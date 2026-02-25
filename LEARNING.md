@@ -73,6 +73,91 @@ When a monolithic `.allium` spec grows too large, split by orthogonal concern:
 
 ---
 
+## 2026-02-25 - Global Query Graph Wiring (Step 4)
+
+### λ register-resolvers! / register-resolvers-in! Pattern
+
+Every component that contributes resolvers to the graph gets two registration
+functions matching the pattern in `psi.ai.core`:
+
+```clojure
+(defn register-resolvers-in!
+  "Isolated — for tests. rebuild? flag avoids double-rebuild when caller
+   batches multiple components."
+  ([qctx] (register-resolvers-in! qctx true))
+  ([qctx rebuild?]
+   (doseq [r all-resolvers]
+     (query/register-resolver-in! qctx r))
+   (when rebuild?
+     (query/rebuild-env-in! qctx))))
+
+(defn register-resolvers!
+  "Global — call once at startup."
+  []
+  (doseq [r all-resolvers]
+    (query/register-resolver! r))
+  (query/rebuild-env!))
+```
+
+The `rebuild?` flag prevents double-rebuild when a higher-level component
+(e.g. introspection) registers multiple sub-component resolver sets then
+rebuilds once at the end.
+
+### λ Batched Registration — Single Rebuild
+
+When a component wires N sub-components into a shared `QueryContext`, register
+all resolver sets first and rebuild once at the end:
+
+```clojure
+;; introspection/register-resolvers-in!
+(doseq [r introspection-resolvers] (register-resolver-in! qctx r))
+(when session-ctx
+  (agent-session/register-resolvers-in! qctx false))  ; rebuild?=false
+(rebuild-env-in! qctx)                                  ; single rebuild
+```
+
+This avoids N intermediate Pathom index compilations (each `rebuild-env-in!`
+recompiles the full index from scratch).
+
+### λ Introspection Context Accepts Optional Sub-Contexts
+
+When a component's isolated context needs to include another component's
+graph, use an options map factory with optional keys — nil means "omit":
+
+```clojure
+(defn create-context
+  ([] (create-context {}))
+  ([{:keys [engine-ctx query-ctx agent-session-ctx]}]
+   (->IntrospectionContext
+    (or engine-ctx (engine/create-context))
+    (or query-ctx  (query/create-query-context))
+    agent-session-ctx)))  ; nil = no agent-session resolvers registered
+```
+
+`register-resolvers-in!` checks `(:agent-session-ctx ctx)` and conditionally
+registers the additional resolver set.  Tests that don't need agent-session
+simply call `(create-context)` and get the old behaviour.
+
+### λ Unused Public Var — clojure-lsp INFO vs Error
+
+`register-resolvers!` (global) has no callers in the codebase until startup
+code is added — clojure-lsp reports it as `INFO: Unused public var`.  This is
+**not an error** and does not block compilation.  It is suppressed by either:
+
+- Adding `^:export` metadata to the var, or
+- Calling it from startup code (e.g. `main.clj`)
+
+The warning is expected for intentional public API entry points.
+
+### λ Drop Unused Requires Immediately
+
+Adding a require for a future refactor (e.g. `[psi.query.core :as query]` in
+`main.clj`) and never using the alias leaves dead weight.  Remove it in the
+same commit or the next atomic one.  clj-kondo and clojure-lsp may not warn
+in all configurations, so check manually after every namespace edit.
+
+---
+
 ## 2026-02-25 - Introspection Component
 
 ### λ Introspection = Engine Queries Itself via EQL
