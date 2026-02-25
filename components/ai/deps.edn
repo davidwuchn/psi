@@ -1,0 +1,5 @@
+{:deps {org.clojure/clojure {:mvn/version "1.12.0"}
+        cheshire/cheshire {:mvn/version "5.13.0"}
+        clj-http/clj-http {:mvn/version "3.13.0"}
+        org.clojure/core.async {:mvn/version "1.6.681"}
+        metosin/malli {:mvn/version "0.16.4"}}}
