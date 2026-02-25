@@ -155,6 +155,21 @@ them via a uniform EQL surface:
 (query/query {:ai/provider :anthropic} [:ai/provider-models])
 ```
 
+### λ clj-kondo Hooks Must Be Imported Per Component
+
+Each Polylith component has its own `.clj-kondo/` dir.  When a component
+gains a new dependency whose macros need kondo hooks (e.g. pathom3's
+`pco/defresolver`), the hooks must be imported **in that component's dir**:
+
+```bash
+cd components/<name>
+clj-kondo --lint "$(clojure -Spath)" --copy-configs --skip-lint
+```
+
+The component `deps.edn` must already declare the dep for it to appear
+on the classpath.  Symptom of missing import: "Unresolved symbol" for
+every var/binding the macro generates.
+
 ### λ Stub Provider Pattern for Tests
 
 Use a stub provider closure to drive streaming tests without HTTP:
