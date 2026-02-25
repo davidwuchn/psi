@@ -2,8 +2,9 @@
   "Introspection component — makes the Psi system queryable via EQL.
 
    The introspection component bridges the engine (statechart state,
-   transitions, system readiness) and the query graph (registered
-   resolvers/mutations) into a uniform EQL query surface.
+   transitions, system readiness), the query graph (registered
+   resolvers/mutations), and optionally the agent-session into a uniform
+   EQL query surface.
 
    Usage pattern — isolated (tests):
 
@@ -12,36 +13,49 @@
        (introspection/register-resolvers-in! ctx)
        (introspection/query-system-state-in ctx))
 
+   With agent-session:
+
+     (let [session-ctx (session/create-context)
+           ctx         (introspection/create-context {:agent-session-ctx session-ctx})]
+       (introspection/register-resolvers-in! ctx)
+       (introspection/query-agent-session-in ctx [:psi.agent-session/phase]))
+
    Usage pattern — global (production):
 
      (introspection/register-resolvers!)        ; once at startup
      (introspection/query-system-state)         ; thereafter
 
    Public API:
-     register-resolvers!       — register all introspection resolvers into the
-                                 global query graph (call once at startup)
-     register-resolvers-in!    — same but for an isolated IntrospectionContext
-     create-context            — create isolated context (Nullable pattern)
-     query-system-state-in     — system state + derived properties (ctx)
-     query-transitions-in      — full transition log (ctx)
-     query-recent-transitions-in — last 20 transitions (ctx)
-     query-graph-summary-in    — query graph statistics (ctx)
-     query-all-engines-in      — all engines + count (ctx)
-     query-engine-detail-in    — single-engine diagnostics (ctx)"
+     register-resolvers!           — register engine + agent-session resolvers into
+                                     the global query graph (call once at startup)
+     register-resolvers-in!        — same but for an isolated IntrospectionContext
+     create-context                — create isolated context (Nullable pattern)
+     query-system-state-in         — system state + derived properties (ctx)
+     query-transitions-in          — full transition log (ctx)
+     query-recent-transitions-in   — last 20 transitions (ctx)
+     query-graph-summary-in        — query graph statistics (ctx)
+     query-all-engines-in          — all engines + count (ctx)
+     query-engine-detail-in        — single-engine diagnostics (ctx)
+     query-agent-session-in        — EQL query over :psi.agent-session/* (ctx, q)"
   (:require
    [psi.introspection.resolvers :as resolvers]
    [psi.engine.core :as engine]
-   [psi.query.core :as query]))
+   [psi.query.core :as query]
+   [psi.agent-session.core :as agent-session]
+   [psi.agent-session.resolvers :as as-resolvers]))
 
 ;; ─────────────────────────────────────────────────────────────────────────────
 ;; Global registration
 ;; ─────────────────────────────────────────────────────────────────────────────
 
 (defn register-resolvers!
-  "Register all introspection resolvers into the global query graph.
-   Call once at system startup before issuing introspection queries."
+  "Register all introspection and agent-session resolvers into the global
+   query graph.  Rebuilds the env once after all resolvers are registered.
+   Call once at system startup before issuing queries."
   []
   (doseq [r resolvers/all-resolvers]
+    (query/register-resolver! r))
+  (doseq [r as-resolvers/all-resolvers]
     (query/register-resolver! r))
   (query/rebuild-env!))
 
@@ -49,30 +63,44 @@
 ;; Isolated introspection context (Nullable pattern)
 ;; ─────────────────────────────────────────────────────────────────────────────
 
-(defrecord IntrospectionContext [engine-ctx query-ctx])
+(defrecord IntrospectionContext [engine-ctx query-ctx agent-session-ctx])
 
 (defn create-context
   "Create an isolated introspection context with its own engine and query atoms.
    Use in tests (pass instead of global context) to avoid shared state.
 
-   `engine-ctx` — an isolated engine context (default: fresh from engine/create-context)
-   `query-ctx`  — an isolated query context  (default: fresh from query/create-query-context)"
+   Options (map, all optional):
+     :engine-ctx        — an isolated engine context
+                          (default: fresh from engine/create-context)
+     :query-ctx         — an isolated query context
+                          (default: fresh from query/create-query-context)
+     :agent-session-ctx — an agent-session context to expose via EQL
+                          (default: nil — agent-session resolvers not registered)"
   ([]
-   (create-context (engine/create-context) (query/create-query-context)))
-  ([engine-ctx query-ctx]
-   (->IntrospectionContext engine-ctx query-ctx)))
+   (create-context {}))
+  ([{:keys [engine-ctx query-ctx agent-session-ctx]}]
+   (->IntrospectionContext
+    (or engine-ctx (engine/create-context))
+    (or query-ctx (query/create-query-context))
+    agent-session-ctx)))
 
 ;; ─────────────────────────────────────────────────────────────────────────────
 ;; Context-aware helpers
 ;; ─────────────────────────────────────────────────────────────────────────────
 
 (defn register-resolvers-in!
-  "Register all introspection resolvers into `ctx`'s query context,
-   then rebuild the env so queries work immediately."
+  "Register introspection resolvers (and optionally agent-session resolvers)
+   into `ctx`'s query context, then rebuild the env once.
+
+   If `ctx` carries an :agent-session-ctx, agent-session resolvers are also
+   registered so :psi.agent-session/* attributes are queryable."
   [ctx]
   (let [qctx (:query-ctx ctx)]
     (doseq [r resolvers/all-resolvers]
       (query/register-resolver-in! qctx r))
+    (when (:agent-session-ctx ctx)
+      ;; Pass rebuild?=false — we rebuild once below after all resolvers are in.
+      (agent-session/register-resolvers-in! qctx false))
     (query/rebuild-env-in! qctx)))
 
 (defn query-system-state-in
@@ -132,3 +160,12 @@
                     [:psi.engine/status
                      :psi.engine/active-states
                      :psi.engine/diagnostics])))
+
+(defn query-agent-session-in
+  "Run EQL query `q` over the :psi.agent-session/* graph using `ctx`.
+   Requires ctx to have been created with an :agent-session-ctx option."
+  [ctx q]
+  (let [{:keys [agent-session-ctx query-ctx]} ctx]
+    (when-not agent-session-ctx
+      (throw (ex-info "No :agent-session-ctx in introspection context" {})))
+    (query/query-in query-ctx {:psi/agent-session-ctx agent-session-ctx} q)))

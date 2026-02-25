@@ -27,7 +27,8 @@
    [psi.agent-session.executor :as executor]
    [psi.agent-session.tools :as tools]
    [psi.agent-core.core :as agent]
-   [psi.ai.models :as models])
+   [psi.ai.models :as models]
+   [psi.query.core :as query])
   (:gen-class))
 
 ;; ============================================================
@@ -149,6 +150,9 @@
                   {:initial-session {:model {:provider (name (:provider ai-model))
                                              :id       (:id ai-model)
                                              :reasoning (:supports-reasoning ai-model)}}})]
+    ;; Wire agent-session resolvers into the global query graph so
+    ;; :psi.agent-session/* attributes are queryable.
+    (session/register-resolvers!)
     ;; Register built-in tools into agent-core
     (agent/set-tools-in! (:agent-ctx ctx) tools/all-tool-schemas)
     (agent/set-system-prompt-in!

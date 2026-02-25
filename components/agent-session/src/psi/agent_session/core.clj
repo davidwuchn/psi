@@ -40,7 +40,13 @@
    :journal-atom        — atom of [SessionEntry]
    :compaction-fn       — (fn [session-data preparation instructions]) → CompactionResult
    :branch-summary-fn   — (fn [session-data entries instructions]) → BranchSummaryResult
-   :config              — merged config map (global defaults + per-session overrides)"
+   :config              — merged config map (global defaults + per-session overrides)
+
+   Global query graph integration
+   ──────────────────────────────
+   Call `register-resolvers!` once at startup to add :psi.agent-session/*
+   attributes to the global Pathom graph.  For isolated (test) contexts,
+   use `register-resolvers-in!` with a QueryContext from psi.query.core."
   (:require
    [psi.agent-core.core :as agent]
    [psi.agent-session.compaction :as compaction]
@@ -48,7 +54,8 @@
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.resolvers :as resolvers]
    [psi.agent-session.session :as session]
-   [psi.agent-session.statechart :as sc]))
+   [psi.agent-session.statechart :as sc]
+   [psi.query.core :as query]))
 
 ;; ============================================================
 ;; Forward declarations
@@ -477,6 +484,30 @@
      :extension-count         (ext/extension-count-in (:extension-registry ctx))
      :journal-entries         (count @(:journal-atom ctx))
      :agent-diagnostics       (agent/diagnostics-in (:agent-ctx ctx))}))
+
+;; ============================================================
+;; Global query graph registration
+;; ============================================================
+
+(defn register-resolvers-in!
+  "Register all agent-session resolvers into an isolated `qctx` query context.
+   Rebuilds the env unless `rebuild?` is false (useful when the caller will
+   rebuild after adding further resolvers).
+   Use in tests to avoid touching global state."
+  ([qctx] (register-resolvers-in! qctx true))
+  ([qctx rebuild?]
+   (doseq [r resolvers/all-resolvers]
+     (query/register-resolver-in! qctx r))
+   (when rebuild?
+     (query/rebuild-env-in! qctx))))
+
+(defn register-resolvers!
+  "Register all agent-session resolvers into the global query graph and
+   rebuild the environment.  Call once at system startup."
+  []
+  (doseq [r resolvers/all-resolvers]
+    (query/register-resolver! r))
+  (query/rebuild-env!))
 
 ;; ============================================================
 ;; EQL query surface

@@ -7,7 +7,8 @@
    [clojure.test :refer [deftest testing is]]
    [psi.agent-session.core :as session]
    [psi.agent-session.session :as session-data]
-   [psi.agent-session.extensions :as ext]))
+   [psi.agent-session.extensions :as ext]
+   [psi.query.core :as query]))
 
 ;; ── Context creation and isolation ─────────────────────────────────────────
 
@@ -254,3 +255,28 @@
           result (session/query-in ctx [:psi.agent-session/stats])]
       (is (map? (:psi.agent-session/stats result)))
       (is (contains? (:psi.agent-session/stats result) :session-id)))))
+
+;; ── Global query graph registration ─────────────────────────────────────────
+
+(deftest register-resolvers-in!-test
+  (testing "register-resolvers-in! wires agent-session into an isolated query ctx"
+    (let [session-ctx (session/create-context)
+          qctx        (query/create-query-context)]
+      (session/register-resolvers-in! qctx)
+      ;; Agent-session resolvers should now be in the isolated graph
+      (let [syms (query/resolver-syms-in qctx)]
+        (is (contains? syms 'psi.agent-session.resolvers/agent-session-identity)
+            "identity resolver should be registered")
+        (is (contains? syms 'psi.agent-session.resolvers/agent-session-phase)
+            "phase resolver should be registered"))))
+
+  (testing "register-resolvers-in! enables EQL queries via the isolated ctx"
+    (let [session-ctx (session/create-context)
+          qctx        (query/create-query-context)]
+      (session/register-resolvers-in! qctx)
+      (let [result (query/query-in qctx
+                                   {:psi/agent-session-ctx session-ctx}
+                                   [:psi.agent-session/session-id
+                                    :psi.agent-session/phase])]
+        (is (string? (:psi.agent-session/session-id result)))
+        (is (= :idle (:psi.agent-session/phase result)))))))
