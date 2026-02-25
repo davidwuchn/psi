@@ -26,4 +26,7 @@
               psi.agent-session.persistence
               psi.agent-session.statechart
               psi.agent-session.resolvers
-              psi.agent-session.core}}}}
+              psi.agent-session.core
+              psi.agent-session.tools
+              psi.agent-session.executor
+              psi.agent-session.main}}}}

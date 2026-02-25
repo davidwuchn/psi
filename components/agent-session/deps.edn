@@ -2,5 +2,8 @@
         com.fulcrologic/statecharts {:mvn/version "1.2.25"}
         com.wsscode/pathom3         {:mvn/version "2025.01.16-alpha"}
         metosin/malli               {:mvn/version "0.16.4"}
+        cheshire/cheshire           {:mvn/version "5.13.0"}
+        clj-http/clj-http           {:mvn/version "3.13.0"}
         psi/agent-core              {:local/root "../agent-core"}
+        psi/ai                      {:local/root "../ai"}
         psi/query                   {:local/root "../query"}}}

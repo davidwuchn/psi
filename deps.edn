@@ -16,6 +16,12 @@
         psi/agent-session                             {:local/root "components/agent-session"}}
  :aliases
  {:dev   {:extra-paths ["dev"]}
+  :run   {:extra-paths ["components/agent-session/src"
+                        "components/agent-core/src"
+                        "components/ai/src"
+                        "components/engine/src"
+                        "components/query/src"]
+          :main-opts   ["-m" "psi.agent-session.main"]}
   :nrepl {:extra-deps {nrepl/nrepl {:mvn/version "1.5.1"}}}
   :test  {:extra-paths ["test" "components/ai/test" "components/query/test" "components/history/test"
                         "components/introspection/test" "components/tui/test" "components/agent-core/test"
