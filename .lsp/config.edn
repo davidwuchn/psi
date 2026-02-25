@@ -5,4 +5,6 @@
               psi.query.core
               psi.history.git
               psi.history.resolvers
-              psi.history.core}}}}
+              psi.history.core
+              psi.introspection.resolvers
+              psi.introspection.core}}}}

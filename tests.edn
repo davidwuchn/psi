@@ -1,8 +1,10 @@
 #kaocha/v1
 {:tests
  [{:id :unit
-   :test-paths ["test" "components/ai/test" "components/engine/test" "components/query/test" "components/history/test"]
-   :source-paths ["src" "components/ai/src" "components/engine/src" "components/query/src" "components/history/src"]
+   :test-paths ["test" "components/ai/test" "components/engine/test" "components/query/test" "components/history/test"
+               "components/introspection/test"]
+   :source-paths ["src" "components/ai/src" "components/engine/src" "components/query/src" "components/history/src"
+                 "components/introspection/src"]
    :ns-patterns [".*-test$"]}]
  
  :color? true
