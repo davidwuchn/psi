@@ -199,6 +199,50 @@ records — Pathom treats them as plain values in the entity map.
 For a keyword `:configuration-complete` this yields `":configuration-complete"`
 (with leading colon).  Tests must match the stringified form, not the bare name.
 
+## 2026-02-25 - JVM Shutdown / CLI Entry Point
+
+### λ clj-http Parks a Non-Daemon Thread — Call System/exit
+
+`clj-http` (Apache HttpClient) starts a connection-eviction background thread
+with `isDaemon() = false`.  Non-daemon threads block JVM shutdown.  After the
+CLI prompt loop exits (e.g. `/quit`), the JVM hangs indefinitely waiting for
+this thread to finish.
+
+**Fix**: call `(System/exit 0)` at the end of `-main`:
+
+```clojure
+(defn -main [& args]
+  (run-session ...)
+  ;; clj-http parks a non-daemon connection-eviction thread.
+  ;; Explicitly exit so the JVM does not hang after /quit.
+  (System/exit 0))
+```
+
+This is the standard pattern for CLI tools using clj-http (or any library
+that parks non-daemon threads).  It only runs after `run-session` returns
+normally so it does not swallow exceptions during the session.
+
+Other potential culprits investigated and cleared:
+- `simple-env` statecharts — use manually-polled queue, **no** background threads
+- `future` in streaming layer — uses ForkJoin pool, **all daemon** threads
+
+### λ Provider is Encoded in the Model Key — No --provider Flag Needed
+
+The model key already identifies the provider.  `--model <key>` is the one
+obvious way to select both:
+
+| CLI flag | Model | Provider |
+|----------|-------|----------|
+| `--model claude-3-5-haiku` | Claude 3.5 Haiku | Anthropic |
+| `--model claude-3-5-sonnet` | Claude 3.5 Sonnet | Anthropic |
+| `--model gpt-4o` | GPT-4o | OpenAI |
+| `--model o1-preview` | GPT-o1 Preview | OpenAI |
+
+`PSI_MODEL` env var is the alternative.  A separate `--provider` flag would
+be redundant and violate the **One Way** principle.
+
+---
+
 ## 2025-02-24 23:34 - Bootstrap Testing
 
 ### λ Testing Infrastructure Works
