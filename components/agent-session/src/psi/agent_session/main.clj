@@ -34,6 +34,7 @@
    [psi.ai.models :as models]
    [psi.tui.core :as tui]
    [psi.tui.components :as comp]
+   [psi.tui.protocols :as proto]
    [psi.tui.terminal :as terminal])
   (:gen-class))
 
@@ -445,7 +446,7 @@
 
         ;; Start terminal with our custom on-input handler
         (let [orig-on-resize (fn [_c _r] (tui/request-render-in! tui-ctx))]
-          (.start term on-input orig-on-resize))
+          (proto/start! term on-input orig-on-resize))
         ;; Hide cursor and do first render
         (.print System/out "\u001b[?25l")
         (.flush System/out)
