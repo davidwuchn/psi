@@ -1,0 +1,145 @@
+(ns psi.tui.ansi-test
+  "Tests for ANSI/VT escape sequence utilities.
+   Covers: visible-width, truncate-to-width, word-wrap, find-marker, strip-marker."
+  (:require
+   [clojure.string :as str]
+   [clojure.test :refer [deftest is testing]]
+   [psi.tui.ansi :as ansi]))
+
+;;;; visible-width
+
+(deftest visible-width-plain-test
+  ;; Plain strings: width equals character count.
+  (testing "visible-width — plain strings"
+    (testing "empty string"
+      (is (= 0 (ansi/visible-width ""))))
+    (testing "ascii string"
+      (is (= 5 (ansi/visible-width "hello"))
+          "five printable chars = width 5"))))
+
+(deftest visible-width-ignores-ansi-test
+  ;; VisibleWidthIgnoresAnsi rule: escape sequences not counted.
+  (testing "visible-width — with ANSI SGR"
+    (testing "bold + reset does not add columns"
+      (is (= 5 (ansi/visible-width "\u001b[1mhello\u001b[0m"))))
+    (testing "OSC 8 hyperlink does not add columns"
+      (is (= 4 (ansi/visible-width "\u001b]8;;http://x\u0007link\u001b]8;;\u0007"))))))
+
+;;;; strip-ansi
+
+(deftest strip-ansi-test
+  ;; strip-ansi removes all sequences.
+  (testing "strip-ansi"
+    (testing "plain string unchanged"
+      (is (= "hello" (ansi/strip-ansi "hello"))))
+    (testing "SGR codes stripped"
+      (is (= "hello" (ansi/strip-ansi "\u001b[1;32mhello\u001b[0m"))))
+    (testing "CSI sequence stripped"
+      (is (= "hi" (ansi/strip-ansi "\u001b[2Jhi"))))))
+
+;;;; reset-line
+
+(deftest reset-line-test
+  ;; reset-line appends SGR reset + OSC 8 reset.
+  (testing "reset-line"
+    (testing "appends reset sequences"
+      (let [result (ansi/reset-line "text")]
+        (is (str/starts-with? result "text"))
+        (is (str/includes? result "\u001b[0m"))
+        (is (str/includes? result "\u001b]8;;\u0007"))))))
+
+;;;; truncate-to-width
+
+(deftest truncate-to-width-short-string-test
+  ;; Short string: no truncation.
+  (testing "truncate-to-width — short string"
+    (testing "shorter than width returned unchanged"
+      (is (= "hi" (ansi/truncate-to-width "hi" 10))))))
+
+(deftest truncate-to-width-exact-width-test
+  ;; Exact width: no truncation.
+  (testing "truncate-to-width — exact width"
+    (testing "string equal to width returned unchanged"
+      (is (= "hello" (ansi/truncate-to-width "hello" 5))))))
+
+(deftest truncate-to-width-long-string-test
+  ;; TruncateToWidthPreservesAnsi rule.
+  (testing "truncate-to-width — long string"
+    (testing "result visible width <= target width"
+      (let [result (ansi/truncate-to-width "hello world" 7)]
+        (is (<= (ansi/visible-width result) 7))))
+
+    (testing "default ellipsis appended"
+      (let [result (ansi/truncate-to-width "hello world" 7)]
+        (is (str/includes? result "…"))))
+
+    (testing "custom ellipsis respected"
+      (let [result (ansi/truncate-to-width "hello world" 7 "...")]
+        (is (str/includes? result "..."))))))
+
+(deftest truncate-to-width-ansi-string-test
+  ;; ANSI sequences do not consume visible columns.
+  (testing "truncate-to-width — ANSI string"
+    (testing "does not truncate visible text incorrectly"
+      (let [s      "\u001b[1mhello world\u001b[0m"
+            result (ansi/truncate-to-width s 7)]
+        (is (<= (ansi/visible-width result) 7))))))
+
+;;;; word-wrap
+
+(deftest word-wrap-empty-test
+  ;; Empty input.
+  (testing "word-wrap — empty string"
+    (testing "returns single empty line"
+      (is (= [""] (ansi/word-wrap "" 10))))))
+
+(deftest word-wrap-short-test
+  ;; Short line: no wrapping.
+  (testing "word-wrap — short line"
+    (testing "single word within width returned as-is"
+      (is (= ["hello"] (ansi/word-wrap "hello" 10))))))
+
+(deftest word-wrap-wraps-test
+  ;; WrapTextWithAnsi rule: each wrapped line <= width.
+  (testing "word-wrap — wrapping"
+    (testing "all result lines fit within width"
+      (let [text   "one two three four five six seven eight"
+            width  15
+            lines  (ansi/word-wrap text width)]
+        (is (every? #(<= (count %) width) lines))))
+
+    (testing "all words appear in result"
+      (let [text   "one two three"
+            result (str/join " " (ansi/word-wrap text 6))]
+        (is (str/includes? result "one"))
+        (is (str/includes? result "two"))
+        (is (str/includes? result "three"))))))
+
+;;;; find-marker / strip-marker
+
+(deftest find-marker-test
+  ;; CursorMarkerExtracted: find-marker locates the cursor marker.
+  (let [marker "CURSOR"]
+    (testing "find-marker"
+      (testing "returns nil when marker absent"
+        (is (nil? (ansi/find-marker ["hello" "world"] marker))))
+
+      (testing "returns row+col when marker present"
+        (let [result (ansi/find-marker ["hello" "woCURSORrld"] marker)]
+          (is (= {:row 1 :col 2} result))))
+
+      (testing "finds marker on first line"
+        (let [result (ansi/find-marker ["CURSORhello"] marker)]
+          (is (= {:row 0 :col 0} result)))))))
+
+(deftest strip-marker-test
+  ;; strip-marker removes all occurrences.
+  (let [marker "CURSOR"]
+    (testing "strip-marker"
+      (testing "removes marker from the target line"
+        (let [result (ansi/strip-marker ["hello" "woCURSORrld"] marker)]
+          (is (= ["hello" "world"] result))))
+
+      (testing "no-op when marker absent"
+        (let [lines ["hello" "world"]]
+          (is (= lines (ansi/strip-marker lines marker))))))))

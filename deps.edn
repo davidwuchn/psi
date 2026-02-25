@@ -10,13 +10,14 @@
         psi/engine                                    {:local/root "components/engine"}
         psi/query                                     {:local/root "components/query"}
         psi/history                                   {:local/root "components/history"}
-        psi/introspection                             {:local/root "components/introspection"}}
+        psi/introspection                             {:local/root "components/introspection"}
+        psi/tui                                       {:local/root "components/tui"}}
  :aliases
  {:dev   {:extra-paths ["dev"]}
   :nrepl {:extra-deps {nrepl/nrepl {:mvn/version "1.5.1"}}}
   :test  {:extra-paths ["test" "components/ai/test" "components/query/test" "components/history/test"
-                        "components/introspection/test"
+                        "components/introspection/test" "components/tui/test"
                         "components/ai/src" "components/engine/src" "components/query/src" "components/history/src"
-                        "components/introspection/src"]
+                        "components/introspection/src" "components/tui/src"]
           :extra-deps  {lambdaisland/kaocha {:mvn/version "1.91.1392"}}
           :main-opts   ["-m" "kaocha.runner"]}}}
