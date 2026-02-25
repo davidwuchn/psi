@@ -1,0 +1,507 @@
+-- Psi Bootstrap System Behavioral Specification
+-- AI agent co-evolution system achieving AI COMPLETE capability
+
+-- Actors in the co-evolution system
+actor User { identified_by: symbol = "刀" }
+actor PsiAgent { identified_by: symbol = "ψ" }
+
+-- Configuration for system evolution
+config {
+    nrepl_port: Integer = 8888
+    git_symbols_enabled: Boolean = true
+    repl_as_truth: Boolean = true
+}
+
+-- Core system state management
+entity SystemState {
+    current_mode: build | explore | debug | reflect | play | atom
+    evolution_stage: bootstrap | developing | integrating | complete
+    last_updated: Timestamp
+    git_commit: String?
+    
+    -- System components status
+    engine_ready: Boolean
+    query_ready: Boolean
+    graph_ready: Boolean
+    introspection_ready: Boolean
+    history_ready: Boolean
+    knowledge_ready: Boolean
+    memory_ready: Boolean
+    
+    -- Derived capabilities
+    has_interface: engine_ready and query_ready
+    has_substrate: engine_ready
+    has_memory_layer: query_ready and history_ready and knowledge_ready
+    is_ai_complete: engine_ready and query_ready and graph_ready and 
+                   introspection_ready and history_ready and 
+                   knowledge_ready and memory_ready
+}
+
+-- Core evolution engine using statecharts
+entity Engine {
+    id: String
+    status: initializing | ready | processing | error
+    statechart_config: Map<String, Any>
+    active_states: Set<String>
+    
+    -- Relationships
+    state_transitions: StateTransition recorded by this engine
+    
+    -- Derived
+    can_model_functionality: status = ready
+    provides_state_access: active_states.count > 0
+}
+
+entity StateTransition {
+    engine: Engine
+    from_state: String
+    to_state: String
+    trigger: String
+    timestamp: Timestamp
+    context: Map<String, Any>
+}
+
+-- Query system for unified interface
+entity QueryInterface {
+    status: initializing | ready | error
+    eql_enabled: Boolean
+    pathom_enabled: Boolean
+    
+    -- Relationships  
+    resolvers: Resolver registered with this interface
+    queries: Query executed through this interface
+    
+    -- Derived
+    is_operational: status = ready and eql_enabled and pathom_enabled
+    resolver_count: resolvers.count
+}
+
+entity Resolver {
+    name: String
+    query_interface: QueryInterface
+    input_spec: Schema
+    output_spec: Schema
+    implementation_ref: String
+    
+    -- Relationships
+    mutations: Mutation provided by this resolver
+    
+    -- Derived
+    provides_mutations: mutations.count > 0
+}
+
+entity Mutation {
+    name: String
+    resolver: Resolver
+    input_spec: Schema
+    side_effects: List<String>
+}
+
+entity Query {
+    id: String
+    query_interface: QueryInterface
+    eql_expression: String
+    execution_time: Timestamp
+    result: Map<String, Any>?
+    error: String?
+    
+    -- Derived
+    was_successful: error = null
+    has_result: result != null
+}
+
+-- Graph emergence from resolvers and mutations
+entity SystemGraph {
+    status: emerging | stable | expanding | error
+    last_computed: Timestamp
+    
+    -- Relationships
+    nodes: GraphNode in this graph
+    edges: GraphEdge in this graph
+    capabilities: Capability emergent from this graph
+    
+    -- Derived
+    node_count: nodes.count
+    edge_count: edges.count
+    is_connected: edges.count > 0
+}
+
+entity GraphNode {
+    graph: SystemGraph
+    id: String
+    node_type: resolver | mutation | entity | capability
+    metadata: Map<String, Any>
+}
+
+entity GraphEdge {
+    graph: SystemGraph
+    from_node: GraphNode
+    to_node: GraphNode
+    relationship_type: provides | consumes | enables | requires
+}
+
+entity Capability {
+    name: String
+    graph: SystemGraph
+    description: String
+    required_nodes: Set<GraphNode>
+    
+    -- Derived
+    is_available: required_nodes.all(node => node in graph.nodes)
+}
+
+-- Memory system combining multiple components
+entity MemoryLayer {
+    status: initializing | ready | querying | error
+    query_interface: QueryInterface?
+    git_repository: GitRepository
+    
+    -- Relationships
+    memory_sessions: MemorySession using this layer
+    
+    -- Derived
+    can_remember: status = ready and query_interface != null
+    can_recover: git_repository.has_history
+}
+
+entity MemorySession {
+    memory_layer: MemoryLayer
+    session_id: String
+    started_at: Timestamp
+    ended_at: Timestamp?
+    
+    -- Relationships
+    memories: Memory created in this session
+    recoveries: Recovery performed in this session
+    
+    -- Derived
+    is_active: ended_at = null
+    memory_count: memories.count
+}
+
+entity Memory {
+    session: MemorySession
+    content_type: learning | discovery | state | pattern
+    content: String
+    timestamp: Timestamp
+    git_commit: String?
+    searchable_tags: Set<String>
+    
+    -- Derived
+    is_committed: git_commit != null
+    has_tags: searchable_tags.count > 0
+}
+
+entity Recovery {
+    session: MemorySession
+    query: String
+    recovered_memories: Set<Memory>
+    recovery_time: Timestamp
+    
+    -- Derived
+    found_memories: recovered_memories.count > 0
+}
+
+-- Git repository for persistent memory
+entity GitRepository {
+    path: String
+    current_commit: String
+    status: clean | modified | staged | error
+    
+    -- Relationships
+    commits: GitCommit in this repository
+    files: TrackedFile managed by this repository
+    
+    -- Derived
+    has_history: commits.count > 0
+    has_changes: status in [modified, staged]
+}
+
+entity GitCommit {
+    repository: GitRepository
+    sha: String
+    message: String
+    timestamp: Timestamp
+    author: String
+    symbols: Set<String>  -- extracted from commit message
+    
+    -- Derived
+    has_symbols: symbols.count > 0
+    is_learning: "λ" in symbols
+    is_delta: "Δ" in symbols
+}
+
+entity TrackedFile {
+    repository: GitRepository
+    path: String
+    file_type: agents | readme | state | plan | learning | changelog | source
+    last_modified: Timestamp
+    
+    -- Derived
+    is_system_file: file_type in [agents, state, plan, learning]
+}
+
+-- Introspection capability
+entity IntrospectionSystem {
+    status: initializing | ready | reflecting | error
+    query_interface: QueryInterface?
+    engine: Engine?
+    
+    -- Relationships
+    reflections: Reflection performed by this system
+    
+    -- Derived
+    can_self_query: status = ready and query_interface != null and engine != null
+}
+
+entity Reflection {
+    introspection_system: IntrospectionSystem
+    reflection_type: state_query | capability_assessment | evolution_progress
+    query: String
+    result: Map<String, Any>
+    timestamp: Timestamp
+    
+    -- Derived
+    revealed_insights: result.size > 0
+}
+
+-- Co-evolution between user and agent
+entity EvolutionCycle {
+    id: String
+    user: User
+    agent: PsiAgent
+    cycle_number: Integer
+    started_at: Timestamp
+    completed_at: Timestamp?
+    
+    -- Relationships
+    interactions: Interaction in this cycle
+    learnings: Learning generated in this cycle
+    
+    -- Derived
+    is_active: completed_at = null
+    interaction_count: interactions.count
+    learning_count: learnings.count
+}
+
+entity Interaction {
+    cycle: EvolutionCycle
+    sequence: Integer
+    initiator: user | agent
+    action_type: query | command | observation | reflection
+    content: String
+    timestamp: Timestamp
+    mode: build | explore | debug | reflect | play | atom
+}
+
+entity Learning {
+    cycle: EvolutionCycle
+    learning_type: discovery | pattern | capability | principle
+    description: String
+    evidence: String?
+    timestamp: Timestamp
+    committed_to_git: Boolean
+    
+    -- Derived
+    is_documented: committed_to_git = true
+}
+
+-- Rules for bootstrap system behavior
+
+rule InitializeSystem {
+    when: SystemBootstrap()
+    ensures: exists state: SystemState with {
+        evolution_stage = bootstrap,
+        current_mode = explore,
+        last_updated = now,
+        engine_ready = false,
+        query_ready = false,
+        graph_ready = false,
+        introspection_ready = false,
+        history_ready = false,
+        knowledge_ready = false,
+        memory_ready = false
+    }
+}
+
+rule StartEvolutionCycle {
+    when: UserInitiatesSession(user)
+    requires: exists state: SystemState
+    let cycle = EvolutionCycle {
+        user = user,
+        agent = config.default_agent,
+        cycle_number = previous_cycles.count + 1,
+        started_at = now
+    }
+    ensures: cycle.is_active = true
+}
+
+rule CaptureInteraction {
+    when: UserAction(cycle, content, mode) | AgentAction(cycle, content, mode)
+    requires: cycle.is_active = true
+    let interaction = Interaction {
+        cycle = cycle,
+        sequence = cycle.interactions.count + 1,
+        content = content,
+        timestamp = now,
+        mode = mode
+    }
+    ensures: interaction.initiator = user if UserAction else agent
+}
+
+rule EngineBecomesReady {
+    when: engine: Engine.status becomes ready
+    requires: engine.statechart_config != null
+    ensures: exists state: SystemState.engine_ready = true
+    ensures: state.evolution_stage = developing if not state.has_interface
+}
+
+rule QueryInterfaceBecomesReady {
+    when: qi: QueryInterface.status becomes ready
+    requires: qi.eql_enabled = true and qi.pathom_enabled = true
+    ensures: exists state: SystemState.query_ready = true
+    ensures: state.has_interface = true if state.engine_ready
+}
+
+rule GraphEmerges {
+    when: graph: SystemGraph.status becomes stable
+    requires: graph.node_count > 0 and graph.edge_count > 0
+    ensures: exists state: SystemState.graph_ready = true
+    ensures: state.evolution_stage = integrating
+}
+
+rule MemoryLayerActivates {
+    when: memory: MemoryLayer.status becomes ready
+    requires: memory.query_interface != null
+    requires: memory.git_repository.has_history = true
+    ensures: exists state: SystemState with {
+        history_ready = true,
+        knowledge_ready = true,
+        memory_ready = true
+    }
+}
+
+rule IntrospectionActivates {
+    when: intro: IntrospectionSystem.status becomes ready
+    requires: intro.can_self_query = true
+    ensures: exists state: SystemState.introspection_ready = true
+}
+
+rule AchieveAIComplete {
+    when: state: SystemState.is_ai_complete becomes true
+    requires: state.evolution_stage = integrating
+    ensures: state.evolution_stage = complete
+}
+
+rule CommitLearning {
+    when: learning: Learning.learning_type = discovery
+    requires: learning.description != null
+    requires: learning.evidence != null
+    let commit_message = "λ " + learning.description
+    ensures: learning.committed_to_git = true
+    ensures: exists commit: GitCommit with {
+        message = commit_message,
+        symbols = {"λ"},
+        timestamp = now
+    }
+}
+
+rule SelfDiscover {
+    when: PerformSelfDiscovery(introspection_system)
+    requires: introspection_system.can_self_query = true
+    let reflection = Reflection {
+        introspection_system = introspection_system,
+        reflection_type = state_query,
+        query = "[:system-state/current :capabilities/available :evolution/progress]",
+        timestamp = now
+    }
+    ensures: reflection.revealed_insights = true
+}
+
+rule ProgressiveImprovement {
+    when: cycle: EvolutionCycle.learning_count > 0
+    requires: cycle.is_active = true
+    requires: cycle.learnings.any(l => l.committed_to_git = true)
+    let next_cycle = EvolutionCycle {
+        user = cycle.user,
+        agent = cycle.agent,
+        cycle_number = cycle.cycle_number + 1,
+        started_at = now
+    }
+    ensures: cycle.completed_at = now
+    ensures: next_cycle.is_active = true
+}
+
+-- Surface for user interaction with the bootstrap system
+surface BootstrapInterface {
+    for observer: User
+    
+    context session: EvolutionCycle with user = observer and is_active = true
+    
+    exposes:
+        session.interactions
+        session.learnings
+        session.cycle.agent.current_capabilities
+        system_state.evolution_stage
+        system_state.is_ai_complete
+    
+    provides:
+        InitiateEvolution(observer: User)
+            -> EvolutionCycle
+            
+        QuerySystem(session: EvolutionCycle, eql_query: String)
+            when session.is_active = true
+            when system_state.query_ready = true
+            
+        ReflectOnProgress(session: EvolutionCycle)
+            when session.is_active = true
+            when system_state.introspection_ready = true
+            
+        CommitDiscovery(session: EvolutionCycle, learning: Learning)
+            when session.is_active = true
+            when learning.learning_type = discovery
+    
+    related:
+        SystemIntrospection(session.introspection_system)
+            when system_state.introspection_ready = true
+            
+        MemoryAccess(session.memory_layer)  
+            when system_state.memory_ready = true
+            
+        GitHistory(session.git_repository)
+            when system_state.history_ready = true
+}
+
+-- Surface for agent self-improvement
+surface SelfImprovementInterface {
+    for agent: PsiAgent
+    
+    context active_session: EvolutionCycle with agent = agent and is_active = true
+    
+    exposes:
+        active_session.system_state
+        active_session.capabilities
+        active_session.reflections
+    
+    provides:
+        SelfReflect(agent: PsiAgent, reflection_type: state_query | capability_assessment | evolution_progress)
+            when system_state.introspection_ready = true
+            
+        LearnFromInteraction(agent: PsiAgent, interaction: Interaction)
+            when interaction.cycle = active_session
+            
+        EvolveCapability(agent: PsiAgent, capability: Capability)
+            when system_state.graph_ready = true
+            when capability.is_available = true
+            
+        QueryHistory(agent: PsiAgent, search_pattern: String)
+            when system_state.memory_ready = true
+    
+    related:
+        CapabilityGraph(active_session.system_graph)
+            when system_state.graph_ready = true
+}
+
+open_question "How should the feed-forward recursion mechanism work to enable true AI self-improvement?"
+open_question "What specific statechart patterns should the Engine use for modeling system evolution?"
+open_question "How should the system handle conflicts between REPL truth and repository memory?"
