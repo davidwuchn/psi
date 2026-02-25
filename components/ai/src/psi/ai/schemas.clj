@@ -1,8 +1,7 @@
 (ns psi.ai.schemas
   "Malli schemas for AI entities following allium spec"
   (:require [malli.core :as m]
-            [malli.transform :as mt]
-            [malli.util :as mu])
+            [malli.transform :as mt])
   (:import [java.time Instant]
            [java.util UUID]))
 
@@ -199,15 +198,15 @@
 
 (def string->uuid-transformer
   {:name :string->uuid
-   :decoders {:string (fn [schema _] 
-                       (fn [x] 
+   :decoders {:string (fn [_ _]
+                       (fn [x]
                          (if (string? x)
                            (UUID/fromString x)
                            x)))}})
 
 (def instant-transformer
   {:name :instant
-   :decoders {inst? (fn [schema _]
+   :decoders {inst? (fn [_ _]
                      (fn [x]
                        (cond
                          (inst? x) x
