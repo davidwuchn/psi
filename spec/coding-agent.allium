@@ -1,0 +1,1019 @@
+-- coding-agent.allium
+--
+-- Scope: pi coding-agent — the orchestration layer that wraps the core LLM agent
+--        with sessions, extensions, skills, resources, compaction, and run modes.
+--
+-- Includes:
+--   AgentSession — lifecycle, prompting, model/thinking management, compaction,
+--                  session branching, retry, queued messages, extension hooks
+--   Extension system — registration, event dispatch, tool wrapping, commands
+--   Resource loading — skills, prompt templates, themes, context files
+--   Session management — tree structure, persistence, branching, forking
+--   Compaction — context summarisation triggering and execution
+--   Run modes — interactive (TUI), print (headless), RPC (JSON stdio)
+--
+-- Excludes:
+--   Core LLM agent loop and streaming (see agent.allium)
+--   AI provider internals, model APIs, transport (see ai-abstract-model.allium)
+--   TUI rendering implementation details (layout, CSS, terminal codes)
+--   Shell / bash execution internals
+--   OAuth token exchange protocols
+--   File system and git implementation details
+
+use "./agent.allium" as agent
+
+------------------------------------------------------------
+-- External Entities
+------------------------------------------------------------
+
+external entity Agent {
+    -- The core LLM agent (specified in agent.allium).
+    state: agent/AgentState
+    is_streaming: Boolean
+}
+
+external entity Model {
+    provider: String
+    id: String
+    reasoning: Boolean          -- supports extended thinking
+}
+
+external entity AuthCredentials {
+    -- OAuth or API-key credentials for a provider.
+    provider: String
+}
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value SessionStats {
+    sessionId: String
+    sessionFile: String?
+    userMessages: Integer
+    assistantMessages: Integer
+    toolCalls: Integer
+    totalMessages: Integer
+    tokens: TokenUsage
+    cost: Decimal
+}
+
+value TokenUsage {
+    input: Integer
+    output: Integer
+    cacheRead: Integer
+    cacheWrite: Integer
+    total: Integer
+}
+
+value ModelCycleResult {
+    model: Model
+    thinkingLevel: off | minimal | low | medium | high | xhigh
+    isScoped: Boolean
+}
+
+value CompactionPreparation {
+    -- Computed slice of entries to be summarised and those to be kept.
+    entriesToSummarise: List<SessionEntry>
+    firstKeptEntryId: String
+    tokensBefore: Integer
+}
+
+value CompactionResult {
+    summary: String
+    firstKeptEntryId: String
+    tokensBefore: Integer
+    details: String?        -- extension-provided JSON metadata
+}
+
+value BranchSummaryResult {
+    summary: String
+    details: String?
+}
+
+value ContextUsage {
+    tokens: Integer?            -- null immediately after compaction
+    contextWindow: Integer
+    percent: Decimal?
+}
+
+value PathMetadata {
+    -- Origin of an installed resource (npm package or git ref).
+    source: npm | git
+    packageName: String?
+    version: String?
+}
+
+------------------------------------------------------------
+-- Entities and Variants
+------------------------------------------------------------
+
+-- ── Skills ─────────────────────────────────────────────
+
+entity Skill {
+    name: String
+    description: String
+    filePath: String
+    baseDir: String
+    source: user | project | path
+    disableModelInvocation: Boolean
+
+    -- Derived
+    is_available_to_model: not disableModelInvocation
+}
+
+-- ── Prompt templates ───────────────────────────────────
+
+entity PromptTemplate {
+    name: String
+    description: String
+    content: String             -- may contain $1 $2 $@ argument placeholders
+    source: user | project | path
+    filePath: String
+}
+
+-- ── Extension system ───────────────────────────────────
+
+entity Extension {
+    path: String
+    resolvedPath: String
+    -- Collections populated at registration time
+    handlers: Set<String>       -- event names with at least one handler
+    tools: Set<String>          -- registered tool names
+    commands: Set<String>       -- registered command names
+    flags: Set<String>          -- registered flag names
+    shortcuts: Set<String>      -- registered keybinding ids
+}
+
+entity RegisteredCommand {
+    name: String
+    description: String?
+    extensionPath: String
+}
+
+entity RegisteredTool {
+    name: String
+    label: String
+    description: String
+    parameters: String          -- JSON Schema
+    extensionPath: String
+}
+
+entity ExtensionFlag {
+    name: String
+    type: boolean | string
+    defaultValue: String?
+    currentValue: String?
+    extensionPath: String
+}
+
+-- ── Session structure ──────────────────────────────────
+
+entity SessionEntry {
+    id: String
+    parentId: String?
+    timestamp: Timestamp
+    kind: MessageEntry | ThinkingLevelEntry | ModelEntry |
+          CompactionEntry | BranchSummaryEntry | CustomEntry |
+          CustomMessageEntry | LabelEntry | SessionInfoEntry
+}
+
+variant MessageEntry : SessionEntry {
+    message: agent/AgentMessage
+}
+
+variant ThinkingLevelEntry : SessionEntry {
+    thinkingLevel: String
+}
+
+variant ModelEntry : SessionEntry {
+    provider: String
+    modelId: String
+}
+
+variant CompactionEntry : SessionEntry {
+    summary: String
+    firstKeptEntryId: String
+    tokensBefore: Integer
+    details: String?
+    fromHook: Boolean
+}
+
+variant BranchSummaryEntry : SessionEntry {
+    fromId: String
+    summary: String
+    details: String?
+    fromHook: Boolean
+    label: String?
+}
+
+variant CustomEntry : SessionEntry {
+    -- Extension state persistence; not sent to LLM.
+    customType: String
+    data: String?           -- JSON-serialised extension data
+}
+
+variant CustomMessageEntry : SessionEntry {
+    -- Extension-injected message; sent to LLM as a user message.
+    customType: String
+    content: String         -- text or JSON-serialised content array
+    details: String?
+    display: Boolean
+}
+
+variant LabelEntry : SessionEntry {
+    targetId: String
+    label: String?
+}
+
+variant SessionInfoEntry : SessionEntry {
+    name: String?
+}
+
+entity SessionTreeNode {
+    id: String
+    parentId: String?
+    children: List<SessionTreeNode>
+    isCurrent: Boolean
+    label: String?
+}
+
+-- ── AgentSession ───────────────────────────────────────
+
+entity AgentSession {
+    -- The central orchestrator, shared by all run modes.
+    sessionId: String
+    sessionFile: String?
+    sessionName: String?
+
+    -- Agent state (delegated)
+    model: Model?
+    thinkingLevel: off | minimal | low | medium | high | xhigh
+    isStreaming: Boolean
+    systemPrompt: String
+
+    -- Queues (mirrors agent)
+    steeringMessages: List<String>
+    followUpMessages: List<String>
+
+    -- Compaction
+    isCompacting: Boolean
+    autoCompactionEnabled: Boolean
+
+    -- Retry
+    retryAttempt: Integer
+    autoRetryEnabled: Boolean
+
+    -- Scoped models for cycling (from --models CLI flag)
+    scopedModels: List<{model: Model, thinkingLevel: String}>
+
+    -- Derived
+    is_idle: not isStreaming and not isCompacting
+    pending_message_count: steeringMessages.count + followUpMessages.count
+    has_pending_messages: pending_message_count > 0
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    auto_compaction_threshold: Decimal = 0.8    -- fraction of context window
+    auto_compaction_reserve_tokens: Integer = 16384
+    auto_compaction_keep_recent_tokens: Integer = 20000
+    branch_summary_reserve_tokens: Integer = 16384
+    auto_retry_enabled: Boolean = true
+    auto_retry_max_retries: Integer = 3
+    auto_retry_base_delay: Duration = 2.seconds
+    auto_retry_max_delay: Duration = 60.seconds
+    default_active_tools: Set<String> = {"read", "bash", "edit", "write"}
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+-- ── Prompt handling ─────────────────────────────────────
+
+rule UserPrompts {
+    -- User submits a message. Extension input handlers run first,
+    -- then skill / prompt-template expansion, then the agent is invoked.
+    when: UserPrompts(session, text, images?)
+
+    requires: session.is_idle
+    requires: exists session.model
+
+    let expanded = SkillAndTemplateExpanded(session, text)
+
+    ensures: agent/Prompt(session.agent, expanded, images)
+    ensures: SessionEntry.created(kind: MessageEntry, message: UserMessage{expanded, images})
+}
+
+rule UserPromptsWhileStreaming {
+    -- During streaming, steer or follow-up based on caller intent.
+    when: UserPromptsWhileStreaming(session, text, behavior)
+
+    requires: session.isStreaming
+    requires: behavior in [steer, followUp]
+
+    ensures:
+        if behavior = steer:
+            session.steeringMessages = session.steeringMessages + [text]
+            agent/Steer(session.agent, UserMessage{text})
+        else:
+            session.followUpMessages = session.followUpMessages + [text]
+            agent/FollowUp(session.agent, UserMessage{text})
+}
+
+rule ExtensionCommandExecuted {
+    -- /command text is intercepted before agent invocation.
+    when: UserPrompts(session, text, _)
+
+    requires: text.startsWith("/")
+    requires: exists RegisteredCommand{name: text.commandName}
+
+    ensures: RegisteredCommand{text.commandName}.handler.called(text.args)
+    -- agent is NOT invoked; command handler manages its own LLM interaction
+}
+
+-- ── Skill and template expansion ────────────────────────
+
+rule SkillCommandExpanded {
+    -- /skill:name args → injects skill file content as a <skill> block.
+    when: SkillAndTemplateExpanded(session, text)
+
+    requires: text.startsWith("/skill:")
+
+    let skill_name = text.after("/skill:").before(" ")
+    let skill = session.skills with name = skill_name
+
+    requires: exists skill
+
+    ensures: result = "<skill name=\"{skill.name}\" location=\"{skill.filePath}\">\n{skill.content}\n</skill>\n\n{text.args}"
+}
+
+rule PromptTemplateExpanded {
+    -- /template-name args → substitutes $1 $2 $@ placeholders.
+    when: SkillAndTemplateExpanded(session, text)
+
+    requires: text.startsWith("/")
+    requires: exists PromptTemplate{name: text.commandName}
+
+    let template = PromptTemplate{name: text.commandName}
+    let args = text.args
+
+    ensures: result = template.content with placeholders substituted from args
+}
+
+-- ── Session lifecycle ───────────────────────────────────
+
+rule NewSessionStarted {
+    -- User starts a fresh session. Extensions may cancel.
+    when: NewSessionStarted(session, parentSession?)
+
+    ensures: SessionBeforeSwitchDispatched(session, reason: new)
+    ensures: session.agent.reset()
+    ensures: session.sessionId = NewUUID()
+    ensures: session.sessionName = null
+    ensures: session.steeringMessages = []
+    ensures: session.followUpMessages = []
+    ensures: SessionEntry.created(kind: ThinkingLevelEntry, thinkingLevel: session.thinkingLevel)
+    ensures: SessionSwitchDispatched(session, reason: new)
+}
+
+rule SessionResumed {
+    -- User resumes a previously saved session file.
+    when: SessionResumed(session, sessionPath)
+
+    ensures: SessionBeforeSwitchDispatched(session, reason: resume)
+    ensures: session.sessionFile = sessionPath
+    ensures: session.sessionId = LoadedFrom(sessionPath)
+    ensures: agent/ReplaceMessages(session.agent, LoadedMessages(sessionPath))
+    ensures: SessionSwitchDispatched(session, reason: resume)
+}
+
+rule SessionForked {
+    -- User forks from an earlier entry, creating a new branch.
+    when: SessionForked(session, entryId)
+
+    ensures: SessionBeforeForkDispatched(session, entryId)
+    ensures: session.sessionFile = NewFile()
+    ensures: session.sessionId = NewUUID()
+    ensures: agent/ReplaceMessages(session.agent, EntriesUpTo(entryId))
+    ensures: SessionForkDispatched(session)
+}
+
+rule TreeNavigated {
+    -- User navigates to a different node in the session tree.
+    -- Optionally summarises the abandoned branch first.
+    when: TreeNavigated(session, targetId, summarize?, customInstructions?, label?)
+
+    ensures: SessionBeforeTreeDispatched(session, targetId, summarize, customInstructions, label)
+    ensures: agent/ReplaceMessages(session.agent, EntriesUpTo(targetId))
+    ensures:
+        if summarize:
+            let summary = BranchSummarised(session, abandonedEntries, customInstructions)
+            BranchSummaryEntry.created(
+                fromId: oldLeafId,
+                summary: summary.summary,
+                details: summary.details,
+                label: label
+            )
+    ensures: SessionTreeDispatched(session, targetId)
+}
+
+-- ── Model management ────────────────────────────────────
+
+rule ModelSet {
+    when: ModelSet(session, model)
+
+    requires: exists ApiKeyFor(model)
+
+    ensures: session.model = model
+    ensures: session.thinkingLevel = Clamped(session.thinkingLevel, model)
+    ensures: SessionEntry.created(kind: ModelEntry, provider: model.provider, modelId: model.id)
+    ensures: ModelSelectDispatched(session, model, source: set)
+}
+
+rule ModelCycled {
+    when: ModelCycled(session, direction)
+
+    let candidates =
+        if session.scopedModels.count > 0:
+            session.scopedModels with api_key_available
+        else:
+            AvailableModels() with api_key_available
+
+    requires: candidates.count > 1
+
+    ensures: session.model = NextModel(candidates, session.model, direction)
+    ensures: session.thinkingLevel = Clamped(session.thinkingLevel, session.model)
+    ensures: SessionEntry.created(kind: ModelEntry, provider: session.model.provider, modelId: session.model.id)
+    ensures: ModelSelectDispatched(session, session.model, source: cycle)
+}
+
+-- ── Thinking level ──────────────────────────────────────
+
+rule ThinkingLevelSet {
+    when: ThinkingLevelSet(session, level)
+
+    let effective = Clamped(level, session.model)
+
+    ensures: session.thinkingLevel = effective
+    ensures: SessionEntry.created(kind: ThinkingLevelEntry, thinkingLevel: effective)
+}
+
+rule ThinkingLevelCycled {
+    when: ThinkingLevelCycled(session)
+
+    requires: session.model.reasoning
+
+    let levels = AvailableThinkingLevels(session.model)
+    let next = NextAfter(levels, session.thinkingLevel)
+
+    ensures: session.thinkingLevel = next
+    ensures: SessionEntry.created(kind: ThinkingLevelEntry, thinkingLevel: next)
+}
+
+-- ── Tool management ─────────────────────────────────────
+
+rule ActiveToolsSet {
+    when: ActiveToolsSet(session, toolNames)
+
+    ensures: session.agent.tools = ToolsFromRegistry(toolNames)
+    ensures: session.systemPrompt = RebuildSystemPrompt(session, toolNames)
+}
+
+-- ── Compaction ──────────────────────────────────────────
+
+rule ManualCompaction {
+    -- User triggers /compact. Agent is aborted first.
+    when: ManualCompaction(session, customInstructions?)
+
+    requires: exists session.model
+
+    ensures: session.agent.abort()
+    ensures: session.isCompacting = true
+    ensures: SessionBeforeCompactDispatched(session, preparation, customInstructions)
+    ensures:
+        let result = CompactionExecuted(session, preparation, customInstructions)
+        CompactionEntry.created(
+            summary: result.summary,
+            firstKeptEntryId: result.firstKeptEntryId,
+            tokensBefore: result.tokensBefore,
+            details: result.details,
+            fromHook: false
+        )
+        agent/ReplaceMessages(session.agent, RebuildFromEntries(session))
+    ensures: session.isCompacting = false
+    ensures: SessionCompactDispatched(session)
+}
+
+rule AutoCompactionTriggered {
+    -- Fires after each agent turn when context exceeds threshold.
+    when: session: AgentSession.autoCompactionEnabled
+    when: _: agent/AgentEndEvent.emitted
+
+    requires: session.autoCompactionEnabled
+    requires: ContextFractionUsed(session) >= config.auto_compaction_threshold
+
+    ensures: AutoCompactionStartDispatched(session, reason: threshold)
+    ensures: ManualCompaction(session, customInstructions: null)
+    ensures: AutoCompactionEndDispatched(session)
+}
+
+rule AutoCompactionOnOverflow {
+    -- Fires when the LLM reports a context overflow error.
+    when: _: agent/AgentEndEvent.emitted
+
+    requires: session.autoCompactionEnabled
+    requires: LastAssistantMessage(session).stopReason = error
+    requires: IsContextOverflow(LastAssistantMessage(session))
+
+    ensures: AutoCompactionStartDispatched(session, reason: overflow)
+    ensures: ManualCompaction(session, customInstructions: null)
+    ensures: AutoCompactionEndDispatched(session)
+    -- session re-prompts after compaction
+}
+
+-- ── Auto-retry ──────────────────────────────────────────
+
+rule AutoRetryOnTransientError {
+    -- Retries after rate-limit / overloaded / 5xx errors with exponential backoff.
+    when: _: agent/AgentEndEvent.emitted
+
+    requires: session.autoRetryEnabled
+    requires: session.retryAttempt < config.auto_retry_max_retries
+    requires: IsRetryableError(LastAssistantMessage(session))
+
+    let delay = ExponentialBackoff(session.retryAttempt, config.auto_retry_base_delay, config.auto_retry_max_delay)
+
+    ensures: session.retryAttempt = session.retryAttempt + 1
+    ensures: AutoRetryStartDispatched(session, session.retryAttempt, delay)
+    ensures: Wait(delay)
+    ensures: agent/Continue(session.agent)
+}
+
+rule AutoRetrySucceeded {
+    -- Successful response resets retry counter.
+    when: _: agent/MessageEndEvent.emitted
+
+    requires: session.retryAttempt > 0
+    requires: LastAssistantMessage(session).stopReason != error
+
+    ensures: session.retryAttempt = 0
+    ensures: AutoRetryEndDispatched(session, success: true)
+}
+
+-- ── Custom messages ─────────────────────────────────────
+
+rule CustomMessageSent {
+    -- Extension injects a custom message with optional LLM trigger.
+    when: CustomMessageSent(session, message, triggerTurn?, deliverAs?)
+
+    ensures:
+        if session.isStreaming:
+            if deliverAs = followUp:
+                agent/FollowUp(session.agent, message)
+            else:
+                agent/Steer(session.agent, message)
+        else if triggerTurn:
+            agent/Prompt(session.agent, message)
+        else:
+            session.agent.appendMessage(message)
+            CustomMessageEntry.created(customType: message.customType, content: message.content, display: message.display)
+}
+
+-- ── Extension system ────────────────────────────────────
+
+rule ExtensionsLoaded {
+    -- At startup, extension modules are loaded and registered.
+    when: ExtensionsLoaded(session, extensionPaths)
+
+    ensures:
+        for path in extensionPaths:
+            let ext = Extension.created(path: path)
+            ExtensionFactoryInvoked(ext)
+    ensures: ResourcesDiscoverDispatched(session, reason: startup)
+}
+
+rule ExtensionsReloaded {
+    -- /reload reloads all resources and extensions.
+    when: ExtensionsReloaded(session)
+
+    ensures:
+        for ext in session.extensions:
+            not exists ext
+    ensures: ExtensionsLoaded(session, session.extensionPaths)
+    ensures: SystemPromptRebuilt(session)
+}
+
+rule ExtensionToolWrapped {
+    -- Extension tools are combined with built-in tools, with pre/post hooks.
+    when: ExtensionToolWrapped(session, tool, ext)
+
+    ensures: WrappedTool.created(
+        inner: tool,
+        onCall: ToolCallDispatched(session, tool),
+        onResult: ToolResultDispatched(session, tool)
+    )
+}
+
+-- ── Session persistence ─────────────────────────────────
+
+rule MessagePersisted {
+    -- Every completed message is appended to the session file.
+    when: _: agent/MessageEndEvent.emitted
+
+    ensures:
+        if LastMessage(session).role in [user, assistant, toolResult]:
+            SessionEntry.created(kind: MessageEntry, message: LastMessage(session))
+        else if LastMessage(session).role = custom:
+            CustomMessageEntry.created(
+                customType: LastMessage(session).customType,
+                content: LastMessage(session).content,
+                display: LastMessage(session).display
+            )
+}
+
+-- ── System prompt ───────────────────────────────────────
+
+rule SystemPromptBuilt {
+    -- System prompt is assembled from context files, skills, and selected tools.
+    when: SystemPromptBuilt(session, toolNames)
+
+    ensures: session.systemPrompt = Assemble(
+        cwd: session.cwd,
+        contextFiles: session.contextFiles,
+        skills: session.skills with is_available_to_model,
+        customPrompt: session.customSystemPrompt,
+        appendPrompt: session.appendSystemPrompt,
+        selectedTools: toolNames
+    )
+    ensures: session.agent.systemPrompt = session.systemPrompt
+}
+
+-- ── Before-agent-start hook ─────────────────────────────
+
+rule BeforeAgentStartFired {
+    -- Extensions may prepend custom context messages or override system prompt.
+    when: BeforeAgentStartFired(session, prompt, images)
+
+    ensures: BeforeAgentStartDispatched(session, prompt, images, session.systemPrompt)
+    ensures:
+        for msg in ExtensionContextMessages(session):
+            session.agent.messages = session.agent.messages + [msg]
+    ensures:
+        if ExtensionSystemPromptOverride(session) != null:
+            session.agent.systemPrompt = ExtensionSystemPromptOverride(session)
+        else:
+            session.agent.systemPrompt = session.systemPrompt
+
+------------------------------------------------------------
+-- Extension Event Dispatch
+------------------------------------------------------------
+
+-- These rules capture when extension event handlers fire.
+-- Each corresponds to a named event in the extension API.
+
+rule ResourcesDiscoverDispatched {
+    when: ResourcesDiscoverDispatched(session, reason)
+    ensures: ExtensionEvent.emitted(session, {type: resources_discover, cwd: session.cwd, reason: reason})
+}
+
+rule SessionBeforeSwitchDispatched {
+    when: SessionBeforeSwitchDispatched(session, reason)
+    ensures: ExtensionEvent.emitted(session, {type: session_before_switch, reason: reason})
+    -- Handler may return cancel: true, which aborts the switch
+}
+
+rule SessionSwitchDispatched {
+    when: SessionSwitchDispatched(session, reason)
+    ensures: ExtensionEvent.emitted(session, {type: session_switch, reason: reason})
+}
+
+rule SessionBeforeForkDispatched {
+    when: SessionBeforeForkDispatched(session, entryId)
+    ensures: ExtensionEvent.emitted(session, {type: session_before_fork, entryId: entryId})
+}
+
+rule SessionForkDispatched {
+    when: SessionForkDispatched(session)
+    ensures: ExtensionEvent.emitted(session, {type: session_fork})
+}
+
+rule SessionBeforeCompactDispatched {
+    when: SessionBeforeCompactDispatched(session, preparation, customInstructions)
+    ensures: ExtensionEvent.emitted(session, {type: session_before_compact, preparation: preparation, customInstructions: customInstructions})
+    -- Handler may return cancel: true or supply its own CompactionResult
+}
+
+rule SessionCompactDispatched {
+    when: SessionCompactDispatched(session)
+    ensures: ExtensionEvent.emitted(session, {type: session_compact})
+}
+
+rule SessionBeforeTreeDispatched {
+    when: SessionBeforeTreeDispatched(session, targetId, summarize, customInstructions, label)
+    ensures: ExtensionEvent.emitted(session, {type: session_before_tree, targetId: targetId})
+    -- Handler may cancel, supply a summary, or override instructions
+}
+
+rule SessionTreeDispatched {
+    when: SessionTreeDispatched(session, targetId)
+    ensures: ExtensionEvent.emitted(session, {type: session_tree, newLeafId: targetId})
+}
+
+rule ModelSelectDispatched {
+    when: ModelSelectDispatched(session, model, source)
+    ensures: ExtensionEvent.emitted(session, {type: model_select, model: model, source: source})
+}
+
+rule AutoCompactionStartDispatched {
+    when: AutoCompactionStartDispatched(session, reason)
+    ensures: AgentSessionEvent.emitted(session, {type: auto_compaction_start, reason: reason})
+}
+
+rule AutoCompactionEndDispatched {
+    when: AutoCompactionEndDispatched(session)
+    ensures: AgentSessionEvent.emitted(session, {type: auto_compaction_end})
+}
+
+rule AutoRetryStartDispatched {
+    when: AutoRetryStartDispatched(session, attempt, delay)
+    ensures: AgentSessionEvent.emitted(session, {type: auto_retry_start, attempt: attempt, delayMs: delay})
+}
+
+rule AutoRetryEndDispatched {
+    when: AutoRetryEndDispatched(session, success)
+    ensures: AgentSessionEvent.emitted(session, {type: auto_retry_end, success: success, attempt: session.retryAttempt})
+}
+
+rule ToolCallDispatched {
+    when: ToolCallDispatched(session, tool, args)
+    ensures: ExtensionEvent.emitted(session, {type: tool_call, toolName: tool.name, args: args})
+    -- Handler may return block: true to prevent execution
+}
+
+rule ToolResultDispatched {
+    when: ToolResultDispatched(session, tool, result)
+    ensures: ExtensionEvent.emitted(session, {type: tool_result, toolName: tool.name, result: result})
+    -- Handler may modify content, details, or isError
+}
+
+------------------------------------------------------------
+-- Actor Declarations
+------------------------------------------------------------
+
+actor User {
+    identified_by: HumanOperator
+}
+
+actor ExtensionModule {
+    identified_by: Extension
+}
+
+actor RpcClient {
+    identified_by: ExternalProcess
+}
+
+------------------------------------------------------------
+-- Surfaces
+------------------------------------------------------------
+
+surface AgentSessionApi {
+    -- The primary API shared by all run modes.
+    for caller: User
+
+    context session: AgentSession
+
+    exposes:
+        session.sessionId
+        session.sessionFile
+        session.sessionName
+        session.model
+        session.thinkingLevel
+        session.isStreaming
+        session.isCompacting
+        session.systemPrompt
+        session.pending_message_count
+        session.steeringMessages
+        session.followUpMessages
+        session.retryAttempt
+        session.scopedModels
+
+    provides:
+        UserPrompts(caller, session, text, images?)
+            when session.is_idle
+        UserPromptsWhileStreaming(caller, session, text, behavior)
+            when session.isStreaming
+        NewSessionStarted(caller, session, parentSession?)
+        SessionResumed(caller, session, sessionPath)
+        SessionForked(caller, session, entryId)
+        TreeNavigated(caller, session, targetId, summarize?, customInstructions?, label?)
+        ModelSet(caller, session, model)
+        ModelCycled(caller, session, direction)
+        ThinkingLevelSet(caller, session, level)
+        ThinkingLevelCycled(caller, session)
+            when session.model.reasoning
+        ManualCompaction(caller, session, customInstructions?)
+            when session.is_idle
+        ActiveToolsSet(caller, session, toolNames)
+        ExtensionsReloaded(caller, session)
+
+    guidance:
+        -- session.is_idle = not isStreaming and not isCompacting.
+        -- Callers must check is_idle before calling UserPrompts or ManualCompaction.
+        -- During streaming, route input via UserPromptsWhileStreaming.
+}
+
+surface ExtensionApi {
+    -- API surface for extension modules.
+    for ext: ExtensionModule
+
+    context session: AgentSession
+
+    exposes:
+        session.sessionId
+        session.sessionName
+        session.model
+        session.thinkingLevel
+        session.isStreaming
+
+    requires:
+        -- Extensions must register handlers, tools, commands, shortcuts, and flags
+        -- during the factory invocation phase (synchronously).
+
+    provides:
+        -- Lifecycle hooks
+        on(event_name, handler)             -- subscribe to any extension event
+
+        -- Tool registration
+        registerTool(tool_definition)
+
+        -- Command / shortcut / flag registration
+        registerCommand(name, options)
+        registerShortcut(key, options)
+        registerFlag(name, options)
+
+        -- Message actions
+        sendMessage(message, options?)
+        sendUserMessage(content, options?)
+        appendEntry(customType, data?)
+
+        -- Session metadata
+        setSessionName(name)
+        setLabel(entryId, label?)
+
+        -- Tool management
+        getActiveTools()
+        setActiveTools(toolNames)
+
+        -- Model
+        setModel(model)
+        getThinkingLevel()
+        setThinkingLevel(level)
+
+        -- Provider registration
+        registerProvider(name, config)
+
+        -- Shared event bus
+        events.emit(channel, data)
+        events.on(channel, handler)
+
+    guidance:
+        -- Extension handlers receive an ExtensionContext with session state.
+        -- Command handlers receive an ExtensionCommandContext with session control.
+        -- session_before_* events may return { cancel: true } to block the action.
+        -- session_before_compact may supply a custom CompactionResult to replace
+        --   pi's default LLM-based summarisation.
+}
+
+surface RpcApi {
+    -- JSON-lines stdio protocol for headless / programmatic control.
+    for client: RpcClient
+
+    context session: AgentSession
+
+    exposes:
+        -- All commands produce a typed JSON response on stdout.
+        -- Events are emitted asynchronously as JSON lines.
+
+    provides:
+        -- Prompting
+        prompt(message, images?, streamingBehavior?)
+        steer(message, images?)
+        follow_up(message, images?)
+        abort()
+        new_session(parentSession?)
+
+        -- State
+        get_state()
+        get_messages()
+        get_session_stats()
+
+        -- Model
+        set_model(provider, modelId)
+        cycle_model()
+        get_available_models()
+
+        -- Thinking
+        set_thinking_level(level)
+        cycle_thinking_level()
+
+        -- Compaction
+        compact(customInstructions?)
+        set_auto_compaction(enabled)
+
+        -- Retry
+        set_auto_retry(enabled)
+        abort_retry()
+
+        -- Bash
+        bash(command)
+        abort_bash()
+
+        -- Session
+        export_html(outputPath?)
+        switch_session(sessionPath)
+        fork(entryId)
+        get_fork_messages()
+        get_last_assistant_text()
+        set_session_name(name)
+        get_commands()
+
+    guidance:
+        -- Commands are sent as JSON lines on stdin: { id?, type, ...params }
+        -- Responses are emitted as JSON lines on stdout: { id?, type, ...data }
+        -- Events are interleaved with responses; callers match by id where present.
+        -- The RpcClient may integrate as a library (rpc-client.ts) or over stdio.
+}
+
+surface ResourceLoaderApi {
+    -- Provides resources to AgentSession at startup and after reload.
+    for caller: User
+
+    context session: AgentSession
+
+    exposes:
+        session.skills
+        session.promptTemplates
+        session.themes
+        session.contextFiles
+        session.extensions
+
+    provides:
+        reload()
+
+    guidance:
+        -- Skills are loaded from ~/.pi/agent/skills, .pi/skills, and --skill-paths.
+        -- Prompt templates from ~/.pi/agent/prompts and .pi/prompts.
+        -- AGENTS.md and CLAUDE.md are discovered walking up from cwd to home.
+        -- Extensions may contribute additional paths via resources_discover event.
+        -- Skills with disableModelInvocation: true are excluded from the system prompt
+        --   but remain available via /skill:name commands.
+}
+
+surface SkillInvocationContract {
+    -- Contract for /skill:name command expansion.
+    for caller: User
+
+    context session: AgentSession
+
+    exposes:
+        session.skills
+
+    provides:
+        -- /skill:name args → injects SKILL.md content as an XML block
+        SkillCommandExpanded(session, "/skill:" + name + " " + args)
+            when exists Skill{name: name}
+
+    guidance:
+        -- The injected XML block includes the skill's base directory so
+        --   relative path references resolve correctly in tool calls.
+        -- Skills with disableModelInvocation: true are still invocable
+        --   via /skill:name even though they are hidden from the LLM prompt.
+}
+
+------------------------------------------------------------
+-- Deferred Specifications
+------------------------------------------------------------
+
+deferred CompactionAlgorithm.execute    -- see: compaction details in pi-agent-core
+deferred BranchSummarisation.execute    -- see: branch-summarization.ts
+deferred SystemPromptAssembly.build     -- see: system-prompt.ts
+deferred ModelRegistry.resolve          -- see: model-registry.ts (API key resolution, provider registration)
+
+------------------------------------------------------------
+-- Open Questions
+------------------------------------------------------------
+
+open_question "Should AgentSession be split into sub-specs (session-management.allium, extension-system.allium, compaction.allium) once the Clojure implementation begins?"
+
+open_question "Extension event ordering: when multiple extensions handle the same event, is the order deterministic? Should the spec guarantee it?"
+
+open_question "Compaction threshold: is config.auto_compaction_threshold a session-level or global setting? The code uses per-session settings but the config block implies global."
+
+open_question "RPC mode: should the JSON stdio protocol be a separate allium spec, or is the surface declaration here sufficient?"
+
+open_question "Skills collision policy: when two skills share the same name, the first discovered wins. Should this be configurable (warn / error / last-wins)?"
