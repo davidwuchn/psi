@@ -1,0 +1,19 @@
+#kaocha/v1
+{:tests
+ [{:id :unit
+   :test-paths ["test" "components/ai/test"]
+   :source-paths ["src" "components/ai/src"]
+   :ns-patterns [".*-test$"]}]
+ 
+ :color? true
+ :fail-fast? false
+ :capture-output? true
+ 
+ ;; Reporters
+ :reporter [kaocha.report/documentation]
+ 
+ ;; Plugins
+ :plugins []
+ 
+ ;; Skip tests that require API keys unless environment variables are set
+ :skip-meta [:integration]}

@@ -1,6 +1,5 @@
 (ns psi.ai.models
-  "Model definitions and capabilities"
-  (:require [clojure.spec.alpha :as s]))
+  "Model definitions and capabilities")
 
 ;; Model definitions following allium spec
 

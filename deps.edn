@@ -4,10 +4,12 @@
         com.wsscode/pathom3                           {:mvn/version "2025.01.16-alpha"}
         ;; API: OpenAPI specs -> callable clients
         com.github.oliyh/martian-babashka-http-client {:mvn/version "0.2.1"}
-        org.clojure/clojure                           {:mvn/version "1.12.4"}}
+        org.clojure/clojure                           {:mvn/version "1.12.4"}
+        ;; Components
+        psi/ai                                        {:local/root "components/ai"}}
  :aliases
  {:dev   {:extra-paths ["dev"]}
   :nrepl {:extra-deps {nrepl/nrepl {:mvn/version "1.5.1"}}}
-  :test  {:extra-paths ["test"]
+  :test  {:extra-paths ["test" "components/ai/test"]
           :extra-deps  {lambdaisland/kaocha {:mvn/version "1.91.1392"}}
           :main-opts   ["-m" "kaocha.runner"]}}}

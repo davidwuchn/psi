@@ -1,7 +1,6 @@
 (ns psi.ai.streaming
   "Streaming response management and event handling"
-  (:require [clojure.core.async :as async]
-            [psi.ai.conversation :as conversation])
+  (:require [clojure.core.async :as async])
   (:import [java.util UUID]
            [java.time Instant]))
 
