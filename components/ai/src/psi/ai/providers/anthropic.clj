@@ -1,108 +1,109 @@
 (ns psi.ai.providers.anthropic
-  "Anthropic provider implementation"
-  (:require [clojure.core.async :as async]
-            [clojure.java.io :as io]
+  "Anthropic provider implementation.
+
+   The provider exposes a single `:stream` fn that accepts a conversation,
+   model, options, and a `consume-fn` callback.  Events are delivered
+   synchronously on a dedicated thread so callers are not forced to use
+   core.async."
+  (:require [clojure.java.io :as io]
             [clj-http.client :as http]
             [cheshire.core :as json]))
 
 (defn transform-messages
-  "Transform conversation messages to Anthropic format"
+  "Transform conversation messages to Anthropic format."
   [conversation]
   (map (fn [msg]
          (case (:role msg)
-           :user {:role "user"
-                  :content (if (string? (:content msg))
-                             (:content msg)
-                             (get-in msg [:content :text]))}
-           :assistant {:role "assistant"
-                       :content (if (string? (:content msg))
-                                  (:content msg)
-                                  ;; Handle structured content
-                                  (get-in msg [:content :text] ""))}
-           :tool-result {:role "user"  ;; Anthropic uses user role for tool results
+           :user        {:role    "user"
+                         :content (get-in msg [:content :text] (str (:content msg)))}
+           :assistant   {:role    "assistant"
+                         :content (get-in msg [:content :text] "")}
+           :tool-result {:role    "user"
                          :content (str "Tool result: " (:content msg))}))
        (:messages conversation)))
 
 (defn build-request
-  "Build Anthropic API request"
+  "Build Anthropic API request map."
   [conversation model options]
-  {:headers {"Content-Type" "application/json"
-             "x-api-key" (or (:api-key options) (System/getenv "ANTHROPIC_API_KEY"))
+  {:headers {"Content-Type"    "application/json"
+             "x-api-key"       (or (:api-key options)
+                                   (System/getenv "ANTHROPIC_API_KEY"))
              "anthropic-version" "2023-06-01"}
-   :body (json/generate-string
-          {:model (:id model)
-           :max_tokens (or (:max-tokens options) (:max-tokens model))
-           :temperature (or (:temperature options) 0.7)
-           :system (:system-prompt conversation)
-           :messages (transform-messages conversation)
-           :stream true})})
+   :body    (json/generate-string
+             {:model       (:id model)
+              :max_tokens  (or (:max-tokens options) (:max-tokens model))
+              :temperature (or (:temperature options) 0.7)
+              :system      (:system-prompt conversation)
+              :messages    (transform-messages conversation)
+              :stream      true})})
 
 (defn parse-sse-line
-  "Parse Server-Sent Events line"
+  "Parse a Server-Sent Events `data:` line; returns nil for non-data lines."
   [line]
-  (when (and line (.startsWith line "data: "))
-    (let [data (.substring line 6)]
+  (when (and line (.startsWith ^String line "data: "))
+    (let [data (.substring ^String line 6)]
       (when (not= data "[DONE]")
-        (try
-          (json/parse-string data true)
-          (catch Exception _ nil))))))
+        (try (json/parse-string data true)
+             (catch Exception _ nil))))))
 
 (defn stream-anthropic
-  "Stream response from Anthropic API"
-  [conversation model options]
-  (let [event-chan (async/chan 100)
-        request (build-request conversation model options)]
+  "Stream response from Anthropic API.
 
-    (async/go
-      (try
-        (let [response (http/get (str (:base-url model) "/v1/messages")
-                                 (merge request {:as :stream}))]
-          (with-open [reader (io/reader (:body response))]
-            (doseq [line (line-seq reader)]
-              (when-let [event-data (parse-sse-line line)]
-                (case (:type event-data)
-                  "message_start"
-                  (async/>! event-chan {:type :start})
+   Calls `consume-fn` with each event map on the current thread (blocking).
+   Returns when streaming is complete or an error occurs.
 
-                  "content_block_start"
-                  (async/>! event-chan {:type :text-start}
-                            :content-index (:index event-data))
+   Event types emitted:
+     {:type :start}
+     {:type :text-start  :content-index n}
+     {:type :text-delta  :content-index n  :delta \"...\"}
+     {:type :text-end    :content-index n}
+     {:type :done        :reason kw  :usage {...}}
+     {:type :error       :error-message \"...\"}
+   "
+  [conversation model options consume-fn]
+  (let [request (build-request conversation model options)]
+    (try
+      (let [response (http/get (str (:base-url model) "/v1/messages")
+                               (merge request {:as :stream}))]
+        (with-open [reader (io/reader (:body response))]
+          (doseq [line (line-seq reader)]
+            (when-let [event-data (parse-sse-line line)]
+              (case (:type event-data)
+                "message_start"
+                (consume-fn {:type :start})
 
-                  "content_block_delta"
-                  (when-let [delta (get-in event-data [:delta :text])]
-                    (async/>! event-chan {:type :text-delta}
-                              :content-index (:index event-data)
-                              :delta delta))
+                "content_block_start"
+                (consume-fn {:type          :text-start
+                             :content-index (:index event-data)})
 
-                  "content_block_stop"
-                  (async/>! event-chan {:type :text-end}
-                            :content-index (:index event-data))
+                "content_block_delta"
+                (when-let [delta (get-in event-data [:delta :text])]
+                  (consume-fn {:type          :text-delta
+                               :content-index (:index event-data)
+                               :delta         delta}))
 
-                  "message_delta"
-                  (when (:stop_reason event-data)
-                    (async/>! event-chan {:type :done}
-                              :reason (keyword (:stop_reason event-data))
-                              :usage {:input-tokens 0}  ;; TODO: extract from response
-                              :output-tokens 0
-                              :total-tokens 0
-                              :cost {:total 0.0}))
+                "content_block_stop"
+                (consume-fn {:type          :text-end
+                             :content-index (:index event-data)})
 
-                  "message_stop"
-                  (async/>! event-chan {:type :done}
-                            :reason :stop)
+                "message_delta"
+                (when (:stop_reason event-data)
+                  (consume-fn {:type   :done
+                               :reason (keyword (:stop_reason event-data))
+                               :usage  {:input-tokens  0
+                                        :output-tokens 0
+                                        :total-tokens  0
+                                        :cost          {:total 0.0}}}))
 
-                  ;; Default case
-                  nil)))))
+                "message_stop"
+                (consume-fn {:type :done :reason :stop})
 
-        (catch Exception e
-          (async/>! event-chan {:type :error}
-                    :error-message (str e))))
-
-      (async/close! event-chan))
-
-    event-chan))
+                ;; Unknown event — ignore
+                nil)))))
+      (catch Exception e
+        (consume-fn {:type :error :error-message (str e)})))))
 
 ;; Provider implementation
 (def provider
-  {:name :anthropic
+  {:name   :anthropic
    :stream stream-anthropic})
