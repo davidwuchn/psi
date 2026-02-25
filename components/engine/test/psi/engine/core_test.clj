@@ -1,175 +1,170 @@
 (ns psi.engine.core-test
-  "Tests for core engine functionality"
+  "Tests for core engine functionality.
+
+  Uses engine/create-context (Nullable pattern) so every test gets its
+  own isolated set of atoms — no global-state mutations, no private-var
+  hacking."
   (:require
    [clojure.test :refer [deftest testing is]]
    [psi.engine.core :as engine]))
 
+;; ─────────────────────────────────────────────────────────────────────────────
+;; Schema-validation tests — pure logic, no context needed
+;; ─────────────────────────────────────────────────────────────────────────────
+
 (deftest schema-validation-test
   (testing "Engine schema validation"
-    (let [valid-engine {:engine-id "test-engine"
-                        :engine-status :ready
-                        :statechart-config {}
-                        :active-states #{"ready"}}]
-      (is (engine/valid-engine? valid-engine)
-          "Valid engine should pass validation"))
-    
-    (let [invalid-engine {:engine-id 123  ; should be string
-                          :engine-status :invalid-status
-                          :statechart-config {}
-                          :active-states #{"ready"}}]
-      (is (not (engine/valid-engine? invalid-engine))
-          "Invalid engine should fail validation")))
-  
+    (is (engine/valid-engine?
+         {:engine-id         "test-engine"
+          :engine-status     :ready
+          :statechart-config {}
+          :active-states     #{"ready"}})
+        "Valid engine should pass validation")
+
+    (is (not (engine/valid-engine?
+              {:engine-id         123          ; should be string
+               :engine-status     :invalid-status
+               :statechart-config {}
+               :active-states     #{"ready"}}))
+        "Invalid engine should fail validation"))
+
   (testing "System state schema validation"
-    (let [valid-state {:current-mode :explore
-                       :evolution-stage :bootstrap
-                       :last-updated (java.time.Instant/now)}]
-      (is (engine/valid-system-state? valid-state)
-          "Valid system state should pass validation"))
-    
-    (let [invalid-state {:current-mode :invalid-mode  ; not in enum
-                         :evolution-stage :bootstrap
-                         :last-updated (java.time.Instant/now)}]
-      (is (not (engine/valid-system-state? invalid-state))
-          "Invalid system state should fail validation")))
-  
+    (is (engine/valid-system-state?
+         {:current-mode    :explore
+          :evolution-stage :bootstrap
+          :last-updated    (java.time.Instant/now)})
+        "Valid system state should pass validation")
+
+    (is (not (engine/valid-system-state?
+              {:current-mode    :invalid-mode   ; not in enum
+               :evolution-stage :bootstrap
+               :last-updated    (java.time.Instant/now)}))
+        "Invalid system state should fail validation"))
+
   (testing "State transition schema validation"
-    (let [valid-transition {:engine-id "test-engine"
-                            :from-state "initializing"
-                            :to-state "ready"
-                            :trigger "configuration-complete"
-                            :timestamp (java.time.Instant/now)
-                            :context {}}]
-      (is (engine/valid-state-transition? valid-transition)
-          "Valid state transition should pass validation"))
-    
-    (let [invalid-transition {:engine-id "test-engine"
-                              :from-state "initializing"
-                              :to-state "ready"
-                              :trigger "configuration-complete"
-                              :timestamp "not-an-instant"  ; should be instant
-                              :context {}}]
-      (is (not (engine/valid-state-transition? invalid-transition))
-          "Invalid state transition should fail validation"))))
+    (is (engine/valid-state-transition?
+         {:engine-id  "test-engine"
+          :from-state "initializing"
+          :to-state   "ready"
+          :trigger    "configuration-complete"
+          :timestamp  (java.time.Instant/now)
+          :context    {}})
+        "Valid state transition should pass validation")
+
+    (is (not (engine/valid-state-transition?
+              {:engine-id  "test-engine"
+               :from-state "initializing"
+               :to-state   "ready"
+               :trigger    "configuration-complete"
+               :timestamp  "not-an-instant"   ; should be Instant
+               :context    {}}))
+        "Invalid state transition should fail validation")))
+
+;; ─────────────────────────────────────────────────────────────────────────────
+;; Engine lifecycle — isolated context
+;; ─────────────────────────────────────────────────────────────────────────────
 
 (deftest engine-lifecycle-test
   (testing "Engine creation and lifecycle"
-    ;; Clear state before test
-    (reset! @#'engine/engines {})
-    (reset! @#'engine/system-state nil)
-    (reset! @#'engine/state-transitions [])
-    (reset! @#'engine/sc-env nil)
-    
-    ;; Test engine creation
-    (let [engine-id "test-engine"
-          config {:test true}
-          engine (engine/create-engine engine-id config)]
-      
-      (is (= engine-id (:engine-id engine))
+    (let [ctx       (engine/create-context)
+          engine-id "test-engine"
+          config    {:test true}
+          eng       (engine/create-engine-in ctx engine-id config)]
+
+      (is (= engine-id (:engine-id eng))
           "Engine should have correct ID")
-      
-      (is (= config (:statechart-config engine))
+
+      (is (= config (:statechart-config eng))
           "Engine should store configuration")
-      
-      (is (= :initializing (:engine-status engine))
+
+      (is (= :initializing (:engine-status eng))
           "Engine should start in initializing state")
-      
-      ;; Test engine retrieval
-      (let [retrieved-engine (engine/get-engine engine-id)]
-        (is (not (nil? retrieved-engine))
-            "Should be able to retrieve created engine"))
-      
-      ;; Test engine status
-      (let [status (engine/engine-status engine-id)]
-        (is (contains? status :engine-status)
-            "Status should include engine status")
-        (is (contains? status :active-states)
-            "Status should include active states")))))
+
+      (testing "engine is retrievable"
+        (is (some? (engine/get-engine-in ctx engine-id))))
+
+      (testing "engine status contains expected keys"
+        (let [status (engine/engine-status-in ctx engine-id)]
+          (is (contains? status :engine-status))
+          (is (contains? status :active-states)))))))
+
+;; ─────────────────────────────────────────────────────────────────────────────
+;; System state management — isolated context
+;; ─────────────────────────────────────────────────────────────────────────────
 
 (deftest system-state-management-test
   (testing "System state initialization and updates"
-    ;; Clear state before test
-    (reset! @#'engine/engines {})
-    (reset! @#'engine/system-state nil)
-    (reset! @#'engine/state-transitions [])
-    (reset! @#'engine/sc-env nil)
-    
-    ;; Initialize system state
-    (let [state (engine/initialize-system-state!)]
-      (is (= :explore (:current-mode state))
-          "System should start in explore mode")
-      
-      (is (= :bootstrap (:evolution-stage state))
-          "System should start in bootstrap stage")
-      
-      (is (false? (:engine-ready state))
-          "Engine should not be ready initially"))
-    
-    ;; Test component updates
-    (engine/update-system-component! :engine-ready true)
-    (let [updated-state (engine/get-system-state)]
-      (is (:engine-ready updated-state)
-          "Engine should be marked as ready"))
-    
-    ;; Test derived properties
-    (engine/update-system-component! :query-ready true)
-    (is (engine/system-has-interface?)
-        "System should have interface when engine and query are ready")))
+    (let [ctx (engine/create-context)]
+
+      (testing "initial state"
+        (let [state (engine/initialize-system-state-in! ctx)]
+          (is (= :explore (:current-mode state))
+              "System should start in explore mode")
+          (is (= :bootstrap (:evolution-stage state))
+              "System should start in bootstrap stage")
+          (is (false? (:engine-ready state))
+              "Engine should not be ready initially")))
+
+      (testing "component update"
+        (engine/update-system-component-in! ctx :engine-ready true)
+        (is (:engine-ready (engine/get-system-state-in ctx))
+            "Engine should be marked as ready"))
+
+      (testing "derived interface property"
+        (engine/update-system-component-in! ctx :query-ready true)
+        (is (engine/system-has-interface-in? ctx)
+            "System should have interface when engine and query are ready")))))
+
+;; ─────────────────────────────────────────────────────────────────────────────
+;; Derived properties — isolated context
+;; ─────────────────────────────────────────────────────────────────────────────
 
 (deftest derived-properties-test
   (testing "System derived property calculations"
-    ;; Clear state before test
-    (reset! @#'engine/engines {})
-    (reset! @#'engine/system-state nil)
-    (reset! @#'engine/state-transitions [])
-    (reset! @#'engine/sc-env nil)
-    
-    ;; Initialize system state and update components
-    (engine/initialize-system-state!)
-    (engine/update-system-component! :engine-ready true)
-    (engine/update-system-component! :query-ready true)
-    (engine/update-system-component! :graph-ready false)
-    (engine/update-system-component! :introspection-ready false)
-    (engine/update-system-component! :history-ready true)
-    (engine/update-system-component! :knowledge-ready true)
-    (engine/update-system-component! :memory-ready false)
-    
-    (is (engine/system-has-interface?)
-        "Should have interface when engine and query ready")
-    
-    (is (engine/system-has-substrate?)
-        "Should have substrate when engine ready")
-    
-    (is (engine/system-has-memory-layer?)
-        "Should have memory layer when query, history, and knowledge ready")
-    
-    (is (not (engine/system-is-ai-complete?))
-        "Should not be AI complete when not all components ready")))
+    (let [ctx (engine/create-context)]
+      (engine/initialize-system-state-in! ctx)
+      (doseq [[k v] {:engine-ready        true
+                     :query-ready         true
+                     :graph-ready         false
+                     :introspection-ready false
+                     :history-ready       true
+                     :knowledge-ready     true
+                     :memory-ready        false}]
+        (engine/update-system-component-in! ctx k v))
+
+      (is (engine/system-has-interface-in? ctx)
+          "Should have interface when engine and query ready")
+
+      (is (engine/system-has-substrate-in? ctx)
+          "Should have substrate when engine ready")
+
+      (is (engine/system-has-memory-layer-in? ctx)
+          "Should have memory layer when query, history, and knowledge ready")
+
+      (is (not (engine/system-is-ai-complete-in? ctx))
+          "Should not be AI complete when not all components ready"))))
+
+;; ─────────────────────────────────────────────────────────────────────────────
+;; Bootstrap integration — isolated context
+;; ─────────────────────────────────────────────────────────────────────────────
 
 (deftest bootstrap-integration-test
   (testing "Full system bootstrap"
-    ;; Clear state before test
-    (reset! @#'engine/engines {})
-    (reset! @#'engine/system-state nil)
-    (reset! @#'engine/state-transitions [])
-    (reset! @#'engine/sc-env nil)
-    
-    ;; Bootstrap the system
-    (let [result (engine/bootstrap-system!)]
-      
+    (let [ctx    (engine/create-context)
+          result (engine/bootstrap-system-in! ctx)]
+
       (is (contains? result :system-state)
           "Bootstrap should return system state")
-      
+
       (is (contains? result :main-engine)
           "Bootstrap should return main engine")
-      
+
       (is (contains? result :diagnostics)
           "Bootstrap should return diagnostics")
-      
-      ;; Verify system is properly initialized
+
       (let [diagnostics (:diagnostics result)]
         (is (= 1 (:engine-count diagnostics))
             "Should have one engine after bootstrap")
-        
+
         (is (true? (get-in diagnostics [:derived-properties :has-substrate]))
             "Should have substrate after bootstrap")))))

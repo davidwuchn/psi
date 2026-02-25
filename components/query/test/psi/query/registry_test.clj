@@ -1,11 +1,16 @@
 (ns psi.query.registry-test
-  "Tests for the resolver/mutation registry"
+  "Tests for the resolver/mutation registry.
+
+  Uses registry/create-registry (Nullable pattern) so every test gets its
+  own isolated registry — no global-state resets needed."
   (:require
    [clojure.test :refer [deftest testing is]]
    [com.wsscode.pathom3.connect.operation :as pco]
    [psi.query.registry :as registry]))
 
-;;; Sample operations
+;; ─────────────────────────────────────────────────────────────────────────────
+;; Sample operations
+;; ─────────────────────────────────────────────────────────────────────────────
 
 (pco/defresolver sample-name-resolver [{user-id :user/id}]
   {::pco/input  [:user/id]
@@ -21,78 +26,78 @@
   {::pco/params [:user/name]}
   {:result/ok true})
 
-;;; Helper — each test block resets and restores so tests are independent
-
-(defmacro with-clean-registry [& body]
-  `(do
-     (registry/reset-registry!)
-     (try
-       ~@body
-       (finally
-         (registry/reset-registry!)))))
-
-;;; Tests
+;; ─────────────────────────────────────────────────────────────────────────────
+;; Register resolver tests
+;; ─────────────────────────────────────────────────────────────────────────────
 
 (deftest register-resolver-test
-  ;; Registers a resolver and verifies it appears in the registry
-  (testing "register-resolver!"
+  (testing "register-resolver-in!"
     (testing "stores resolver and returns entry"
-      (with-clean-registry
-        (let [entry (registry/register-resolver! sample-name-resolver)]
-          (is (qualified-symbol? (:resolver-sym entry)))
-          (is (inst? (:registered-at entry)))
-          (is (= sample-name-resolver (:resolver entry))))))
+      (let [reg   (registry/create-registry)
+            entry (registry/register-resolver-in! reg sample-name-resolver)]
+        (is (qualified-symbol? (:resolver-sym entry)))
+        (is (inst? (:registered-at entry)))
+        (is (= sample-name-resolver (:resolver entry)))))
 
     (testing "increments resolver count"
-      (with-clean-registry
-        (is (= 0 (registry/resolver-count)))
-        (registry/register-resolver! sample-name-resolver)
-        (is (= 1 (registry/resolver-count)))
-        (registry/register-resolver! sample-age-resolver)
-        (is (= 2 (registry/resolver-count)))))
+      (let [reg (registry/create-registry)]
+        (is (= 0 (registry/resolver-count-in reg)))
+        (registry/register-resolver-in! reg sample-name-resolver)
+        (is (= 1 (registry/resolver-count-in reg)))
+        (registry/register-resolver-in! reg sample-age-resolver)
+        (is (= 2 (registry/resolver-count-in reg)))))
 
-    (testing "all-resolvers returns registered objects"
-      (with-clean-registry
-        (registry/register-resolver! sample-name-resolver)
-        (is (= [sample-name-resolver] (registry/all-resolvers)))))
+    (testing "all-resolvers-in returns registered objects"
+      (let [reg (registry/create-registry)]
+        (registry/register-resolver-in! reg sample-name-resolver)
+        (is (= [sample-name-resolver] (registry/all-resolvers-in reg)))))
 
-    (testing "registered-resolver-syms contains sym"
-      (with-clean-registry
-        (registry/register-resolver! sample-name-resolver)
-        (let [syms (registry/registered-resolver-syms)]
+    (testing "registered-resolver-syms-in contains sym"
+      (let [reg (registry/create-registry)]
+        (registry/register-resolver-in! reg sample-name-resolver)
+        (let [syms (registry/registered-resolver-syms-in reg)]
           (is (set? syms))
           (is (= 1 (count syms))))))))
 
+;; ─────────────────────────────────────────────────────────────────────────────
+;; Register mutation tests
+;; ─────────────────────────────────────────────────────────────────────────────
+
 (deftest register-mutation-test
-  ;; Registers a mutation and verifies it appears in the registry
-  (testing "register-mutation!"
+  (testing "register-mutation-in!"
     (testing "stores mutation and returns entry"
-      (with-clean-registry
-        (let [entry (registry/register-mutation! sample-mutation)]
-          (is (qualified-symbol? (:mutation-sym entry)))
-          (is (inst? (:registered-at entry))))))
+      (let [reg   (registry/create-registry)
+            entry (registry/register-mutation-in! reg sample-mutation)]
+        (is (qualified-symbol? (:mutation-sym entry)))
+        (is (inst? (:registered-at entry)))))
 
     (testing "increments mutation count"
-      (with-clean-registry
-        (is (= 0 (registry/mutation-count)))
-        (registry/register-mutation! sample-mutation)
-        (is (= 1 (registry/mutation-count)))))))
+      (let [reg (registry/create-registry)]
+        (is (= 0 (registry/mutation-count-in reg)))
+        (registry/register-mutation-in! reg sample-mutation)
+        (is (= 1 (registry/mutation-count-in reg)))))))
+
+;; ─────────────────────────────────────────────────────────────────────────────
+;; build-indexes-in tests
+;; ─────────────────────────────────────────────────────────────────────────────
 
 (deftest build-indexes-test
-  ;; build-indexes compiles registered resolvers into a Pathom index
-  (testing "build-indexes"
-    (with-clean-registry
-      (registry/register-resolver! sample-name-resolver)
-      (let [idx (registry/build-indexes)]
+  (testing "build-indexes-in compiles registered resolvers into a Pathom index"
+    (let [reg (registry/create-registry)]
+      (registry/register-resolver-in! reg sample-name-resolver)
+      (let [idx (registry/build-indexes-in reg)]
         (is (map? idx))
         (is (contains? idx :com.wsscode.pathom3.connect.indexes/index-oir))))))
 
-(deftest reset-registry-test
-  ;; reset-registry! clears all state
-  (testing "reset-registry!"
-    (with-clean-registry
-      (registry/register-resolver! sample-name-resolver)
-      (is (= 1 (registry/resolver-count)))
-      (registry/reset-registry!)
-      (is (= 0 (registry/resolver-count)))
-      (is (= 0 (registry/mutation-count))))))
+;; ─────────────────────────────────────────────────────────────────────────────
+;; Isolation test — registries are independent
+;; ─────────────────────────────────────────────────────────────────────────────
+
+(deftest registry-isolation-test
+  (testing "two registries are independent"
+    (let [reg-a (registry/create-registry)
+          reg-b (registry/create-registry)]
+      (registry/register-resolver-in! reg-a sample-name-resolver)
+      (is (= 1 (registry/resolver-count-in reg-a)))
+      (is (= 0 (registry/resolver-count-in reg-b))
+          "reg-b should be unaffected by reg-a registration"))))

@@ -25,6 +25,23 @@
          :openai    openai/provider}))
 
 ;; ───────────────────────────────────────────────────────────────────────────
+;; Isolated AI context (Nullable pattern)
+;; ───────────────────────────────────────────────────────────────────────────
+
+(defn create-context
+  "Create an isolated AI context with its own provider registry atom.
+
+  Options:
+    :providers — map of provider-key → provider-impl to seed the registry
+                 (default: empty map; pass {:anthropic stub-provider} for tests)
+
+  Use in tests to stream responses through a stub provider without touching
+  the global provider-registry."
+  ([] (create-context {}))
+  ([{:keys [providers] :or {providers {}}}]
+   {:provider-registry (atom providers)}))
+
+;; ───────────────────────────────────────────────────────────────────────────
 ;; Pathom resolvers — AI capabilities exposed via EQL
 ;; ───────────────────────────────────────────────────────────────────────────
 
@@ -58,8 +75,17 @@
 ;; Register resolvers with the query component
 ;; ───────────────────────────────────────────────────────────────────────────
 
+(defn register-resolvers-in!
+  "Register all AI resolvers into an isolated `qctx` query context and rebuild its env."
+  [qctx]
+  (query/register-resolver-in! qctx ai-model-resolver)
+  (query/register-resolver-in! qctx ai-model-list-resolver)
+  (query/register-resolver-in! qctx ai-provider-models-resolver)
+  (query/register-resolver-in! qctx ai-provider-registry-resolver)
+  (query/rebuild-env-in! qctx))
+
 (defn register-resolvers!
-  "Register all AI resolvers into the query graph and rebuild the environment."
+  "Register all AI resolvers into the global query graph and rebuild the environment."
   []
   (query/register-resolver! ai-model-resolver)
   (query/register-resolver! ai-model-list-resolver)
@@ -112,7 +138,42 @@
   (conversation/total-usage conversation))
 
 ;; ───────────────────────────────────────────────────────────────────────────
-;; Public API — streaming
+;; Streaming — context-aware core (used by public API and tests)
+;; ───────────────────────────────────────────────────────────────────────────
+
+(defn- resolve-provider
+  "Look up the provider impl for `model` from `registry-atom`, throwing if absent."
+  [registry-atom model]
+  (let [provider-impl (get @registry-atom (:provider model))]
+    (when-not provider-impl
+      (throw (ex-info "Unknown provider" {:provider (:provider model)})))
+    provider-impl))
+
+(defn stream-response-in
+  "Stream assistant response in an isolated `ctx`, calling `consume-fn` for each event.
+
+  Returns {:future ... :session atom}.  The provider is resolved from `ctx`'s
+  provider registry, so tests can supply a stub without touching global state."
+  [ctx conversation model options consume-fn]
+  {:pre [(schemas/valid? schemas/Conversation conversation)
+         (schemas/valid? schemas/Model model)
+         (schemas/valid? schemas/StreamOptions options)]}
+  (let [provider-impl (resolve-provider (:provider-registry ctx) model)]
+    (streaming/stream-response provider-impl conversation model options consume-fn)))
+
+(defn stream-response-seq-in
+  "Stream assistant response as a lazy sequence of events in an isolated `ctx`.
+
+  Returns {:events lazy-seq :session atom}."
+  [ctx conversation model options]
+  {:pre [(schemas/valid? schemas/Conversation conversation)
+         (schemas/valid? schemas/Model model)
+         (schemas/valid? schemas/StreamOptions options)]}
+  (let [provider-impl (resolve-provider (:provider-registry ctx) model)]
+    (streaming/stream-response-seq provider-impl conversation model options)))
+
+;; ───────────────────────────────────────────────────────────────────────────
+;; Public API — streaming (global wrappers)
 ;; ───────────────────────────────────────────────────────────────────────────
 
 (defn stream-response
@@ -123,13 +184,8 @@
 
    See `psi.ai.streaming/stream-response` for event shapes."
   [conversation model options consume-fn]
-  {:pre [(schemas/valid? schemas/Conversation conversation)
-         (schemas/valid? schemas/Model model)
-         (schemas/valid? schemas/StreamOptions options)]}
-  (let [provider-impl (get @provider-registry (:provider model))]
-    (when-not provider-impl
-      (throw (ex-info "Unknown provider" {:provider (:provider model)})))
-    (streaming/stream-response provider-impl conversation model options consume-fn)))
+  (stream-response-in {:provider-registry provider-registry}
+                      conversation model options consume-fn))
 
 (defn stream-response-seq
   "Stream assistant response as a lazy sequence of events.
@@ -139,13 +195,8 @@
 
    See `psi.ai.streaming/stream-response-seq` for event shapes."
   [conversation model options]
-  {:pre [(schemas/valid? schemas/Conversation conversation)
-         (schemas/valid? schemas/Model model)
-         (schemas/valid? schemas/StreamOptions options)]}
-  (let [provider-impl (get @provider-registry (:provider model))]
-    (when-not provider-impl
-      (throw (ex-info "Unknown provider" {:provider (:provider model)})))
-    (streaming/stream-response-seq provider-impl conversation model options)))
+  (stream-response-seq-in {:provider-registry provider-registry}
+                           conversation model options))
 
 ;; ───────────────────────────────────────────────────────────────────────────
 ;; Public API — models

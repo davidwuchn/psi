@@ -31,7 +31,75 @@
 
 (defonce ^:private current-env (atom nil))
 
-;;; Environment lifecycle
+;;; Isolated query context (Nullable pattern)
+
+(defrecord QueryContext [reg env-atom])
+
+(defn create-query-context
+  "Create an isolated query context backed by its own registry and env atom.
+  Use in tests to avoid touching global state.
+
+  Returns a QueryContext that can be passed to the *-in context-aware fns."
+  []
+  (->QueryContext (registry/create-registry) (atom nil)))
+
+;;; Context-aware core functions
+
+(defn register-resolver-in!
+  "Register a resolver into an isolated `ctx` query context."
+  [ctx resolver]
+  (registry/register-resolver-in! (:reg ctx) resolver))
+
+(defn register-mutation-in!
+  "Register a mutation into an isolated `ctx` query context."
+  [ctx mutation]
+  (registry/register-mutation-in! (:reg ctx) mutation))
+
+(defn rebuild-env-in!
+  "Rebuild the Pathom environment for `ctx` from its registry."
+  ([ctx] (rebuild-env-in! ctx {}))
+  ([ctx opts]
+   (let [indexes (registry/build-indexes-in (:reg ctx))
+         new-env (env/build-env (assoc opts :indexes indexes))]
+     (reset! (:env-atom ctx) new-env)
+     new-env)))
+
+(defn ensure-env-in!
+  "Return the environment for `ctx`, building it first if necessary."
+  [ctx]
+  (or @(:env-atom ctx) (rebuild-env-in! ctx)))
+
+(defn query-in
+  "Execute an EQL `q` against `ctx`'s live graph."
+  [ctx input q]
+  (let [e (ensure-env-in! ctx)]
+    (env/process e input q)))
+
+(defn query-one-in
+  "Execute an EQL query against `ctx` and return a single `attr` value."
+  [ctx input attr]
+  (get (query-in ctx input [attr]) attr))
+
+(defn resolver-syms-in
+  "Return set of registered resolver syms in `ctx`."
+  [ctx]
+  (registry/registered-resolver-syms-in (:reg ctx)))
+
+(defn mutation-syms-in
+  "Return set of registered mutation syms in `ctx`."
+  [ctx]
+  (registry/registered-mutation-syms-in (:reg ctx)))
+
+(defn graph-summary-in
+  "Return a summary map describing the query graph state in `ctx`."
+  [ctx]
+  {:resolver-count (registry/resolver-count-in (:reg ctx))
+   :mutation-count (registry/mutation-count-in (:reg ctx))
+   :env-built?     (some? @(:env-atom ctx))
+   :resolvers      (resolver-syms-in ctx)
+   :mutations      (mutation-syms-in ctx)})
+
+;;; Environment lifecycle (global)
 
 (defn rebuild-env!
   "Rebuild the Pathom environment from the current resolver/mutation registry.
