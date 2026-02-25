@@ -4,6 +4,75 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-02-25 - agent-session Component
+
+### λ Statechart Working Memory Data Pattern
+
+`simple/simple-env` uses a **flat** working memory data model.  Guard and script
+functions receive `(fn [env data])` where `data` is the flat WM map.  The current
+event is stored at `:_event` inside `data` by the v20150901 algorithm.
+
+To pass extra data to guards (e.g. the agent event that triggered a transition),
+merge it into the WM before calling `sp/process-event!`:
+
+```clojure
+(defn send-event! [sc-env session-id event-kw extra-data]
+  (let [wm  (get-working-memory sc-env session-id)
+        wm' (if extra-data
+              (update wm ::sc/data-model merge extra-data)
+              wm)]
+    (sp/save-working-memory! ...)
+    (sp/process-event! ... wm' evt)))
+```
+
+Guards then read `(:pending-agent-event data)` — the key we merged in.
+
+Initial WM is populated via `sp/start!`:
+```clojure
+(sp/start! processor env :chart-id {::sc/session-id id
+                                     :session-data-atom a
+                                     :actions-fn f
+                                     :config c})
+```
+
+### λ Reactive Agent Event Bridge via add-watch
+
+Agent-core's `events-atom` accumulates events (never reset between calls).
+Bridge to session statechart using `add-watch` with old/new comparison:
+
+```clojure
+(add-watch (:events-atom agent-ctx) ::session-bridge
+  (fn [_key _ref old-events new-events]
+    (let [new-count (count new-events)
+          old-count (count old-events)]
+      (when (> new-count old-count)
+        (doseq [ev (subvec new-events old-count new-count)]
+          (sc/send-event! sc-env sc-session-id :session/agent-event
+                          {:pending-agent-event ev}))))))
+```
+
+This is simpler than a callback and avoids modifying agent-core's API.
+
+### λ Statechart Script Elements Pattern
+
+Use `(ele/script {:expr (fn [env data] ...)})` inside transitions for side
+effects, and `(ele/on-entry {} (ele/script {:expr ...}))` for entry actions.
+Guards go in `{:cond (fn [_env data] ...)}` on the transition map.
+
+The `actions-fn` in WM is a dispatcher: `(fn [action-key] ...)`.  Statechart
+scripts call `(dispatch! data :action-key)` which is pure (reads from data, no
+closures over ctx), keeping the statechart definition portable.
+
+### λ Allium Sub-spec Splitting Pattern
+
+When a monolithic `.allium` spec grows too large, split by orthogonal concern:
+- Each sub-spec `use`s its dependencies by path
+- Cross-references use `ext/` and `compact/` namespace prefixes
+- Open questions follow each spec and reference the parent spec's original questions
+- The original spec is retained as reference; sub-specs are the authoritative source
+
+---
+
 ## 2026-02-25 - Introspection Component
 
 ### λ Introspection = Engine Queries Itself via EQL
