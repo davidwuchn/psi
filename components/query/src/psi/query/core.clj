@@ -24,14 +24,8 @@
    "
   (:require
    [com.wsscode.pathom3.connect.operation :as pco]
-   [malli.core :as m]
    [psi.query.env :as env]
    [psi.query.registry :as registry]))
-
-;;; Schemas
-
-(def query-result-schema
-  [:map-of :keyword any?])
 
 ;;; State
 
@@ -48,11 +42,6 @@
    (let [new-env (env/build-env opts)]
      (reset! current-env new-env)
      new-env)))
-
-(defn current-environment
-  "Return the live Pathom environment atom value (nil if not yet built)."
-  []
-  @current-env)
 
 (defn ensure-env!
   "Return the current environment, building it first if necessary."
@@ -116,7 +105,7 @@
 
 ;;; Convenience macro for inline resolver registration
 
-(defmacro defresolver
+(defmacro ^:export defresolver
   "Define and immediately register a Pathom resolver.
    Wraps pco/defresolver and calls register-resolver!.
 
@@ -132,7 +121,7 @@
      (register-resolver! ~sym)
      (var ~sym)))
 
-(defmacro defmutation
+(defmacro ^:export defmutation
   "Define and immediately register a Pathom mutation.
    Wraps pco/defmutation and calls register-mutation!.
 

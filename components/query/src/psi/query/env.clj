@@ -5,7 +5,6 @@
    error handling, tracing (optional), and plugin hooks.  Environments
    are cheap to rebuild — just call `build-env` with the latest index."
   (:require
-   [com.wsscode.pathom3.connect.indexes :as pci]
    [com.wsscode.pathom3.error :as p.error]
    [com.wsscode.pathom3.interface.eql :as p.eql]
    [psi.query.registry :as registry]))
@@ -44,9 +43,3 @@
   [env input query]
   (p.eql/process env input query))
 
-(defn process-one
-  "Execute an EQL query and return a single attribute value.
-
-   Convenience wrapper around `process`."
-  [env input attr]
-  (get (process env input [attr]) attr))

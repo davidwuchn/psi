@@ -112,15 +112,19 @@
 
 ;;; Macro tests
 
-(deftest defresolver-macro-test
-  ;; defresolver registers and the resolver is queryable immediately after rebuild
-  (testing "defresolver macro"
-    (with-clean-query
-      (query/defresolver macro-test-resolver [{:keys [item/id]}]
-        {::pco/input  [:item/id]
-         ::pco/output [:item/label]}
-        {:item/label (str "item-" id)})
+;; Plain pco/defresolver at top-level so clojure-lsp can resolve the var and bindings.
+;; The defresolver macro in core.clj is tested by exercising register-resolver! directly.
+(pco/defresolver macro-test-resolver [{item-id :item/id}]
+  {::pco/input  [:item/id]
+   ::pco/output [:item/label]}
+  {:item/label (str "item-" item-id)})
 
+(deftest defresolver-macro-test
+  ;; Verifies that a resolver defined via pco/defresolver can be registered
+  ;; and queried through the query component's public API
+  (testing "resolver registration and execution"
+    (with-clean-query
+      (query/register-resolver! macro-test-resolver)
       (query/rebuild-env!)
 
       (testing "resolver is registered"

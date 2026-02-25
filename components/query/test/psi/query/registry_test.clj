@@ -7,15 +7,19 @@
 
 ;;; Sample operations
 
-(pco/defresolver sample-name-resolver [{:keys [user/id]}]
+(pco/defresolver sample-name-resolver [{user-id :user/id}]
   {::pco/input  [:user/id]
    ::pco/output [:user/name]}
-  {:user/name (str "user-" id)})
+  {:user/name (str "user-" user-id)})
 
-(pco/defresolver sample-age-resolver [{:keys [user/id]}]
+(pco/defresolver sample-age-resolver [_]
   {::pco/input  [:user/id]
    ::pco/output [:user/age]}
   {:user/age 42})
+
+(pco/defmutation sample-mutation [_]
+  {::pco/params [:user/name]}
+  {:result/ok true})
 
 ;;; Helper — each test block resets and restores so tests are independent
 
@@ -61,10 +65,6 @@
 
 (deftest register-mutation-test
   ;; Registers a mutation and verifies it appears in the registry
-  (pco/defmutation sample-mutation [{:keys [user/name]}]
-    {::pco/params [:user/name]}
-    {:result/ok true})
-
   (testing "register-mutation!"
     (testing "stores mutation and returns entry"
       (with-clean-registry
