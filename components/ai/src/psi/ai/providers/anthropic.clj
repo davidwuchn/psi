@@ -63,8 +63,8 @@
   [conversation model options consume-fn]
   (let [request (build-request conversation model options)]
     (try
-      (let [response (http/get (str (:base-url model) "/v1/messages")
-                               (merge request {:as :stream}))]
+      (let [response (http/post (str (:base-url model) "/v1/messages")
+                                (merge request {:as :stream}))]
         (with-open [reader (io/reader (:body response))]
           (doseq [line (line-seq reader)]
             (when-let [event-data (parse-sse-line line)]
