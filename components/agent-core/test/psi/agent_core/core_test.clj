@@ -334,6 +334,85 @@
         (is (true?     (:psi.agent/has-error result)))))))
 
 ;; ─────────────────────────────────────────────────────────────────────────────
+;; Tool event helpers
+;; ─────────────────────────────────────────────────────────────────────────────
+
+(deftest tool-event-helpers-test
+  (let [call {:id "call-1" :name "bash" :arguments "{}"}
+        res  {:content [{:type :text :text "ok"}]}]
+
+    (testing "emit-tool-start-in! emits tool_execution_start event"
+      (let [ctx (agent/create-context)]
+        (agent/create-agent-in! ctx)
+        (agent/emit-tool-start-in! ctx call)
+        (let [events (agent/drain-events-in! ctx)]
+          (is (some #(= :tool-execution-start (:type %)) events)))))
+
+    (testing "emit-tool-end-in! emits tool_execution_end event"
+      (let [ctx (agent/create-context)]
+        (agent/create-agent-in! ctx)
+        (agent/emit-tool-end-in! ctx call res false)
+        (let [events (agent/drain-events-in! ctx)]
+          (is (some #(= :tool-execution-end (:type %)) events)))))
+
+    (testing "emit-turn-end-in! emits turn_end event"
+      (let [ctx       (agent/create-context)
+            assistant {:role "assistant" :content []}]
+        (agent/create-agent-in! ctx)
+        (agent/emit-turn-end-in! ctx assistant [])
+        (let [events (agent/drain-events-in! ctx)]
+          (is (some #(= :turn-end (:type %)) events)))))
+
+    (testing "record-tool-result-in! appends to messages and emits events"
+      (let [ctx    (agent/create-context)
+            result {:role "tool-result" :tool-call-id "c1" :tool-name "bash"
+                    :content [] :is-error false}]
+        (agent/create-agent-in! ctx)
+        (agent/record-tool-result-in! ctx result)
+        (is (= [result] (:messages (agent/get-data-in ctx))))
+        (let [events (agent/drain-events-in! ctx)
+              types  (map :type events)]
+          (is (some #{:message-start} types))
+          (is (some #{:message-end}   types)))))
+
+    (testing "update-stream-in! emits message_update"
+      (let [ctx  (agent/create-context)
+            part {:role "assistant" :content [{:type :text :text "H"}]}
+            upd  {:role "assistant" :content [{:type :text :text "Hi"}]}]
+        (agent/create-agent-in! ctx)
+        (agent/start-loop-in! ctx [])
+        (agent/begin-stream-in! ctx part)
+        (agent/drain-events-in! ctx)
+        (agent/update-stream-in! ctx upd)
+        (let [events (agent/drain-events-in! ctx)]
+          (is (some #(= :message-update (:type %)) events)))))))
+
+;; ─────────────────────────────────────────────────────────────────────────────
+;; Queue drain helpers
+;; ─────────────────────────────────────────────────────────────────────────────
+
+(deftest queue-drain-test
+  (testing "drain-steering-in! removes dequeued messages"
+    (let [ctx (agent/create-context)
+          m1  {:role "user" :content []}
+          m2  {:role "user" :content []}]
+      (agent/create-agent-in! ctx)
+      (agent/queue-steering-in! ctx m1)
+      (agent/queue-steering-in! ctx m2)
+      (agent/drain-steering-in! ctx [m1])
+      (is (= [m2] (:steering-queue (agent/get-data-in ctx))))))
+
+  (testing "drain-follow-up-in! removes dequeued messages"
+    (let [ctx (agent/create-context)
+          m1  {:role "user" :content []}
+          m2  {:role "user" :content []}]
+      (agent/create-agent-in! ctx)
+      (agent/queue-follow-up-in! ctx m1)
+      (agent/queue-follow-up-in! ctx m2)
+      (agent/drain-follow-up-in! ctx [m1])
+      (is (= [m2] (:follow-up-queue (agent/get-data-in ctx)))))))
+
+;; ─────────────────────────────────────────────────────────────────────────────
 ;; Diagnostics snapshot
 ;; ─────────────────────────────────────────────────────────────────────────────
 

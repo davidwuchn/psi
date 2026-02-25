@@ -12,4 +12,6 @@
               psi.tui.ansi
               psi.tui.terminal
               psi.tui.components
-              psi.tui.core}}}}
+              psi.tui.core
+              psi.engine.core
+              psi.agent-core.core}}}}
