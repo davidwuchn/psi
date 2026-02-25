@@ -120,6 +120,7 @@ search text (file contents): `git grep "λ"`
 **clojure-mcp-light:** `clj-paren-repair --help` `clj-nrepl-eval --help`
 **lint:** `clj-kondo --lint src`
 **nREPL port:** `8888` (use `888X` for multiple concurrent playthroughs)
+**charm for TUI** https://codeberg.org/timokramer/charm.clj
 **repair after edit:** `clj-paren-repair <file>` — fixes delimiters, formats code
 
 
