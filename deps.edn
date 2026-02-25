@@ -8,10 +8,12 @@
         ;; Components
         psi/ai                                        {:local/root "components/ai"}
         psi/engine                                    {:local/root "components/engine"}
-        psi/query                                     {:local/root "components/query"}}
+        psi/query                                     {:local/root "components/query"}
+        psi/history                                   {:local/root "components/history"}}
  :aliases
  {:dev   {:extra-paths ["dev"]}
   :nrepl {:extra-deps {nrepl/nrepl {:mvn/version "1.5.1"}}}
-  :test  {:extra-paths ["test" "components/ai/test" "components/query/test"]
+  :test  {:extra-paths ["test" "components/ai/test" "components/query/test" "components/history/test"
+                        "components/ai/src" "components/engine/src" "components/query/src" "components/history/src"]
           :extra-deps  {lambdaisland/kaocha {:mvn/version "1.91.1392"}}
           :main-opts   ["-m" "kaocha.runner"]}}}

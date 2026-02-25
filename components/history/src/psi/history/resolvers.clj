@@ -1,0 +1,121 @@
+(ns psi.history.resolvers
+  "Pathom3 resolvers for the git-backed History component.
+
+   Domain entities from the Allium spec:
+     GitRepository  — repo status, current commit, file list, has_history
+     GitCommit      — sha, date, author, subject, symbols, derived flags
+     TrackedFile    — file paths in the repo
+     GitGrep        — content search results
+
+   Resolvers accept :git/context (a GitContext record) in the EQL input.
+   Tests inject a null context (isolated temp repo) via `create-null-context`
+   — no mocking, no shared state, full Nullable pattern."
+  (:require
+   [com.wsscode.pathom3.connect.operation :as pco]
+   [psi.history.git :as git]))
+
+;;; GitRepository resolvers
+
+(pco/defresolver git-repo-status
+  "Resolve :git.repo/status, :git.repo/current-commit, :git.repo/has-changes."
+  [{:keys [git/context]}]
+  {::pco/input  [:git/context]
+   ::pco/output [:git.repo/status
+                 :git.repo/current-commit
+                 :git.repo/has-changes]}
+  (let [status (git/status context)
+        sha    (try (git/current-commit context) (catch Exception _ nil))]
+    {:git.repo/status         status
+     :git.repo/current-commit sha
+     :git.repo/has-changes    (contains? #{:modified :staged} status)}))
+
+(pco/defresolver git-repo-commits
+  "Resolve :git.repo/commits and :git.repo/has-history.
+
+   Accepts optional EQL params:
+     :n    — number of commits (default 50)
+     :grep — filter by message text
+     :path — restrict to a file/directory"
+  [env {:keys [git/context]}]
+  {::pco/input  [:git/context]
+   ::pco/output [:git.repo/commits
+                 :git.repo/has-history]}
+  (let [params  (pco/params env)
+        commits (vec (git/log context params))]
+    {:git.repo/commits     commits
+     :git.repo/has-history (pos? (count commits))}))
+
+(pco/defresolver git-repo-files
+  "Resolve :git.repo/files — seq of tracked file path strings."
+  [{:keys [git/context]}]
+  {::pco/input  [:git/context]
+   ::pco/output [:git.repo/files]}
+  {:git.repo/files (vec (git/ls-files context))})
+
+;;; GitCommit resolvers
+
+(pco/defresolver git-commit-detail
+  "Resolve full commit detail from :git.commit/sha.
+   Returns body, stat, diff and all base fields + derived flags."
+  [{:keys [git/context git.commit/sha]}]
+  {::pco/input  [:git/context :git.commit/sha]
+   ::pco/output [:git.commit/date
+                 :git.commit/author
+                 :git.commit/email
+                 :git.commit/subject
+                 :git.commit/body
+                 :git.commit/stat
+                 :git.commit/diff
+                 :git.commit/symbols
+                 :git.commit/is-learning
+                 :git.commit/is-delta]}
+  (let [detail (git/show context sha)]
+    (assoc detail
+           :git.commit/is-learning (contains? (:git.commit/symbols detail) "λ")
+           :git.commit/is-delta    (contains? (:git.commit/symbols detail) "Δ"))))
+
+(pco/defresolver git-commit-derived
+  "Compute :git.commit/is-learning and :git.commit/is-delta
+   from already-resolved :git.commit/symbols (e.g. from log output)."
+  [{:keys [git.commit/symbols]}]
+  {::pco/input  [:git.commit/symbols]
+   ::pco/output [:git.commit/is-learning
+                 :git.commit/is-delta]}
+  {:git.commit/is-learning (contains? symbols "λ")
+   :git.commit/is-delta    (contains? symbols "Δ")})
+
+;;; GitGrep resolver
+
+(pco/defresolver git-grep
+  "Resolve :git.repo/grep-results from :git.repo/grep-pattern.
+
+   Optional EQL params:
+     :path — restrict to file/directory
+     :n    — max results (default 200)"
+  [env {:keys [git/context git.repo/grep-pattern]}]
+  {::pco/input  [:git/context :git.repo/grep-pattern]
+   ::pco/output [:git.repo/grep-results]}
+  (let [params  (pco/params env)
+        results (vec (git/grep context grep-pattern params))]
+    {:git.repo/grep-results results}))
+
+;;; Learning commits (QueryHistory from spec — filters by λ symbol)
+
+(pco/defresolver git-learning-commits
+  "Resolve :git.repo/learning-commits — commits containing the λ symbol.
+   Implements the QueryHistory surface from the Allium spec."
+  [{:keys [git/context]}]
+  {::pco/input  [:git/context]
+   ::pco/output [:git.repo/learning-commits]}
+  {:git.repo/learning-commits (vec (git/log context {:grep "λ"}))})
+
+;;; All resolvers
+
+(def all-resolvers
+  [git-repo-status
+   git-repo-commits
+   git-repo-files
+   git-commit-detail
+   git-commit-derived
+   git-grep
+   git-learning-commits])
