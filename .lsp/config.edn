@@ -7,4 +7,9 @@
               psi.history.resolvers
               psi.history.core
               psi.introspection.resolvers
-              psi.introspection.core}}}}
+              psi.introspection.core
+              psi.tui.protocols
+              psi.tui.ansi
+              psi.tui.terminal
+              psi.tui.components
+              psi.tui.core}}}}
