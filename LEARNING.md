@@ -40,3 +40,80 @@ Accumulated discoveries from ψ evolution.
 - ? Graph emergence from resolvers
 
 **Next**: System integration beyond component tests
+
+---
+
+## 2026-02-25 - EQL Query Component
+
+### λ psi/query Component Built and Clean
+
+**Component**: `components/query/` — Pathom3 EQL query surface
+
+Three namespaces, one responsibility each:
+- `psi.query.registry` — additive resolver/mutation store (atoms, malli-validated)
+- `psi.query.env`      — Pathom3 environment construction (`build-env`, `process`)
+- `psi.query.core`     — public API: `register-resolver!`, `query`, `query-one`,
+                          `rebuild-env!`, `graph-summary`, `defresolver`, `defmutation`
+
+**Status**: 10 tests, 32 assertions, 0 failures. 0 kondo errors/warnings. 0 LSP diagnostics.
+
+### λ clj-kondo Config Import
+
+Run this after adding new deps or components — imports hook/type configs from jars:
+```bash
+clj-kondo --lint "$(clojure -Spath)" --copy-configs --skip-lint
+```
+Run at **root** and in **each component dir** separately.
+
+New configs gained this session: pathom3, promesa, guardrails, potemkin, prismatic/schema.
+
+### λ Two Separate Lint Systems
+
+**clj-kondo** (`.clj-kondo/config.edn`) and **clojure-lsp** (`.lsp/config.edn`) are distinct:
+
+| Concern | Config file | Linter key |
+|---------|-------------|------------|
+| clj-kondo unused public var | `.clj-kondo/config.edn` | `:unused-public-var` |
+| clojure-lsp unused public var | `.lsp/config.edn` | `:clojure-lsp/unused-public-var` |
+
+**✗ Do not** put `:unused-public-var` or `:clojure-lsp/*` keys in `.clj-kondo/config.edn`
+— clj-kondo will warn "Unexpected linter name".
+
+**Authoritative check**: `clojure-lsp diagnostics --project-root .` — not the pi tool
+(which caches stale results).
+
+### λ Test Isolation Pattern
+
+Polylith components use `defonce` atoms — state bleeds between tests in the same JVM.
+`use-fixtures :each` resets between *test functions* but not between `testing` blocks.
+
+**Pattern** — use a `with-clean-*` macro:
+```clojure
+(defmacro with-clean-registry [& body]
+  `(do (registry/reset-registry!)
+       (try ~@body (finally (registry/reset-registry!)))))
+```
+Wrap each isolated scenario in its own `with-clean-*` call.
+
+### λ Inline defs in Tests
+
+`pco/defresolver` / `pco/defmutation` inside a `deftest` body triggers
+clj-kondo `inline-def` warning and confuses clojure-lsp symbol resolution.
+
+**Fix**: define resolvers/mutations at **top-level** in the test namespace.
+If the test needs a clean registry, re-register the top-level var inside
+`with-clean-*` rather than redefining.
+
+### λ Kaocha --focus Syntax
+
+`--focus psi.query` does not match test namespaces (needs exact ns name).
+Use: `--focus psi.query.core-test --focus psi.query.registry-test`
+
+### λ Architecture Progress
+
+- ✓ AI component implemented & tested
+- ✓ Engine (statecharts) component implemented & tested
+- ✓ Query (EQL/Pathom3) component implemented & tested
+- ? Graph emergence from resolvers (next: add domain resolvers)
+- ? Introspection (engine queries engine via EQL)
+- ? History / Knowledge resolvers (git + knowledge graph)
