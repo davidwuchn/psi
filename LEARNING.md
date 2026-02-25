@@ -253,6 +253,50 @@ if the factory accidentally shares state:
     (is (= 0 (:resolver-count (query/graph-summary-in ctx-b))))))
 ```
 
+### λ Nullable Pattern for External Process Infrastructure (git)
+
+When infrastructure is an external process (not mutable state), the Nullable
+pattern uses a **context record + embedded temp environment** rather than a
+stub closure:
+
+```clojure
+;; GitContext — the infrastructure wrapper
+(defrecord GitContext [repo-dir])
+
+(defn create-context
+  "Production: points at a real repo dir."
+  ([] (create-context (System/getProperty "user.dir")))
+  ([repo-dir] (->GitContext repo-dir)))
+
+(defn create-null-context
+  "Test: builds an isolated temp git repo with seeded commits.
+   Real git, controlled data, no shared state, no mocking."
+  ([] (create-null-context default-seed-commits))
+  ([commits]
+   (let [tmp (make-temp-dir)]
+     (git-init! tmp)
+     (doseq [{:keys [message files]} commits]
+       (write-files! tmp files)
+       (git-commit! tmp message))
+     (->GitContext tmp))))
+```
+
+Key points:
+- **Real git subprocess** — not a stub. Tests exercise the same code path as production.
+- **Seeded data** — commits carry controlled messages with vocabulary symbols.
+- **Isolated per test** — each `create-null-context` call gets a fresh temp dir.
+- **mkdirs before spit** — files in subdirs need parent dirs created first.
+- **No cleanup needed** — JVM temp dirs are cleaned on exit.
+
+Two-context isolation test verifies independence:
+```clojure
+(deftest two-null-contexts-are-independent
+  (let [ctx-a (git/create-null-context [{:message "only in A" :files {"a.txt" "a"}}])
+        ctx-b (git/create-null-context [{:message "only in B" :files {"b.txt" "b"}}])]
+    (is (not (some #(str/includes? (:git.commit/subject %) "B")
+                   (git/log ctx-a {}))))))
+```
+
 ### λ clj-kondo Cache Goes Stale After Refactors
 
 After adding new public vars to a namespace, clj-kondo's `.cache/` still
