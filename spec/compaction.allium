@@ -1,0 +1,187 @@
+-- compaction.allium
+--
+-- Scope: Context compaction — triggering, preparation, execution, and
+--        branch summarisation.
+--
+-- Includes:
+--   CompactionPreparation value — slice selection logic
+--   CompactionResult value      — summary + kept-entry pointer
+--   BranchSummaryResult value   — branch-abandon summary
+--   ManualCompaction rule       — user-triggered /compact
+--   AutoCompactionTriggered     — threshold-based auto-compact after agent turn
+--   AutoCompactionOnOverflow    — overflow-error auto-compact
+--   BranchSummarised            — branch abandon summarisation
+--
+-- Excludes:
+--   AgentSession fields (those live in session-management.allium)
+--   Extension event dispatch for compact events (extension-system.allium)
+--   LLM provider calls (agent.allium / ai-abstract-model.allium)
+
+use "./agent.allium" as agent
+use "./extension-system.allium" as ext
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value CompactionPreparation {
+    -- Computed slice of entries to be summarised and those to be kept.
+    entriesToSummarise: List<SessionEntry>
+    firstKeptEntryId: String
+    tokensBefore: Integer
+}
+
+value CompactionResult {
+    summary: String
+    firstKeptEntryId: String
+    tokensBefore: Integer
+    details: String?        -- extension-provided JSON metadata
+}
+
+value BranchSummaryResult {
+    summary: String
+    details: String?
+}
+
+value ContextUsage {
+    tokens: Integer?            -- null immediately after compaction
+    contextWindow: Integer
+    percent: Decimal?
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    auto_compaction_threshold: Decimal = 0.8    -- fraction of context window
+    auto_compaction_reserve_tokens: Integer = 16384
+    auto_compaction_keep_recent_tokens: Integer = 20000
+    branch_summary_reserve_tokens: Integer = 16384
+    -- These are global defaults; AgentSession may override per-session.
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+-- ── Manual compaction ───────────────────────────────────
+
+rule ManualCompaction {
+    -- User triggers /compact. Agent is aborted first.
+    when: ManualCompaction(session, customInstructions?)
+
+    requires: exists session.model
+
+    ensures: session.agent.abort()
+    ensures: session.isCompacting = true
+    ensures: ext/SessionBeforeCompactDispatched(session, preparation, customInstructions)
+    ensures:
+        let result = CompactionExecuted(session, preparation, customInstructions)
+        CompactionEntry.created(
+            summary: result.summary,
+            firstKeptEntryId: result.firstKeptEntryId,
+            tokensBefore: result.tokensBefore,
+            details: result.details,
+            fromHook: false
+        )
+        agent/ReplaceMessages(session.agent, RebuildFromEntries(session))
+    ensures: session.isCompacting = false
+    ensures: ext/SessionCompactDispatched(session)
+}
+
+-- ── Auto-compaction: threshold ──────────────────────────
+
+rule AutoCompactionTriggered {
+    -- Fires after each agent turn when context exceeds threshold.
+    when: session: AgentSession.autoCompactionEnabled
+    when: _: agent/AgentEndEvent.emitted
+
+    requires: session.autoCompactionEnabled
+    requires: ContextFractionUsed(session) >= config.auto_compaction_threshold
+
+    ensures: ext/AutoCompactionStartDispatched(session, reason: threshold)
+    ensures: ManualCompaction(session, customInstructions: null)
+    ensures: ext/AutoCompactionEndDispatched(session)
+}
+
+-- ── Auto-compaction: overflow ───────────────────────────
+
+rule AutoCompactionOnOverflow {
+    -- Fires when the LLM reports a context overflow error.
+    when: _: agent/AgentEndEvent.emitted
+
+    requires: session.autoCompactionEnabled
+    requires: LastAssistantMessage(session).stopReason = error
+    requires: IsContextOverflow(LastAssistantMessage(session))
+
+    ensures: ext/AutoCompactionStartDispatched(session, reason: overflow)
+    ensures: ManualCompaction(session, customInstructions: null)
+    ensures: ext/AutoCompactionEndDispatched(session)
+    -- session re-prompts after compaction
+}
+
+-- ── Branch summarisation ────────────────────────────────
+
+rule BranchSummarised {
+    -- Called when TreeNavigated with summarize=true.
+    -- Runs a separate LLM call to summarise the abandoned branch.
+    when: BranchSummarised(session, abandonedEntries, customInstructions?)
+
+    requires: exists session.model
+
+    let context = PrepareForBranchSummary(abandonedEntries, config.branch_summary_reserve_tokens)
+
+    ensures: result = BranchSummaryExecuted(session, context, customInstructions)
+}
+
+------------------------------------------------------------
+-- Surfaces
+------------------------------------------------------------
+
+surface CompactionApi {
+    -- Compaction operations exposed to the session orchestrator.
+    for caller: User
+
+    context session: AgentSession
+
+    exposes:
+        session.isCompacting
+        session.autoCompactionEnabled
+
+    provides:
+        ManualCompaction(caller, session, customInstructions?)
+            when session.is_idle
+
+        SetAutoCompaction(caller, session, enabled)
+
+    guidance:
+        -- ManualCompaction aborts any running agent turn before compacting.
+        -- AutoCompactionTriggered fires automatically; callers need not invoke it.
+        -- session_before_compact extension event may supply a custom CompactionResult,
+        --   bypassing the default LLM-based summarisation entirely.
+        -- After compaction, agent messages are rebuilt from the kept entries;
+        --   token count reported via ContextUsage will be null until the next turn.
+}
+
+------------------------------------------------------------
+-- Deferred Specifications
+------------------------------------------------------------
+
+deferred CompactionAlgorithm.execute
+    -- Selects entriesToSummarise using config.auto_compaction_keep_recent_tokens,
+    -- calls the LLM with a summarisation prompt, returns CompactionResult.
+    -- Reference: pi-agent-core compaction implementation.
+
+deferred BranchSummarisation.execute
+    -- Calls the LLM with a branch-summarisation prompt over abandonedEntries,
+    -- returns BranchSummaryResult.
+    -- Reference: branch-summarization.ts
+
+------------------------------------------------------------
+-- Open Questions
+------------------------------------------------------------
+
+open_question "Compaction threshold (config.auto_compaction_threshold): confirmed as global default with per-session override. Should the override be stored in AgentSession directly, or in a separate CompactionConfig value type?"
+
+open_question "After ManualCompaction, should the session automatically re-prompt with the last user message, or remain idle awaiting the next user input? The spec currently leaves the re-prompt to the caller."

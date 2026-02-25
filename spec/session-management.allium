@@ -1,0 +1,629 @@
+-- session-management.allium
+--
+-- Scope: AgentSession — the orchestration layer that wraps the core LLM agent
+--        with session lifecycle, model/thinking management, queued messages,
+--        prompting, retry, session branching, forking, and persistence.
+--
+-- Includes:
+--   AgentSession entity — all fields and derived predicates
+--   Session lifecycle   — new, resume, fork, tree navigation
+--   Prompting           — user prompts, while-streaming behaviour
+--   Model management    — set, cycle, thinking level
+--   Tool management     — active tools, system prompt rebuild
+--   Auto-retry          — transient error backoff
+--   Custom messages     — extension-injected messages
+--   Session persistence — entry journal, session file I/O
+--   System prompt       — assembly from context files, skills, tools
+--
+-- Excludes:
+--   Compaction algorithm (see compaction.allium)
+--   Extension registration and event dispatch (see extension-system.allium)
+--   Resource loading implementation details (see extension-system.allium)
+--   TUI rendering, RPC protocol, OAuth, shell internals
+
+use "./agent.allium" as agent
+use "./extension-system.allium" as ext
+use "./compaction.allium" as compact
+
+------------------------------------------------------------
+-- External Entities
+------------------------------------------------------------
+
+external entity Agent {
+    -- The core LLM agent (specified in agent.allium).
+    state: agent/AgentState
+    is_streaming: Boolean
+}
+
+external entity Model {
+    provider: String
+    id: String
+    reasoning: Boolean          -- supports extended thinking
+}
+
+external entity AuthCredentials {
+    -- OAuth or API-key credentials for a provider.
+    provider: String
+}
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value SessionStats {
+    sessionId: String
+    sessionFile: String?
+    userMessages: Integer
+    assistantMessages: Integer
+    toolCalls: Integer
+    totalMessages: Integer
+    tokens: TokenUsage
+    cost: Decimal
+}
+
+value TokenUsage {
+    input: Integer
+    output: Integer
+    cacheRead: Integer
+    cacheWrite: Integer
+    total: Integer
+}
+
+value ModelCycleResult {
+    model: Model
+    thinkingLevel: off | minimal | low | medium | high | xhigh
+    isScoped: Boolean
+}
+
+value ContextUsage {
+    tokens: Integer?            -- null immediately after compaction
+    contextWindow: Integer
+    percent: Decimal?
+}
+
+value PathMetadata {
+    -- Origin of an installed resource (npm package or git ref).
+    source: npm | git
+    packageName: String?
+    version: String?
+}
+
+------------------------------------------------------------
+-- Session Entry Variants
+------------------------------------------------------------
+
+entity SessionEntry {
+    id: String
+    parentId: String?
+    timestamp: Timestamp
+    kind: MessageEntry | ThinkingLevelEntry | ModelEntry |
+          CompactionEntry | BranchSummaryEntry | CustomEntry |
+          CustomMessageEntry | LabelEntry | SessionInfoEntry
+}
+
+variant MessageEntry : SessionEntry {
+    message: agent/AgentMessage
+}
+
+variant ThinkingLevelEntry : SessionEntry {
+    thinkingLevel: String
+}
+
+variant ModelEntry : SessionEntry {
+    provider: String
+    modelId: String
+}
+
+variant CompactionEntry : SessionEntry {
+    summary: String
+    firstKeptEntryId: String
+    tokensBefore: Integer
+    details: String?
+    fromHook: Boolean
+}
+
+variant BranchSummaryEntry : SessionEntry {
+    fromId: String
+    summary: String
+    details: String?
+    fromHook: Boolean
+    label: String?
+}
+
+variant CustomEntry : SessionEntry {
+    -- Extension state persistence; not sent to LLM.
+    customType: String
+    data: String?           -- JSON-serialised extension data
+}
+
+variant CustomMessageEntry : SessionEntry {
+    -- Extension-injected message; sent to LLM as a user message.
+    customType: String
+    content: String         -- text or JSON-serialised content array
+    details: String?
+    display: Boolean
+}
+
+variant LabelEntry : SessionEntry {
+    targetId: String
+    label: String?
+}
+
+variant SessionInfoEntry : SessionEntry {
+    name: String?
+}
+
+entity SessionTreeNode {
+    id: String
+    parentId: String?
+    children: List<SessionTreeNode>
+    isCurrent: Boolean
+    label: String?
+}
+
+------------------------------------------------------------
+-- AgentSession Entity
+------------------------------------------------------------
+
+entity AgentSession {
+    -- The central orchestrator, shared by all run modes.
+    sessionId: String
+    sessionFile: String?
+    sessionName: String?
+
+    -- Agent state (delegated to agent.allium)
+    model: Model?
+    thinkingLevel: off | minimal | low | medium | high | xhigh
+    isStreaming: Boolean
+    systemPrompt: String
+
+    -- Queues (mirrors agent)
+    steeringMessages: List<String>
+    followUpMessages: List<String>
+
+    -- Compaction (see compaction.allium)
+    isCompacting: Boolean
+    autoCompactionEnabled: Boolean
+
+    -- Retry
+    retryAttempt: Integer
+    autoRetryEnabled: Boolean
+
+    -- Scoped models for cycling (from --models CLI flag)
+    scopedModels: List<{model: Model, thinkingLevel: String}>
+
+    -- Derived
+    is_idle: not isStreaming and not isCompacting
+    pending_message_count: steeringMessages.count + followUpMessages.count
+    has_pending_messages: pending_message_count > 0
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    auto_retry_enabled: Boolean = true
+    auto_retry_max_retries: Integer = 3
+    auto_retry_base_delay: Duration = 2.seconds
+    auto_retry_max_delay: Duration = 60.seconds
+    default_active_tools: Set<String> = {"read", "bash", "edit", "write"}
+    -- Compaction thresholds live in compaction.allium config.
+    -- These are global defaults; AgentSession may override per-session.
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+-- ── Prompt handling ─────────────────────────────────────
+
+rule UserPrompts {
+    -- User submits a message. Extension input handlers run first,
+    -- then skill / prompt-template expansion, then the agent is invoked.
+    when: UserPrompts(session, text, images?)
+
+    requires: session.is_idle
+    requires: exists session.model
+
+    let expanded = SkillAndTemplateExpanded(session, text)
+
+    ensures: agent/Prompt(session.agent, expanded, images)
+    ensures: SessionEntry.created(kind: MessageEntry, message: UserMessage{expanded, images})
+}
+
+rule UserPromptsWhileStreaming {
+    -- During streaming, steer or follow-up based on caller intent.
+    when: UserPromptsWhileStreaming(session, text, behavior)
+
+    requires: session.isStreaming
+    requires: behavior in [steer, followUp]
+
+    ensures:
+        if behavior = steer:
+            session.steeringMessages = session.steeringMessages + [text]
+            agent/Steer(session.agent, UserMessage{text})
+        else:
+            session.followUpMessages = session.followUpMessages + [text]
+            agent/FollowUp(session.agent, UserMessage{text})
+}
+
+rule ExtensionCommandExecuted {
+    -- /command text is intercepted before agent invocation.
+    when: UserPrompts(session, text, _)
+
+    requires: text.startsWith("/")
+    requires: exists ext/RegisteredCommand{name: text.commandName}
+
+    ensures: ext/RegisteredCommand{text.commandName}.handler.called(text.args)
+    -- agent is NOT invoked; command handler manages its own LLM interaction
+}
+
+-- ── Skill and template expansion ────────────────────────
+
+rule SkillCommandExpanded {
+    -- /skill:name args → injects skill file content as a <skill> block.
+    when: SkillAndTemplateExpanded(session, text)
+
+    requires: text.startsWith("/skill:")
+
+    let skill_name = text.after("/skill:").before(" ")
+    let skill = session.skills with name = skill_name
+
+    requires: exists skill
+
+    ensures: result = "<skill name=\"{skill.name}\" location=\"{skill.filePath}\">\n{skill.content}\n</skill>\n\n{text.args}"
+}
+
+rule PromptTemplateExpanded {
+    -- /template-name args → substitutes $1 $2 $@ placeholders.
+    when: SkillAndTemplateExpanded(session, text)
+
+    requires: text.startsWith("/")
+    requires: exists ext/PromptTemplate{name: text.commandName}
+
+    let template = ext/PromptTemplate{name: text.commandName}
+    let args = text.args
+
+    ensures: result = template.content with placeholders substituted from args
+}
+
+-- ── Session lifecycle ───────────────────────────────────
+
+rule NewSessionStarted {
+    -- User starts a fresh session. Extensions may cancel.
+    when: NewSessionStarted(session, parentSession?)
+
+    ensures: ext/SessionBeforeSwitchDispatched(session, reason: new)
+    ensures: session.agent.reset()
+    ensures: session.sessionId = NewUUID()
+    ensures: session.sessionName = null
+    ensures: session.steeringMessages = []
+    ensures: session.followUpMessages = []
+    ensures: SessionEntry.created(kind: ThinkingLevelEntry, thinkingLevel: session.thinkingLevel)
+    ensures: ext/SessionSwitchDispatched(session, reason: new)
+}
+
+rule SessionResumed {
+    -- User resumes a previously saved session file.
+    when: SessionResumed(session, sessionPath)
+
+    ensures: ext/SessionBeforeSwitchDispatched(session, reason: resume)
+    ensures: session.sessionFile = sessionPath
+    ensures: session.sessionId = LoadedFrom(sessionPath)
+    ensures: agent/ReplaceMessages(session.agent, LoadedMessages(sessionPath))
+    ensures: ext/SessionSwitchDispatched(session, reason: resume)
+}
+
+rule SessionForked {
+    -- User forks from an earlier entry, creating a new branch.
+    when: SessionForked(session, entryId)
+
+    ensures: ext/SessionBeforeForkDispatched(session, entryId)
+    ensures: session.sessionFile = NewFile()
+    ensures: session.sessionId = NewUUID()
+    ensures: agent/ReplaceMessages(session.agent, EntriesUpTo(entryId))
+    ensures: ext/SessionForkDispatched(session)
+}
+
+rule TreeNavigated {
+    -- User navigates to a different node in the session tree.
+    -- Optionally summarises the abandoned branch first.
+    when: TreeNavigated(session, targetId, summarize?, customInstructions?, label?)
+
+    ensures: ext/SessionBeforeTreeDispatched(session, targetId, summarize, customInstructions, label)
+    ensures: agent/ReplaceMessages(session.agent, EntriesUpTo(targetId))
+    ensures:
+        if summarize:
+            let summary = compact/BranchSummarised(session, abandonedEntries, customInstructions)
+            BranchSummaryEntry.created(
+                fromId: oldLeafId,
+                summary: summary.summary,
+                details: summary.details,
+                label: label
+            )
+    ensures: ext/SessionTreeDispatched(session, targetId)
+}
+
+-- ── Model management ────────────────────────────────────
+
+rule ModelSet {
+    when: ModelSet(session, model)
+
+    requires: exists ApiKeyFor(model)
+
+    ensures: session.model = model
+    ensures: session.thinkingLevel = Clamped(session.thinkingLevel, model)
+    ensures: SessionEntry.created(kind: ModelEntry, provider: model.provider, modelId: model.id)
+    ensures: ext/ModelSelectDispatched(session, model, source: set)
+}
+
+rule ModelCycled {
+    when: ModelCycled(session, direction)
+
+    let candidates =
+        if session.scopedModels.count > 0:
+            session.scopedModels with api_key_available
+        else:
+            AvailableModels() with api_key_available
+
+    requires: candidates.count > 1
+
+    ensures: session.model = NextModel(candidates, session.model, direction)
+    ensures: session.thinkingLevel = Clamped(session.thinkingLevel, session.model)
+    ensures: SessionEntry.created(kind: ModelEntry, provider: session.model.provider, modelId: session.model.id)
+    ensures: ext/ModelSelectDispatched(session, session.model, source: cycle)
+}
+
+-- ── Thinking level ──────────────────────────────────────
+
+rule ThinkingLevelSet {
+    when: ThinkingLevelSet(session, level)
+
+    let effective = Clamped(level, session.model)
+
+    ensures: session.thinkingLevel = effective
+    ensures: SessionEntry.created(kind: ThinkingLevelEntry, thinkingLevel: effective)
+}
+
+rule ThinkingLevelCycled {
+    when: ThinkingLevelCycled(session)
+
+    requires: session.model.reasoning
+
+    let levels = AvailableThinkingLevels(session.model)
+    let next = NextAfter(levels, session.thinkingLevel)
+
+    ensures: session.thinkingLevel = next
+    ensures: SessionEntry.created(kind: ThinkingLevelEntry, thinkingLevel: next)
+}
+
+-- ── Tool management ─────────────────────────────────────
+
+rule ActiveToolsSet {
+    when: ActiveToolsSet(session, toolNames)
+
+    ensures: session.agent.tools = ToolsFromRegistry(toolNames)
+    ensures: session.systemPrompt = RebuildSystemPrompt(session, toolNames)
+}
+
+-- ── Auto-retry ──────────────────────────────────────────
+
+rule AutoRetryOnTransientError {
+    -- Retries after rate-limit / overloaded / 5xx errors with exponential backoff.
+    when: _: agent/AgentEndEvent.emitted
+
+    requires: session.autoRetryEnabled
+    requires: session.retryAttempt < config.auto_retry_max_retries
+    requires: IsRetryableError(LastAssistantMessage(session))
+
+    let delay = ExponentialBackoff(session.retryAttempt, config.auto_retry_base_delay, config.auto_retry_max_delay)
+
+    ensures: session.retryAttempt = session.retryAttempt + 1
+    ensures: ext/AutoRetryStartDispatched(session, session.retryAttempt, delay)
+    ensures: Wait(delay)
+    ensures: agent/Continue(session.agent)
+}
+
+rule AutoRetrySucceeded {
+    -- Successful response resets retry counter.
+    when: _: agent/MessageEndEvent.emitted
+
+    requires: session.retryAttempt > 0
+    requires: LastAssistantMessage(session).stopReason != error
+
+    ensures: session.retryAttempt = 0
+    ensures: ext/AutoRetryEndDispatched(session, success: true)
+}
+
+-- ── Custom messages ─────────────────────────────────────
+
+rule CustomMessageSent {
+    -- Extension injects a custom message with optional LLM trigger.
+    when: CustomMessageSent(session, message, triggerTurn?, deliverAs?)
+
+    ensures:
+        if session.isStreaming:
+            if deliverAs = followUp:
+                agent/FollowUp(session.agent, message)
+            else:
+                agent/Steer(session.agent, message)
+        else if triggerTurn:
+            agent/Prompt(session.agent, message)
+        else:
+            session.agent.appendMessage(message)
+            CustomMessageEntry.created(customType: message.customType, content: message.content, display: message.display)
+}
+
+-- ── Session persistence ─────────────────────────────────
+
+rule MessagePersisted {
+    -- Every completed message is appended to the session file.
+    when: _: agent/MessageEndEvent.emitted
+
+    ensures:
+        if LastMessage(session).role in [user, assistant, toolResult]:
+            SessionEntry.created(kind: MessageEntry, message: LastMessage(session))
+        else if LastMessage(session).role = custom:
+            CustomMessageEntry.created(
+                customType: LastMessage(session).customType,
+                content: LastMessage(session).content,
+                display: LastMessage(session).display
+            )
+}
+
+-- ── System prompt ───────────────────────────────────────
+
+rule SystemPromptBuilt {
+    -- System prompt is assembled from context files, skills, and selected tools.
+    when: SystemPromptBuilt(session, toolNames)
+
+    ensures: session.systemPrompt = Assemble(
+        cwd: session.cwd,
+        contextFiles: session.contextFiles,
+        skills: session.skills with is_available_to_model,
+        customPrompt: session.customSystemPrompt,
+        appendPrompt: session.appendSystemPrompt,
+        selectedTools: toolNames
+    )
+    ensures: session.agent.systemPrompt = session.systemPrompt
+}
+
+-- ── Before-agent-start hook ─────────────────────────────
+
+rule BeforeAgentStartFired {
+    -- Extensions may prepend custom context messages or override system prompt.
+    when: BeforeAgentStartFired(session, prompt, images)
+
+    ensures: ext/BeforeAgentStartDispatched(session, prompt, images, session.systemPrompt)
+    ensures:
+        for msg in ext/ExtensionContextMessages(session):
+            session.agent.messages = session.agent.messages + [msg]
+    ensures:
+        if ext/ExtensionSystemPromptOverride(session) != null:
+            session.agent.systemPrompt = ext/ExtensionSystemPromptOverride(session)
+        else:
+            session.agent.systemPrompt = session.systemPrompt
+}
+
+------------------------------------------------------------
+-- Actor Declarations
+------------------------------------------------------------
+
+actor User {
+    identified_by: HumanOperator
+}
+
+actor RpcClient {
+    identified_by: ExternalProcess
+}
+
+------------------------------------------------------------
+-- Surfaces
+------------------------------------------------------------
+
+surface AgentSessionApi {
+    -- The primary API shared by all run modes.
+    for caller: User
+
+    context session: AgentSession
+
+    exposes:
+        session.sessionId
+        session.sessionFile
+        session.sessionName
+        session.model
+        session.thinkingLevel
+        session.isStreaming
+        session.isCompacting
+        session.systemPrompt
+        session.pending_message_count
+        session.steeringMessages
+        session.followUpMessages
+        session.retryAttempt
+        session.scopedModels
+
+    provides:
+        UserPrompts(caller, session, text, images?)
+            when session.is_idle
+        UserPromptsWhileStreaming(caller, session, text, behavior)
+            when session.isStreaming
+        NewSessionStarted(caller, session, parentSession?)
+        SessionResumed(caller, session, sessionPath)
+        SessionForked(caller, session, entryId)
+        TreeNavigated(caller, session, targetId, summarize?, customInstructions?, label?)
+        ModelSet(caller, session, model)
+        ModelCycled(caller, session, direction)
+        ThinkingLevelSet(caller, session, level)
+        ThinkingLevelCycled(caller, session)
+            when session.model.reasoning
+        ActiveToolsSet(caller, session, toolNames)
+        ext/ExtensionsReloaded(caller, session)
+
+    guidance:
+        -- session.is_idle = not isStreaming and not isCompacting.
+        -- Callers must check is_idle before calling UserPrompts.
+        -- During streaming, route input via UserPromptsWhileStreaming.
+        -- ManualCompaction is provided by the compaction surface (compaction.allium).
+}
+
+surface ResourceLoaderApi {
+    -- Provides resources to AgentSession at startup and after reload.
+    for caller: User
+
+    context session: AgentSession
+
+    exposes:
+        session.skills
+        session.promptTemplates
+        session.themes
+        session.contextFiles
+        session.extensions
+
+    provides:
+        reload()
+
+    guidance:
+        -- Skills are loaded from ~/.pi/agent/skills, .pi/skills, and --skill-paths.
+        -- Prompt templates from ~/.pi/agent/prompts and .pi/prompts.
+        -- AGENTS.md and CLAUDE.md are discovered walking up from cwd to home.
+        -- Extensions may contribute additional paths via resources_discover event.
+        -- Skills with disableModelInvocation: true are excluded from the system prompt
+        --   but remain available via /skill:name commands.
+}
+
+surface SkillInvocationContract {
+    -- Contract for /skill:name command expansion.
+    for caller: User
+
+    context session: AgentSession
+
+    exposes:
+        session.skills
+
+    provides:
+        -- /skill:name args → injects SKILL.md content as an XML block
+        SkillCommandExpanded(session, "/skill:" + name + " " + args)
+            when exists ext/Skill{name: name}
+
+    guidance:
+        -- The injected XML block includes the skill's base directory so
+        --   relative path references resolve correctly in tool calls.
+        -- Skills with disableModelInvocation: true are still invocable
+        --   via /skill:name even though they are hidden from the LLM prompt.
+}
+
+------------------------------------------------------------
+-- Deferred Specifications
+------------------------------------------------------------
+
+deferred SystemPromptAssembly.build     -- see: system-prompt.ts
+deferred ModelRegistry.resolve          -- see: model-registry.ts (API key resolution)
+
+------------------------------------------------------------
+-- Open Questions
+------------------------------------------------------------
+
+open_question "Skills collision policy: when two skills share the same name, the first discovered wins. Should this be configurable (warn / error / last-wins)?"
+
+open_question "TreeNavigated: should the branch-summary step block the navigation (synchronous) or proceed immediately with summarisation happening async in the background?"

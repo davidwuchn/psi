@@ -1,0 +1,333 @@
+-- extension-system.allium
+--
+-- Scope: Extension system — registration, event dispatch, tool wrapping,
+--        commands, flags, shortcuts, and resource discovery.
+--
+-- Includes:
+--   Extension entity — registration, handler/tool/command/flag/shortcut sets
+--   RegisteredCommand, RegisteredTool, ExtensionFlag entities
+--   Skill and PromptTemplate entities (loaded via resource discovery)
+--   Extension lifecycle — load, reload, factory invocation
+--   Tool wrapping — pre/post call hooks on built-in and extension tools
+--   Event dispatch — named events, handler ordering, cancel semantics
+--   Resource discovery — skills, prompt templates, themes, context files
+--
+-- Excludes:
+--   AgentSession lifecycle and prompting (see session-management.allium)
+--   Compaction algorithm (see compaction.allium)
+--   TUI rendering, RPC protocol, OAuth, shell internals
+
+use "./agent.allium" as agent
+
+------------------------------------------------------------
+-- External Entities
+------------------------------------------------------------
+
+external entity Model {
+    provider: String
+    id: String
+    reasoning: Boolean
+}
+
+------------------------------------------------------------
+-- Resource Entities
+------------------------------------------------------------
+
+-- ── Skills ─────────────────────────────────────────────
+
+entity Skill {
+    name: String
+    description: String
+    filePath: String
+    baseDir: String
+    source: user | project | path
+    disableModelInvocation: Boolean
+
+    -- Derived
+    is_available_to_model: not disableModelInvocation
+}
+
+-- ── Prompt templates ───────────────────────────────────
+
+entity PromptTemplate {
+    name: String
+    description: String
+    content: String             -- may contain $1 $2 $@ argument placeholders
+    source: user | project | path
+    filePath: String
+}
+
+------------------------------------------------------------
+-- Extension Entities
+------------------------------------------------------------
+
+entity Extension {
+    path: String
+    resolvedPath: String
+    -- Collections populated at registration time
+    handlers: Set<String>       -- event names with at least one handler
+    tools: Set<String>          -- registered tool names
+    commands: Set<String>       -- registered command names
+    flags: Set<String>          -- registered flag names
+    shortcuts: Set<String>      -- registered keybinding ids
+}
+
+entity RegisteredCommand {
+    name: String
+    description: String?
+    extensionPath: String
+}
+
+entity RegisteredTool {
+    name: String
+    label: String
+    description: String
+    parameters: String          -- JSON Schema
+    extensionPath: String
+}
+
+entity ExtensionFlag {
+    name: String
+    type: boolean | string
+    defaultValue: String?
+    currentValue: String?
+    extensionPath: String
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    extension_event_ordering: registration_order
+    -- When multiple extensions handle the same event, they fire in the
+    -- order they were registered.  All handlers fire (broadcast); a handler
+    -- returning { cancel: true } blocks the associated session action but
+    -- does not suppress remaining handlers.
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+-- ── Extension lifecycle ─────────────────────────────────
+
+rule ExtensionsLoaded {
+    -- At startup, extension modules are loaded and registered.
+    when: ExtensionsLoaded(session, extensionPaths)
+
+    ensures:
+        for path in extensionPaths:
+            let ext = Extension.created(path: path)
+            ExtensionFactoryInvoked(ext)
+    ensures: ResourcesDiscoverDispatched(session, reason: startup)
+}
+
+rule ExtensionsReloaded {
+    -- /reload reloads all resources and extensions.
+    when: ExtensionsReloaded(session)
+
+    ensures:
+        for ext in session.extensions:
+            not exists ext
+    ensures: ExtensionsLoaded(session, session.extensionPaths)
+    ensures: SystemPromptRebuilt(session)
+}
+
+rule ExtensionToolWrapped {
+    -- Extension tools are combined with built-in tools, with pre/post hooks.
+    when: ExtensionToolWrapped(session, tool, ext)
+
+    ensures: WrappedTool.created(
+        inner: tool,
+        onCall: ToolCallDispatched(session, tool),
+        onResult: ToolResultDispatched(session, tool)
+    )
+}
+
+-- ── Extension Event Dispatch ────────────────────────────
+
+rule ResourcesDiscoverDispatched {
+    when: ResourcesDiscoverDispatched(session, reason)
+    ensures: ExtensionEvent.emitted(session, {type: resources_discover, cwd: session.cwd, reason: reason})
+}
+
+rule SessionBeforeSwitchDispatched {
+    when: SessionBeforeSwitchDispatched(session, reason)
+    ensures: ExtensionEvent.emitted(session, {type: session_before_switch, reason: reason})
+    -- Handler may return cancel: true, which aborts the switch
+}
+
+rule SessionSwitchDispatched {
+    when: SessionSwitchDispatched(session, reason)
+    ensures: ExtensionEvent.emitted(session, {type: session_switch, reason: reason})
+}
+
+rule SessionBeforeForkDispatched {
+    when: SessionBeforeForkDispatched(session, entryId)
+    ensures: ExtensionEvent.emitted(session, {type: session_before_fork, entryId: entryId})
+}
+
+rule SessionForkDispatched {
+    when: SessionForkDispatched(session)
+    ensures: ExtensionEvent.emitted(session, {type: session_fork})
+}
+
+rule SessionBeforeCompactDispatched {
+    when: SessionBeforeCompactDispatched(session, preparation, customInstructions)
+    ensures: ExtensionEvent.emitted(session, {type: session_before_compact, preparation: preparation, customInstructions: customInstructions})
+    -- Handler may return cancel: true or supply its own CompactionResult
+}
+
+rule SessionCompactDispatched {
+    when: SessionCompactDispatched(session)
+    ensures: ExtensionEvent.emitted(session, {type: session_compact})
+}
+
+rule SessionBeforeTreeDispatched {
+    when: SessionBeforeTreeDispatched(session, targetId, summarize, customInstructions, label)
+    ensures: ExtensionEvent.emitted(session, {type: session_before_tree, targetId: targetId})
+    -- Handler may cancel, supply a summary, or override instructions
+}
+
+rule SessionTreeDispatched {
+    when: SessionTreeDispatched(session, targetId)
+    ensures: ExtensionEvent.emitted(session, {type: session_tree, newLeafId: targetId})
+}
+
+rule ModelSelectDispatched {
+    when: ModelSelectDispatched(session, model, source)
+    ensures: ExtensionEvent.emitted(session, {type: model_select, model: model, source: source})
+}
+
+rule AutoCompactionStartDispatched {
+    when: AutoCompactionStartDispatched(session, reason)
+    ensures: AgentSessionEvent.emitted(session, {type: auto_compaction_start, reason: reason})
+}
+
+rule AutoCompactionEndDispatched {
+    when: AutoCompactionEndDispatched(session)
+    ensures: AgentSessionEvent.emitted(session, {type: auto_compaction_end})
+}
+
+rule AutoRetryStartDispatched {
+    when: AutoRetryStartDispatched(session, attempt, delay)
+    ensures: AgentSessionEvent.emitted(session, {type: auto_retry_start, attempt: attempt, delayMs: delay})
+}
+
+rule AutoRetryEndDispatched {
+    when: AutoRetryEndDispatched(session, success)
+    ensures: AgentSessionEvent.emitted(session, {type: auto_retry_end, success: success, attempt: session.retryAttempt})
+}
+
+rule ToolCallDispatched {
+    when: ToolCallDispatched(session, tool, args)
+    ensures: ExtensionEvent.emitted(session, {type: tool_call, toolName: tool.name, args: args})
+    -- Handler may return block: true to prevent execution
+}
+
+rule ToolResultDispatched {
+    when: ToolResultDispatched(session, tool, result)
+    ensures: ExtensionEvent.emitted(session, {type: tool_result, toolName: tool.name, result: result})
+    -- Handler may modify content, details, or isError
+}
+
+rule BeforeAgentStartDispatched {
+    when: BeforeAgentStartDispatched(session, prompt, images, systemPrompt)
+    ensures: ExtensionEvent.emitted(session, {type: before_agent_start, prompt: prompt, images: images, systemPrompt: systemPrompt})
+}
+
+------------------------------------------------------------
+-- Actor Declarations
+------------------------------------------------------------
+
+actor ExtensionModule {
+    identified_by: Extension
+}
+
+------------------------------------------------------------
+-- Surfaces
+------------------------------------------------------------
+
+surface ExtensionApi {
+    -- API surface for extension modules.
+    for ext: ExtensionModule
+
+    context session: AgentSession
+
+    exposes:
+        session.sessionId
+        session.sessionName
+        session.model
+        session.thinkingLevel
+        session.isStreaming
+
+    requires:
+        -- Extensions must register handlers, tools, commands, shortcuts, and flags
+        -- during the factory invocation phase (synchronously).
+
+    provides:
+        -- Lifecycle hooks
+        on(event_name, handler)             -- subscribe to any extension event
+
+        -- Tool registration
+        registerTool(tool_definition)
+
+        -- Command / shortcut / flag registration
+        registerCommand(name, options)
+        registerShortcut(key, options)
+        registerFlag(name, options)
+
+        -- Message actions
+        sendMessage(message, options?)
+        sendUserMessage(content, options?)
+        appendEntry(customType, data?)
+
+        -- Session metadata
+        setSessionName(name)
+        setLabel(entryId, label?)
+
+        -- Tool management
+        getActiveTools()
+        setActiveTools(toolNames)
+
+        -- Model
+        setModel(model)
+        getThinkingLevel()
+        setThinkingLevel(level)
+
+        -- Provider registration
+        registerProvider(name, config)
+
+        -- Shared event bus
+        events.emit(channel, data)
+        events.on(channel, handler)
+
+    guidance:
+        -- Extension handlers receive an ExtensionContext with session state.
+        -- Command handlers receive an ExtensionCommandContext with session control.
+        -- Handlers fire in registration order (first registered, first called).
+        -- All registered handlers for an event fire (broadcast semantics).
+        -- session_before_* events may return { cancel: true } to block the action;
+        --   this stops the session action but does not suppress remaining handlers.
+        -- session_before_compact may supply a custom CompactionResult to replace
+        --   the default LLM-based summarisation.
+        -- A handler returning cancel: true for session_before_compact or
+        --   session_before_switch takes precedence; later handlers still fire
+        --   but their cancel return is ignored once one cancel has been seen.
+}
+
+------------------------------------------------------------
+-- Deferred Specifications
+------------------------------------------------------------
+
+deferred ExtensionLoader.resolve        -- filesystem path resolution, npm/git
+deferred ResourceDiscovery.scan         -- skill/template/theme path scanning
+
+------------------------------------------------------------
+-- Open Questions
+------------------------------------------------------------
+
+open_question "Extension event ordering: the spec guarantees registration order and broadcast. Should a cancel from handler N also suppress handlers N+1..M, or should all handlers always fire regardless?"
+
+open_question "Tool wrapping: should ToolCallDispatched be able to *replace* the tool arguments (not just block), enabling extension-level argument transformation?"
