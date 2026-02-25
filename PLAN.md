@@ -8,7 +8,7 @@ Ordered steps toward AI COMPLETE.
 
 Split `coding-agent.allium` into three sub-specs, then implement.
 
-### Step 1 — Split allium specs  ✗
+### Step 1 — Split allium specs  ✓
 
 Produce from `spec/coding-agent.allium`:
 
@@ -20,7 +20,7 @@ Produce from `spec/coding-agent.allium`:
 - `spec/compaction.allium`          — Context compaction algorithm, branch
                                        summarisation, auto-compaction triggers
 
-### Step 2 — Implement `agent-session` component  ✗
+### Step 2 — Implement `agent-session` component  ✓
 
 **Polylith-style, no interface.clj**
 
@@ -72,7 +72,7 @@ own guards (auto-compact threshold, retry config) to decide next state.
 - `RegisteredCommand` / `RegisteredTool` full registry
 - `SkillCommandExpanded` / `PromptTemplateExpanded` expansion
 
-### Step 3 — Wire agent-session into system  ✗
+### Step 3 — Wire agent-session into system  ✗ (next)
 
 - Add `psi/agent-session` to root `deps.edn` and `tests.edn`
 - Register `agent-session` resolvers into global query graph at startup

@@ -15,7 +15,7 @@ Current truth about the Psi system.
 | `history`       | ✓      | Git log resolvers, nullable git context         |
 | `introspection` | ✓      | Bridges engine + query, self-describing graph   |
 | `tui`           | ✓      | Terminal UI components                          |
-| `agent-session` | ✗      | **In design** — see PLAN.md                     |
+| `agent-session` | ✓      | Session statechart + EQL resolvers, 33 tests    |
 
 ## Architecture Progress
 
@@ -25,7 +25,7 @@ Current truth about the Psi system.
 - ✓ Agent core loop
 - ✓ Git history resolvers
 - ✓ Introspection (engine queries itself)
-- ✗ Coding-agent session orchestration (agent-session component)
+- ✓ Coding-agent session orchestration (agent-session component)
 - ✗ Graph emergence from domain resolvers
 - ✗ RPC / HTTP API surface
 - ✗ AI COMPLETE
@@ -37,7 +37,7 @@ Current truth about the Psi system.
 | `bootstrap-system.allium`  | `engine` + `query`      | ✓ implemented  |
 | `agent.allium`             | `agent-core`            | ✓ implemented  |
 | `ai-abstract-model.allium` | `ai`                    | ✓ implemented  |
-| `coding-agent.allium`      | `agent-session`         | ✗ to split → 3 sub-specs, then implement |
+| `coding-agent.allium`      | `agent-session`         | ✓ split → 3 sub-specs; ✓ implemented    |
 | `tui.allium`               | `tui`                   | partial        |
 
 ## Open Questions (resolved)
