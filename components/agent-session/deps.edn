@@ -6,4 +6,5 @@
         clj-http/clj-http           {:mvn/version "3.13.0"}
         psi/agent-core              {:local/root "../agent-core"}
         psi/ai                      {:local/root "../ai"}
-        psi/query                   {:local/root "../query"}}}
+        psi/query                   {:local/root "../query"}
+        psi/tui                     {:local/root "../tui"}}}

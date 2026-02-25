@@ -288,6 +288,16 @@
                       :focused          nil
                       :render-requested true))))
 
+(defn swap-tui-children-in!
+  "Replace the TUI children with a new list and request a render."
+  [ctx children]
+  (swap-tui! ctx assoc :children (vec children) :render-requested true))
+
+(defn focused-in
+  "Return the currently focused component, or nil."
+  [ctx]
+  (:focused (tui-of ctx)))
+
 ;;;; Global singleton API
 
 (defonce ^:private global-ctx (atom nil))
@@ -297,9 +307,11 @@
   [terminal children]
   (reset! global-ctx (create-context terminal children)))
 
-(defn start-tui!    [] (start-tui-in!   @global-ctx))
-(defn stop-tui!     [] (stop-tui-in!    @global-ctx))
-(defn tick!         [] (tick-in!        @global-ctx))
-(defn set-focus!    [c]   (set-focus-in!    @global-ctx c))
-(defn show-overlay! [c o] (show-overlay-in! @global-ctx c o))
-(defn hide-overlay! [e]   (hide-overlay-in! @global-ctx e))
+(defn start-tui!          [] (start-tui-in!          @global-ctx))
+(defn stop-tui!           [] (stop-tui-in!           @global-ctx))
+(defn tick!               [] (tick-in!               @global-ctx))
+(defn focused             [] (focused-in             @global-ctx))
+(defn set-focus!          [c]   (set-focus-in!          @global-ctx c))
+(defn swap-tui-children!  [cs]  (swap-tui-children-in!  @global-ctx cs))
+(defn show-overlay!       [c o] (show-overlay-in!       @global-ctx c o))
+(defn hide-overlay!       [e]   (hide-overlay-in!       @global-ctx e))
