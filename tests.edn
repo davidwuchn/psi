@@ -1,8 +1,8 @@
 #kaocha/v1
 {:tests
  [{:id :unit
-   :test-paths ["test" "components/ai/test"]
-   :source-paths ["src" "components/ai/src"]
+   :test-paths ["test" "components/ai/test" "components/engine/test"]
+   :source-paths ["src" "components/ai/src" "components/engine/src"]
    :ns-patterns [".*-test$"]}]
  
  :color? true

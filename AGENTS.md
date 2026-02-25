@@ -114,6 +114,7 @@ search text (file contents): `git grep "λ"`
 
 **JVM Clojure**.
 
+**malli**: rather than spec
 **babashka**: `bb --help`
 **bbin:** `bbin --help`
 **clojure-mcp-light:** `clj-paren-repair --help` `clj-nrepl-eval --help`
