@@ -14,4 +14,16 @@
               psi.tui.components
               psi.tui.core
               psi.engine.core
-              psi.agent-core.core}}}}
+              psi.agent-core.core
+              psi.ai.core
+              psi.ai.conversation
+              psi.ai.models
+              psi.ai.schemas
+              psi.ai.streaming
+              psi.agent-session.session
+              psi.agent-session.extensions
+              psi.agent-session.compaction
+              psi.agent-session.persistence
+              psi.agent-session.statechart
+              psi.agent-session.resolvers
+              psi.agent-session.core}}}}
