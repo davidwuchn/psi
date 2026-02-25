@@ -233,4 +233,7 @@
   [& args]
   (set-log-level! (log-level-from-args args))
   (let [model-key (model-key-from-args args)]
-    (run-session model-key)))
+    (run-session model-key))
+  ;; clj-http (Apache HttpClient) parks a non-daemon connection-eviction thread.
+  ;; Explicitly exit so the JVM does not hang after /quit.
+  (System/exit 0))
