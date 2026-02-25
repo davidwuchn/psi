@@ -1,0 +1,848 @@
+-- psi-agent.allium
+-- Behavioral specification for the ψ (Psi) AI agent system
+-- Following the principles: Self-Discover, Self-Improve, REPL as truth, Repository as Memory
+
+config {
+    nrepl_port: Integer = 8888
+    session_timeout: Duration = 30.minutes
+    max_conversation_length: Integer = 1000
+    default_cache_retention: String = "short"
+    cost_tracking_precision: Integer = 6  -- decimal places
+}
+
+------------------------------------------------------------
+-- Core Engine: Statechart-based System State
+------------------------------------------------------------
+
+entity AgentEngine {
+    id: EngineId
+    state: offline | initializing | ready | processing | introspecting | evolving | error
+    
+    -- REPL integration (truth source)
+    nrepl_port: Integer
+    repl_session: ReplSession? for this engine
+    
+    -- Repository as memory
+    git_repository: GitRepository for this engine
+    
+    -- Query interface (EQL)
+    pathom_env: PathomEnvironment for this engine
+    
+    -- Relationships
+    conversations: Conversation for this engine
+    providers: Provider for this engine
+    
+    -- Introspection capability
+    query_history: Query for this engine
+    learning_log: LearningEntry for this engine
+    
+    -- Derived state
+    is_queryable: state in [ready, processing, introspecting] and repl_session != null
+    can_self_discover: is_queryable and pathom_env != null
+    can_self_improve: is_queryable and git_repository.is_clean = false
+    memory_size: git_repository.commit_count
+}
+
+entity ReplSession {
+    engine: AgentEngine
+    port: Integer
+    status: connecting | connected | evaluating | disconnected | error
+    
+    -- Session state
+    current_ns: Namespace
+    evaluation_count: Integer
+    
+    -- Derived
+    is_truth_source: status = connected
+    evaluation_history: evaluations for this session
+}
+
+entity GitRepository {
+    engine: AgentEngine
+    path: String
+    status: clean | dirty | staged | committing | pushing | error
+    
+    -- Repository state
+    current_branch: String
+    head_commit: CommitHash
+    commit_count: Integer
+    uncommitted_changes: Integer
+    
+    -- Learning accumulation
+    commits: Commit for this repository
+    
+    -- Derived
+    is_clean: uncommitted_changes = 0
+    has_learning: commits with message contains "λ" count > 0
+    memory_search_enabled: true  -- git log --grep and git grep
+}
+
+entity PathomEnvironment {
+    engine: AgentEngine
+    status: initializing | ready | processing | error
+    
+    -- EQL interface
+    resolvers: Resolver for this environment
+    mutations: Mutation for this environment
+    
+    -- Graph emergence
+    schema_graph: GraphNode for this environment
+    
+    -- Derived
+    is_ready: status = ready and resolvers.count > 0
+    graph_completeness: schema_graph.coverage_percentage
+}
+
+------------------------------------------------------------
+-- AI Conversation System
+------------------------------------------------------------
+
+entity Conversation {
+    id: ConversationId
+    engine: AgentEngine
+    
+    -- Core state
+    status: active | completed | error | suspended
+    system_prompt: String?
+    created_at: Timestamp
+    updated_at: Timestamp
+    
+    -- Message flow
+    messages: Message for this conversation
+    streaming_session: StreamSession? for this conversation
+    
+    -- Tool integration
+    tools: Tool for this conversation
+    
+    -- Cost and usage tracking
+    total_usage: Usage
+    total_cost: CostBreakdown
+    
+    -- Error handling
+    error_message: String?
+    
+    -- Derived
+    is_active: status = active
+    has_pending_tools: messages with requires_tool_response = true count > 0
+    turn_count: messages with role = assistant count
+    last_message: messages.last
+}
+
+entity Message {
+    id: MessageId
+    conversation: Conversation
+    
+    -- Message identity
+    role: user | assistant | tool_result
+    content: MessageContent
+    timestamp: Timestamp
+    
+    -- Provider metadata
+    provider: Provider?
+    model_id: String?
+    api: Api?
+    
+    -- Usage and cost
+    usage: Usage?
+    stop_reason: stop | length | tool_use | error | aborted?
+    error_message: String?
+    
+    -- Tool-specific fields
+    tool_call_id: String?  -- for tool_result messages
+    tool_name: String?
+    is_error: Boolean = false
+    
+    -- Derived
+    is_from_user: role = user
+    is_from_assistant: role = assistant
+    requires_tool_response: role = assistant and stop_reason = tool_use
+    has_usage_data: usage != null
+    cost_total: usage.cost.total when usage.cost != null
+}
+
+entity StreamSession {
+    id: StreamSessionId
+    conversation: Conversation
+    
+    -- Session state
+    status: starting | streaming | completed | failed
+    model: Model
+    started_at: Timestamp
+    completed_at: Timestamp?
+    
+    -- Stream configuration
+    temperature: Float?
+    max_tokens: Integer?
+    cache_retention: none | short | long
+    
+    -- Real-time events
+    events: StreamEvent for this session
+    
+    -- Results
+    final_message: Message?
+    error_message: String?
+    
+    -- Derived
+    is_active: status = streaming
+    duration: completed_at - started_at when completed_at != null
+    event_count: events.count
+}
+
+entity StreamEvent {
+    session: StreamSession
+    sequence: Integer
+    event_type: start | text_start | text_delta | text_end | thinking_start | 
+               thinking_delta | thinking_end | toolcall_start | toolcall_delta | 
+               toolcall_end | done | error
+    timestamp: Timestamp
+    
+    -- Event data
+    content_index: Integer?
+    delta_text: String?
+    error_message: String?
+    
+    -- Derived
+    is_delta: event_type in [text_delta, thinking_delta, toolcall_delta]
+    is_terminal: event_type in [done, error]
+}
+
+------------------------------------------------------------
+-- Provider and Model System  
+------------------------------------------------------------
+
+entity Provider {
+    id: ProviderId
+    engine: AgentEngine
+    
+    -- Provider identity
+    name: anthropic | openai
+    status: registered | active | error | disabled
+    
+    -- Configuration
+    base_url: String
+    api_key: String?  -- Can be dynamically resolved
+    
+    -- Available models
+    models: Model for this provider
+    
+    -- Derived
+    is_available: status = active and models.count > 0
+    model_count: models.count
+}
+
+entity Model {
+    id: ModelId
+    provider: Provider
+    
+    -- Model identity
+    name: String
+    api: anthropic_messages | openai_completions
+    
+    -- Capabilities
+    supports_reasoning: Boolean
+    supports_images: Boolean  
+    supports_text: Boolean
+    context_window: Integer
+    max_tokens: Integer
+    
+    -- Cost structure
+    input_cost: Float
+    output_cost: Float
+    cache_read_cost: Float
+    cache_write_cost: Float
+    
+    -- Derived
+    full_id: provider.name + "/" + name
+    supports_vision: supports_images and supports_text
+    cost_per_1k_input: input_cost * 1000
+    cost_per_1k_output: output_cost * 1000
+}
+
+entity Tool {
+    conversation: Conversation
+    
+    -- Tool definition
+    name: String
+    description: String
+    parameters: JsonSchema
+    
+    -- Execution
+    executions: ToolExecution for this tool
+    
+    -- Derived
+    is_registered: name != ""
+    execution_count: executions.count
+    success_rate: executions with status = completed count / execution_count
+}
+
+entity ToolExecution {
+    tool: Tool
+    
+    -- Execution identity
+    call_id: String
+    status: pending | running | completed | error | cancelled
+    
+    -- Timing
+    started_at: Timestamp?
+    completed_at: Timestamp?
+    
+    -- Results
+    result_content: String?
+    result_details: JsonObject?
+    error_message: String?
+    
+    -- Derived
+    duration: completed_at - started_at when completed_at != null and started_at != null
+    is_successful: status = completed and result_content != null
+}
+
+------------------------------------------------------------
+-- Learning and Memory System
+------------------------------------------------------------
+
+entity LearningEntry {
+    engine: AgentEngine
+    
+    -- Learning identity
+    id: LearningId
+    timestamp: Timestamp
+    
+    -- Learning content
+    discovery: String  -- What was discovered
+    verification: String?  -- How it was verified
+    improvement: String?  -- What was improved
+    
+    -- Context
+    conversation_id: ConversationId?
+    query_context: String?
+    
+    -- Git integration
+    commit_hash: CommitHash?
+    
+    -- Derived
+    is_committed: commit_hash != null
+    learning_type: discovery_type(discovery)  -- exploration, debugging, reflection, etc.
+}
+
+entity Query {
+    engine: AgentEngine
+    
+    -- Query identity
+    id: QueryId
+    timestamp: Timestamp
+    
+    -- EQL query
+    query_eql: String
+    query_context: JsonObject
+    
+    -- Results
+    result: JsonObject?
+    execution_time_ms: Integer?
+    error_message: String?
+    
+    -- Introspection
+    introspection_depth: Integer  -- How deep the self-query went
+    
+    -- Derived
+    is_successful: result != null and error_message = null
+    is_self_introspection: query_eql contains "AgentEngine" or query_eql contains "PathomEnvironment"
+    performance_category: execution_time_category(execution_time_ms)
+}
+
+entity Commit {
+    repository: GitRepository
+    
+    -- Commit identity
+    hash: CommitHash
+    message: String
+    timestamp: Timestamp
+    
+    -- Symbolism (from vocabulary)
+    symbols: String  -- Extracted symbols (ψ, λ, Δ, etc.)
+    mode: build | explore | debug | reflect | play | atom?
+    
+    -- Changes
+    files_changed: Integer
+    lines_added: Integer
+    lines_removed: Integer
+    
+    -- Derived
+    is_learning: message contains "λ"
+    is_delta: message contains "Δ" 
+    change_magnitude: files_changed + lines_added + lines_removed
+    semantic_type: commit_type_from_symbols(symbols)
+}
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value MessageContent {
+    kind: text | structured
+    data: String | StructuredBlocks
+}
+
+value StructuredBlocks {
+    blocks: List<ContentBlock>
+}
+
+value ContentBlock {
+    type: text | thinking | image | tool_call
+    content: String
+    metadata: JsonObject?
+}
+
+value Usage {
+    input_tokens: Integer
+    output_tokens: Integer
+    cache_read_tokens: Integer
+    cache_write_tokens: Integer  
+    total_tokens: Integer
+    cost: CostBreakdown?
+}
+
+value CostBreakdown {
+    input: Float
+    output: Float
+    cache_read: Float
+    cache_write: Float
+    total: Float
+}
+
+value JsonSchema {
+    schema: String  -- JSON Schema definition
+}
+
+value JsonObject {
+    data: String  -- Serialized JSON
+}
+
+value Namespace {
+    name: String
+    aliases: Map<String, String>
+}
+
+------------------------------------------------------------
+-- Surfaces: API and Integration Points
+------------------------------------------------------------
+
+surface ReplInterface {
+    for developer: Developer
+    
+    context engine: AgentEngine with nrepl_port = developer.preferred_port
+    
+    exposes:
+        engine.state
+        engine.repl_session.current_ns
+        engine.repl_session.evaluation_count
+        engine.pathom_env.is_ready
+        engine.conversations.count
+        engine.learning_log
+    
+    provides:
+        ConnectRepl(developer, port: Integer)
+            when engine.state = ready
+        
+        EvaluateExpression(developer, expression: String, namespace: String?)
+            when engine.repl_session.is_truth_source
+        
+        IntrospectSystem(developer, query_eql: String)
+            when engine.can_self_discover
+        
+        QueryHistory(developer, search_terms: String)
+            when engine.git_repository.memory_search_enabled
+    
+    related:
+        ConversationDetail(conversation)
+            when conversation.engine = engine
+        
+        LearningDetail(learning_entry)
+            when learning_entry.engine = engine
+}
+
+surface ConversationAPI {
+    for client: Client
+    
+    context engine: AgentEngine with state = ready
+    
+    exposes:
+        engine.conversations
+        conversation.messages
+        conversation.total_cost
+        conversation.status
+    
+    provides:
+        CreateConversation(client, system_prompt: String?)
+            when engine.is_queryable
+        
+        SendMessage(client, conversation: Conversation, content: String)
+            when conversation.is_active
+            and not conversation.has_pending_tools
+        
+        StreamResponse(client, conversation: Conversation, model: Model, options: StreamOptions)
+            when conversation.is_active
+            and conversation.last_message.is_from_user
+        
+        AddTool(client, conversation: Conversation, tool: Tool)
+            when conversation.is_active
+        
+        GetUsageStats(client, conversation: Conversation)
+            when conversation != null
+    
+    related:
+        StreamSessionDetail(stream_session)
+            when stream_session.conversation.engine = engine
+}
+
+surface LearningInterface {
+    for observer: Observer  -- The human collaborator (刀)
+    
+    context engine: AgentEngine
+    
+    exposes:
+        engine.learning_log
+        engine.git_repository.commits with is_learning = true
+        engine.query_history with is_self_introspection = true
+        engine.memory_size
+        engine.can_self_improve
+    
+    provides:
+        RecordLearning(observer, discovery: String, context: String?)
+            when engine.is_queryable
+        
+        CommitLearning(observer, learning: LearningEntry, message: String)
+            when learning.is_committed = false
+            and engine.git_repository.is_clean = false
+        
+        SearchMemory(observer, pattern: String, scope: commits | content)
+            when engine.git_repository.memory_search_enabled
+        
+        TriggerEvolution(observer, target_state: String)
+            when engine.can_self_improve
+    
+    related:
+        CommitDetail(commit)
+            when commit.repository.engine = engine
+}
+
+------------------------------------------------------------
+-- Behavioral Rules: Self-Discovery and Self-Improvement
+------------------------------------------------------------
+
+rule SystemBootstrap {
+    when: AgentEngine.created
+    
+    ensures: engine.state = initializing
+    ensures: engine.nrepl_port = config.nrepl_port
+    triggers: InitializeComponents(engine)
+}
+
+rule InitializeComponents {
+    when: InitializeComponents(engine)
+    requires: engine.state = initializing
+    
+    let repl_session = create ReplSession {
+        engine: engine,
+        port: engine.nrepl_port,
+        status: connecting,
+        current_ns: {name: "user", aliases: {}},
+        evaluation_count: 0
+    }
+    
+    let git_repo = create GitRepository {
+        engine: engine,
+        path: ".",
+        status: clean,
+        current_branch: "main"
+    }
+    
+    let pathom_env = create PathomEnvironment {
+        engine: engine,
+        status: initializing
+    }
+    
+    ensures: engine.repl_session = repl_session
+    ensures: engine.git_repository = git_repo
+    ensures: engine.pathom_env = pathom_env
+    triggers: ConnectToRepl(repl_session)
+    triggers: InitializePathom(pathom_env)
+}
+
+rule ConnectToRepl {
+    when: ConnectToRepl(repl_session)
+    requires: repl_session.status = connecting
+    
+    -- REPL as truth - establish connection to running system
+    ensures: repl_session.status = connected
+    ensures: repl_session.engine.state = ready
+    
+    -- Now system can self-discover
+    triggers: RegisterCoreResolvers(repl_session.engine.pathom_env)
+}
+
+rule RegisterCoreResolvers {
+    when: RegisterCoreResolvers(pathom_env)
+    requires: pathom_env.status = initializing
+    requires: pathom_env.engine.repl_session.is_truth_source
+    
+    -- Create resolvers for introspection
+    let resolvers = [
+        create Resolver {name: "engine-state", provides: [:engine/state]},
+        create Resolver {name: "conversations", provides: [:conversation/list]},
+        create Resolver {name: "learning-history", provides: [:learning/entries]},
+        create Resolver {name: "git-commits", provides: [:git/commits]},
+        create Resolver {name: "query-history", provides: [:query/history]}
+    ]
+    
+    ensures: pathom_env.resolvers += resolvers
+    ensures: pathom_env.status = ready
+    ensures: pathom_env.engine.can_self_discover = true
+}
+
+rule SelfDiscoveryQuery {
+    when: IntrospectSystem(developer, query_eql)
+    requires: engine.can_self_discover
+    requires: query_eql != ""
+    
+    let query = create Query {
+        engine: engine,
+        query_eql: query_eql,
+        query_context: {developer: developer.id},
+        timestamp: now
+    }
+    
+    -- Execute query against live system (REPL as truth)
+    ensures: query.result = execute_eql(pathom_env, query_eql)
+    ensures: query.execution_time_ms = execution_duration
+    
+    -- Track introspection depth
+    if: query.is_self_introspection
+    ensures: query.introspection_depth = calculate_depth(query_eql)
+    
+    ensures: engine.query_history += query
+    
+    -- Trigger learning if significant discovery
+    if: query.is_self_introspection and query.introspection_depth > 2
+    triggers: ConsiderLearningOpportunity(engine, query)
+}
+
+rule ConsiderLearningOpportunity {
+    when: ConsiderLearningOpportunity(engine, query)
+    requires: query.is_successful
+    requires: query.is_self_introspection
+    
+    -- Analyze query for learning potential
+    let discovery_potential = analyze_discovery_potential(query.result)
+    
+    if: discovery_potential > threshold
+    let learning = create LearningEntry {
+        engine: engine,
+        discovery: extract_discovery(query.result),
+        query_context: query.query_eql,
+        timestamp: now
+    }
+    
+    ensures: engine.learning_log += learning
+    triggers: SuggestLearningCommit(learning)
+}
+
+rule ConversationFlow {
+    when: SendMessage(client, conversation, content)
+    requires: conversation.is_active
+    requires: not conversation.has_pending_tools
+    
+    let user_message = create Message {
+        conversation: conversation,
+        role: user,
+        content: {kind: text, data: content},
+        timestamp: now
+    }
+    
+    ensures: conversation.messages += user_message
+    ensures: conversation.updated_at = now
+    triggers: PrepareResponse(conversation, user_message)
+}
+
+rule PrepareResponse {
+    when: PrepareResponse(conversation, user_message)
+    requires: user_message.is_from_user
+    
+    -- Check for available models
+    let available_models = conversation.engine.providers with status = active
+                          flatMap(p => p.models)
+    
+    requires: available_models.count > 0
+    
+    -- Select appropriate model (could be rule-based)
+    let selected_model = available_models.first
+    
+    triggers: StreamResponse(client, conversation, selected_model, default_options)
+}
+
+rule StreamResponse {
+    when: StreamResponse(client, conversation, model, options)
+    requires: conversation.last_message.is_from_user
+    requires: model.provider.is_available
+    
+    let stream_session = create StreamSession {
+        conversation: conversation,
+        model: model,
+        status: starting,
+        started_at: now,
+        temperature: options.temperature,
+        max_tokens: options.max_tokens,
+        cache_retention: options.cache_retention or config.default_cache_retention
+    }
+    
+    ensures: conversation.streaming_session = stream_session
+    ensures: stream_session.status = streaming
+    triggers: ProcessStreamEvents(stream_session)
+}
+
+rule ProcessStreamEvents {
+    when: ProcessStreamEvents(stream_session)
+    requires: stream_session.is_active
+    
+    -- This rule handles the streaming event loop
+    -- Events come from provider implementations
+    
+    when: StreamEventReceived(stream_session, event)
+    ensures: stream_session.events += event
+    
+    -- Handle text deltas
+    if: event.is_delta
+    triggers: UpdatePartialMessage(stream_session, event)
+    
+    -- Handle completion
+    if: event.is_terminal and event.event_type = done
+    ensures: stream_session.status = completed
+    ensures: stream_session.completed_at = now
+    triggers: FinalizeMessage(stream_session)
+    
+    -- Handle errors
+    if: event.is_terminal and event.event_type = error
+    ensures: stream_session.status = failed
+    ensures: stream_session.error_message = event.error_message
+    triggers: HandleStreamError(stream_session)
+}
+
+rule FinalizeMessage {
+    when: FinalizeMessage(stream_session)
+    requires: stream_session.status = completed
+    
+    let final_message = create Message {
+        conversation: stream_session.conversation,
+        role: assistant,
+        content: aggregate_stream_content(stream_session.events),
+        timestamp: stream_session.completed_at,
+        provider: stream_session.model.provider.name,
+        model_id: stream_session.model.id,
+        usage: calculate_usage(stream_session.events),
+        stop_reason: extract_stop_reason(stream_session.events)
+    }
+    
+    ensures: stream_session.final_message = final_message
+    ensures: stream_session.conversation.messages += final_message
+    ensures: stream_session.conversation.updated_at = now
+    
+    -- Update cost tracking
+    if: final_message.has_usage_data
+    ensures: stream_session.conversation.total_usage += final_message.usage
+    ensures: stream_session.conversation.total_cost += final_message.usage.cost
+    
+    -- Check for tool requirements
+    if: final_message.requires_tool_response
+    triggers: ExecuteToolCalls(final_message)
+    
+    -- Log completion for learning
+    triggers: LogConversationTurn(stream_session.conversation, final_message)
+}
+
+rule SelfImprovementCycle {
+    when: TriggerEvolution(observer, target_state)
+    requires: engine.can_self_improve
+    requires: engine.git_repository.uncommitted_changes > 0
+    
+    ensures: engine.state = evolving
+    
+    -- Work → Learn → Verify → Update → Evolve pattern
+    let current_learnings = engine.learning_log with is_committed = false
+    
+    -- Verify learnings against REPL truth
+    let verified_learnings = current_learnings.each(l => verify_learning(l, engine.repl_session))
+    
+    -- Update system based on verified learnings
+    triggers: ApplyVerifiedLearnings(engine, verified_learnings)
+    
+    -- Commit evolution
+    triggers: CommitEvolution(engine, target_state)
+}
+
+rule CommitEvolution {
+    when: CommitEvolution(engine, target_state)
+    requires: engine.state = evolving
+    
+    let commit_message = generate_evolution_message(target_state, engine.learning_log)
+    
+    let commit = create Commit {
+        repository: engine.git_repository,
+        message: "ψ " + commit_message + " λ",  -- Using vocabulary symbols
+        timestamp: now,
+        symbols: "ψλ",
+        mode: reflect
+    }
+    
+    ensures: engine.git_repository.commits += commit
+    ensures: engine.git_repository.head_commit = commit.hash
+    ensures: engine.git_repository.status = clean
+    ensures: engine.state = ready
+    
+    -- Mark learnings as committed
+    ensures: engine.learning_log.each(l => l.commit_hash = commit.hash)
+    
+    -- Gift to future self complete
+    triggers: LogEvolutionComplete(engine, commit)
+}
+
+rule MemorySearch {
+    when: SearchMemory(observer, pattern, scope)
+    requires: engine.git_repository.memory_search_enabled
+    
+    let search_results = if scope = commits 
+                        then git_search_commits(pattern)
+                        else git_search_content(pattern)
+    
+    -- Return formatted results with vocabulary symbols
+    ensures: search_results.each(r => r.symbols = extract_symbols(r.content))
+}
+
+------------------------------------------------------------
+-- External Dependencies
+------------------------------------------------------------
+
+external entity Developer {
+    id: DeveloperId
+    preferred_port: Integer
+}
+
+external entity Client {
+    id: ClientId
+}
+
+external entity Observer {
+    id: ObserverId
+    -- The human collaborator (刀) guiding evolution
+}
+
+------------------------------------------------------------
+-- Open Questions Following Psi Principles
+------------------------------------------------------------
+
+open_question "Pathom resolver composition - how should resolvers dynamically register based on discovered capabilities?"
+open_question "Statechart modeling - should conversation states be modeled as explicit statechart entities?"
+open_question "Memory pruning - how should the system manage git repository size and query performance?"
+open_question "Learning verification - what constitutes sufficient verification against REPL truth?"
+open_question "Evolution triggers - when should the system automatically trigger self-improvement cycles?"
+open_question "Query optimization - how should EQL queries be optimized for introspection performance?"
+open_question "Provider extensibility - how should new AI providers be dynamically discovered and integrated?"
+open_question "Cost prediction - should the system predict conversation costs before execution?"
