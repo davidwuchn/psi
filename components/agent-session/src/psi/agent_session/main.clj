@@ -4,6 +4,7 @@
    Usage:
      clojure -M -m psi.agent-session.main
      clojure -M -m psi.agent-session.main --model claude-3-5-haiku
+     clojure -M -m psi.agent-session.main --log-level DEBUG
 
    What it does:
      1. Creates an agent session (statechart + agent-core + extension registry)
@@ -23,12 +24,34 @@
      /help    — print available commands"
   (:require
    [clojure.string :as str]
+   [taoensso.timbre :as timbre]
    [psi.agent-session.core :as session]
    [psi.agent-session.executor :as executor]
    [psi.agent-session.tools :as tools]
    [psi.agent-core.core :as agent]
    [psi.ai.models :as models])
   (:gen-class))
+
+;; ============================================================
+;; Logging
+;; ============================================================
+
+(def ^:private valid-log-levels
+  #{:trace :debug :info :warn :error :fatal :report})
+
+(defn- set-log-level!
+  "Set Timbre's minimum log level (case-insensitive keyword).
+  Defaults to :info if the string is unrecognised."
+  [level-str]
+  (let [kw    (keyword (str/lower-case (or level-str "info")))
+        level (if (valid-log-levels kw) kw :info)]
+    (timbre/set-min-level! level)))
+
+(defn- log-level-from-args
+  "Extract --log-level <LEVEL> from CLI args, or fall back to INFO."
+  [args]
+  (or (second (drop-while #(not= "--log-level" %) args))
+      "INFO"))
 
 ;; ============================================================
 ;; Model resolution
@@ -200,7 +223,8 @@
 ;; ============================================================
 
 (defn -main
-  "Entry point. Accepts optional --model <key> flag."
+  "Entry point. Accepts optional --model <key> and --log-level <LEVEL> flags."
   [& args]
+  (set-log-level! (log-level-from-args args))
   (let [model-key (model-key-from-args args)]
     (run-session model-key)))

@@ -115,6 +115,7 @@ search text (file contents): `git grep "λ"`
 **JVM Clojure**.
 
 **malli**: rather than spec
+**timbre**: logging (`taoensso.timbre`); set min level via `timbre/set-min-level!`; pulled in transitively by statecharts
 **babashka**: `bb --help`
 **bbin:** `bbin --help`
 **clojure-mcp-light:** `clj-paren-repair --help` `clj-nrepl-eval --help`
