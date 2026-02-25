@@ -184,3 +184,101 @@ Use a stub provider closure to drive streaming tests without HTTP:
 ```
 
 Swap it into the registry for the test, restore afterward.
+
+---
+
+## 2026-02-25 - Nullable Pattern / Testing Without Mocks
+
+### λ Nullable Pattern in Clojure — Isolated Context Factory
+
+The Nullable pattern replaces global-atom resets and mock/spy setups with
+isolated context factories.  Every component that owns mutable state gets a
+`create-context` (or `create-registry`, `create-query-context`) factory that
+returns a plain map of fresh atoms:
+
+```clojure
+(defn create-context []
+  {:engines           (atom {})
+   :system-state      (atom nil)
+   :state-transitions (atom [])
+   :sc-env            (atom nil)})
+```
+
+All mutable functions gain a `*-in` context-aware variant taking the context
+as first arg.  The global (singleton) API becomes thin wrappers via a
+`global-context` helper that returns the `defonce` atoms:
+
+```clojure
+(defn- global-context []
+  {:engines engines :system-state system-state ...})
+
+(defn create-engine [engine-id config]
+  (create-engine-in (global-context) engine-id config))
+```
+
+Tests create their own context — no shared state, no cleanup fixtures:
+
+```clojure
+(deftest engine-lifecycle-test
+  (let [ctx (engine/create-context)
+        eng (engine/create-engine-in ctx "test" {})]
+    (is (= :initializing (:engine-status eng)))))
+```
+
+### λ Isolated Query Context (QueryContext record)
+
+`query/create-query-context` returns a `QueryContext` record with its own
+registry + env atom.  Tests register resolvers into it and query against it:
+
+```clojure
+(let [ctx (query/create-query-context)]
+  (query/register-resolver-in! ctx my-resolver)
+  (query/rebuild-env-in! ctx)
+  (query/query-in ctx {:user/id 1} [:user/name]))
+```
+
+This replaces the `with-clean-query` macro that reset global atoms.
+
+### λ Isolation Tests Are Worth Adding
+
+Adding an explicit test that two contexts are independent catches regressions
+if the factory accidentally shares state:
+
+```clojure
+(deftest context-isolation-test
+  (let [ctx-a (query/create-query-context)
+        ctx-b (query/create-query-context)]
+    (query/register-resolver-in! ctx-a greeting-resolver)
+    (is (= 1 (:resolver-count (query/graph-summary-in ctx-a))))
+    (is (= 0 (:resolver-count (query/graph-summary-in ctx-b))))))
+```
+
+### λ clj-kondo Cache Goes Stale After Refactors
+
+After adding new public vars to a namespace, clj-kondo's `.cache/` still
+holds the old snapshot → LSP reports "Unresolved var" for the new fns even
+though they compile fine.
+
+**Fix**: re-lint the source directories to rebuild the cache:
+```bash
+clj-kondo --lint components/query/src components/ai/src ...
+```
+No flags needed — linting source updates the cache in place.
+
+### λ Avoid Redundant `let` for clj-kondo
+
+clj-kondo warns "Redundant let expression" when a `let` has a single binding
+(even if it's map destructuring).  Merge the inner `let` into the outer one
+to silence it:
+
+```clojure
+;; ✗ triggers warning
+(let [ctx (create-context)]
+  (let [{:keys [future session]} (stream-response-in ctx ...)]
+    @future ...))
+
+;; ✓ merge bindings
+(let [ctx                       (create-context)
+      {bg :future session :session} (stream-response-in ctx ...)]
+  @bg ...)
+```
