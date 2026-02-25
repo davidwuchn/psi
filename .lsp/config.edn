@@ -1,0 +1,8 @@
+{:linters
+ {:clojure-lsp/unused-public-var
+  {:exclude #{psi.query.registry
+              psi.query.env
+              psi.query.core
+              psi.history.git
+              psi.history.resolvers
+              psi.history.core}}}}
