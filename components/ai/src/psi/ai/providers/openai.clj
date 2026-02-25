@@ -71,7 +71,7 @@
   (let [request (build-request conversation model options)]
     (try
       (let [response (http/post (str (:base-url model) "/chat/completions")
-                                (merge request {:as :stream}))]
+                                (merge request {:as :stream :cookie-policy :none}))]
         (with-open [reader (io/reader (:body response))]
           (doseq [line (line-seq reader)]
             (when-let [chunk (parse-sse-line line)]
