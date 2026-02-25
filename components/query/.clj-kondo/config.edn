@@ -1,5 +1,1 @@
-{:linters
- {:unused-public-vars
-  {:exclude #{psi.query.registry
-              psi.query.env
-              psi.query.core}}}}
+{}
