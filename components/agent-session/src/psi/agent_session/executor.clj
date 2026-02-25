@@ -112,8 +112,12 @@
                       (deliver done-p final))
                     :error
                     (let [err-msg (:error-message event)
+                          partial (str text-buf)
+                          content (cond-> []
+                                    (seq partial) (conj {:type :text :text partial})
+                                    :always       (conj {:type :error :text err-msg}))
                           final   {:role          "assistant"
-                                   :content       [{:type :text :text (str text-buf)}]
+                                   :content       content
                                    :stop-reason   :error
                                    :error-message err-msg
                                    :timestamp     (java.time.Instant/now)}]
@@ -123,7 +127,8 @@
                     nil)))
     ;; Block until streaming completes (future in ai layer)
     (deref done-p 120000 {:role          "assistant"
-                          :content       []
+                          :content       [{:type  :error
+                                           :text  "Timeout waiting for LLM response"}]
                           :stop-reason   :error
                           :error-message "Timeout waiting for LLM response"
                           :timestamp     (java.time.Instant/now)})))

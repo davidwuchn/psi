@@ -137,11 +137,17 @@
 ;; ============================================================
 
 (defn- print-assistant-message
-  "Print the text content of an assistant message map."
+  "Print the text content of an assistant message map.
+  If the message carries an error, print it clearly instead of (or after) any partial text."
   [msg]
-  (let [text (str/join (keep #(when (= :text (:type %)) (:text %))
-                             (:content msg)))]
-    (println (str "\nψ: " text "\n"))))
+  (let [text   (str/join (keep #(when (= :text  (:type %)) (:text %)) (:content msg)))
+        errors (keep     #(when (= :error (:type %)) (:text %)) (:content msg))]
+    (when (seq text)
+      (println (str "\nψ: " text "\n")))
+    (doseq [err errors]
+      (println (str "\n[Provider error: " err "]\n")))
+    (when (and (empty? text) (empty? errors))
+      (println "\nψ: (no response)\n"))))
 
 ;; ============================================================
 ;; Core: one prompt → response cycle
