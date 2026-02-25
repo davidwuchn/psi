@@ -27,8 +27,7 @@
    [psi.agent-session.executor :as executor]
    [psi.agent-session.tools :as tools]
    [psi.agent-core.core :as agent]
-   [psi.ai.models :as models]
-   [psi.query.core :as query])
+   [psi.ai.models :as models])
   (:gen-class))
 
 ;; ============================================================
