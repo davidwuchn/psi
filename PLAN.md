@@ -24,26 +24,22 @@ Ordered steps toward AI COMPLETE.
 
 ---
 
-## Current: Step 4 — Wire agent-session into global query graph
+### Step 4 — Wire agent-session into global query graph  ✓
+- `agent-session.core`: `register-resolvers!` / `register-resolvers-in!`
+- `introspection.core`: `create-context {:agent-session-ctx …}`,
+  `query-agent-session-in`, single-rebuild registration
+- `main.clj`: calls `register-resolvers!` at startup
+- New tests: `register-resolvers-in!-test`, `agent_session_test.clj`
 
-Register `psi.agent-session.resolvers/all-resolvers` into the global Pathom graph
-so `:psi.agent-session/*` attributes are queryable alongside `:psi.system/*`
-and `:psi.engine/*`.
+---
 
-Tasks:
-- Add `register-resolvers!` / `register-resolvers-in!` to `agent-session.core`
-  (matching the pattern in `psi.ai.core`)
-- Call `register-resolvers!` from a system startup fn (or `main.clj`)
-- Update `introspection` component to include agent-session resolvers in its
-  isolated query context
-- Add `agent-session` to `introspection/create-context` so isolated contexts
-  can wrap a session
+## Current: Step 5 — Graph emergence
 
 ---
 
 ## Backlog
 
-5. Graph emergence — register domain resolvers, surface capability graph via EQL
+5. (Current) Graph emergence — register domain resolvers, surface capability graph via EQL
 6. HTTP API — openapi spec + martian client, surface via Pathom mutations
 7. RPC surface — JSON stdio protocol for headless / programmatic control
 8. Memory layer — combine query + history + knowledge into queryable memory
