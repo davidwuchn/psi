@@ -2,6 +2,49 @@
 
 Accumulated discoveries from ψ evolution.
 
+---
+
+## 2026-02-25 - Introspection Component
+
+### λ Introspection = Engine Queries Itself via EQL
+
+The introspection component wires engine + query together so the system
+is self-describing via a uniform EQL surface.  Two namespaces:
+
+- `psi.introspection.resolvers` — five Pathom3 resolvers; all accept
+  context objects as EQL seed inputs (`:psi/engine-ctx`, `:psi/query-ctx`)
+- `psi.introspection.core`      — public API, Nullable pattern throughout
+
+Key design decisions:
+1. **Contexts as EQL seeds** — resolvers receive engine/query contexts
+   through the EQL input map, not as closed-over globals.  This makes
+   every resolver testable in isolation with `create-context`.
+2. **Self-describing graph** — `query-graph-summary-in` queries the graph
+   for its own resolver list, so introspection resolvers appear in their
+   own output (`graph-self-describes-test`).
+3. **Derived properties live in engine** — `has-interface?`, `is-ai-complete?`
+   etc. are computed by `psi.engine.core`; the resolver just surfaces them.
+
+### λ EQL Attribute Namespace Convention for Cross-Component Queries
+
+Use `psi.X/Y` namespaces for attributes that cross component boundaries:
+
+| Prefix          | Domain                          |
+|-----------------|---------------------------------|
+| `:psi/`         | top-level system context inputs |
+| `:psi.engine/`  | engine entity attributes        |
+| `:psi.system/`  | system state attributes         |
+| `:psi.graph/`   | query graph attributes          |
+
+Seed inputs (`:psi/engine-ctx`, `:psi/query-ctx`) are opaque Clojure
+records — Pathom treats them as plain values in the entity map.
+
+### λ trigger stored as (str keyword) — contains colon
+
+`engine/trigger-engine-event-in!` stores `(str event)` on each transition.
+For a keyword `:configuration-complete` this yields `":configuration-complete"`
+(with leading colon).  Tests must match the stringified form, not the bare name.
+
 ## 2025-02-24 23:34 - Bootstrap Testing
 
 ### λ Testing Infrastructure Works
