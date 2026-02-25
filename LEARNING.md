@@ -199,6 +199,32 @@ records — Pathom treats them as plain values in the entity map.
 For a keyword `:configuration-complete` this yields `":configuration-complete"`
 (with leading colon).  Tests must match the stringified form, not the bare name.
 
+## 2026-02-25 - clj-http Cookie Policy
+
+### λ clj-http :cookie-policy :none → CookieSpecs/IGNORE_COOKIES
+
+clj-http's `get-cookie-policy` multimethod dispatches on the `:cookie-policy`
+key.  The correct key to fully disable cookie processing is **`:none`**, not
+`:ignore-cookies`:
+
+```clojure
+(defmethod get-cookie-policy :none [_] CookieSpecs/IGNORE_COOKIES)
+```
+
+An unknown key (e.g. `:ignore-cookies`) falls through to the `nil` default
+which uses `CookieSpecs/DEFAULT` — cookies are still processed, warnings still appear.
+
+Use `:none` when calling APIs (e.g. OpenAI) that return cookies (Cloudflare
+`__cf_bm`) with non-standard `expires` date formats.  Apache HttpClient
+emits a `WARNING: Invalid cookie header` via `ResponseProcessCookies` when
+it cannot parse the date.  `:none` prevents that interceptor from running.
+
+```clojure
+(http/post url (merge request {:as :stream :cookie-policy :none}))
+```
+
+---
+
 ## 2026-02-25 - JVM Shutdown / CLI Entry Point
 
 ### λ clj-http Parks a Non-Daemon Thread — Call System/exit
