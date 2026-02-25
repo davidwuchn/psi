@@ -1,0 +1,655 @@
+-- agent.allium
+--
+-- Scope: Stateful LLM agent with tool execution, streaming events, and
+--        mid-run message injection.
+--
+-- Includes:
+--   - Agent lifecycle (start, run, stop, abort, reset)
+--   - Conversation turns (LLM call + tool execution)
+--   - Steering messages (interrupt mid-run)
+--   - Follow-up messages (continue after completion)
+--   - Proxy streaming (backend-proxied LLM calls)
+--   - Custom message types (declaration merging extension point)
+--
+-- Excludes:
+--   - LLM provider details (model APIs, transports, auth tokens)
+--   - UI rendering (layout, components, CSS)
+--   - Session caching internals
+--   - Context pruning / compaction algorithms (implementation concern)
+
+------------------------------------------------------------
+-- External Entities
+------------------------------------------------------------
+
+external entity Model {
+    -- An LLM model known to the underlying AI runtime.
+    provider: String
+    id: String
+    api: String
+}
+
+external entity LlmMessage {
+    -- A message in LLM-native format (user | assistant | toolResult).
+    -- The LLM understands only these three roles.
+    role: user | assistant | toolResult
+}
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value TextContent {
+    type: text
+    text: String
+}
+
+value ImageContent {
+    type: image
+    data: String        -- base-64 encoded
+    mimeType: String
+}
+
+value ThinkingContent {
+    type: thinking
+    thinking: String
+}
+
+value ToolCallContent {
+    type: toolCall
+    id: String
+    name: String
+    arguments: String   -- JSON-encoded
+}
+
+value UsageStats {
+    input: Integer
+    output: Integer
+    cacheRead: Integer
+    cacheWrite: Integer
+    totalTokens: Integer
+}
+
+------------------------------------------------------------
+-- Entities and Variants
+------------------------------------------------------------
+
+entity AgentMessage {
+    -- A message that lives in the agent conversation context.
+    -- Superset of LlmMessage: may include custom app-defined roles.
+    role: String
+    timestamp: Timestamp
+
+    -- Derived: is this message passable to the LLM?
+    is_llm_compatible: role in [user, assistant, toolResult]
+}
+
+entity AssistantMessage : AgentMessage {
+    -- An assistant (LLM) response.
+    role: assistant
+    content: List<TextContent | ThinkingContent | ToolCallContent>
+    model: String
+    provider: String
+    stopReason: stop | length | toolUse | aborted | error
+    usage: UsageStats
+    errorMessage: String?
+
+    -- Derived
+    tool_calls: content with type = toolCall
+    has_tool_calls: tool_calls.count > 0
+    is_error: stopReason in [aborted, error]
+}
+
+entity UserMessage : AgentMessage {
+    role: user
+    content: List<TextContent | ImageContent>
+}
+
+entity ToolResultMessage : AgentMessage {
+    role: toolResult
+    toolCallId: String
+    toolName: String
+    content: List<TextContent | ImageContent>
+    isError: Boolean
+}
+
+entity AgentTool {
+    -- A capability the agent can invoke during a turn.
+    name: String
+    label: String           -- human-readable label for UI display
+    description: String
+    parameters: String      -- JSON Schema for the tool's parameters
+}
+
+entity AgentState {
+    -- Full mutable state of an Agent instance.
+    systemPrompt: String
+    model: Model
+    thinkingLevel: off | minimal | low | medium | high | xhigh
+    tools: List<AgentTool>
+    messages: List<AgentMessage>        -- full conversation history
+    isStreaming: Boolean
+    streamMessage: AgentMessage?        -- partial message during streaming
+    pendingToolCalls: Set<String>       -- toolCallIds currently executing
+    error: String?
+
+    steeringQueue: List<AgentMessage>
+    followUpQueue: List<AgentMessage>
+
+    steeringMode: all | one-at-a-time
+    followUpMode: all | one-at-a-time
+
+    -- Derived
+    is_idle: not isStreaming
+    has_queued_messages: steeringQueue.count > 0 or followUpQueue.count > 0
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    default_model_provider: String = "google"
+    default_model_id: String = "gemini-2.5-flash-lite-preview-06-17"
+    default_thinking_level: off | minimal | low | medium | high | xhigh = off
+    default_steering_mode: all | one-at-a-time = one-at-a-time
+    default_follow_up_mode: all | one-at-a-time = one-at-a-time
+    max_retry_delay: Duration = 60.seconds
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+-- ── Agent initialisation ────────────────────────────────
+
+rule CreateAgent {
+    -- Instantiate a new agent with optional initial configuration.
+    when: CreateAgent(initial_state?)
+
+    ensures: AgentState.created(
+        systemPrompt: initial_state.systemPrompt or "",
+        model: initial_state.model or Model{provider: config.default_model_provider, id: config.default_model_id},
+        thinkingLevel: initial_state.thinkingLevel or config.default_thinking_level,
+        tools: initial_state.tools or [],
+        messages: initial_state.messages or [],
+        isStreaming: false,
+        streamMessage: null,
+        pendingToolCalls: {},
+        error: null,
+        steeringQueue: [],
+        followUpQueue: [],
+        steeringMode: config.default_steering_mode,
+        followUpMode: config.default_follow_up_mode
+    )
+}
+
+rule ResetAgent {
+    -- Clear conversation and streaming state; keep configuration.
+    when: ResetAgent(agent)
+
+    ensures: agent.messages = []
+    ensures: agent.isStreaming = false
+    ensures: agent.streamMessage = null
+    ensures: agent.pendingToolCalls = {}
+    ensures: agent.error = null
+    ensures: agent.steeringQueue = []
+    ensures: agent.followUpQueue = []
+}
+
+-- ── Configuration updates ───────────────────────────────
+
+rule SetSystemPrompt {
+    when: SetSystemPrompt(agent, prompt)
+    ensures: agent.systemPrompt = prompt
+}
+
+rule SetModel {
+    when: SetModel(agent, model)
+    ensures: agent.model = model
+}
+
+rule SetThinkingLevel {
+    when: SetThinkingLevel(agent, level)
+    ensures: agent.thinkingLevel = level
+}
+
+rule SetTools {
+    when: SetTools(agent, tools)
+    ensures: agent.tools = tools
+}
+
+rule SetSteeringMode {
+    when: SetSteeringMode(agent, mode)
+    ensures: agent.steeringMode = mode
+}
+
+rule SetFollowUpMode {
+    when: SetFollowUpMode(agent, mode)
+    ensures: agent.followUpMode = mode
+}
+
+-- ── Message management ──────────────────────────────────
+
+rule ReplaceMessages {
+    when: ReplaceMessages(agent, messages)
+    ensures: agent.messages = messages
+}
+
+rule AppendMessage {
+    when: AppendMessage(agent, message)
+    ensures: agent.messages = agent.messages + [message]
+}
+
+rule ClearMessages {
+    when: ClearMessages(agent)
+    ensures: agent.messages = []
+}
+
+-- ── Prompting ───────────────────────────────────────────
+
+rule PromptWithText {
+    -- Send a text (+ optional images) prompt to the agent.
+    when: Prompt(agent, text, images?)
+
+    requires: agent.is_idle
+
+    let user_message = UserMessage.created(
+        role: user,
+        content: [TextContent{text}] + (images or []),
+        timestamp: now
+    )
+
+    ensures: AgentLoopStarted(agent, [user_message])
+}
+
+rule PromptWithMessages {
+    -- Send one or more pre-formed AgentMessages as the next prompt.
+    when: PromptWithMessages(agent, messages)
+
+    requires: agent.is_idle
+    requires: messages.count > 0
+
+    ensures: AgentLoopStarted(agent, messages)
+}
+
+rule Continue {
+    -- Resume from current context without adding a new message.
+    -- Used for retries after errors or to deliver queued messages.
+    when: Continue(agent)
+
+    requires: agent.is_idle
+    requires: agent.messages.count > 0
+    requires: agent.messages.last.role != assistant
+
+    ensures: AgentLoopStarted(agent, [])
+}
+
+-- ── Agent loop ──────────────────────────────────────────
+
+rule AgentLoopStarted {
+    -- Internal: the loop begins. Sets streaming flag and emits agent_start.
+    when: AgentLoopStarted(agent, new_messages)
+
+    ensures: agent.isStreaming = true
+    ensures: agent.streamMessage = null
+    ensures: agent.error = null
+    ensures: AgentEvent.emitted(agent, {type: agent_start})
+    ensures: TurnBegins(agent, new_messages)
+}
+
+rule TurnBegins {
+    -- Internal: each turn starts by emitting turn_start and injecting pending messages.
+    when: TurnBegins(agent, pending_messages)
+
+    ensures: AgentEvent.emitted(agent, {type: turn_start})
+    ensures:
+        for msg in pending_messages:
+            agent.messages = agent.messages + [msg]
+            AgentEvent.emitted(agent, {type: message_start, message: msg})
+            AgentEvent.emitted(agent, {type: message_end, message: msg})
+    ensures: AssistantResponseStreamed(agent)
+}
+
+rule AssistantResponseStreamed {
+    -- Internal: the LLM is called and the response is streamed.
+    -- Context is transformed and converted to LLM format before the call.
+    when: AssistantResponseStreamed(agent)
+
+    ensures:
+        -- Partial message is established at stream start
+        AgentEvent.emitted(agent, {type: message_start, message: agent.streamMessage})
+    ensures:
+        -- Incremental updates are emitted as tokens arrive
+        AgentEvent.emitted(agent, {type: message_update, message: agent.streamMessage})
+    ensures:
+        -- Final message replaces partial on completion
+        AgentEvent.emitted(agent, {type: message_end, message: agent.streamMessage})
+        agent.messages = agent.messages + [agent.streamMessage]
+        agent.streamMessage = null
+    ensures: TurnCompletes(agent, agent.messages.last)
+}
+
+rule TurnCompletesWithTools {
+    -- Internal: assistant requested tool calls; execute them before next turn.
+    when: TurnCompletes(agent, assistant_message)
+
+    requires: assistant_message.has_tool_calls
+
+    ensures: ToolCallsExecuted(agent, assistant_message)
+}
+
+rule TurnCompletesWithoutTools {
+    -- Internal: no tool calls; check for steering then follow-ups.
+    when: TurnCompletes(agent, assistant_message)
+
+    requires: not assistant_message.has_tool_calls
+
+    ensures: AgentEvent.emitted(agent, {type: turn_end, message: assistant_message, toolResults: []})
+    ensures: SteeringOrFollowUpChecked(agent)
+}
+
+rule TurnEndsOnError {
+    -- Internal: LLM returned an error or was aborted; end agent run.
+    when: TurnCompletes(agent, assistant_message)
+
+    requires: assistant_message.is_error
+
+    ensures: agent.error = assistant_message.errorMessage
+    ensures: AgentEvent.emitted(agent, {type: turn_end, message: assistant_message, toolResults: []})
+    ensures: AgentLoopEnded(agent)
+}
+
+-- ── Tool execution ──────────────────────────────────────
+
+rule ToolCallsExecuted {
+    -- Execute tool calls sequentially. After each, poll for steering messages.
+    when: ToolCallsExecuted(agent, assistant_message)
+
+    let tool_calls = assistant_message.tool_calls
+
+    ensures:
+        let all_results = []
+        for call in tool_calls:
+            AgentEvent.emitted(agent, {type: tool_execution_start, toolCallId: call.id, toolName: call.name, args: call.arguments})
+            let pending_steering = SteeringPolled(agent)
+            if pending_steering.count > 0:
+                -- Skip remaining calls; steering messages take priority
+                for remaining in tool_calls from call onwards:
+                    let skipped_result = ToolResultMessage.created(
+                        toolCallId: remaining.id,
+                        toolName: remaining.name,
+                        content: [{type: text, text: "Skipped due to queued user message."}],
+                        isError: true,
+                        timestamp: now
+                    )
+                    AgentEvent.emitted(agent, {type: tool_execution_start, toolCallId: remaining.id, toolName: remaining.name, args: remaining.arguments})
+                    AgentEvent.emitted(agent, {type: tool_execution_end, toolCallId: remaining.id, toolName: remaining.name, result: skipped_result, isError: true})
+                    AgentEvent.emitted(agent, {type: message_start, message: skipped_result})
+                    AgentEvent.emitted(agent, {type: message_end, message: skipped_result})
+                    all_results = all_results + [skipped_result]
+                agent.messages = agent.messages + all_results
+                AgentEvent.emitted(agent, {type: turn_end, message: assistant_message, toolResults: all_results})
+                -- Inject steering and loop
+                TurnBegins(agent, pending_steering)
+            else:
+                let result = ToolExecuted(agent, call)
+                all_results = all_results + [result]
+        agent.messages = agent.messages + all_results
+        AgentEvent.emitted(agent, {type: turn_end, message: assistant_message, toolResults: all_results})
+        SteeringOrFollowUpChecked(agent)
+}
+
+rule ToolExecuted {
+    -- Execute a single tool call and emit lifecycle events.
+    when: ToolExecuted(agent, tool_call)
+
+    let tool = agent.tools with name = tool_call.name
+
+    ensures:
+        if exists tool:
+            let result = tool.execute(tool_call.id, tool_call.arguments)
+            AgentEvent.emitted(agent, {type: tool_execution_end, toolCallId: tool_call.id, toolName: tool_call.name, result: result, isError: false})
+            let msg = ToolResultMessage.created(
+                toolCallId: tool_call.id,
+                toolName: tool_call.name,
+                content: result.content,
+                isError: false,
+                timestamp: now
+            )
+            AgentEvent.emitted(agent, {type: message_start, message: msg})
+            AgentEvent.emitted(agent, {type: message_end, message: msg})
+        else:
+            let error_result = {content: [{type: text, text: "Tool not found: " + tool_call.name}]}
+            AgentEvent.emitted(agent, {type: tool_execution_end, toolCallId: tool_call.id, toolName: tool_call.name, result: error_result, isError: true})
+            let msg = ToolResultMessage.created(
+                toolCallId: tool_call.id,
+                toolName: tool_call.name,
+                content: error_result.content,
+                isError: true,
+                timestamp: now
+            )
+            AgentEvent.emitted(agent, {type: message_start, message: msg})
+            AgentEvent.emitted(agent, {type: message_end, message: msg})
+}
+
+-- ── Steering and follow-up ──────────────────────────────
+
+rule QueueSteeringMessage {
+    -- Add a message to the steering queue (interrupt mid-run after current tool).
+    when: Steer(agent, message)
+    ensures: agent.steeringQueue = agent.steeringQueue + [message]
+}
+
+rule QueueFollowUpMessage {
+    -- Add a message to the follow-up queue (delivered after agent completes).
+    when: FollowUp(agent, message)
+    ensures: agent.followUpQueue = agent.followUpQueue + [message]
+}
+
+rule ClearSteeringQueue {
+    when: ClearSteeringQueue(agent)
+    ensures: agent.steeringQueue = []
+}
+
+rule ClearFollowUpQueue {
+    when: ClearFollowUpQueue(agent)
+    ensures: agent.followUpQueue = []
+}
+
+rule SteeringOrFollowUpChecked {
+    -- After a turn completes with no tool calls (or tools done), check queues.
+    when: SteeringOrFollowUpChecked(agent)
+
+    ensures:
+        let steering = DequeueMessages(agent.steeringQueue, agent.steeringMode)
+        if steering.count > 0:
+            agent.steeringQueue = agent.steeringQueue without steering
+            TurnBegins(agent, steering)
+        else:
+            let follow_ups = DequeueMessages(agent.followUpQueue, agent.followUpMode)
+            if follow_ups.count > 0:
+                agent.followUpQueue = agent.followUpQueue without follow_ups
+                TurnBegins(agent, follow_ups)
+            else:
+                AgentLoopEnded(agent)
+}
+
+rule DequeueMessages {
+    -- Return messages from a queue according to the delivery mode.
+    when: DequeueMessages(queue, mode)
+
+    ensures:
+        if mode = one-at-a-time:
+            if queue.count > 0:
+                result = [queue.first]
+            else:
+                result = []
+        else:
+            -- mode = all
+            result = queue
+}
+
+-- ── Agent loop end ──────────────────────────────────────
+
+rule AgentLoopEnded {
+    -- Tear down streaming state and emit agent_end.
+    when: AgentLoopEnded(agent)
+
+    ensures: agent.isStreaming = false
+    ensures: agent.streamMessage = null
+    ensures: agent.pendingToolCalls = {}
+    ensures: AgentEvent.emitted(agent, {type: agent_end, messages: agent.messages})
+}
+
+-- ── Abort ───────────────────────────────────────────────
+
+rule AbortAgent {
+    -- Cancel the current operation. In-flight LLM calls and tool executions stop.
+    when: AbortAgent(agent)
+
+    requires: agent.isStreaming
+
+    ensures: agent.isStreaming = false
+    ensures: agent.streamMessage = null
+    ensures: agent.pendingToolCalls = {}
+    -- Partial assistant message is preserved in history with stopReason = aborted
+}
+
+------------------------------------------------------------
+-- Surfaces
+------------------------------------------------------------
+
+actor CallerApplication {
+    -- Any application embedding the Agent (TUI, web UI, CLI, tests).
+    identified_by: User
+}
+
+surface AgentApi {
+    -- The public API surface of an Agent instance.
+    for caller: CallerApplication
+
+    context agent: AgentState
+
+    exposes:
+        agent.state
+        agent.isStreaming
+        agent.streamMessage
+        agent.pendingToolCalls
+        agent.error
+        agent.has_queued_messages
+        agent.steeringMode
+        agent.followUpMode
+
+    provides:
+        Prompt(caller, agent, text, images?)
+            when agent.is_idle
+        PromptWithMessages(caller, agent, messages)
+            when agent.is_idle
+        Continue(caller, agent)
+            when agent.is_idle and agent.messages.count > 0 and agent.messages.last.role != assistant
+        Steer(caller, agent, message)
+            when agent.isStreaming
+        FollowUp(caller, agent, message)
+        AbortAgent(caller, agent)
+            when agent.isStreaming
+        ResetAgent(caller, agent)
+            when agent.is_idle
+        SetSystemPrompt(caller, agent, prompt)
+        SetModel(caller, agent, model)
+        SetThinkingLevel(caller, agent, level)
+        SetTools(caller, agent, tools)
+        SetSteeringMode(caller, agent, mode)
+        SetFollowUpMode(caller, agent, mode)
+        ReplaceMessages(caller, agent, messages)
+        AppendMessage(caller, agent, message)
+        ClearMessages(caller, agent)
+        ClearSteeringQueue(caller, agent)
+        ClearFollowUpQueue(caller, agent)
+
+    guidance:
+        -- Callers must not call Prompt while isStreaming = true.
+        -- Use steer() to inject messages mid-run, or await idle first.
+        -- subscribe() returns an unsubscribe function; callers should
+        -- unsubscribe when the UI component is torn down.
+}
+
+surface AgentEventStream {
+    -- The stream of events emitted by an Agent during a run.
+    for caller: CallerApplication
+
+    context agent: AgentState
+
+    exposes:
+        -- Events are emitted in strict sequence per the event flow below.
+        -- agent_start    → turn_start → message_start/end (user)
+        --               → message_start / message_update* / message_end (assistant)
+        --               → tool_execution_start / update* / end
+        --               → message_start/end (toolResult)
+        --               → turn_end → [repeat turns] → agent_end
+        AgentEvent
+
+    invariant: MessageUpdateOnlyForAssistant
+        -- message_update events are only emitted for assistant messages,
+        -- never for user or toolResult messages.
+
+    invariant: ToolExecutionBracketed
+        -- Every tool_execution_start has a matching tool_execution_end
+        -- before agent_end, even for skipped or errored calls.
+
+    guidance:
+        -- Subscribe before calling prompt() to avoid missing agent_start.
+        -- message_update carries an assistantMessageEvent with delta for
+        -- streaming text rendering.
+}
+
+surface ToolContract {
+    -- Contract between the agent loop and a tool implementation.
+    for tool: AgentTool
+
+    exposes:
+        tool.name
+        tool.label
+        tool.description
+        tool.parameters
+
+    requires:
+        -- Tool must return content + details on success.
+        -- Tool must throw an Error (not return error content) on failure.
+        -- Tool may call onUpdate with partial results during long execution.
+
+    guidance:
+        -- The agent catches thrown errors and reports them to the LLM
+        -- as tool results with isError = true.
+        -- Tools should respect the AbortSignal passed to execute().
+}
+
+surface ProxyStreamContract {
+    -- Contract for a proxy backend that relays LLM calls on behalf of the agent.
+    for caller: CallerApplication
+
+    exposes:
+        -- POST /api/stream  { model, context, options }
+        -- → Server-Sent Events stream of ProxyAssistantMessageEvent
+
+    requires:
+        -- Each request must carry a valid auth token (Bearer).
+        -- The server must strip the `partial` field from delta events.
+
+    guidance:
+        -- The client (streamProxy) reconstructs the partial message from
+        -- incremental deltas. No partial is transmitted over the wire.
+        -- On abort the client cancels the ReadableStream reader; the server
+        -- should detect connection close and halt generation.
+}
+
+------------------------------------------------------------
+-- Open Questions
+------------------------------------------------------------
+
+open_question "Context transformation: should pruning / compaction be specified here or in a separate spec? Currently it is caller-supplied via transformContext."
+
+open_question "Thinking budgets: are per-level token budgets a configuration concern for this spec or purely a provider-level detail?"
+
+open_question "Custom message types: should the extension point (declaration merging) be captured as a formal surface or remain an implementation convention?"
+
+open_question "Session caching: should sessionId semantics (what it caches, when to rotate) be specified here or in a provider spec?"
