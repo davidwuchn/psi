@@ -114,6 +114,58 @@ Use: `--focus psi.query.core-test --focus psi.query.registry-test`
 - ✓ AI component implemented & tested
 - ✓ Engine (statecharts) component implemented & tested
 - ✓ Query (EQL/Pathom3) component implemented & tested
+- ✓ AI integrated with engine + query — resolvers registered, core.async removed
 - ? Graph emergence from resolvers (next: add domain resolvers)
 - ? Introspection (engine queries engine via EQL)
 - ? History / Knowledge resolvers (git + knowledge graph)
+
+---
+
+## 2026-02-25 - AI ↔ Engine/Query Integration
+
+### λ Callback > Channel for blocking I/O
+
+Provider HTTP streaming is purely blocking I/O.  `core.async/go` +
+`async/chan` added scheduler complexity with no benefit.  Replacing with:
+
+- **`consume-fn` callback** — provider calls it synchronously per event
+- **`future` + `LinkedBlockingQueue`** — bridges background thread to a
+  lazy seq when callers prefer pull-style consumption
+
+Pattern:
+```clojure
+;; Push style (callback)
+(stream-response provider conv model opts
+  (fn [ev] (when (= :text-delta (:type ev)) (print (:delta ev)))))
+
+;; Pull style (lazy seq)
+(let [{:keys [events]} (stream-response-seq provider conv model opts)]
+  (doseq [ev events] ...))
+```
+
+### λ AI Resolvers in EQL Graph
+
+Register AI capabilities as Pathom resolvers so the whole system can query
+them via a uniform EQL surface:
+
+```clojure
+(core/register-resolvers!)
+(query/query {} [:ai/all-models])
+(query/query {:ai.model/key :gpt-4o} [:ai.model/data])
+(query/query {:ai/provider :anthropic} [:ai/provider-models])
+```
+
+### λ Stub Provider Pattern for Tests
+
+Use a stub provider closure to drive streaming tests without HTTP:
+
+```clojure
+(defn stub-provider [text]
+  {:name   :stub
+   :stream (fn [_conv _model _opts consume-fn]
+             (consume-fn {:type :start})
+             (consume-fn {:type :text-delta :delta text})
+             (consume-fn {:type :done :reason :stop ...}))})
+```
+
+Swap it into the registry for the test, restore afterward.
