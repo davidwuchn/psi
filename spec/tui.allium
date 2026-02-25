@@ -1,0 +1,1162 @@
+-- Terminal UI specification
+-- Behavioural spec for a Clojure implementation of the pi-tui component.
+-- Source: ~/src/pi-mono/packages/tui
+--
+-- Architecture:
+--   Terminal  ←  raw I/O boundary
+--   TUI       ←  main container, differential renderer, focus & overlay manager
+--   Component ←  protocol: render / handle-input / invalidate
+--   Focusable ←  protocol extension: cursor marker for IME positioning
+
+------------------------------------------------------------
+-- External Entities
+------------------------------------------------------------
+
+external entity AnsiString {
+    -- A string that may contain ANSI escape sequences.
+    -- visible-width is the count of printable columns.
+    content: String
+    visible_width: Integer
+}
+
+external entity KeyEvent {
+    -- Raw terminal input data (may include ANSI/CSI escape sequences or
+    -- Kitty keyboard protocol extensions).
+    raw: String
+}
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value Dimensions {
+    columns: Integer
+    rows:    Integer
+}
+
+value CursorPosition {
+    row: Integer
+    col: Integer
+}
+
+value SizeValue {
+    -- A dimension that can be expressed as an absolute column/row count
+    -- or as a percentage of the terminal dimension.
+    kind:     absolute | percent
+    value:    Integer         -- columns when absolute, 0-100 when percent
+}
+
+value OverlayMargin {
+    top:    Integer
+    right:  Integer
+    bottom: Integer
+    left:   Integer
+}
+
+value OverlayLayout {
+    -- Resolved pixel-free layout for one overlay.
+    row:        Integer
+    col:        Integer
+    width:      Integer
+    max_height: Integer?
+}
+
+value SelectItem {
+    value:       String
+    label:       String
+    description: String?
+}
+
+value AutocompleteItem {
+    value:       String
+    label:       String
+    description: String?
+}
+
+value EditorCursor {
+    line: Integer
+    col:  Integer
+}
+
+value TextChunk {
+    text:        String
+    start_index: Integer
+    end_index:   Integer
+}
+
+------------------------------------------------------------
+-- Entities and Variants
+------------------------------------------------------------
+
+entity Theme {
+    -- A collection of style functions (text → styled-text).
+    -- Represented as a map of named style functions in Clojure.
+    name: String
+}
+
+entity Component {
+    -- Abstract component.  Every concrete component is a variant.
+    kind: TUI
+         | Container
+         | Box
+         | Text
+         | TruncatedText
+         | Input
+         | Editor
+         | Markdown
+         | Loader
+         | CancellableLoader
+         | SelectList
+         | SettingsList
+         | Spacer
+         | Image
+
+    -- Lifecycle
+    invalidated: Boolean     -- true when cached render state must be discarded
+}
+
+variant TUI : Component {
+    terminal:              Terminal
+    children:              List<Component>
+    overlays:              List<OverlayEntry>
+    focused:               Component?
+    previous_lines:        List<AnsiString>
+    previous_width:        Integer
+    hardware_cursor_row:   Integer
+    max_lines_rendered:    Integer
+    render_requested:      Boolean
+    show_hardware_cursor:  Boolean
+    clear_on_shrink:       Boolean
+}
+
+variant Container : Component {
+    children: List<Component>
+}
+
+variant Box : Component {
+    children:  List<Component>
+    padding_x: Integer
+    padding_y: Integer
+    -- background style function applied to each rendered line
+}
+
+variant Text : Component {
+    content:   String
+    padding_x: Integer
+    padding_y: Integer
+    -- optional background style function
+}
+
+variant TruncatedText : Component {
+    content:   String
+    padding_x: Integer
+    padding_y: Integer
+}
+
+variant Input : Component {
+    value:         String
+    cursor_col:    Integer
+    focused:       Boolean
+}
+
+variant Editor : Component {
+    lines:                  List<String>
+    cursor:                 EditorCursor
+    scroll_offset:          Integer
+    padding_x:              Integer
+    focused:                Boolean
+    disable_submit:         Boolean
+    autocomplete_active:    Boolean
+    history:                List<String>
+    history_index:          Integer     -- -1 = not browsing
+    jump_mode:              forward | backward | none
+    last_action:            kill | type_word | none
+    paste_counter:          Integer
+    -- kill ring and undo stack are internal; not exposed as fields
+}
+
+variant Markdown : Component {
+    content:   String
+    padding_x: Integer
+    padding_y: Integer
+}
+
+variant Loader : Component {
+    running:  Boolean
+    message:  String
+}
+
+variant CancellableLoader : Component {
+    running:  Boolean
+    message:  String
+    aborted:  Boolean
+}
+
+variant SelectList : Component {
+    items:          List<SelectItem>
+    filtered_items: List<SelectItem>
+    selected_index: Integer
+    max_visible:    Integer
+}
+
+variant SettingsList : Component {
+    items:          List<SettingItem>
+    selected_index: Integer
+    max_visible:    Integer
+    submenu_open:   Boolean
+}
+
+variant Spacer : Component {
+    lines: Integer
+}
+
+variant Image : Component {
+    base64_data: String
+    mime_type:   String
+    max_width:   Integer?
+    max_height:  Integer?
+}
+
+entity SettingItem {
+    id:            String
+    label:         String
+    description:   String?
+    current_value: String
+    values:        List<String>     -- empty = uses submenu instead
+    has_submenu:   Boolean
+}
+
+entity OverlayEntry {
+    component: Component
+    hidden:    Boolean
+    -- positioning options below
+    width:     SizeValue?
+    min_width: Integer?
+    max_height: SizeValue?
+    anchor:    center | top_left | top_right | bottom_left | bottom_right
+              | top_center | bottom_center | left_center | right_center
+    offset_x:  Integer
+    offset_y:  Integer
+    row:       SizeValue?
+    col:       SizeValue?
+    margin:    OverlayMargin
+}
+
+entity Terminal {
+    -- Abstraction over the OS terminal.  Two implementations:
+    --   ProcessTerminal  – wraps stdin/stdout
+    --   VirtualTerminal  – in-memory, for testing
+    columns:               Integer
+    rows:                  Integer
+    kitty_protocol_active: Boolean
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    cursor_marker:          String  = "\u001b_pi:c\u0007"   -- zero-width APC sequence
+    debug_key:              String  = "shift+ctrl+d"
+    editor_max_history:     Integer = 100
+    editor_max_visible_pct: Decimal = 0.30   -- fraction of terminal rows
+    editor_min_visible:     Integer = 5
+    paste_line_threshold:   Integer = 10
+    paste_char_threshold:   Integer = 1000
+    autocomplete_max:       Integer = 5
+    select_list_no_match:   String  = "  No matching commands"
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+-- ── Terminal lifecycle ─────────────────────────────────────────────────────
+
+rule TUIStarts {
+    when: StartTUI(tui)
+    ensures: tui.terminal.kitty_protocol_active = false
+    ensures: TerminalStarted(tui.terminal)
+    ensures: CursorHidden(tui.terminal)
+    ensures: RenderRequested(tui)
+}
+
+rule TUIStops {
+    when: StopTUI(tui)
+    ensures: CursorMoved(tui.terminal, after_last_content_line)
+    ensures: CursorShown(tui.terminal)
+    ensures: TerminalStopped(tui.terminal)
+}
+
+-- ── Rendering ─────────────────────────────────────────────────────────────
+
+rule RenderScheduled {
+    -- Deferred: actual render happens on next tick, coalescing rapid changes.
+    when: RenderRequested(tui)
+    requires: not tui.render_requested
+    ensures: tui.render_requested = true
+    ensures: RenderDue(tui)
+}
+
+rule FirstRender {
+    when: RenderDue(tui)
+    requires: tui.previous_lines.count = 0
+    let new_lines = tui.render(tui.terminal.columns)
+    let composited = CompositeOverlays(new_lines, tui.overlays, tui.terminal.columns, tui.terminal.rows)
+    ensures: WriteSynchronized(tui.terminal, composited)
+    ensures: tui.previous_lines = composited
+    ensures: tui.previous_width = tui.terminal.columns
+    ensures: tui.max_lines_rendered = composited.count
+    ensures: tui.render_requested = false
+}
+
+rule WidthChangedRender {
+    when: RenderDue(tui)
+    requires: tui.previous_width != 0
+    requires: tui.previous_width != tui.terminal.columns
+    let new_lines = tui.render(tui.terminal.columns)
+    let composited = CompositeOverlays(new_lines, tui.overlays, tui.terminal.columns, tui.terminal.rows)
+    ensures: ClearScreenAndScrollback(tui.terminal)
+    ensures: WriteSynchronized(tui.terminal, composited)
+    ensures: tui.previous_lines = composited
+    ensures: tui.previous_width = tui.terminal.columns
+    ensures: tui.max_lines_rendered = composited.count
+    ensures: tui.render_requested = false
+}
+
+rule DifferentialRender {
+    -- Normal update: move cursor to first changed line, clear to end, write changed lines.
+    when: RenderDue(tui)
+    requires: tui.previous_width = tui.terminal.columns
+    requires: tui.previous_lines.count > 0
+    let new_lines = tui.render(tui.terminal.columns)
+    let composited = CompositeOverlays(new_lines, tui.overlays, tui.terminal.columns, tui.terminal.rows)
+    let first_changed = FirstDiff(tui.previous_lines, composited)
+    requires: first_changed != null
+    ensures: WriteChangedLines(tui.terminal, composited, first_changed)
+    ensures: tui.previous_lines = composited
+    ensures: tui.max_lines_rendered = max(tui.max_lines_rendered, composited.count)
+    ensures: tui.render_requested = false
+}
+
+rule NoChangesRender {
+    when: RenderDue(tui)
+    requires: tui.previous_width = tui.terminal.columns
+    requires: tui.previous_lines.count > 0
+    let new_lines = tui.render(tui.terminal.columns)
+    let composited = CompositeOverlays(new_lines, tui.overlays, tui.terminal.columns, tui.terminal.rows)
+    requires: FirstDiff(tui.previous_lines, composited) = null
+    -- Only hardware cursor position may have changed.
+    ensures: PositionHardwareCursor(tui, composited)
+    ensures: tui.render_requested = false
+}
+
+rule SynchronizedOutput {
+    -- All terminal writes are wrapped in CSI ?2026h / ?2026l for flicker-free output.
+    when: WriteSynchronized(terminal, lines)
+    ensures: terminal.write("\x1b[?2026h" + lines.join("\r\n") + "\x1b[?2026l")
+}
+
+rule LineMustNotExceedWidth {
+    -- Invariant: any rendered line wider than the terminal width is an error.
+    when: ComponentRendered(component, lines, width)
+    for line in lines:
+        requires: line.visible_width <= width
+}
+
+rule LineResetAfterRender {
+    -- Each rendered line gets a full SGR reset and OSC 8 reset appended.
+    -- Styles do not carry across lines.
+    when: ComponentRendered(_, lines, _)
+    ensures: lines.each(l => l = l + "\x1b[0m\x1b]8;;\x07")
+}
+
+-- ── Overlay management ────────────────────────────────────────────────────
+
+rule ShowOverlay {
+    when: ShowOverlay(tui, component, options?)
+    let entry = OverlayEntry.created(component: component, hidden: false)
+    ensures: tui.overlays = tui.overlays + [entry]
+    ensures: tui.focused = component
+    ensures: CursorHidden(tui.terminal)
+    ensures: RenderRequested(tui)
+    ensures: OverlayHandleCreated(entry)
+}
+
+rule HideOverlayPermanently {
+    when: HideOverlay(tui, entry)
+    requires: entry in tui.overlays
+    ensures: not exists entry
+    ensures: tui.focused = PreviousFocus(tui, entry)
+    ensures: RenderRequested(tui)
+}
+
+rule TemporarilyHideOverlay {
+    when: SetOverlayHidden(entry, hidden: true)
+    ensures: entry.hidden = true
+    ensures: RenderRequested(tui)
+}
+
+rule ShowHiddenOverlay {
+    when: SetOverlayHidden(entry, hidden: false)
+    ensures: entry.hidden = false
+    ensures: tui.focused = entry.component
+    ensures: RenderRequested(tui)
+}
+
+rule OverlayLayoutResolution {
+    -- Resolve overlay position and size each render cycle.
+    -- Priority order: absolute row/col > percentage row/col > anchor.
+    -- minWidth is applied as a floor after width calculation.
+    -- margin clamps final position within terminal bounds.
+    when: CompositeOverlays(_, overlays, term_width, term_height)
+    for entry in overlays with hidden = false:
+        let layout = ResolveOverlayLayout(entry, term_width, term_height)
+        ensures: OverlayComposited(entry.component, layout)
+}
+
+rule OverlayVisibilityCallback {
+    -- When an overlay declares a visible? predicate, it is evaluated each frame.
+    when: CompositeOverlays(_, overlays, term_width, term_height)
+    for entry in overlays:
+        requires: entry.visible_fn(term_width, term_height) = false
+        ensures: OverlaySkipped(entry)
+}
+
+-- ── Focus management ──────────────────────────────────────────────────────
+
+rule FocusComponent {
+    when: SetFocus(tui, component)
+    ensures: tui.focused = component
+    ensures: RenderRequested(tui)
+}
+
+rule FocusableFlagSet {
+    -- When a Focusable component receives focus, its focused flag becomes true.
+    when: tui: TUI.focused becomes component
+    ensures: component.focused = true
+}
+
+rule FocusableFlagCleared {
+    -- When focus moves away from a Focusable component, its focused flag becomes false.
+    when: tui: TUI.focused becomes other
+    for comp in [tui.focused] with comp != other:
+        ensures: comp.focused = false
+}
+
+-- ── Input routing ─────────────────────────────────────────────────────────
+
+rule DebugKeyIntercepted {
+    when: InputReceived(tui, key: KeyEvent)
+    requires: key.raw = config.debug_key
+    ensures: DebugTriggered(tui)
+}
+
+rule InputRoutedToFocused {
+    when: InputReceived(tui, key: KeyEvent)
+    requires: key.raw != config.debug_key
+    requires: tui.focused != null
+    requires: not IsKeyRelease(key) or tui.focused.wants_key_release = true
+    ensures: tui.focused.handle_input(key)
+    ensures: RenderRequested(tui)
+}
+
+rule KeyReleaseFiltered {
+    -- Key release events (Kitty protocol) are dropped unless the focused
+    -- component opts in via wants_key_release = true.
+    when: InputReceived(tui, key: KeyEvent)
+    requires: IsKeyRelease(key)
+    requires: tui.focused.wants_key_release != true
+    ensures: InputDropped(key)
+}
+
+-- ── IME / hardware cursor ─────────────────────────────────────────────────
+
+rule CursorMarkerExtracted {
+    -- After rendering, scan the bottom terminal-height lines for CURSOR_MARKER.
+    -- Strip the marker and record the cursor position.
+    when: ComponentRendered(comp, lines, _)
+    requires: comp.focused = true
+    let marker_pos = FindMarker(lines, config.cursor_marker)
+    requires: marker_pos != null
+    ensures: lines = StripMarker(lines, marker_pos)
+    ensures: HardwareCursorPositioned(tui, marker_pos)
+}
+
+rule HardwareCursorPositioned {
+    when: HardwareCursorPositioned(tui, pos: CursorPosition)
+    ensures: tui.terminal.write(MoveCursorTo(pos))
+    ensures: tui.hardware_cursor_row = pos.row
+    ensures:
+        if tui.show_hardware_cursor:
+            CursorShown(tui.terminal)
+        else:
+            CursorHidden(tui.terminal)
+}
+
+-- ── Kitty keyboard protocol ───────────────────────────────────────────────
+
+rule KittyProtocolQueried {
+    when: TerminalStarted(terminal)
+    ensures: terminal.write("\x1b[?u")   -- query current flags
+}
+
+rule KittyProtocolEnabled {
+    when: KittyResponseReceived(terminal)
+    requires: not terminal.kitty_protocol_active
+    ensures: terminal.write("\x1b[>7u")   -- enable: disambiguate + report types + alternate keys
+    ensures: terminal.kitty_protocol_active = true
+}
+
+rule KittyProtocolDisabledOnStop {
+    when: StopTUI(tui)
+    requires: tui.terminal.kitty_protocol_active
+    ensures: tui.terminal.write("\x1b[<u")
+    ensures: tui.terminal.kitty_protocol_active = false
+}
+
+rule BracketedPasteEnabled {
+    when: TerminalStarted(terminal)
+    ensures: terminal.write("\x1b[?2004h")
+}
+
+rule BracketedPasteDisabledOnStop {
+    when: StopTUI(tui)
+    ensures: tui.terminal.write("\x1b[?2004l")
+}
+
+-- ── Component: Input ──────────────────────────────────────────────────────
+
+rule InputSubmitted {
+    when: InputReceived(input: Input, key: KeyEvent)
+    requires: Matches(key, "enter")
+    ensures: InputSubmittedEvent(input, input.value)
+}
+
+rule InputCharInserted {
+    when: InputReceived(input: Input, key: KeyEvent)
+    requires: IsPrintable(key)
+    ensures: input.value = InsertAt(input.value, input.cursor_col, key.raw)
+    ensures: input.cursor_col = input.cursor_col + 1
+}
+
+rule InputBackspace {
+    when: InputReceived(input: Input, key: KeyEvent)
+    requires: Matches(key, "backspace")
+    requires: input.cursor_col > 0
+    ensures: input.value = DeleteGraphemeBefore(input.value, input.cursor_col)
+    ensures: input.cursor_col = input.cursor_col - GraphemeWidth(input.value, input.cursor_col)
+}
+
+rule InputCursorLeft {
+    when: InputReceived(input: Input, key: KeyEvent)
+    requires: Matches(key, "left") or Matches(key, "ctrl+b")
+    requires: input.cursor_col > 0
+    ensures: input.cursor_col = input.cursor_col - GraphemeWidth(input.value, input.cursor_col)
+}
+
+rule InputCursorRight {
+    when: InputReceived(input: Input, key: KeyEvent)
+    requires: Matches(key, "right") or Matches(key, "ctrl+f")
+    requires: input.cursor_col < input.value.length
+    ensures: input.cursor_col = input.cursor_col + 1
+}
+
+rule InputLineStart {
+    when: InputReceived(input: Input, key: KeyEvent)
+    requires: Matches(key, "home") or Matches(key, "ctrl+a")
+    ensures: input.cursor_col = 0
+}
+
+rule InputLineEnd {
+    when: InputReceived(input: Input, key: KeyEvent)
+    requires: Matches(key, "end") or Matches(key, "ctrl+e")
+    ensures: input.cursor_col = input.value.length
+}
+
+rule InputDeleteToEnd {
+    when: InputReceived(input: Input, key: KeyEvent)
+    requires: Matches(key, "ctrl+k")
+    ensures: input.value = input.value.slice(0, input.cursor_col)
+}
+
+rule InputDeleteToStart {
+    when: InputReceived(input: Input, key: KeyEvent)
+    requires: Matches(key, "ctrl+u")
+    ensures: input.value = input.value.slice(input.cursor_col)
+    ensures: input.cursor_col = 0
+}
+
+rule InputWordBackspace {
+    when: InputReceived(input: Input, key: KeyEvent)
+    requires: Matches(key, "ctrl+w") or Matches(key, "alt+backspace")
+    let word_start = WordBoundaryLeft(input.value, input.cursor_col)
+    ensures: input.value = input.value.slice(0, word_start) + input.value.slice(input.cursor_col)
+    ensures: input.cursor_col = word_start
+}
+
+-- ── Component: Editor ─────────────────────────────────────────────────────
+
+rule EditorSubmitted {
+    when: InputReceived(editor: Editor, key: KeyEvent)
+    requires: Matches(key, "enter")
+    requires: not editor.disable_submit
+    requires: editor.autocomplete_active = false
+    let text = ExpandPastes(editor.lines, editor.pastes)
+    ensures: editor.lines = [""]
+    ensures: editor.cursor = { line: 0, col: 0 }
+    ensures: editor.scroll_offset = 0
+    ensures: editor.history_index = -1
+    ensures: EditorSubmittedEvent(editor, text)
+}
+
+rule EditorNewLine {
+    when: InputReceived(editor: Editor, key: KeyEvent)
+    requires: Matches(key, "shift+enter") or Matches(key, "alt+enter") or Matches(key, "ctrl+enter")
+    ensures: SplitLine(editor, editor.cursor)
+}
+
+rule EditorCharInserted {
+    when: InputReceived(editor: Editor, key: KeyEvent)
+    requires: IsPrintable(key)
+    requires: editor.jump_mode = none
+    ensures: InsertCharAtCursor(editor, key.raw)
+    ensures: AutocompleteUpdated(editor)
+}
+
+rule EditorBackspace {
+    when: InputReceived(editor: Editor, key: KeyEvent)
+    requires: Matches(key, "backspace")
+    ensures: DeleteGraphemeBeforeCursor(editor)
+    ensures: AutocompleteUpdated(editor)
+}
+
+rule EditorForwardDelete {
+    when: InputReceived(editor: Editor, key: KeyEvent)
+    requires: Matches(key, "delete") or Matches(key, "ctrl+d")
+    ensures: DeleteGraphemeAtCursor(editor)
+    ensures: AutocompleteUpdated(editor)
+}
+
+rule EditorDeleteWordBackward {
+    when: InputReceived(editor: Editor, key: KeyEvent)
+    requires: Matches(key, "ctrl+w") or Matches(key, "alt+backspace")
+    ensures: KillWordBackward(editor)
+}
+
+rule EditorDeleteWordForward {
+    when: InputReceived(editor: Editor, key: KeyEvent)
+    requires: Matches(key, "alt+d") or Matches(key, "alt+delete")
+    ensures: KillWordForward(editor)
+}
+
+rule EditorDeleteToLineEnd {
+    when: InputReceived(editor: Editor, key: KeyEvent)
+    requires: Matches(key, "ctrl+k")
+    ensures: KillToLineEnd(editor)
+}
+
+rule EditorDeleteToLineStart {
+    when: InputReceived(editor: Editor, key: KeyEvent)
+    requires: Matches(key, "ctrl+u")
+    ensures: KillToLineStart(editor)
+}
+
+rule EditorYank {
+    when: InputReceived(editor: Editor, key: KeyEvent)
+    requires: Matches(key, "ctrl+y")
+    ensures: YankFromKillRing(editor)
+}
+
+rule EditorYankPop {
+    when: InputReceived(editor: Editor, key: KeyEvent)
+    requires: Matches(key, "alt+y")
+    ensures: YankPopFromKillRing(editor)
+}
+
+rule EditorUndo {
+    when: InputReceived(editor: Editor, key: KeyEvent)
+    requires: Matches(key, "ctrl+-")
+    ensures: UndoLastEdit(editor)
+}
+
+rule EditorCursorUp {
+    when: InputReceived(editor: Editor, key: KeyEvent)
+    requires: Matches(key, "up")
+    requires: editor.autocomplete_active = false
+    ensures:
+        if IsOnFirstVisualLine(editor):
+            NavigateHistory(editor, direction: up)
+        else:
+            MoveCursorVertical(editor, delta: -1)
+}
+
+rule EditorCursorDown {
+    when: InputReceived(editor: Editor, key: KeyEvent)
+    requires: Matches(key, "down")
+    requires: editor.autocomplete_active = false
+    ensures:
+        if IsOnLastVisualLine(editor):
+            NavigateHistory(editor, direction: down)
+        else:
+            MoveCursorVertical(editor, delta: 1)
+}
+
+rule EditorCursorLeft {
+    when: InputReceived(editor: Editor, key: KeyEvent)
+    requires: Matches(key, "left") or Matches(key, "ctrl+b")
+    ensures: MoveCursorHorizontal(editor, delta: -1)
+}
+
+rule EditorCursorRight {
+    when: InputReceived(editor: Editor, key: KeyEvent)
+    requires: Matches(key, "right") or Matches(key, "ctrl+f")
+    ensures: MoveCursorHorizontal(editor, delta: 1)
+}
+
+rule EditorWordLeft {
+    when: InputReceived(editor: Editor, key: KeyEvent)
+    requires: Matches(key, "alt+left") or Matches(key, "ctrl+left") or Matches(key, "alt+b")
+    ensures: MoveWordBackward(editor)
+}
+
+rule EditorWordRight {
+    when: InputReceived(editor: Editor, key: KeyEvent)
+    requires: Matches(key, "alt+right") or Matches(key, "ctrl+right") or Matches(key, "alt+f")
+    ensures: MoveWordForward(editor)
+}
+
+rule EditorLineStart {
+    when: InputReceived(editor: Editor, key: KeyEvent)
+    requires: Matches(key, "home") or Matches(key, "ctrl+a")
+    ensures: editor.cursor = { line: editor.cursor.line, col: 0 }
+}
+
+rule EditorLineEnd {
+    when: InputReceived(editor: Editor, key: KeyEvent)
+    requires: Matches(key, "end") or Matches(key, "ctrl+e")
+    let line = editor.lines[editor.cursor.line]
+    ensures: editor.cursor = { line: editor.cursor.line, col: line.length }
+}
+
+rule EditorJumpForwardTriggered {
+    when: InputReceived(editor: Editor, key: KeyEvent)
+    requires: Matches(key, "ctrl+]")
+    ensures: editor.jump_mode = forward
+}
+
+rule EditorJumpBackwardTriggered {
+    when: InputReceived(editor: Editor, key: KeyEvent)
+    requires: Matches(key, "ctrl+alt+]")
+    ensures: editor.jump_mode = backward
+}
+
+rule EditorJumpExecuted {
+    when: InputReceived(editor: Editor, key: KeyEvent)
+    requires: editor.jump_mode != none
+    requires: IsPrintable(key)
+    let direction = editor.jump_mode
+    ensures: editor.jump_mode = none
+    ensures: JumpToChar(editor, key.raw, direction)
+}
+
+rule EditorPageUp {
+    when: InputReceived(editor: Editor, key: KeyEvent)
+    requires: Matches(key, "pageUp")
+    ensures: PageScroll(editor, delta: -1)
+}
+
+rule EditorPageDown {
+    when: InputReceived(editor: Editor, key: KeyEvent)
+    requires: Matches(key, "pageDown")
+    ensures: PageScroll(editor, delta: 1)
+}
+
+rule EditorLargePasteMarker {
+    -- Pastes exceeding threshold are stored and a compact marker inserted.
+    when: PasteReceived(editor: Editor, text: String)
+    requires: text.line_count > config.paste_line_threshold
+           or text.length > config.paste_char_threshold
+    let id = editor.paste_counter + 1
+    ensures: editor.paste_counter = id
+    ensures: PasteStored(editor, id, text)
+    ensures:
+        if text.line_count > config.paste_line_threshold:
+            InsertAtCursor(editor, "[paste #" + id + " +" + text.line_count + " lines]")
+        else:
+            InsertAtCursor(editor, "[paste #" + id + " " + text.length + " chars]")
+}
+
+rule EditorSmallPaste {
+    when: PasteReceived(editor: Editor, text: String)
+    requires: text.line_count <= config.paste_line_threshold
+    requires: text.length <= config.paste_char_threshold
+    ensures: InsertAtCursor(editor, text)
+}
+
+rule EditorWordWrap {
+    -- Visual line layout follows word-wrap boundaries; lines break at whitespace
+    -- where possible and fall back to character-level wrap for long words.
+    when: EditorRendered(editor: Editor, width: Integer)
+    let layout_width = width - editor.padding_x * 2 - 1
+    ensures: VisualLines(editor, layout_width) = WordWrapLines(editor.lines, layout_width)
+}
+
+rule EditorScrollAdjusted {
+    -- Scroll offset is adjusted each render to keep the cursor visible.
+    -- Max visible lines = max(config.editor_min_visible, terminal_rows * config.editor_max_visible_pct).
+    when: EditorRendered(editor: Editor, _)
+    let cursor_visual_line = VisualLineOf(editor, editor.cursor)
+    let max_visible = max(config.editor_min_visible,
+                          floor(tui.terminal.rows * config.editor_max_visible_pct))
+    ensures:
+        if cursor_visual_line < editor.scroll_offset:
+            editor.scroll_offset = cursor_visual_line
+        else if cursor_visual_line >= editor.scroll_offset + max_visible:
+            editor.scroll_offset = cursor_visual_line - max_visible + 1
+}
+
+rule EditorHistoryNavigation {
+    -- Up/down at buffer edges navigates prompt history.
+    when: NavigateHistory(editor: Editor, direction: up | down)
+    let new_index =
+        if direction = up:
+            editor.history_index + 1
+        else:
+            editor.history_index - 1
+    requires: new_index >= -1
+    requires: new_index < editor.history.count
+    ensures: editor.history_index = new_index
+    ensures:
+        if new_index = -1:
+            editor.lines = [""]
+        else:
+            editor.lines = editor.history[new_index].split("\n")
+    ensures: editor.cursor = { line: editor.lines.count - 1,
+                                col: editor.lines.last.length }
+}
+
+rule EditorHistoryRecorded {
+    -- Successful submission adds the text to history (most recent first,
+    -- no consecutive duplicates, capped at config.editor_max_history).
+    when: EditorSubmittedEvent(editor: Editor, text: String)
+    let trimmed = text.trim()
+    requires: trimmed.length > 0
+    requires: editor.history.count = 0 or editor.history.first != trimmed
+    ensures: editor.history = [trimmed] + editor.history.slice(0, config.editor_max_history - 1)
+}
+
+-- ── Component: Autocomplete ───────────────────────────────────────────────
+
+rule AutocompleteTriggeredBySlash {
+    when: InsertCharAtCursor(editor: Editor, char: String)
+    requires: char = "/"
+    requires: IsAtStartOfMessage(editor)
+    ensures: TryTriggerAutocomplete(editor)
+}
+
+rule AutocompleteTriggeredByAt {
+    when: InsertCharAtCursor(editor: Editor, char: String)
+    requires: char = "@"
+    ensures: TryTriggerAutocomplete(editor)
+}
+
+rule AutocompleteTriggeredByLetter {
+    when: InsertCharAtCursor(editor: Editor, char: String)
+    requires: IsAlphanumeric(char)
+    requires: IsInSlashCommandContext(editor) or IsInAtFileContext(editor)
+    ensures: TryTriggerAutocomplete(editor)
+}
+
+rule AutocompleteItemSelected {
+    when: InputReceived(editor: Editor, key: KeyEvent)
+    requires: editor.autocomplete_active = true
+    requires: Matches(key, "tab") or Matches(key, "enter")
+    let selected = AutocompleteSelected(editor)
+    requires: selected != null
+    ensures: ApplyCompletion(editor, selected)
+    ensures: editor.autocomplete_active = false
+}
+
+rule AutocompleteCancelled {
+    when: InputReceived(editor: Editor, key: KeyEvent)
+    requires: editor.autocomplete_active = true
+    requires: Matches(key, "escape") or Matches(key, "ctrl+c")
+    ensures: editor.autocomplete_active = false
+}
+
+-- ── Component: SelectList ─────────────────────────────────────────────────
+
+rule SelectListMoveUp {
+    when: InputReceived(list: SelectList, key: KeyEvent)
+    requires: Matches(key, "up")
+    ensures: list.selected_index =
+        if list.selected_index = 0:
+            list.filtered_items.count - 1
+        else:
+            list.selected_index - 1
+}
+
+rule SelectListMoveDown {
+    when: InputReceived(list: SelectList, key: KeyEvent)
+    requires: Matches(key, "down")
+    ensures: list.selected_index =
+        if list.selected_index = list.filtered_items.count - 1:
+            0
+        else:
+            list.selected_index + 1
+}
+
+rule SelectListConfirm {
+    when: InputReceived(list: SelectList, key: KeyEvent)
+    requires: Matches(key, "enter")
+    let item = list.filtered_items[list.selected_index]
+    requires: item != null
+    ensures: SelectListSelected(list, item)
+}
+
+rule SelectListCancel {
+    when: InputReceived(list: SelectList, key: KeyEvent)
+    requires: Matches(key, "escape") or Matches(key, "ctrl+c")
+    ensures: SelectListCancelled(list)
+}
+
+rule SelectListFiltered {
+    when: SelectListSetFilter(list: SelectList, filter: String)
+    ensures: list.filtered_items = list.items with label.starts_with(filter)
+    ensures: list.selected_index = 0
+}
+
+-- ── Component: SettingsList ───────────────────────────────────────────────
+
+rule SettingsListActivate {
+    when: InputReceived(settings: SettingsList, key: KeyEvent)
+    requires: Matches(key, "enter") or Matches(key, "space")
+    let item = settings.items[settings.selected_index]
+    ensures:
+        if item.values.count > 0:
+            CycleSettingValue(settings, item)
+        else:
+            OpenSubmenu(settings, item)
+}
+
+rule SettingsListMoveUp {
+    when: InputReceived(settings: SettingsList, key: KeyEvent)
+    requires: Matches(key, "up")
+    ensures: settings.selected_index = max(0, settings.selected_index - 1)
+}
+
+rule SettingsListMoveDown {
+    when: InputReceived(settings: SettingsList, key: KeyEvent)
+    requires: Matches(key, "down")
+    ensures: settings.selected_index = min(settings.items.count - 1,
+                                            settings.selected_index + 1)
+}
+
+rule SettingsListCancel {
+    when: InputReceived(settings: SettingsList, key: KeyEvent)
+    requires: Matches(key, "escape")
+    ensures: SettingsListCancelled(settings)
+}
+
+-- ── Component: Loader / CancellableLoader ────────────────────────────────
+
+rule LoaderStarted {
+    when: LoaderStart(loader: Loader)
+    ensures: loader.running = true
+    ensures: LoaderAnimating(loader)
+}
+
+rule LoaderStopped {
+    when: LoaderStop(loader: Loader)
+    ensures: loader.running = false
+}
+
+rule CancellableLoaderEscaped {
+    when: InputReceived(loader: CancellableLoader, key: KeyEvent)
+    requires: Matches(key, "escape")
+    requires: not loader.aborted
+    ensures: loader.aborted = true
+    ensures: LoaderAborted(loader)
+}
+
+-- ── ANSI utilities ────────────────────────────────────────────────────────
+
+rule VisibleWidthIgnoresAnsi {
+    -- The visible width of a string is the column count ignoring all ANSI
+    -- escape sequences (SGR codes, OSC 8 hyperlinks, APC sequences, etc.).
+    when: VisibleWidthQueried(s: AnsiString)
+    ensures: s.visible_width = ColumnCount(s.content)
+}
+
+rule TruncateToWidthPreservesAnsi {
+    -- truncate-to-width cuts a string at exactly `width` visible columns,
+    -- appends an ellipsis by default, and closes any open ANSI codes.
+    when: TruncateToWidthCalled(s: AnsiString, width: Integer, ellipsis?: String)
+    let result = Truncate(s, width, ellipsis ?? "…")
+    ensures: result.visible_width <= width
+    ensures: AnsiCodesProperlyReset(result)
+}
+
+rule WrapTextWithAnsi {
+    -- Word-wrap that preserves ANSI style codes across line boundaries.
+    -- Each wrapped line is self-contained (styles reapplied if needed).
+    when: WrapTextCalled(s: AnsiString, width: Integer)
+    let lines = WordWrap(s, width)
+    for line in lines:
+        ensures: line.visible_width <= width
+}
+
+-- ── Keybindings ───────────────────────────────────────────────────────────
+
+rule KeybindingsConfigurable {
+    -- Each editor action can be rebound to one or more key identifiers.
+    -- Default bindings are used when no override is provided.
+    when: SetEditorKeybindings(config: KeybindingsConfig)
+    ensures: GlobalKeybindings(config)
+}
+
+rule KeyMatchesBinding {
+    -- matchesKey checks raw input data against a key identifier,
+    -- supporting both legacy VT sequences and Kitty CSI-u extensions.
+    when: KeyMatchQueried(data: String, key_id: String)
+    ensures: KeyMatched(data, key_id) = VTorKittyMatch(data, key_id)
+}
+
+------------------------------------------------------------
+-- Actor Declarations
+------------------------------------------------------------
+
+actor User {
+    identified_by: InputReceived
+}
+
+------------------------------------------------------------
+-- Surfaces
+------------------------------------------------------------
+
+surface TUIApplication {
+    for app: User
+
+    exposes:
+        tui.terminal.columns
+        tui.terminal.rows
+
+    provides:
+        StartTUI(tui)
+        StopTUI(tui)
+        SetFocus(tui, component)
+        ShowOverlay(tui, component, options?)
+        HideOverlay(tui, entry)
+        RenderRequested(tui)
+
+    guidance:
+        -- In Clojure, Component is a protocol (not an interface):
+        --   (defprotocol Component
+        --     (render [this width])
+        --     (handle-input [this data])
+        --     (invalidate [this]))
+        --
+        -- Focusable is a separate protocol:
+        --   (defprotocol Focusable
+        --     (focused? [this])
+        --     (set-focused! [this v]))
+        --
+        -- Terminal is a protocol:
+        --   (defprotocol Terminal
+        --     (start! [this on-input on-resize])
+        --     (stop! [this])
+        --     (write! [this data])
+        --     (columns [this])
+        --     (rows [this])
+        --     ...)
+        --
+        -- Rendering is synchronous within a single tick; use an atom or
+        -- statechart to represent mutable TUI/editor state.
+}
+
+surface EditorSurface {
+    for user: User
+
+    context editor: Editor
+
+    exposes:
+        editor.lines
+        editor.cursor
+        editor.scroll_offset
+        editor.autocomplete_active
+
+    provides:
+        InputReceived(editor, key)
+        EditorSetText(editor, text)
+        EditorInsertAtCursor(editor, text)
+        EditorSetAutocompleteProvider(editor, provider)
+
+    related:
+        AutocompleteSurface(editor) when editor.autocomplete_active = true
+}
+
+surface AutocompleteSurface {
+    for user: User
+
+    context editor: Editor
+
+    exposes:
+        AutocompleteItems(editor)
+        AutocompleteSelected(editor)
+
+    provides:
+        AutocompleteItemSelected(editor, item)
+            when editor.autocomplete_active = true
+        AutocompleteCancelled(editor)
+            when editor.autocomplete_active = true
+}
+
+surface SelectListSurface {
+    for user: User
+
+    context list: SelectList
+
+    exposes:
+        list.filtered_items
+        list.selected_index
+
+    provides:
+        SelectListSetFilter(list, filter)
+        InputReceived(list, key)
+}
+
+surface OverlaySurface {
+    for user: User
+
+    context entry: OverlayEntry
+
+    exposes:
+        entry.hidden
+        entry.component
+
+    provides:
+        SetOverlayHidden(entry, hidden: Boolean)
+        HideOverlay(tui, entry)
+}
+
+------------------------------------------------------------
+-- Deferred Specifications
+------------------------------------------------------------
+
+deferred WordWrapLine.compute        -- see: spec/tui/word-wrap.allium
+deferred KillRing.operations         -- see: spec/tui/kill-ring.allium
+deferred UndoStack.operations        -- see: spec/tui/undo-stack.allium
+deferred CombinedAutocompleteProvider.suggest   -- see: spec/tui/autocomplete.allium
+deferred InlineImageRendering.render -- see: spec/tui/terminal-image.allium
+
+------------------------------------------------------------
+-- Open Questions
+------------------------------------------------------------
+
+open_question "Clojure state model: atoms per component vs single TUI atom vs statechart?  Statechart preferred per project Engine principle."
+open_question "Thread model: should rendering happen on a dedicated thread or rely on core.async?  The JS version defers to nextTick."
+open_question "VirtualTerminal for tests: use a Clojure in-memory byte-buffer or wrap @xterm/headless via GraalVM/nREPL?"
+open_question "Image support (Kitty/iTerm2 protocols): include in initial implementation or defer?"
+open_question "Windows VT input (koffi workaround in TS): skip entirely for the Clojure JVM target?"
+open_question "Keybinding configuration: use EDN map analogous to EditorKeybindingsConfig; which namespace to own it?"
