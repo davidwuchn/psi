@@ -15,7 +15,7 @@ Current truth about the Psi system.
 | `history`       | ✓      | Git log resolvers, nullable git context                    |
 | `introspection` | ✓      | Bridges engine + query, self-describing graph              |
 | `tui`           | ✓      | charm.clj Elm Architecture, JLine3, extension UI state     |
-| `agent-session` | ✓      | Session ✓, extensions ✓, extension UI ✓, main REPL ✓, TUI ✓ |
+| `agent-session` | ✓      | Session ✓, extensions ✓, extension UI ✓, main REPL ✓, TUI ✓, OAuth ✓ |
 
 ## Architecture Progress
 
@@ -33,6 +33,9 @@ Current truth about the Psi system.
 - ✓ TUI session (`--tui` flag) — charm.clj Elm Architecture, JLine3
 - ✓ Extension system (Clojure extensions, loader, API, tool wrapping, EQL introspection)
 - ✓ Extension UI (dialogs, widgets, status, notifications, render registry, EQL introspection)
+- ✓ OAuth module (PKCE, callback server, credential store, provider registry, Anthropic)
+- ✗ OAuth wired into main.clj (replace env-var-only auth)
+- ✗ /login and /logout commands
 - ✗ Session resolvers wired into global query graph
 - ✗ Graph emergence from domain resolvers
 - ✗ RPC / HTTP API surface
@@ -106,10 +109,15 @@ Caught by `jline-terminal-keymap-test` smoke test.
 | `turn_statechart.clj`           | Per-turn streaming statechart (idle→text⇄tool→done) |
 | `executor.clj`                  | ai ↔ agent-core streaming bridge (statechart-driven) |
 | `main.clj`                      | Interactive REPL loop + TUI session (-main)       |
+| `oauth/pkce.clj`                | PKCE verifier + S256 challenge (JDK crypto)       |
+| `oauth/callback_server.clj`     | Local HTTP callback server (Nullable: null server) |
+| `oauth/store.clj`               | Credential storage, priority chain (Nullable: in-memory) |
+| `oauth/providers.clj`           | Provider registry + Anthropic OAuth impl          |
+| `oauth/core.clj`                | Top-level OAuth API (Nullable: stub providers)    |
 
 ## Test Status
 
-251 tests, 1070 assertions, 0 failures. 0 clj-kondo errors.
+272 tests, 1141 assertions, 0 failures. 0 clj-kondo errors.
 
 ## Specs
 
@@ -122,6 +130,7 @@ Caught by `jline-terminal-keymap-test` smoke test.
 | `skills.allium`            | `agent-session/skills`  | ✓ implemented                         |
 | `tui.allium`               | `tui`                   | partial — session loop not yet working|
 | `ui-extension-points.allium` | `tui/extension_ui`    | ✓ implemented                         |
+| `oauth-auth.allium`        | `agent-session/oauth`   | ✓ implemented (Anthropic provider)    |
 
 ## Open Questions
 

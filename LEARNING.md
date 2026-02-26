@@ -4,6 +4,87 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-02-26 - OAuth Module
+
+### λ No Clojure OAuth Client Library Fits CLI Use Case
+
+All existing Clojure OAuth libs (`ring-oauth2`, `clj-oauth2`, `clj-oauth`)
+are **server-side Ring middleware** — they authenticate users visiting a web
+app. A CLI agent needs **client-side** OAuth: build auth URL, open browser,
+receive local callback, exchange code. None of the libs do this.
+
+**Decision**: Build directly on `clj-http` (already a dep) + JDK built-ins.
+The actual OAuth logic is ~150 lines of shared infra + ~40 lines per provider.
+
+### λ JDK HttpServer for OAuth Callback — Zero New Deps
+
+`com.sun.net.httpserver.HttpServer` is built into the JDK, confirmed
+available. Binds to localhost, receives one redirect callback, shuts down.
+No need for http-kit or Ring just for this.
+
+```clojure
+(doto (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)
+  (.createContext "/" handler)
+  (.start))
+```
+
+### λ Nullable Callback Server — Deliver Without Network
+
+The callback server's Nullable uses a `LinkedBlockingQueue` with a
+`:deliver` fn instead of a real HTTP server:
+
+```clojure
+;; Production: real HTTP callback
+(let [srv (cb/start-server {:port 0})]
+  ((:wait-for-code srv) 30000))
+
+;; Test: inject result directly
+(let [srv (cb/create-null-server)]
+  ((:deliver srv) {:code "abc" :state "xyz"})
+  ((:wait-for-code srv) 3000))
+```
+
+Same interface, same `wait-loop` fn — only the delivery mechanism differs.
+
+### λ Credential Store Nullable — :persisted Atom for Inspection
+
+The null store captures what was persisted via a `:persisted` atom,
+letting tests verify persistence without disk I/O:
+
+```clojure
+(let [s (store/create-null-store)]
+  (store/set-credential! s :anthropic {:type :api-key :key "k"})
+  @(:persisted s))
+;; => {:anthropic {:type :api-key :key "k"}}
+```
+
+### λ OAuth Context Composes Store + Providers — Three Nullable Layers
+
+`oauth.core/create-null-context` composes a null store with stub providers.
+Tests can override login/refresh behaviour per-context:
+
+```clojure
+(create-null-context
+  {:credentials {:anthropic {:type :oauth :access "old" :expires 1000}}
+   :login-fn    (fn [_] {:type :oauth :access "new" ...})})
+```
+
+Three independent Nullable layers (server, store, context) compose cleanly.
+
+### λ Distill Spec Before Build — Scope Decisions Made Upfront
+
+Writing `oauth-auth.allium` before code forced explicit decisions:
+- Credential as sum type (ApiKeyCredential | OAuthCredential)
+- 5-level API key priority chain
+- Token refresh with concurrent-process awareness
+- Provider contract surface (login, refresh, getApiKey, modifyModels)
+- What's excluded (PKCE crypto, HTTP details, TUI rendering)
+
+The spec excluded concerns cleanly, preventing scope creep during
+implementation.
+
+---
+
 ## 2026-02-26 - Retry, Tool Call Introspection, bash stdin
 
 ### λ should-retry? Guard Read From Wrong Data Source
