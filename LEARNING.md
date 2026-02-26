@@ -4,6 +4,51 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-02-26 - Hierarchical API Error Resolvers
+
+### λ Hierarchical Resolver Pattern — Cheap List, Lazy Detail
+
+Pathom3 resolvers naturally support hierarchical drill-down: a list
+resolver outputs entities with identity keys + ctx, and downstream
+detail resolvers only fire when their output attributes are queried.
+
+Pattern:
+```
+Level 1 (list, cheap): scan for entities, output identity + ctx
+Level 2 (detail, moderate): seeded by identity, parses/enriches
+Level 3 (expensive): seeded by identity, reconstructs full state
+```
+
+Each level's resolver is independent — querying L1 never triggers L2/L3.
+The ctx passthrough (`{:psi/agent-session-ctx agent-session-ctx}`) in
+each list entity seeds downstream resolvers automatically.
+
+### λ Request Shape as Diagnostic Surface
+
+Computing "what would the API request look like?" is valuable both for
+error forensics and live "will my next prompt fit?" checks.
+
+Key insight: the same `compute-request-shape` fn serves both:
+- `:psi.api-error/request-shape` — messages[0..error-index), post-mortem
+- `:psi.agent-session/request-shape` — all current messages, live check
+
+The shape is provider-agnostic (token estimate from char count / 4,
+structural checks on agent-core messages directly).
+
+### λ 400 Root Cause: headroom-tokens = 186
+
+The resolvers immediately revealed the root cause: 320 messages with
+~183K estimated tokens + 16K max-output left only 186 tokens of headroom.
+The actual tokenizer likely pushed it over 200K. Auto-compaction didn't
+trigger before this final call.
+
+### λ Context Window Info Not in Session Data Atom
+
+The session-data-atom `:model` only stores `{:provider :id :reasoning}`,
+not the full model config. Context window and max-tokens come from the
+ai-model config (stored separately in session-state). Resolvers need
+fallback paths: session-data → model-config-atom → defaults.
+
 ## 2026-02-26 - OAuth Module
 
 ### λ No Clojure OAuth Client Library Fits CLI Use Case

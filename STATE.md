@@ -117,7 +117,7 @@ Caught by `jline-terminal-keymap-test` smoke test.
 
 ## Test Status
 
-272 tests, 1141 assertions, 0 failures. 0 clj-kondo errors.
+290 tests, 1243 assertions, 0 failures. 0 clj-kondo errors.
 
 ## Specs
 
