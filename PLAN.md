@@ -39,44 +39,21 @@ Ordered steps toward AI COMPLETE.
 - JLine smoke test catches API compat issues
 - 161 tests, 561 assertions, 0 failures
 
+### Step 6 — Statechart-driven tool calling  ✓
+- `turn_statechart.clj`: per-turn statechart definition, context, events, queries
+- States: idle → text-accumulating ⇄ tool-accumulating → done | error
+- `executor.clj`: `make-turn-actions` bridges agent-core lifecycle → statechart events
+- EQL resolver for `:psi.turn/*` attributes (state, text, tool-calls, error)
+- Wired through session context via `:turn-ctx-atom`, observable from nREPL
+- 18 tests, 76 assertions covering statechart + executor
+- 179 tests, 637 assertions, 0 failures total
+
 ---
 
 ## Next
 
-### Step 6 — Statechart-driven tool calling
-Replace ad-hoc atoms in executor/providers with a per-turn statechart.
-
-**Why**: `stream-turn!` currently tracks streaming state (text buffer,
-tool-call accumulation, done flag) via scattered atoms and StringBuilders.
-This is an implicit state machine — formalising it as a statechart makes
-every state explicit, queryable via EQL, and observable from nREPL.
-
-**States**: `idle → streaming → (text-accumulating | tool-accumulating)* → done`
-- `streaming/text`: accumulates text deltas
-- `streaming/tool-call`: accumulates tool-call id/name/arguments per index
-- `done`: final message assembled, tool calls extracted
-- `error`: provider error, timeout
-
-**Scope**:
-- Statechart definition for per-turn streaming state
-- Executor drives the statechart instead of raw atoms
-- Provider events (`:text-delta`, `:toolcall-start/delta/end`, `:done`)
-  become statechart events
-- Active states, accumulated content, tool calls all queryable via EQL
-- nREPL introspection: connect and query the streaming statechart live
-- Existing tests continue to pass (statechart is internal to executor)
-
-**Boundaries** (not in scope):
-- Session-level statechart (already exists)
-- Provider SSE parsing (unchanged)
-- Tool execution (unchanged — still called by `run-turn!` after statechart reaches `done`)
-
----
-
-## Backlog
-
-7. Step 7 — Graph emergence
-   Register domain resolvers, surface capability graph via EQL
+### Step 7 — Graph emergence
+Register domain resolvers, surface capability graph via EQL
 
 8. Step 8 — HTTP API
    openapi spec + martian client, surface via Pathom mutations

@@ -28,6 +28,7 @@ Current truth about the Psi system.
 - ✓ Coding-agent session orchestration (agent-session component)
 - ✓ Built-in tools (read, bash, edit, write)
 - ✓ Executor (bridges ai streaming → agent-core loop protocol)
+- ✓ Turn statechart (per-turn streaming state, EQL queryable)
 - ✓ Runnable entry point (`clojure -M:run`)
 - ✓ TUI session (`--tui` flag) — charm.clj Elm Architecture, JLine3
 - ✗ Session resolvers wired into global query graph
@@ -54,6 +55,12 @@ nREPL introspection (from connected REPL):
 (require '[psi.agent-session.core :as s])
 (s/query-in (:ctx @psi.agent-session.main/session-state)
   [:psi.agent-session/phase :psi.agent-session/session-id])
+
+;; Live turn state (during streaming)
+(require '[psi.agent-session.turn-statechart :as turn])
+(when-let [a (:turn-ctx-atom (:ctx @psi.agent-session.main/session-state))]
+  (turn/query-turn @a))
+;; → {:psi.turn/state :text-accumulating :psi.turn/text "..." ...}
 ```
 
 ## TUI Session: Resolved
@@ -86,12 +93,13 @@ Caught by `jline-terminal-keymap-test` smoke test.
 | `persistence.clj`               | Append-only journal                               |
 | `resolvers.clj`                 | EQL resolvers (:psi.agent-session/*)              |
 | `tools.clj`                     | Built-in tool implementations                     |
-| `executor.clj`                  | ai ↔ agent-core streaming bridge                  |
+| `turn_statechart.clj`           | Per-turn streaming statechart (idle→text⇄tool→done) |
+| `executor.clj`                  | ai ↔ agent-core streaming bridge (statechart-driven) |
 | `main.clj`                      | Interactive REPL loop + TUI session (-main)       |
 
 ## Test Status
 
-161 tests, 561 assertions, 0 failures. 0 clj-kondo warnings. 0 clojure-lsp diagnostics.
+179 tests, 637 assertions, 0 failures. 0 clj-kondo warnings. 0 clojure-lsp diagnostics.
 
 ## Specs
 
