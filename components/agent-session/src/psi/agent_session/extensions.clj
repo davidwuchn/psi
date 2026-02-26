@@ -35,8 +35,7 @@
 
    Nullable pattern:
      `create-registry` returns an isolated registry map (atom inside).
-     All public fns have a context-aware `-in` variant.
-     The global singleton delegates to `global-registry`."
+     All public fns take the registry as first arg (`-in` suffix)."
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
@@ -60,16 +59,6 @@
           :registration-order []
           :flag-values        {}
           :event-bus          {}})))
-
-(defonce ^:private global-reg (atom nil))
-
-(defn- ensure-global-reg! []
-  (or @global-reg
-      (let [r (create-registry)]
-        (reset! global-reg r)
-        r)))
-
-(defn- global-registry [] (ensure-global-reg!))
 
 ;; ============================================================
 ;; Registration helpers (operate on isolated registry)
@@ -215,11 +204,6 @@
     {:cancelled? (boolean (some :cancel results))
      :override   (first (keep :result results))
      :results    results}))
-
-(defn dispatch
-  "Dispatch `event` to the global registry."
-  [event-name event]
-  (dispatch-in (global-registry) event-name event))
 
 ;; ============================================================
 ;; Tool wrapping
@@ -709,27 +693,4 @@
    (unregister-all-in! reg)
    (load-extensions-in! reg action-fns configured-paths cwd)))
 
-;; ============================================================
-;; Global singleton wrappers
-;; ============================================================
 
-(defn register-extension! [path]
-  (register-extension-in! (global-registry) path))
-
-(defn register-handler! [ext-path event-name handler-fn]
-  (register-handler-in! (global-registry) ext-path event-name handler-fn))
-
-(defn register-tool! [ext-path tool]
-  (register-tool-in! (global-registry) ext-path tool))
-
-(defn register-command! [ext-path cmd]
-  (register-command-in! (global-registry) ext-path cmd))
-
-(defn register-flag! [ext-path flag]
-  (register-flag-in! (global-registry) ext-path flag))
-
-(defn unregister-all! []
-  (unregister-all-in! (global-registry)))
-
-(defn summary []
-  (summary-in (global-registry)))
