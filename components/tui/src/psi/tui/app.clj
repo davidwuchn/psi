@@ -94,9 +94,7 @@
   ([model-name query-fn]
    (fn []
      (let [introspected (when query-fn
-                          (try (query-fn [:psi.prompt-template/names
-                                          :psi.agent-session/prompt-templates])
-                               (catch Exception _ nil)))]
+                          (query-fn [:psi.agent-session/prompt-templates]))]
        [{:messages         []
          :phase            :idle
          :error            nil
