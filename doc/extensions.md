@@ -1,0 +1,438 @@
+# Psi Extensions
+
+Extensions customise psi's behaviour: add tools, intercept events,
+wrap tool execution, contribute UI elements, and register custom
+renderers.
+
+An extension is a `.clj` file with a namespace that exports an `init`
+function.  The loader calls `init` with an API map — the extension
+calls registration functions on that map to declare what it provides.
+
+## Quick Start
+
+Create `~/.psi/agent/extensions/hello_ext.clj`:
+
+```clojure
+(ns my.hello-ext)
+
+(defn init [api]
+  ;; Register a slash command
+  ((:register-command api) "hello"
+   {:description "Say hello"
+    :handler     (fn [_args] (println "Hello from extension!"))})
+
+  ;; Listen to events
+  ((:on api) "session_switch"
+   (fn [ev] (println "Session switched:" (:reason ev))))
+
+  ;; Show a status line in the TUI footer
+  (when-let [ui (:ui api)]
+    ((:set-status ui) "hello-ext loaded")))
+```
+
+Psi discovers and loads it automatically on startup.
+
+## Discovery
+
+Extensions are discovered from three locations, in order:
+
+1. **Project-local**: `.psi/extensions/` in the current working directory
+2. **User-global**: `~/.psi/agent/extensions/`
+3. **CLI-provided**: `--extension <path>` flags
+
+Within each directory, discovery finds:
+- Direct `.clj` files (e.g. `my_ext.clj`)
+- Subdirectories with an `extension.clj` entry point (e.g. `my-ext/extension.clj`)
+
+Paths are deduplicated — an extension found in project-local is not
+loaded again from user-global.
+
+## Extension API
+
+The `init` function receives a map with these keys:
+
+### Registration
+
+| Key                  | Signature                                 | Description                          |
+|----------------------|-------------------------------------------|--------------------------------------|
+| `:on`                | `(fn [event-name handler-fn])`            | Subscribe to a named event           |
+| `:register-tool`     | `(fn [tool-map])`                         | Register a tool for the agent        |
+| `:register-command`  | `(fn [name opts])`                        | Register a `/name` slash command     |
+| `:register-flag`     | `(fn [name opts])`                        | Register a toggleable flag           |
+| `:register-shortcut` | `(fn [key opts])`                         | Register a keyboard shortcut         |
+
+### Session Actions
+
+| Key                  | Signature                                 | Description                          |
+|----------------------|-------------------------------------------|--------------------------------------|
+| `:send-message`      | `(fn [msg opts?])`                        | Send a raw message to the agent      |
+| `:send-user-message` | `(fn [content opts?])`                    | Send a user message                  |
+| `:append-entry`      | `(fn [custom-type data?])`                | Append a custom journal entry        |
+| `:set-session-name`  | `(fn [name])`                             | Set the session name                 |
+| `:get-session-name`  | `(fn [])`                                 | Get the current session name         |
+| `:set-label`         | `(fn [entry-id label])`                   | Label a journal entry                |
+| `:get-active-tools`  | `(fn [])`                                 | Get active tool names                |
+| `:set-active-tools`  | `(fn [tool-names])`                       | Filter active tools by name          |
+| `:get-model`         | `(fn [])`                                 | Get the current model map            |
+| `:set-model`         | `(fn [model])`                            | Set the model                        |
+| `:is-idle`           | `(fn [])`                                 | True when the session is idle        |
+| `:abort`             | `(fn [])`                                 | Abort the current agent run          |
+| `:compact`           | `(fn [opts?])`                            | Trigger manual compaction            |
+| `:get-system-prompt` | `(fn [])`                                 | Get the current system prompt        |
+
+### Inter-Extension Communication
+
+| Key       | Value                                                 |
+|-----------|-------------------------------------------------------|
+| `:events` | `{:emit (fn [channel data]) :on (fn [channel handler-fn])}` |
+
+`:on` returns a zero-arg unsubscribe function.
+
+### UI Context
+
+| Key   | Value                                                    |
+|-------|----------------------------------------------------------|
+| `:ui` | UI context map (see [UI Extension Points](#ui-extension-points)), or `nil` when headless |
+
+### Identity
+
+| Key     | Value                          |
+|---------|--------------------------------|
+| `:path` | Absolute path of this extension file |
+
+## Events
+
+Extensions subscribe to named events via `(:on api)`.  Handlers fire in
+registration order (first registered, first called).  All handlers fire
+for every event — this is broadcast semantics, not first-match.
+
+### Event List
+
+| Event                     | Data                                      | Cancel? | Notes                                     |
+|---------------------------|-------------------------------------------|---------|--------------------------------------------|
+| `"session_switch"`        | `{:reason :new\|:resume}`                 | —       | After session switch                       |
+| `"session_before_switch"` | `{:reason :new\|:resume}`                 | ✓       | Return `{:cancel true}` to block           |
+| `"session_before_compact"`| `{:preparation ... :custom-instructions}` | ✓       | Return `{:result CompactionResult}` to override |
+| `"session_compact"`       | `{}`                                      | —       | After compaction completes                 |
+| `"session_before_fork"`   | `{:entry-id ...}`                         | —       | Before forking from an entry               |
+| `"session_fork"`          | `{}`                                      | —       | After fork completes                       |
+| `"model_select"`          | `{:model ... :source :set}`               | —       | After model change                         |
+| `"tool_call"`             | `{:type :tool-name :tool-call-id :input}` | block   | See [Tool Wrapping](#tool-wrapping)        |
+| `"tool_result"`           | `{:type :tool-name :content :is-error}`   | modify  | See [Tool Wrapping](#tool-wrapping)        |
+
+**Cancel semantics**: If *any* handler returns `{:cancel true}`, the
+associated action is blocked.  Remaining handlers still fire.
+
+## Tool Registration
+
+Extensions register tools that become available to the agent:
+
+```clojure
+((:register-tool api)
+ {:name        "search_docs"
+  :description "Search project documentation"
+  :parameters  [{:name "query" :type "string" :required true}]
+  :execute     (fn [args]
+                 {:content (str "Found: " (:query args))
+                  :is-error false})})
+```
+
+## Tool Wrapping
+
+Extensions can intercept tool execution without registering new tools.
+Subscribe to `"tool_call"` (before) and `"tool_result"` (after):
+
+```clojure
+;; Block dangerous commands
+((:on api) "tool_call"
+ (fn [{:keys [tool-name input]}]
+   (when (and (= tool-name "bash")
+              (clojure.string/includes? (:command input) "rm -rf"))
+     {:block true :reason "Dangerous command blocked"})))
+
+;; Modify results
+((:on api) "tool_result"
+ (fn [{:keys [tool-name content]}]
+   (when (= tool-name "bash")
+     {:content (str content "\n[logged by extension]")})))
+```
+
+A `"tool_call"` handler returning `{:block true}` prevents execution.
+A `"tool_result"` handler may return `:content`, `:details`, or
+`:is-error` to modify the result.
+
+## Flags
+
+Extensions register named flags with defaults:
+
+```clojure
+((:register-flag api) "verbose"
+ {:description "Enable verbose output"
+  :default     false})
+
+;; Read anywhere
+((:get-flag api) "verbose") ;; => false
+```
+
+Flag values persist across extension reloads.
+
+## UI Extension Points
+
+When psi runs with a TUI (`--tui`), the API includes a `:ui` key with
+methods for dialogs, widgets, status lines, notifications, and custom
+renderers.  In headless mode, `:ui` is `nil` — extensions should check
+before calling.
+
+```clojure
+(when-let [ui (:ui api)]
+  ;; safe to use ui methods
+  )
+```
+
+### Dialogs
+
+Dialogs block the calling thread until the user responds.  Only one
+dialog is active at a time; others queue FIFO.
+
+```clojure
+(when-let [ui (:ui api)]
+  ;; Confirm dialog — returns true/false
+  (let [ok? ((:confirm ui) "Delete file?" "Are you sure?")]
+    (when ok? (delete-file!)))
+
+  ;; Select dialog — returns selected :value string, or nil
+  (let [choice ((:select ui) "Pick format"
+                 [{:value "json" :label "JSON" :description "Standard format"}
+                  {:value "edn"  :label "EDN"  :description "Clojure format"}])]
+    (when choice (export! choice)))
+
+  ;; Input dialog — returns entered text, or nil
+  (let [name ((:input ui) "Project name" "my-project")]
+    (when name (create-project! name))))
+```
+
+**Headless fallback**: When there is no TUI, `:ui` is nil.  If an
+extension calls dialog functions on a nil atom directly (via the
+lower-level API), confirm returns `false`, select and input return
+`nil`.
+
+### Widgets
+
+Widgets are persistent content blocks rendered above or below the
+editor.  Each widget is keyed by `[extension-id widget-id]` to prevent
+collisions.
+
+```clojure
+(when-let [ui (:ui api)]
+  ;; Add a widget above the editor
+  ((:set-widget ui) "token-counter" :above-editor
+   ["Tokens: 1,234 / 100,000"
+    "Context: 1.2%"])
+
+  ;; Update it later
+  ((:set-widget ui) "token-counter" :above-editor
+   ["Tokens: 5,678 / 100,000"
+    "Context: 5.7%"])
+
+  ;; Remove it
+  ((:clear-widget ui) "token-counter"))
+```
+
+Placements: `:above-editor`, `:below-editor`.
+
+### Status Lines
+
+Each extension gets one persistent status line in the footer:
+
+```clojure
+(when-let [ui (:ui api)]
+  ((:set-status ui) "✓ Connected to database")
+  ;; Later:
+  ((:clear-status ui)))
+```
+
+### Notifications
+
+Non-blocking toasts that auto-dismiss after 5 seconds.  At most 3
+visible at a time; older ones are dismissed when new ones arrive.
+
+```clojure
+(when-let [ui (:ui api)]
+  ((:notify ui) "File saved successfully" :info)
+  ((:notify ui) "Rate limit approaching" :warning)
+  ((:notify ui) "Connection lost" :error))
+```
+
+Levels: `:info`, `:warning`, `:error`.
+
+### Custom Renderers
+
+Extensions can override how tool calls and results are displayed, and
+add renderers for custom message types.
+
+```clojure
+(when-let [ui (:ui api)]
+  ;; Custom tool renderer
+  ((:register-tool-renderer ui) "search_docs"
+   ;; render-call-fn: (fn [args] → ANSI string)
+   (fn [args] (str "🔍 Searching: " (:query args)))
+   ;; render-result-fn: (fn [result opts] → ANSI string)
+   (fn [result _opts] (str "📄 " (:content result))))
+
+  ;; Custom message renderer
+  ((:register-message-renderer ui) "code-review"
+   ;; render-fn: (fn [message opts] → ANSI string)
+   (fn [msg _opts] (str "📝 Review: " (:summary msg)))))
+```
+
+Render functions return ANSI strings.
+
+### UI Method Summary
+
+| Method                       | Signature                                          | Returns        |
+|------------------------------|----------------------------------------------------|----------------|
+| `:confirm`                   | `(fn [title message])`                             | `boolean`      |
+| `:select`                    | `(fn [title options])`                             | `string?`      |
+| `:input`                     | `(fn [title placeholder?])`                        | `string?`      |
+| `:set-widget`                | `(fn [widget-id placement content])`               | —              |
+| `:clear-widget`              | `(fn [widget-id])`                                 | —              |
+| `:set-status`                | `(fn [text])`                                      | —              |
+| `:clear-status`              | `(fn [])`                                          | —              |
+| `:notify`                    | `(fn [message level])`                             | —              |
+| `:register-tool-renderer`    | `(fn [tool-name render-call-fn render-result-fn])` | —              |
+| `:register-message-renderer` | `(fn [custom-type render-fn])`                     | —              |
+
+## EQL Introspection
+
+All extension and UI state is queryable via EQL from a connected nREPL:
+
+```clojure
+(require '[psi.agent-session.core :as s])
+(def ctx (:ctx @psi.agent-session.main/session-state))
+
+;; Extension registry
+(s/query-in ctx [:psi.extension/paths
+                 :psi.extension/count
+                 :psi.extension/handler-events
+                 :psi.extension/tool-names
+                 :psi.extension/command-names
+                 :psi.extension/flag-names
+                 :psi.extension/flag-values
+                 :psi.extension/details])
+
+;; UI state
+(s/query-in ctx [:psi.ui/dialog-queue-empty?
+                 :psi.ui/active-dialog
+                 :psi.ui/pending-dialog-count
+                 :psi.ui/widgets
+                 :psi.ui/statuses
+                 :psi.ui/visible-notifications
+                 :psi.ui/tool-renderers
+                 :psi.ui/message-renderers])
+```
+
+### EQL Attributes
+
+**Extension registry** (`:psi.extension/*`):
+
+| Attribute                      | Type           | Description                        |
+|--------------------------------|----------------|------------------------------------|
+| `:psi.extension/paths`         | `[string]`     | Registered extension file paths    |
+| `:psi.extension/count`         | `int`          | Number of loaded extensions        |
+| `:psi.extension/handler-events`| `[string]`     | Event names with handlers          |
+| `:psi.extension/handler-count` | `int`          | Total handler registrations        |
+| `:psi.extension/tools`         | `[map]`        | Tool definitions (sans `:execute`) |
+| `:psi.extension/tool-names`    | `[string]`     | Registered tool names              |
+| `:psi.extension/commands`      | `[map]`        | Commands (sans `:handler`)         |
+| `:psi.extension/command-names` | `[string]`     | Registered command names           |
+| `:psi.extension/flags`         | `[map]`        | Flag definitions with current values |
+| `:psi.extension/flag-names`    | `[string]`     | Registered flag names              |
+| `:psi.extension/flag-values`   | `{name value}` | Current flag values                |
+| `:psi.extension/details`       | `[map]`        | Per-extension detail maps          |
+
+**UI state** (`:psi.ui/*`):
+
+| Attribute                          | Type       | Description                          |
+|------------------------------------|------------|--------------------------------------|
+| `:psi.ui/dialog-queue-empty?`      | `boolean`  | True when no dialogs active/pending  |
+| `:psi.ui/active-dialog`            | `map?`     | Current dialog (sans promise)        |
+| `:psi.ui/pending-dialog-count`     | `int`      | Queued dialogs waiting               |
+| `:psi.ui/widgets`                  | `[map]`    | All widget entries                   |
+| `:psi.ui/statuses`                 | `[map]`    | All status line entries              |
+| `:psi.ui/visible-notifications`    | `[map]`    | Non-dismissed notifications (max 3)  |
+| `:psi.ui/tool-renderers`           | `[map]`    | Tool renderer metadata               |
+| `:psi.ui/message-renderers`        | `[map]`    | Message renderer metadata            |
+
+## Extension Lifecycle
+
+1. **Discovery** — paths collected from standard locations + CLI flags
+2. **Load** — each `.clj` file is `load-file`d, `ns` form is read to resolve the namespace
+3. **Init** — the namespace's `init` var is called with the API map
+4. **Active** — handlers fire on events, UI contributions render in TUI
+5. **Reload** — `reload-extensions-in!` unregisters all, clears UI state, re-discovers and re-loads
+
+On reload, all extension registrations (handlers, tools, commands, flags,
+shortcuts) and all UI contributions (widgets, status lines, notifications,
+renderers) are cleared.  Active and pending dialogs are cancelled (promises
+deliver `nil`).  Flag *values* are preserved across reloads.
+
+## Implementation
+
+The extension system spans two components:
+
+| Namespace                     | Component       | Role                                     |
+|-------------------------------|-----------------|------------------------------------------|
+| `psi.agent-session.extensions`| agent-session   | Registry, loading, event dispatch, tool wrapping |
+| `psi.tui.extension-ui`       | tui             | UI state atom, dialogs, widgets, renderers |
+| `psi.agent-session.resolvers` | agent-session  | EQL resolvers (`:psi.extension/*`, `:psi.ui/*`) |
+| `psi.agent-session.core`     | agent-session   | Context wiring, `make-extension-action-fns` |
+
+`extension-ui` lives in the `tui` component because `tui/app.clj` needs
+to require it for rendering, and `agent-session` depends on `tui` (not
+vice versa).
+
+## Example: Full Extension
+
+```clojure
+(ns my.code-stats-ext
+  (:require [clojure.string :as str]))
+
+(defn init [api]
+  (let [counter (atom 0)]
+
+    ;; Track tool calls
+    ((:on api) "tool_call"
+     (fn [{:keys [tool-name]}]
+       (swap! counter inc)
+       ;; Update widget if TUI is active
+       (when-let [ui (:ui api)]
+         ((:set-widget ui) "stats" :below-editor
+          [(str "Tool calls: " @counter)]))))
+
+    ;; Register a command to show stats
+    ((:register-command api) "stats"
+     {:description "Show tool call count"
+      :handler     (fn [_args]
+                     (println "Total tool calls:" @counter))})
+
+    ;; Register a flag
+    ((:register-flag api) "stats-verbose"
+     {:description "Show detailed tool stats"
+      :default     false})
+
+    ;; Notify on load
+    (when-let [ui (:ui api)]
+      ((:notify ui) "Code stats extension loaded" :info))
+
+    ;; Inter-extension communication
+    ((:on (:events api)) "stats-request"
+     (fn [_data]
+       ((:emit (:events api)) "stats-response" {:count @counter})))))
+```
+
+## Spec
+
+See [`spec/extension-system.allium`](../spec/extension-system.allium)
+for the extension system behavioural specification and
+[`spec/ui-extension-points.allium`](../spec/ui-extension-points.allium)
+for the UI extension points specification.
