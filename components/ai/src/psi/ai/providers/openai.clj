@@ -126,11 +126,13 @@
             (when-let [chunk (parse-sse-line line)]
               (let [choice (first (:choices chunk))
                     delta  (:delta choice)]
-                (cond
-                  ;; Start of response
-                  (and choice (= (:role delta) "assistant"))
-                  (consume-fn {:type :start})
 
+                ;; Start of response — fires once, does NOT gate other fields.
+                ;; OpenAI packs role + tool_calls in the same first chunk.
+                (when (and choice (= (:role delta) "assistant"))
+                  (consume-fn {:type :start}))
+
+                (cond
                   ;; Content delta
                   (:content delta)
                   (consume-fn {:type          :text-delta
