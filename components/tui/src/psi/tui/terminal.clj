@@ -15,7 +15,7 @@
   (:require
    [psi.tui.protocols :as proto])
   (:import
-   (java.io InputStream PrintStream)))
+   (java.io FileInputStream PrintStream)))
 
 ;;;; Escape constants
 
@@ -105,17 +105,62 @@
 
 ;;;; ProcessTerminal (real OS terminal)
 
+(defn- run-stty!
+  "Run stty with args against /dev/tty. Ignores errors."
+  [& args]
+  (try
+    (-> (ProcessBuilder. ^java.util.List (into ["stty"] args))
+        (.redirectInput (java.io.File. "/dev/tty"))
+        (.redirectOutput (java.io.File. "/dev/tty"))
+        (.start)
+        (.waitFor))
+    (catch Exception _ nil)))
+
+(defn- translate-key
+  "Translate raw VT byte sequences to symbolic key names that components expect.
+   Printable characters are returned as-is.
+   Unknown sequences are returned as-is."
+  [^String raw]
+  (case raw
+    "\r"       "enter"
+    "\n"       "enter"
+    "\u001b"   "escape"
+    "\u001b[A" "up"
+    "\u001b[B" "down"
+    "\u001b[C" "right"
+    "\u001b[D" "left"
+    "\u001b[H" "home"
+    "\u001b[F" "end"
+    "\u001b[1~" "home"
+    "\u001b[4~" "end"
+    "\u001b[5~" "pageUp"
+    "\u001b[6~" "pageDown"
+    "\u001b[3~" "delete"
+    "\u007f"   "backspace"
+    "\u0008"   "backspace"
+    "\t"       "tab"
+    ;; Ctrl+letter sequences already handled by components as raw chars:
+    ;;  \u0001=ctrl+a, \u0002=ctrl+b, \u0005=ctrl+e, \u0006=ctrl+f,
+    ;;  \u000b=ctrl+k, \u000f=ctrl+o, \u0015=ctrl+u
+    ;; Shift+enter variants sent by some terminals
+    "\u001b[13;2u" "shift+enter"
+    "\u001b\r"     "alt+enter"
+    raw))
+
 (defn- read-input-loop
-  "Read bytes from in, call on-input with each complete key sequence.
-   Runs in a background daemon thread.  Exits when running? becomes false."
-  [^InputStream in on-input running?]
-  (let [buf (byte-array 64)]
-    (loop []
-      (when @running?
-        (let [n (.read in buf 0 64)]
-          (when (pos? n)
-            (on-input (String. buf 0 n "UTF-8")))
-          (recur))))))
+  "Read bytes from /dev/tty, translate to key names, call on-input.
+   Runs in a background daemon thread. Exits when running? becomes false."
+  [on-input running?]
+  (try
+    (let [tty (FileInputStream. "/dev/tty")
+          buf (byte-array 64)]
+      (loop []
+        (when @running?
+          (let [n (.read tty buf 0 64)]
+            (when (pos? n)
+              (on-input (translate-key (String. buf 0 n "UTF-8"))))
+            (recur)))))
+    (catch Exception _e nil)))
 
 (defrecord ProcessTerminal
   [^PrintStream out
@@ -128,14 +173,16 @@
   proto/Terminal
   (start! [this on-input _on-resize]
     (reset! running-atom true)
-    ;; Query + enable bracketed paste + hide cursor
+    ;; Enable raw mode: no echo, no canonical buffering
+    (run-stty! "-echo" "raw")
+    ;; Query Kitty protocol + enable bracketed paste + hide cursor
     (.print out kitty-query)
     (.print out paste-enable)
     (.print out hide-cursor)
     (.flush out)
-    ;; Background reader thread
+    ;; Background reader thread reads from /dev/tty directly
     (let [t (Thread.
-             #(read-input-loop System/in on-input running-atom)
+             #(read-input-loop on-input running-atom)
              "tui-input-reader")]
       (.setDaemon t true)
       (.start t)
@@ -144,6 +191,8 @@
 
   (stop! [_this]
     (reset! running-atom false)
+    ;; Restore terminal state before writing cursor-restore sequences
+    (run-stty! "sane")
     (when @kitty-active-atom
       (.print out kitty-disable)
       (reset! kitty-active-atom false))
@@ -160,7 +209,7 @@
 
 (defn create-process-terminal
   "Create a ProcessTerminal backed by System/out.
-   Dimensions default to 80×24; updated via fire-resize! or SIGWINCH handler."
+   Dimensions default to 80×24; pass {:cols n :rows n} to override."
   ([] (create-process-terminal {}))
   ([{:keys [cols rows] :or {cols 80 rows 24}}]
    (->ProcessTerminal
