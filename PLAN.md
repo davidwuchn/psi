@@ -41,24 +41,56 @@ Ordered steps toward AI COMPLETE.
 
 ---
 
+## Next
+
+### Step 6 — Statechart-driven tool calling
+Replace ad-hoc atoms in executor/providers with a per-turn statechart.
+
+**Why**: `stream-turn!` currently tracks streaming state (text buffer,
+tool-call accumulation, done flag) via scattered atoms and StringBuilders.
+This is an implicit state machine — formalising it as a statechart makes
+every state explicit, queryable via EQL, and observable from nREPL.
+
+**States**: `idle → streaming → (text-accumulating | tool-accumulating)* → done`
+- `streaming/text`: accumulates text deltas
+- `streaming/tool-call`: accumulates tool-call id/name/arguments per index
+- `done`: final message assembled, tool calls extracted
+- `error`: provider error, timeout
+
+**Scope**:
+- Statechart definition for per-turn streaming state
+- Executor drives the statechart instead of raw atoms
+- Provider events (`:text-delta`, `:toolcall-start/delta/end`, `:done`)
+  become statechart events
+- Active states, accumulated content, tool calls all queryable via EQL
+- nREPL introspection: connect and query the streaming statechart live
+- Existing tests continue to pass (statechart is internal to executor)
+
+**Boundaries** (not in scope):
+- Session-level statechart (already exists)
+- Provider SSE parsing (unchanged)
+- Tool execution (unchanged — still called by `run-turn!` after statechart reaches `done`)
+
+---
+
 ## Backlog
 
-6. Step 6 — Graph emergence
+7. Step 7 — Graph emergence
    Register domain resolvers, surface capability graph via EQL
 
-7. Step 7 — HTTP API
+8. Step 8 — HTTP API
    openapi spec + martian client, surface via Pathom mutations
 
-8. Step 8 — RPC surface
+9. Step 9 — RPC surface
    JSON stdio protocol for headless / programmatic control
 
-9. Step 9 — Memory layer
-   Combine query + history + knowledge into queryable memory
+10. Step 10 — Memory layer
+    Combine query + history + knowledge into queryable memory
 
-10. Step 10 — Feed-forward recursion
+11. Step 11 — Feed-forward recursion
     AI tooling hooks + FUTURE_STATE
 
-11. AI COMPLETE
+12. AI COMPLETE
 
 ### Deferred (agent-session)
 - `TreeNavigated` branch tree navigation
