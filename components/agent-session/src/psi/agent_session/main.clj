@@ -418,7 +418,7 @@
                 (let [providers (oauth/available-providers oauth-ctx)]
                   (doseq [[i p] (map-indexed vector providers)]
                     (let [logged-in? (some #(= (:id p) (:id %))
-                                          (oauth/logged-in-providers oauth-ctx))]
+                                           (oauth/logged-in-providers oauth-ctx))]
                       (println (str "  " (inc i) ". " (:name p)
                                     (when logged-in? " ✓ logged in")))))
                   (print "  Select provider (number): ")
@@ -538,23 +538,93 @@
                                          :oauth-ctx oauth-ctx})
 
         ;; run-agent-fn! — called by the TUI update fn on submit.
-        ;; Expands prompt templates, then starts the agent in a background thread.
+        ;; Handles /login and /logout inline; everything else goes to the agent.
         run-agent-fn! (fn [text ^java.util.concurrent.LinkedBlockingQueue queue]
-                        (future
-                          (try
-                            (let [expanded (expand-input ctx text)
-                                  user-msg {:role      "user"
-                                            :content   [{:type :text :text expanded}]
-                                            :timestamp (java.time.Instant/now)}
-                                  api-key  (resolve-api-key oauth-ctx ai-model)
-                                  result   (executor/run-agent-loop!
-                                            ai-ctx (:agent-ctx ctx)
-                                            ai-model [user-msg]
-                                            {:turn-ctx-atom (:turn-ctx-atom ctx)
-                                             :api-key       api-key})]
-                              (.put queue {:kind :done :result result}))
-                            (catch Exception e
-                              (.put queue {:kind :error :message (ex-message e)})))))]
+                        (let [trimmed (str/trim text)]
+                          (cond
+                            ;; /login — run OAuth login, report result as assistant message
+                            (= trimmed "/login")
+                            (future
+                              (try
+                                (let [providers (oauth/available-providers oauth-ctx)
+                                      ;; Auto-select first provider (extend to selector later)
+                                      provider  (first providers)
+                                      code-promise (promise)]
+                                  ;; Store the promise so /code can deliver it
+                                  (reset! session-state
+                                          (assoc @session-state
+                                                 :login-code-promise code-promise
+                                                 :login-provider-id (:id provider)))
+                                  (oauth/login! oauth-ctx (:id provider)
+                                                {:on-auth     (fn [{:keys [url]}]
+                                                                (.put queue
+                                                                      {:kind :done
+                                                                       :result {:role    "assistant"
+                                                                                :content [{:type :text
+                                                                                           :text (str "🔑 Login to " (:name provider)
+                                                                                                      "\n\nOpen this URL:\n" url
+                                                                                                      "\n\nThen paste the code with: /code <authorization-code>")}]}}))
+                                                 :on-prompt   (fn [_prompt]
+                                                                (deref code-promise))
+                                                 :on-progress (fn [_])})
+                                  ;; Login succeeded
+                                  (.put queue {:kind :done
+                                               :result {:role    "assistant"
+                                                        :content [{:type :text
+                                                                   :text (str "✓ Logged in to " (:name provider))}]}}))
+                                (catch Exception e
+                                  (.put queue {:kind :done
+                                               :result {:role    "assistant"
+                                                        :content [{:type :text
+                                                                   :text (str "✗ Login failed: " (ex-message e))}]}}))))
+
+                            ;; /code <auth-code> — deliver the authorization code to a pending login
+                            (str/starts-with? trimmed "/code ")
+                            (let [code (str/trim (subs trimmed 6))]
+                              (if-let [p (:login-code-promise @session-state)]
+                                (do (deliver p code)
+                                    (.put queue {:kind :done
+                                                 :result {:role    "assistant"
+                                                          :content [{:type :text
+                                                                     :text "Processing authorization code..."}]}}))
+                                (.put queue {:kind :done
+                                             :result {:role    "assistant"
+                                                      :content [{:type :text
+                                                                 :text "No login in progress. Use /login first."}]}})))
+
+                            ;; /logout — remove OAuth credentials
+                            (= trimmed "/logout")
+                            (let [logged-in (oauth/logged-in-providers oauth-ctx)]
+                              (if (empty? logged-in)
+                                (.put queue {:kind :done
+                                             :result {:role    "assistant"
+                                                      :content [{:type :text
+                                                                 :text "No OAuth providers logged in. Use /login first."}]}})
+                                (do (doseq [p logged-in]
+                                      (oauth/logout! oauth-ctx (:id p)))
+                                    (.put queue {:kind :done
+                                                 :result {:role    "assistant"
+                                                          :content [{:type :text
+                                                                     :text (str "✓ Logged out of: "
+                                                                                (str/join ", " (map :name logged-in)))}]}}))))
+
+                            ;; Everything else — send to agent
+                            :else
+                            (future
+                              (try
+                                (let [expanded (expand-input ctx text)
+                                      user-msg {:role      "user"
+                                                :content   [{:type :text :text expanded}]
+                                                :timestamp (java.time.Instant/now)}
+                                      api-key  (resolve-api-key oauth-ctx ai-model)
+                                      result   (executor/run-agent-loop!
+                                                ai-ctx (:agent-ctx ctx)
+                                                ai-model [user-msg]
+                                                {:turn-ctx-atom (:turn-ctx-atom ctx)
+                                                 :api-key       api-key})]
+                                  (.put queue {:kind :done :result result}))
+                                (catch Exception e
+                                  (.put queue {:kind :error :message (ex-message e)})))))))]
 
     (tui-app/start! (:name ai-model) run-agent-fn!
                     {:query-fn      (fn [q] (session/query-in ctx q))
