@@ -1,0 +1,589 @@
+-- ui-extension-points.allium
+--
+-- Scope: UI extension points — the bridge between the extension system
+--        and the TUI layer, enabling extensions to show dialogs, contribute
+--        widgets, display notifications, and register custom renderers.
+--
+-- Design decisions:
+--   1. Extension UI state lives in the charm app state atom (centralized Elm model)
+--   2. Dialogs use a promise bridge: extension thread blocks, TUI resolves
+--   3. Dialogs are queued FIFO, one active at a time
+--   4. Widgets placed above-editor or below-editor, keyed by extension id
+--   5. Status is a single-line widget variant in the footer
+--   6. Custom rendering via registered render fns keyed by tool-name or custom-type
+--   7. Render fns return ANSI strings (matching charm.clj view model)
+--   8. UI context (:ui key) present only when TUI is active
+--   9. All extension UI state is EQL-queryable (read-only)
+--  10. Screen takeover (custom components) deferred
+--
+-- Includes:
+--   Dialog entities (confirm, select, input) and queue lifecycle
+--   Widget entity, placement, contribution and removal
+--   Status line entity
+--   Notification entity, auto-dismiss lifecycle
+--   Render registry for tool results and custom messages
+--   UI context availability and headless fallback
+--   EQL resolver surface for extension UI state
+--
+-- Excludes:
+--   TUI rendering internals, component protocols, terminal I/O (see tui.allium)
+--   Extension lifecycle, event dispatch, tool wrapping (see extension-system.allium)
+--   AgentSession orchestration (see coding-agent.allium)
+--   Screen takeover / custom component injection (deferred)
+
+use "./extension-system.allium" as ext
+use "./coding-agent.allium" as session
+use "./tui.allium" as tui
+
+------------------------------------------------------------
+-- External Entities
+------------------------------------------------------------
+
+external entity AgentSession {
+    sessionId: String
+    isStreaming: Boolean
+    extensions: List<ext/Extension>
+}
+
+external entity Extension {
+    path: String
+}
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value WidgetPlacement {
+    kind: above_editor | below_editor
+}
+
+value NotificationLevel {
+    kind: info | warning | error
+}
+
+value DialogOption {
+    value: String
+    label: String
+    description: String?
+}
+
+------------------------------------------------------------
+-- Entities and Variants
+------------------------------------------------------------
+
+-- ── Dialogs ────────────────────────────────────────────
+
+entity Dialog {
+    id: String
+    extensionPath: String
+    kind: ConfirmDialog | SelectDialog | InputDialog
+    -- Promise bridge: the requesting extension thread blocks on this.
+    -- The TUI update loop resolves it when the user responds.
+    resolved: Boolean
+}
+
+variant ConfirmDialog : Dialog {
+    title: String
+    message: String
+    result: Boolean?            -- true = confirmed, false = cancelled, null = pending
+}
+
+variant SelectDialog : Dialog {
+    title: String
+    options: List<DialogOption>
+    result: String?             -- selected value, or null if cancelled
+}
+
+variant InputDialog : Dialog {
+    title: String
+    placeholder: String?
+    result: String?             -- entered text, or null if cancelled
+}
+
+entity DialogQueue {
+    -- FIFO queue of pending dialogs. One active at a time.
+    pending: List<Dialog>
+    active: Dialog?
+
+    -- Derived
+    has_pending: pending.count > 0
+    is_empty: active = null and pending.count = 0
+}
+
+-- ── Widgets ────────────────────────────────────────────
+
+entity Widget {
+    -- Persistent UI element contributed by an extension.
+    -- Keyed by (extensionId, widgetId) to prevent collisions.
+    extensionId: String
+    widgetId: String
+    placement: WidgetPlacement
+    content: List<String>       -- lines of ANSI-styled text
+}
+
+-- ── Status ─────────────────────────────────────────────
+
+entity StatusEntry {
+    -- Single-line status in the footer area, keyed by extension id.
+    extensionId: String
+    text: String
+}
+
+-- ── Notifications ──────────────────────────────────────
+
+entity Notification {
+    id: String
+    extensionId: String
+    message: String
+    level: NotificationLevel
+    createdAt: Timestamp
+    dismissed: Boolean
+
+    -- Derived
+    is_expired: createdAt + config.notification_auto_dismiss <= now
+}
+
+-- ── Render Registry ────────────────────────────────────
+
+entity ToolRenderer {
+    -- Custom render fn for a tool's call and/or result display.
+    toolName: String
+    extensionPath: String
+    -- render-call-fn: (fn [args] → String)
+    -- render-result-fn: (fn [result opts] → String)
+}
+
+entity MessageRenderer {
+    -- Custom render fn for extension-injected messages with a customType.
+    customType: String
+    extensionPath: String
+    -- render-fn: (fn [message opts] → String)
+}
+
+-- ── UI State (aggregate in charm app state) ────────────
+
+entity ExtensionUIState {
+    -- Aggregate of all extension-contributed UI elements.
+    -- Lives inside the charm app state atom.
+    dialogQueue: DialogQueue
+    widgets: List<Widget>
+    statuses: List<StatusEntry>
+    notifications: List<Notification>
+    toolRenderers: List<ToolRenderer>
+    messageRenderers: List<MessageRenderer>
+
+    -- Derived
+    active_widgets_above: widgets with placement.kind = above_editor
+    active_widgets_below: widgets with placement.kind = below_editor
+    visible_notifications: notifications with dismissed = false and not is_expired
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    notification_auto_dismiss: Duration = 5.seconds
+    max_visible_notifications: Integer = 3
+    dialog_queue_max: Integer = 10
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+-- ── Dialog lifecycle ───────────────────────────────────
+
+rule DialogRequested {
+    -- Extension requests a dialog. It is queued and the extension
+    -- thread blocks on a promise until the TUI resolves it.
+    when: DialogRequested(session, dialog)
+
+    requires: session.uiState.dialogQueue.pending.count < config.dialog_queue_max
+
+    ensures: session.uiState.dialogQueue.pending =
+        session.uiState.dialogQueue.pending + [dialog]
+    ensures: DialogQueueAdvanced(session)
+}
+
+rule DialogQueueAdvanced {
+    -- Promote the next pending dialog to active when no dialog is showing.
+    when: DialogQueueAdvanced(session)
+
+    requires: session.uiState.dialogQueue.active = null
+    requires: session.uiState.dialogQueue.has_pending
+
+    let next = session.uiState.dialogQueue.pending.first
+
+    ensures: session.uiState.dialogQueue.active = next
+    ensures: session.uiState.dialogQueue.pending =
+        session.uiState.dialogQueue.pending.rest
+    ensures: DialogShown(session, next)
+}
+
+rule DialogResolved {
+    -- User responds to the active dialog. The promise is resolved,
+    -- unblocking the extension thread.
+    when: DialogResolved(session, dialog, result)
+
+    requires: session.uiState.dialogQueue.active = dialog
+
+    ensures: dialog.resolved = true
+    ensures:
+        if dialog.kind = ConfirmDialog:
+            dialog.result = result
+        else if dialog.kind = SelectDialog:
+            dialog.result = result
+        else if dialog.kind = InputDialog:
+            dialog.result = result
+    ensures: session.uiState.dialogQueue.active = null
+    ensures: PromiseResolved(dialog, result)
+    ensures: DialogQueueAdvanced(session)
+}
+
+rule DialogCancelled {
+    -- User presses escape on the active dialog.
+    when: DialogCancelled(session, dialog)
+
+    requires: session.uiState.dialogQueue.active = dialog
+
+    ensures: dialog.resolved = true
+    ensures: dialog.result = null
+    ensures: session.uiState.dialogQueue.active = null
+    ensures: PromiseResolved(dialog, null)
+    ensures: DialogQueueAdvanced(session)
+}
+
+-- ── Widget lifecycle ───────────────────────────────────
+
+rule WidgetSet {
+    -- Extension sets or replaces a widget. Keyed by (extensionId, widgetId).
+    when: WidgetSet(session, extensionId, widgetId, placement, content)
+
+    ensures:
+        let existing = Widget{extensionId, widgetId}
+        if exists existing:
+            existing.placement = placement
+            existing.content = content
+        else:
+            Widget.created(
+                extensionId: extensionId,
+                widgetId: widgetId,
+                placement: placement,
+                content: content
+            )
+}
+
+rule WidgetCleared {
+    -- Extension removes a widget.
+    when: WidgetCleared(session, extensionId, widgetId)
+
+    let target = Widget{extensionId, widgetId}
+    requires: exists target
+
+    ensures: not exists target
+}
+
+-- ── Status lifecycle ───────────────────────────────────
+
+rule StatusSet {
+    -- Extension sets a persistent status line in the footer.
+    when: StatusSet(session, extensionId, text)
+
+    ensures:
+        let existing = StatusEntry{extensionId}
+        if exists existing:
+            existing.text = text
+        else:
+            StatusEntry.created(extensionId: extensionId, text: text)
+}
+
+rule StatusCleared {
+    -- Extension removes its status line.
+    when: StatusCleared(session, extensionId)
+
+    let target = StatusEntry{extensionId}
+    requires: exists target
+
+    ensures: not exists target
+}
+
+-- ── Notification lifecycle ─────────────────────────────
+
+rule NotificationCreated {
+    -- Extension fires a non-blocking notification.
+    when: NotificationCreated(session, extensionId, message, level)
+
+    ensures: Notification.created(
+        id: NewUUID(),
+        extensionId: extensionId,
+        message: message,
+        level: level,
+        createdAt: now,
+        dismissed: false
+    )
+}
+
+rule NotificationAutoDismissed {
+    -- Notifications auto-dismiss after the configured duration.
+    when: notification: Notification.is_expired
+
+    requires: notification.dismissed = false
+
+    ensures: notification.dismissed = true
+}
+
+rule NotificationOverflowDismissed {
+    -- When more than max_visible_notifications are showing, dismiss oldest.
+    when: _: Notification.created
+
+    let visible = session.uiState.visible_notifications
+    requires: visible.count > config.max_visible_notifications
+    let oldest = visible.first
+
+    ensures: oldest.dismissed = true
+}
+
+-- ── Render registry ────────────────────────────────────
+
+rule ToolRendererRegistered {
+    -- Extension registers a custom renderer for a tool's output.
+    when: ToolRendererRegistered(session, toolName, extensionPath)
+
+    ensures:
+        let existing = ToolRenderer{toolName}
+        if exists existing:
+            existing.extensionPath = extensionPath
+        else:
+            ToolRenderer.created(
+                toolName: toolName,
+                extensionPath: extensionPath
+            )
+}
+
+rule MessageRendererRegistered {
+    -- Extension registers a custom renderer for a custom message type.
+    when: MessageRendererRegistered(session, customType, extensionPath)
+
+    ensures:
+        let existing = MessageRenderer{customType}
+        if exists existing:
+            existing.extensionPath = extensionPath
+        else:
+            MessageRenderer.created(
+                customType: customType,
+                extensionPath: extensionPath
+            )
+}
+
+-- ── UI availability ────────────────────────────────────
+
+rule UIContextProvided {
+    -- When TUI is active, extension event handlers and tool execute fns
+    -- receive a :ui key in their context map.
+    -- When headless (REPL mode), :ui is nil.
+    when: ExtensionHandlerInvoked(session, handler, event)
+
+    ensures:
+        if session.tui_active:
+            handler.context = handler.context + {:ui UIContextFor(session)}
+        else:
+            handler.context = handler.context + {:ui nil}
+}
+
+rule HeadlessDialogFallback {
+    -- In headless mode, dialog methods return defaults immediately.
+    -- confirm → false, select → nil, input → nil.
+    when: DialogRequested(session, dialog)
+
+    requires: not session.tui_active
+
+    ensures: dialog.resolved = true
+    ensures:
+        if dialog.kind = ConfirmDialog:
+            dialog.result = false
+        else:
+            dialog.result = null
+    ensures: PromiseResolved(dialog, dialog.result)
+}
+
+-- ── Cleanup on extension reload ────────────────────────
+
+rule ExtensionUICleanedUp {
+    -- When extensions are reloaded, all UI contributions are cleared.
+    when: ext/ExtensionsReloaded(session)
+
+    ensures: session.uiState.dialogQueue = DialogQueue{pending: [], active: null}
+    ensures:
+        for w in session.uiState.widgets:
+            not exists w
+    ensures:
+        for s in session.uiState.statuses:
+            not exists s
+    ensures:
+        for n in session.uiState.notifications:
+            not exists n
+    ensures:
+        for r in session.uiState.toolRenderers:
+            not exists r
+    ensures:
+        for r in session.uiState.messageRenderers:
+            not exists r
+}
+
+------------------------------------------------------------
+-- Actor Declarations
+------------------------------------------------------------
+
+actor ExtensionModule {
+    identified_by: ext/Extension
+}
+
+------------------------------------------------------------
+-- Surfaces
+------------------------------------------------------------
+
+surface ExtensionUI {
+    -- UI methods available to extensions when TUI is active.
+    -- Passed as the :ui key in extension handler and tool contexts.
+    for ext: ExtensionModule
+
+    context session: AgentSession
+
+    exposes:
+        session.uiState.dialogQueue.is_empty
+        session.uiState.visible_notifications
+
+    provides:
+        -- Dialogs (blocking — extension thread waits for user response)
+        confirm(title, message)                     → Boolean
+        select(title, options: List<DialogOption>)   → String?
+        input(title, placeholder?)                   → String?
+
+        -- Widgets (persistent until cleared)
+        set_widget(widgetId, placement, content: List<String>)
+        clear_widget(widgetId)
+
+        -- Status (single-line footer)
+        set_status(text)
+        clear_status()
+
+        -- Notifications (fire-and-forget)
+        notify(message, level)
+
+        -- Render registration
+        register_tool_renderer(toolName, renderCallFn, renderResultFn)
+        register_message_renderer(customType, renderFn)
+
+    guidance:
+        -- Dialog methods block the calling extension thread.
+        -- The TUI update loop shows the dialog and resolves the promise.
+        -- Only one dialog is active at a time; others queue FIFO.
+        --
+        -- In headless mode (no TUI), all dialog methods return defaults:
+        --   confirm → false, select → nil, input → nil.
+        -- Fire-and-forget methods (notify, set_status, set_widget) are no-ops.
+        --
+        -- Widget content is a vector of ANSI-styled strings (one per line).
+        -- Render fns receive args/result and return ANSI strings.
+        --
+        -- Extensions should check (:ui ctx) before calling UI methods.
+        -- Idiomatic pattern:
+        --   (when-let [ui (:ui ctx)]
+        --     (ui/confirm ui "Title" "Message"))
+        --
+        -- extensionId is derived from the extension path automatically;
+        -- extensions do not need to pass it explicitly.
+}
+
+surface ExtensionUIQuery {
+    -- EQL query surface for extension UI state (read-only introspection).
+    for caller: ExtensionModule
+
+    context session: AgentSession
+
+    exposes:
+        :psi.ui/dialog-queue-empty?
+        :psi.ui/active-dialog
+        :psi.ui/pending-dialog-count
+        :psi.ui/widgets
+        :psi.ui/statuses
+        :psi.ui/visible-notifications
+        :psi.ui/tool-renderers
+        :psi.ui/message-renderers
+
+    guidance:
+        -- All attributes are read-only.
+        -- Query via (query-in ctx [:psi.ui/widgets :psi.ui/statuses])
+        -- or from nREPL for live introspection.
+        --
+        -- Widgets are returned as [{:extension-id s :widget-id s
+        --                            :placement :above-editor :content [s ...]} ...]
+        -- Statuses as [{:extension-id s :text s} ...]
+        -- Notifications as [{:id s :extension-id s :message s :level :info} ...]
+}
+
+surface TUIViewIntegration {
+    -- Contract between the extension UI state and the charm.clj view fn.
+    -- The view fn reads extension UI state and renders it into the layout.
+    for app: session/AgentSession
+
+    context uiState: ExtensionUIState
+
+    exposes:
+        uiState.active_widgets_above
+        uiState.active_widgets_below
+        uiState.statuses
+        uiState.visible_notifications
+        uiState.dialogQueue.active
+        uiState.toolRenderers
+        uiState.messageRenderers
+
+    guidance:
+        -- The charm.clj view fn renders extension UI elements at fixed positions:
+        --
+        --   ┌─────────────────────────────┐
+        --   │ Banner                      │
+        --   │ Messages                    │
+        --   │ [widgets: above_editor]     │
+        --   │ ─── separator ───           │
+        --   │ Editor / active dialog      │
+        --   │ [widgets: below_editor]     │
+        --   │ [statuses] (footer)         │
+        --   │ [notifications] (toast)     │
+        --   └─────────────────────────────┘
+        --
+        -- When a dialog is active, it replaces the editor area.
+        -- The user interacts with the dialog; all other input is blocked.
+        --
+        -- Notifications render as a small overlay or inline toast,
+        -- styled by level (info=dim, warning=yellow, error=red).
+        --
+        -- Tool renderers are looked up by tool-name during message rendering.
+        -- If no custom renderer is registered, the default renderer is used.
+        -- Message renderers are looked up by customType for CustomMessageEntry display.
+        --
+        -- All render fns return ANSI strings. The view fn inserts them directly.
+}
+
+------------------------------------------------------------
+-- Deferred Specifications
+------------------------------------------------------------
+
+deferred PromiseBridge.implementation       -- JVM promise/deferred for cross-thread dialog resolution
+deferred NotificationToastLayout.render     -- positioning and animation of notification toasts
+deferred DialogComponentRendering.render    -- charm.clj view integration for dialog components
+
+------------------------------------------------------------
+-- Open Questions
+------------------------------------------------------------
+
+open_question "Dialog timeout: should dialogs support an auto-dismiss timeout (like pi's { timeout: 5000 })? Could be added as an optional duration on DialogRequested."
+
+open_question "Widget ordering: when multiple extensions contribute widgets to the same placement, what determines order? Registration order (consistent with extension event ordering) seems natural."
+
+open_question "Render fn signature: should render fns receive a theme map for consistent styling, or is direct ANSI string construction sufficient? A theme map would decouple extensions from specific color codes."
+
+open_question "Editor text injection: should extensions be able to prefill the editor (set-editor-text, paste-to-editor)? Useful for suggested commands but adds complexity to the Elm state model."
+
+open_question "Working message: should extensions be able to override the spinner message during streaming (e.g., 'Analyzing code...' instead of 'thinking…')? Low effort, high UX value."
