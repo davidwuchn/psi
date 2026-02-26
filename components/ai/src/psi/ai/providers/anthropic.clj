@@ -187,7 +187,8 @@
                 ;; Unknown event — ignore
                 nil)))))
       (catch Exception e
-        (consume-fn {:type :error :error-message (str e)})))))
+        (consume-fn (cond-> {:type :error :error-message (str e)}
+                      (:status (ex-data e)) (assoc :http-status (:status (ex-data e)))))))))
 
 ;; Provider implementation
 (def provider

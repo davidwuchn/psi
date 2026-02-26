@@ -184,11 +184,12 @@
               content (cond-> []
                         (seq text-buffer) (conj {:type :text :text text-buffer})
                         :always           (conj {:type :error :text err-msg}))
-              final {:role          "assistant"
-                     :content       content
-                     :stop-reason   :error
-                     :error-message err-msg
-                     :timestamp     (java.time.Instant/now)}]
+              final (cond-> {:role          "assistant"
+                             :content       content
+                             :stop-reason   :error
+                             :error-message err-msg
+                             :timestamp     (java.time.Instant/now)}
+                      (:http-status data) (assoc :http-status (:http-status data)))]
           (swap! td assoc :final-message final :error-message err-msg)
           (agent/end-stream-in! agent-ctx final)
           (deliver done-p final))
@@ -265,7 +266,8 @@
 
                     :error
                     (turn-sc/send-event! turn-ctx :turn/error
-                                         {:error-message (:error-message event)})
+                                         (cond-> {:error-message (:error-message event)}
+                                           (:http-status event) (assoc :http-status (:http-status event))))
 
                     ;; :text-start :text-end :thinking-* — ignore
                     nil)))
@@ -365,10 +367,11 @@
    (let [result (try
                   (run-turn! ai-ctx agent-ctx ai-model turn-ctx-atom)
                   (catch Exception e
-                    {:role "assistant" :content []
-                     :stop-reason :error
-                     :error-message (ex-message e)
-                     :timestamp (java.time.Instant/now)}))]
+                    (cond-> {:role "assistant" :content []
+                             :stop-reason :error
+                             :error-message (ex-message e)
+                             :timestamp (java.time.Instant/now)}
+                      (:status (ex-data e)) (assoc :http-status (:status (ex-data e))))))]
      (if (= :error (:stop-reason result))
        (agent/end-loop-on-error-in! agent-ctx (:error-message result))
        (agent/end-loop-in! agent-ctx))

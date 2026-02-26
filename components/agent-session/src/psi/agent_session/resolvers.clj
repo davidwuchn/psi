@@ -33,6 +33,16 @@
    :psi.agent-session/context-window
    :psi.agent-session/context-fraction    — nil or 0.0–1.0
    :psi.agent-session/stats               — SessionStats snapshot
+   :psi.agent-session/tool-call-history   — [{:psi.tool-call/*}], nested tool call entities
+   :psi.agent-session/tool-call-history-count — number of tool calls
+
+   Tool call entities (nested under tool-call-history)
+   ───────────────────────────────────────────────────
+   :psi.tool-call/id                      — unique call ID (from list resolver)
+   :psi.tool-call/name                    — tool name (from list resolver)
+   :psi.tool-call/arguments               — raw argument string (from list resolver)
+   :psi.tool-call/result                  — result text (from detail resolver, lazy)
+   :psi.tool-call/is-error                — error flag (from detail resolver, lazy)
 
    Prompt template introspection
    ─────────────────────────────
@@ -72,7 +82,8 @@
    [psi.agent-session.extensions :as ext]
    [psi.tui.extension-ui :as ext-ui]
    [psi.agent-session.statechart :as sc]
-   [psi.agent-session.turn-statechart :as turn-sc]))
+   [psi.agent-session.turn-statechart :as turn-sc]
+   [psi.agent-core.core :as agent]))
 
 ;; ── Core session fields ─────────────────────────────────
 
@@ -292,6 +303,65 @@
       :context-tokens    (:context-tokens sd)
       :context-window    (:context-window sd)}}))
 
+;; ── Tool call history ───────────────────────────────────
+;;
+;; Two-level hierarchy:
+;;   1. List resolver — extracts lightweight tool call identity from
+;;      assistant messages (id, name, arguments). Cheap: no result loading.
+;;   2. Detail resolver — given a :psi.tool-call/id, scans journal for the
+;;      matching toolResult message. Only runs when result/error is queried.
+;;
+;; Usage:
+;;   [:psi.agent-session/tool-call-history-count]
+;;   [{:psi.agent-session/tool-call-history [:psi.tool-call/id :psi.tool-call/name]}]
+;;   [{:psi.agent-session/tool-call-history [:psi.tool-call/name :psi.tool-call/result :psi.tool-call/is-error]}]
+
+(defn- agent-core-messages
+  "Extract the message vec from agent-core inside a session context."
+  [agent-session-ctx]
+  (:messages (psi.agent-core.core/get-data-in (:agent-ctx agent-session-ctx))))
+
+(pco/defresolver agent-session-tool-calls
+  "Resolve tool call list from assistant messages in agent-core.
+   Each entry carries identity + the session context for downstream resolvers."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.agent-session/tool-call-history-count
+                 {:psi.agent-session/tool-call-history
+                  [:psi.tool-call/id
+                   :psi.tool-call/name
+                   :psi.tool-call/arguments
+                   :psi/agent-session-ctx]}]}
+  (let [msgs  (agent-core-messages agent-session-ctx)
+        calls (->> msgs
+                   (filter #(= "assistant" (:role %)))
+                   (mapcat (fn [msg]
+                             (->> (:content msg)
+                                  (filter #(= :tool-call (:type %)))
+                                  (map (fn [tc]
+                                         {:psi.tool-call/id         (:id tc)
+                                          :psi.tool-call/name       (:name tc)
+                                          :psi.tool-call/arguments  (:arguments tc)
+                                          :psi/agent-session-ctx    agent-session-ctx})))))
+                   vec)]
+    {:psi.agent-session/tool-call-history       calls
+     :psi.agent-session/tool-call-history-count (count calls)}))
+
+(pco/defresolver tool-call-result
+  "Resolve the result and error status for a single tool call.
+   Scans agent-core messages for the matching toolResult."
+  [{:keys [psi.tool-call/id psi/agent-session-ctx]}]
+  {::pco/input  [:psi.tool-call/id :psi/agent-session-ctx]
+   ::pco/output [:psi.tool-call/result
+                 :psi.tool-call/is-error]}
+  (let [result-msg (->> (agent-core-messages agent-session-ctx)
+                        (filter #(= "toolResult" (:role %)))
+                        (filter #(= id (:tool-call-id %)))
+                        first)]
+    {:psi.tool-call/result   (some #(when (= :text (:type %)) (:text %))
+                                   (:content result-msg))
+     :psi.tool-call/is-error (:is-error result-msg)}))
+
 ;; ── Turn streaming state ────────────────────────────────
 
 (pco/defresolver agent-session-turn
@@ -441,6 +511,8 @@
    agent-session-context-usage
    agent-session-journal
    agent-session-stats
+   agent-session-tool-calls
+   tool-call-result
    agent-session-turn
    prompt-template-summary-resolver
    prompt-template-detail-resolver

@@ -262,18 +262,24 @@
 
 ;; ── Retry backoff ───────────────────────────────────────
 
+(def ^:private retriable-http-statuses
+  "HTTP status codes that indicate a retriable error."
+  #{429 500 502 503 529})
+
 (defn retry-error?
-  "True if `stop-reason` and optional `error-message` indicate a retriable error.
-  Matches rate-limit, overloaded, and 5xx patterns."
-  [stop-reason error-message]
-  (and (= stop-reason :error)
-       (some #(re-find % (or error-message ""))
-             [#"(?i)rate.limit"
-              #"(?i)overloaded"
-              #"(?i)529"
-              #"(?i)503"
-              #"(?i)502"
-              #"(?i)500"])))
+  "True if the error is retriable.
+  Checks numeric :http-status first (preferred), falls back to string matching."
+  ([stop-reason error-message]
+   (retry-error? stop-reason error-message nil))
+  ([stop-reason error-message http-status]
+   (and (= stop-reason :error)
+        (or (contains? retriable-http-statuses http-status)
+            (some #(re-find % (or error-message ""))
+                  [#"(?i)rate.limit"
+                   #"(?i)too.many.requests"
+                   #"(?i)overloaded"
+                   #"(?i)status[ .:_]429"
+                   #"(?i)status[ .:_]5\d\d"])))))
 
 (defn context-overflow-error?
   "True if `error-message` indicates a context-window overflow."

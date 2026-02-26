@@ -88,17 +88,18 @@
          (swap! session add-event :start)
          (swap! session assoc :status :streaming)
          ((:stream provider-impl) conversation model options
-          (fn [event]
-            (case (:type event)
-              :done  (do (swap! session complete-session)
-                         (consume-fn event))
-              :error (do (swap! session fail-session (:error-message event))
-                         (consume-fn event))
-              (consume-fn event))))
+                                  (fn [event]
+                                    (case (:type event)
+                                      :done  (do (swap! session complete-session)
+                                                 (consume-fn event))
+                                      :error (do (swap! session fail-session (:error-message event))
+                                                 (consume-fn event))
+                                      (consume-fn event))))
          (catch Exception e
            (swap! session fail-session (str e))
-           (consume-fn {:type          :error
-                        :error-message (str e)}))))
+           (consume-fn (cond-> {:type          :error
+                                :error-message (str e)}
+                         (:status (ex-data e)) (assoc :http-status (:status (ex-data e))))))))
      :session session}))
 
 ;; ───────────────────────────────────────────────────────────────────────────
@@ -131,7 +132,7 @@
                       (when (#{:done :error} (:type event))
                         (.put queue sentinel)))
         {:keys [session]} (stream-response provider-impl conversation model
-                                            options consume-fn)
+                                           options consume-fn)
         drain-seq   (fn drain []
                       (lazy-seq
                        (let [item (.poll queue 30 TimeUnit/SECONDS)]

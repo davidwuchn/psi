@@ -51,14 +51,16 @@
          (session/above-compaction-threshold? sd threshold))))
 
 (defn- should-retry? [data]
-  (let [sd    @(:session-data-atom data)
-        max-r (get-in data [:config :auto-retry-max-retries] 3)
-        msgs  (:messages sd)
-        last-m (last msgs)]
+  (let [sd     @(:session-data-atom data)
+        max-r  (get-in data [:config :auto-retry-max-retries] 3)
+        event  (:pending-agent-event data)
+        last-m (last (:messages event))]
     (and (agent-end-event? data)
          (:auto-retry-enabled sd)
          (< (:retry-attempt sd) max-r)
-         (session/retry-error? (:stop-reason last-m) (:error-message last-m)))))
+         (session/retry-error? (:stop-reason last-m)
+                               (:error-message last-m)
+                               (:http-status last-m)))))
 
 (defn- dispatch! [data action-key]
   (when-let [af (:actions-fn data)]
@@ -72,54 +74,54 @@
   (chart/statechart {:id :agent-session}
 
     ;; ── idle ─────────────────────────────────────────────
-    (ele/state {:id :idle}
-      (ele/transition {:event :session/prompt        :target :streaming})
-      (ele/transition {:event :session/compact-start :target :compacting})
-      (ele/transition {:event :session/reset         :target :idle}))
+                    (ele/state {:id :idle}
+                               (ele/transition {:event :session/prompt        :target :streaming})
+                               (ele/transition {:event :session/compact-start :target :compacting})
+                               (ele/transition {:event :session/reset         :target :idle}))
 
     ;; ── streaming ────────────────────────────────────────
-    (ele/state {:id :streaming}
-      (ele/on-entry {}
-        (ele/script {:expr (fn [_env data] (dispatch! data :on-streaming-entered))}))
+                    (ele/state {:id :streaming}
+                               (ele/on-entry {}
+                                             (ele/script {:expr (fn [_env data] (dispatch! data :on-streaming-entered))}))
 
       ;; auto-compact guard takes priority over retry guard
-      (ele/transition
-       {:event  :session/agent-event
-        :target :compacting
-        :cond   (fn [_env data] (should-auto-compact? data))}
-        (ele/script {:expr (fn [_env data] (dispatch! data :on-auto-compact-triggered))}))
+                               (ele/transition
+                                {:event  :session/agent-event
+                                 :target :compacting
+                                 :cond   (fn [_env data] (should-auto-compact? data))}
+                                (ele/script {:expr (fn [_env data] (dispatch! data :on-auto-compact-triggered))}))
 
-      (ele/transition
-       {:event  :session/agent-event
-        :target :retrying
-        :cond   (fn [_env data] (should-retry? data))}
-        (ele/script {:expr (fn [_env data] (dispatch! data :on-retry-triggered))}))
+                               (ele/transition
+                                {:event  :session/agent-event
+                                 :target :retrying
+                                 :cond   (fn [_env data] (should-retry? data))}
+                                (ele/script {:expr (fn [_env data] (dispatch! data :on-retry-triggered))}))
 
-      (ele/transition
-       {:event  :session/agent-event
-        :target :idle
-        :cond   (fn [_env data] (agent-end-event? data))}
-        (ele/script {:expr (fn [_env data] (dispatch! data :on-agent-done))}))
+                               (ele/transition
+                                {:event  :session/agent-event
+                                 :target :idle
+                                 :cond   (fn [_env data] (agent-end-event? data))}
+                                (ele/script {:expr (fn [_env data] (dispatch! data :on-agent-done))}))
 
-      (ele/transition {:event :session/abort :target :idle}
-        (ele/script {:expr (fn [_env data] (dispatch! data :on-abort))}))
-      (ele/transition {:event :session/reset :target :idle}))
+                               (ele/transition {:event :session/abort :target :idle}
+                                               (ele/script {:expr (fn [_env data] (dispatch! data :on-abort))}))
+                               (ele/transition {:event :session/reset :target :idle}))
 
     ;; ── compacting ───────────────────────────────────────
-    (ele/state {:id :compacting}
-      (ele/on-entry {}
-        (ele/script {:expr (fn [_env data] (dispatch! data :on-compacting-entered))}))
-      (ele/transition {:event :session/compact-done :target :idle}
-        (ele/script {:expr (fn [_env data] (dispatch! data :on-compact-done))}))
-      (ele/transition {:event :session/reset :target :idle}))
+                    (ele/state {:id :compacting}
+                               (ele/on-entry {}
+                                             (ele/script {:expr (fn [_env data] (dispatch! data :on-compacting-entered))}))
+                               (ele/transition {:event :session/compact-done :target :idle}
+                                               (ele/script {:expr (fn [_env data] (dispatch! data :on-compact-done))}))
+                               (ele/transition {:event :session/reset :target :idle}))
 
     ;; ── retrying ─────────────────────────────────────────
-    (ele/state {:id :retrying}
-      (ele/on-entry {}
-        (ele/script {:expr (fn [_env data] (dispatch! data :on-retrying-entered))}))
-      (ele/transition {:event :session/retry-done :target :streaming}
-        (ele/script {:expr (fn [_env data] (dispatch! data :on-retry-resume))}))
-      (ele/transition {:event :session/reset :target :idle}))))
+                    (ele/state {:id :retrying}
+                               (ele/on-entry {}
+                                             (ele/script {:expr (fn [_env data] (dispatch! data :on-retrying-entered))}))
+                               (ele/transition {:event :session/retry-done :target :streaming}
+                                               (ele/script {:expr (fn [_env data] (dispatch! data :on-retry-resume))}))
+                               (ele/transition {:event :session/reset :target :idle}))))
 
 ;; ============================================================
 ;; Statechart env / session management

@@ -84,8 +84,8 @@
                         (:max-tokens options)  (assoc :max_tokens  (:max-tokens options))
                         (seq tool-defs)        (assoc :tools tool-defs))]
     {:headers {"Content-Type"  "application/json"
-               "Authorization" (str "Bearer " (or (:api-key options)
-                                                   (System/getenv "OPENAI_API_KEY")))}
+               "Authorization" (str "Bearer " (or (:api-key options
+                                                            (System/getenv "OPENAI_API_KEY"))))}
      :body    (json/generate-string body)}))
 
 (defn parse-sse-line
@@ -196,7 +196,8 @@
                       (consume-fn {:type   :done
                                    :reason (keyword (:finish_reason choice))})))))))))
       (catch Exception e
-        (consume-fn {:type :error :error-message (str e)})))))
+        (consume-fn (cond-> {:type :error :error-message (str e)}
+                      (:status (ex-data e)) (assoc :http-status (:status (ex-data e)))))))))
 
 ;; Provider implementation
 (def provider
