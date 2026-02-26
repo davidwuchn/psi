@@ -24,6 +24,8 @@
    [charm.core :as charm]
    [charm.input.keymap] ; loaded so we can patch before use
    [charm.message :as msg]
+   [charm.render.core]  ; loaded so we can patch enter-alt-screen!
+   [charm.terminal :as charm-term]
    [clojure.string :as str]
    [psi.tui.extension-ui :as ext-ui])
   (:import
@@ -48,6 +50,24 @@
           (when (and (pos? (count seq-str))
                      (= (int (.charAt seq-str 0)) 27))
             (.bind keymap event (subs seq-str 1)))))))))
+
+;; ── Alt-screen fix ───────────────────────────────────────────
+;; charm.clj v0.1.42: create-renderer stores :alt-screen from opts
+;; in the renderer atom. enter-alt-screen! checks
+;; (when-not (:alt-screen @renderer)) — which short-circuits because
+;; the flag is already true. Result: alt-screen is never entered,
+;; so the TUI runs inline in the main buffer and Display cursor
+;; tracking desyncs on content height changes.
+
+(alter-var-root
+ #'charm.render.core/enter-alt-screen!
+ (constantly
+  (fn [renderer]
+    (let [terminal (:terminal @renderer)]
+      (charm-term/enter-alt-screen terminal)
+      (charm-term/clear-screen terminal)
+      (charm-term/cursor-home terminal))
+    (swap! renderer assoc :alt-screen true))))
 
 ;; ── Styles ──────────────────────────────────────────────────
 
