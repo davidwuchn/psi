@@ -6,6 +6,7 @@
    synchronously on a dedicated thread so callers are not forced to use
    core.async."
   (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [clj-http.client :as http]
             [cheshire.core :as json]))
 
@@ -80,11 +81,18 @@
                             {:name         (:name t)
                              :description  (:description t)
                              :input_schema (:parameters t)})
-                          (:tools conversation)))]
-    {:headers {"Content-Type"      "application/json"
-               "x-api-key"         (or (:api-key options)
-                                       (System/getenv "ANTHROPIC_API_KEY"))
-               "anthropic-version" "2023-06-01"}
+                          (:tools conversation)))
+        api-key   (or (:api-key options) (System/getenv "ANTHROPIC_API_KEY"))
+        oauth?    (and api-key (str/includes? api-key "sk-ant-oat"))
+        headers   (if oauth?
+                    {"Content-Type"      "application/json"
+                     "Authorization"     (str "Bearer " api-key)
+                     "anthropic-version" "2023-06-01"
+                     "anthropic-beta"    "claude-code-20250219,oauth-2025-04-20"}
+                    {"Content-Type"      "application/json"
+                     "x-api-key"         api-key
+                     "anthropic-version" "2023-06-01"})]
+    {:headers headers
      :body    (json/generate-string
                (cond-> {:model       (:id model)
                         :max_tokens  (or (:max-tokens options) (:max-tokens model))

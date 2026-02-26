@@ -55,12 +55,21 @@
     (when (and dir (not (.exists dir)))
       (.mkdirs dir))))
 
+(defn- coerce-credential
+  "Ensure :type is a keyword after JSON round-trip (\"oauth\" → :oauth)."
+  [cred]
+  (if (and (map? cred) (:type cred))
+    (update cred :type keyword)
+    cred))
+
 (defn- read-json-file
-  "Read and parse a JSON file. Returns {} on missing/invalid."
+  "Read and parse a JSON file. Returns {} on missing/invalid.
+   Coerces :type fields to keywords."
   [^String path]
   (try
     (if (.exists (File. path))
-      (json/parse-string (slurp path) true)
+      (let [raw (json/parse-string (slurp path) true)]
+        (into {} (map (fn [[k v]] [k (coerce-credential v)]) raw)))
       {})
     (catch Exception _e {})))
 
