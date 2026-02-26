@@ -188,11 +188,11 @@
   "Execute a pending render if one is due.
    Implements RenderScheduled / RenderDue."
   [ctx]
-  (let [tui (tui-of ctx)]
-    (when (:render-requested tui)
-      (let [terminal (:terminal tui)
-            new-tui  (do-render! tui terminal)]
-        (reset! (:tui-atom ctx) new-tui)))))
+  (swap-tui! ctx
+             (fn [tui]
+               (if (:render-requested tui)
+                 (do-render! tui (:terminal tui))
+                 tui))))
 
 (defn handle-input-in!
   "Route input to focused component. Implements InputRoutedToFocused."
