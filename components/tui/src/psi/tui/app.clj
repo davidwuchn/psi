@@ -23,13 +23,16 @@
   (:require
    [charm.core :as charm]
    [charm.input.keymap] ; loaded so we can patch before use
+   [charm.render.core :as render]
+   [charm.terminal :as term]
    [charm.message :as msg]
    [clojure.string :as str]
    [psi.tui.extension-ui :as ext-ui])
   (:import
    [java.util.concurrent LinkedBlockingQueue TimeUnit]
    [org.jline.keymap KeyMap]
-   [org.jline.terminal Terminal]))
+   [org.jline.terminal Terminal]
+   [org.jline.utils Display]))
 
 ;; ── JLine compat patch ──────────────────────────────────────
 ;; charm.clj v0.1.42: bind-from-capability! calls (String. ^chars seq)
@@ -48,6 +51,49 @@
           (when (and (pos? (count seq-str))
                      (= (int (.charAt seq-str 0)) 27))
             (.bind keymap event (subs seq-str 1)))))))))
+
+;; ── Width margin patch ──────────────────────────────────────
+;; The pty width can exceed the visible rendering area (e.g. when
+;; running inside a TUI host that reserves columns for its own UI).
+;; Patch charm.clj's renderer to apply a margin so JLine's Display
+;; and truncate-line use the correct usable width.
+;;
+;; `renderer-size` captures the adjusted size for make-init to read.
+;; `width-margin`  is set by start! before charm/run.
+
+(def ^:private renderer-size (atom {:width 80 :height 24}))
+(def ^:private width-margin  (atom 0))
+
+(defn- apply-margin [width]
+  (max 1 (- width @width-margin)))
+
+(alter-var-root
+ #'render/create-renderer
+ (constantly
+  (fn [^Terminal terminal & {:keys [fps alt-screen hide-cursor]
+                             :or   {fps 60 alt-screen false hide-cursor true}}]
+    (let [{:keys [width height]} (term/get-size terminal)
+          adj-w   (apply-margin width)
+          display (doto (Display. terminal false)
+                    (.resize height adj-w))]
+      (reset! renderer-size {:width adj-w :height height})
+      (atom {:terminal   terminal
+             :display    display
+             :fps        fps
+             :alt-screen alt-screen
+             :hide-cursor hide-cursor
+             :width      adj-w
+             :height     height
+             :running    false})))))
+
+(alter-var-root
+ #'render/update-size!
+ (constantly
+  (fn [renderer width height]
+    (let [adj-w   (apply-margin width)
+          ^Display display (:display @renderer)]
+      (.resize display height adj-w)
+      (swap! renderer assoc :width adj-w :height height)))))
 
 ;; ── Styles ──────────────────────────────────────────────────
 
@@ -152,21 +198,6 @@
          {:type :agent-poll})
        {:type :agent-poll}))))
 
-;; ── Terminal size detection ───────────────────────────────────
-;; charm.clj drains the initial window-size message before our update
-;; function sees it, so the state never gets the real terminal dimensions.
-;; Detect via a temporary JLine terminal so we match the renderer's width.
-
-(defn- detect-terminal-size
-  "Query the real terminal size via JLine. Returns {:width w :height h}."
-  []
-  (try
-    (let [terminal (charm/create-terminal)
-          size     (charm/get-size terminal)]
-      (.close ^org.jline.terminal.Terminal terminal)
-      size)
-    (catch Exception _ {:width 80 :height 24})))
-
 ;; ── Init ────────────────────────────────────────────────────
 
 (defn make-init
@@ -185,7 +216,7 @@
                           (query-fn [:psi.agent-session/prompt-templates
                                      :psi.agent-session/skills
                                      :psi.agent-session/extension-summary]))
-           {:keys [width height]} (detect-terminal-size)]
+           {:keys [width height]} @renderer-size]
        [{:messages          []
          :phase             :idle
          :error             nil
@@ -294,9 +325,9 @@
            (msg/key-match? m "escape"))
       [state charm/quit-cmd]
 
-      ;; Window resize
+      ;; Window resize (margin already applied by patched update-size!)
       (msg/window-size? m)
-      [(assoc state :width (:width m) :height (:height m)) nil]
+      [(assoc state :width (apply-margin (:width m)) :height (:height m)) nil]
 
       ;; Dialog active — route all key input to dialog handler
       (and (has-active-dialog? state) (msg/key-press? m))
@@ -488,10 +519,12 @@
                        {:kind :error :message str} on queue.
    `opts`           — optional map:
                        :query-fn      — (fn [eql-query]) for session introspection
-                       :ui-state-atom — extension UI state atom"
+                       :ui-state-atom — extension UI state atom
+                       :width-margin  — columns to subtract from pty width (default 0)"
   ([model-name run-agent-fn!]
    (start! model-name run-agent-fn! {}))
   ([model-name run-agent-fn! opts]
+   (reset! width-margin (or (:width-margin opts) 0))
    (charm/run {:init   (make-init model-name (:query-fn opts) (:ui-state-atom opts))
                :update (make-update run-agent-fn!)
                :view   view

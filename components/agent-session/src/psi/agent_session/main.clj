@@ -480,7 +480,10 @@
 
     (tui-app/start! (:name ai-model) run-agent-fn!
                     {:query-fn      (fn [q] (session/query-in ctx q))
-                     :ui-state-atom (:ui-state-atom ctx)})))
+                     :ui-state-atom (:ui-state-atom ctx)
+                     :width-margin  (or (some-> (System/getenv "PSI_WIDTH_MARGIN")
+                                                parse-long)
+                                        0)})))
 
 ;; ============================================================
 ;; -main
