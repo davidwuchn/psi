@@ -69,6 +69,54 @@
    :psi.tool-call/result                  — result text (from detail resolver, lazy)
    :psi.tool-call/is-error                — error flag (from detail resolver, lazy)
 
+   API error diagnostics (hierarchical)
+   ────────────────────────────────────
+   :psi.agent-session/api-error-count     — number of API errors in session
+   :psi.agent-session/api-errors          — [{:psi.api-error/*}] error entities
+
+   Level 1 (list, cheap — identity from assistant error messages):
+   :psi.api-error/message-index           — position in agent-core message vec
+   :psi.api-error/http-status             — HTTP status code (e.g. 400), or nil
+   :psi.api-error/timestamp               — Instant of the error
+   :psi.api-error/error-message-brief     — first 120 chars of error text
+
+   Level 2 (detail, moderate — seeded by :psi.api-error/message-index):
+   :psi.api-error/error-message-full      — complete error text
+   :psi.api-error/request-id              — API request-id parsed from error text
+   :psi.api-error/surrounding-messages    — [{:psi.context-message/*}] nearby messages
+
+   Level 3 (request shape, expensive — seeded by :psi.api-error/message-index):
+   :psi.api-error/request-shape           — {:psi.request-shape/*} at point of failure
+
+   Context message entities (nested under surrounding-messages)
+   ────────────────────────────────────────────────────────────
+   :psi.context-message/index             — position in agent-core message vec
+   :psi.context-message/role              — message role string
+   :psi.context-message/content-types     — [:text :tool-call :error ...]
+   :psi.context-message/snippet           — first 200 chars of primary content
+
+   Request shape (shared between api-error and current diagnostics)
+   ────────────────────────────────────────────────────────────────
+   :psi.agent-session/request-shape       — {:psi.request-shape/*} for current state
+   :psi.request-shape/message-count       — raw agent-core message count
+   :psi.request-shape/system-prompt-chars — system prompt character count
+   :psi.request-shape/message-chars       — total message characters (pr-str estimate)
+   :psi.request-shape/tool-schema-chars   — tool definition characters
+   :psi.request-shape/total-chars         — sum of above
+   :psi.request-shape/estimated-tokens    — total-chars / 4 (rough estimate)
+   :psi.request-shape/context-window      — model context window size
+   :psi.request-shape/max-output-tokens   — model max output tokens
+   :psi.request-shape/headroom-tokens     — context-window - estimated - max-output
+   :psi.request-shape/role-distribution   — {role count}
+   :psi.request-shape/tool-count          — number of tool definitions
+   :psi.request-shape/tool-use-count      — tool_use blocks in assistant messages
+   :psi.request-shape/tool-result-count   — toolResult messages
+   :psi.request-shape/missing-tool-results — tool_use IDs without matching results
+   :psi.request-shape/orphan-tool-results  — toolResult IDs without matching tool_use
+   :psi.request-shape/alternation-valid?   — true if role alternation is correct
+   :psi.request-shape/alternation-violations — count of consecutive same-role pairs
+   :psi.request-shape/empty-content-count  — messages with empty content
+
    Prompt template introspection
    ─────────────────────────────
    :psi.prompt-template/summary           — overall template summary
@@ -98,6 +146,7 @@
    :psi.ui/tool-renderers                 — vector of tool renderer metadata maps
    :psi.ui/message-renderers              — vector of message renderer metadata maps"
   (:require
+   [clojure.set :as set]
    [com.wsscode.pathom3.connect.operation :as pco]
    [com.wsscode.pathom3.connect.indexes :as pci]
    [com.wsscode.pathom3.interface.eql :as p.eql]
@@ -405,6 +454,228 @@
                                    (:content result-msg))
      :psi.tool-call/is-error (:is-error result-msg)}))
 
+;; ── API error diagnostics (helpers) ─────────────────────
+
+(defn- error-message-text
+  "Extract the first :error block text from an assistant message."
+  [msg]
+  (some #(when (= :error (:type %)) (:text %)) (:content msg)))
+
+(defn- parse-request-id
+  "Extract request-id from a clj-http error text string."
+  [error-text]
+  (when error-text
+    (second (re-find #"\"request-id\"\s+\"([^\"]+)\"" error-text))))
+
+(defn- message-summary
+  "Lightweight summary of an agent-core message for context display."
+  [msg idx]
+  (let [snippet (some (fn [c]
+                        (case (:type c)
+                          :text      (let [t (:text c)]
+                                       (when (seq t)
+                                         (subs t 0 (min 200 (count t)))))
+                          :tool-call (str "[tool:" (:name c) "]")
+                          :error     (let [t (:text c)]
+                                       (when (seq t)
+                                         (subs t 0 (min 200 (count t)))))
+                          nil))
+                      (:content msg))]
+    {:psi.context-message/index         idx
+     :psi.context-message/role          (:role msg)
+     :psi.context-message/content-types (mapv :type (:content msg))
+     :psi.context-message/snippet       (or snippet "")}))
+
+(def ^:private request-shape-output
+  "Shared output spec for :psi.request-shape/* attributes."
+  [:psi.request-shape/message-count
+   :psi.request-shape/system-prompt-chars
+   :psi.request-shape/message-chars
+   :psi.request-shape/tool-schema-chars
+   :psi.request-shape/total-chars
+   :psi.request-shape/estimated-tokens
+   :psi.request-shape/context-window
+   :psi.request-shape/max-output-tokens
+   :psi.request-shape/headroom-tokens
+   :psi.request-shape/role-distribution
+   :psi.request-shape/tool-count
+   :psi.request-shape/tool-use-count
+   :psi.request-shape/tool-result-count
+   :psi.request-shape/missing-tool-results
+   :psi.request-shape/orphan-tool-results
+   :psi.request-shape/alternation-valid?
+   :psi.request-shape/alternation-violations
+   :psi.request-shape/empty-content-count])
+
+(defn- compute-request-shape
+  "Compute request diagnostics from agent-core messages.
+   Provider-agnostic: estimates tokens from serialized char count."
+  [system-prompt messages tools context-window max-output-tokens]
+  (let [;; Role counts
+        role-counts   (frequencies (map :role messages))
+
+        ;; Tool pairing
+        tool-use-ids  (into #{}
+                            (comp (filter #(= "assistant" (:role %)))
+                                  (mapcat :content)
+                                  (filter #(= :tool-call (:type %)))
+                                  (map :id))
+                            messages)
+        tool-result-ids (into #{}
+                              (comp (filter #(= "toolResult" (:role %)))
+                                    (map :tool-call-id))
+                              messages)
+
+        ;; Size estimates (pr-str approximates wire format)
+        sys-chars  (count (str system-prompt))
+        msg-chars  (transduce (map #(count (pr-str %))) + 0 messages)
+        tool-chars (transduce (map #(count (pr-str %))) + 0 tools)
+        total      (+ sys-chars msg-chars tool-chars)
+        est-tokens (quot total 4)
+        headroom   (- context-window est-tokens max-output-tokens)
+
+        ;; Alternation: map toolResult→user, deduplicate consecutive same roles
+        api-roles  (->> messages
+                        (keep #(case (:role %)
+                                 "user"       "user"
+                                 "assistant"  "assistant"
+                                 "toolResult" "user"
+                                 nil)))
+        merged     (reduce (fn [acc r]
+                             (if (= r (peek acc)) acc (conj acc r)))
+                           [] api-roles)
+        violations (count (filter (fn [[a b]] (= a b))
+                                  (partition 2 1 merged)))
+
+        ;; Empty content
+        empty-ct   (count (filter #(empty? (:content %)) messages))]
+
+    {:psi.request-shape/message-count          (count messages)
+     :psi.request-shape/system-prompt-chars    sys-chars
+     :psi.request-shape/message-chars          msg-chars
+     :psi.request-shape/tool-schema-chars      tool-chars
+     :psi.request-shape/total-chars            total
+     :psi.request-shape/estimated-tokens       est-tokens
+     :psi.request-shape/context-window         context-window
+     :psi.request-shape/max-output-tokens      max-output-tokens
+     :psi.request-shape/headroom-tokens        headroom
+     :psi.request-shape/role-distribution      role-counts
+     :psi.request-shape/tool-count             (count tools)
+     :psi.request-shape/tool-use-count         (count tool-use-ids)
+     :psi.request-shape/tool-result-count      (count tool-result-ids)
+     :psi.request-shape/missing-tool-results   (count (set/difference tool-use-ids tool-result-ids))
+     :psi.request-shape/orphan-tool-results    (count (set/difference tool-result-ids tool-use-ids))
+     :psi.request-shape/alternation-valid?     (zero? violations)
+     :psi.request-shape/alternation-violations violations
+     :psi.request-shape/empty-content-count    empty-ct}))
+
+(defn- resolve-context-window
+  "Best-effort context window from session data or model config atom."
+  [agent-session-ctx]
+  (or (:context-window @(:session-data-atom agent-session-ctx))
+      (some-> (:model-config-atom agent-session-ctx) deref :context-window)
+      200000))
+
+(defn- resolve-max-output-tokens
+  "Best-effort max output tokens from session data or model config atom."
+  [agent-session-ctx]
+  (or (some-> (:model-config-atom agent-session-ctx) deref :max-tokens)
+      16384))
+
+;; ── Level 1: API error list (cheap) ────────────────────
+
+(pco/defresolver api-error-list
+  "Extract API errors from assistant messages with :stop-reason :error.
+   Cheap: linear scan for error stop reason, no result loading."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.agent-session/api-error-count
+                 {:psi.agent-session/api-errors
+                  [:psi.api-error/message-index
+                   :psi.api-error/http-status
+                   :psi.api-error/timestamp
+                   :psi.api-error/error-message-brief
+                   :psi/agent-session-ctx]}]}
+  (let [msgs   (agent-core-messages agent-session-ctx)
+        errors (->> msgs
+                    (map-indexed vector)
+                    (filter (fn [[_ m]]
+                              (and (= "assistant" (:role m))
+                                   (= :error (:stop-reason m)))))
+                    (mapv (fn [[idx m]]
+                            (let [err-text (error-message-text m)
+                                  brief    (when err-text
+                                             (subs err-text
+                                                   0 (min 120 (count err-text))))]
+                              {:psi.api-error/message-index      idx
+                               :psi.api-error/http-status        (:http-status m)
+                               :psi.api-error/timestamp          (:timestamp m)
+                               :psi.api-error/error-message-brief brief
+                               :psi/agent-session-ctx            agent-session-ctx}))))]
+    {:psi.agent-session/api-error-count (count errors)
+     :psi.agent-session/api-errors      errors}))
+
+;; ── Level 2: API error detail (moderate) ────────────────
+
+(pco/defresolver api-error-detail
+  "Resolve full error text, request-id, and surrounding message context.
+   Seeded by :psi.api-error/message-index from the list resolver."
+  [{:keys [psi.api-error/message-index psi/agent-session-ctx]}]
+  {::pco/input  [:psi.api-error/message-index :psi/agent-session-ctx]
+   ::pco/output [:psi.api-error/error-message-full
+                 :psi.api-error/request-id
+                 {:psi.api-error/surrounding-messages
+                  [:psi.context-message/index
+                   :psi.context-message/role
+                   :psi.context-message/content-types
+                   :psi.context-message/snippet]}]}
+  (let [msgs     (agent-core-messages agent-session-ctx)
+        msg      (nth msgs message-index nil)
+        err-text (when msg (error-message-text msg))
+        ;; 5 before, 2 after the error
+        start    (max 0 (- message-index 5))
+        end      (min (count msgs) (+ message-index 3))
+        surr     (mapv #(message-summary (nth msgs %) %) (range start end))]
+    {:psi.api-error/error-message-full   err-text
+     :psi.api-error/request-id           (parse-request-id err-text)
+     :psi.api-error/surrounding-messages surr}))
+
+;; ── Level 3: API error request shape (expensive) ────────
+
+(pco/defresolver api-error-request-shape
+  "Reconstruct the request shape at the point of an API error.
+   Uses messages[0..message-index) — what was sent when the error occurred.
+   Expensive: full message scan + size estimation."
+  [{:keys [psi.api-error/message-index psi/agent-session-ctx]}]
+  {::pco/input  [:psi.api-error/message-index :psi/agent-session-ctx]
+   ::pco/output [{:psi.api-error/request-shape request-shape-output}]}
+  (let [data      (agent/get-data-in (:agent-ctx agent-session-ctx))
+        msgs      (:messages data)
+        pre-error (subvec (vec msgs) 0 (min message-index (count msgs)))]
+    {:psi.api-error/request-shape
+     (compute-request-shape (:system-prompt data)
+                            pre-error
+                            (:tools data)
+                            (resolve-context-window agent-session-ctx)
+                            (resolve-max-output-tokens agent-session-ctx))}))
+
+;; ── Current request shape (live diagnostics) ────────────
+
+(pco/defresolver current-request-shape
+  "Request shape for the current conversation state.
+   Answers: 'if I send a prompt now, what does the context look like?'
+   Expensive: full message scan + size estimation."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [{:psi.agent-session/request-shape request-shape-output}]}
+  (let [data (agent/get-data-in (:agent-ctx agent-session-ctx))]
+    {:psi.agent-session/request-shape
+     (compute-request-shape (:system-prompt data)
+                            (:messages data)
+                            (:tools data)
+                            (resolve-context-window agent-session-ctx)
+                            (resolve-max-output-tokens agent-session-ctx))}))
+
 ;; ── Turn streaming state ────────────────────────────────
 
 (pco/defresolver agent-session-turn
@@ -610,6 +881,11 @@
    agent-session-stats
    agent-session-tool-calls
    tool-call-result
+   ;; API error diagnostics (hierarchical)
+   api-error-list
+   api-error-detail
+   api-error-request-shape
+   current-request-shape
    agent-session-turn
    prompt-template-summary-resolver
    prompt-template-detail-resolver

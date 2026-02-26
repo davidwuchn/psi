@@ -47,7 +47,7 @@
           reg (:extension-registry ctx)]
       (ext/register-extension-in! reg "/ext/cancel")
       (ext/register-handler-in! reg "/ext/cancel" "session_before_switch"
-                                 (fn [_] {:cancel true}))
+                                (fn [_] {:cancel true}))
       (let [old-id (:session-id (session/get-session-data-in ctx))]
         (session/new-session-in! ctx)
         ;; session-id unchanged because cancelled
@@ -157,7 +157,7 @@
           reg (:extension-registry ctx)]
       (ext/register-extension-in! reg "/ext/c")
       (ext/register-handler-in! reg "/ext/c" "session_before_compact"
-                                 (fn [_] {:cancel true}))
+                                (fn [_] {:cancel true}))
       (let [result (session/manual-compact-in! ctx)]
         (is (nil? result)))))
 
@@ -170,7 +170,7 @@
           reg (:extension-registry ctx)]
       (ext/register-extension-in! reg "/ext/c")
       (ext/register-handler-in! reg "/ext/c" "session_before_compact"
-                                 (fn [_] {:result custom-result}))
+                                (fn [_] {:result custom-result}))
       (let [result (session/manual-compact-in! ctx)]
         (is (= "ext summary" (:summary result)))))))
 
@@ -255,6 +255,160 @@
           result (session/query-in ctx [:psi.agent-session/stats])]
       (is (map? (:psi.agent-session/stats result)))
       (is (contains? (:psi.agent-session/stats result) :session-id)))))
+
+;; ── API error diagnostics (hierarchical EQL) ────────────────────────────────
+
+(defn- inject-messages!
+  "Append a sequence of message maps into agent-core for testing."
+  [ctx msgs]
+  (let [agent-ctx (:agent-ctx ctx)]
+    (doseq [m msgs]
+      (psi.agent-core.core/append-message-in! agent-ctx m))))
+
+(defn- make-user-msg [text]
+  {:role "user" :content [{:type :text :text text}]
+   :timestamp (java.time.Instant/now)})
+
+(defn- make-assistant-msg [text]
+  {:role "assistant" :content [{:type :text :text text}]
+   :stop-reason :stop :timestamp (java.time.Instant/now)})
+
+(defn- make-tool-call-msg [text tool-id tool-name]
+  {:role "assistant"
+   :content [{:type :text :text text}
+             {:type :tool-call :id tool-id :name tool-name :arguments "{}"}]
+   :stop-reason :tool_use :timestamp (java.time.Instant/now)})
+
+(defn- make-tool-result-msg [tool-id tool-name result]
+  {:role "toolResult" :tool-call-id tool-id :tool-name tool-name
+   :content [{:type :text :text result}] :is-error false
+   :timestamp (java.time.Instant/now)})
+
+(defn- make-error-msg [error-text http-status]
+  {:role "assistant"
+   :content [{:type :error :text error-text}]
+   :stop-reason :error :http-status http-status
+   :timestamp (java.time.Instant/now)})
+
+(deftest api-error-list-test
+  (testing "no errors → count 0, empty list"
+    (let [ctx (session/create-context)]
+      (inject-messages! ctx [(make-user-msg "hi")
+                             (make-assistant-msg "hello")])
+      (let [r (session/query-in ctx [:psi.agent-session/api-error-count])]
+        (is (zero? (:psi.agent-session/api-error-count r))))))
+
+  (testing "single 400 error → count 1 with correct fields"
+    (let [ctx (session/create-context)]
+      (inject-messages! ctx [(make-user-msg "hi")
+                             (make-error-msg "clj-http: status 400 {}" 400)])
+      (let [r (session/query-in ctx
+                                [{:psi.agent-session/api-errors
+                                  [:psi.api-error/message-index
+                                   :psi.api-error/http-status
+                                   :psi.api-error/error-message-brief]}])
+            errors (:psi.agent-session/api-errors r)]
+        (is (= 1 (count errors)))
+        (is (= 1 (:psi.api-error/message-index (first errors))))
+        (is (= 400 (:psi.api-error/http-status (first errors))))
+        (is (string? (:psi.api-error/error-message-brief (first errors)))))))
+
+  (testing "multiple errors → all captured"
+    (let [ctx (session/create-context)]
+      (inject-messages! ctx [(make-user-msg "hi")
+                             (make-error-msg "error 1" 429)
+                             (make-user-msg "retry")
+                             (make-error-msg "error 2" 500)])
+      (let [r (session/query-in ctx [:psi.agent-session/api-error-count])]
+        (is (= 2 (:psi.agent-session/api-error-count r)))))))
+
+(deftest api-error-detail-test
+  (testing "request-id parsed from error text"
+    (let [ctx (session/create-context)]
+      (inject-messages! ctx [(make-user-msg "hi")
+                             (make-error-msg
+                              "clj-http: status 400 {\"request-id\" \"req_abc123\"}"
+                              400)])
+      (let [r (session/query-in ctx
+                                [{:psi.agent-session/api-errors
+                                  [:psi.api-error/request-id]}])
+            err (first (:psi.agent-session/api-errors r))]
+        (is (= "req_abc123" (:psi.api-error/request-id err))))))
+
+  (testing "surrounding messages include context window"
+    (let [ctx (session/create-context)]
+      (inject-messages! ctx [(make-user-msg "step 1")
+                             (make-assistant-msg "response 1")
+                             (make-user-msg "step 2")
+                             (make-error-msg "boom" 400)])
+      (let [r (session/query-in ctx
+                                [{:psi.agent-session/api-errors
+                                  [{:psi.api-error/surrounding-messages
+                                    [:psi.context-message/index
+                                     :psi.context-message/role]}]}])
+            surr (-> r :psi.agent-session/api-errors first
+                     :psi.api-error/surrounding-messages)]
+        (is (pos? (count surr)))
+        (is (= "user" (:psi.context-message/role (first surr))))))))
+
+(deftest api-error-request-shape-test
+  (testing "request shape computed at point of error"
+    (let [ctx (session/create-context)]
+      (inject-messages! ctx [(make-user-msg "go")
+                             (make-tool-call-msg "running" "tc1" "bash")
+                             (make-tool-result-msg "tc1" "bash" "done")
+                             (make-error-msg "status 400" 400)])
+      (let [r (session/query-in ctx
+                                [{:psi.agent-session/api-errors
+                                  [{:psi.api-error/request-shape
+                                    [:psi.request-shape/message-count
+                                     :psi.request-shape/tool-use-count
+                                     :psi.request-shape/tool-result-count
+                                     :psi.request-shape/missing-tool-results
+                                     :psi.request-shape/alternation-valid?
+                                     :psi.request-shape/headroom-tokens]}]}])
+            shape (-> r :psi.agent-session/api-errors first
+                      :psi.api-error/request-shape)]
+        ;; 3 messages before the error (user, assistant, toolResult)
+        (is (= 3 (:psi.request-shape/message-count shape)))
+        (is (= 1 (:psi.request-shape/tool-use-count shape)))
+        (is (= 1 (:psi.request-shape/tool-result-count shape)))
+        (is (zero? (:psi.request-shape/missing-tool-results shape)))
+        (is (true? (:psi.request-shape/alternation-valid? shape)))
+        (is (pos? (:psi.request-shape/headroom-tokens shape)))))))
+
+(deftest current-request-shape-test
+  (testing "current shape reflects all messages"
+    (let [ctx (session/create-context)]
+      (inject-messages! ctx [(make-user-msg "hello")
+                             (make-assistant-msg "world")])
+      (let [r (session/query-in ctx
+                                [{:psi.agent-session/request-shape
+                                  [:psi.request-shape/message-count
+                                   :psi.request-shape/estimated-tokens
+                                   :psi.request-shape/context-window
+                                   :psi.request-shape/alternation-valid?]}])
+            shape (:psi.agent-session/request-shape r)]
+        (is (= 2 (:psi.request-shape/message-count shape)))
+        (is (pos? (:psi.request-shape/estimated-tokens shape)))
+        (is (= 200000 (:psi.request-shape/context-window shape)))
+        (is (true? (:psi.request-shape/alternation-valid? shape))))))
+
+  (testing "headroom decreases as context grows"
+    (let [ctx (session/create-context)]
+      (inject-messages! ctx [(make-user-msg "a")])
+      (let [r1 (session/query-in ctx
+                                 [{:psi.agent-session/request-shape
+                                   [:psi.request-shape/headroom-tokens]}])
+            h1 (-> r1 :psi.agent-session/request-shape :psi.request-shape/headroom-tokens)]
+        ;; Add more messages
+        (inject-messages! ctx [(make-assistant-msg (apply str (repeat 1000 "x")))
+                               (make-user-msg "b")])
+        (let [r2 (session/query-in ctx
+                                   [{:psi.agent-session/request-shape
+                                     [:psi.request-shape/headroom-tokens]}])
+              h2 (-> r2 :psi.agent-session/request-shape :psi.request-shape/headroom-tokens)]
+          (is (< h2 h1)))))))
 
 ;; ── Global query graph registration ─────────────────────────────────────────
 
