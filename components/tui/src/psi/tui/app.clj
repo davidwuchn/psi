@@ -105,12 +105,35 @@
 
 ;; ── Update helpers ──────────────────────────────────────────
 
+(defn- command?
+  "Return true if text is a /command."
+  [text]
+  (str/starts-with? text "/"))
+
+(defn- handle-command
+  "Process a /command, returning [new-state cmd] or nil if unrecognised."
+  [state text]
+  (case text
+    ("/quit" "/exit") [state charm/quit-cmd]
+    nil))
+
 (defn- submit-input
   "Extract text from input, start agent, return [new-state cmd]."
   [state run-agent-fn!]
   (let [text (str/trim (charm/text-input-value (:input state)))]
-    (if (str/blank? text)
+    (cond
+      (str/blank? text)
       [state nil]
+
+      (command? text)
+      (or (handle-command state text)
+          ;; Unrecognised command — show inline error, clear input
+          [(-> state
+               (assoc :error (str "Unknown command: " text)
+                      :input (charm/text-input-reset (:input state))))
+           nil])
+
+      :else
       (let [queue (LinkedBlockingQueue.)]
         (run-agent-fn! text queue)
         [(-> state

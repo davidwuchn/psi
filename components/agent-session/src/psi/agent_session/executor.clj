@@ -24,6 +24,7 @@
    The executor builds agent-core messages directly and keeps a parallel
    ai/conversation for the LLM call — the two are kept in sync."
   (:require
+   [clojure.edn :as edn]
    [clojure.string :as str]
    [cheshire.core :as json]
    [psi.ai.core :as ai]
@@ -35,37 +36,81 @@
 ;; ai conversation ↔ agent-core message translation
 ;; ============================================================
 
+(defn- parse-args
+  "Parse JSON tool arguments string into a map."
+  [arguments]
+  (try
+    (json/parse-string arguments)
+    (catch Exception _ {})))
+
+(defn- parse-tool-parameters
+  "Parse tool parameters from pr-str'd string to a map, or return as-is if already a map."
+  [params]
+  (if (string? params) (edn/read-string params) params))
+
 (defn- agent-messages->ai-conversation
   "Rebuild an ai/conversation from agent-core message history.
-  Used to reconstruct the conversation context before each LLM call."
-  [system-prompt messages]
-  (reduce
-   (fn [conv msg]
-     (case (:role msg)
-       "user"
-       (conv/add-user-message conv
-                              (or (some #(when (= :text (:type %)) (:text %))
-                                        (:content msg))
-                                  (str (:content msg))))
-       "assistant"
-       ;; assistant messages: extract text content
-       (let [text (str/join "\n"
-                            (keep #(when (= :text (:type %)) (:text %))
-                                  (:content msg)))]
-         (conv/add-assistant-message conv {:content {:kind :text :text text}}))
+  Used to reconstruct the conversation context before each LLM call.
+  Includes tool definitions so the Anthropic API can offer tool_use."
+  [system-prompt messages agent-tools]
+  (let [conv (reduce
+              (fn [conv msg]
+                (case (:role msg)
+                  "user"
+                  (conv/add-user-message
+                   conv
+                   (or (some #(when (= :text (:type %)) (:text %))
+                             (:content msg))
+                       (str (:content msg))))
 
-       "toolResult"
-       (conv/add-tool-result conv
-                             (:tool-call-id msg)
-                             (:tool-name msg)
-                             (or (some #(when (= :text (:type %)) (:text %))
+                  "assistant"
+                  (let [text-parts (keep #(when (= :text (:type %)) (:text %))
+                                         (:content msg))
+                        tool-calls (filter #(= :tool-call (:type %))
+                                           (:content msg))
+                        text       (str/join "\n" text-parts)]
+                    (if (seq tool-calls)
+                      ;; Structured content with tool calls
+                      (conv/add-assistant-message
+                       conv
+                       {:content
+                        {:kind   :structured
+                         :blocks (vec
+                                  (concat
+                                   (when (seq text)
+                                     [{:kind :text :text text}])
+                                   (map (fn [tc]
+                                          {:kind  :tool-call
+                                           :id    (:id tc)
+                                           :name  (:name tc)
+                                           :input (parse-args (:arguments tc))})
+                                        tool-calls)))}})
+                      ;; Text only
+                      (conv/add-assistant-message
+                       conv
+                       {:content {:kind :text :text text}})))
+
+                  "toolResult"
+                  (let [text (or (some #(when (= :text (:type %)) (:text %))
                                        (:content msg))
-                                 "")
-                             (boolean (:is-error msg)))
-       ;; unknown roles — skip
-       conv))
-   (conv/create system-prompt)
-   messages))
+                                 "")]
+                    (conv/add-tool-result conv
+                                         (:tool-call-id msg)
+                                         (:tool-name msg)
+                                         {:kind :text :text text}
+                                         (boolean (:is-error msg))))
+
+                  ;; unknown roles — skip
+                  conv))
+              (conv/create system-prompt)
+              messages)]
+    ;; Add agent tools to conversation so the provider includes them in the request
+    (reduce (fn [c tool]
+              (conv/add-tool c {:name        (:name tool)
+                                :description (:description tool)
+                                :parameters  (parse-tool-parameters (:parameters tool))}))
+            conv
+            agent-tools)))
 
 ;; ============================================================
 ;; Single LLM turn
@@ -80,14 +125,18 @@
 
 (defn- stream-turn!
   "Stream one LLM response into agent-core, returning the final assistant message map.
+  Captures both text and tool-call content from the provider stream.
   Calls agent-core lifecycle fns: begin-stream-in!, update-stream-in!, end-stream-in!."
   [ai-ctx agent-ctx ai-model]
   (let [data          (agent/get-data-in agent-ctx)
         system-prompt (:system-prompt data)
         messages      (:messages data)
-        ai-conv       (agent-messages->ai-conversation system-prompt messages)
+        agent-tools   (:tools data)
+        ai-conv       (agent-messages->ai-conversation system-prompt messages agent-tools)
         ai-options    {}
         text-buf      (StringBuilder.)
+        ;; Track tool calls by content-index → {:id :name :input-buf}
+        tool-calls-state (atom {})
         partial-msg   {:role      "assistant"
                        :content   [{:type :text :text ""}]
                        :timestamp (java.time.Instant/now)}
@@ -103,13 +152,37 @@
                          {:role      "assistant"
                           :content   [{:type :text :text (str text-buf)}]
                           :timestamp (java.time.Instant/now)}))
+
+                    :toolcall-start
+                    (swap! tool-calls-state assoc (:content-index event)
+                           {:id (:id event) :name (:name event)
+                            :input-buf (StringBuilder.)})
+
+                    :toolcall-delta
+                    (when-let [tc (get @tool-calls-state (:content-index event))]
+                      (.append ^StringBuilder (:input-buf tc) ^String (:delta event)))
+
+                    :toolcall-end nil ;; tool calls finalised in :done
+
                     :done
-                    (let [final {:role        "assistant"
-                                 :content     [{:type :text :text (str text-buf)}]
-                                 :stop-reason (or (:reason event) :stop)
-                                 :timestamp   (java.time.Instant/now)}]
+                    (let [tc-blocks (->> @tool-calls-state
+                                         (sort-by key)
+                                         (mapv (fn [[_ tc]]
+                                                 {:type      :tool-call
+                                                  :id        (:id tc)
+                                                  :name      (:name tc)
+                                                  :arguments (str (:input-buf tc))})))
+                          text      (str text-buf)
+                          content   (cond-> []
+                                      (seq text)     (conj {:type :text :text text})
+                                      :always        (into tc-blocks))
+                          final     {:role        "assistant"
+                                     :content     content
+                                     :stop-reason (or (:reason event) :stop)
+                                     :timestamp   (java.time.Instant/now)}]
                       (agent/end-stream-in! agent-ctx final)
                       (deliver done-p final))
+
                     :error
                     (let [err-msg (:error-message event)
                           partial (str text-buf)
@@ -123,7 +196,8 @@
                                    :timestamp     (java.time.Instant/now)}]
                       (agent/end-stream-in! agent-ctx final)
                       (deliver done-p final))
-                    ;; :start :text-start :text-end — ignore
+
+                    ;; :start :text-start :text-end :thinking-* — ignore
                     nil)))
     ;; Block until streaming completes (future in ai layer)
     (deref done-p 120000 {:role          "assistant"
@@ -141,13 +215,6 @@
   "Extract tool call specs from an assistant message's content."
   [assistant-msg]
   (filter #(= :tool-call (:type %)) (:content assistant-msg)))
-
-(defn- parse-args
-  "Parse JSON tool arguments string into a map."
-  [arguments]
-  (try
-    (json/parse-string arguments)
-    (catch Exception _ {})))
 
 (defn- run-tool-call!
   "Execute one tool call, record the result in agent-core, return the result map."
