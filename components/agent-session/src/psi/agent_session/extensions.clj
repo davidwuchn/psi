@@ -39,6 +39,7 @@
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
+   [psi.tui.extension-ui :as ext-ui]
    [taoensso.timbre :as timbre]))
 
 ;; ============================================================
@@ -548,7 +549,12 @@
      ;; ── Event bus ──────────────────────────────────────
      :events
      {:emit (fn [channel data] (bus-emit-in! reg channel data))
-      :on   (fn [channel handler] (bus-on-in! reg channel handler))}}))
+      :on   (fn [channel handler] (bus-on-in! reg channel handler))}
+
+     ;; ── UI context ─────────────────────────────────────
+     ;; nil when headless (no TUI); present when TUI is active.
+     :ui
+     (ext-ui/create-ui-context (:ui-state-atom action-fns) ext-path)}))
 
 ;; ============================================================
 ;; Extension loading

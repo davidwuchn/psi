@@ -50,7 +50,18 @@
    :psi.skill/visible-count               — skills available to model
    :psi.skill/hidden-count                — skills with disable-model-invocation
    :psi.skill/by-source                   — skills grouped by source
-   :psi.skill/detail                      — single enriched skill (seed: :psi.skill/name)"
+   :psi.skill/detail                      — single enriched skill (seed: :psi.skill/name)
+
+   Extension UI state (read-only)
+   ──────────────────────────────
+   :psi.ui/dialog-queue-empty?            — true when no dialogs active or pending
+   :psi.ui/active-dialog                  — current dialog map (sans promise), or nil
+   :psi.ui/pending-dialog-count           — number of queued dialogs
+   :psi.ui/widgets                        — vector of widget maps
+   :psi.ui/statuses                       — vector of status entry maps
+   :psi.ui/visible-notifications          — vector of non-dismissed notification maps
+   :psi.ui/tool-renderers                 — vector of tool renderer metadata maps
+   :psi.ui/message-renderers              — vector of message renderer metadata maps"
   (:require
    [com.wsscode.pathom3.connect.operation :as pco]
    [com.wsscode.pathom3.connect.indexes :as pci]
@@ -59,6 +70,7 @@
    [psi.agent-session.prompt-templates :as pt]
    [psi.agent-session.skills :as skills]
    [psi.agent-session.extensions :as ext]
+   [psi.tui.extension-ui :as ext-ui]
    [psi.agent-session.statechart :as sc]
    [psi.agent-session.turn-statechart :as turn-sc]))
 
@@ -383,6 +395,39 @@
     {:psi.skill/detail
      (when skill (skills/enrich-skill skill))}))
 
+;; ── Extension UI state ───────────────────────────────
+
+(pco/defresolver extension-ui-resolver
+  "Resolve extension UI state snapshot (read-only introspection)."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.ui/dialog-queue-empty?
+                 :psi.ui/active-dialog
+                 :psi.ui/pending-dialog-count
+                 :psi.ui/widgets
+                 :psi.ui/statuses
+                 :psi.ui/visible-notifications
+                 :psi.ui/tool-renderers
+                 :psi.ui/message-renderers]}
+  (let [snap (ext-ui/snapshot (:ui-state-atom agent-session-ctx))]
+    (if snap
+      {:psi.ui/dialog-queue-empty?   (:dialog-queue-empty? snap)
+       :psi.ui/active-dialog         (:active-dialog snap)
+       :psi.ui/pending-dialog-count  (:pending-dialog-count snap)
+       :psi.ui/widgets               (:widgets snap)
+       :psi.ui/statuses              (:statuses snap)
+       :psi.ui/visible-notifications (:visible-notifications snap)
+       :psi.ui/tool-renderers        (:tool-renderers snap)
+       :psi.ui/message-renderers     (:message-renderers snap)}
+      {:psi.ui/dialog-queue-empty?   true
+       :psi.ui/active-dialog         nil
+       :psi.ui/pending-dialog-count  0
+       :psi.ui/widgets               []
+       :psi.ui/statuses              []
+       :psi.ui/visible-notifications []
+       :psi.ui/tool-renderers        []
+       :psi.ui/message-renderers     []})))
+
 ;; ── All resolvers ───────────────────────────────────────
 
 (def all-resolvers
@@ -408,7 +453,9 @@
    extension-commands-resolver
    extension-flags-resolver
    extension-details-resolver
-   extension-detail-by-path-resolver])
+   extension-detail-by-path-resolver
+   ;; Extension UI
+   extension-ui-resolver])
 
 ;; ── Local Pathom env (for component-local queries) ──────
 

@@ -51,6 +51,7 @@
    [psi.agent-core.core :as agent]
    [psi.agent-session.compaction :as compaction]
    [psi.agent-session.extensions :as ext]
+   [psi.tui.extension-ui :as ext-ui]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.resolvers :as resolvers]
    [psi.agent-session.session :as session]
@@ -145,6 +146,7 @@
          agent-ctx         (agent/create-context)
          ext-reg           (ext/create-registry)
          journal-atom      (persist/create-journal)
+         ui-state-atom     (ext-ui/create-ui-state)
          merged-config     (merge session/default-config (or config {}))
          ;; Build ctx without actions-fn so we can close over it
          ctx               {:sc-env             sc-env
@@ -154,6 +156,7 @@
                             :extension-registry ext-reg
                             :journal-atom       journal-atom
                             :turn-ctx-atom      (atom nil)
+                            :ui-state-atom      ui-state-atom
                             :compaction-fn      (or compaction-fn compaction/stub-compaction-fn)
                             :branch-summary-fn  (or branch-summary-fn compaction/stub-branch-summary-fn)
                             :config             merged-config}
@@ -468,7 +471,8 @@
    :is-idle-fn          (fn [] (idle-in? ctx))
    :abort-fn            (fn [] (abort-in! ctx))
    :compact-fn          (fn [_opts] (manual-compact-in! ctx))
-   :get-system-prompt-fn (fn [] (:system-prompt (get-session-data-in ctx)))})
+   :get-system-prompt-fn (fn [] (:system-prompt (get-session-data-in ctx)))
+   :ui-state-atom       (:ui-state-atom ctx)})
 
 (defn load-extensions-in!
   "Discover and load all extensions into this session's registry.

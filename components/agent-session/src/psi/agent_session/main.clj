@@ -479,7 +479,8 @@
                               (.put queue {:kind :error :message (ex-message e)})))))]
 
     (tui-app/start! (:name ai-model) run-agent-fn!
-                    {:query-fn (fn [q] (session/query-in ctx q))})))
+                    {:query-fn      (fn [q] (session/query-in ctx q))
+                     :ui-state-atom (:ui-state-atom ctx)})))
 
 ;; ============================================================
 ;; -main

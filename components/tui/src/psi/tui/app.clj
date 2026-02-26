@@ -24,7 +24,8 @@
    [charm.core :as charm]
    [charm.input.keymap] ; loaded so we can patch before use
    [charm.message :as msg]
-   [clojure.string :as str])
+   [clojure.string :as str]
+   [psi.tui.extension-ui :as ext-ui])
   (:import
    [java.util.concurrent LinkedBlockingQueue TimeUnit]
    [org.jline.keymap KeyMap]
@@ -68,6 +69,74 @@
 (defn agent-error?  [m] (= :agent-error  (:type m)))
 (defn agent-poll?   [m] (= :agent-poll   (:type m)))
 
+;; ── Dialog state helpers ────────────────────────────────────
+
+(defn- has-active-dialog? [state]
+  (boolean (some-> (:ui-state-atom state) ext-ui/active-dialog)))
+
+(defn- handle-dialog-key
+  "Route keypress to the active dialog. Returns [new-state cmd] or nil
+   if no dialog is active."
+  [state m]
+  (when-let [ui-atom (:ui-state-atom state)]
+    (when-let [dialog (ext-ui/active-dialog ui-atom)]
+      (cond
+        ;; Escape cancels any dialog
+        (msg/key-match? m "escape")
+        (do (ext-ui/cancel-dialog! ui-atom)
+            [state nil])
+
+        ;; Enter confirms / submits
+        (msg/key-match? m "enter")
+        (case (:kind dialog)
+          :confirm
+          (do (ext-ui/resolve-dialog! ui-atom (:id dialog) true)
+              [state nil])
+
+          :select
+          (let [idx     (or (:selected-index dialog) 0)
+                options (:options dialog)
+                value   (when (seq options) (:value (nth options idx nil)))]
+            (when value
+              (ext-ui/resolve-dialog! ui-atom (:id dialog) value))
+            [state nil])
+
+          :input
+          (let [text (or (:input-text dialog) "")]
+            (ext-ui/resolve-dialog! ui-atom (:id dialog) text)
+            [state nil])
+
+          ;; fallback
+          [state nil])
+
+        ;; For select: up/down to change selection
+        (and (= :select (:kind dialog)) (msg/key-match? m "up"))
+        (do (swap! ui-atom update-in [:dialog-queue :active :selected-index]
+                   (fn [i] (max 0 (dec (or i 0)))))
+            [state nil])
+
+        (and (= :select (:kind dialog)) (msg/key-match? m "down"))
+        (do (swap! ui-atom update-in [:dialog-queue :active :selected-index]
+                   (fn [i] (min (dec (count (:options dialog)))
+                                (inc (or i 0)))))
+            [state nil])
+
+        ;; For input: printable chars and backspace
+        (and (= :input (:kind dialog)) (msg/key-match? m "backspace"))
+        (do (swap! ui-atom update-in [:dialog-queue :active :input-text]
+                   (fn [s] (let [s (or s "")]
+                             (if (pos? (count s)) (subs s 0 (dec (count s))) s))))
+            [state nil])
+
+        (and (= :input (:kind dialog)) (msg/key-press? m))
+        (let [ch (:key m)]
+          (when (and ch (= 1 (count ch)))
+            (swap! ui-atom update-in [:dialog-queue :active :input-text]
+                   (fn [s] (str (or s "") ch))))
+          [state nil])
+
+        :else [state nil]))))
+
 ;; ── Commands ────────────────────────────────────────────────
 
 (defn poll-cmd
@@ -89,9 +158,13 @@
   "Create an init function for the charm program.
    `model-name` is displayed in the banner.
    `query-fn`  — optional (fn [eql-query]) → result map; used to
-                  introspect the session for prompt templates, etc."
+                  introspect the session for prompt templates, etc.
+   `ui-state-atom` — optional extension UI state atom; when present,
+                     the TUI renders widgets, status, notifications,
+                     and dialogs from extensions."
   ([model-name] (make-init model-name nil))
-  ([model-name query-fn]
+  ([model-name query-fn] (make-init model-name query-fn nil))
+  ([model-name query-fn ui-state-atom]
    (fn []
      (let [introspected (when query-fn
                           (query-fn [:psi.agent-session/prompt-templates
@@ -108,6 +181,7 @@
          :prompt-templates  (or (:psi.agent-session/prompt-templates introspected) [])
          :skills            (or (:psi.agent-session/skills introspected) [])
          :extension-summary (or (:psi.agent-session/extension-summary introspected) {})
+         :ui-state-atom     ui-state-atom
          :queue             nil
          :width             80
          :height            24}
@@ -189,18 +263,28 @@
    or {:kind :error :message str} on queue when finished."
   [run-agent-fn!]
   (fn [state m]
+    ;; Dismiss expired notifications on every tick
+    (when-let [ui-atom (:ui-state-atom state)]
+      (ext-ui/dismiss-expired! ui-atom)
+      (ext-ui/dismiss-overflow! ui-atom))
+
     (cond
-      ;; Quit: ctrl+c always; escape when idle
+      ;; Quit: ctrl+c always; escape when idle and no dialog
       (msg/key-match? m "ctrl+c")
       [state charm/quit-cmd]
 
       (and (= :idle (:phase state))
+           (not (has-active-dialog? state))
            (msg/key-match? m "escape"))
       [state charm/quit-cmd]
 
       ;; Window resize
       (msg/window-size? m)
       [(assoc state :width (:width m) :height (:height m)) nil]
+
+      ;; Dialog active — route all key input to dialog handler
+      (and (has-active-dialog? state) (msg/key-press? m))
+      (or (handle-dialog-key state m) [state nil])
 
       ;; Agent result
       (agent-result? m)
@@ -209,8 +293,8 @@
       ;; Agent error
       (agent-error? m)
       [(assoc state :phase :idle
-                    :error (:error m)
-                    :queue nil) nil]
+              :error (:error m)
+              :queue nil) nil]
 
       ;; Agent poll timeout → advance spinner, keep polling
       (agent-poll? m)
@@ -240,17 +324,17 @@
          (charm/render dim-style (str "  Model: " model-name)) "\n"
          (when (seq prompt-templates)
            (str (charm/render dim-style
-                  (str "  Prompts: "
-                       (str/join ", " (map #(str "/" (:name %)) prompt-templates))))
+                              (str "  Prompts: "
+                                   (str/join ", " (map #(str "/" (:name %)) prompt-templates))))
                 "\n"))
          (when (seq visible-skills)
            (str (charm/render dim-style
-                  (str "  Skills: "
-                       (str/join ", " (map :name visible-skills))))
+                              (str "  Skills: "
+                                   (str/join ", " (map :name visible-skills))))
                 "\n"))
          (when (pos? ext-count)
            (str (charm/render dim-style
-                  (str "  Exts: " ext-count " loaded"))
+                              (str "  Exts: " ext-count " loaded"))
                 "\n"))
          (charm/render dim-style "  ESC to quit") "\n")))
 
@@ -275,12 +359,82 @@
 (defn- render-separator []
   (charm/render sep-style (apply str (repeat 40 "─"))))
 
+;; ── Extension UI rendering ──────────────────────────────────
+
+(def ^:private notify-info-style    dim-style)
+(def ^:private notify-warning-style (charm/style :fg charm/yellow))
+(def ^:private notify-error-style   error-style)
+
+(defn- render-widgets [ui-state-atom placement]
+  (when ui-state-atom
+    (let [widgets (ext-ui/widgets-by-placement ui-state-atom placement)]
+      (when (seq widgets)
+        (str (str/join "\n"
+                       (mapcat :content widgets))
+             "\n")))))
+
+(defn- render-statuses [ui-state-atom]
+  (when ui-state-atom
+    (let [statuses (ext-ui/all-statuses ui-state-atom)]
+      (when (seq statuses)
+        (str (str/join " │ "
+                       (map #(charm/render dim-style (:text %)) statuses))
+             "\n")))))
+
+(defn- render-notifications [ui-state-atom]
+  (when ui-state-atom
+    (let [notes (ext-ui/visible-notifications ui-state-atom)]
+      (when (seq notes)
+        (str (str/join "\n"
+                       (map (fn [n]
+                              (let [style (case (:level n)
+                                            :warning notify-warning-style
+                                            :error   notify-error-style
+                                            notify-info-style)]
+                                (charm/render style (str "  " (:message n)))))
+                            notes))
+             "\n")))))
+
+(defn- render-dialog [ui-state-atom]
+  (when ui-state-atom
+    (when-let [dialog (ext-ui/active-dialog ui-state-atom)]
+      (case (:kind dialog)
+        :confirm
+        (str (charm/render title-style (:title dialog)) "\n"
+             "  " (:message dialog) "\n"
+             (charm/render dim-style "  Enter=confirm  Escape=cancel") "\n")
+
+        :select
+        (let [idx     (or (:selected-index dialog) 0)
+              options (:options dialog)]
+          (str (charm/render title-style (:title dialog)) "\n"
+               (str/join "\n"
+                         (map-indexed
+                          (fn [i opt]
+                            (if (= i idx)
+                              (str (charm/render user-style (str "▸ " (:label opt)))
+                                   (when (:description opt)
+                                     (str "  " (charm/render dim-style (:description opt)))))
+                              (str "  " (:label opt))))
+                          options))
+               "\n"
+               (charm/render dim-style "  ↑/↓=navigate  Enter=select  Escape=cancel") "\n"))
+
+        :input
+        (str (charm/render title-style (:title dialog)) "\n"
+             "  " (or (:input-text dialog) "") "█" "\n"
+             (charm/render dim-style "  Enter=submit  Escape=cancel") "\n")
+
+        ;; fallback
+        ""))))
+
 (defn view
   "Render the full TUI state to a string."
   [state]
   (let [{:keys [messages phase error input spinner-frame model-name
-                prompt-templates skills extension-summary]} state
-        spinner-char (nth spinner-frames (mod spinner-frame (count spinner-frames)))]
+                prompt-templates skills extension-summary ui-state-atom]} state
+        spinner-char (nth spinner-frames (mod spinner-frame (count spinner-frames)))
+        dialog-active? (has-active-dialog? state)]
     (str (render-banner model-name prompt-templates skills extension-summary)
          "\n"
          (render-messages messages)
@@ -289,11 +443,22 @@
                 spinner-char " thinking…\n"))
          (when error
            (str "\n" (charm/render error-style (str "[error: " error "]")) "\n"))
+         ;; Widgets above editor
+         (render-widgets ui-state-atom :above-editor)
          "\n"
          (render-separator) "\n"
-         (if (= :idle phase)
-           (charm/text-input-view input)
-           (charm/render dim-style "(waiting for response…)")))))
+         ;; Dialog replaces editor when active
+         (if dialog-active?
+           (render-dialog ui-state-atom)
+           (if (= :idle phase)
+             (charm/text-input-view input)
+             (charm/render dim-style "(waiting for response…)")))
+         ;; Widgets below editor
+         (render-widgets ui-state-atom :below-editor)
+         ;; Status footer
+         (render-statuses ui-state-atom)
+         ;; Notifications toast
+         (render-notifications ui-state-atom))))
 
 ;; ── Public entry point ──────────────────────────────────────
 
@@ -305,11 +470,12 @@
                        must put {:kind :done :result msg} or
                        {:kind :error :message str} on queue.
    `opts`           — optional map:
-                       :query-fn — (fn [eql-query]) for session introspection"
+                       :query-fn      — (fn [eql-query]) for session introspection
+                       :ui-state-atom — extension UI state atom"
   ([model-name run-agent-fn!]
    (start! model-name run-agent-fn! {}))
   ([model-name run-agent-fn! opts]
-   (charm/run {:init   (make-init model-name (:query-fn opts))
+   (charm/run {:init   (make-init model-name (:query-fn opts) (:ui-state-atom opts))
                :update (make-update run-agent-fn!)
                :view   view
                :alt-screen true})))
