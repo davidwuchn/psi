@@ -29,7 +29,8 @@
    [cheshire.core :as json]
    [clojure.string :as str]
    [psi.tui.ansi :as ansi]
-   [psi.tui.extension-ui :as ext-ui])
+   [psi.tui.extension-ui :as ext-ui]
+   [psi.tui.markdown :as md])
   (:import
    [java.util.concurrent LinkedBlockingQueue TimeUnit]
    [org.jline.keymap KeyMap]
@@ -436,9 +437,10 @@
     (str (charm/render user-style "刀: ") text)
 
     :assistant
-    (let [lines       (str/split-lines text)
-          first-line  (str (charm/render assist-style "ψ: ") (first lines))
-          rest-lines  (map #(str "   " %) (rest lines))]
+    (let [rendered (or (md/render-markdown text) text)
+          lines    (str/split-lines rendered)
+          first-line (str (charm/render assist-style "ψ: ") (first lines))
+          rest-lines (map #(str "   " %) (rest lines))]
       (str/join "\n" (cons first-line rest-lines)))
 
     ;; fallback
@@ -685,12 +687,13 @@
                                     (str/split-lines result)))))))))))
 
 (defn- render-stream-text
-  "Render accumulated streaming text from the LLM."
+  "Render accumulated streaming text from the LLM with markdown styling."
   [text]
   (when (and text (not (str/blank? text)))
-    (let [lines       (str/split-lines text)
-          first-line  (str (charm/render assist-style "ψ: ") (first lines))
-          rest-lines  (map #(str "   " %) (rest lines))]
+    (let [rendered (or (md/render-markdown text) text)
+          lines    (str/split-lines rendered)
+          first-line (str (charm/render assist-style "ψ: ") (first lines))
+          rest-lines (map #(str "   " %) (rest lines))]
       (str (str/join "\n" (cons first-line rest-lines)) "\n"))))
 
 (defn view
