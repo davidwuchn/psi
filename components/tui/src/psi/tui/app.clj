@@ -87,21 +87,29 @@
 
 (defn make-init
   "Create an init function for the charm program.
-   `model-name` is displayed in the banner."
-  [model-name]
-  (fn []
-    [{:messages      []
-      :phase         :idle      ; :idle | :streaming | :error
-      :error         nil
-      :input         (charm/text-input :prompt "刀: "
-                                       :placeholder "Type a message…"
-                                       :focused true)
-      :spinner-frame 0
-      :model-name    model-name
-      :queue         nil        ; created per submission
-      :width         80
-      :height        24}
-     nil]))
+   `model-name` is displayed in the banner.
+   `query-fn`  — optional (fn [eql-query]) → result map; used to
+                  introspect the session for prompt templates, etc."
+  ([model-name] (make-init model-name nil))
+  ([model-name query-fn]
+   (fn []
+     (let [introspected (when query-fn
+                          (try (query-fn [:psi.prompt-template/names
+                                          :psi.agent-session/prompt-templates])
+                               (catch Exception _ nil)))]
+       [{:messages         []
+         :phase            :idle
+         :error            nil
+         :input            (charm/text-input :prompt "刀: "
+                                             :placeholder "Type a message…"
+                                             :focused true)
+         :spinner-frame    0
+         :model-name       model-name
+         :prompt-templates (or (:psi.agent-session/prompt-templates introspected) [])
+         :queue            nil
+         :width            80
+         :height           24}
+        nil]))))
 
 ;; ── Update helpers ──────────────────────────────────────────
 
@@ -223,9 +231,14 @@
 
 ;; ── View ────────────────────────────────────────────────────
 
-(defn- render-banner [model-name]
+(defn- render-banner [model-name prompt-templates]
   (str (charm/render title-style "ψ Psi Agent Session") "\n"
        (charm/render dim-style (str "  Model: " model-name)) "\n"
+       (when (seq prompt-templates)
+         (str (charm/render dim-style
+                (str "  Prompts: "
+                     (str/join ", " (map #(str "/" (:name %)) prompt-templates))))
+              "\n"))
        (charm/render dim-style "  ESC to quit") "\n"))
 
 (defn- render-message [{:keys [role text]}]
@@ -252,9 +265,9 @@
 (defn view
   "Render the full TUI state to a string."
   [state]
-  (let [{:keys [messages phase error input spinner-frame model-name]} state
+  (let [{:keys [messages phase error input spinner-frame model-name prompt-templates]} state
         spinner-char (nth spinner-frames (mod spinner-frame (count spinner-frames)))]
-    (str (render-banner model-name)
+    (str (render-banner model-name prompt-templates)
          "\n"
          (render-messages messages)
          (when (= :streaming phase)
@@ -276,9 +289,13 @@
    `model-name`     — display name for the banner
    `run-agent-fn!`  — (fn [text queue]) starts agent in background;
                        must put {:kind :done :result msg} or
-                       {:kind :error :message str} on queue."
-  [model-name run-agent-fn!]
-  (charm/run {:init   (make-init model-name)
-              :update (make-update run-agent-fn!)
-              :view   view
-              :alt-screen true}))
+                       {:kind :error :message str} on queue.
+   `opts`           — optional map:
+                       :query-fn — (fn [eql-query]) for session introspection"
+  ([model-name run-agent-fn!]
+   (start! model-name run-agent-fn! {}))
+  ([model-name run-agent-fn! opts]
+   (charm/run {:init   (make-init model-name (:query-fn opts))
+               :update (make-update run-agent-fn!)
+               :view   view
+               :alt-screen true})))

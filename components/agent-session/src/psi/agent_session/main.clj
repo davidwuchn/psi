@@ -371,7 +371,8 @@
                             (catch Exception e
                               (.put queue {:kind :error :message (ex-message e)})))))]
 
-    (tui-app/start! (:name ai-model) run-agent-fn!)))
+    (tui-app/start! (:name ai-model) run-agent-fn!
+                    {:query-fn (fn [q] (session/query-in ctx q))})))
 
 ;; ============================================================
 ;; -main
