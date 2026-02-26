@@ -39,6 +39,8 @@
    [taoensso.timbre :as timbre]
    [psi.agent-session.core :as session]
    [psi.agent-session.executor :as executor]
+   [psi.agent-session.extensions :as ext]
+   [psi.agent-session.prompt-templates :as pt]
    [psi.agent-session.tools :as tools]
    [psi.agent-core.core :as agent]
    [psi.ai.models :as models]
@@ -170,15 +172,34 @@
           (println (str "  [" role "] " (subs text 0 (min 120 (count text))))))))
     (println "───────────────────────────────────────\n")))
 
-(defn- print-help []
+(defn- print-help [ctx]
   (println "\n── Commands ───────────────────────────")
   (println "  /quit    — exit the session")
   (println "  /status  — show session diagnostics")
   (println "  /history — show message history")
+  (println "  /prompts — list available prompt templates")
   (println "  /new     — start a fresh session")
   (println "  /help    — show this help")
+  (let [templates (:prompt-templates (session/get-session-data-in ctx))]
+    (when (seq templates)
+      (println "  ── Prompt Templates ─────────────────")
+      (doseq [t templates]
+        (println (str "  /" (:name t) " — " (:description t))))))
   (println "  (anything else is sent to the agent)")
   (println "───────────────────────────────────────\n"))
+
+(defn- print-prompts [ctx]
+  (let [templates (:prompt-templates (session/get-session-data-in ctx))]
+    (println "\n── Prompt Templates ───────────────────")
+    (if (empty? templates)
+      (println "  (none discovered)")
+      (doseq [t templates]
+        (let [placeholders (if (pt/has-placeholders? (:content t))
+                             (str " [$" (pt/placeholder-count (:content t)) " args]")
+                             "")]
+          (println (str "  /" (:name t) placeholders " — " (:description t)
+                        " [" (name (:source t)) "]")))))
+    (println "───────────────────────────────────────\n")))
 
 ;; ============================================================
 ;; Response printing — streams to stdout as tokens arrive
@@ -198,14 +219,34 @@
       (println "\nψ: (no response)\n"))))
 
 ;; ============================================================
+;; Prompt template expansion
+;; ============================================================
+
+(defn- expand-input
+  "Expand user input through prompt templates if it matches /name.
+   Returns the (possibly expanded) text to send to the agent.
+   Extension commands are excluded — they are handled by the command dispatch."
+  [ctx text]
+  (let [sd        (session/get-session-data-in ctx)
+        templates (:prompt-templates sd)
+        commands  (ext/command-names-in (:extension-registry ctx))]
+    (if-let [result (pt/invoke-template templates commands text)]
+      (do
+        (println (str "[Template: " (:source-template result) "]\n"))
+        (:content result))
+      text)))
+
+;; ============================================================
 ;; Core: one prompt → response cycle
 ;; ============================================================
 
 (defn- run-prompt!
-  "Send `text` to the agent and block until done, printing the response."
+  "Send `text` to the agent and block until done, printing the response.
+   Expands prompt templates before sending."
   [ctx ai-ctx ai-model text]
-  (let [user-msg {:role      "user"
-                  :content   [{:type :text :text text}]
+  (let [expanded (expand-input ctx text)
+        user-msg {:role      "user"
+                  :content   [{:type :text :text expanded}]
                   :timestamp (java.time.Instant/now)}
         result   (executor/run-agent-loop! ai-ctx (:agent-ctx ctx) ai-model [user-msg]
                                            {:turn-ctx-atom (:turn-ctx-atom ctx)})]
@@ -222,11 +263,14 @@
   (let [ai-model (resolve-model model-key)
         ;; ai context: nil signals the executor to use the public ai/stream-response API
         ai-ctx   nil
+        ;; Discover prompt templates from global + project dirs
+        templates (pt/discover-templates)
         ;; session context — agent-core + statechart + extension registry
         ctx      (session/create-context
                   {:initial-session {:model {:provider (name (:provider ai-model))
                                              :id       (:id ai-model)
-                                             :reasoning (:supports-reasoning ai-model)}}})]
+                                             :reasoning (:supports-reasoning ai-model)}
+                                    :prompt-templates templates}})]
     ;; Wire agent-session resolvers into the global query graph so
     ;; :psi.agent-session/* attributes are queryable.
     (session/register-resolvers!)
@@ -241,6 +285,8 @@
     ;; Expose state for nREPL introspection
     (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model})
     (print-banner ai-model)
+    (when (seq templates)
+      (println (str "  Prompts: " (str/join ", " (map #(str "/" (:name %)) templates)) "\n")))
     (loop []
       (print "刀: ")
       (flush)
@@ -256,13 +302,16 @@
             (= trimmed "/history")
             (do (print-history ctx) (recur))
 
+            (= trimmed "/prompts")
+            (do (print-prompts ctx) (recur))
+
             (= trimmed "/new")
             (do (session/new-session-in! ctx)
                 (println "\n[New session started]\n")
                 (recur))
 
             (or (= trimmed "/help") (= trimmed "/?"))
-            (do (print-help) (recur))
+            (do (print-help ctx) (recur))
 
             (str/blank? trimmed)
             (recur)
@@ -283,31 +332,34 @@
   "Create a session and run it as a full-screen TUI via charm.clj.
   Blocks until the user exits (Escape or Ctrl+C while idle)."
   [model-key]
-  (let [ai-model (resolve-model model-key)
-        ai-ctx   nil
-        ctx      (session/create-context
-                  {:initial-session {:model {:provider (name (:provider ai-model))
-                                             :id       (:id ai-model)
-                                             :reasoning (:supports-reasoning ai-model)}}})
-        _        (session/register-resolvers!)
-        _        (agent/set-tools-in! (:agent-ctx ctx) tools/all-tool-schemas)
-        _        (agent/set-system-prompt-in!
-                  (:agent-ctx ctx)
-                  (str "You are ψ (Psi), a helpful AI coding assistant.\n"
-                       "Working directory: " (System/getProperty "user.dir") "\n"
-                       "You have access to tools: read, bash, edit, write.\n"
-                       "Use them to help with coding tasks."))
+  (let [ai-model  (resolve-model model-key)
+        ai-ctx    nil
+        templates (pt/discover-templates)
+        ctx       (session/create-context
+                   {:initial-session {:model {:provider (name (:provider ai-model))
+                                              :id       (:id ai-model)
+                                              :reasoning (:supports-reasoning ai-model)}
+                                     :prompt-templates templates}})
+        _         (session/register-resolvers!)
+        _         (agent/set-tools-in! (:agent-ctx ctx) tools/all-tool-schemas)
+        _         (agent/set-system-prompt-in!
+                   (:agent-ctx ctx)
+                   (str "You are ψ (Psi), a helpful AI coding assistant.\n"
+                        "Working directory: " (System/getProperty "user.dir") "\n"
+                        "You have access to tools: read, bash, edit, write.\n"
+                        "Use them to help with coding tasks."))
 
         ;; Expose state for nREPL introspection
-        _        (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model})
+        _         (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model})
 
         ;; run-agent-fn! — called by the TUI update fn on submit.
-        ;; Starts the agent in a background thread; puts result on queue.
+        ;; Expands prompt templates, then starts the agent in a background thread.
         run-agent-fn! (fn [text ^java.util.concurrent.LinkedBlockingQueue queue]
                         (future
                           (try
-                            (let [user-msg {:role      "user"
-                                            :content   [{:type :text :text text}]
+                            (let [expanded (expand-input ctx text)
+                                  user-msg {:role      "user"
+                                            :content   [{:type :text :text expanded}]
                                             :timestamp (java.time.Instant/now)}
                                   result   (executor/run-agent-loop!
                                             ai-ctx (:agent-ctx ctx)
