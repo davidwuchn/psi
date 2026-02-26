@@ -993,6 +993,44 @@ Two-context isolation test verifies independence:
 
 ---
 
+## 2026-02-26 - charm.clj Alt-Screen Bug
+
+### λ charm.clj v0.1.42 enter-alt-screen! Never Fires
+
+`create-renderer` stores `:alt-screen` from opts into the renderer atom.
+`enter-alt-screen!` checks `(when-not (:alt-screen @renderer))` — which
+short-circuits because the flag is already `true`. Alt-screen is never
+actually entered.
+
+**Impact**: TUI runs inline in the main terminal buffer. JLine's `Display`
+uses relative cursor tracking in non-fullscreen context. Any content height
+change (streaming toggle, notifications, errors) desyncs cursor position.
+Symptom: typed text renders after the footer instead of at the prompt.
+
+**Root cause chain**:
+1. `create-renderer` stores `:alt-screen true` in atom (from opts)
+2. `start!` sees `:alt-screen true`, calls `enter-alt-screen!`
+3. `enter-alt-screen!` checks `(when-not (:alt-screen @renderer))` → skip
+
+**Fix**: `alter-var-root` patch (same pattern as keymap fix):
+```clojure
+(alter-var-root
+ #'charm.render.core/enter-alt-screen!
+ (constantly
+  (fn [renderer]
+    (let [terminal (:terminal @renderer)]
+      (charm-term/enter-alt-screen terminal)
+      (charm-term/clear-screen terminal)
+      (charm-term/cursor-home terminal))
+    (swap! renderer assoc :alt-screen true))))
+```
+
+**Lesson**: When a library stores "desired config" and "current state"
+in the same key, idempotency guards can prevent initial setup from
+running. Two charm.clj patches now — both `alter-var-root` at load time.
+
+---
+
 ## 2026-02-25 - TUI: charm.clj Elm Architecture (Step 5)
 
 ### λ charm.clj Replaces Custom Terminal Layer
