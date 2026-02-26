@@ -155,17 +155,16 @@
 ;; ── Terminal size detection ───────────────────────────────────
 ;; charm.clj drains the initial window-size message before our update
 ;; function sees it, so the state never gets the real terminal dimensions.
-;; Detect them at init time via /dev/tty (works even in raw mode).
+;; Detect via a temporary JLine terminal so we match the renderer's width.
 
 (defn- detect-terminal-size
-  "Query the real terminal size. Returns {:width w :height h}."
+  "Query the real terminal size via JLine. Returns {:width w :height h}."
   []
   (try
-    (let [proc (.start (ProcessBuilder. ["/bin/sh" "-c" "stty size < /dev/tty"]))
-          output (str/trim (slurp (.getInputStream proc)))]
-      (.waitFor proc)
-      (let [[rows cols] (str/split output #"\s+")]
-        {:width (parse-long cols) :height (parse-long rows)}))
+    (let [terminal (charm/create-terminal)
+          size     (charm/get-size terminal)]
+      (.close ^org.jline.terminal.Terminal terminal)
+      size)
     (catch Exception _ {:width 80 :height 24})))
 
 ;; ── Init ────────────────────────────────────────────────────
