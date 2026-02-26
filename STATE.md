@@ -15,7 +15,7 @@ Current truth about the Psi system.
 | `history`       | ✓      | Git log resolvers, nullable git context                    |
 | `introspection` | ✓      | Bridges engine + query, self-describing graph              |
 | `tui`           | ✓      | charm.clj Elm Architecture, JLine3 terminal               |
-| `agent-session` | ✓      | Session ✓, main REPL ✓, TUI session ✓ (charm.clj)        |
+| `agent-session` | ✓      | Session ✓, extensions ✓, main REPL ✓, TUI session ✓      |
 
 ## Architecture Progress
 
@@ -31,6 +31,7 @@ Current truth about the Psi system.
 - ✓ Turn statechart (per-turn streaming state, EQL queryable)
 - ✓ Runnable entry point (`clojure -M:run`)
 - ✓ TUI session (`--tui` flag) — charm.clj Elm Architecture, JLine3
+- ✓ Extension system (Clojure extensions, loader, API, tool wrapping, EQL introspection)
 - ✗ Session resolvers wired into global query graph
 - ✗ Graph emergence from domain resolvers
 - ✗ RPC / HTTP API surface
@@ -47,7 +48,7 @@ clojure -M:run --nrepl 7888              # specific port
 clojure -M:run --tui --nrepl             # TUI + nREPL for live introspection
 ```
 
-In-session commands: `/status`, `/history`, `/new`, `/help`, `/quit`, `/exit`, `/skills`, `/prompts`, `/skill:<name>`
+In-session commands: `/status`, `/history`, `/new`, `/help`, `/quit`, `/exit`, `/skills`, `/prompts`, `/skill:<name>`, plus extension commands
 
 nREPL introspection (from connected REPL):
 ```clojure
@@ -91,7 +92,7 @@ Caught by `jline-terminal-keymap-test` smoke test.
 | `skills.clj`                    | Skill discovery, validation, prompt formatting    |
 | `system_prompt.clj`             | System prompt assembly (tools, context, skills)   |
 | `compaction.clj`                | Compaction algorithm (stub, injectable fn)        |
-| `extensions.clj`                | Extension registry + broadcast dispatch           |
+| `extensions.clj`                | Extension registry, loader, API, tool wrapping    |
 | `persistence.clj`               | Append-only journal                               |
 | `resolvers.clj`                 | EQL resolvers (:psi.agent-session/*, :psi.skill/*)|
 | `tools.clj`                     | Built-in tool implementations                     |
@@ -101,7 +102,7 @@ Caught by `jline-terminal-keymap-test` smoke test.
 
 ## Test Status
 
-222 tests, 897 assertions, 0 failures. 0 clj-kondo warnings. 0 clojure-lsp diagnostics.
+238 tests, 966 assertions, 0 failures. 0 clj-kondo errors.
 
 ## Specs
 

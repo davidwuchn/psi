@@ -4,6 +4,76 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-02-25 - Extension System Implementation
+
+### λ Clojure Extensions = load-file + init fn
+
+Extensions are `.clj` files with a namespace that defines an `init` function.
+The loader reads the `ns` form, `load-file`s the source, resolves the `init`
+var, and calls it with an ExtensionAPI map.
+
+```clojure
+;; ~/.psi/agent/extensions/hello_ext.clj
+(ns my.hello-ext)
+(defn init [api]
+  ((:register-command api) "hello" {:description "Say hi"
+                                    :handler (fn [args] (println "Hello" args))})
+  ((:on api) "session_switch" (fn [ev] (println "switched!" ev))))
+```
+
+This is simpler than pi's TypeScript approach (jiti + virtualModules + aliases)
+because Clojure's `load-file` handles compilation natively.
+
+### λ ExtensionAPI as a Plain Map
+
+The API passed to extension `init` fns is a plain Clojure map of functions.
+No protocol, no deftype — just a map with keyword keys for registration and
+action fns.  Each action fn delegates to the session context via closures:
+
+```clojure
+{:on                 (fn [event-name handler-fn] ...)
+ :register-tool      (fn [tool] ...)
+ :register-command   (fn [name opts] ...)
+ :register-flag      (fn [name opts] ...)
+ :get-flag           (fn [name] ...)
+ :set-session-name   (fn [name] ...)
+ :events             {:emit (fn [ch data] ...) :on (fn [ch handler] ...)}}
+```
+
+Action fns that haven't been wired to a session throw on call
+(same pattern as pi's "throwing stubs until runner.initialize()").
+
+### λ Tool Wrapping via wrap-tool-executor
+
+Tool wrapping creates a higher-order function around the tool executor:
+
+```clojure
+(let [wrapped (ext/wrap-tool-executor reg execute-tool)]
+  (wrapped "bash" {"command" "ls"}))
+```
+
+Pre-hook: dispatches `tool_call` event → handler returns `{:block true}` to prevent.
+Post-hook: dispatches `tool_result` event → handler returns `{:content "modified"}`.
+
+This is compositional — the wrapped fn has the same signature as the original.
+
+### λ Forward Declarations for Mutual References
+
+When `make-extension-action-fns` (early in core.clj) needs to call
+`set-session-name-in!` (defined later), use `(declare set-session-name-in!)`.
+This is standard Clojure but easy to forget when adding cross-referencing
+functions to an existing namespace.
+
+### λ Discovery Convention: .clj in dir OR extension.clj in subdir
+
+Extension discovery searches:
+1. `.psi/extensions/*.clj` — direct files
+2. `.psi/extensions/*/extension.clj` — subdirectory convention
+
+This mirrors pi's `index.ts` convention for directories.
+
+---
+
 ## 2026-02-25 - Per-Turn Streaming Statechart (Step 6)
 
 ### λ FlatWorkingMemoryDataModel Uses Its Own Namespace Key
