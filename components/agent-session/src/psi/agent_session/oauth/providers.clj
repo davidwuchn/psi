@@ -5,7 +5,9 @@
      :id                  — keyword identifier
      :name                — display name
      :uses-callback-server — true if login uses a local redirect server
-     :login               — (fn [callbacks]) → credential map
+     :login               — (fn [callbacks]) → credential map (blocking, callback-based)
+     :begin-login         — (fn []) → {:url ... :login-state ...} (non-blocking)
+     :complete-login      — (fn [input login-state]) → credential map
      :refresh-token       — (fn [credential]) → updated credential map
      :get-api-key         — (fn [credential]) → api key string"
   (:require [clj-http.client :as http]
@@ -66,15 +68,9 @@
 (def ^:private anthropic-redirect-uri "https://console.anthropic.com/oauth/code/callback")
 (def ^:private anthropic-scopes "org:create_api_key user:profile user:inference")
 
-(defn- anthropic-login
-  "Run Anthropic OAuth authorization code + PKCE flow.
-
-   Callbacks map:
-     :on-auth     — (fn [{:keys [url instructions]}]) show URL to user
-     :on-prompt   — (fn [{:keys [message placeholder]}]) → user input string
-     :on-progress — (fn [message]) optional progress updates
-     :signal      — atom, set to true to cancel"
-  [callbacks]
+(defn- anthropic-begin-login
+  "Generate PKCE + authorize URL. Returns {:url ... :login-state ...}."
+  []
   (let [{:keys [verifier challenge]} (pkce/generate-pkce)
         auth-url (str anthropic-authorize-url "?"
                       (build-query-string
@@ -86,33 +82,47 @@
                         "code_challenge"        challenge
                         "code_challenge_method" "S256"
                         "state"                 verifier}))]
-    ;; Show URL to user
-    ((:on-auth callbacks) {:url auth-url})
     (open-browser! auth-url)
+    {:url         auth-url
+     :login-state {:verifier verifier}}))
 
-    ;; Prompt for authorization code (format: code#state)
-    (let [input     ((:on-prompt callbacks) {:message "Paste the authorization code:"})
-          [code state] (str/split input #"#" 2)
-          ;; Exchange code for tokens
-          response  (http/post anthropic-token-url
-                               {:content-type :json
-                                :as           :json
-                                :cookie-policy :none
-                                :body         (json/generate-string
-                                               {"grant_type"    "authorization_code"
-                                                "client_id"     anthropic-client-id
-                                                "code"          code
-                                                "state"         state
-                                                "redirect_uri"  anthropic-redirect-uri
-                                                "code_verifier" verifier})})
-          {:keys [access_token refresh_token expires_in]} (:body response)
-          ;; 5-minute buffer before expiry
-          expires-at (- (+ (System/currentTimeMillis) (* expires_in 1000))
-                        (* 5 60 1000))]
-      {:type    :oauth
-       :refresh refresh_token
-       :access  access_token
-       :expires expires-at})))
+(defn- anthropic-complete-login
+  "Exchange authorization code for tokens.
+   `input` is the code#state string from the redirect page.
+   `login-state` is the map returned by begin-login."
+  [input login-state]
+  (let [[code state] (str/split input #"#" 2)
+        response  (http/post anthropic-token-url
+                             {:content-type :json
+                              :as           :json
+                              :cookie-policy :none
+                              :body         (json/generate-string
+                                             {"grant_type"    "authorization_code"
+                                              "client_id"     anthropic-client-id
+                                              "code"          code
+                                              "state"         state
+                                              "redirect_uri"  anthropic-redirect-uri
+                                              "code_verifier" (:verifier login-state)})})
+        {:keys [access_token refresh_token expires_in]} (:body response)
+        expires-at (- (+ (System/currentTimeMillis) (* expires_in 1000))
+                      (* 5 60 1000))]
+    {:type    :oauth
+     :refresh refresh_token
+     :access  access_token
+     :expires expires-at}))
+
+(defn- anthropic-login
+  "Run Anthropic OAuth authorization code + PKCE flow (callback-based).
+
+   Callbacks map:
+     :on-auth     — (fn [{:keys [url]}]) show URL to user
+     :on-prompt   — (fn [{:keys [message]}]) → user input string
+     :on-progress — (fn [message]) optional progress updates"
+  [callbacks]
+  (let [{:keys [url login-state]} (anthropic-begin-login)]
+    ((:on-auth callbacks) {:url url})
+    (let [input ((:on-prompt callbacks) {:message "Paste the authorization code:"})]
+      (anthropic-complete-login input login-state))))
 
 (defn- anthropic-refresh
   "Refresh an Anthropic OAuth token."
@@ -137,6 +147,8 @@
    :name                 "Anthropic (Claude Pro/Max)"
    :uses-callback-server false
    :login                anthropic-login
+   :begin-login          anthropic-begin-login
+   :complete-login       anthropic-complete-login
    :refresh-token        anthropic-refresh
    :get-api-key          :access})
 

@@ -537,76 +537,55 @@
         _         (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model
                                          :oauth-ctx oauth-ctx})
 
+        ;; Helper: put an immediate assistant message on the TUI queue.
+        reply!    (fn [^java.util.concurrent.LinkedBlockingQueue queue text]
+                    (.put queue {:kind :done
+                                 :result {:role    "assistant"
+                                          :content [{:type :text :text text}]}}))
+
         ;; run-agent-fn! — called by the TUI update fn on submit.
-        ;; Handles /login and /logout inline; everything else goes to the agent.
+        ;; Two-step login: /login shows URL → next input is the auth code.
         run-agent-fn! (fn [text ^java.util.concurrent.LinkedBlockingQueue queue]
-                        (let [trimmed (str/trim text)]
+                        (let [trimmed (str/trim text)
+                              pending (:pending-login @session-state)]
                           (cond
-                            ;; /login — run OAuth login, report result as assistant message
-                            (= trimmed "/login")
+                            ;; Step 2: pending login — this input IS the auth code
+                            pending
                             (future
                               (try
-                                (let [providers (oauth/available-providers oauth-ctx)
-                                      ;; Auto-select first provider (extend to selector later)
-                                      provider  (first providers)
-                                      code-promise (promise)]
-                                  ;; Store the promise so /code can deliver it
-                                  (reset! session-state
-                                          (assoc @session-state
-                                                 :login-code-promise code-promise
-                                                 :login-provider-id (:id provider)))
-                                  (oauth/login! oauth-ctx (:id provider)
-                                                {:on-auth     (fn [{:keys [url]}]
-                                                                (.put queue
-                                                                      {:kind :done
-                                                                       :result {:role    "assistant"
-                                                                                :content [{:type :text
-                                                                                           :text (str "🔑 Login to " (:name provider)
-                                                                                                      "\n\nOpen this URL:\n" url
-                                                                                                      "\n\nThen paste the code with: /code <authorization-code>")}]}}))
-                                                 :on-prompt   (fn [_prompt]
-                                                                (deref code-promise))
-                                                 :on-progress (fn [_])})
-                                  ;; Login succeeded
-                                  (.put queue {:kind :done
-                                               :result {:role    "assistant"
-                                                        :content [{:type :text
-                                                                   :text (str "✓ Logged in to " (:name provider))}]}}))
+                                (let [{:keys [provider-id provider-name login-state]} pending]
+                                  (swap! session-state dissoc :pending-login)
+                                  (oauth/complete-login! oauth-ctx provider-id trimmed login-state)
+                                  (reply! queue (str "✓ Logged in to " provider-name)))
                                 (catch Exception e
-                                  (.put queue {:kind :done
-                                               :result {:role    "assistant"
-                                                        :content [{:type :text
-                                                                   :text (str "✗ Login failed: " (ex-message e))}]}}))))
+                                  (swap! session-state dissoc :pending-login)
+                                  (reply! queue (str "✗ Login failed: " (ex-message e))))))
 
-                            ;; /code <auth-code> — deliver the authorization code to a pending login
-                            (str/starts-with? trimmed "/code ")
-                            (let [code (str/trim (subs trimmed 6))]
-                              (if-let [p (:login-code-promise @session-state)]
-                                (do (deliver p code)
-                                    (.put queue {:kind :done
-                                                 :result {:role    "assistant"
-                                                          :content [{:type :text
-                                                                     :text "Processing authorization code..."}]}}))
-                                (.put queue {:kind :done
-                                             :result {:role    "assistant"
-                                                      :content [{:type :text
-                                                                 :text "No login in progress. Use /login first."}]}})))
+                            ;; Step 1: /login — generate URL, store state, wait for code
+                            (= trimmed "/login")
+                            (try
+                              (let [providers (oauth/available-providers oauth-ctx)
+                                    provider  (first providers)
+                                    {:keys [url login-state]} (oauth/begin-login! oauth-ctx (:id provider))]
+                                (swap! session-state assoc :pending-login
+                                       {:provider-id   (:id provider)
+                                        :provider-name (:name provider)
+                                        :login-state   login-state})
+                                (reply! queue (str "🔑 Login to " (:name provider)
+                                                   "\n\nOpen this URL in your browser:\n" url
+                                                   "\n\nPaste the authorization code below ↓")))
+                              (catch Exception e
+                                (reply! queue (str "✗ Login failed: " (ex-message e)))))
 
                             ;; /logout — remove OAuth credentials
                             (= trimmed "/logout")
                             (let [logged-in (oauth/logged-in-providers oauth-ctx)]
                               (if (empty? logged-in)
-                                (.put queue {:kind :done
-                                             :result {:role    "assistant"
-                                                      :content [{:type :text
-                                                                 :text "No OAuth providers logged in. Use /login first."}]}})
+                                (reply! queue "No OAuth providers logged in. Use /login first.")
                                 (do (doseq [p logged-in]
                                       (oauth/logout! oauth-ctx (:id p)))
-                                    (.put queue {:kind :done
-                                                 :result {:role    "assistant"
-                                                          :content [{:type :text
-                                                                     :text (str "✓ Logged out of: "
-                                                                                (str/join ", " (map :name logged-in)))}]}}))))
+                                    (reply! queue (str "✓ Logged out of: "
+                                                       (str/join ", " (map :name logged-in)))))))
 
                             ;; Everything else — send to agent
                             :else

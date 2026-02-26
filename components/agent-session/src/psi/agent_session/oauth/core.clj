@@ -60,6 +60,15 @@
                                                             :access  "test-access"
                                                             :expires (+ (System/currentTimeMillis)
                                                                         3600000)}))
+                               :begin-login          (fn []
+                                                       {:url         "https://test.example.com/auth"
+                                                        :login-state {:verifier "test-verifier"}})
+                               :complete-login       (fn [_input _login-state]
+                                                       {:type    :oauth
+                                                        :refresh "test-refresh"
+                                                        :access  "test-access"
+                                                        :expires (+ (System/currentTimeMillis)
+                                                                    3600000)})
                                :refresh-token        (or refresh-fn
                                                          (fn [_cred]
                                                            {:type    :oauth
@@ -91,6 +100,30 @@
       (throw (ex-info (str "Unknown OAuth provider: " provider-id)
                       {:provider-id provider-id})))
     (let [credential ((:login provider) callbacks)]
+      (store/set-credential! (:store ctx) provider-id credential)
+      credential)))
+
+(defn begin-login!
+  "Start a two-step login. Returns {:url ... :login-state ... :provider-id ...}.
+   Does NOT block — caller shows URL, collects code, then calls complete-login!."
+  [ctx provider-id]
+  (let [provider ((:get-provider ctx) provider-id)]
+    (when-not provider
+      (throw (ex-info (str "Unknown OAuth provider: " provider-id)
+                      {:provider-id provider-id})))
+    (let [result ((:begin-login provider))]
+      (assoc result :provider-id provider-id))))
+
+(defn complete-login!
+  "Finish a two-step login. `input` is the authorization code string.
+   `login-state` is the :login-state from begin-login!.
+   Exchanges code for tokens and stores the credential."
+  [ctx provider-id input login-state]
+  (let [provider ((:get-provider ctx) provider-id)]
+    (when-not provider
+      (throw (ex-info (str "Unknown OAuth provider: " provider-id)
+                      {:provider-id provider-id})))
+    (let [credential ((:complete-login provider) input login-state)]
       (store/set-credential! (:store ctx) provider-id credential)
       credential)))
 
