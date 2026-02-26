@@ -584,8 +584,8 @@ surface ResourceLoaderApi {
         reload()
 
     guidance:
-        -- Skills are loaded from ~/.pi/agent/skills, .pi/skills, and --skill-paths.
-        -- Prompt templates from ~/.pi/agent/prompts and .pi/prompts.
+        -- Skills are loaded from ~/.psi/agent/skills, .psi/skills, and --skill-paths.
+        -- Prompt templates from ~/.psi/agent/prompts and .psi/prompts.
         -- AGENTS.md and CLAUDE.md are discovered walking up from cwd to home.
         -- Extensions may contribute additional paths via resources_discover event.
         -- Skills with disableModelInvocation: true are excluded from the system prompt

@@ -1,60 +1,54 @@
 -- extension-system.allium
 --
 -- Scope: Extension system — registration, event dispatch, tool wrapping,
---        commands, flags, shortcuts, and resource discovery.
+--        commands, flags, shortcuts, custom messages, and resource discovery.
+--
+-- Extensions are TypeScript modules that extend the agent's behaviour.
+-- They subscribe to lifecycle events, register custom tools callable
+-- by the LLM, add commands, and manage persistent state.
 --
 -- Includes:
 --   Extension entity — registration, handler/tool/command/flag/shortcut sets
---   RegisteredCommand, RegisteredTool, ExtensionFlag entities
---   Skill and PromptTemplate entities (loaded via resource discovery)
+--   RegisteredCommand, RegisteredTool, ExtensionFlag, WrappedTool entities
 --   Extension lifecycle — load, reload, factory invocation
 --   Tool wrapping — pre/post call hooks on built-in and extension tools
 --   Event dispatch — named events, handler ordering, cancel semantics
---   Resource discovery — skills, prompt templates, themes, context files
+--   Custom messages — extension-injected messages with LLM trigger options
+--   Before-agent-start hook — context injection and system prompt override
+--   Resource discovery trigger — notifies extensions to contribute paths
 --
 -- Excludes:
---   AgentSession lifecycle and prompting (see session-management.allium)
+--   Skill entity, discovery, invocation (see skills.allium)
+--   Prompt template entity, discovery, expansion (see prompt-templates.allium)
+--   AgentSession lifecycle and prompting (see coding-agent.allium)
 --   Compaction algorithm (see compaction.allium)
+--   Session management (see session-management.allium)
 --   TUI rendering, RPC protocol, OAuth, shell internals
 
 use "./agent.allium" as agent
+use "./skills.allium" as skills
+use "./prompt-templates.allium" as prompts
 
 ------------------------------------------------------------
 -- External Entities
 ------------------------------------------------------------
 
+external entity AgentSession {
+    -- The central orchestrator (specified in coding-agent.allium).
+    sessionId: String
+    sessionName: String?
+    model: Model?
+    thinkingLevel: String
+    isStreaming: Boolean
+    systemPrompt: String
+    extensions: List<Extension>
+    extensionPaths: List<String>
+}
+
 external entity Model {
     provider: String
     id: String
     reasoning: Boolean
-}
-
-------------------------------------------------------------
--- Resource Entities
-------------------------------------------------------------
-
--- ── Skills ─────────────────────────────────────────────
-
-entity Skill {
-    name: String
-    description: String
-    filePath: String
-    baseDir: String
-    source: user | project | path
-    disableModelInvocation: Boolean
-
-    -- Derived
-    is_available_to_model: not disableModelInvocation
-}
-
--- ── Prompt templates ───────────────────────────────────
-
-entity PromptTemplate {
-    name: String
-    description: String
-    content: String             -- may contain $1 $2 $@ argument placeholders
-    source: user | project | path
-    filePath: String
 }
 
 ------------------------------------------------------------
@@ -82,7 +76,7 @@ entity RegisteredTool {
     name: String
     label: String
     description: String
-    parameters: String          -- JSON Schema
+    parameters: String          -- JSON Schema (TypeBox)
     extensionPath: String
 }
 
@@ -94,11 +88,19 @@ entity ExtensionFlag {
     extensionPath: String
 }
 
+entity WrappedTool {
+    inner: RegisteredTool
+    onCall: ToolCallDispatched
+    onResult: ToolResultDispatched
+}
+
 ------------------------------------------------------------
 -- Config
 ------------------------------------------------------------
 
 config {
+    global_extension_dirs: List<Path> = [~/.psi/agent/extensions]
+    project_extension_dirs: List<Path> = [.psi/extensions]
     extension_event_ordering: registration_order
     -- When multiple extensions handle the same event, they fire in the
     -- order they were registered.  All handlers fire (broadcast); a handler
@@ -107,13 +109,12 @@ config {
 }
 
 ------------------------------------------------------------
--- Rules
+-- Extension Lifecycle
 ------------------------------------------------------------
-
--- ── Extension lifecycle ─────────────────────────────────
 
 rule ExtensionsLoaded {
     -- At startup, extension modules are loaded and registered.
+    -- Each module exports a default function receiving ExtensionAPI.
     when: ExtensionsLoaded(session, extensionPaths)
 
     ensures:
@@ -145,12 +146,80 @@ rule ExtensionToolWrapped {
     )
 }
 
--- ── Extension Event Dispatch ────────────────────────────
+------------------------------------------------------------
+-- Extension Command Dispatch
+------------------------------------------------------------
+
+rule ExtensionCommandExecuted {
+    -- /command text is intercepted before agent invocation.
+    -- Extension commands take priority over prompt templates.
+    when: UserPrompts(session, text, _)
+
+    requires: text.startsWith("/")
+    requires: exists RegisteredCommand{name: text.commandName}
+
+    ensures: RegisteredCommand{text.commandName}.handler.called(text.args)
+    -- agent is NOT invoked; command handler manages its own LLM interaction
+}
+
+------------------------------------------------------------
+-- Custom Messages
+------------------------------------------------------------
+
+rule CustomMessageSent {
+    -- Extension injects a custom message with optional LLM trigger.
+    when: CustomMessageSent(session, message, triggerTurn?, deliverAs?)
+
+    ensures:
+        if session.isStreaming:
+            if deliverAs = followUp:
+                agent/FollowUp(session.agent, message)
+            else:
+                agent/Steer(session.agent, message)
+        else if triggerTurn:
+            agent/Prompt(session.agent, message)
+        else:
+            session.agent.appendMessage(message)
+            CustomMessageEntry.created(customType: message.customType, content: message.content, display: message.display)
+}
+
+------------------------------------------------------------
+-- Before-Agent-Start Hook
+------------------------------------------------------------
+
+rule BeforeAgentStartFired {
+    -- Extensions may prepend custom context messages or override system prompt.
+    -- Fires after system prompt is built, before agent processes the user prompt.
+    when: BeforeAgentStartFired(session, prompt, images)
+
+    ensures: BeforeAgentStartDispatched(session, prompt, images, session.systemPrompt)
+    ensures:
+        for msg in ExtensionContextMessages(session):
+            session.agent.messages = session.agent.messages + [msg]
+    ensures:
+        if ExtensionSystemPromptOverride(session) != null:
+            session.agent.systemPrompt = ExtensionSystemPromptOverride(session)
+        else:
+            session.agent.systemPrompt = session.systemPrompt
+}
+
+------------------------------------------------------------
+-- Extension Event Dispatch
+------------------------------------------------------------
+
+-- These rules capture when extension event handlers fire.
+-- Each corresponds to a named event in the extension API.
+-- Handlers fire in registration order (broadcast semantics).
+
+-- ── Resource events ─────────────────────────────────────
 
 rule ResourcesDiscoverDispatched {
+    -- Extensions may contribute additional resource paths.
     when: ResourcesDiscoverDispatched(session, reason)
     ensures: ExtensionEvent.emitted(session, {type: resources_discover, cwd: session.cwd, reason: reason})
 }
+
+-- ── Session events ──────────────────────────────────────
 
 rule SessionBeforeSwitchDispatched {
     when: SessionBeforeSwitchDispatched(session, reason)
@@ -195,9 +264,18 @@ rule SessionTreeDispatched {
     ensures: ExtensionEvent.emitted(session, {type: session_tree, newLeafId: targetId})
 }
 
+-- ── Model events ────────────────────────────────────────
+
 rule ModelSelectDispatched {
     when: ModelSelectDispatched(session, model, source)
     ensures: ExtensionEvent.emitted(session, {type: model_select, model: model, source: source})
+}
+
+-- ── Agent events ────────────────────────────────────────
+
+rule BeforeAgentStartDispatched {
+    when: BeforeAgentStartDispatched(session, prompt, images, systemPrompt)
+    ensures: ExtensionEvent.emitted(session, {type: before_agent_start, prompt: prompt, images: images, systemPrompt: systemPrompt})
 }
 
 rule AutoCompactionStartDispatched {
@@ -220,6 +298,8 @@ rule AutoRetryEndDispatched {
     ensures: AgentSessionEvent.emitted(session, {type: auto_retry_end, success: success, attempt: session.retryAttempt})
 }
 
+-- ── Tool events ─────────────────────────────────────────
+
 rule ToolCallDispatched {
     when: ToolCallDispatched(session, tool, args)
     ensures: ExtensionEvent.emitted(session, {type: tool_call, toolName: tool.name, args: args})
@@ -230,11 +310,6 @@ rule ToolResultDispatched {
     when: ToolResultDispatched(session, tool, result)
     ensures: ExtensionEvent.emitted(session, {type: tool_result, toolName: tool.name, result: result})
     -- Handler may modify content, details, or isError
-}
-
-rule BeforeAgentStartDispatched {
-    when: BeforeAgentStartDispatched(session, prompt, images, systemPrompt)
-    ensures: ExtensionEvent.emitted(session, {type: before_agent_start, prompt: prompt, images: images, systemPrompt: systemPrompt})
 }
 
 ------------------------------------------------------------
@@ -315,6 +390,7 @@ surface ExtensionApi {
         -- A handler returning cancel: true for session_before_compact or
         --   session_before_switch takes precedence; later handlers still fire
         --   but their cancel return is ignored once one cancel has been seen.
+        -- Extension commands shadow prompt templates with the same name.
 }
 
 ------------------------------------------------------------
@@ -331,3 +407,5 @@ deferred ResourceDiscovery.scan         -- skill/template/theme path scanning
 open_question "Extension event ordering: the spec guarantees registration order and broadcast. Should a cancel from handler N also suppress handlers N+1..M, or should all handlers always fire regardless?"
 
 open_question "Tool wrapping: should ToolCallDispatched be able to *replace* the tool arguments (not just block), enabling extension-level argument transformation?"
+
+open_question "Extension reload: should /reload preserve handler state, or is a clean teardown-and-rebuild always correct?"
