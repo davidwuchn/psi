@@ -32,12 +32,21 @@
    :psi.agent-session/context-tokens
    :psi.agent-session/context-window
    :psi.agent-session/context-fraction    — nil or 0.0–1.0
-   :psi.agent-session/stats               — SessionStats snapshot"
+   :psi.agent-session/stats               — SessionStats snapshot
+
+   Prompt template introspection
+   ─────────────────────────────
+   :psi.prompt-template/summary           — overall template summary
+   :psi.prompt-template/names             — vector of template name strings
+   :psi.prompt-template/count             — number of discovered templates
+   :psi.prompt-template/by-source         — templates grouped by source
+   :psi.prompt-template/detail            — single enriched template (seed: :psi.prompt-template/name)"
   (:require
    [com.wsscode.pathom3.connect.operation :as pco]
    [com.wsscode.pathom3.connect.indexes :as pci]
    [com.wsscode.pathom3.interface.eql :as p.eql]
    [psi.agent-session.session :as session]
+   [psi.agent-session.prompt-templates :as pt]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.statechart :as sc]
    [psi.agent-session.turn-statechart :as turn-sc]))
@@ -230,6 +239,33 @@
      :psi.turn/is-done              false
      :psi.turn/is-error             false}))
 
+;; ── Prompt template introspection ────────────────────────
+
+(pco/defresolver prompt-template-summary-resolver
+  "Resolve prompt template summary: count, names, per-source grouping."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.prompt-template/summary
+                 :psi.prompt-template/names
+                 :psi.prompt-template/count
+                 :psi.prompt-template/by-source]}
+  (let [templates (:prompt-templates @(:session-data-atom agent-session-ctx))]
+    {:psi.prompt-template/summary   (pt/template-summary templates)
+     :psi.prompt-template/names     (pt/template-names templates)
+     :psi.prompt-template/count     (count templates)
+     :psi.prompt-template/by-source (pt/templates-by-source templates)}))
+
+(pco/defresolver prompt-template-detail-resolver
+  "Resolve a single enriched prompt template by name.
+   Seed input: {:psi.prompt-template/name \"template-name\"}"
+  [{:keys [psi/agent-session-ctx psi.prompt-template/name]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.prompt-template/name]
+   ::pco/output [:psi.prompt-template/detail]}
+  (let [templates (:prompt-templates @(:session-data-atom agent-session-ctx))
+        tpl       (pt/find-template templates name)]
+    {:psi.prompt-template/detail
+     (when tpl (pt/enrich-template tpl))}))
+
 ;; ── All resolvers ───────────────────────────────────────
 
 (def all-resolvers
@@ -243,7 +279,9 @@
    agent-session-context-usage
    agent-session-journal
    agent-session-stats
-   agent-session-turn])
+   agent-session-turn
+   prompt-template-summary-resolver
+   prompt-template-detail-resolver])
 
 ;; ── Local Pathom env (for component-local queries) ──────
 
