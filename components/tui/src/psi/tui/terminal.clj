@@ -147,8 +147,41 @@
     "\u001b\r"     "alt+enter"
     raw))
 
+(defn- dispatch-input
+  "Split a raw read into individual key events and call on-input for each.
+   Escape sequences (starting with ESC) are kept whole.
+   Everything else is split character by character."
+  [^String raw on-input]
+  (loop [s raw]
+    (when (seq s)
+      (cond
+        ;; ESC sequence: consume until we have a full sequence
+        (= \u001b (first s))
+        (let [;; Try to match a known escape sequence prefix
+              known-len (cond
+                          ;; CSI sequences: ESC [ ... final-byte
+                          (and (> (count s) 2) (= \[ (nth s 1)))
+                          (let [end (loop [i 2]
+                                      (cond
+                                        (>= i (count s)) (count s)
+                                        (let [c (int (nth s i))]
+                                          (and (>= c 0x40) (<= c 0x7e))) (inc i)
+                                        :else (recur (inc i))))]
+                            end)
+                          ;; ESC alone or ESC + one char
+                          (= 1 (count s)) 1
+                          :else 2)]
+          (on-input (translate-key (subs s 0 known-len)))
+          (recur (subs s known-len)))
+
+        ;; Single printable/control character
+        :else
+        (do
+          (on-input (translate-key (str (first s))))
+          (recur (subs s 1)))))))
+
 (defn- read-input-loop
-  "Read bytes from /dev/tty, translate to key names, call on-input.
+  "Read bytes from /dev/tty, split into key events, call on-input.
    Runs in a background daemon thread. Exits when running? becomes false."
   [on-input running?]
   (try
@@ -158,7 +191,7 @@
         (when @running?
           (let [n (.read tty buf 0 64)]
             (when (pos? n)
-              (on-input (translate-key (String. buf 0 n "UTF-8"))))
+              (dispatch-input (String. buf 0 n "UTF-8") on-input))
             (recur)))))
     (catch Exception _e nil)))
 

@@ -382,16 +382,22 @@
         ;; Build initial children
         initial-children (build-tui-children @tui-state-atom @editor-atom)
 
-        ;; Create real terminal — try to detect dimensions via stty
-        [cols rows] (try
-                      (let [p   (-> (ProcessBuilder. ["stty" "size"])
-                                    (.redirectInput (java.io.File. "/dev/tty"))
-                                    (.start))
-                            out (slurp (.getInputStream p))
-                            _   (.waitFor p)
-                            [r c] (map #(Integer/parseInt %) (str/split (str/trim out) #" "))]
-                        [c r])
-                      (catch Exception _ [80 24]))
+        ;; Detect terminal dimensions: stty size → env vars → default
+        [cols rows] (or (try
+                          (let [p   (-> (ProcessBuilder. ["stty" "size"])
+                                        (.redirectInput (java.io.File. "/dev/tty"))
+                                        (.start))
+                                out (slurp (.getInputStream p))
+                                _   (.waitFor p)
+                                [r c] (map #(Integer/parseInt %)
+                                           (str/split (str/trim out) #" "))]
+                            (when (and (pos? c) (pos? r)) [c r]))
+                          (catch Exception _ nil))
+                        (when-let [c (System/getenv "COLUMNS")]
+                          (when-let [r (System/getenv "LINES")]
+                            (try [(Integer/parseInt c) (Integer/parseInt r)]
+                                 (catch Exception _ nil))))
+                        [80 24])
         term (terminal/create-process-terminal {:cols cols :rows rows})
         tui-ctx (tui/create-context term initial-children)]
 
@@ -439,7 +445,6 @@
                   :else
                   (do
                     (tui/handle-input-in! tui-ctx raw)
-                    ;; Sync editor-atom from tui focused component
                     (when-let [focused (tui/focused-in tui-ctx)]
                       (reset! editor-atom focused))
                     (tui/request-render-in! tui-ctx))))]
