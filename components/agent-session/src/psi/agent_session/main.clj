@@ -32,10 +32,7 @@
    [psi.agent-session.tools :as tools]
    [psi.agent-core.core :as agent]
    [psi.ai.models :as models]
-   [psi.tui.core :as tui]
-   [psi.tui.components :as comp]
-   [psi.tui.protocols :as proto]
-   [psi.tui.terminal :as terminal])
+   [psi.tui.app :as tui-app])
   (:gen-class))
 
 ;; ============================================================
@@ -231,132 +228,11 @@
               (recur))))))))
 
 ;; ============================================================
-;; TUI session
+;; TUI session (charm.clj Elm Architecture)
 ;; ============================================================
 
-;; TUI state shape:
-;;   {:messages       [{:role :user|:assistant :text "…"}]
-;;    :streaming-text nil | String   ; partial assistant response while streaming
-;;    :phase          :idle | :streaming | :error
-;;    :error          nil | String}
-
-(defn- make-tui-state []
-  {:messages       []
-   :streaming-text nil
-   :phase          :idle
-   :error          nil})
-
-(defn- message->lines
-  "Format a single conversation message as a vector of display strings."
-  [{:keys [role text]}]
-  (let [prefix     (case role
-                     :user      "刀: "
-                     :assistant "ψ: "
-                     "   ")
-        all-lines  (str/split-lines text)
-        first-line (str prefix (first all-lines))
-        rest-lines (mapv #(str (apply str (repeat (count prefix) \space)) %) (rest all-lines))]
-    (into [first-line] rest-lines)))
-
-(defn- build-tui-children
-  "Build the TUI child component list from current tui-state."
-  [{:keys [messages streaming-text phase error]} editor]
-  (let [;; History messages
-        history-lines (into [] (mapcat message->lines messages))
-        history-text  (if (seq history-lines)
-                        (str/join "\n" history-lines)
-                        "")
-        history-comp  (when (seq history-lines)
-                        (comp/create-text history-text))
-
-        ;; Streaming partial response
-        stream-comp   (when streaming-text
-                        (comp/create-text (str "ψ: " streaming-text)))
-
-        ;; Loader shown while streaming
-        loader-comp   (when (= phase :streaming)
-                        (assoc (comp/create-loader "thinking…") :running true))
-
-        ;; Error display
-        error-comp    (when error
-                        (comp/create-text (str "[error: " error "]")))
-
-        ;; Separator line
-        sep-comp      (comp/create-text (apply str (repeat 40 "─")))
-
-        ;; Prompt label above editor
-        prompt-comp   (comp/create-text "刀:")]
-
-    (filterv some?
-             [history-comp
-              stream-comp
-              loader-comp
-              error-comp
-              sep-comp
-              prompt-comp
-              editor])))
-
-(defn- start-render-loop!
-  "Start a daemon thread that calls tick-in! at ~30 fps.
-  Returns the thread."
-  [tui-ctx stop-atom]
-  (doto (Thread.
-         (fn []
-           (while (not @stop-atom)
-             (try
-               (tui/tick-in! tui-ctx)
-               (catch Exception _))
-             (Thread/sleep 33)))
-         "tui-render-loop")
-    (.setDaemon true)
-    (.start)))
-
-(defn- run-agent-async!
-  "Run the agent loop in a background thread.
-  Updates `tui-state-atom` with streaming tokens and completion.
-  Rebuilds TUI children on each update and requests a render.
-  `editor-atom` holds the current Editor component (for child rebuild)."
-  [ctx ai-ctx ai-model text tui-ctx tui-state-atom editor-atom]
-  (future
-    (swap! tui-state-atom assoc :phase :streaming :streaming-text "" :error nil)
-    (tui/swap-tui-children-in! tui-ctx
-                               (build-tui-children @tui-state-atom @editor-atom))
-    (tui/request-render-in! tui-ctx)
-    (try
-      (let [user-msg   {:role      "user"
-                        :content   [{:type :text :text text}]
-                        :timestamp (java.time.Instant/now)}
-            result     (executor/run-agent-loop!
-                        ai-ctx
-                        (:agent-ctx ctx)
-                        ai-model
-                        [user-msg])
-            final-text (or (some #(when (= :text (:type %)) (:text %))
-                                 (:content result))
-                           "")
-            error-text (first (keep #(when (= :error (:type %)) (:text %))
-                                    (:content result)))
-            add-msg    (fn [msgs]
-                         (-> msgs
-                             (conj {:role :user :text text})
-                             (conj {:role :assistant :text (or final-text "(no response)")})))]
-        (swap! tui-state-atom
-               #(-> %
-                    (update :messages add-msg)
-                    (assoc :streaming-text nil
-                           :phase          :idle
-                           :error          error-text))))
-      (catch Exception e
-        (swap! tui-state-atom assoc
-               :phase          :idle
-               :streaming-text nil
-               :error          (ex-message e))))
-    (tui/swap-tui-children-in! tui-ctx
-                               (build-tui-children @tui-state-atom @editor-atom))
-    (tui/request-render-in! tui-ctx)))
-
 (defn run-tui-session
-  "Create a session and run it as a full-screen TUI.
+  "Create a session and run it as a full-screen TUI via charm.clj.
   Blocks until the user exits (Escape or Ctrl+C while idle)."
   [model-key]
   (let [ai-model (resolve-model model-key)
@@ -374,99 +250,22 @@
                        "You have access to tools: read, bash, edit, write.\n"
                        "Use them to help with coding tasks."))
 
-        ;; Shared state
-        tui-state-atom (atom (make-tui-state))
-        stop-atom      (atom false)
-        editor-atom    (atom (comp/create-editor {:padding-x 0}))
+        ;; run-agent-fn! — called by the TUI update fn on submit.
+        ;; Starts the agent in a background thread; puts result on queue.
+        run-agent-fn! (fn [text ^java.util.concurrent.LinkedBlockingQueue queue]
+                        (future
+                          (try
+                            (let [user-msg {:role      "user"
+                                            :content   [{:type :text :text text}]
+                                            :timestamp (java.time.Instant/now)}
+                                  result   (executor/run-agent-loop!
+                                            ai-ctx (:agent-ctx ctx)
+                                            ai-model [user-msg])]
+                              (.put queue {:kind :done :result result}))
+                            (catch Exception e
+                              (.put queue {:kind :error :message (ex-message e)})))))]
 
-        ;; Build initial children
-        initial-children (build-tui-children @tui-state-atom @editor-atom)
-
-        ;; Detect terminal dimensions: stty size → env vars → default
-        [cols rows] (or (try
-                          (let [p   (-> (ProcessBuilder. ["stty" "size"])
-                                        (.redirectInput (java.io.File. "/dev/tty"))
-                                        (.start))
-                                out (slurp (.getInputStream p))
-                                _   (.waitFor p)
-                                [r c] (map #(Integer/parseInt %)
-                                           (str/split (str/trim out) #" "))]
-                            (when (and (pos? c) (pos? r)) [c r]))
-                          (catch Exception _ nil))
-                        (when-let [c (System/getenv "COLUMNS")]
-                          (when-let [r (System/getenv "LINES")]
-                            (try [(Integer/parseInt c) (Integer/parseInt r)]
-                                 (catch Exception _ nil))))
-                        [80 24])
-        term (terminal/create-process-terminal {:cols cols :rows rows})
-        tui-ctx (tui/create-context term initial-children)]
-
-    ;; Focus the editor
-    (tui/set-focus-in! tui-ctx @editor-atom)
-
-    ;; Wire editor submit → run agent; escape/ctrl+c → quit
-    ;; We override handle-input by watching the tui state instead of subclassing.
-    ;; We use a custom input hook: patch the terminal's on-input to intercept
-    ;; submit and quit before routing to the TUI.
-    ;;
-    ;; Strategy: wrap start-tui-in! with a custom on-input callback that
-    ;; checks for enter (submit) and escape/ctrl+c (quit) at the session level.
-    ;; We achieve this by replacing the terminal's input callback after start.
-
-    (let [render-thread (start-render-loop! tui-ctx stop-atom)]
-
-      ;; Custom input handler wrapping the normal TUI input routing.
-      (letfn [(on-input [raw]
-                (cond
-                  ;; Quit signals (when idle)
-                  (and (= :idle (:phase @tui-state-atom))
-                       (or (= raw "escape")
-                           (= raw "\u0003")))  ; Ctrl+C
-                  (reset! stop-atom true)
-
-                  ;; Editor submit — enter key when idle
-                  (and (= :idle (:phase @tui-state-atom))
-                       (= raw "enter")
-                       (not (str/blank? (str/join "\n" (:lines @editor-atom)))))
-                  (let [text (str/join "\n" (:lines @editor-atom))]
-                    ;; Reset editor
-                    (reset! editor-atom (comp/create-editor {:padding-x 0}))
-                    ;; Update TUI children to show reset editor
-                    (tui/swap-tui-children-in! tui-ctx
-                                               (build-tui-children @tui-state-atom @editor-atom))
-                    (tui/set-focus-in! tui-ctx @editor-atom)
-                    (tui/request-render-in! tui-ctx)
-                    ;; Run agent in background
-                    (run-agent-async! ctx ai-ctx ai-model text
-                                      tui-ctx tui-state-atom editor-atom))
-
-                  ;; All other keys — route through TUI normally,
-                  ;; updating editor-atom with the new component state.
-                  :else
-                  (do
-                    (tui/handle-input-in! tui-ctx raw)
-                    (when-let [focused (tui/focused-in tui-ctx)]
-                      (reset! editor-atom focused))
-                    (tui/request-render-in! tui-ctx))))]
-
-        ;; Start terminal with our custom on-input handler
-        (let [orig-on-resize (fn [_c _r] (tui/request-render-in! tui-ctx))]
-          (proto/start! term on-input orig-on-resize))
-        ;; Hide cursor and do first render
-        (.print System/out "\u001b[?25l")
-        (.flush System/out)
-        (tui/request-render-in! tui-ctx)
-        (tui/tick-in! tui-ctx))
-
-      ;; Block until stop-atom is set
-      (loop []
-        (when-not @stop-atom
-          (Thread/sleep 50)
-          (recur)))
-
-      ;; Tear down
-      (tui/stop-tui-in! tui-ctx)
-      (.interrupt render-thread))))
+    (tui-app/start! (:name ai-model) run-agent-fn!)))
 
 ;; ============================================================
 ;; -main
