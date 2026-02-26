@@ -152,6 +152,22 @@
          {:type :agent-poll})
        {:type :agent-poll}))))
 
+;; ── Terminal size detection ───────────────────────────────────
+;; charm.clj drains the initial window-size message before our update
+;; function sees it, so the state never gets the real terminal dimensions.
+;; Detect them at init time via /dev/tty (works even in raw mode).
+
+(defn- detect-terminal-size
+  "Query the real terminal size. Returns {:width w :height h}."
+  []
+  (try
+    (let [proc (.start (ProcessBuilder. ["/bin/sh" "-c" "stty size < /dev/tty"]))
+          output (str/trim (slurp (.getInputStream proc)))]
+      (.waitFor proc)
+      (let [[rows cols] (str/split output #"\s+")]
+        {:width (parse-long cols) :height (parse-long rows)}))
+    (catch Exception _ {:width 80 :height 24})))
+
 ;; ── Init ────────────────────────────────────────────────────
 
 (defn make-init
@@ -169,7 +185,8 @@
      (let [introspected (when query-fn
                           (query-fn [:psi.agent-session/prompt-templates
                                      :psi.agent-session/skills
-                                     :psi.agent-session/extension-summary]))]
+                                     :psi.agent-session/extension-summary]))
+           {:keys [width height]} (detect-terminal-size)]
        [{:messages          []
          :phase             :idle
          :error             nil
@@ -183,8 +200,8 @@
          :extension-summary (or (:psi.agent-session/extension-summary introspected) {})
          :ui-state-atom     ui-state-atom
          :queue             nil
-         :width             80
-         :height            24}
+         :width             width
+         :height            height}
         nil]))))
 
 ;; ── Update helpers ──────────────────────────────────────────
