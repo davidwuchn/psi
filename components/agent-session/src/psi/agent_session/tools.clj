@@ -4,10 +4,9 @@
    Each tool returns {:content string :is-error boolean}.
    Errors throw ex-info so the executor can catch and report them."
   (:require
+   [babashka.process :as proc]
    [clojure.java.io :as io]
-   [clojure.java.shell :as shell]
-   [clojure.string :as str])
-)
+   [clojure.string :as str]))
 
 ;; ============================================================
 ;; Tool schemas (for agent registration)
@@ -18,36 +17,36 @@
    :label       "Read"
    :description "Read the contents of a file. Returns the file text."
    :parameters  (pr-str {:type       "object"
-                          :properties {:path {:type "string" :description "File path to read"}}
-                          :required   ["path"]})})
+                         :properties {:path {:type "string" :description "File path to read"}}
+                         :required   ["path"]})})
 
 (def bash-tool
   {:name        "bash"
    :label       "Bash"
    :description "Execute a bash command. Returns stdout and stderr combined."
    :parameters  (pr-str {:type       "object"
-                          :properties {:command {:type "string" :description "Bash command to run"}
-                                       :timeout {:type "integer" :description "Timeout in seconds (default 30)"}}
-                          :required   ["command"]})})
+                         :properties {:command {:type "string" :description "Bash command to run"}
+                                      :timeout {:type "integer" :description "Timeout in seconds (default 30)"}}
+                         :required   ["command"]})})
 
 (def edit-tool
   {:name        "edit"
    :label       "Edit"
    :description "Replace exact text in a file. oldText must match exactly."
    :parameters  (pr-str {:type       "object"
-                          :properties {:path    {:type "string" :description "File path"}
-                                       :oldText {:type "string" :description "Exact text to find"}
-                                       :newText {:type "string" :description "Replacement text"}}
-                          :required   ["path" "oldText" "newText"]})})
+                         :properties {:path    {:type "string" :description "File path"}
+                                      :oldText {:type "string" :description "Exact text to find"}
+                                      :newText {:type "string" :description "Replacement text"}}
+                         :required   ["path" "oldText" "newText"]})})
 
 (def write-tool
   {:name        "write"
    :label       "Write"
    :description "Write content to a file, creating it if it does not exist."
    :parameters  (pr-str {:type       "object"
-                          :properties {:path    {:type "string" :description "File path"}
-                                       :content {:type "string" :description "Content to write"}}
-                          :required   ["path" "content"]})})
+                         :properties {:path    {:type "string" :description "File path"}
+                                      :content {:type "string" :description "Content to write"}}
+                         :required   ["path" "content"]})})
 
 (def all-tool-schemas
   [read-tool bash-tool edit-tool write-tool])
@@ -70,11 +69,15 @@
      :is-error false}))
 
 (defn execute-bash
-  "Run a shell command, returning combined stdout+stderr.
-  Note: timeout is passed via env/shell config; clojure.java.shell does not
-  support per-call timeouts natively, so it is accepted but not enforced here."
+  "Run a shell command via babashka.process, returning combined stdout+stderr.
+  Stdin is bound to /dev/null so tools like rg don't misdetect a readable
+  pipe and search stdin instead of the working directory."
   [{:strs [command]}]
-  (let [result (shell/sh "bash" "-c" command :env (into {} (System/getenv)))
+  (let [result (proc/shell {:out      :string
+                            :err      :string
+                            :continue true
+                            :in       (java.io.File. "/dev/null")}
+                           "bash" "-c" command)
         out    (str (:out result) (:err result))]
     {:content  (if (str/blank? out) "[no output]" out)
      :is-error (not= 0 (:exit result))}))
