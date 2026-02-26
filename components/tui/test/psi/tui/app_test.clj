@@ -3,7 +3,9 @@
    Exercises init/update/view as pure functions — no terminal needed.
    Includes a JLine integration smoke test for terminal + keymap creation."
   (:require
+   [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
+   [charm.components.text-input :as text-input]
    [charm.core :as charm]
    [charm.input.keymap :as keymap]
    [charm.message :as msg]
@@ -55,7 +57,7 @@
           state     (init-state)
           [s1 _]    (update-fn state (msg/key-press "h"))
           [s2 _]    (update-fn s1 (msg/key-press "i"))]
-      (is (= "hi" (charm.components.text-input/value (:input s2)))))))
+      (is (= "hi" (text-input/value (:input s2)))))))
 
 (deftest backspace-test
   (testing "backspace removes a character"
@@ -64,7 +66,7 @@
           [s1 _]    (update-fn state (msg/key-press "a"))
           [s2 _]    (update-fn s1 (msg/key-press "b"))
           [s3 _]    (update-fn s2 (msg/key-press :backspace))]
-      (is (= "a" (charm.components.text-input/value (:input s3)))))))
+      (is (= "a" (text-input/value (:input s3)))))))
 
 ;;;; Update — submit
 
@@ -169,25 +171,25 @@
     (let [state (init-state "gpt-4o")
           out   (app/view state)]
       (is (string? out))
-      (is (clojure.string/includes? out "gpt-4o")))))
+      (is (str/includes? out "gpt-4o")))))
 
 (deftest view-renders-messages-test
   (testing "view renders user and assistant messages"
     (let [state (assoc (init-state)
                        :messages [{:role :user :text "hello"}
                                   {:role :assistant :text "world"}])]
-      (is (clojure.string/includes? (app/view state) "hello"))
-      (is (clojure.string/includes? (app/view state) "world")))))
+      (is (str/includes? (app/view state) "hello"))
+      (is (str/includes? (app/view state) "world")))))
 
 (deftest view-shows-spinner-during-streaming-test
   (testing "view shows spinner while streaming"
     (let [state (assoc (init-state) :phase :streaming)]
-      (is (clojure.string/includes? (app/view state) "thinking")))))
+      (is (str/includes? (app/view state) "thinking")))))
 
 (deftest view-shows-error-test
   (testing "view shows error message"
     (let [state (assoc (init-state) :error "something broke")]
-      (is (clojure.string/includes? (app/view state) "something broke")))))
+      (is (str/includes? (app/view state) "something broke")))))
 
 ;;;; Window resize
 
