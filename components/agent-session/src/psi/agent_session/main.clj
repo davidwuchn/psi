@@ -351,7 +351,7 @@
       (doseq [{:keys [path error]} errors]
         (timbre/warn "Extension error:" path error))
       (when (seq loaded)
-        (timbre/info "Extensions loaded:" (count loaded))))
+        (timbre/debug "Extensions loaded:" (count loaded))))
     ;; Register extension tools alongside built-ins
     (let [ext-tools (ext/all-tools-in (:extension-registry ctx))]
       (when (seq ext-tools)
@@ -451,7 +451,7 @@
                     (doseq [{:keys [path error]} errors]
                       (timbre/warn "Extension error:" path error))
                     (when (seq loaded)
-                      (timbre/info "Extensions loaded:" (count loaded))))
+                      (timbre/debug "Extensions loaded:" (count loaded))))
         ;; Register extension tools alongside built-ins
         _         (let [ext-tools (ext/all-tools-in (:extension-registry ctx))]
                     (when (seq ext-tools)

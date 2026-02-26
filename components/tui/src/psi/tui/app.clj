@@ -377,7 +377,8 @@
   (when ui-state-atom
     (let [statuses (ext-ui/all-statuses ui-state-atom)]
       (when (seq statuses)
-        (str (str/join " │ "
+        (str "\n" (render-separator) "\n"
+             (str/join " │ "
                        (map #(charm/render dim-style (:text %)) statuses))
              "\n")))))
 
