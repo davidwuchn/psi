@@ -95,20 +95,22 @@
    (fn []
      (let [introspected (when query-fn
                           (query-fn [:psi.agent-session/prompt-templates
-                                     :psi.agent-session/skills]))]
-       [{:messages         []
-         :phase            :idle
-         :error            nil
-         :input            (charm/text-input :prompt "刀: "
-                                             :placeholder "Type a message…"
-                                             :focused true)
-         :spinner-frame    0
-         :model-name       model-name
-         :prompt-templates (or (:psi.agent-session/prompt-templates introspected) [])
-         :skills           (or (:psi.agent-session/skills introspected) [])
-         :queue            nil
-         :width            80
-         :height           24}
+                                     :psi.agent-session/skills
+                                     :psi.agent-session/extension-summary]))]
+       [{:messages          []
+         :phase             :idle
+         :error             nil
+         :input             (charm/text-input :prompt "刀: "
+                                              :placeholder "Type a message…"
+                                              :focused true)
+         :spinner-frame     0
+         :model-name        model-name
+         :prompt-templates  (or (:psi.agent-session/prompt-templates introspected) [])
+         :skills            (or (:psi.agent-session/skills introspected) [])
+         :extension-summary (or (:psi.agent-session/extension-summary introspected) {})
+         :queue             nil
+         :width             80
+         :height            24}
         nil]))))
 
 ;; ── Update helpers ──────────────────────────────────────────
@@ -231,8 +233,9 @@
 
 ;; ── View ────────────────────────────────────────────────────
 
-(defn- render-banner [model-name prompt-templates skills]
-  (let [visible-skills (remove :disable-model-invocation skills)]
+(defn- render-banner [model-name prompt-templates skills extension-summary]
+  (let [visible-skills (remove :disable-model-invocation skills)
+        ext-count      (:extension-count extension-summary 0)]
     (str (charm/render title-style "ψ Psi Agent Session") "\n"
          (charm/render dim-style (str "  Model: " model-name)) "\n"
          (when (seq prompt-templates)
@@ -244,6 +247,10 @@
            (str (charm/render dim-style
                   (str "  Skills: "
                        (str/join ", " (map :name visible-skills))))
+                "\n"))
+         (when (pos? ext-count)
+           (str (charm/render dim-style
+                  (str "  Exts: " ext-count " loaded"))
                 "\n"))
          (charm/render dim-style "  ESC to quit") "\n")))
 
@@ -271,9 +278,10 @@
 (defn view
   "Render the full TUI state to a string."
   [state]
-  (let [{:keys [messages phase error input spinner-frame model-name prompt-templates skills]} state
+  (let [{:keys [messages phase error input spinner-frame model-name
+                prompt-templates skills extension-summary]} state
         spinner-char (nth spinner-frames (mod spinner-frame (count spinner-frames)))]
-    (str (render-banner model-name prompt-templates skills)
+    (str (render-banner model-name prompt-templates skills extension-summary)
          "\n"
          (render-messages messages)
          (when (= :streaming phase)

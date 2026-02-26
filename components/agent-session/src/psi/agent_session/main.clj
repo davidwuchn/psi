@@ -132,7 +132,7 @@
 ;; Output helpers
 ;; ============================================================
 
-(defn- print-banner [model templates loaded-skills]
+(defn- print-banner [model templates loaded-skills ctx]
   (println)
   (println "╔══════════════════════════════════════╗")
   (println "║  ψ  Psi Agent Session                ║")
@@ -148,6 +148,16 @@
           hidden  (skills/hidden-skills loaded-skills)]
       (println (str "  Skills  : " (count visible) " available"
                     (when (seq hidden) (str ", " (count hidden) " hidden"))))))
+  (let [ext-details (ext/extension-details-in (:extension-registry ctx))]
+    (when (seq ext-details)
+      (println (str "  Exts    : " (count ext-details) " loaded"))
+      (doseq [d ext-details]
+        (let [parts (cond-> []
+                      (pos? (:tool-count d))    (conj (str (:tool-count d) " tools"))
+                      (pos? (:command-count d)) (conj (str (:command-count d) " cmds"))
+                      (pos? (:handler-count d)) (conj (str (:handler-count d) " handlers")))
+              suffix (when (seq parts) (str " (" (str/join ", " parts) ")"))]
+          (println (str "    " (.getName (java.io.File. ^String (:path d))) suffix))))))
   (println "  /help for commands, /quit to exit")
   (println))
 
@@ -349,7 +359,7 @@
                              (into (vec tools/all-tool-schemas) ext-tools))))
     ;; Expose state for nREPL introspection
     (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model})
-    (print-banner ai-model templates skills)
+    (print-banner ai-model templates skills ctx)
     (loop []
       (print "刀: ")
       (flush)
