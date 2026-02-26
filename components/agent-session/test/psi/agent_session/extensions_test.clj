@@ -1,6 +1,8 @@
 (ns psi.agent-session.extensions-test
-  "Tests for the extension registry and event dispatch."
+  "Tests for the extension registry, loading, tool wrapping, and introspection."
   (:require
+   [clojure.java.io :as io]
+   [clojure.string :as str]
    [clojure.test :refer [deftest testing is]]
    [psi.agent-session.extensions :as ext]))
 
@@ -179,4 +181,380 @@
       (let [s (ext/summary-in reg)]
         (is (= 1 (:extension-count s)))
         (is (= 1 (:handler-count s)))
-        (is (contains? (:tool-names s) "t1"))))))
+        (is (contains? (:tool-names s) "t1"))
+        (is (contains? (:handler-events s) "e"))))))
+
+;; ── Flag management ─────────────────────────────────────────────────────────
+
+(deftest flag-registration-test
+  (testing "register-flag-in! with default sets initial value"
+    (let [reg (ext/create-registry)]
+      (ext/register-extension-in! reg "/ext/a")
+      (ext/register-flag-in! reg "/ext/a" {:name "verbose" :type :boolean :default true})
+      (is (= true (ext/get-flag-in reg "verbose")))))
+
+  (testing "set-flag-in! updates value"
+    (let [reg (ext/create-registry)]
+      (ext/register-extension-in! reg "/ext/a")
+      (ext/register-flag-in! reg "/ext/a" {:name "verbose" :type :boolean :default false})
+      (ext/set-flag-in! reg "verbose" true)
+      (is (= true (ext/get-flag-in reg "verbose")))))
+
+  (testing "flag without default has nil value"
+    (let [reg (ext/create-registry)]
+      (ext/register-extension-in! reg "/ext/a")
+      (ext/register-flag-in! reg "/ext/a" {:name "mode" :type :string})
+      (is (nil? (ext/get-flag-in reg "mode")))))
+
+  (testing "flag names tracked"
+    (let [reg (ext/create-registry)]
+      (ext/register-extension-in! reg "/ext/a")
+      (ext/register-flag-in! reg "/ext/a" {:name "f1" :type :boolean})
+      (is (contains? (ext/flag-names-in reg) "f1"))))
+
+  (testing "all-flag-values-in returns complete map"
+    (let [reg (ext/create-registry)]
+      (ext/register-extension-in! reg "/ext/a")
+      (ext/register-flag-in! reg "/ext/a" {:name "f1" :type :boolean :default true})
+      (ext/register-flag-in! reg "/ext/a" {:name "f2" :type :string :default "x"})
+      (is (= {"f1" true "f2" "x"} (ext/all-flag-values-in reg))))))
+
+;; ── Event bus ───────────────────────────────────────────────────────────────
+
+(deftest event-bus-test
+  (testing "bus-emit fires subscribers"
+    (let [reg     (ext/create-registry)
+          received (atom nil)]
+      (ext/bus-on-in! reg "test-channel" (fn [data] (reset! received data)))
+      (ext/bus-emit-in! reg "test-channel" {:value 42})
+      (is (= {:value 42} @received))))
+
+  (testing "bus-on-in! returns unsubscribe fn"
+    (let [reg     (ext/create-registry)
+          count-a (atom 0)
+          unsub   (ext/bus-on-in! reg "ch" (fn [_] (swap! count-a inc)))]
+      (ext/bus-emit-in! reg "ch" {})
+      (is (= 1 @count-a))
+      (unsub)
+      (ext/bus-emit-in! reg "ch" {})
+      (is (= 1 @count-a))))
+
+  (testing "multiple subscribers receive same event"
+    (let [reg    (ext/create-registry)
+          fired  (atom [])]
+      (ext/bus-on-in! reg "ch" (fn [d] (swap! fired conj [:a d])))
+      (ext/bus-on-in! reg "ch" (fn [d] (swap! fired conj [:b d])))
+      (ext/bus-emit-in! reg "ch" :x)
+      (is (= [[:a :x] [:b :x]] @fired)))))
+
+;; ── Tool wrapping ───────────────────────────────────────────────────────────
+
+(deftest tool-wrapping-test
+  (testing "wrap-tool-executor passes through when no handlers"
+    (let [reg        (ext/create-registry)
+          execute-fn (fn [tool-name _args] {:content (str tool-name " ok") :is-error false})
+          wrapped    (ext/wrap-tool-executor reg execute-fn)]
+      (is (= {:content "read ok" :is-error false}
+             (wrapped "read" {})))))
+
+  (testing "tool_call handler can block execution"
+    (let [reg        (ext/create-registry)
+          execute-fn (fn [_tool-name _args]
+                       (throw (Exception. "should not be called")))
+          _          (ext/register-extension-in! reg "/ext/a")
+          _          (ext/register-handler-in! reg "/ext/a" "tool_call"
+                                              (fn [_] {:block true :reason "blocked!"}))
+          wrapped    (ext/wrap-tool-executor reg execute-fn)]
+      (is (= {:content "blocked!" :is-error true}
+             (wrapped "bash" {"command" "rm -rf /"})))))
+
+  (testing "tool_result handler can modify result"
+    (let [reg        (ext/create-registry)
+          execute-fn (fn [_tool-name _args] {:content "original" :is-error false})
+          _          (ext/register-extension-in! reg "/ext/a")
+          _          (ext/register-handler-in! reg "/ext/a" "tool_result"
+                                              (fn [_] {:content "modified"}))
+          wrapped    (ext/wrap-tool-executor reg execute-fn)]
+      (is (= {:content "modified" :is-error false}
+             (wrapped "read" {"path" "test.txt"})))))
+
+  (testing "tool_result handler can modify is-error"
+    (let [reg        (ext/create-registry)
+          execute-fn (fn [_tool-name _args] {:content "result" :is-error false})
+          _          (ext/register-extension-in! reg "/ext/a")
+          _          (ext/register-handler-in! reg "/ext/a" "tool_result"
+                                              (fn [_] {:is-error true}))
+          wrapped    (ext/wrap-tool-executor reg execute-fn)]
+      (is (= {:content "result" :is-error true}
+             (wrapped "read" {"path" "test.txt"}))))))
+
+;; ── Introspection: handler event names ──────────────────────────────────────
+
+(deftest handler-event-names-test
+  (testing "handler-event-names-in returns sorted set of event names"
+    (let [reg (ext/create-registry)]
+      (ext/register-extension-in! reg "/ext/a")
+      (ext/register-handler-in! reg "/ext/a" "session_switch" (fn [_] nil))
+      (ext/register-handler-in! reg "/ext/a" "tool_call" (fn [_] nil))
+      (ext/register-handler-in! reg "/ext/a" "model_select" (fn [_] nil))
+      (is (= #{"model_select" "session_switch" "tool_call"}
+             (ext/handler-event-names-in reg))))))
+
+;; ── Introspection: all tools/commands/flags ─────────────────────────────────
+
+(deftest all-tools-in-test
+  (testing "all-tools-in returns tools with extension-path"
+    (let [reg (ext/create-registry)]
+      (ext/register-extension-in! reg "/ext/a")
+      (ext/register-tool-in! reg "/ext/a" {:name "my-tool" :label "T" :description "d"})
+      (let [tools (ext/all-tools-in reg)]
+        (is (= 1 (count tools)))
+        (is (= "my-tool" (:name (first tools))))
+        (is (= "/ext/a" (:extension-path (first tools)))))))
+
+  (testing "first registration per name wins"
+    (let [reg (ext/create-registry)]
+      (ext/register-extension-in! reg "/ext/a")
+      (ext/register-extension-in! reg "/ext/b")
+      (ext/register-tool-in! reg "/ext/a" {:name "t" :label "A"})
+      (ext/register-tool-in! reg "/ext/b" {:name "t" :label "B"})
+      (let [tools (ext/all-tools-in reg)]
+        (is (= 1 (count tools)))
+        (is (= "A" (:label (first tools))))))))
+
+(deftest all-commands-in-test
+  (testing "all-commands-in returns commands with extension-path"
+    (let [reg (ext/create-registry)]
+      (ext/register-extension-in! reg "/ext/a")
+      (ext/register-command-in! reg "/ext/a" {:name "hello" :description "say hi"})
+      (let [cmds (ext/all-commands-in reg)]
+        (is (= 1 (count cmds)))
+        (is (= "hello" (:name (first cmds))))
+        (is (= "/ext/a" (:extension-path (first cmds))))))))
+
+(deftest all-flags-in-test
+  (testing "all-flags-in includes current values"
+    (let [reg (ext/create-registry)]
+      (ext/register-extension-in! reg "/ext/a")
+      (ext/register-flag-in! reg "/ext/a" {:name "verbose" :type :boolean :default true})
+      (let [flags (ext/all-flags-in reg)]
+        (is (= 1 (count flags)))
+        (is (= "verbose" (:name (first flags))))
+        (is (= true (:current-value (first flags))))))))
+
+;; ── Introspection: extension details ────────────────────────────────────────
+
+(deftest extension-detail-test
+  (testing "extension-detail-in returns detail map"
+    (let [reg (ext/create-registry)]
+      (ext/register-extension-in! reg "/ext/a")
+      (ext/register-handler-in! reg "/ext/a" "tool_call" (fn [_] nil))
+      (ext/register-handler-in! reg "/ext/a" "tool_result" (fn [_] nil))
+      (ext/register-tool-in! reg "/ext/a" {:name "my-tool"})
+      (ext/register-command-in! reg "/ext/a" {:name "cmd"})
+      (ext/register-flag-in! reg "/ext/a" {:name "f1" :type :boolean})
+      (let [d (ext/extension-detail-in reg "/ext/a")]
+        (is (= "/ext/a" (:path d)))
+        (is (= #{"tool_call" "tool_result"} (:handler-names d)))
+        (is (= 2 (:handler-count d)))
+        (is (= #{"my-tool"} (:tool-names d)))
+        (is (= 1 (:tool-count d)))
+        (is (= #{"cmd"} (:command-names d)))
+        (is (= 1 (:command-count d)))
+        (is (= #{"f1"} (:flag-names d)))
+        (is (= 1 (:flag-count d))))))
+
+  (testing "extension-detail-in returns nil for unknown path"
+    (let [reg (ext/create-registry)]
+      (is (nil? (ext/extension-detail-in reg "/ext/unknown")))))
+
+  (testing "extension-details-in returns all extensions"
+    (let [reg (ext/create-registry)]
+      (ext/register-extension-in! reg "/ext/a")
+      (ext/register-extension-in! reg "/ext/b")
+      (let [details (ext/extension-details-in reg)]
+        (is (= 2 (count details)))
+        (is (= ["/ext/a" "/ext/b"] (mapv :path details)))))))
+
+;; ── Get command/tool by name ────────────────────────────────────────────────
+
+(deftest get-command-in-test
+  (testing "returns command by name"
+    (let [reg (ext/create-registry)]
+      (ext/register-extension-in! reg "/ext/a")
+      (ext/register-command-in! reg "/ext/a" {:name "hello" :handler identity})
+      (is (= "hello" (:name (ext/get-command-in reg "hello"))))))
+
+  (testing "returns nil for unknown command"
+    (let [reg (ext/create-registry)]
+      (is (nil? (ext/get-command-in reg "nope"))))))
+
+(deftest get-tool-in-test
+  (testing "returns tool by name"
+    (let [reg (ext/create-registry)]
+      (ext/register-extension-in! reg "/ext/a")
+      (ext/register-tool-in! reg "/ext/a" {:name "my-tool" :label "T"})
+      (is (= "my-tool" (:name (ext/get-tool-in reg "my-tool"))))))
+
+  (testing "returns nil for unknown tool"
+    (let [reg (ext/create-registry)]
+      (is (nil? (ext/get-tool-in reg "nope"))))))
+
+;; ── Extension API (factory invocation) ──────────────────────────────────────
+
+(deftest extension-api-registration-test
+  (testing "API :on registers handlers"
+    (let [reg (ext/create-registry)
+          _   (ext/register-extension-in! reg "/ext/test")
+          api (ext/create-extension-api reg "/ext/test" {})]
+      ((:on api) "session_switch" (fn [_] nil))
+      (is (= 1 (ext/handler-count-in reg)))))
+
+  (testing "API :register-tool registers tools"
+    (let [reg (ext/create-registry)
+          _   (ext/register-extension-in! reg "/ext/test")
+          api (ext/create-extension-api reg "/ext/test" {})]
+      ((:register-tool api) {:name "ext-tool" :label "ET" :description "test"})
+      (is (contains? (ext/tool-names-in reg) "ext-tool"))))
+
+  (testing "API :register-command registers commands"
+    (let [reg (ext/create-registry)
+          _   (ext/register-extension-in! reg "/ext/test")
+          api (ext/create-extension-api reg "/ext/test" {})]
+      ((:register-command api) "greet" {:handler (fn [_] nil) :description "Say hi"})
+      (is (contains? (ext/command-names-in reg) "greet"))))
+
+  (testing "API :register-flag with default"
+    (let [reg (ext/create-registry)
+          _   (ext/register-extension-in! reg "/ext/test")
+          api (ext/create-extension-api reg "/ext/test" {})]
+      ((:register-flag api) "debug" {:type :boolean :default false})
+      (is (= false ((:get-flag api) "debug")))))
+
+  (testing "API action fns delegate to session"
+    (let [reg        (ext/create-registry)
+          name-atom  (atom nil)
+          _          (ext/register-extension-in! reg "/ext/test")
+          action-fns {:set-session-name-fn (fn [n] (reset! name-atom n))
+                      :get-session-name-fn (fn [] @name-atom)}
+          api        (ext/create-extension-api reg "/ext/test" action-fns)]
+      ((:set-session-name api) "my session")
+      (is (= "my session" @name-atom))
+      (is (= "my session" ((:get-session-name api)))))))
+
+;; ── Extension loading from file ─────────────────────────────────────────────
+
+(deftest load-extension-from-file-test
+  (testing "loads a .clj extension file and invokes init"
+    (let [tmp-dir  (io/file (System/getProperty "java.io.tmpdir")
+                            (str "psi-ext-test-" (System/nanoTime)))
+          _        (.mkdirs tmp-dir)
+          ext-file (io/file tmp-dir "hello_ext.clj")
+          reg      (ext/create-registry)]
+      (try
+        ;; Write a minimal extension file
+        (spit ext-file
+              "(ns psi.test-extensions.hello-ext)
+
+(defn init [api]
+  ((:register-command api) \"hello\" {:description \"Say hello\"
+                                     :handler (fn [args] (println \"Hello\" args))})
+  ((:register-flag api) \"verbose\" {:type :boolean :default true})
+  ((:on api) \"session_switch\" (fn [ev] (println \"switched!\" ev))))")
+        (let [result (ext/load-extension-in! reg (.getAbsolutePath ext-file) {})]
+          (is (nil? (:error result)))
+          (is (= (.getAbsolutePath ext-file) (:extension result)))
+          ;; Verify registrations took effect
+          (is (= 1 (ext/extension-count-in reg)))
+          (is (contains? (ext/command-names-in reg) "hello"))
+          (is (contains? (ext/flag-names-in reg) "verbose"))
+          (is (= true (ext/get-flag-in reg "verbose")))
+          (is (= 1 (ext/handler-count-in reg))))
+        (finally
+          (.delete ext-file)
+          (.delete tmp-dir))))))
+
+(deftest load-extension-missing-file-test
+  (testing "returns error for missing file"
+    (let [reg    (ext/create-registry)
+          result (ext/load-extension-in! reg "/nonexistent/ext.clj" {})]
+      (is (some? (:error result)))
+      (is (nil? (:extension result))))))
+
+;; ── Extension discovery ─────────────────────────────────────────────────────
+
+(deftest discover-extension-paths-test
+  (testing "discovers .clj files in a directory"
+    (let [tmp-dir  (io/file (System/getProperty "java.io.tmpdir")
+                            (str "psi-discover-" (System/nanoTime)))
+          ext-dir  (io/file tmp-dir ".psi" "extensions")
+          ext-file (io/file ext-dir "my_ext.clj")]
+      (try
+        (.mkdirs ext-dir)
+        (spit ext-file "(ns test-ext)")
+        (let [paths (ext/discover-extension-paths [] (.getAbsolutePath tmp-dir))]
+          (is (some #(str/ends-with? % "my_ext.clj") paths)))
+        (finally
+          (.delete ext-file)
+          (.delete ext-dir)
+          (.delete (io/file tmp-dir ".psi"))
+          (.delete tmp-dir)))))
+
+  (testing "discovers extension.clj in subdirectories"
+    (let [tmp-dir  (io/file (System/getProperty "java.io.tmpdir")
+                            (str "psi-discover-sub-" (System/nanoTime)))
+          ext-dir  (io/file tmp-dir ".psi" "extensions" "my-ext")
+          ext-file (io/file ext-dir "extension.clj")]
+      (try
+        (.mkdirs ext-dir)
+        (spit ext-file "(ns test-ext-sub)")
+        (let [paths (ext/discover-extension-paths [] (.getAbsolutePath tmp-dir))]
+          (is (some #(str/ends-with? % "extension.clj") paths)))
+        (finally
+          (.delete ext-file)
+          (.delete ext-dir)
+          (.delete (io/file tmp-dir ".psi" "extensions"))
+          (.delete (io/file tmp-dir ".psi"))
+          (.delete tmp-dir)))))
+
+  (testing "explicit path included"
+    (let [tmp-file (io/file (System/getProperty "java.io.tmpdir")
+                            (str "explicit-ext-" (System/nanoTime) ".clj"))]
+      (try
+        (spit tmp-file "(ns explicit)")
+        (let [paths (ext/discover-extension-paths [(.getAbsolutePath tmp-file)]
+                                                  "/nonexistent")]
+          (is (some #(= (.getAbsolutePath tmp-file) %) paths)))
+        (finally
+          (.delete tmp-file))))))
+
+;; ── Shortcut registration ───────────────────────────────────────────────────
+
+(deftest shortcut-registration-test
+  (testing "register-shortcut-in! adds shortcut"
+    (let [reg (ext/create-registry)]
+      (ext/register-extension-in! reg "/ext/a")
+      (ext/register-shortcut-in! reg "/ext/a" {:key "ctrl+k" :handler (fn [] nil)})
+      (let [d (ext/extension-detail-in reg "/ext/a")]
+        (is (= 1 (:shortcut-count d)))))))
+
+;; ── EQL introspection ───────────────────────────────────────────────────────
+
+(deftest eql-extension-introspection-test
+  (testing "resolvers expose extension data via EQL"
+    (let [;; Need a full session context for resolver tests
+          reg (ext/create-registry)]
+      (ext/register-extension-in! reg "/ext/a")
+      (ext/register-handler-in! reg "/ext/a" "tool_call" (fn [_] nil))
+      (ext/register-tool-in! reg "/ext/a" {:name "ext-read" :label "R" :description "ext read"})
+      (ext/register-command-in! reg "/ext/a" {:name "greet" :description "Say hi"})
+      (ext/register-flag-in! reg "/ext/a" {:name "debug" :type :boolean :default false})
+      ;; Test the inspection functions that resolvers will call
+      (is (= ["/ext/a"] (vec (ext/extensions-in reg))))
+      (is (= 1 (ext/handler-count-in reg)))
+      (is (= ["tool_call"] (vec (ext/handler-event-names-in reg))))
+      (is (= 1 (count (ext/all-tools-in reg))))
+      (is (= 1 (count (ext/all-commands-in reg))))
+      (is (= 1 (count (ext/all-flags-in reg))))
+      (is (= false (:current-value (first (ext/all-flags-in reg)))))
+      (is (= 1 (count (ext/extension-details-in reg)))))))

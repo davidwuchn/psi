@@ -1,11 +1,19 @@
 (ns psi.agent-session.extensions
-  "Extension registry and event dispatch.
+  "Extension system: registry, loading, event dispatch, tool wrapping, introspection.
 
    Design
    ──────
-   An extension is registered by path.  During factory invocation the
-   extension calls registration fns to declare its handlers, tools,
-   commands, flags, and shortcuts.
+   An extension is a Clojure file exporting an `init` function.
+   During factory invocation the extension calls registration fns on the
+   ExtensionAPI map to declare its handlers, tools, commands, flags, and shortcuts.
+
+   Discovery: extensions are found in:
+     1. Project-local:  .psi/extensions/
+     2. User-global:    ~/.psi/agent/extensions/
+     3. CLI-provided:   --extension paths
+
+   Loading: each .clj file is `load-file`d, then its `init` fn is called
+   with the ExtensionAPI map.
 
    Event dispatch (broadcast model):
      - Handlers fire in registration order (first registered, first called).
@@ -16,29 +24,23 @@
      - session_before_compact handlers may return {:result CompactionResult}
        to supply a custom compaction, bypassing the default LLM summarisation.
 
+   Tool wrapping:
+     - Extensions can hook into tool_call (before) and tool_result (after).
+     - tool_call handlers may return {:block true} to prevent execution.
+     - tool_result handlers may modify :content, :details, or :is-error.
+
+   Introspection:
+     - All registry state is queryable via EQL :psi.extension/* attributes.
+     - `extension-details-in` returns per-extension detail maps.
+
    Nullable pattern:
      `create-registry` returns an isolated registry map (atom inside).
      All public fns have a context-aware `-in` variant.
      The global singleton delegates to `global-registry`."
-  )
-
-;; ============================================================
-;; Schema
-;; ============================================================
-
-(def handler-entry-schema
-  [:map
-   [:extension-path :string]
-   [:handler fn?]])
-
-(def extension-record-schema
-  [:map
-   [:path :string]
-   [:handlers [:map-of :string [:vector handler-entry-schema]]]
-   [:tools [:map-of :string :map]]
-   [:commands [:map-of :string :map]]
-   [:flags [:map-of :string :map]]
-   [:shortcuts [:map-of :string :map]]])
+  (:require
+   [clojure.java.io :as io]
+   [clojure.string :as str]
+   [taoensso.timbre :as timbre]))
 
 ;; ============================================================
 ;; Registry structure
@@ -48,12 +50,16 @@
 
 (defn create-registry
   "Create an isolated extension registry.
-  State is {:extensions {path ExtensionRecord}
-             :registration-order [path ...]}."
+  State is {:extensions          {path ExtensionRecord}
+            :registration-order  [path ...]
+            :flag-values         {name value}
+            :event-bus           {channel [handler-fn ...]}}"
   []
   (->ExtensionRegistry
-   (atom {:extensions        {}
-          :registration-order []})))
+   (atom {:extensions         {}
+          :registration-order []
+          :flag-values        {}
+          :event-bus          {}})))
 
 (defonce ^:private global-reg (atom nil))
 
@@ -78,12 +84,12 @@
              s
              (-> s
                  (assoc-in [:extensions path]
-                            {:path      path
-                             :handlers  {}
-                             :tools     {}
-                             :commands  {}
-                             :flags     {}
-                             :shortcuts {}})
+                           {:path       path
+                            :handlers   {}
+                            :tools      {}
+                            :commands   {}
+                            :flags      {}
+                            :shortcuts  {}})
                  (update :registration-order conj path)))))
   reg)
 
@@ -111,17 +117,74 @@
   reg)
 
 (defn register-flag-in!
-  "Register `flag` (a map with :name key) for the extension at `ext-path`."
+  "Register `flag` (a map with :name key) for the extension at `ext-path`.
+   If the flag has a :default value and no value is set yet, sets the default."
   [reg ext-path flag]
   (swap! (:state reg)
-         assoc-in [:extensions ext-path :flags (:name flag)] flag)
+         (fn [s]
+           (let [s (assoc-in s [:extensions ext-path :flags (:name flag)] flag)]
+             (if (and (contains? flag :default)
+                      (not (contains? (:flag-values s) (:name flag))))
+               (assoc-in s [:flag-values (:name flag)] (:default flag))
+               s))))
+  reg)
+
+(defn register-shortcut-in!
+  "Register `shortcut` (a map with :key and :handler) for the extension at `ext-path`."
+  [reg ext-path shortcut]
+  (swap! (:state reg)
+         assoc-in [:extensions ext-path :shortcuts (:key shortcut)] shortcut)
   reg)
 
 (defn unregister-all-in!
-  "Remove all registered extensions from `reg`. Used during reload."
+  "Remove all registered extensions from `reg`. Used during reload.
+   Preserves flag-values and event-bus."
   [reg]
   (swap! (:state reg) assoc :extensions {} :registration-order [])
   reg)
+
+;; ============================================================
+;; Flag values
+;; ============================================================
+
+(defn get-flag-in
+  "Get the current value of flag `name` from `reg`."
+  [reg name]
+  (get-in @(:state reg) [:flag-values name]))
+
+(defn set-flag-in!
+  "Set the value of flag `name` in `reg`."
+  [reg name value]
+  (swap! (:state reg) assoc-in [:flag-values name] value)
+  reg)
+
+(defn all-flag-values-in
+  "Return map of all flag name → current value."
+  [reg]
+  (:flag-values @(:state reg)))
+
+;; ============================================================
+;; Event bus (inter-extension communication)
+;; ============================================================
+
+(defn bus-emit-in!
+  "Emit `data` on `channel` to all event bus subscribers in `reg`."
+  [reg channel data]
+  (let [handlers (get-in @(:state reg) [:event-bus channel])]
+    (doseq [h handlers]
+      (try (h data)
+           (catch Exception e
+             (timbre/warn "Event bus handler error on channel" channel
+                          (ex-message e)))))))
+
+(defn bus-on-in!
+  "Subscribe `handler-fn` to `channel` on the event bus in `reg`.
+   Returns a no-arg unsubscribe function."
+  [reg channel handler-fn]
+  (swap! (:state reg) update-in [:event-bus channel] (fnil conj []) handler-fn)
+  (fn []
+    (swap! (:state reg) update-in [:event-bus channel]
+           (fn [handlers] (vec (remove #(= % handler-fn) handlers))))))
 
 ;; ============================================================
 ;; Dispatch
@@ -159,6 +222,61 @@
   (dispatch-in (global-registry) event-name event))
 
 ;; ============================================================
+;; Tool wrapping
+;; ============================================================
+
+(defn dispatch-tool-call-in
+  "Dispatch a tool_call event. Returns {:block true :reason s} or nil."
+  [reg tool-name tool-call-id args]
+  (let [{:keys [results]} (dispatch-in reg "tool_call"
+                                       {:type         "tool_call"
+                                        :tool-name    tool-name
+                                        :tool-call-id tool-call-id
+                                        :input        args})]
+    (first (filter :block results))))
+
+(defn dispatch-tool-result-in
+  "Dispatch a tool_result event. Returns modified result map or nil."
+  [reg tool-name tool-call-id args result is-error?]
+  (let [{:keys [results]} (dispatch-in reg "tool_result"
+                                       {:type         "tool_result"
+                                        :tool-name    tool-name
+                                        :tool-call-id tool-call-id
+                                        :input        args
+                                        :content      (:content result)
+                                        :details      (:details result)
+                                        :is-error     is-error?})]
+    ;; Return the first result that modifies content/details/is-error
+    (first (filter #(or (contains? % :content) (contains? % :details)
+                        (contains? % :is-error))
+                   (remove :error results)))))
+
+(defn wrap-tool-executor
+  "Wrap a tool executor fn with extension pre/post hooks.
+   `execute-fn` is (fn [tool-name args] → {:content s :is-error bool}).
+   Returns a wrapped fn with the same signature."
+  [reg execute-fn]
+  (fn [tool-name args]
+    ;; Pre-hook: tool_call
+    (let [block-result (dispatch-tool-call-in reg tool-name nil args)]
+      (if (:block block-result)
+        {:content  (or (:reason block-result)
+                       "Tool execution was blocked by an extension")
+         :is-error true}
+        ;; Execute the actual tool
+        (let [result   (execute-fn tool-name args)
+              is-error (:is-error result false)
+              ;; Post-hook: tool_result
+              modified (dispatch-tool-result-in
+                        reg tool-name nil args result is-error)]
+          (if modified
+            (cond-> result
+              (contains? modified :content)  (assoc :content (:content modified))
+              (contains? modified :details)  (assoc :details (:details modified))
+              (contains? modified :is-error) (assoc :is-error (:is-error modified)))
+            result))))))
+
+;; ============================================================
 ;; Inspection
 ;; ============================================================
 
@@ -182,6 +300,14 @@
      0
      (:registration-order state))))
 
+(defn handler-event-names-in
+  "Return sorted set of all event names that have at least one handler in `reg`."
+  [reg]
+  (let [state @(:state reg)]
+    (into (sorted-set)
+          (mapcat #(keys (get-in state [:extensions % :handlers]))
+                  (:registration-order state)))))
+
 (defn tool-names-in
   "Return set of all registered tool names across all extensions in `reg`."
   [reg]
@@ -198,14 +324,390 @@
           (mapcat #(keys (get-in state [:extensions % :commands]))
                   (:registration-order state)))))
 
+(defn flag-names-in
+  "Return set of all registered flag names across all extensions in `reg`."
+  [reg]
+  (let [state @(:state reg)]
+    (into #{}
+          (mapcat #(keys (get-in state [:extensions % :flags]))
+                  (:registration-order state)))))
+
+(defn all-tools-in
+  "Return vector of all registered tool definition maps across all extensions.
+   First registration per name wins."
+  [reg]
+  (let [state @(:state reg)
+        seen  (atom #{})]
+    (into []
+          (for [path  (:registration-order state)
+                [name tool] (get-in state [:extensions path :tools])
+                :when (not (@seen name))
+                :let  [_ (swap! seen conj name)]]
+            (assoc tool :extension-path path)))))
+
+(defn all-commands-in
+  "Return vector of all registered command maps across all extensions.
+   First registration per name wins."
+  [reg]
+  (let [state @(:state reg)
+        seen  (atom #{})]
+    (into []
+          (for [path  (:registration-order state)
+                [name cmd] (get-in state [:extensions path :commands])
+                :when (not (@seen name))
+                :let  [_ (swap! seen conj name)]]
+            (assoc cmd :extension-path path)))))
+
+(defn all-flags-in
+  "Return vector of all registered flag maps across all extensions."
+  [reg]
+  (let [state @(:state reg)]
+    (into []
+          (for [path  (:registration-order state)
+                [_name flag] (get-in state [:extensions path :flags])]
+            (assoc flag :extension-path path
+                   :current-value (get-in state [:flag-values (:name flag)]))))))
+
+(defn get-command-in
+  "Return the command map for `cmd-name`, or nil."
+  [reg cmd-name]
+  (let [state @(:state reg)]
+    (some (fn [path]
+            (get-in state [:extensions path :commands cmd-name]))
+          (:registration-order state))))
+
+(defn get-tool-in
+  "Return the tool map for `tool-name`, or nil."
+  [reg tool-name]
+  (let [state @(:state reg)]
+    (some (fn [path]
+            (get-in state [:extensions path :tools tool-name]))
+          (:registration-order state))))
+
+(defn extension-detail-in
+  "Return detail map for a single extension at `ext-path`, or nil."
+  [reg ext-path]
+  (let [state @(:state reg)
+        ext   (get-in state [:extensions ext-path])]
+    (when ext
+      {:path           ext-path
+       :handler-names  (into (sorted-set) (keys (:handlers ext)))
+       :handler-count  (reduce + 0 (map count (vals (:handlers ext))))
+       :tool-names     (into (sorted-set) (keys (:tools ext)))
+       :tool-count     (count (:tools ext))
+       :command-names  (into (sorted-set) (keys (:commands ext)))
+       :command-count  (count (:commands ext))
+       :flag-names     (into (sorted-set) (keys (:flags ext)))
+       :flag-count     (count (:flags ext))
+       :shortcut-count (count (:shortcuts ext))})))
+
+(defn extension-details-in
+  "Return vector of detail maps for all registered extensions."
+  [reg]
+  (mapv #(extension-detail-in reg %) (extensions-in reg)))
+
 (defn summary-in
   "Return a summary map describing the extension registry state."
   [reg]
   {:extension-count (extension-count-in reg)
    :extensions      (extensions-in reg)
    :handler-count   (handler-count-in reg)
+   :handler-events  (handler-event-names-in reg)
    :tool-names      (tool-names-in reg)
-   :command-names   (command-names-in reg)})
+   :command-names   (command-names-in reg)
+   :flag-names      (flag-names-in reg)})
+
+;; ============================================================
+;; Extension API (passed to extension init functions)
+;; ============================================================
+
+(defn create-extension-api
+  "Build the ExtensionAPI map for an extension at `ext-path`.
+   The API provides registration and action methods.
+
+   `action-fns` is a map of session-level action implementations:
+     :send-message-fn     — (fn [msg opts])
+     :send-user-message-fn — (fn [content opts])
+     :append-entry-fn     — (fn [custom-type data])
+     :set-session-name-fn — (fn [name])
+     :get-session-name-fn — (fn [])
+     :set-label-fn        — (fn [entry-id label])
+     :get-active-tools-fn — (fn [])
+     :set-active-tools-fn — (fn [tool-names])
+     :get-model-fn        — (fn [])
+     :set-model-fn        — (fn [model])
+     :is-idle-fn          — (fn [])
+     :abort-fn            — (fn [])
+     :compact-fn          — (fn [opts])
+     :get-system-prompt-fn — (fn [])
+
+   Any missing action key returns a no-op or throws."
+  [reg ext-path action-fns]
+  (let [not-init #(throw (ex-info "Extension runtime not initialized" {:action %}))]
+    {:path ext-path
+
+     ;; ── Event subscription ──────────────────────────────
+     :on
+     (fn [event-name handler-fn]
+       (register-handler-in! reg ext-path event-name handler-fn))
+
+     ;; ── Tool registration ──────────────────────────────
+     :register-tool
+     (fn [tool]
+       (register-tool-in! reg ext-path tool))
+
+     ;; ── Command registration ────────────────────────────
+     :register-command
+     (fn [name opts]
+       (register-command-in! reg ext-path (assoc opts :name name)))
+
+     ;; ── Shortcut registration ──────────────────────────
+     :register-shortcut
+     (fn [key opts]
+       (register-shortcut-in! reg ext-path (assoc opts :key key)))
+
+     ;; ── Flag registration ──────────────────────────────
+     :register-flag
+     (fn [name opts]
+       (register-flag-in! reg ext-path (assoc opts :name name)))
+
+     ;; ── Flag access ────────────────────────────────────
+     :get-flag
+     (fn [name]
+       (get-flag-in reg name))
+
+     ;; ── Actions (delegate to session) ──────────────────
+     :send-message
+     (fn [msg & [opts]]
+       (if-let [f (:send-message-fn action-fns)]
+         (f msg opts)
+         (not-init :send-message)))
+
+     :send-user-message
+     (fn [content & [opts]]
+       (if-let [f (:send-user-message-fn action-fns)]
+         (f content opts)
+         (not-init :send-user-message)))
+
+     :append-entry
+     (fn [custom-type & [data]]
+       (if-let [f (:append-entry-fn action-fns)]
+         (f custom-type data)
+         (not-init :append-entry)))
+
+     :set-session-name
+     (fn [name]
+       (if-let [f (:set-session-name-fn action-fns)]
+         (f name)
+         (not-init :set-session-name)))
+
+     :get-session-name
+     (fn []
+       (if-let [f (:get-session-name-fn action-fns)]
+         (f)
+         (not-init :get-session-name)))
+
+     :set-label
+     (fn [entry-id label]
+       (if-let [f (:set-label-fn action-fns)]
+         (f entry-id label)
+         (not-init :set-label)))
+
+     :get-active-tools
+     (fn []
+       (if-let [f (:get-active-tools-fn action-fns)]
+         (f)
+         (not-init :get-active-tools)))
+
+     :set-active-tools
+     (fn [tool-names]
+       (if-let [f (:set-active-tools-fn action-fns)]
+         (f tool-names)
+         (not-init :set-active-tools)))
+
+     :get-model
+     (fn []
+       (if-let [f (:get-model-fn action-fns)]
+         (f)
+         (not-init :get-model)))
+
+     :set-model
+     (fn [model]
+       (if-let [f (:set-model-fn action-fns)]
+         (f model)
+         (not-init :set-model)))
+
+     :is-idle
+     (fn []
+       (if-let [f (:is-idle-fn action-fns)]
+         (f)
+         (not-init :is-idle)))
+
+     :abort
+     (fn []
+       (if-let [f (:abort-fn action-fns)]
+         (f)
+         (not-init :abort)))
+
+     :compact
+     (fn [& [opts]]
+       (if-let [f (:compact-fn action-fns)]
+         (f opts)
+         (not-init :compact)))
+
+     :get-system-prompt
+     (fn []
+       (if-let [f (:get-system-prompt-fn action-fns)]
+         (f)
+         (not-init :get-system-prompt)))
+
+     ;; ── Event bus ──────────────────────────────────────
+     :events
+     {:emit (fn [channel data] (bus-emit-in! reg channel data))
+      :on   (fn [channel handler] (bus-on-in! reg channel handler))}}))
+
+;; ============================================================
+;; Extension loading
+;; ============================================================
+
+(defn- extension-file?
+  "True if `f` is a .clj file."
+  [f]
+  (and (.isFile f) (str/ends-with? (.getName f) ".clj")))
+
+(defn- discover-in-dir
+  "Discover extension .clj files in `dir`. Returns vector of absolute paths.
+   Discovery: direct .clj files in dir, or extension.clj in subdirs."
+  [dir]
+  (let [d (io/file dir)]
+    (when (.isDirectory d)
+      (into []
+            (for [entry (.listFiles d)
+                  :let  [abs (.getAbsolutePath entry)]
+                  path  (cond
+                          ;; Direct .clj file
+                          (extension-file? entry) [abs]
+                          ;; Subdir with extension.clj
+                          (.isDirectory entry)
+                          (let [ext-clj (io/file entry "extension.clj")]
+                            (when (.exists ext-clj)
+                              [(.getAbsolutePath ext-clj)]))
+                          :else nil)]
+              path)))))
+
+(defn discover-extension-paths
+  "Discover extension paths from standard locations and explicit paths.
+   Returns deduplicated vector of absolute paths.
+
+   Standard locations:
+     1. .psi/extensions/  (project-local)
+     2. ~/.psi/agent/extensions/  (user-global)
+   Plus any explicit paths (files or dirs)."
+  ([] (discover-extension-paths [] nil))
+  ([configured-paths] (discover-extension-paths configured-paths nil))
+  ([configured-paths cwd]
+   (let [cwd  (or cwd (System/getProperty "user.dir"))
+         home (System/getProperty "user.home")
+         seen (atom #{})
+         result (atom [])]
+     ;; 1. Project-local
+     (doseq [p (discover-in-dir (str cwd "/.psi/extensions"))]
+       (when-not (@seen p)
+         (swap! seen conj p)
+         (swap! result conj p)))
+     ;; 2. User-global
+     (doseq [p (discover-in-dir (str home "/.psi/agent/extensions"))]
+       (when-not (@seen p)
+         (swap! seen conj p)
+         (swap! result conj p)))
+     ;; 3. Explicit paths
+     (doseq [cp configured-paths]
+       (let [f (io/file cp)]
+         (cond
+           ;; Direct file
+           (and (.exists f) (.isFile f))
+           (let [abs (.getAbsolutePath f)]
+             (when-not (@seen abs)
+               (swap! seen conj abs)
+               (swap! result conj abs)))
+
+           ;; Directory — discover within it
+           (and (.exists f) (.isDirectory f))
+           (doseq [p (discover-in-dir cp)]
+             (when-not (@seen p)
+               (swap! seen conj p)
+               (swap! result conj p))))))
+     @result)))
+
+(defn load-extension-in!
+  "Load a single extension from `ext-path` into `reg`.
+   The file must define an `init` function in its namespace.
+   `action-fns` is passed through to `create-extension-api`.
+   Returns {:extension ext-path :error nil} or {:extension nil :error msg}."
+  [reg ext-path action-fns]
+  (try
+    (let [f (io/file ext-path)]
+      (when-not (.exists f)
+        (throw (ex-info (str "Extension file not found: " ext-path) {:path ext-path})))
+      ;; Register the extension path
+      (register-extension-in! reg ext-path)
+      ;; Load the file (defines namespace + vars)
+      (load-file ext-path)
+      ;; Find the init fn: look for `init` in the last namespace loaded from the file.
+      ;; Convention: the file's ns should have an `init` fn.
+      ;; We resolve it by reading the ns form from the file.
+      (let [ns-sym  (with-open [rdr (java.io.PushbackReader. (io/reader f))]
+                      (let [form (read rdr)]
+                        (when (and (list? form) (= 'ns (first form)))
+                          (second form))))
+            _       (when-not ns-sym
+                      (throw (ex-info "Extension file does not start with (ns ...)"
+                                      {:path ext-path})))
+            ns-obj  (find-ns ns-sym)
+            _       (when-not ns-obj
+                      (throw (ex-info (str "Namespace " ns-sym " not found after loading")
+                                      {:path ext-path :ns ns-sym})))
+            init-var (ns-resolve ns-obj 'init)
+            _       (when-not init-var
+                      (throw (ex-info (str "Extension " ns-sym " does not define `init` fn")
+                                      {:path ext-path :ns ns-sym})))
+            api     (create-extension-api reg ext-path action-fns)]
+        (init-var api)
+        {:extension ext-path :error nil}))
+    (catch Exception e
+      (timbre/warn "Failed to load extension" ext-path (ex-message e))
+      {:extension nil :error (ex-message e)})))
+
+(defn load-extensions-in!
+  "Discover and load all extensions into `reg`.
+   `configured-paths` are explicit CLI paths.
+   `action-fns` is passed to each extension's API.
+   Returns {:loaded [paths] :errors [{:path :error}]}."
+  ([reg] (load-extensions-in! reg {} []))
+  ([reg action-fns] (load-extensions-in! reg action-fns []))
+  ([reg action-fns configured-paths]
+   (load-extensions-in! reg action-fns configured-paths nil))
+  ([reg action-fns configured-paths cwd]
+   (let [paths  (discover-extension-paths configured-paths cwd)
+         loaded (atom [])
+         errors (atom [])]
+     (doseq [p paths]
+       (let [result (load-extension-in! reg p action-fns)]
+         (if (:error result)
+           (swap! errors conj {:path p :error (:error result)})
+           (swap! loaded conj p))))
+     {:loaded @loaded :errors @errors})))
+
+(defn reload-extensions-in!
+  "Unregister all extensions and re-discover/load them.
+   Returns the load result."
+  ([reg] (reload-extensions-in! reg {} []))
+  ([reg action-fns] (reload-extensions-in! reg action-fns []))
+  ([reg action-fns configured-paths]
+   (reload-extensions-in! reg action-fns configured-paths nil))
+  ([reg action-fns configured-paths cwd]
+   (unregister-all-in! reg)
+   (load-extensions-in! reg action-fns configured-paths cwd)))
 
 ;; ============================================================
 ;; Global singleton wrappers

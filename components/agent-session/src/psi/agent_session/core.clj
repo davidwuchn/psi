@@ -62,6 +62,7 @@
 ;; ============================================================
 
 (declare execute-compaction-in!)
+(declare set-session-name-in!)
 
 ;; ============================================================
 ;; Actions dispatcher
@@ -438,6 +439,68 @@
   "Dispatch a named extension event. Returns the dispatch result map."
   [ctx event-name event-data]
   (ext/dispatch-in (:extension-registry ctx) event-name event-data))
+
+(defn- make-extension-action-fns
+  "Build the action-fns map that extension APIs delegate to.
+   These close over the session context so extensions can interact with
+   the session without holding a reference to the context directly."
+  [ctx]
+  {:send-message-fn     (fn [_msg _opts] nil) ;; stub — wired by run mode
+   :send-user-message-fn (fn [_content _opts] nil)
+   :append-entry-fn     (fn [custom-type data]
+                          (swap! (:journal-atom ctx)
+                                 conj (persist/custom-message-entry
+                                       custom-type (str data) nil false)))
+   :set-session-name-fn (fn [name] (set-session-name-in! ctx name))
+   :get-session-name-fn (fn [] (:session-name (get-session-data-in ctx)))
+   :set-label-fn        (fn [entry-id label]
+                          (swap! (:journal-atom ctx)
+                                 conj (persist/label-entry entry-id label)))
+   :get-active-tools-fn (fn [] (mapv :name (:tools (agent/get-data-in (:agent-ctx ctx)))))
+   :set-active-tools-fn (fn [tool-names]
+                          (let [current-tools (:tools (agent/get-data-in (:agent-ctx ctx)))
+                                name-set      (set tool-names)]
+                            (agent/set-tools-in! (:agent-ctx ctx)
+                                                 (filterv #(name-set (:name %))
+                                                          current-tools))))
+   :get-model-fn        (fn [] (:model (get-session-data-in ctx)))
+   :set-model-fn        (fn [model] (set-model-in! ctx model))
+   :is-idle-fn          (fn [] (idle-in? ctx))
+   :abort-fn            (fn [] (abort-in! ctx))
+   :compact-fn          (fn [_opts] (manual-compact-in! ctx))
+   :get-system-prompt-fn (fn [] (:system-prompt (get-session-data-in ctx)))})
+
+(defn load-extensions-in!
+  "Discover and load all extensions into this session's registry.
+   `configured-paths` are explicit CLI paths.
+   Returns {:loaded [paths] :errors [{:path :error}]}."
+  ([ctx] (load-extensions-in! ctx []))
+  ([ctx configured-paths]
+   (load-extensions-in! ctx configured-paths nil))
+  ([ctx configured-paths cwd]
+   (let [action-fns (make-extension-action-fns ctx)]
+     (ext/load-extensions-in! (:extension-registry ctx) action-fns
+                              configured-paths cwd))))
+
+(defn reload-extensions-in!
+  "Unregister all extensions and re-discover/load them."
+  ([ctx] (reload-extensions-in! ctx []))
+  ([ctx configured-paths]
+   (reload-extensions-in! ctx configured-paths nil))
+  ([ctx configured-paths cwd]
+   (let [action-fns (make-extension-action-fns ctx)]
+     (ext/reload-extensions-in! (:extension-registry ctx) action-fns
+                                configured-paths cwd))))
+
+(defn extension-summary-in
+  "Return introspection summary of the extension registry."
+  [ctx]
+  (ext/summary-in (:extension-registry ctx)))
+
+(defn extension-details-in
+  "Return per-extension detail maps."
+  [ctx]
+  (ext/extension-details-in (:extension-registry ctx)))
 
 ;; ============================================================
 ;; Session naming

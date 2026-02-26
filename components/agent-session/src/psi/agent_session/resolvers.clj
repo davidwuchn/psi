@@ -161,6 +161,80 @@
   {:psi.agent-session/extension-summary
    (ext/summary-in (:extension-registry agent-session-ctx))})
 
+;; ── Extension introspection ─────────────────────────────
+
+(pco/defresolver extension-paths-resolver
+  "Resolve list of registered extension paths."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.extension/paths
+                 :psi.extension/count]}
+  (let [reg (:extension-registry agent-session-ctx)]
+    {:psi.extension/paths (vec (ext/extensions-in reg))
+     :psi.extension/count (ext/extension-count-in reg)}))
+
+(pco/defresolver extension-handlers-resolver
+  "Resolve handler event names and total handler count."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.extension/handler-events
+                 :psi.extension/handler-count]}
+  (let [reg (:extension-registry agent-session-ctx)]
+    {:psi.extension/handler-events (vec (ext/handler-event-names-in reg))
+     :psi.extension/handler-count  (ext/handler-count-in reg)}))
+
+(pco/defresolver extension-tools-resolver
+  "Resolve all registered extension tools."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.extension/tools
+                 :psi.extension/tool-names]}
+  (let [reg   (:extension-registry agent-session-ctx)
+        tools (ext/all-tools-in reg)]
+    {:psi.extension/tools      (mapv #(dissoc % :execute) tools)
+     :psi.extension/tool-names (vec (ext/tool-names-in reg))}))
+
+(pco/defresolver extension-commands-resolver
+  "Resolve all registered extension commands."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.extension/commands
+                 :psi.extension/command-names]}
+  (let [reg  (:extension-registry agent-session-ctx)
+        cmds (ext/all-commands-in reg)]
+    {:psi.extension/commands      (mapv #(dissoc % :handler) cmds)
+     :psi.extension/command-names (vec (ext/command-names-in reg))}))
+
+(pco/defresolver extension-flags-resolver
+  "Resolve all registered extension flags with current values."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.extension/flags
+                 :psi.extension/flag-names
+                 :psi.extension/flag-values]}
+  (let [reg   (:extension-registry agent-session-ctx)
+        flags (ext/all-flags-in reg)]
+    {:psi.extension/flags      flags
+     :psi.extension/flag-names (vec (ext/flag-names-in reg))
+     :psi.extension/flag-values (ext/all-flag-values-in reg)}))
+
+(pco/defresolver extension-details-resolver
+  "Resolve per-extension detail maps."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.extension/details]}
+  {:psi.extension/details
+   (ext/extension-details-in (:extension-registry agent-session-ctx))})
+
+(pco/defresolver extension-detail-by-path-resolver
+  "Resolve detail for a single extension by path.
+   Seed input: {:psi.extension/path \"path\"}"
+  [{:keys [psi/agent-session-ctx psi.extension/path]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.extension/path]
+   ::pco/output [:psi.extension/detail]}
+  {:psi.extension/detail
+   (ext/extension-detail-in (:extension-registry agent-session-ctx) path)})
+
 ;; ── Context usage ───────────────────────────────────────
 
 (pco/defresolver agent-session-context-usage
@@ -326,7 +400,15 @@
    prompt-template-summary-resolver
    prompt-template-detail-resolver
    skill-summary-resolver
-   skill-detail-resolver])
+   skill-detail-resolver
+   ;; Extension introspection
+   extension-paths-resolver
+   extension-handlers-resolver
+   extension-tools-resolver
+   extension-commands-resolver
+   extension-flags-resolver
+   extension-details-resolver
+   extension-detail-by-path-resolver])
 
 ;; ── Local Pathom env (for component-local queries) ──────
 

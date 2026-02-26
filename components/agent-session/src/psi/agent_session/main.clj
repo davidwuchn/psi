@@ -205,6 +205,12 @@
         (println (str "  /skill:" (:name s)
                       (when (:disable-model-invocation s) " [hidden]")
                       " — " (:description s))))))
+  (let [ext-cmds (ext/all-commands-in (:extension-registry ctx))]
+    (when (seq ext-cmds)
+      (println "  ── Extension Commands ───────────────")
+      (doseq [c ext-cmds]
+        (println (str "  /" (:name c)
+                      (when (:description c) (str " — " (:description c))))))))
   (println "  (anything else is sent to the agent)")
   (println "───────────────────────────────────────\n"))
 
@@ -320,9 +326,9 @@
                   {:initial-session {:model {:provider (name (:provider ai-model))
                                              :id       (:id ai-model)
                                              :reasoning (:supports-reasoning ai-model)}
-                                    :prompt-templates templates
-                                    :skills          skills
-                                    :system-prompt   system-prompt}})]
+                                     :prompt-templates templates
+                                     :skills          skills
+                                     :system-prompt   system-prompt}})]
     ;; Wire agent-session resolvers into the global query graph so
     ;; :psi.agent-session/* attributes are queryable.
     (session/register-resolvers!)
@@ -330,6 +336,17 @@
     (agent/set-tools-in! (:agent-ctx ctx) tools/all-tool-schemas)
     ;; Set the assembled system prompt (introspectable)
     (agent/set-system-prompt-in! (:agent-ctx ctx) system-prompt)
+    ;; Discover and load extensions
+    (let [{:keys [loaded errors]} (session/load-extensions-in! ctx)]
+      (doseq [{:keys [path error]} errors]
+        (timbre/warn "Extension error:" path error))
+      (when (seq loaded)
+        (timbre/info "Extensions loaded:" (count loaded))))
+    ;; Register extension tools alongside built-ins
+    (let [ext-tools (ext/all-tools-in (:extension-registry ctx))]
+      (when (seq ext-tools)
+        (agent/set-tools-in! (:agent-ctx ctx)
+                             (into (vec tools/all-tool-schemas) ext-tools))))
     ;; Expose state for nREPL introspection
     (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model})
     (print-banner ai-model templates skills)
@@ -361,6 +378,21 @@
 
             (or (= trimmed "/help") (= trimmed "/?"))
             (do (print-help ctx) (recur))
+
+            ;; Extension command: /name args
+            (and (str/starts-with? trimmed "/")
+                 (let [cmd-name (first (str/split (subs trimmed 1) #"\s" 2))]
+                   (ext/get-command-in (:extension-registry ctx) cmd-name)))
+            (let [parts    (str/split (subs trimmed 1) #"\s" 2)
+                  cmd-name (first parts)
+                  args-str (or (second parts) "")
+                  cmd      (ext/get-command-in (:extension-registry ctx) cmd-name)]
+              (try
+                (when-let [handler (:handler cmd)]
+                  (handler args-str))
+                (catch Exception e
+                  (println (str "\n[Command error: " (ex-message e) "]\n"))))
+              (recur))
 
             (str/blank? trimmed)
             (recur)
@@ -397,12 +429,24 @@
                    {:initial-session {:model {:provider (name (:provider ai-model))
                                               :id       (:id ai-model)
                                               :reasoning (:supports-reasoning ai-model)}
-                                     :prompt-templates templates
-                                     :skills          skills
-                                     :system-prompt   system-prompt}})
+                                      :prompt-templates templates
+                                      :skills          skills
+                                      :system-prompt   system-prompt}})
         _         (session/register-resolvers!)
         _         (agent/set-tools-in! (:agent-ctx ctx) tools/all-tool-schemas)
         _         (agent/set-system-prompt-in! (:agent-ctx ctx) system-prompt)
+
+        ;; Discover and load extensions
+        _         (let [{:keys [loaded errors]} (session/load-extensions-in! ctx)]
+                    (doseq [{:keys [path error]} errors]
+                      (timbre/warn "Extension error:" path error))
+                    (when (seq loaded)
+                      (timbre/info "Extensions loaded:" (count loaded))))
+        ;; Register extension tools alongside built-ins
+        _         (let [ext-tools (ext/all-tools-in (:extension-registry ctx))]
+                    (when (seq ext-tools)
+                      (agent/set-tools-in! (:agent-ctx ctx)
+                                           (into (vec tools/all-tool-schemas) ext-tools))))
 
         ;; Expose state for nREPL introspection
         _         (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model})
