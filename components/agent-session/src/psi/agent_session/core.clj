@@ -152,6 +152,7 @@
                             :agent-ctx          agent-ctx
                             :extension-registry ext-reg
                             :journal-atom       journal-atom
+                            :turn-ctx-atom      (atom nil)
                             :compaction-fn      (or compaction-fn compaction/stub-compaction-fn)
                             :branch-summary-fn  (or branch-summary-fn compaction/stub-branch-summary-fn)
                             :config             merged-config}
@@ -286,18 +287,18 @@
   [ctx text]
   (swap-session! ctx update :steering-messages conj text)
   (agent/queue-steering-in! (:agent-ctx ctx)
-                             {:role      "user"
-                              :content   [{:type :text :text text}]
-                              :timestamp (java.time.Instant/now)}))
+                            {:role      "user"
+                             :content   [{:type :text :text text}]
+                             :timestamp (java.time.Instant/now)}))
 
 (defn follow-up-in!
   "Queue a follow-up message for delivery after the current agent run."
   [ctx text]
   (swap-session! ctx update :follow-up-messages conj text)
   (agent/queue-follow-up-in! (:agent-ctx ctx)
-                              {:role      "user"
-                               :content   [{:type :text :text text}]
-                               :timestamp (java.time.Instant/now)}))
+                             {:role      "user"
+                              :content   [{:type :text :text text}]
+                              :timestamp (java.time.Instant/now)}))
 
 (defn abort-in!
   "Abort the current agent run."
@@ -539,7 +540,7 @@
 (defn new-session!      []       (new-session-in!         (global-context)))
 (defn set-model!        [m]      (set-model-in!           (global-context) m))
 (defn set-thinking!     [l]      (set-thinking-level-in!  (global-context) l))
-(defn cycle-thinking!   []       (cycle-thinking-level-in!(global-context)))
+(defn cycle-thinking!   []       (cycle-thinking-level-in! (global-context)))
 (defn set-name!         [n]      (set-session-name-in!    (global-context) n))
 (defn compact!          []       (manual-compact-in!      (global-context)))
 (defn compact-with!     [instr]  (manual-compact-in!      (global-context) instr))

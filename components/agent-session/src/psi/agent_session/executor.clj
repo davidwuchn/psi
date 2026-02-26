@@ -8,14 +8,20 @@
      tools               — execute tool calls, return results
 
    One call to `run-turn!` drives a single LLM turn:
-     1. Streams the LLM response, feeding agent-core's streaming state.
+     1. Streams the LLM response via a per-turn statechart.
      2. On completion, checks for tool calls.
      3. For each tool call: executes the tool, records the result.
      4. If tools were called, recurses for the next turn.
      5. Returns when the LLM produces a stop response (no tools).
 
-   The executor is stateless — all state lives in agent-core's context.
-   It receives an :ai-ctx (for provider access) and an :agent-ctx.
+   Per-turn statechart (Step 6)
+   ────────────────────────────
+   Each streaming turn is driven by a statechart:
+     :idle → :text-accumulating ⇄ :tool-accumulating → :done | :error
+
+   Provider events are translated to statechart events.
+   Accumulated text, tool calls, and final message are stored in a
+   :turn-data atom — queryable via EQL from nREPL at any time.
 
    Message format translation
    ──────────────────────────
@@ -30,7 +36,8 @@
    [psi.ai.core :as ai]
    [psi.ai.conversation :as conv]
    [psi.agent-core.core :as agent]
-   [psi.agent-session.tools :as tools]))
+   [psi.agent-session.tools :as tools]
+   [psi.agent-session.turn-statechart :as turn-sc]))
 
 ;; ============================================================
 ;; ai conversation ↔ agent-core message translation
@@ -95,10 +102,10 @@
                                        (:content msg))
                                  "")]
                     (conv/add-tool-result conv
-                                         (:tool-call-id msg)
-                                         (:tool-name msg)
-                                         {:kind :text :text text}
-                                         (boolean (:is-error msg))))
+                                          (:tool-call-id msg)
+                                          (:tool-name msg)
+                                          {:kind :text :text text}
+                                          (boolean (:is-error msg))))
 
                   ;; unknown roles — skip
                   conv))
@@ -113,6 +120,86 @@
             agent-tools)))
 
 ;; ============================================================
+;; Turn actions — agent-core integration on top of accumulation
+;; ============================================================
+
+(defn- make-turn-actions
+  "Create the actions-fn for the per-turn statechart.
+   Handles both data accumulation (in turn-data atom) and agent-core
+   lifecycle calls (begin-stream, update-stream, end-stream)."
+  [agent-ctx done-p]
+  (fn [action-key data]
+    (let [td (:turn-data data)]
+      (case action-key
+        :on-stream-start
+        (agent/begin-stream-in! agent-ctx
+                                {:role      "assistant"
+                                 :content   [{:type :text :text ""}]
+                                 :timestamp (java.time.Instant/now)})
+
+        :on-text-delta
+        (do (swap! td update :text-buffer str (:delta data))
+            (agent/update-stream-in! agent-ctx
+                                     {:role      "assistant"
+                                      :content   [{:type :text :text (:text-buffer @td)}]
+                                      :timestamp (java.time.Instant/now)}))
+
+        :on-toolcall-start
+        (let [idx     (:content-index data)
+              tc-id   (:tool-id data)
+              tc-name (:tool-name data)]
+          (swap! td assoc-in [:tool-calls idx]
+                 {:id tc-id :name tc-name :arguments ""}))
+
+        :on-toolcall-delta
+        (let [idx   (:content-index data)
+              delta (:delta data)]
+          (swap! td update-in [:tool-calls idx :arguments] str delta))
+
+        :on-toolcall-end nil
+
+        :on-done
+        (let [{:keys [text-buffer tool-calls]} @td
+              tc-blocks (->> tool-calls
+                             (sort-by key)
+                             (mapv (fn [[_ tc]]
+                                     {:type      :tool-call
+                                      :id        (:id tc)
+                                      :name      (:name tc)
+                                      :arguments (:arguments tc)})))
+              content (cond-> []
+                        (seq text-buffer) (conj {:type :text :text text-buffer})
+                        :always           (into tc-blocks))
+              final {:role        "assistant"
+                     :content     content
+                     :stop-reason (or (:reason data) :stop)
+                     :timestamp   (java.time.Instant/now)}]
+          (swap! td assoc :final-message final)
+          (agent/end-stream-in! agent-ctx final)
+          (deliver done-p final))
+
+        :on-error
+        (let [{:keys [text-buffer]} @td
+              err-msg (:error-message data)
+              content (cond-> []
+                        (seq text-buffer) (conj {:type :text :text text-buffer})
+                        :always           (conj {:type :error :text err-msg}))
+              final {:role          "assistant"
+                     :content       content
+                     :stop-reason   :error
+                     :error-message err-msg
+                     :timestamp     (java.time.Instant/now)}]
+          (swap! td assoc :final-message final :error-message err-msg)
+          (agent/end-stream-in! agent-ctx final)
+          (deliver done-p final))
+
+        :on-reset
+        (reset! td (turn-sc/create-turn-data))
+
+        ;; unknown — ignore
+        nil))))
+
+;; ============================================================
 ;; Single LLM turn
 ;; ============================================================
 
@@ -124,88 +211,78 @@
     (ai/stream-response ai-conv ai-model ai-options consume-fn)))
 
 (defn- stream-turn!
-  "Stream one LLM response into agent-core, returning the final assistant message map.
-  Captures both text and tool-call content from the provider stream.
-  Calls agent-core lifecycle fns: begin-stream-in!, update-stream-in!, end-stream-in!."
-  [ai-ctx agent-ctx ai-model]
+  "Stream one LLM response into agent-core via the per-turn statechart.
+
+   Creates a turn context (statechart + turn-data atom), sends :turn/start,
+   then translates each provider event into a statechart event.  Blocks until
+   the statechart reaches :done or :error.
+
+   If `turn-ctx-atom` is non-nil, stores the turn context there so it can be
+   queried live from nREPL."
+  [ai-ctx agent-ctx ai-model turn-ctx-atom]
   (let [data          (agent/get-data-in agent-ctx)
         system-prompt (:system-prompt data)
         messages      (:messages data)
         agent-tools   (:tools data)
         ai-conv       (agent-messages->ai-conversation system-prompt messages agent-tools)
         ai-options    {}
-        text-buf      (StringBuilder.)
-        ;; Track tool calls by content-index → {:id :name :input-buf}
-        tool-calls-state (atom {})
-        partial-msg   {:role      "assistant"
-                       :content   [{:type :text :text ""}]
-                       :timestamp (java.time.Instant/now)}
-        _             (agent/begin-stream-in! agent-ctx partial-msg)
-        done-p        (promise)]
+        done-p        (promise)
+        actions-fn    (make-turn-actions agent-ctx done-p)
+        turn-ctx      (turn-sc/create-turn-context actions-fn)]
+    ;; Expose turn context for nREPL introspection
+    (when turn-ctx-atom
+      (reset! turn-ctx-atom turn-ctx))
+    ;; Transition: :idle → :text-accumulating (calls begin-stream-in!)
+    (turn-sc/send-event! turn-ctx :turn/start)
+    ;; Start provider stream — callback translates events to statechart events
     (do-stream! ai-ctx ai-conv ai-model ai-options
                 (fn [event]
                   (case (:type event)
+                    :start nil ;; already transitioned via :turn/start
+
                     :text-delta
-                    (do (.append text-buf ^String (:delta event))
-                        (agent/update-stream-in!
-                         agent-ctx
-                         {:role      "assistant"
-                          :content   [{:type :text :text (str text-buf)}]
-                          :timestamp (java.time.Instant/now)}))
+                    (turn-sc/send-event! turn-ctx :turn/text-delta
+                                         {:delta (:delta event)})
 
                     :toolcall-start
-                    (swap! tool-calls-state assoc (:content-index event)
-                           {:id (:id event) :name (:name event)
-                            :input-buf (StringBuilder.)})
+                    (turn-sc/send-event! turn-ctx :turn/toolcall-start
+                                         {:content-index (:content-index event)
+                                          :tool-id       (:id event)
+                                          :tool-name     (:name event)})
 
                     :toolcall-delta
-                    (when-let [tc (get @tool-calls-state (:content-index event))]
-                      (.append ^StringBuilder (:input-buf tc) ^String (:delta event)))
+                    (turn-sc/send-event! turn-ctx :turn/toolcall-delta
+                                         {:content-index (:content-index event)
+                                          :delta         (:delta event)})
 
-                    :toolcall-end nil ;; tool calls finalised in :done
+                    :toolcall-end
+                    (turn-sc/send-event! turn-ctx :turn/toolcall-end
+                                         {:content-index (:content-index event)})
 
                     :done
-                    (let [tc-blocks (->> @tool-calls-state
-                                         (sort-by key)
-                                         (mapv (fn [[_ tc]]
-                                                 {:type      :tool-call
-                                                  :id        (:id tc)
-                                                  :name      (:name tc)
-                                                  :arguments (str (:input-buf tc))})))
-                          text      (str text-buf)
-                          content   (cond-> []
-                                      (seq text)     (conj {:type :text :text text})
-                                      :always        (into tc-blocks))
-                          final     {:role        "assistant"
-                                     :content     content
-                                     :stop-reason (or (:reason event) :stop)
-                                     :timestamp   (java.time.Instant/now)}]
-                      (agent/end-stream-in! agent-ctx final)
-                      (deliver done-p final))
+                    (turn-sc/send-event! turn-ctx :turn/done
+                                         {:reason (:reason event)})
 
                     :error
-                    (let [err-msg (:error-message event)
-                          partial (str text-buf)
-                          content (cond-> []
-                                    (seq partial) (conj {:type :text :text partial})
-                                    :always       (conj {:type :error :text err-msg}))
-                          final   {:role          "assistant"
-                                   :content       content
-                                   :stop-reason   :error
-                                   :error-message err-msg
-                                   :timestamp     (java.time.Instant/now)}]
-                      (agent/end-stream-in! agent-ctx final)
-                      (deliver done-p final))
+                    (turn-sc/send-event! turn-ctx :turn/error
+                                         {:error-message (:error-message event)})
 
-                    ;; :start :text-start :text-end :thinking-* — ignore
+                    ;; :text-start :text-end :thinking-* — ignore
                     nil)))
-    ;; Block until streaming completes (future in ai layer)
-    (deref done-p 120000 {:role          "assistant"
-                          :content       [{:type  :error
-                                           :text  "Timeout waiting for LLM response"}]
-                          :stop-reason   :error
-                          :error-message "Timeout waiting for LLM response"
-                          :timestamp     (java.time.Instant/now)})))
+    ;; Block until streaming completes
+    (let [result (deref done-p 120000 ::timeout)]
+      (if (= result ::timeout)
+        (let [timeout-msg {:role          "assistant"
+                           :content       [{:type  :error
+                                            :text  "Timeout waiting for LLM response"}]
+                           :stop-reason   :error
+                           :error-message "Timeout waiting for LLM response"
+                           :timestamp     (java.time.Instant/now)}]
+          ;; Drive statechart to :error so it's observable
+          (turn-sc/send-event! turn-ctx :turn/error
+                               {:error-message "Timeout waiting for LLM response"})
+          timeout-msg)
+        result))))
 
 ;; ============================================================
 ;; Tool execution for one turn
@@ -247,25 +324,28 @@
   "Drive one complete agent interaction loop:
      stream → check tools → execute tools → stream again (recursive).
 
-   `ai-ctx`    — ai component context (has :provider-registry)
-   `agent-ctx` — agent-core context
-   `ai-model`  — ai.schemas.Model map
+   `ai-ctx`        — ai component context (has :provider-registry)
+   `agent-ctx`     — agent-core context
+   `ai-model`      — ai.schemas.Model map
+   `turn-ctx-atom` — optional atom, stores current turn context for introspection
 
    Returns the final (non-tool) assistant message map.
    Emits agent-core events throughout."
-  [ai-ctx agent-ctx ai-model]
-  (agent/emit-in! agent-ctx {:type :turn-start})
-  (let [assistant-msg (stream-turn! ai-ctx agent-ctx ai-model)
-        tool-calls    (extract-tool-calls assistant-msg)]
-    (agent/emit-turn-end-in! agent-ctx assistant-msg [])
-    (if (and (seq tool-calls) (not= :error (:stop-reason assistant-msg)))
-      ;; Tool calls requested — execute them all then recurse
-      (do
-        (doseq [tc tool-calls]
-          (run-tool-call! agent-ctx tc))
-        (run-turn! ai-ctx agent-ctx ai-model))
-      ;; No tool calls (or error) — we're done
-      assistant-msg)))
+  ([ai-ctx agent-ctx ai-model]
+   (run-turn! ai-ctx agent-ctx ai-model nil))
+  ([ai-ctx agent-ctx ai-model turn-ctx-atom]
+   (agent/emit-in! agent-ctx {:type :turn-start})
+   (let [assistant-msg (stream-turn! ai-ctx agent-ctx ai-model turn-ctx-atom)
+         tool-calls    (extract-tool-calls assistant-msg)]
+     (agent/emit-turn-end-in! agent-ctx assistant-msg [])
+     (if (and (seq tool-calls) (not= :error (:stop-reason assistant-msg)))
+       ;; Tool calls requested — execute them all then recurse
+       (do
+         (doseq [tc tool-calls]
+           (run-tool-call! agent-ctx tc))
+         (run-turn! ai-ctx agent-ctx ai-model turn-ctx-atom))
+       ;; No tool calls (or error) — we're done
+       assistant-msg))))
 
 (defn run-agent-loop!
   "Run a complete agent loop starting from the current agent-core state.
@@ -274,17 +354,22 @@
    This fn drives the internal turn loop and returns when the LLM stops
    requesting tool calls.
 
+   Options (optional 5th arg map):
+     :turn-ctx-atom — atom to store the current turn context for EQL introspection
+
    Returns the final assistant message."
-  [ai-ctx agent-ctx ai-model new-messages]
-  (agent/start-loop-in! agent-ctx new-messages)
-  (let [result (try
-                 (run-turn! ai-ctx agent-ctx ai-model)
-                 (catch Exception e
-                   {:role "assistant" :content []
-                    :stop-reason :error
-                    :error-message (ex-message e)
-                    :timestamp (java.time.Instant/now)}))]
-    (if (= :error (:stop-reason result))
-      (agent/end-loop-on-error-in! agent-ctx (:error-message result))
-      (agent/end-loop-in! agent-ctx))
-    result))
+  ([ai-ctx agent-ctx ai-model new-messages]
+   (run-agent-loop! ai-ctx agent-ctx ai-model new-messages nil))
+  ([ai-ctx agent-ctx ai-model new-messages {:keys [turn-ctx-atom]}]
+   (agent/start-loop-in! agent-ctx new-messages)
+   (let [result (try
+                  (run-turn! ai-ctx agent-ctx ai-model turn-ctx-atom)
+                  (catch Exception e
+                    {:role "assistant" :content []
+                     :stop-reason :error
+                     :error-message (ex-message e)
+                     :timestamp (java.time.Instant/now)}))]
+     (if (= :error (:stop-reason result))
+       (agent/end-loop-on-error-in! agent-ctx (:error-message result))
+       (agent/end-loop-in! agent-ctx))
+     result)))

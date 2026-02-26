@@ -207,7 +207,8 @@
   (let [user-msg {:role      "user"
                   :content   [{:type :text :text text}]
                   :timestamp (java.time.Instant/now)}
-        result   (executor/run-agent-loop! ai-ctx (:agent-ctx ctx) ai-model [user-msg])]
+        result   (executor/run-agent-loop! ai-ctx (:agent-ctx ctx) ai-model [user-msg]
+                                           {:turn-ctx-atom (:turn-ctx-atom ctx)})]
     (print-assistant-message result)))
 
 ;; ============================================================
@@ -310,7 +311,8 @@
                                             :timestamp (java.time.Instant/now)}
                                   result   (executor/run-agent-loop!
                                             ai-ctx (:agent-ctx ctx)
-                                            ai-model [user-msg])]
+                                            ai-model [user-msg]
+                                            {:turn-ctx-atom (:turn-ctx-atom ctx)})]
                               (.put queue {:kind :done :result result}))
                             (catch Exception e
                               (.put queue {:kind :error :message (ex-message e)})))))]

@@ -39,7 +39,8 @@
    [com.wsscode.pathom3.interface.eql :as p.eql]
    [psi.agent-session.session :as session]
    [psi.agent-session.extensions :as ext]
-   [psi.agent-session.statechart :as sc]))
+   [psi.agent-session.statechart :as sc]
+   [psi.agent-session.turn-statechart :as turn-sc]))
 
 ;; ── Core session fields ─────────────────────────────────
 
@@ -185,6 +186,50 @@
       :context-tokens    (:context-tokens sd)
       :context-window    (:context-window sd)}}))
 
+;; ── Turn streaming state ────────────────────────────────
+
+(pco/defresolver agent-session-turn
+  "Resolve per-turn streaming statechart state.
+   Returns nil/empty values when no turn is active."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.turn/phase
+                 :psi.turn/is-streaming
+                 :psi.turn/text
+                 :psi.turn/tool-calls
+                 :psi.turn/tool-call-count
+                 :psi.turn/final-message
+                 :psi.turn/error-message
+                 :psi.turn/is-text-accumulating
+                 :psi.turn/is-tool-accumulating
+                 :psi.turn/is-done
+                 :psi.turn/is-error]}
+  (if-let [turn-ctx (some-> (:turn-ctx-atom agent-session-ctx) deref)]
+    (let [phase (turn-sc/turn-phase turn-ctx)
+          td    (turn-sc/get-turn-data turn-ctx)]
+      {:psi.turn/phase                phase
+       :psi.turn/is-streaming         (boolean (#{:text-accumulating :tool-accumulating} phase))
+       :psi.turn/text                 (:text-buffer td)
+       :psi.turn/tool-calls           (vec (vals (:tool-calls td)))
+       :psi.turn/tool-call-count      (count (:tool-calls td))
+       :psi.turn/final-message        (:final-message td)
+       :psi.turn/error-message        (:error-message td)
+       :psi.turn/is-text-accumulating (= :text-accumulating phase)
+       :psi.turn/is-tool-accumulating (= :tool-accumulating phase)
+       :psi.turn/is-done              (= :done phase)
+       :psi.turn/is-error             (= :error phase)})
+    {:psi.turn/phase                nil
+     :psi.turn/is-streaming         false
+     :psi.turn/text                 nil
+     :psi.turn/tool-calls           []
+     :psi.turn/tool-call-count      0
+     :psi.turn/final-message        nil
+     :psi.turn/error-message        nil
+     :psi.turn/is-text-accumulating false
+     :psi.turn/is-tool-accumulating false
+     :psi.turn/is-done              false
+     :psi.turn/is-error             false}))
+
 ;; ── All resolvers ───────────────────────────────────────
 
 (def all-resolvers
@@ -197,7 +242,8 @@
    agent-session-extensions
    agent-session-context-usage
    agent-session-journal
-   agent-session-stats])
+   agent-session-stats
+   agent-session-turn])
 
 ;; ── Local Pathom env (for component-local queries) ──────
 

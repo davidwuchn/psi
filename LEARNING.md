@@ -4,6 +4,124 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-02-25 - Per-Turn Streaming Statechart (Step 6)
+
+### λ FlatWorkingMemoryDataModel Uses Its Own Namespace Key
+
+The fulcrologic `FlatWorkingMemoryDataModel` stores and reads data from
+`::wmdm/data-model` (`:com.fulcrologic.statecharts.data-model.working-memory-data-model/data-model`),
+**NOT** from `::sc/data-model` (`:com.fulcrologic.statecharts/data-model`).
+
+These are different fully-qualified keywords. Using the wrong one means
+scripts receive `nil` as their `data` parameter — actions silently don't
+fire because the execution model swallows the nil.
+
+```clojure
+;; ✗ WRONG — different namespace, scripts get nil
+(update wm ::sc/data-model merge extra-data)
+
+;; ✓ CORRECT — matches what FlatWorkingMemoryDataModel reads
+(require '[com.fulcrologic.statecharts.data-model.working-memory-data-model :as wmdm])
+(update wm ::wmdm/data-model merge extra-data)
+```
+
+### λ sp/start! Puts Initial Data at WM Top-Level, Not in Data Model
+
+`sp/start!` (processor-level) merges the `params` map into the working
+memory at the **top level** alongside `::sc/configuration`, `::sc/session-id`,
+etc.  It does NOT populate `::wmdm/data-model`.
+
+Scripts read from `(sp/current-data data-model env)` which reads
+`::wmdm/data-model`.  So initial user data (actions-fn, context atoms)
+must be explicitly placed there after `start!`:
+
+```clojure
+(let [wm (sp/start! processor env :chart-id {::sc/session-id sid})]
+  (save-working-memory! sc-env sid
+    (assoc wm ::wmdm/data-model {:actions-fn af :turn-data td})))
+```
+
+### λ Session Statechart Data Model Bug (Pre-existing)
+
+The existing session statechart (`statechart.clj`) uses `::sc/data-model`
+for merging extra-data in `send-event!`.  This is the **wrong key** — the
+flat data model reads from `::wmdm/data-model`.  Guards that check
+`:pending-agent-event` receive nil and always return false.
+
+The system still works because:
+1. Auto-compact and retry guards silently fail (return false on nil)
+2. The `:session/agent-event` with `:agent-end` falls through all guards,
+   leaving the session in `:streaming` — but `run-agent-loop!` manages
+   the session lifecycle directly via `end-loop-in!`
+3. No test exercises the reactive guard path end-to-end
+
+**Impact**: Auto-compaction and auto-retry via statechart guards are
+non-functional.  They need the same `::wmdm/data-model` fix.
+
+### λ Debugging WM Data Flow — Use Assertion Messages
+
+When `println` output is captured by test harnesses (kaocha captures
+stdout per test), use **assertion message comparison** to surface values:
+
+```clojure
+;; ✗ println swallowed by test output capture
+(println "DM:" dm)
+
+;; ✓ intentionally-wrong assertion shows actual value in failure output
+(is (= :show-me-the-keys (keys wm)))
+```
+
+### λ Self-Transitions Required for simple-env Accumulation
+
+Targetless transitions (no `:target` attribute) in fulcrologic's
+`simple-env` are untested territory.  Use **self-transitions** (`:target`
+pointing to the current state) for accumulation events like
+`:turn/text-delta`.  The exit/re-entry overhead is negligible when there
+are no `on-entry`/`on-exit` handlers.
+
+```clojure
+;; Self-transition — safe, works in simple-env
+(ele/transition {:event  :turn/text-delta
+                 :target :text-accumulating}
+  (ele/script {:expr (fn [_env data] (dispatch! data :on-text-delta))}))
+```
+
+### λ Per-Turn Statechart Architecture
+
+Each streaming turn gets its own short-lived statechart context:
+
+```
+:idle → :text-accumulating ⇄ :tool-accumulating → :done | :error
+```
+
+- **Statechart** owns state transitions (explicit, queryable)
+- **turn-data atom** owns accumulated content (text buffer, tool calls)
+- **actions-fn** bridges statechart events to side effects (agent-core calls)
+- **turn-ctx-atom** on agent-session context enables nREPL introspection
+
+Provider events are translated 1:1 to statechart events:
+`:text-delta` → `:turn/text-delta`, `:toolcall-start` → `:turn/toolcall-start`, etc.
+
+The executor creates a fresh turn context per `stream-turn!` call and
+stores it in the session's `:turn-ctx-atom` for live EQL queries.
+
+### λ with-redefs Works on Private Vars
+
+`with-redefs` resolves symbols via `(var sym)` at compile time.  Private
+vars ARE accessible through fully-qualified `#'ns/private-var`.  This is
+the standard pattern for stubbing internal functions in tests:
+
+```clojure
+(with-redefs [psi.agent-session.executor/do-stream!
+              (fn [_ctx _conv _model _opts consume-fn]
+                (consume-fn {:type :start})
+                (consume-fn {:type :text-delta :delta "hello"})
+                (consume-fn {:type :done :reason :stop}))]
+  (executor/run-agent-loop! ...))
+```
+
+---
+
 ## 2026-02-25 - agent-session Component
 
 ### λ Statechart Working Memory Data Pattern
