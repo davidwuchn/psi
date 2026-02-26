@@ -29,12 +29,37 @@
    :psi.agent-session/prompt-templates
    :psi.agent-session/extension-summary   — map describing registered extensions
    :psi.agent-session/session-entry-count
+   :psi.agent-session/session-entries     — [{:psi.session-entry/*}] full journal contents
+   :psi.agent-session/journal-flushed?    — true once initial bulk write has happened
    :psi.agent-session/context-tokens
    :psi.agent-session/context-window
    :psi.agent-session/context-fraction    — nil or 0.0–1.0
    :psi.agent-session/stats               — SessionStats snapshot
    :psi.agent-session/tool-call-history   — [{:psi.tool-call/*}], nested tool call entities
    :psi.agent-session/tool-call-history-count — number of tool calls
+
+   Session entry entities (nested under session-entries)
+   ──────────────────────────────────────────────────────
+   :psi.session-entry/id
+   :psi.session-entry/parent-id
+   :psi.session-entry/timestamp
+   :psi.session-entry/kind
+   :psi.session-entry/data
+
+   Session listing (cross-session)
+   ────────────────────────────────
+   :psi.session/list                      — [{:psi.session-info/*}] for current cwd
+   :psi.session/list-all                  — [{:psi.session-info/*}] across all projects
+   :psi.session-info/path
+   :psi.session-info/id
+   :psi.session-info/cwd
+   :psi.session-info/name
+   :psi.session-info/parent-session-path
+   :psi.session-info/created
+   :psi.session-info/modified
+   :psi.session-info/message-count
+   :psi.session-info/first-message
+   :psi.session-info/all-messages-text
 
    Tool call entities (nested under tool-call-history)
    ───────────────────────────────────────────────────
@@ -76,6 +101,7 @@
    [com.wsscode.pathom3.connect.operation :as pco]
    [com.wsscode.pathom3.connect.indexes :as pci]
    [com.wsscode.pathom3.interface.eql :as p.eql]
+   [psi.agent-session.persistence :as persist]
    [psi.agent-session.session :as session]
    [psi.agent-session.prompt-templates :as pt]
    [psi.agent-session.skills :as skills]
@@ -275,12 +301,29 @@
 ;; ── Journal ─────────────────────────────────────────────
 
 (pco/defresolver agent-session-journal
-  "Resolve session entry count."
+  "Resolve session entry count, flush state, and full entry list."
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
-   ::pco/output [:psi.agent-session/session-entry-count]}
-  {:psi.agent-session/session-entry-count
-   (count @(:journal-atom agent-session-ctx))})
+   ::pco/output [:psi.agent-session/session-entry-count
+                 :psi.agent-session/journal-flushed?
+                 {:psi.agent-session/session-entries
+                  [:psi.session-entry/id
+                   :psi.session-entry/parent-id
+                   :psi.session-entry/timestamp
+                   :psi.session-entry/kind
+                   :psi.session-entry/data]}]}
+  (let [entries  @(:journal-atom agent-session-ctx)
+        flushed? (:flushed? @(:flush-state-atom agent-session-ctx))]
+    {:psi.agent-session/session-entry-count (count entries)
+     :psi.agent-session/journal-flushed?    flushed?
+     :psi.agent-session/session-entries
+     (mapv (fn [e]
+             {:psi.session-entry/id        (:id e)
+              :psi.session-entry/parent-id (:parent-id e)
+              :psi.session-entry/timestamp (:timestamp e)
+              :psi.session-entry/kind      (:kind e)
+              :psi.session-entry/data      (:data e)})
+           entries)}))
 
 ;; ── Stats snapshot ──────────────────────────────────────
 
@@ -465,6 +508,60 @@
     {:psi.skill/detail
      (when skill (skills/enrich-skill skill))}))
 
+;; ── Session listing ─────────────────────────────────────
+
+(defn- session-info->eql
+  "Convert a SessionInfo map to :psi.session-info/* attributes."
+  [info]
+  {:psi.session-info/path                (:path info)
+   :psi.session-info/id                  (:id info)
+   :psi.session-info/cwd                 (:cwd info)
+   :psi.session-info/name                (:name info)
+   :psi.session-info/parent-session-path (:parent-session-path info)
+   :psi.session-info/created             (:created info)
+   :psi.session-info/modified            (:modified info)
+   :psi.session-info/message-count       (:message-count info)
+   :psi.session-info/first-message       (:first-message info)
+   :psi.session-info/all-messages-text   (:all-messages-text info)})
+
+(pco/defresolver session-list-resolver
+  "Resolve all sessions for the current session's cwd, sorted by modified desc."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [{:psi.session/list
+                  [:psi.session-info/path
+                   :psi.session-info/id
+                   :psi.session-info/cwd
+                   :psi.session-info/name
+                   :psi.session-info/parent-session-path
+                   :psi.session-info/created
+                   :psi.session-info/modified
+                   :psi.session-info/message-count
+                   :psi.session-info/first-message
+                   :psi.session-info/all-messages-text]}]}
+  {:psi.session/list
+   (mapv session-info->eql
+         (persist/list-sessions
+          (persist/session-dir-for (:cwd agent-session-ctx))))})
+
+(pco/defresolver session-list-all-resolver
+  "Resolve all sessions across all project directories, sorted by modified desc."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [{:psi.session/list-all
+                  [:psi.session-info/path
+                   :psi.session-info/id
+                   :psi.session-info/cwd
+                   :psi.session-info/name
+                   :psi.session-info/parent-session-path
+                   :psi.session-info/created
+                   :psi.session-info/modified
+                   :psi.session-info/message-count
+                   :psi.session-info/first-message
+                   :psi.session-info/all-messages-text]}]}
+  {:psi.session/list-all
+   (mapv session-info->eql (persist/list-all-sessions))})
+
 ;; ── Extension UI state ───────────────────────────────
 
 (pco/defresolver extension-ui-resolver
@@ -527,7 +624,10 @@
    extension-details-resolver
    extension-detail-by-path-resolver
    ;; Extension UI
-   extension-ui-resolver])
+   extension-ui-resolver
+   ;; Session listing
+   session-list-resolver
+   session-list-all-resolver])
 
 ;; ── Local Pathom env (for component-local queries) ──────
 
