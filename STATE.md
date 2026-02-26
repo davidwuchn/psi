@@ -40,10 +40,21 @@ Current truth about the Psi system.
 ```bash
 ANTHROPIC_API_KEY=sk-... clojure -M:run
 clojure -M:run --model claude-3-5-sonnet
-clojure -M:run --model gpt-4o --tui     # starts but typing does not appear
+clojure -M:run --model gpt-4o --tui
+clojure -M:run --nrepl                   # random port, printed at startup
+clojure -M:run --nrepl 7888              # specific port
+clojure -M:run --tui --nrepl             # TUI + nREPL for live introspection
 ```
 
-In-session commands (plain mode): `/status`, `/history`, `/new`, `/help`, `/quit`
+In-session commands: `/status`, `/history`, `/new`, `/help`, `/quit`, `/exit`
+
+nREPL introspection (from connected REPL):
+```clojure
+@psi.agent-session.main/session-state   ;; → {:ctx ... :ai-model ...}
+(require '[psi.agent-session.core :as s])
+(s/query-in (:ctx @psi.agent-session.main/session-state)
+  [:psi.agent-session/phase :psi.agent-session/session-id])
+```
 
 ## TUI Session: Resolved
 

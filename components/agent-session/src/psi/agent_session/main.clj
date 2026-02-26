@@ -2,23 +2,33 @@
   "Entry point: run an interactive agent session on the terminal.
 
    Usage:
-     clojure -M -m psi.agent-session.main
-     clojure -M -m psi.agent-session.main --model claude-3-5-haiku
-     clojure -M -m psi.agent-session.main --log-level DEBUG
-     clojure -M -m psi.agent-session.main --tui
+     clojure -M:run
+     clojure -M:run --model claude-3-5-haiku
+     clojure -M:run --log-level DEBUG
+     clojure -M:run --tui
+     clojure -M:run --nrepl            # random port
+     clojure -M:run --nrepl 7888       # specific port
+     clojure -M:run --tui --nrepl      # TUI + nREPL
 
    What it does:
      1. Creates an agent session (statechart + agent-core + extension registry)
      2. Wires the ai provider (Anthropic by default) into the executor
      3. Registers the four built-in tools: read, bash, edit, write
-     4. Drops into a REPL-style prompt loop — type a message, get a response
+     4. Optionally starts an nREPL server for live introspection
+     5. Drops into a REPL-style prompt loop — type a message, get a response
         OR (with --tui) renders an interactive TUI session
-     5. /quit or EOF exits (plain mode); Escape or Ctrl+C exits (TUI mode)
+     6. /quit or EOF exits (plain mode); Escape or Ctrl+C exits (TUI mode)
 
    Environment variables:
      ANTHROPIC_API_KEY   — required for Anthropic models
      OPENAI_API_KEY      — required for OpenAI models
      PSI_MODEL           — model key override (e.g. claude-3-5-haiku, gpt-4o)
+
+   nREPL introspection (from a connected REPL):
+     @psi.agent-session.main/session-state  — live session context
+     (require '[psi.agent-session.core :as s])
+     (s/query-in (:ctx @psi.agent-session.main/session-state)
+       [:psi.agent-session/phase :psi.agent-session/session-id])
 
    Introspection (plain mode only):
      /status  — print session diagnostics via EQL
@@ -34,6 +44,41 @@
    [psi.ai.models :as models]
    [psi.tui.app :as tui-app])
   (:gen-class))
+
+;; ============================================================
+;; Live session state — accessible from nREPL
+;; ============================================================
+
+(defonce session-state
+  (atom nil))
+
+;; ============================================================
+;; nREPL server (started conditionally via --nrepl)
+;; ============================================================
+
+(defn- start-nrepl!
+  "Start an nREPL server on `port` (0 = random). Returns the server."
+  [port]
+  (let [start-server (requiring-resolve 'nrepl.server/start-server)
+        server       (start-server :port port)]
+    (println (str "  nREPL : localhost:" (:port server)
+                  " (connect with your editor)"))
+    server))
+
+(defn- stop-nrepl! [server]
+  (when server
+    (let [stop-server (requiring-resolve 'nrepl.server/stop-server)]
+      (stop-server server))))
+
+(defn- nrepl-port-from-args
+  "If --nrepl is present, return the port (next arg if numeric, else 0).
+   Returns nil if --nrepl is absent."
+  [args]
+  (when (some #(= "--nrepl" %) args)
+    (let [after (second (drop-while #(not= "--nrepl" %) args))]
+      (if (and after (re-matches #"\d+" after))
+        (Integer/parseInt after)
+        0))))
 
 ;; ============================================================
 ;; Logging
@@ -192,6 +237,8 @@
           "Working directory: " (System/getProperty "user.dir") "\n"
           "You have access to tools: read, bash, edit, write.\n"
           "Use them to help with coding tasks."))
+    ;; Expose state for nREPL introspection
+    (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model})
     (print-banner ai-model)
     (loop []
       (print "刀: ")
@@ -250,6 +297,9 @@
                        "You have access to tools: read, bash, edit, write.\n"
                        "Use them to help with coding tasks."))
 
+        ;; Expose state for nREPL introspection
+        _        (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model})
+
         ;; run-agent-fn! — called by the TUI update fn on submit.
         ;; Starts the agent in a background thread; puts result on queue.
         run-agent-fn! (fn [text ^java.util.concurrent.LinkedBlockingQueue queue]
@@ -272,14 +322,19 @@
 ;; ============================================================
 
 (defn -main
-  "Entry point. Accepts optional --model <key>, --log-level <LEVEL>, and --tui flags."
+  "Entry point. Accepts optional --model <key>, --log-level <LEVEL>, --tui, --nrepl [port]."
   [& args]
   (set-log-level! (log-level-from-args args))
-  (let [model-key (model-key-from-args args)
-        tui?      (some #(= "--tui" %) args)]
-    (if tui?
-      (run-tui-session model-key)
-      (run-session model-key)))
-  ;; clj-http (Apache HttpClient) parks a non-daemon connection-eviction thread.
-  ;; Explicitly exit so the JVM does not hang after /quit.
-  (System/exit 0))
+  (let [model-key  (model-key-from-args args)
+        tui?       (some #(= "--tui" %) args)
+        nrepl-port (nrepl-port-from-args args)
+        nrepl-srv  (when nrepl-port (start-nrepl! nrepl-port))]
+    (try
+      (if tui?
+        (run-tui-session model-key)
+        (run-session model-key))
+      (finally
+        (stop-nrepl! nrepl-srv)))
+    ;; clj-http (Apache HttpClient) parks a non-daemon connection-eviction thread.
+    ;; Explicitly exit so the JVM does not hang after /quit.
+    (System/exit 0)))
