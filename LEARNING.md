@@ -564,6 +564,88 @@ Two-context isolation test verifies independence:
                    (git/log ctx-a {}))))))
 ```
 
+---
+
+## 2026-02-25 - TUI: charm.clj Elm Architecture (Step 5)
+
+### λ charm.clj Replaces Custom Terminal Layer
+
+Custom `ProcessTerminal` with `stty -echo raw` + manual differential
+rendering had cursor position desync on macOS. The cursor would move
+incorrectly after PTY-level echo, making typed text invisible.
+
+**Fix**: Replace the entire TUI layer with charm.clj's Elm Architecture.
+charm.clj uses JLine3 (`jline-terminal-ffm`) which handles raw mode,
+input parsing, and rendering correctly via JLine's `Display` differ.
+
+Architecture:
+```
+init    → [state nil]        ; initial state
+update  → (state msg) → [state cmd]  ; pure state transitions
+view    → state → string     ; pure render
+```
+
+The agent runs in a `future`. Communication uses `LinkedBlockingQueue`:
+```
+submit → future puts {:kind :done/:error} on queue
+poll-cmd → reads queue with 120ms timeout → returns message
+poll timeout → advances spinner, issues new poll-cmd
+```
+
+No separate timer thread. Spinner is driven by poll ticks.
+
+### λ JLine3 FFM Requires --enable-native-access
+
+charm.clj uses `jline-terminal-ffm` which needs the JVM flag
+`--enable-native-access=ALL-UNNAMED` on JDK 22+. Add to `:jvm-opts`
+in the `:run` alias.
+
+### λ charm.clj v0.1.42 JLine String vs char[] Bug
+
+`charm.input.keymap/bind-from-capability!` calls `(String. ^chars seq)`
+but JLine 3.30+ `KeyMap/key` returns `String`, not `char[]`.
+ClassCastException at runtime.
+
+**Fix**: `alter-var-root` the private fn at namespace load time:
+```clojure
+(alter-var-root
+ #'charm.input.keymap/bind-from-capability!
+ (constantly
+  (fn [^KeyMap keymap ^Terminal terminal cap event]
+    (when terminal
+      (when-let [seq-val (KeyMap/key terminal cap)]
+        (let [^String seq-str (if (string? seq-val)
+                                seq-val
+                                (String. ^chars seq-val))]
+          (when (and (pos? (count seq-str))
+                     (= (int (.charAt seq-str 0)) 27))
+            (.bind keymap event (subs seq-str 1)))))))))
+```
+
+**Lesson**: Add a JLine integration smoke test that creates a real
+terminal + keymap. Unit tests exercising pure init/update/view don't
+touch JLine and miss this class of bug.
+
+### λ Elm Architecture Patterns for Agent TUI
+
+**Polling command pattern** — when background work runs in a future,
+use a command that reads from a queue with a short timeout:
+```clojure
+(defn poll-cmd [queue]
+  (charm/cmd
+   (fn []
+     (if-let [event (.poll queue 120 TimeUnit/MILLISECONDS)]
+       (translate event)
+       {:type :agent-poll}))))  ; timeout → keep polling
+```
+
+The update function returns a new poll-cmd on each poll/timeout,
+creating a self-sustaining loop that ends when the agent is done.
+
+**Avoiding clojure.core/run! collision** — charm.clj's `run` is a
+common function name. Don't name your entry point `run!` to avoid
+shadowing `clojure.core/run!`. Use `start!` instead.
+
 ### λ clj-kondo Cache Goes Stale After Refactors
 
 After adding new public vars to a namespace, clj-kondo's `.cache/` still
