@@ -4,6 +4,139 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-02-26 - Retry, Tool Call Introspection, bash stdin
+
+### λ should-retry? Guard Read From Wrong Data Source
+
+The `should-retry?` statechart guard checked `(:messages sd)` from
+session-data — but messages live in **agent-core**, not session-data.
+`(:messages sd)` was always nil, so retry never fired.
+
+**Fix**: Read from the `:pending-agent-event` which carries `:messages`
+from agent-core's `:agent-end` event:
+
+```clojure
+;; ✗ session-data has no :messages key
+(let [msgs (:messages @(:session-data-atom data)) ...])
+
+;; ✓ agent-end event carries messages
+(let [msgs (:messages (:pending-agent-event data)) ...])
+```
+
+### λ HTTP Status Lost Through Error Chain — Propagate Structured Data
+
+clj-http throws `ExceptionInfo` with `:status` in `ex-data`, but every
+layer stringified it: `(str e)` / `(ex-message e)`. The numeric status
+was lost by the time it reached the retry guard.
+
+**Fix**: Extract `:http-status` from `ex-data` at each catch site and
+propagate it through the entire chain:
+
+```
+provider catch → :http-status in error event
+streaming catch → :http-status preserved
+turn statechart → :http-status in turn data
+executor → :http-status on message map
+statechart guard → numeric check
+```
+
+`retry-error?` now checks numeric status first (reliable), falls back
+to string patterns (legacy compatibility):
+
+```clojure
+(def ^:private retriable-http-statuses #{429 500 502 503 529})
+
+(defn retry-error? [stop-reason error-message http-status]
+  (and (= stop-reason :error)
+       (or (contains? retriable-http-statuses http-status)
+           (some #(re-find % (or error-message "")) ...))))
+```
+
+### λ Hierarchical Pathom3 Resolvers — Split List from Detail
+
+One monolithic resolver that computes everything can't be decomposed by
+the EQL consumer. Split into list + detail resolvers:
+
+```clojure
+;; List resolver — cheap, no result loading
+(pco/defresolver agent-session-tool-calls [...]
+  {::pco/output [{:psi.agent-session/tool-call-history
+                  [:psi.tool-call/id :psi.tool-call/name
+                   :psi.tool-call/arguments :psi/agent-session-ctx]}]})
+
+;; Detail resolver — runs only when result/error queried
+(pco/defresolver tool-call-result [...]
+  {::pco/input [:psi.tool-call/id :psi/agent-session-ctx]
+   ::pco/output [:psi.tool-call/result :psi.tool-call/is-error]})
+```
+
+Three query levels, each triggers only what's needed:
+- `[:psi.agent-session/tool-call-history-count]` → count only
+- `[{… [:psi.tool-call/name]}]` → list resolver only
+- `[{… [:psi.tool-call/name :psi.tool-call/result]}]` → list + detail
+
+**Key**: Pass `:psi/agent-session-ctx` through the list entities so the
+detail resolver can access agent-core messages.
+
+### λ Agent-Core Messages vs Session Journal
+
+Messages live in **agent-core** (`(:messages (agent/get-data-in agent-ctx))`),
+not the session journal. The journal stores session entries (`:kind :message`)
+but the journal atom was empty while agent-core had 9 messages. Always check
+where data actually lives before writing resolvers.
+
+### λ shell/sh Stdin Pipe Breaks rg
+
+`clojure.java.shell/sh` connects stdin as a pipe. ripgrep detects
+`is_readable_stdin=true` and searches **stdin** instead of the working
+directory. Result: `rg pattern` returns nothing + exit 1.
+
+**Fix**: Use `babashka.process/shell` with `:in (java.io.File. "/dev/null")`.
+This gives rg a file descriptor (not a pipe), so it correctly searches cwd.
+Pipes within commands still work because bash establishes their own stdin.
+
+```clojure
+(proc/shell {:out :string :err :string :continue true
+             :in (java.io.File. "/dev/null")}
+            "bash" "-c" command)
+```
+
+**Note**: `:in ""` does NOT work — empty string still creates a readable pipe.
+
+### λ Protocol Reload Breaks Running Records
+
+`:reload-all` redefines protocols, but existing record instances still
+reference the old protocol. Statechart `LocalMemoryStore` records created
+at session startup break with `No implementation of method` errors.
+
+**Rule**: Changes to code that touches protocols/records used by the
+statechart require a process restart. Namespace `:reload` (not `:reload-all`)
+is safe for most changes but not protocol-dependent code.
+
+### λ Statechart Guards Are Captured at Startup
+
+Statechart guard functions are closures captured when the chart is created.
+Reloading the namespace that defines `should-retry?` doesn't replace the
+guard in the already-running statechart. The new code only takes effect
+after a process restart.
+
+### λ Pathom3 Index Is the Resolver Registry
+
+The Pathom3 environment indexes are queryable:
+
+```clojure
+(let [env (resolvers/build-env)]
+  ;; All resolver names
+  (keys (:com.wsscode.pathom3.connect.indexes/index-resolvers env))
+  ;; All queryable attributes
+  (keys (:com.wsscode.pathom3.connect.indexes/index-attributes env)))
+```
+
+25 resolvers, 80 attributes across 8 namespaces (agent-session, tool-call,
+turn, extension, prompt-template, skill, ui, agent-session-ctx).
+
+---
+
 ## 2026-02-25 - UI Extension Points Implementation
 
 ### λ Extension UI State Lives in TUI Component, Not Agent-Session
