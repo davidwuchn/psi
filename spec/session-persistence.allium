@@ -1,0 +1,365 @@
+-- session-persistence.allium
+--
+-- Scope: Session journal disk I/O — writing and reading the append-only
+--        NDJSON session file that backs the in-memory journal atom.
+--
+-- Includes:
+--   SessionFile entity — NDJSON file on disk
+--   SessionHeader — first line of every session file
+--   Append-only write strategy — lazy flush (wait for first assistant turn)
+--   Load strategy — parse, validate, migrate, rebuild index
+--   Session directory layout — cwd-encoded path under ~/.psi/agent/sessions/
+--   Session discovery — most-recent file for continue/resume
+--   Session listing — metadata scan for session picker UI
+--   Migration — v1 → v2 (add id/parentId), v2 → v3 (role rename)
+--
+-- Excludes:
+--   In-memory journal atom operations (see persistence.clj)
+--   Session entry construction (see persistence.clj)
+--   Session lifecycle rules — new, fork, tree navigation (see session-management.allium)
+--   Compaction algorithm (see compaction.allium)
+--   Extension event dispatch (see extension-system.allium)
+--
+-- Scope decisions:
+--   "Would we rebuild this?" test:
+--     NDJSON format: Yes — it is the design decision (human-readable, appendable, streamable)
+--     Lazy flush: Yes — affects durability guarantee (only after first assistant response)
+--     cwd-encoded directory: Yes — determines session isolation per project
+--     Migration versions: Yes — forward compatibility is a requirement
+--     Token/byte counts in entries: No — implementation of context estimation
+--     File descriptor management: No — OS-level infrastructure
+
+use "./session-management.allium" as session
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    sessions_root:      Path    = "~/.psi/agent/sessions"
+    current_version:    Integer = 3
+}
+
+------------------------------------------------------------
+-- Entities
+------------------------------------------------------------
+
+entity SessionFile {
+    -- An NDJSON file on disk backing one session branch.
+    path:     Path
+    header:   SessionHeader
+    entries:  List<session/SessionEntry>   -- ordered, append-only
+    version:  Integer
+
+    -- Derived
+    is_valid: header.type = "session" and header.id is non-empty
+    cwd:      header.cwd
+}
+
+value SessionHeader {
+    -- First JSON line of every session file.
+    type:           String          -- always "session"
+    version:        Integer         -- file format version (1, 2, or 3)
+    id:             String          -- session UUID
+    timestamp:      Timestamp       -- session creation time
+    cwd:            Path            -- working directory at session start
+    parent_session: Path?           -- path to forked-from file, if any
+}
+
+value SessionDirectory {
+    -- Directory holding all session files for one project (cwd).
+    path: Path
+    -- Derived from cwd as: sessions_root / "--" + cwd_encoded + "--"
+    -- where cwd_encoded replaces leading slash and all / : with "-"
+}
+
+value SessionInfo {
+    -- Lightweight metadata scanned from a session file for the picker UI.
+    path:                Path
+    id:                  String
+    cwd:                 Path
+    name:                String?     -- from latest SessionInfoEntry
+    parent_session_path: Path?
+    created:             Timestamp   -- from header.timestamp
+    modified:            Timestamp   -- from last user/assistant message timestamp, or header
+    message_count:       Integer
+    first_message:       String      -- first user message text, or "(no messages)"
+    all_messages_text:   String      -- all user+assistant text concatenated (for search)
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+-- ── Write path ──────────────────────────────────────────
+
+rule SessionFileCreated {
+    -- A new session file is created when a new session starts.
+    -- File name encodes creation timestamp and session UUID.
+    when: session/NewSessionStarted(s, _)
+
+    requires: s.sessionFile = null
+
+    let dir = SessionDirectoryFor(s.cwd)
+    let ts  = now.formatted_as("yyyy-MM-dd'T'HH-mm-ss-SSS")
+
+    ensures: s.sessionFile = dir.path / "{ts}_{s.sessionId}.ndjson"
+    ensures: SessionFile.created(
+        path:    s.sessionFile,
+        header:  SessionHeader{
+            type:           "session",
+            version:        config.current_version,
+            id:             s.sessionId,
+            timestamp:      now,
+            cwd:            s.cwd,
+            parent_session: null
+        },
+        entries: []
+    )
+
+    guidance:
+        -- File is not written to disk until the first assistant response
+        -- arrives (see EntryFlushedToDisk). This avoids creating empty
+        -- files for sessions that never receive an LLM response.
+}
+
+rule ForkedSessionFileCreated {
+    -- Fork creates a new file containing only the branch path up to entryId.
+    when: session/SessionForked(s, entryId)
+
+    let parent_path = s.sessionFile
+    let branch      = EntriesOnPathTo(s.journal, entryId)
+    let ts          = now.formatted_as("yyyy-MM-dd'T'HH-mm-ss-SSS")
+    let dir         = SessionDirectoryFor(s.cwd)
+
+    ensures: s.sessionFile = dir.path / "{ts}_{s.sessionId}.ndjson"
+    ensures: SessionFile.created(
+        path:    s.sessionFile,
+        header:  SessionHeader{
+            type:           "session",
+            version:        config.current_version,
+            id:             s.sessionId,
+            timestamp:      now,
+            cwd:            s.cwd,
+            parent_session: parent_path
+        },
+        entries: branch
+    )
+    ensures: SessionFile.written_to_disk(s.sessionFile)
+
+    guidance:
+        -- Fork writes immediately (not lazily) because it contains history.
+        -- LabelEntry records for entries on the branch path are included.
+        -- LabelEntry records for entries NOT on the branch are excluded.
+}
+
+rule EntryFlushedToDisk {
+    -- Entries are written to the session file after the first assistant
+    -- response. Before that, entries are held in the in-memory journal only.
+    when: entry: session/SessionEntry.appended_to_journal(s)
+
+    let has_assistant = s.journal.any(e => e.kind = MessageEntry and e.message.role = assistant)
+
+    ensures:
+        if has_assistant and not s.journal_flushed:
+            -- Flush all accumulated entries at once (header + all entries so far)
+            SessionFile.written_to_disk(s.sessionFile, all_entries: s.journal)
+            s.journal_flushed = true
+        else if has_assistant:
+            -- Append only the new entry
+            SessionFile.appended_to_disk(s.sessionFile, entry)
+
+    guidance:
+        -- "journal_flushed" tracks whether the initial bulk write has happened.
+        -- After flush, every subsequent entry is appended individually.
+        -- This means sessions with only user messages (no assistant yet) are
+        -- not persisted to disk — they exist only in memory.
+        -- The durability guarantee: all entries up to and including the first
+        -- assistant response are atomically written together.
+}
+
+-- ── Read path ───────────────────────────────────────────
+
+rule SessionLoaded {
+    -- Load a session file from disk into the in-memory journal.
+    when: session/SessionResumed(s, session_path)
+
+    let raw_entries = ParseNDJSON(session_path)
+
+    requires: raw_entries.first.type = "session"         -- valid header
+    requires: raw_entries.first.id is non-empty
+
+    let migrated = MigratedToCurrentVersion(raw_entries)
+    let header   = migrated.first as SessionHeader
+    let entries  = migrated.rest as List<session/SessionEntry>
+
+    ensures: s.sessionId   = header.id
+    ensures: s.cwd         = header.cwd
+    ensures: s.journal     = entries
+    ensures: s.journal_flushed = true    -- file already exists; subsequent appends go directly
+    ensures: s.leafId      = entries.last.id    -- resume at end of linear history
+
+    guidance:
+        -- If the file is empty or has no valid header, treat as a new session
+        --   and overwrite the file (write fresh header to disk).
+        -- Malformed JSON lines are silently skipped.
+        -- After loading, rebuild the id → entry index and labels index.
+}
+
+rule MostRecentSessionFound {
+    -- Locate the most recently modified valid session file in a directory.
+    when: ContinueRecentRequested(cwd)
+
+    let dir   = SessionDirectoryFor(cwd)
+    let files = dir.path.ndjson_files
+                    with is_valid_session_file
+                    sorted_by modified_time descending
+
+    ensures:
+        if files.count > 0:
+            result = files.first.path
+        else:
+            result = null
+
+    guidance:
+        -- Validity check reads only the first 512 bytes of each file
+        --   (enough to parse the header JSON line) to avoid loading full files.
+        -- Invalid files (missing header, non-JSON) are excluded silently.
+}
+
+-- ── Migration ───────────────────────────────────────────
+
+rule MigratedV1ToV2 {
+    -- v1 sessions have no id/parentId on entries. Migration adds them
+    -- as a linear chain (each entry's parentId = previous entry's id).
+    when: MigratedToCurrentVersion(raw_entries)
+
+    requires: raw_entries.first.version = null    -- v1 has no version field
+
+    ensures: raw_entries.first.version = 2
+    ensures: raw_entries.each(e =>
+        e.id       = GeneratedShortId(existing_ids)
+        e.parentId = previous_entry.id    -- null for first entry
+    )
+    ensures:
+        -- CompactionEntry: convert firstKeptEntryIndex (integer offset) to
+        --   firstKeptEntryId (string id of the entry at that index)
+        compaction_entries.each(c =>
+            c.firstKeptEntryId = raw_entries[c.firstKeptEntryIndex].id
+        )
+}
+
+rule MigratedV2ToV3 {
+    -- v2 sessions used role "hookMessage" for extension-injected messages.
+    -- v3 renames this role to "custom".
+    when: MigratedToCurrentVersion(raw_entries)
+
+    requires: raw_entries.first.version = 2
+
+    ensures: raw_entries.first.version = 3
+    ensures:
+        message_entries.each(e =>
+            if e.message.role = "hookMessage":
+                e.message.role = "custom"
+        )
+}
+
+-- ── Session directory ───────────────────────────────────
+
+rule SessionDirectoryResolved {
+    -- Compute the session directory path for a given cwd.
+    when: SessionDirectoryFor(cwd)
+
+    let encoded = "--" + cwd.strip_leading_slash.replace("/", "-").replace(":", "-") + "--"
+
+    ensures: result = config.sessions_root / encoded
+    ensures: result.created_if_absent
+
+    guidance:
+        -- The encoding is reversible enough to identify the project at a glance.
+        -- Directory is created eagerly when the session directory is first needed.
+}
+
+-- ── Session listing ─────────────────────────────────────
+
+rule SessionsListed {
+    -- Scan all session files in a directory and return SessionInfo metadata.
+    when: SessionsListed(cwd, session_dir?)
+
+    let dir   = session_dir ?? SessionDirectoryFor(cwd)
+    let files = dir.path.ndjson_files
+
+    ensures: result = files.map(f => BuildSessionInfo(f)).compact
+    ensures: result.sorted_by(modified descending)
+
+    guidance:
+        -- Files are processed concurrently for speed.
+        -- BuildSessionInfo reads the full file to extract name, message count,
+        --   first message text, and all message text for search.
+        -- modified is taken from the latest user/assistant message timestamp;
+        --   falls back to header timestamp, then file mtime.
+        -- Files that fail to parse return null and are excluded.
+}
+
+rule AllSessionsListed {
+    -- Scan all project directories under sessions_root.
+    when: AllSessionsListed()
+
+    let dirs  = config.sessions_root.subdirectories
+
+    ensures: result = dirs.flatMap(d => SessionsListed(cwd: null, session_dir: d))
+    ensures: result.sorted_by(modified descending)
+
+    guidance:
+        -- Progress callbacks receive (loaded_count, total_count) for UI feedback.
+        -- Total file count is computed upfront across all directories.
+}
+
+------------------------------------------------------------
+-- Surfaces
+------------------------------------------------------------
+
+surface SessionPersistenceApi {
+    -- Internal API used by AgentSession and session lifecycle rules.
+    -- Not exposed directly to users; called by session-management rules.
+
+    for caller: session/AgentSession
+
+    context s: session/AgentSession
+
+    exposes:
+        s.sessionFile
+        s.journal_flushed
+
+    provides:
+        -- Write
+        SessionFileCreated(s)
+            when s.sessionFile = null
+        EntryFlushedToDisk(s, entry)
+            when s.sessionFile != null
+
+        -- Read
+        SessionLoaded(s, session_path)
+        MostRecentSessionFound(s.cwd)
+
+        -- List
+        SessionsListed(s.cwd)
+        AllSessionsListed()
+
+    guidance:
+        -- Callers never interact with the file system directly.
+        -- All disk operations are mediated through this surface.
+        -- journal_flushed is internal state; not exposed to run modes.
+}
+
+------------------------------------------------------------
+-- Open Questions
+------------------------------------------------------------
+
+open_question "File format: NDJSON (as in pi-mono) or EDN? NDJSON is the pi-mono reference implementation and is human-readable / tool-friendly. EDN is idiomatic Clojure. Decision needed before implementing write path."
+
+open_question "Lazy flush threshold: pi-mono flushes on first assistant response. Should psi use the same threshold, or flush after every entry (simpler, slightly more I/O)?"
+
+open_question "Session directory: should psi use the same cwd-encoded layout as pi-mono (~/.psi/agent/sessions/--encoded-cwd--/) or a different layout? The pi-mono layout is proven but encodes cwd in a lossy way."
+
+open_question "Concurrent sessions: if two psi processes share the same session file (e.g. two terminals in the same project), do we need file locking? pi-mono does not lock."
