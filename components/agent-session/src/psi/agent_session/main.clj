@@ -130,13 +130,17 @@
 ;; Output helpers
 ;; ============================================================
 
-(defn- print-banner [model]
+(defn- print-banner [model templates]
   (println)
   (println "╔══════════════════════════════════════╗")
   (println "║  ψ  Psi Agent Session                ║")
   (println "╚══════════════════════════════════════╝")
-  (println (str "  Model : " (:name model)))
-  (println (str "  Tools : " (str/join ", " (map :name tools/all-tool-schemas))))
+  (println (str "  Model   : " (:name model)))
+  (println (str "  Tools   : " (str/join ", " (map :name tools/all-tool-schemas))))
+  (when (seq templates)
+    (println (str "  Prompts : " (count templates) " loaded"))
+    (doseq [t templates]
+      (println (str "    /" (:name t) " — " (:description t)))))
   (println "  /help for commands, /quit to exit")
   (println))
 
@@ -284,9 +288,7 @@
           "Use them to help with coding tasks."))
     ;; Expose state for nREPL introspection
     (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model})
-    (print-banner ai-model)
-    (when (seq templates)
-      (println (str "  Prompts: " (str/join ", " (map #(str "/" (:name %)) templates)) "\n")))
+    (print-banner ai-model templates)
     (loop []
       (print "刀: ")
       (flush)
