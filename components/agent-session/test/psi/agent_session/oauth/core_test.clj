@@ -51,13 +51,14 @@
       (is (nil? (oauth/get-api-key ctx :nonexistent))))))
 
 (deftest refresh-token-test
-  (testing "refresh updates stored credential"
-    (let [ctx (oauth/create-null-context)]
-      (oauth/login! ctx :anthropic {:on-auth (fn [_]) :on-prompt (fn [_] "x")})
-      (let [refreshed (oauth/refresh-token! ctx :anthropic)]
-        (is (= "refreshed-access" (:access refreshed)))
-        (is (= "refreshed-access"
-               (:access (store/get-credential (:store ctx) :anthropic)))))))
+  (testing "refresh updates expired credential"
+    (let [ctx       (oauth/create-null-context
+                     {:credentials {:anthropic {:type :oauth :refresh "old" :access "old"
+                                                 :expires 1000}}})
+          refreshed (oauth/refresh-token! ctx :anthropic)]
+      (is (= "refreshed-access" (:access refreshed)))
+      (is (= "refreshed-access"
+             (:access (store/get-credential (:store ctx) :anthropic))))))
 
   (testing "refresh with no credential throws"
     (let [ctx (oauth/create-null-context)]

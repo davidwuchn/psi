@@ -219,14 +219,17 @@
    the statechart reaches :done or :error.
 
    If `turn-ctx-atom` is non-nil, stores the turn context there so it can be
-   queried live from nREPL."
-  [ai-ctx agent-ctx ai-model turn-ctx-atom]
+   queried live from nREPL.
+
+   `extra-ai-options` — merged into the ai-options map sent to the provider
+                        (e.g. {:api-key \"...\"})"
+  [ai-ctx agent-ctx ai-model turn-ctx-atom extra-ai-options]
   (let [data          (agent/get-data-in agent-ctx)
         system-prompt (:system-prompt data)
         messages      (:messages data)
         agent-tools   (:tools data)
         ai-conv       (agent-messages->ai-conversation system-prompt messages agent-tools)
-        ai-options    {}
+        ai-options    (or extra-ai-options {})
         done-p        (promise)
         actions-fn    (make-turn-actions agent-ctx done-p)
         turn-ctx      (turn-sc/create-turn-context actions-fn)]
@@ -326,18 +329,21 @@
   "Drive one complete agent interaction loop:
      stream → check tools → execute tools → stream again (recursive).
 
-   `ai-ctx`        — ai component context (has :provider-registry)
-   `agent-ctx`     — agent-core context
-   `ai-model`      — ai.schemas.Model map
-   `turn-ctx-atom` — optional atom, stores current turn context for introspection
+   `ai-ctx`            — ai component context (has :provider-registry)
+   `agent-ctx`         — agent-core context
+   `ai-model`          — ai.schemas.Model map
+   `turn-ctx-atom`     — optional atom, stores current turn context for introspection
+   `extra-ai-options`  — extra options merged into ai-options (e.g. {:api-key \"...\"})
 
    Returns the final (non-tool) assistant message map.
    Emits agent-core events throughout."
   ([ai-ctx agent-ctx ai-model]
-   (run-turn! ai-ctx agent-ctx ai-model nil))
+   (run-turn! ai-ctx agent-ctx ai-model nil nil))
   ([ai-ctx agent-ctx ai-model turn-ctx-atom]
+   (run-turn! ai-ctx agent-ctx ai-model turn-ctx-atom nil))
+  ([ai-ctx agent-ctx ai-model turn-ctx-atom extra-ai-options]
    (agent/emit-in! agent-ctx {:type :turn-start})
-   (let [assistant-msg (stream-turn! ai-ctx agent-ctx ai-model turn-ctx-atom)
+   (let [assistant-msg (stream-turn! ai-ctx agent-ctx ai-model turn-ctx-atom extra-ai-options)
          tool-calls    (extract-tool-calls assistant-msg)]
      (agent/emit-turn-end-in! agent-ctx assistant-msg [])
      (if (and (seq tool-calls) (not= :error (:stop-reason assistant-msg)))
@@ -345,7 +351,7 @@
        (do
          (doseq [tc tool-calls]
            (run-tool-call! agent-ctx tc))
-         (run-turn! ai-ctx agent-ctx ai-model turn-ctx-atom))
+         (run-turn! ai-ctx agent-ctx ai-model turn-ctx-atom extra-ai-options))
        ;; No tool calls (or error) — we're done
        assistant-msg))))
 
@@ -358,14 +364,16 @@
 
    Options (optional 5th arg map):
      :turn-ctx-atom — atom to store the current turn context for EQL introspection
+     :api-key       — API key to pass through to the provider (from OAuth store)
 
    Returns the final assistant message."
   ([ai-ctx agent-ctx ai-model new-messages]
    (run-agent-loop! ai-ctx agent-ctx ai-model new-messages nil))
-  ([ai-ctx agent-ctx ai-model new-messages {:keys [turn-ctx-atom]}]
+  ([ai-ctx agent-ctx ai-model new-messages {:keys [turn-ctx-atom api-key]}]
    (agent/start-loop-in! agent-ctx new-messages)
-   (let [result (try
-                  (run-turn! ai-ctx agent-ctx ai-model turn-ctx-atom)
+   (let [extra-ai-options (when api-key {:api-key api-key})
+         result (try
+                  (run-turn! ai-ctx agent-ctx ai-model turn-ctx-atom extra-ai-options)
                   (catch Exception e
                     (cond-> {:role "assistant" :content []
                              :stop-reason :error

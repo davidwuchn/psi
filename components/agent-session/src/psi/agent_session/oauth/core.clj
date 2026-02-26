@@ -101,19 +101,23 @@
 
 (defn refresh-token!
   "Refresh an expired OAuth token for a provider.
-   Updates the store with new credentials. Returns the new credential."
+   Uses file locking for cross-process safety. Re-reads from disk inside
+   the lock — if another process already refreshed, uses their result.
+   Returns the new credential."
   [ctx provider-id]
-  (let [provider   ((:get-provider ctx) provider-id)
-        credential (store/get-credential (:store ctx) provider-id)]
+  (let [provider ((:get-provider ctx) provider-id)]
     (when-not provider
       (throw (ex-info (str "Unknown OAuth provider: " provider-id)
                       {:provider-id provider-id})))
-    (when-not (= :oauth (:type credential))
-      (throw (ex-info (str "No OAuth credential for: " provider-id)
-                      {:provider-id provider-id})))
-    (let [refreshed ((:refresh-token provider) credential)]
-      (store/set-credential! (:store ctx) provider-id refreshed)
-      refreshed)))
+    (store/with-locked-refresh! (:store ctx) provider-id
+      (fn [current]
+        (when-not (= :oauth (:type current))
+          (throw (ex-info (str "No OAuth credential for: " provider-id)
+                          {:provider-id provider-id})))
+        ;; If another process already refreshed, skip
+        (if (< (System/currentTimeMillis) (:expires current 0))
+          current
+          ((:refresh-token provider) current))))))
 
 (defn get-api-key
   "Resolve API key for a provider. Auto-refreshes expired OAuth tokens.

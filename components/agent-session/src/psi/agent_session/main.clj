@@ -40,6 +40,7 @@
    [psi.agent-session.core :as session]
    [psi.agent-session.executor :as executor]
    [psi.agent-session.extensions :as ext]
+   [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.prompt-templates :as pt]
    [psi.agent-session.skills :as skills]
    [psi.agent-session.system-prompt :as sys-prompt]
@@ -209,6 +210,8 @@
   (println "  /prompts — list available prompt templates")
   (println "  /skills  — list available skills")
   (println "  /new     — start a fresh session")
+  (println "  /login   — login with an OAuth provider")
+  (println "  /logout  — logout from an OAuth provider")
   (println "  /help    — show this help")
   (println "  /skill:name — invoke a skill (loads full content)")
   (let [templates (:prompt-templates (session/get-session-data-in ctx))]
@@ -303,16 +306,25 @@
 ;; Core: one prompt → response cycle
 ;; ============================================================
 
+(defn- resolve-api-key
+  "Resolve the API key for the current model's provider via OAuth context.
+   Returns the key string, or nil (provider falls back to env var)."
+  [oauth-ctx ai-model]
+  (when oauth-ctx
+    (oauth/get-api-key oauth-ctx (:provider ai-model))))
+
 (defn- run-prompt!
   "Send `text` to the agent and block until done, printing the response.
    Expands prompt templates before sending."
-  [ctx ai-ctx ai-model text]
+  [ctx ai-ctx ai-model oauth-ctx text]
   (let [expanded (expand-input ctx text)
         user-msg {:role      "user"
                   :content   [{:type :text :text expanded}]
                   :timestamp (java.time.Instant/now)}
+        api-key  (resolve-api-key oauth-ctx ai-model)
         result   (executor/run-agent-loop! ai-ctx (:agent-ctx ctx) ai-model [user-msg]
-                                           {:turn-ctx-atom (:turn-ctx-atom ctx)})]
+                                           {:turn-ctx-atom (:turn-ctx-atom ctx)
+                                            :api-key       api-key})]
     (print-assistant-message result)))
 
 ;; ============================================================
@@ -323,9 +335,11 @@
   "Create a session and enter the interactive prompt loop.
   Returns when the user exits."
   [model-key]
-  (let [ai-model (resolve-model model-key)
+  (let [ai-model  (resolve-model model-key)
         ;; ai context: nil signals the executor to use the public ai/stream-response API
-        ai-ctx   nil
+        ai-ctx    nil
+        ;; OAuth credential store (file-backed, auto-refresh)
+        oauth-ctx (oauth/create-context)
         ;; Discover prompt templates from global + project dirs
         templates (pt/discover-templates)
         ;; Discover skills from global + project dirs
@@ -366,7 +380,8 @@
         (agent/set-tools-in! (:agent-ctx ctx)
                              (into (vec tools/all-tool-schemas) ext-tools))))
     ;; Expose state for nREPL introspection
-    (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model})
+    (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model
+                           :oauth-ctx oauth-ctx})
     (print-banner ai-model templates skills ctx)
     (loop []
       (print "刀: ")
@@ -397,6 +412,57 @@
             (or (= trimmed "/help") (= trimmed "/?"))
             (do (print-help ctx) (recur))
 
+            ;; /login — OAuth login flow
+            (= trimmed "/login")
+            (do (println "\n── OAuth Login ────────────────────────")
+                (let [providers (oauth/available-providers oauth-ctx)]
+                  (doseq [[i p] (map-indexed vector providers)]
+                    (let [logged-in? (some #(= (:id p) (:id %))
+                                          (oauth/logged-in-providers oauth-ctx))]
+                      (println (str "  " (inc i) ". " (:name p)
+                                    (when logged-in? " ✓ logged in")))))
+                  (print "  Select provider (number): ")
+                  (flush)
+                  (when-let [choice (try (read-line) (catch Exception _ nil))]
+                    (let [idx (try (dec (Integer/parseInt (str/trim choice)))
+                                   (catch Exception _ -1))]
+                      (if-let [provider (nth providers idx nil)]
+                        (try
+                          (oauth/login! oauth-ctx (:id provider)
+                                        {:on-auth     (fn [{:keys [url]}]
+                                                        (println (str "\n  Open: " url "\n")))
+                                         :on-prompt   (fn [{:keys [message]}]
+                                                        (println (str "  " message))
+                                                        (print "  > ")
+                                                        (flush)
+                                                        (or (read-line) ""))
+                                         :on-progress (fn [msg] (println (str "  " msg)))})
+                          (println (str "\n  ✓ Logged in to " (:name provider) "\n"))
+                          (catch Exception e
+                            (println (str "\n  ✗ Login failed: " (ex-message e) "\n"))))
+                        (println "\n  Invalid selection.\n")))))
+                (recur))
+
+            ;; /logout — OAuth logout
+            (= trimmed "/logout")
+            (do (let [logged-in (oauth/logged-in-providers oauth-ctx)]
+                  (if (empty? logged-in)
+                    (println "\n  No OAuth providers logged in. Use /login first.\n")
+                    (do
+                      (println "\n── OAuth Logout ───────────────────────")
+                      (doseq [[i p] (map-indexed vector logged-in)]
+                        (println (str "  " (inc i) ". " (:name p))))
+                      (print "  Select provider (number): ")
+                      (flush)
+                      (when-let [choice (try (read-line) (catch Exception _ nil))]
+                        (let [idx (try (dec (Integer/parseInt (str/trim choice)))
+                                       (catch Exception _ -1))]
+                          (if-let [provider (nth logged-in idx nil)]
+                            (do (oauth/logout! oauth-ctx (:id provider))
+                                (println (str "\n  ✓ Logged out of " (:name provider) "\n")))
+                            (println "\n  Invalid selection.\n")))))))
+                (recur))
+
             ;; Extension command: /name args
             (and (str/starts-with? trimmed "/")
                  (let [cmd-name (first (str/split (subs trimmed 1) #"\s" 2))]
@@ -418,7 +484,7 @@
             :else
             (do
               (try
-                (run-prompt! ctx ai-ctx ai-model trimmed)
+                (run-prompt! ctx ai-ctx ai-model oauth-ctx trimmed)
                 (catch Exception e
                   (println (str "\n[Error: " (ex-message e) "]\n"))))
               (recur))))))))
@@ -433,6 +499,7 @@
   [model-key]
   (let [ai-model  (resolve-model model-key)
         ai-ctx    nil
+        oauth-ctx (oauth/create-context)
         templates (pt/discover-templates)
         {:keys [skills diagnostics]} (skills/discover-skills)
         _         (doseq [d diagnostics]
@@ -467,7 +534,8 @@
                                            (into (vec tools/all-tool-schemas) ext-tools))))
 
         ;; Expose state for nREPL introspection
-        _         (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model})
+        _         (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model
+                                         :oauth-ctx oauth-ctx})
 
         ;; run-agent-fn! — called by the TUI update fn on submit.
         ;; Expands prompt templates, then starts the agent in a background thread.
@@ -478,10 +546,12 @@
                                   user-msg {:role      "user"
                                             :content   [{:type :text :text expanded}]
                                             :timestamp (java.time.Instant/now)}
+                                  api-key  (resolve-api-key oauth-ctx ai-model)
                                   result   (executor/run-agent-loop!
                                             ai-ctx (:agent-ctx ctx)
                                             ai-model [user-msg]
-                                            {:turn-ctx-atom (:turn-ctx-atom ctx)})]
+                                            {:turn-ctx-atom (:turn-ctx-atom ctx)
+                                             :api-key       api-key})]
                               (.put queue {:kind :done :result result}))
                             (catch Exception e
                               (.put queue {:kind :error :message (ex-message e)})))))]
