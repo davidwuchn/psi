@@ -26,13 +26,14 @@
 --   AI provider internals, model APIs, transport (see ai-abstract-model.allium)
 --   TUI rendering implementation details (layout, CSS, terminal codes)
 --   Shell / bash execution internals
---   OAuth token exchange protocols
+--   OAuth and credential management (see oauth-auth.allium)
 --   File system and git implementation details
 
 use "./agent.allium" as agent
 use "./prompt-templates.allium" as prompts
 use "./skills.allium" as skills
 use "./extension-system.allium" as ext
+use "./oauth-auth.allium" as auth
 
 ------------------------------------------------------------
 -- External Entities
@@ -51,8 +52,12 @@ external entity Model {
 }
 
 external entity AuthCredentials {
-    -- OAuth or API-key credentials for a provider.
+    -- OAuth or API-key credentials for a provider (see oauth-auth.allium).
     provider: String
+}
+
+external entity CredentialStore {
+    -- Manages credentials for all providers (see oauth-auth.allium).
 }
 
 ------------------------------------------------------------
@@ -389,7 +394,7 @@ rule TreeNavigated {
 rule ModelSet {
     when: ModelSet(session, model)
 
-    requires: exists ApiKeyFor(model)
+    requires: auth/HasAuthResult(true) for model.provider
 
     ensures: session.model = model
     ensures: session.thinkingLevel = Clamped(session.thinkingLevel, model)
@@ -743,7 +748,7 @@ surface ResourceLoaderApi {
 deferred CompactionAlgorithm.execute    -- see: compaction details in pi-agent-core
 deferred BranchSummarisation.execute    -- see: branch-summarization.ts
 deferred SystemPromptAssembly.build     -- see: system-prompt.ts
-deferred ModelRegistry.resolve          -- see: model-registry.ts (API key resolution, provider registration)
+deferred ModelRegistry.resolve          -- see: oauth-auth.allium (API key resolution, provider registration)
 
 ------------------------------------------------------------
 -- Open Questions
