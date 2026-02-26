@@ -356,8 +356,8 @@
   (when (seq messages)
     (str (str/join "\n\n" (map render-message messages)) "\n")))
 
-(defn- render-separator []
-  (charm/render sep-style (apply str (repeat 40 "─"))))
+(defn- render-separator [width]
+  (charm/render sep-style (apply str (repeat (max 1 width) "─"))))
 
 ;; ── Extension UI rendering ──────────────────────────────────
 
@@ -373,11 +373,11 @@
                        (mapcat :content widgets))
              "\n")))))
 
-(defn- render-statuses [ui-state-atom]
+(defn- render-statuses [ui-state-atom width]
   (when ui-state-atom
     (let [statuses (ext-ui/all-statuses ui-state-atom)]
       (when (seq statuses)
-        (str "\n" (render-separator) "\n"
+        (str "\n" (render-separator width) "\n"
              (str/join " │ "
                        (map #(charm/render dim-style (:text %)) statuses))
              "\n")))))
@@ -432,7 +432,7 @@
 (defn view
   "Render the full TUI state to a string."
   [state]
-  (let [{:keys [messages phase error input spinner-frame model-name
+  (let [{:keys [messages phase error input spinner-frame model-name width
                 prompt-templates skills extension-summary ui-state-atom]} state
         spinner-char (nth spinner-frames (mod spinner-frame (count spinner-frames)))
         dialog-active? (has-active-dialog? state)]
@@ -447,7 +447,7 @@
          ;; Widgets above editor
          (render-widgets ui-state-atom :above-editor)
          "\n"
-         (render-separator) "\n"
+         (render-separator width) "\n"
          ;; Dialog replaces editor when active
          (if dialog-active?
            (render-dialog ui-state-atom)
@@ -457,7 +457,7 @@
          ;; Widgets below editor
          (render-widgets ui-state-atom :below-editor)
          ;; Status footer
-         (render-statuses ui-state-atom)
+         (render-statuses ui-state-atom width)
          ;; Notifications toast
          (render-notifications ui-state-atom))))
 
