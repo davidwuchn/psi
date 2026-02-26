@@ -94,7 +94,8 @@
   ([model-name query-fn]
    (fn []
      (let [introspected (when query-fn
-                          (query-fn [:psi.agent-session/prompt-templates]))]
+                          (query-fn [:psi.agent-session/prompt-templates
+                                     :psi.agent-session/skills]))]
        [{:messages         []
          :phase            :idle
          :error            nil
@@ -104,6 +105,7 @@
          :spinner-frame    0
          :model-name       model-name
          :prompt-templates (or (:psi.agent-session/prompt-templates introspected) [])
+         :skills           (or (:psi.agent-session/skills introspected) [])
          :queue            nil
          :width            80
          :height           24}
@@ -229,15 +231,21 @@
 
 ;; ── View ────────────────────────────────────────────────────
 
-(defn- render-banner [model-name prompt-templates]
-  (str (charm/render title-style "ψ Psi Agent Session") "\n"
-       (charm/render dim-style (str "  Model: " model-name)) "\n"
-       (when (seq prompt-templates)
-         (str (charm/render dim-style
-                (str "  Prompts: "
-                     (str/join ", " (map #(str "/" (:name %)) prompt-templates))))
-              "\n"))
-       (charm/render dim-style "  ESC to quit") "\n"))
+(defn- render-banner [model-name prompt-templates skills]
+  (let [visible-skills (remove :disable-model-invocation skills)]
+    (str (charm/render title-style "ψ Psi Agent Session") "\n"
+         (charm/render dim-style (str "  Model: " model-name)) "\n"
+         (when (seq prompt-templates)
+           (str (charm/render dim-style
+                  (str "  Prompts: "
+                       (str/join ", " (map #(str "/" (:name %)) prompt-templates))))
+                "\n"))
+         (when (seq visible-skills)
+           (str (charm/render dim-style
+                  (str "  Skills: "
+                       (str/join ", " (map :name visible-skills))))
+                "\n"))
+         (charm/render dim-style "  ESC to quit") "\n")))
 
 (defn- render-message [{:keys [role text]}]
   (case role
@@ -263,9 +271,9 @@
 (defn view
   "Render the full TUI state to a string."
   [state]
-  (let [{:keys [messages phase error input spinner-frame model-name prompt-templates]} state
+  (let [{:keys [messages phase error input spinner-frame model-name prompt-templates skills]} state
         spinner-char (nth spinner-frames (mod spinner-frame (count spinner-frames)))]
-    (str (render-banner model-name prompt-templates)
+    (str (render-banner model-name prompt-templates skills)
          "\n"
          (render-messages messages)
          (when (= :streaming phase)
