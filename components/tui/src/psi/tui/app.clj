@@ -113,11 +113,6 @@
 
 ;; ── Update helpers ──────────────────────────────────────────
 
-(defn- command?
-  "Return true if text is a /command."
-  [text]
-  (str/starts-with? text "/"))
-
 (defn- handle-command
   "Process a /command, returning [new-state cmd] or nil if unrecognised."
   [state text]
@@ -125,33 +120,38 @@
     ("/quit" "/exit") [state charm/quit-cmd]
     nil))
 
+(defn- submit-to-agent
+  "Start the agent with `text`, return [new-state cmd]."
+  [state run-agent-fn! text]
+  (let [queue (LinkedBlockingQueue.)]
+    (run-agent-fn! text queue)
+    [(-> state
+         (update :messages conj {:role :user :text text})
+         (assoc :phase         :streaming
+                :error         nil
+                :input         (charm/text-input-reset (:input state))
+                :queue         queue
+                :spinner-frame 0))
+     (poll-cmd queue)]))
+
 (defn- submit-input
-  "Extract text from input, start agent, return [new-state cmd]."
+  "Extract text from input, start agent, return [new-state cmd].
+   Built-in commands (/quit, /exit) are handled directly.
+   All other /name input is forwarded to the agent where prompt
+   template expansion and extension command dispatch occur."
   [state run-agent-fn!]
   (let [text (str/trim (charm/text-input-value (:input state)))]
     (cond
       (str/blank? text)
       [state nil]
 
-      (command? text)
-      (or (handle-command state text)
-          ;; Unrecognised command — show inline error, clear input
-          [(-> state
-               (assoc :error (str "Unknown command: " text)
-                      :input (charm/text-input-reset (:input state))))
-           nil])
+      ;; Built-in TUI commands
+      (some? (handle-command state text))
+      (handle-command state text)
 
+      ;; Everything else — including /template-name — goes to the agent
       :else
-      (let [queue (LinkedBlockingQueue.)]
-        (run-agent-fn! text queue)
-        [(-> state
-             (update :messages conj {:role :user :text text})
-             (assoc :phase         :streaming
-                    :error         nil
-                    :input         (charm/text-input-reset (:input state))
-                    :queue         queue
-                    :spinner-frame 0))
-         (poll-cmd queue)]))))
+      (submit-to-agent state run-agent-fn! text))))
 
 (defn- handle-agent-result
   "Process completed agent result."
