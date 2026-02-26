@@ -4,6 +4,84 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-02-25 - UI Extension Points Implementation
+
+### λ Extension UI State Lives in TUI Component, Not Agent-Session
+
+`psi.tui.extension-ui` lives in the `tui` component because both `tui/app.clj`
+(which renders it) and `agent-session/extensions.clj` (which creates UI contexts)
+need to require it.  Since agent-session depends on tui but not vice versa,
+the module must live in tui.
+
+### λ Promise Bridge for Blocking Dialogs in Elm Architecture
+
+The challenge: extensions call `(confirm "title" "msg")` and block, but the
+TUI is message-driven (Elm update/view).  Solution — enqueue a dialog with a
+`promise`, block the extension thread on `deref`, and have the TUI update fn
+call `deliver` when the user responds.
+
+```clojure
+;; Extension thread (blocking)
+(let [result (deref (:promise dialog))]  ; blocks here
+  (if result "confirmed" "cancelled"))
+
+;; TUI update thread (resolves)
+(deliver (:promise active-dialog) true)  ; unblocks extension
+```
+
+FIFO queue ensures one dialog at a time. `advance-queue!` promotes next.
+
+### λ clear-all! Must Snapshot Before Reset
+
+When clearing all UI state (e.g. extension reload), snapshot the active and
+pending dialogs **before** resetting the atom.  If you cancel the active dialog
+first, `cancel-dialog!` calls `advance-queue!` which promotes a pending dialog
+to active — then the pending loop finds nothing to deliver:
+
+```clojure
+;; ✗ Race: cancel advances queue, doseq finds empty pending
+(cancel-dialog! ui-atom)
+(doseq [d (get-in @ui-atom [:dialog-queue :pending])] (deliver (:promise d) nil))
+
+;; ✓ Snapshot all, reset, then deliver
+(let [active  (get-in @ui-atom [:dialog-queue :active])
+      pending (get-in @ui-atom [:dialog-queue :pending])]
+  (reset! ui-atom {...empty...})
+  (when active (deliver (:promise active) nil))
+  (doseq [d pending] (deliver (:promise d) nil)))
+```
+
+### λ Dialog Routing in Elm Update — Check Before Normal Input
+
+When a dialog is active, **all keypresses** go to the dialog handler, not the
+editor.  The update function must check for active dialog before checking idle
+state, otherwise escape/enter goes to the wrong handler:
+
+```clojure
+(cond
+  ;; ctrl+c always quits
+  (msg/key-match? m "ctrl+c") [state charm/quit-cmd]
+  ;; Dialog intercepts ALL key input when active
+  (and (has-active-dialog? state) (msg/key-press? m))
+  (handle-dialog-key state m)
+  ;; Normal idle input...
+  ...)
+```
+
+### λ charm.clj Key Press Messages Have :key Field
+
+charm.clj key press messages are maps with `:key` (a string).  For single
+printable characters, `(:key m)` returns the character.  There is no
+`key-runes` function — that's a Bubble Tea concept.
+
+### λ EQL Snapshot Must Strip Promises and Functions
+
+Promises and function objects are not serialisable.  The `snapshot` fn for
+EQL resolvers strips `:promise` from dialog maps and `:render-*-fn` from
+renderer maps, returning only data the resolver can safely expose.
+
+---
+
 ## 2026-02-25 - Extension System Implementation
 
 ### λ Clojure Extensions = load-file + init fn

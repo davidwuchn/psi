@@ -15,7 +15,7 @@ Current truth about the Psi system.
 | `history`       | ✓      | Git log resolvers, nullable git context                    |
 | `introspection` | ✓      | Bridges engine + query, self-describing graph              |
 | `tui`           | ✓      | charm.clj Elm Architecture, JLine3 terminal               |
-| `agent-session` | ✓      | Session ✓, extensions ✓, main REPL ✓, TUI session ✓      |
+| `agent-session` | ✓      | Session ✓, extensions ✓, extension UI ✓, main REPL ✓, TUI ✓ |
 
 ## Architecture Progress
 
@@ -32,6 +32,7 @@ Current truth about the Psi system.
 - ✓ Runnable entry point (`clojure -M:run`)
 - ✓ TUI session (`--tui` flag) — charm.clj Elm Architecture, JLine3
 - ✓ Extension system (Clojure extensions, loader, API, tool wrapping, EQL introspection)
+- ✓ Extension UI (dialogs, widgets, status, notifications, render registry, EQL introspection)
 - ✗ Session resolvers wired into global query graph
 - ✗ Graph emergence from domain resolvers
 - ✗ RPC / HTTP API surface
@@ -56,6 +57,11 @@ nREPL introspection (from connected REPL):
 (require '[psi.agent-session.core :as s])
 (s/query-in (:ctx @psi.agent-session.main/session-state)
   [:psi.agent-session/phase :psi.agent-session/session-id])
+
+;; Extension UI state
+(s/query-in (:ctx @psi.agent-session.main/session-state)
+  [:psi.ui/widgets :psi.ui/statuses :psi.ui/visible-notifications
+   :psi.ui/dialog-queue-empty? :psi.ui/tool-renderers])
 
 ;; Live turn state (during streaming)
 (require '[psi.agent-session.turn-statechart :as turn])
@@ -93,6 +99,7 @@ Caught by `jline-terminal-keymap-test` smoke test.
 | `system_prompt.clj`             | System prompt assembly (tools, context, skills)   |
 | `compaction.clj`                | Compaction algorithm (stub, injectable fn)        |
 | `extensions.clj`                | Extension registry, loader, API, tool wrapping    |
+| `tui/extension_ui.clj`         | Extension UI: dialogs, widgets, status, notifications, renderers |
 | `persistence.clj`               | Append-only journal                               |
 | `resolvers.clj`                 | EQL resolvers (:psi.agent-session/*, :psi.skill/*)|
 | `tools.clj`                     | Built-in tool implementations                     |
@@ -102,7 +109,7 @@ Caught by `jline-terminal-keymap-test` smoke test.
 
 ## Test Status
 
-238 tests, 966 assertions, 0 failures. 0 clj-kondo errors.
+251 tests, 1070 assertions, 0 failures. 0 clj-kondo errors.
 
 ## Specs
 
@@ -114,6 +121,7 @@ Caught by `jline-terminal-keymap-test` smoke test.
 | `coding-agent.allium`      | `agent-session`         | ✓ split → 3 sub-specs; ✓ implemented  |
 | `skills.allium`            | `agent-session/skills`  | ✓ implemented                         |
 | `tui.allium`               | `tui`                   | partial — session loop not yet working|
+| `ui-extension-points.allium` | `tui/extension_ui`    | ✓ implemented                         |
 
 ## Open Questions
 
