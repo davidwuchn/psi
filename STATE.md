@@ -14,7 +14,7 @@ Current truth about the Psi system.
 | `agent-core`    | ✓      | LLM agent lifecycle statechart + EQL resolvers             |
 | `history`       | ✓      | Git log resolvers, nullable git context                    |
 | `introspection` | ✓      | Bridges engine + query, self-describing graph              |
-| `tui`           | ✓      | charm.clj Elm Architecture, JLine3 terminal               |
+| `tui`           | ✓      | charm.clj Elm Architecture, JLine3, extension UI state     |
 | `agent-session` | ✓      | Session ✓, extensions ✓, extension UI ✓, main REPL ✓, TUI ✓ |
 
 ## Architecture Progress
@@ -101,7 +101,7 @@ Caught by `jline-terminal-keymap-test` smoke test.
 | `extensions.clj`                | Extension registry, loader, API, tool wrapping    |
 | `tui/extension_ui.clj`         | Extension UI: dialogs, widgets, status, notifications, renderers |
 | `persistence.clj`               | Append-only journal                               |
-| `resolvers.clj`                 | EQL resolvers (:psi.agent-session/*, :psi.skill/*)|
+| `resolvers.clj`                 | EQL resolvers (:psi.agent-session/*, :psi.skill/*, :psi.ui/*) |
 | `tools.clj`                     | Built-in tool implementations                     |
 | `turn_statechart.clj`           | Per-turn streaming statechart (idle→text⇄tool→done) |
 | `executor.clj`                  | ai ↔ agent-core streaming bridge (statechart-driven) |
@@ -127,6 +127,11 @@ Caught by `jline-terminal-keymap-test` smoke test.
 
 - TUI: per-token streaming (currently shows spinner until agent done)
 - TUI: tool execution status display during agent loop
+- Extension UI: should dialogs support auto-dismiss timeout?
+- Extension UI: widget ordering when multiple extensions contribute to same placement
+- Extension UI: should render fns receive a theme map for consistent styling?
+- Extension UI: editor text injection (set-editor-text, paste-to-editor)
+- Extension UI: working message override during streaming ("Analyzing..." vs "thinking…")
 
 ## nREPL
 

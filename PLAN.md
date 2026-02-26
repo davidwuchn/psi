@@ -48,6 +48,22 @@ Ordered steps toward AI COMPLETE.
 - 18 tests, 76 assertions covering statechart + executor
 - 179 tests, 637 assertions, 0 failures total
 
+### Step 6b — Extension UI points  ✓
+- `spec/ui-extension-points.allium`: spec for dialogs, widgets, status, notifications, renderers
+- `psi.tui.extension-ui`: 469-line implementation in tui component
+  - Promise bridge: blocking dialogs for extensions, resolved by TUI update loop
+  - Dialog queue: FIFO, one active at a time
+  - Widgets: keyed by `[ext-id widget-id]`, above/below editor placement
+  - Status: single-line footer entries per extension
+  - Notifications: auto-dismiss, overflow cap, level-based styling
+  - Render registry: tool renderers + message renderers
+  - UI context map: `:ui` key in extension API (nil when headless)
+  - EQL resolver: 8 `:psi.ui/*` attributes (read-only introspection)
+- Wired through: `extensions.clj` → `:ui` in API, `core.clj` → `:ui-state-atom` in ctx
+- TUI integration: `app.clj` renders dialogs, widgets, status, notifications
+- 13 tests, 104 assertions covering UI state, dialogs, queue, renderers
+- 251 tests, 1070 assertions, 0 failures total
+
 ---
 
 ## Next
@@ -72,7 +88,8 @@ Register domain resolvers, surface capability graph via EQL
 ### Deferred (agent-session)
 - `TreeNavigated` branch tree navigation
 - Session persistence to disk (journal currently in-memory only)
-- Extension tool wrapping (pre/post hooks on tool calls)
-- `RegisteredCommand` / full registry
-- `SkillCommandExpanded` / `PromptTemplateExpanded`
+- `SkillCommandExpanded` / `PromptTemplateExpanded` events
 - Streaming token printing during TUI session
+- Extension UI: dialog timeouts, widget ordering, theme maps for renderers,
+  editor text injection, working message override (see spec open questions)
+- Extension UI: screen takeover / custom component injection

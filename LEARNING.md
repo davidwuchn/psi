@@ -80,6 +80,34 @@ Promises and function objects are not serialisable.  The `snapshot` fn for
 EQL resolvers strips `:promise` from dialog maps and `:render-*-fn` from
 renderer maps, returning only data the resolver can safely expose.
 
+### λ Allium Spec → Design Decisions → Implementation
+
+Writing the allium spec first forced 10 design decisions to be explicit
+before any code was written:
+
+1. State ownership (centralized Elm model)
+2. Dialog model (promise bridge)
+3. Dialog queueing (FIFO)
+4. Widget placement (above/below editor, keyed by ext-id)
+5. Status vs widget vs notification (three primitives)
+6. Custom rendering (register fn by tool-name/custom-type)
+7. Render output (ANSI strings)
+8. UI availability (:ui key, nil when headless)
+9. Screen takeover (deferred)
+10. EQL queryability (yes, read-only)
+
+The spec's `open_question` blocks captured decisions to revisit later without
+blocking implementation.  This is significantly faster than discovering
+these decisions during coding.
+
+### λ Deferred Items Get Smaller After Spec
+
+Items originally on the deferred list (`RegisteredCommand`, extension tool
+wrapping) were already partially implemented by the time the UI spec was done.
+Writing the spec clarified that tool wrapping pre/post hooks were already
+implemented in `wrap-tool-executor`.  The deferred list shrinks when you spec
+precisely enough to see what's already done.
+
 ---
 
 ## 2026-02-25 - Extension System Implementation
