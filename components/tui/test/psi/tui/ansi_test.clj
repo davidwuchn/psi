@@ -115,6 +115,44 @@
         (is (str/includes? result "two"))
         (is (str/includes? result "three"))))))
 
+;;;; CJK / fullwidth character support
+
+(deftest char-width-test
+  (testing "char-width"
+    (testing "ASCII character is width 1"
+      (is (= 1 (ansi/char-width \A))))
+    (testing "CJK ideograph is width 2"
+      (is (= 2 (ansi/char-width \刀))))
+    (testing "Hiragana is width 2"
+      (is (= 2 (ansi/char-width \あ))))
+    (testing "Fullwidth Latin is width 2"
+      (is (= 2 (ansi/char-width \Ａ))))))
+
+(deftest visible-width-cjk-test
+  (testing "visible-width — CJK characters"
+    (testing "single CJK char counts as 2"
+      (is (= 2 (ansi/visible-width "刀"))))
+    (testing "mixed ASCII and CJK"
+      ;; "hi刀" = 2 + 2 = 4
+      (is (= 4 (ansi/visible-width "hi刀"))))
+    (testing "CJK with ANSI escapes"
+      (is (= 2 (ansi/visible-width "\u001b[1m刀\u001b[0m"))))))
+
+(deftest truncate-to-width-cjk-test
+  (testing "truncate-to-width — CJK"
+    (testing "CJK string within width not truncated"
+      (is (= "刀" (ansi/truncate-to-width "刀" 5))))
+    (testing "CJK string truncated at column boundary"
+      (let [result (ansi/truncate-to-width "刀人ψ" 4)]
+        (is (<= (ansi/visible-width result) 4))))))
+
+(deftest word-wrap-cjk-test
+  (testing "word-wrap — CJK"
+    (testing "CJK words wrapped respecting display width"
+      (let [lines (ansi/word-wrap "刀人" 3)]
+        ;; "刀" is 2 cols, "人" is 2 cols, width 3 can't fit both
+        (is (every? #(<= (ansi/visible-width %) 3) lines))))))
+
 ;;;; find-marker / strip-marker
 
 (deftest find-marker-test
@@ -130,7 +168,12 @@
 
       (testing "finds marker on first line"
         (let [result (ansi/find-marker ["CURSORhello"] marker)]
-          (is (= {:row 0 :col 0} result)))))))
+          (is (= {:row 0 :col 0} result))))
+
+      (testing "col is display column not char index after CJK"
+        (let [result (ansi/find-marker ["刀CURSOR"] marker)]
+          ;; 刀 is 2 display columns, so col should be 2 not 1
+          (is (= {:row 0 :col 2} result)))))))
 
 (deftest strip-marker-test
   ;; strip-marker removes all occurrences.
