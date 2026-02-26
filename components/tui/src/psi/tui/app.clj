@@ -28,6 +28,7 @@
    [charm.terminal :as charm-term]
    [cheshire.core :as json]
    [clojure.string :as str]
+   [psi.tui.ansi :as ansi]
    [psi.tui.extension-ui :as ext-ui])
   (:import
    [java.util.concurrent LinkedBlockingQueue TimeUnit]
@@ -520,6 +521,110 @@
         ;; fallback
         ""))))
 
+;; ── Text input word wrap ─────────────────────────────────────
+
+(defn- wrap-chunks
+  "Split plain text into word-wrapped chunks with position tracking.
+   Returns [{:text \"line\" :start N :end N} ...] where start/end are
+   character indices in the original text. Whitespace at break points
+   is consumed (trimmed from line end, skipped at next line start)."
+  [^String text max-width]
+  (if (or (nil? text) (empty? text))
+    [{:text "" :start 0 :end 0}]
+    (let [len (count text)]
+      (loop [start 0, chunks []]
+        (if (>= start len)
+          (if (empty? chunks)
+            [{:text "" :start 0 :end 0}]
+            chunks)
+          (let [[end-idx]
+                (loop [j start, col 0, last-break -1]
+                  (if (>= j len)
+                    [j]
+                    (let [c (.charAt text j)
+                          cw (ansi/char-width c)]
+                      (if (> (+ col cw) max-width)
+                        ;; Overflow — break at word boundary or hard break
+                        (if (pos? last-break)
+                          [last-break]
+                          [j])
+                        ;; Fits — advance; track break after space before non-space
+                        (recur (inc j) (+ col cw)
+                               (if (and (Character/isWhitespace c)
+                                        (< (inc j) len)
+                                        (not (Character/isWhitespace
+                                              (.charAt text (inc j)))))
+                                 (inc j)
+                                 last-break))))))
+                chunk-text (str/trimr (subs text start end-idx))
+                ;; Skip whitespace for next line start
+                next-start (loop [ns (long end-idx)]
+                             (if (and (< ns len)
+                                      (Character/isWhitespace (.charAt text ns)))
+                               (recur (inc ns))
+                               ns))]
+            (if (= next-start start)
+              ;; Safety: force progress
+              (recur (inc start)
+                     (conj chunks {:text (str (.charAt text start))
+                                   :start start :end (inc start)}))
+              (recur next-start
+                     (conj chunks {:text chunk-text
+                                   :start start :end end-idx})))))))))
+
+(defn- wrap-text-input-view
+  "Render text input with word wrapping at terminal width.
+   Continuation lines indent to align with the prompt end."
+  [input width]
+  (let [{:keys [prompt value pos focused cursor-style
+                prompt-style placeholder-style placeholder]} input
+        prompt-str (if prompt-style
+                     (charm/render prompt-style prompt)
+                     (or prompt ""))
+        prompt-w   (ansi/visible-width (or prompt ""))
+        avail      (max 1 (- width prompt-w))
+        indent     (apply str (repeat prompt-w \space))
+        cursor-sty (or cursor-style (charm/style :reverse true))]
+    (if (and (empty? value) placeholder (not (str/blank? placeholder)))
+      ;; Placeholder
+      (str prompt-str
+           (if focused
+             (str (charm/render cursor-sty (subs placeholder 0 1))
+                  (if placeholder-style
+                    (charm/render placeholder-style (subs placeholder 1))
+                    (subs placeholder 1)))
+             (if placeholder-style
+               (charm/render placeholder-style placeholder)
+               placeholder)))
+      ;; Normal value — word-wrap and place cursor
+      (let [text   (apply str value)
+            chunks (wrap-chunks text avail)]
+        (str/join
+         "\n"
+         (map-indexed
+          (fn [i {:keys [text start end]}]
+            (let [prefix  (if (zero? i) prompt-str indent)
+                  is-last (= i (dec (count chunks)))
+                  ;; Cursor in this chunk? Last chunk owns pos >= start;
+                  ;; others own start <= pos < end
+                  cursor? (and focused
+                               (>= pos start)
+                               (or is-last (< pos end)))]
+              (if cursor?
+                (let [lp     (- pos start)
+                      before (subs text 0 (min lp (count text)))
+                      c-char (if (< lp (count text))
+                               (subs text lp (inc lp))
+                               " ")
+                      after  (if (< lp (count text))
+                               (subs text (inc lp))
+                               "")]
+                  (str prefix before
+                       (charm/render cursor-sty c-char)
+                       after))
+                (str prefix text))))
+          chunks))))))
+
 ;; ── Tool progress rendering ──────────────────────────────────
 
 (def ^:private tool-result-preview-lines 5)
@@ -593,7 +698,7 @@
   [state]
   (let [{:keys [messages phase error input spinner-frame model-name
                 prompt-templates skills extension-summary ui-state-atom
-                stream-text tool-calls tool-order]} state
+                stream-text tool-calls tool-order width]} state
         spinner-char (nth spinner-frames (mod spinner-frame (count spinner-frames)))
         dialog-active? (has-active-dialog? state)
         has-progress? (or (seq stream-text) (seq tool-order))]
@@ -620,7 +725,7 @@
          (if dialog-active?
            (render-dialog ui-state-atom)
            (if (= :idle phase)
-             (charm/text-input-view input)
+             (wrap-text-input-view input width)
              (charm/render dim-style "(waiting for response…)")))
          ;; Widgets below editor
          (render-widgets ui-state-atom :below-editor)

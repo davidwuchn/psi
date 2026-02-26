@@ -201,6 +201,54 @@
       (is (= 120 (:width s1)))
       (is (= 40 (:height s1))))))
 
+;;;; Text input word wrap
+
+(deftest wrap-text-input-short-test
+  (testing "short text renders on one line with prompt"
+    (let [state (init-state)
+          s1    (assoc state :width 80)
+          ;; Type "hello"
+          update-fn (app/make-update (stub-agent-fn ""))
+          [s2 _] (update-fn s1 (msg/key-press "h"))
+          [s3 _] (update-fn s2 (msg/key-press "i"))
+          out    (app/view s3)]
+      ;; Should have prompt + text on one line, no extra newlines in input area
+      (is (str/includes? out "hi")))))
+
+(deftest wrap-text-input-long-test
+  (testing "long text wraps at terminal width"
+    (let [state   (init-state)
+          ;; Set narrow width so wrapping kicks in
+          state   (assoc state :width 20)
+          update-fn (app/make-update (stub-agent-fn ""))
+          ;; Type enough text to exceed width (prompt "刀: " is ~4 cols)
+          ;; Available = 20 - 4 = 16 cols
+          long-text "the quick brown fox jumps over"
+          s (reduce (fn [s ch]
+                      (first (update-fn s (msg/key-press (str ch)))))
+                    state
+                    long-text)
+          out (app/view s)
+          lines (str/split-lines out)]
+      ;; The input area should span multiple lines
+      ;; Find lines containing parts of our text
+      (is (str/includes? out "the quick"))
+      (is (str/includes? out "fox"))
+      ;; Verify continuation lines are indented (prompt width spaces)
+      (let [input-lines (filter #(or (str/includes? % "the quick")
+                                     (str/includes? % "fox")
+                                     (str/includes? % "jumps"))
+                                lines)]
+        (is (> (count input-lines) 1)
+            "text should wrap to multiple lines")))))
+
+(deftest wrap-text-input-placeholder-test
+  (testing "empty input shows placeholder"
+    (let [state (assoc (init-state) :width 80)
+          out   (app/view state)]
+      ;; Cursor renders on first char, so check for rest of placeholder
+      (is (str/includes? out "ype a message")))))
+
 ;;;; JLine integration smoke test
 
 (deftest jline-terminal-keymap-test
