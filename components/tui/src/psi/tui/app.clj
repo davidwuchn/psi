@@ -23,7 +23,6 @@
   (:require
    [charm.core :as charm]
    [charm.input.keymap] ; loaded so we can patch before use
-   [charm.render.core :as render]
    [charm.message :as msg]
    [clojure.string :as str]
    [psi.tui.extension-ui :as ext-ui])
@@ -49,41 +48,6 @@
           (when (and (pos? (count seq-str))
                      (= (int (.charAt seq-str 0)) 27))
             (.bind keymap event (subs seq-str 1)))))))))
-
-;; ── Width margin ─────────────────────────────────────────────
-;; The pty width can exceed the visible rendering area (e.g. when
-;; running inside a TUI host that reserves columns for its own UI).
-;; JLine's Display MUST use the real pty width (cursor tracking
-;; breaks if Display.columns != terminal width). So we only apply
-;; the margin to our own view content — separator, etc.
-;;
-;; `renderer-size` captures the pty size for make-init to read
-;; (charm.clj drains the initial window-size message).
-;; `width-margin`  is set by start! before charm/run.
-
-(def ^:private renderer-size (atom {:width 80 :height 24}))
-(def ^:private width-margin  (atom 0))
-
-(defn- apply-margin [width]
-  (max 1 (- width @width-margin)))
-
-;; Capture the pty size from create-renderer (runs before init).
-;; Also disable delayedWrapAtEol on the Display — in eat terminal
-;; (Emacs), cursor movement to the pty's right margin extends line
-;; width, causing wrapping when the pty is wider than the visible area.
-;; Since our content never reaches the right margin (we apply a margin),
-;; neither delayedWrapAtEol nor the atRight fallback will fire.
-(alter-var-root
- #'render/create-renderer
- (fn [original]
-   (fn [^Terminal terminal & {:as opts}]
-     (let [renderer (apply original terminal (mapcat identity opts))
-           ^org.jline.utils.Display display (:display @renderer)
-           field    (.getDeclaredField org.jline.utils.Display "delayedWrapAtEol")]
-       (.setAccessible field true)
-       (.setBoolean field display false)
-       (reset! renderer-size (select-keys @renderer [:width :height]))
-       renderer))))
 
 ;; ── Styles ──────────────────────────────────────────────────
 
@@ -205,8 +169,7 @@
      (let [introspected (when query-fn
                           (query-fn [:psi.agent-session/prompt-templates
                                      :psi.agent-session/skills
-                                     :psi.agent-session/extension-summary]))
-           {:keys [width height]} @renderer-size]
+                                     :psi.agent-session/extension-summary]))]
        [{:messages          []
          :phase             :idle
          :error             nil
@@ -220,8 +183,8 @@
          :extension-summary (or (:psi.agent-session/extension-summary introspected) {})
          :ui-state-atom     ui-state-atom
          :queue             nil
-         :width             width
-         :height            height}
+         :width             80
+         :height            24}
         nil]))))
 
 ;; ── Update helpers ──────────────────────────────────────────
@@ -315,7 +278,7 @@
            (msg/key-match? m "escape"))
       [state charm/quit-cmd]
 
-      ;; Window resize — state tracks pty width; margin applied in view
+      ;; Window resize
       (msg/window-size? m)
       [(assoc state :width (:width m) :height (:height m)) nil]
 
@@ -393,8 +356,8 @@
   (when (seq messages)
     (str (str/join "\n\n" (map render-message messages)) "\n")))
 
-(defn- render-separator [width]
-  (charm/render sep-style (apply str (repeat (max 1 width) "─"))))
+(defn- render-separator []
+  (charm/render sep-style (apply str (repeat 40 "─"))))
 
 ;; ── Extension UI rendering ──────────────────────────────────
 
@@ -410,11 +373,11 @@
                        (mapcat :content widgets))
              "\n")))))
 
-(defn- render-statuses [ui-state-atom width]
+(defn- render-statuses [ui-state-atom]
   (when ui-state-atom
     (let [statuses (ext-ui/all-statuses ui-state-atom)]
       (when (seq statuses)
-        (str "\n" (render-separator width) "\n"
+        (str "\n" (render-separator) "\n"
              (str/join " │ "
                        (map #(charm/render dim-style (:text %)) statuses))
              "\n")))))
@@ -469,9 +432,8 @@
 (defn view
   "Render the full TUI state to a string."
   [state]
-  (let [{:keys [messages phase error input spinner-frame model-name width
+  (let [{:keys [messages phase error input spinner-frame model-name
                 prompt-templates skills extension-summary ui-state-atom]} state
-        view-width   (apply-margin width) ; visible width after margin
         spinner-char (nth spinner-frames (mod spinner-frame (count spinner-frames)))
         dialog-active? (has-active-dialog? state)]
     (str (render-banner model-name prompt-templates skills extension-summary)
@@ -485,7 +447,7 @@
          ;; Widgets above editor
          (render-widgets ui-state-atom :above-editor)
          "\n"
-         (render-separator view-width) "\n"
+         (render-separator) "\n"
          ;; Dialog replaces editor when active
          (if dialog-active?
            (render-dialog ui-state-atom)
@@ -495,7 +457,7 @@
          ;; Widgets below editor
          (render-widgets ui-state-atom :below-editor)
          ;; Status footer
-         (render-statuses ui-state-atom view-width)
+         (render-statuses ui-state-atom)
          ;; Notifications toast
          (render-notifications ui-state-atom))))
 
@@ -510,12 +472,10 @@
                        {:kind :error :message str} on queue.
    `opts`           — optional map:
                        :query-fn      — (fn [eql-query]) for session introspection
-                       :ui-state-atom — extension UI state atom
-                       :width-margin  — columns to subtract from pty width (default 0)"
+                       :ui-state-atom — extension UI state atom"
   ([model-name run-agent-fn!]
    (start! model-name run-agent-fn! {}))
   ([model-name run-agent-fn! opts]
-   (reset! width-margin (or (:width-margin opts) 0))
    (charm/run {:init   (make-init model-name (:query-fn opts) (:ui-state-atom opts))
                :update (make-update run-agent-fn!)
                :view   view
