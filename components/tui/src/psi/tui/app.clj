@@ -24,15 +24,13 @@
    [charm.core :as charm]
    [charm.input.keymap] ; loaded so we can patch before use
    [charm.render.core :as render]
-   [charm.terminal :as term]
    [charm.message :as msg]
    [clojure.string :as str]
    [psi.tui.extension-ui :as ext-ui])
   (:import
    [java.util.concurrent LinkedBlockingQueue TimeUnit]
    [org.jline.keymap KeyMap]
-   [org.jline.terminal Terminal]
-   [org.jline.utils Display]))
+   [org.jline.terminal Terminal]))
 
 ;; ── JLine compat patch ──────────────────────────────────────
 ;; charm.clj v0.1.42: bind-from-capability! calls (String. ^chars seq)
@@ -52,13 +50,15 @@
                      (= (int (.charAt seq-str 0)) 27))
             (.bind keymap event (subs seq-str 1)))))))))
 
-;; ── Width margin patch ──────────────────────────────────────
+;; ── Width margin ─────────────────────────────────────────────
 ;; The pty width can exceed the visible rendering area (e.g. when
 ;; running inside a TUI host that reserves columns for its own UI).
-;; Patch charm.clj's renderer to apply a margin so JLine's Display
-;; and truncate-line use the correct usable width.
+;; JLine's Display MUST use the real pty width (cursor tracking
+;; breaks if Display.columns != terminal width). So we only apply
+;; the margin to our own view content — separator, etc.
 ;;
-;; `renderer-size` captures the adjusted size for make-init to read.
+;; `renderer-size` captures the pty size for make-init to read
+;; (charm.clj drains the initial window-size message).
 ;; `width-margin`  is set by start! before charm/run.
 
 (def ^:private renderer-size (atom {:width 80 :height 24}))
@@ -67,33 +67,14 @@
 (defn- apply-margin [width]
   (max 1 (- width @width-margin)))
 
+;; Capture the pty size from create-renderer (runs before init).
 (alter-var-root
  #'render/create-renderer
- (constantly
-  (fn [^Terminal terminal & {:keys [fps alt-screen hide-cursor]
-                             :or   {fps 60 alt-screen false hide-cursor true}}]
-    (let [{:keys [width height]} (term/get-size terminal)
-          adj-w   (apply-margin width)
-          display (doto (Display. terminal false)
-                    (.resize height adj-w))]
-      (reset! renderer-size {:width adj-w :height height})
-      (atom {:terminal   terminal
-             :display    display
-             :fps        fps
-             :alt-screen alt-screen
-             :hide-cursor hide-cursor
-             :width      adj-w
-             :height     height
-             :running    false})))))
-
-(alter-var-root
- #'render/update-size!
- (constantly
-  (fn [renderer width height]
-    (let [adj-w   (apply-margin width)
-          ^Display display (:display @renderer)]
-      (.resize display height adj-w)
-      (swap! renderer assoc :width adj-w :height height)))))
+ (fn [original]
+   (fn [^Terminal terminal & {:as opts}]
+     (let [renderer (apply original terminal (mapcat identity opts))]
+       (reset! renderer-size (select-keys @renderer [:width :height]))
+       renderer))))
 
 ;; ── Styles ──────────────────────────────────────────────────
 
@@ -325,9 +306,9 @@
            (msg/key-match? m "escape"))
       [state charm/quit-cmd]
 
-      ;; Window resize (margin already applied by patched update-size!)
+      ;; Window resize — state tracks pty width; margin applied in view
       (msg/window-size? m)
-      [(assoc state :width (apply-margin (:width m)) :height (:height m)) nil]
+      [(assoc state :width (:width m) :height (:height m)) nil]
 
       ;; Dialog active — route all key input to dialog handler
       (and (has-active-dialog? state) (msg/key-press? m))
@@ -481,6 +462,7 @@
   [state]
   (let [{:keys [messages phase error input spinner-frame model-name width
                 prompt-templates skills extension-summary ui-state-atom]} state
+        view-width   (apply-margin width) ; visible width after margin
         spinner-char (nth spinner-frames (mod spinner-frame (count spinner-frames)))
         dialog-active? (has-active-dialog? state)]
     (str (render-banner model-name prompt-templates skills extension-summary)
@@ -494,7 +476,7 @@
          ;; Widgets above editor
          (render-widgets ui-state-atom :above-editor)
          "\n"
-         (render-separator width) "\n"
+         (render-separator view-width) "\n"
          ;; Dialog replaces editor when active
          (if dialog-active?
            (render-dialog ui-state-atom)
@@ -504,7 +486,7 @@
          ;; Widgets below editor
          (render-widgets ui-state-atom :below-editor)
          ;; Status footer
-         (render-statuses ui-state-atom width)
+         (render-statuses ui-state-atom view-width)
          ;; Notifications toast
          (render-notifications ui-state-atom))))
 
