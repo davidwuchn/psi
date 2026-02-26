@@ -68,11 +68,20 @@
   (max 1 (- width @width-margin)))
 
 ;; Capture the pty size from create-renderer (runs before init).
+;; Also disable delayedWrapAtEol on the Display — in eat terminal
+;; (Emacs), cursor movement to the pty's right margin extends line
+;; width, causing wrapping when the pty is wider than the visible area.
+;; Since our content never reaches the right margin (we apply a margin),
+;; neither delayedWrapAtEol nor the atRight fallback will fire.
 (alter-var-root
  #'render/create-renderer
  (fn [original]
    (fn [^Terminal terminal & {:as opts}]
-     (let [renderer (apply original terminal (mapcat identity opts))]
+     (let [renderer (apply original terminal (mapcat identity opts))
+           ^org.jline.utils.Display display (:display @renderer)
+           field    (.getDeclaredField org.jline.utils.Display "delayedWrapAtEol")]
+       (.setAccessible field true)
+       (.setBoolean field display false)
        (reset! renderer-size (select-keys @renderer [:width :height]))
        renderer))))
 
