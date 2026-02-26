@@ -599,8 +599,9 @@
                                       result   (executor/run-agent-loop!
                                                 ai-ctx (:agent-ctx ctx)
                                                 ai-model [user-msg]
-                                                {:turn-ctx-atom (:turn-ctx-atom ctx)
-                                                 :api-key       api-key})]
+                                                {:turn-ctx-atom  (:turn-ctx-atom ctx)
+                                                 :api-key        api-key
+                                                 :progress-queue queue})]
                                   (.put queue {:kind :done :result result}))
                                 (catch Exception e
                                   (.put queue {:kind :error :message (ex-message e)})))))))]

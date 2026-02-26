@@ -123,11 +123,20 @@
 ;; Turn actions — agent-core integration on top of accumulation
 ;; ============================================================
 
+(defn- emit-progress!
+  "Emit a progress event to the progress queue (if provided).
+   Events are maps with :type :agent-event and :event-kind."
+  [progress-queue event]
+  (when progress-queue
+    (.offer ^java.util.concurrent.LinkedBlockingQueue progress-queue
+            (assoc event :type :agent-event))))
+
 (defn- make-turn-actions
   "Create the actions-fn for the per-turn statechart.
    Handles both data accumulation (in turn-data atom) and agent-core
-   lifecycle calls (begin-stream, update-stream, end-stream)."
-  [agent-ctx done-p]
+   lifecycle calls (begin-stream, update-stream, end-stream).
+   When progress-queue is non-nil, emits :agent-event messages for TUI."
+  [agent-ctx done-p progress-queue]
   (fn [action-key data]
     (let [td (:turn-data data)]
       (case action-key
@@ -139,6 +148,9 @@
 
         :on-text-delta
         (do (swap! td update :text-buffer str (:delta data))
+            (emit-progress! progress-queue
+                            {:event-kind :text-delta
+                             :text       (:text-buffer @td)})
             (agent/update-stream-in! agent-ctx
                                      {:role      "assistant"
                                       :content   [{:type :text :text (:text-buffer @td)}]
@@ -149,12 +161,20 @@
               tc-id   (:tool-id data)
               tc-name (:tool-name data)]
           (swap! td assoc-in [:tool-calls idx]
-                 {:id tc-id :name tc-name :arguments ""}))
+                 {:id tc-id :name tc-name :arguments ""})
+          (emit-progress! progress-queue
+                          {:event-kind :tool-start
+                           :tool-id    tc-id
+                           :tool-name  tc-name}))
 
         :on-toolcall-delta
         (let [idx   (:content-index data)
               delta (:delta data)]
-          (swap! td update-in [:tool-calls idx :arguments] str delta))
+          (swap! td update-in [:tool-calls idx :arguments] str delta)
+          (emit-progress! progress-queue
+                          {:event-kind :tool-delta
+                           :tool-id    (get-in @td [:tool-calls idx :id])
+                           :arguments  (get-in @td [:tool-calls idx :arguments])}))
 
         :on-toolcall-end nil
 
@@ -223,7 +243,7 @@
 
    `extra-ai-options` — merged into the ai-options map sent to the provider
                         (e.g. {:api-key \"...\"})"
-  [ai-ctx agent-ctx ai-model turn-ctx-atom extra-ai-options]
+  [ai-ctx agent-ctx ai-model turn-ctx-atom extra-ai-options progress-queue]
   (let [data          (agent/get-data-in agent-ctx)
         system-prompt (:system-prompt data)
         messages      (:messages data)
@@ -231,7 +251,7 @@
         ai-conv       (agent-messages->ai-conversation system-prompt messages agent-tools)
         ai-options    (or extra-ai-options {})
         done-p        (promise)
-        actions-fn    (make-turn-actions agent-ctx done-p)
+        actions-fn    (make-turn-actions agent-ctx done-p progress-queue)
         turn-ctx      (turn-sc/create-turn-context actions-fn)]
     ;; Expose turn context for nREPL introspection
     (when turn-ctx-atom
@@ -300,11 +320,16 @@
 
 (defn- run-tool-call!
   "Execute one tool call, record the result in agent-core, return the result map."
-  [agent-ctx tool-call]
+  [agent-ctx tool-call progress-queue]
   (let [call-id  (:id tool-call)
         name     (:name tool-call)
         args     (parse-args (:arguments tool-call))]
     (agent/emit-tool-start-in! agent-ctx tool-call)
+    (emit-progress! progress-queue
+                    {:event-kind  :tool-executing
+                     :tool-id     call-id
+                     :tool-name   name
+                     :parsed-args args})
     (let [{:keys [content is-error]}
           (try
             (tools/execute-tool name args)
@@ -317,6 +342,12 @@
                       :content      [{:type :text :text content}]
                       :is-error     is-error
                       :timestamp    (java.time.Instant/now)}]
+      (emit-progress! progress-queue
+                      {:event-kind  :tool-result
+                       :tool-id     call-id
+                       :tool-name   name
+                       :result-text content
+                       :is-error    is-error})
       (agent/emit-tool-end-in! agent-ctx tool-call {:content content} is-error)
       (agent/record-tool-result-in! agent-ctx result-msg)
       result-msg)))
@@ -334,24 +365,29 @@
    `ai-model`          — ai.schemas.Model map
    `turn-ctx-atom`     — optional atom, stores current turn context for introspection
    `extra-ai-options`  — extra options merged into ai-options (e.g. {:api-key \"...\"})
+   `progress-queue`    — optional LinkedBlockingQueue for TUI progress events
 
    Returns the final (non-tool) assistant message map.
    Emits agent-core events throughout."
   ([ai-ctx agent-ctx ai-model]
-   (run-turn! ai-ctx agent-ctx ai-model nil nil))
+   (run-turn! ai-ctx agent-ctx ai-model nil nil nil))
   ([ai-ctx agent-ctx ai-model turn-ctx-atom]
-   (run-turn! ai-ctx agent-ctx ai-model turn-ctx-atom nil))
+   (run-turn! ai-ctx agent-ctx ai-model turn-ctx-atom nil nil))
   ([ai-ctx agent-ctx ai-model turn-ctx-atom extra-ai-options]
+   (run-turn! ai-ctx agent-ctx ai-model turn-ctx-atom extra-ai-options nil))
+  ([ai-ctx agent-ctx ai-model turn-ctx-atom extra-ai-options progress-queue]
    (agent/emit-in! agent-ctx {:type :turn-start})
-   (let [assistant-msg (stream-turn! ai-ctx agent-ctx ai-model turn-ctx-atom extra-ai-options)
+   (let [assistant-msg (stream-turn! ai-ctx agent-ctx ai-model turn-ctx-atom
+                                     extra-ai-options progress-queue)
          tool-calls    (extract-tool-calls assistant-msg)]
      (agent/emit-turn-end-in! agent-ctx assistant-msg [])
      (if (and (seq tool-calls) (not= :error (:stop-reason assistant-msg)))
        ;; Tool calls requested — execute them all then recurse
        (do
          (doseq [tc tool-calls]
-           (run-tool-call! agent-ctx tc))
-         (run-turn! ai-ctx agent-ctx ai-model turn-ctx-atom extra-ai-options))
+           (run-tool-call! agent-ctx tc progress-queue))
+         (run-turn! ai-ctx agent-ctx ai-model turn-ctx-atom
+                    extra-ai-options progress-queue))
        ;; No tool calls (or error) — we're done
        assistant-msg))))
 
@@ -363,17 +399,19 @@
    requesting tool calls.
 
    Options (optional 5th arg map):
-     :turn-ctx-atom — atom to store the current turn context for EQL introspection
-     :api-key       — API key to pass through to the provider (from OAuth store)
+     :turn-ctx-atom  — atom to store the current turn context for EQL introspection
+     :api-key        — API key to pass through to the provider (from OAuth store)
+     :progress-queue — LinkedBlockingQueue for TUI progress events
 
    Returns the final assistant message."
   ([ai-ctx agent-ctx ai-model new-messages]
    (run-agent-loop! ai-ctx agent-ctx ai-model new-messages nil))
-  ([ai-ctx agent-ctx ai-model new-messages {:keys [turn-ctx-atom api-key]}]
+  ([ai-ctx agent-ctx ai-model new-messages {:keys [turn-ctx-atom api-key progress-queue]}]
    (agent/start-loop-in! agent-ctx new-messages)
    (let [extra-ai-options (when api-key {:api-key api-key})
          result (try
-                  (run-turn! ai-ctx agent-ctx ai-model turn-ctx-atom extra-ai-options)
+                  (run-turn! ai-ctx agent-ctx ai-model turn-ctx-atom
+                             extra-ai-options progress-queue)
                   (catch Exception e
                     (cond-> {:role "assistant" :content []
                              :stop-reason :error

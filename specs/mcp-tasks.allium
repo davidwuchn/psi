@@ -1,0 +1,223 @@
+-- MCP Tasks: Tool execution progress display in TUI
+--
+-- Currently the TUI shows "thinking…" with a spinner while the agent runs.
+-- The user has no visibility into what tools are being called or what text
+-- is being generated. This spec adds streaming progress events so the user
+-- sees tool calls as they happen — names, arguments, and results.
+
+-- ────────────────────────────────────────────────────────────
+-- Entities
+-- ────────────────────────────────────────────────────────────
+
+entity AgentTurn {
+    -- A single LLM turn within an agent loop
+    phase: idle | streaming | tool_executing | done | error
+    text_buffer: String                              -- accumulated LLM text so far
+    tool_calls: List<ToolExecution>                   -- tool calls in this turn
+    error: String?
+}
+
+entity ToolExecution {
+    -- A single tool call within a turn
+    id: String                                        -- tool call id from LLM
+    name: String                                      -- tool name (read, bash, edit, write)
+    arguments: String                                 -- JSON args (streamed incrementally)
+    parsed_args: Map?                                 -- parsed args (available when complete)
+    status: pending | running | success | error
+    result_text: String?                              -- tool output text
+    is_error: Boolean
+}
+
+-- The TUI state tracks the current turn's progress
+entity TuiState {
+    messages: List<Message>
+    phase: idle | streaming
+    current_turn: AgentTurn?                          -- live turn progress
+    error: String?
+    spinner_frame: Integer
+}
+
+-- ────────────────────────────────────────────────────────────
+-- Events: queue messages from executor → TUI
+-- ────────────────────────────────────────────────────────────
+
+-- These flow on the existing LinkedBlockingQueue between the
+-- executor (background future) and the TUI (poll command).
+-- Existing events: :agent-result, :agent-error, :agent-poll
+-- New events below:
+
+value StreamEvent {
+    kind: text_delta
+        | tool_start
+        | tool_delta
+        | tool_executing
+        | tool_result
+        | turn_complete
+}
+
+-- ────────────────────────────────────────────────────────────
+-- Rules: executor emits events
+-- ────────────────────────────────────────────────────────────
+
+rule EmitTextDelta {
+    -- As the LLM streams text tokens, emit them to the TUI
+    when: turn statechart receives :on-text-delta
+    ensures: queue receives {:type :agent-event
+                             :event-kind :text-delta
+                             :text <accumulated text so far>}
+}
+
+rule EmitToolStart {
+    -- When the LLM starts a tool call block
+    when: turn statechart receives :on-toolcall-start
+    ensures: queue receives {:type :agent-event
+                             :event-kind :tool-start
+                             :tool-id <id>
+                             :tool-name <name>}
+}
+
+rule EmitToolArgsDelta {
+    -- As tool arguments stream in
+    when: turn statechart receives :on-toolcall-delta
+    ensures: queue receives {:type :agent-event
+                             :event-kind :tool-delta
+                             :tool-id <id>
+                             :arguments <accumulated args so far>}
+}
+
+rule EmitToolExecuting {
+    -- When we start actually executing the tool (after LLM done)
+    when: run-tool-call! starts execution
+    ensures: queue receives {:type :agent-event
+                             :event-kind :tool-executing
+                             :tool-id <id>
+                             :tool-name <name>
+                             :parsed-args <parsed map>}
+}
+
+rule EmitToolResult {
+    -- When tool execution completes
+    when: run-tool-call! finishes
+    ensures: queue receives {:type :agent-event
+                             :event-kind :tool-result
+                             :tool-id <id>
+                             :tool-name <name>
+                             :result-text <output>
+                             :is-error <boolean>}
+}
+
+-- ────────────────────────────────────────────────────────────
+-- Rules: TUI handles events
+-- ────────────────────────────────────────────────────────────
+
+rule HandleTextDelta {
+    when: TuiState receives :agent-event with event-kind = text_delta
+    ensures: current_turn.text_buffer = event.text
+    ensures: current_turn.phase = streaming
+}
+
+rule HandleToolStart {
+    when: TuiState receives :agent-event with event-kind = tool_start
+    let tc = new ToolExecution {
+        id: event.tool-id,
+        name: event.tool-name,
+        arguments: "",
+        status: pending,
+        is_error: false
+    }
+    ensures: current_turn.tool_calls contains tc
+    ensures: current_turn.phase = streaming
+}
+
+rule HandleToolDelta {
+    when: TuiState receives :agent-event with event-kind = tool_delta
+    requires: tc: ToolExecution with id = event.tool-id in current_turn.tool_calls
+    ensures: tc.arguments = event.arguments
+}
+
+rule HandleToolExecuting {
+    when: TuiState receives :agent-event with event-kind = tool_executing
+    requires: tc: ToolExecution with id = event.tool-id in current_turn.tool_calls
+    ensures: tc.status = running
+    ensures: tc.parsed_args = event.parsed-args
+    ensures: current_turn.phase = tool_executing
+}
+
+rule HandleToolResult {
+    when: TuiState receives :agent-event with event-kind = tool_result
+    requires: tc: ToolExecution with id = event.tool-id in current_turn.tool_calls
+    ensures: tc.status = if event.is-error then error else success
+    ensures: tc.result_text = event.result-text
+    ensures: tc.is_error = event.is-error
+}
+
+-- ────────────────────────────────────────────────────────────
+-- Rules: TUI rendering
+-- ────────────────────────────────────────────────────────────
+
+rule RenderStreamingText {
+    -- Show accumulated text while streaming (before tool calls)
+    when: current_turn.phase = streaming
+    requires: current_turn.text_buffer is not empty
+    ensures: view shows "ψ: <text_buffer>" with assistant style
+}
+
+rule RenderToolCall {
+    -- Each tool call is rendered with its name and formatted args
+    when: tc: ToolExecution in current_turn.tool_calls
+
+    -- Format depends on tool name:
+    -- read  → "read <path>"
+    -- bash  → "$ <command>"
+    -- edit  → "edit <path>"
+    -- write → "write <path>"
+    ensures: view shows tool header with tool name and key arg
+    ensures: view shows status indicator (spinner for pending/running, ✓ for success, ✗ for error)
+}
+
+rule RenderToolResult {
+    -- Show truncated result after tool completes
+    when: tc: ToolExecution with status in [success, error]
+    requires: tc.result_text is not empty
+    ensures: view shows first 5 lines of result (truncated)
+    ensures: error results shown in error style
+}
+
+-- ────────────────────────────────────────────────────────────
+-- Surface: what the user sees
+-- ────────────────────────────────────────────────────────────
+
+surface TuiProgressView {
+    for viewer: User
+
+    -- During streaming phase, instead of just "thinking…":
+    exposes:
+        current_turn.text_buffer                     -- live LLM text
+        current_turn.tool_calls                      -- list of tool executions
+
+    -- Layout (top to bottom):
+    -- 1. Banner (existing)
+    -- 2. Message history (existing)
+    -- 3. Current turn progress:
+    --    a. Streaming text (if any)
+    --    b. Tool calls (each with name, args summary, status, result preview)
+    --    c. Spinner on the active item
+    -- 4. Separator + input (existing)
+}
+
+-- ────────────────────────────────────────────────────────────
+-- Config
+-- ────────────────────────────────────────────────────────────
+
+config {
+    tool_result_preview_lines: Integer = 5
+    text_delta_throttle_ms: Integer = 100           -- don't re-render on every token
+}
+
+-- ────────────────────────────────────────────────────────────
+-- Open questions
+-- ────────────────────────────────────────────────────────────
+
+open_question "Should text deltas be throttled to reduce render frequency?"
+open_question "Should tool args be shown while streaming or only when complete?"
+open_question "Should completed tool results be expandable/collapsible?"

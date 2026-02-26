@@ -38,6 +38,8 @@
    :agent-ctx           — agent-core context (owns the LLM loop)
    :extension-registry  — ExtensionRegistry record
    :journal-atom        — atom of [SessionEntry]
+   :flush-state-atom    — atom {:flushed? bool :session-file File?}
+   :cwd                 — working directory string (used for session dir layout)
    :compaction-fn       — (fn [session-data preparation instructions]) → CompactionResult
    :branch-summary-fn   — (fn [session-data entries instructions]) → BranchSummaryResult
    :config              — merged config map (global defaults + per-session overrides)
@@ -137,15 +139,20 @@
     :branch-summary-fn — (fn [session-data entries instructions]) → BranchSummaryResult
                           default: stub
     :agent-initial     — initial data overrides for the agent-core context
-    :config            — config overrides merged over session/default-config"
+    :config            — config overrides merged over session/default-config
+    :cwd               — working directory for session file layout (default: process cwd)
+    :persist?          — if false, disable all disk I/O (default: true)"
   ([] (create-context {}))
-  ([{:keys [initial-session compaction-fn branch-summary-fn agent-initial config]}]
+  ([{:keys [initial-session compaction-fn branch-summary-fn agent-initial config cwd persist?]
+     :or   {persist? true}}]
    (let [sc-env            (sc/create-sc-env)
          sc-session-id     (java.util.UUID/randomUUID)
+         resolved-cwd      (or cwd (System/getProperty "user.dir"))
          session-data-atom (atom (session/initial-session (or initial-session {})))
          agent-ctx         (agent/create-context)
          ext-reg           (ext/create-registry)
          journal-atom      (persist/create-journal)
+         flush-state-atom  (persist/create-flush-state)
          ui-state-atom     (ext-ui/create-ui-state)
          merged-config     (merge session/default-config (or config {}))
          ;; Build ctx without actions-fn so we can close over it
@@ -155,14 +162,18 @@
                             :agent-ctx          agent-ctx
                             :extension-registry ext-reg
                             :journal-atom       journal-atom
+                            :flush-state-atom   flush-state-atom
                             :turn-ctx-atom      (atom nil)
                             :ui-state-atom      ui-state-atom
+                            :cwd                resolved-cwd
+                            :persist?           persist?
                             :compaction-fn      (or compaction-fn compaction/stub-compaction-fn)
                             :branch-summary-fn  (or branch-summary-fn compaction/stub-branch-summary-fn)
                             :config             merged-config}
          actions-fn        (make-actions-fn ctx)]
 
      ;; Watch agent-core events atom — forward new events to session statechart
+     ;; and persist message-end events to the journal.
      ;; The watch fires whenever events-atom changes value.
      ;; We detect the newest event by comparing old vs new vectors.
      (add-watch (:events-atom agent-ctx) ::session-bridge
@@ -171,6 +182,22 @@
                         old-count (count old-events)]
                     (when (> new-count old-count)
                       (doseq [ev (subvec new-events old-count new-count)]
+                        ;; Persist LLM-generated messages on message-end.
+                        ;; User messages are already journaled in prompt-in!,
+                        ;; so only journal assistant, toolResult, and custom here.
+                        (when (= :message-end (:type ev))
+                          (let [msg  (:message ev)
+                                role (:role msg)]
+                            (when (contains? #{"assistant" "toolResult" "custom"} role)
+                              (persist/append-entry! journal-atom
+                                                     (persist/message-entry msg))
+                              (when persist?
+                                (persist/persist-entry!
+                                 journal-atom
+                                 flush-state-atom
+                                 (:session-id @session-data-atom)
+                                 resolved-cwd
+                                 (:session-file @session-data-atom))))))
                         (sc/send-event! sc-env sc-session-id
                                         :session/agent-event
                                         {:pending-agent-event ev}))))))
@@ -208,6 +235,23 @@
 (defn- swap-session! [ctx f & args]
   (apply swap! (:session-data-atom ctx) f args))
 
+;; ============================================================
+;; Journal append helper
+;; ============================================================
+
+(defn- journal-append!
+  "Append `entry` to the journal and conditionally persist to disk."
+  [ctx entry]
+  (persist/append-entry! (:journal-atom ctx) entry)
+  (when (:persist? ctx)
+    (let [sd (get-session-data-in ctx)]
+      (persist/persist-entry!
+       (:journal-atom ctx)
+       (:flush-state-atom ctx)
+       (:session-id sd)
+       (:cwd ctx)
+       (:session-file sd)))))
+
 (defn sc-phase-in
   "Return the active statechart phase for `ctx`."
   [ctx]
@@ -231,25 +275,70 @@
          {:keys [cancelled?]} (ext/dispatch-in reg "session_before_switch" {:reason :new})]
      (when-not cancelled?
        (agent/reset-agent-in! (:agent-ctx ctx))
-       (swap-session! ctx assoc
-                      :session-id (str (java.util.UUID/randomUUID))
-                      :session-name nil
-                      :steering-messages []
-                      :follow-up-messages []
-                      :retry-attempt 0)
-       (swap! (:journal-atom ctx) conj
-              (persist/thinking-level-entry (:thinking-level (get-session-data-in ctx))))
+       (let [new-session-id (str (java.util.UUID/randomUUID))]
+         (swap-session! ctx assoc
+                        :session-id        new-session-id
+                        :session-file      nil
+                        :session-name      nil
+                        :steering-messages []
+                        :follow-up-messages []
+                        :retry-attempt     0)
+         ;; Reset journal and flush state for the new session
+         (reset! (:journal-atom ctx) [])
+         (when (:persist? ctx)
+           (let [session-dir (persist/session-dir-for (:cwd ctx))
+                 file        (persist/new-session-file-path session-dir new-session-id)]
+             (swap-session! ctx assoc :session-file (str file))
+             (reset! (:flush-state-atom ctx) {:flushed? false :session-file file})))
+         (journal-append! ctx
+                          (persist/thinking-level-entry
+                           (:thinking-level (get-session-data-in ctx)))))
        (ext/dispatch-in reg "session_switch" {:reason :new})
        (get-session-data-in ctx)))))
 
 (defn resume-session-in!
-  "Resume a session from `session-path`.
-  Disk I/O deferred — for now records the path."
+  "Load and resume a session from `session-path`.
+  Parses the NDEDN file, migrates if needed, rebuilds the agent message list,
+  and restores model/thinking-level from the journal."
   [ctx session-path]
   (let [reg                  (:extension-registry ctx)
         {:keys [cancelled?]} (ext/dispatch-in reg "session_before_switch" {:reason :resume})]
     (when-not cancelled?
-      (swap-session! ctx assoc :session-file session-path)
+      (let [loaded (persist/load-session-file session-path)]
+        (if-not loaded
+          ;; File missing or invalid — treat as new session at that path
+          (do (swap-session! ctx assoc :session-file session-path)
+              (reset! (:journal-atom ctx) [])
+              (reset! (:flush-state-atom ctx)
+                      {:flushed? false
+                       :session-file (clojure.java.io/file session-path)}))
+          (let [{:keys [header entries]} loaded
+                session-id (:id header)
+                ;; Restore model/thinking from last model/thinking entries
+                model-entry    (last (filter #(= :model (:kind %)) entries))
+                thinking-entry (last (filter #(= :thinking-level (:kind %)) entries))
+                model          (when model-entry
+                                 {:provider (get-in model-entry [:data :provider])
+                                  :id       (get-in model-entry [:data :model-id])})
+                thinking-level (or (get-in thinking-entry [:data :thinking-level]) :off)
+                ;; Rebuild agent messages from journal
+                messages       (keep #(when (= :message (:kind %))
+                                        (get-in % [:data :message]))
+                                     entries)]
+            (reset! (:journal-atom ctx) (vec entries))
+            (reset! (:flush-state-atom ctx)
+                    {:flushed? true
+                     :session-file (clojure.java.io/file session-path)})
+            (swap-session! ctx assoc
+                           :session-id     session-id
+                           :session-file   session-path
+                           :session-name   (some #(when (= :session-info (:kind %))
+                                                    (get-in % [:data :name]))
+                                                 (rseq (vec entries)))
+                           :model          model
+                           :thinking-level thinking-level)
+            (agent/reset-agent-in! (:agent-ctx ctx))
+            (agent/replace-messages-in! (:agent-ctx ctx) (vec messages)))))
       (ext/dispatch-in reg "session_switch" {:reason :resume})
       (get-session-data-in ctx))))
 
@@ -282,7 +371,7 @@
                    :content   (cond-> [{:type :text :text text}]
                                 images (into images))
                    :timestamp (java.time.Instant/now)}]
-     (swap! (:journal-atom ctx) conj (persist/message-entry user-msg))
+     (journal-append! ctx (persist/message-entry user-msg))
      (sc/send-event! (:sc-env ctx) (:sc-session-id ctx) :session/prompt)
      (agent/start-loop-in! (:agent-ctx ctx) [user-msg]))))
 
@@ -321,7 +410,7 @@
                        model)]
     (swap-session! ctx assoc :model model :thinking-level clamped-level)
     (agent/set-model-in! (:agent-ctx ctx) model)
-    (swap! (:journal-atom ctx) conj (persist/model-entry (:provider model) (:id model)))
+    (journal-append! ctx (persist/model-entry (:provider model) (:id model)))
     (ext/dispatch-in (:extension-registry ctx) "model_select" {:model model :source :set})
     (get-session-data-in ctx)))
 
@@ -344,7 +433,7 @@
         clamped (if model (session/clamp-thinking-level level model) level)]
     (swap-session! ctx assoc :thinking-level clamped)
     (agent/set-thinking-level-in! (:agent-ctx ctx) clamped)
-    (swap! (:journal-atom ctx) conj (persist/thinking-level-entry clamped))
+    (journal-append! ctx (persist/thinking-level-entry clamped))
     (get-session-data-in ctx)))
 
 (defn cycle-thinking-level-in!
@@ -389,7 +478,7 @@
                           ((:compaction-fn ctx) sd preparation custom-instructions))
              entry    (persist/compaction-entry result false)
              new-msgs (compaction/rebuild-messages-from-entries result sd)]
-         (swap! (:journal-atom ctx) conj entry)
+         (journal-append! ctx entry)
          (agent/replace-messages-in! (:agent-ctx ctx) new-msgs)
          (swap-session! ctx assoc :is-compacting false :context-tokens nil)
          (ext/dispatch-in reg "session_compact" {})
@@ -451,14 +540,13 @@
   {:send-message-fn     (fn [_msg _opts] nil) ;; stub — wired by run mode
    :send-user-message-fn (fn [_content _opts] nil)
    :append-entry-fn     (fn [custom-type data]
-                          (swap! (:journal-atom ctx)
-                                 conj (persist/custom-message-entry
-                                       custom-type (str data) nil false)))
+                          (journal-append! ctx
+                                           (persist/custom-message-entry
+                                            custom-type (str data) nil false)))
    :set-session-name-fn (fn [name] (set-session-name-in! ctx name))
    :get-session-name-fn (fn [] (:session-name (get-session-data-in ctx)))
    :set-label-fn        (fn [entry-id label]
-                          (swap! (:journal-atom ctx)
-                                 conj (persist/label-entry entry-id label)))
+                          (journal-append! ctx (persist/label-entry entry-id label)))
    :get-active-tools-fn (fn [] (mapv :name (:tools (agent/get-data-in (:agent-ctx ctx)))))
    :set-active-tools-fn (fn [tool-names]
                           (let [current-tools (:tools (agent/get-data-in (:agent-ctx ctx)))
@@ -514,7 +602,7 @@
   "Set the human-readable session name."
   [ctx name]
   (swap-session! ctx assoc :session-name name)
-  (swap! (:journal-atom ctx) conj (persist/session-info-entry name))
+  (journal-append! ctx (persist/session-info-entry name))
   (get-session-data-in ctx))
 
 ;; ============================================================

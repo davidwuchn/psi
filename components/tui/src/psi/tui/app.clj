@@ -26,6 +26,7 @@
    [charm.message :as msg]
    [charm.render.core]  ; loaded so we can patch enter-alt-screen!
    [charm.terminal :as charm-term]
+   [cheshire.core :as json]
    [clojure.string :as str]
    [psi.tui.extension-ui :as ext-ui])
   (:import
@@ -77,6 +78,10 @@
 (def ^:private error-style   (charm/style :fg charm/red))
 (def ^:private dim-style     (charm/style :fg 240))
 (def ^:private sep-style     (charm/style :fg 240))
+(def ^:private tool-style    (charm/style :fg charm/yellow :bold true))
+(def ^:private tool-ok-style (charm/style :fg charm/green))
+(def ^:private tool-err-style (charm/style :fg charm/red))
+(def ^:private tool-dim-style (charm/style :fg 245))
 
 ;; ── Spinner frames (driven by poll ticks, no separate timer) ──
 
@@ -88,6 +93,7 @@
 (defn agent-result? [m] (= :agent-result (:type m)))
 (defn agent-error?  [m] (= :agent-error  (:type m)))
 (defn agent-poll?   [m] (= :agent-poll   (:type m)))
+(defn agent-event?  [m] (= :agent-event  (:type m)))
 
 ;; ── Dialog state helpers ────────────────────────────────────
 
@@ -204,7 +210,11 @@
          :ui-state-atom     ui-state-atom
          :queue             nil
          :width             80
-         :height            24}
+         :height            24
+         ;; Live turn progress
+         :stream-text       nil       ;; accumulated LLM text for current turn
+         :tool-calls        {}        ;; tool-id → {:name :args :status :result :is-error}
+         :tool-order        []}
         nil]))))
 
 ;; ── Update helpers ──────────────────────────────────────────
@@ -227,7 +237,10 @@
                 :error         nil
                 :input         (charm/text-input-reset (:input state))
                 :queue         queue
-                :spinner-frame 0))
+                :spinner-frame 0
+                :stream-text   nil
+                :tool-calls    {}
+                :tool-order    []))
      (poll-cmd queue)]))
 
 (defn- submit-input
@@ -249,6 +262,51 @@
       :else
       (submit-to-agent state run-agent-fn! text))))
 
+(defn- handle-agent-event
+  "Process an intermediate progress event from the executor."
+  [state event]
+  (let [kind (:event-kind event)]
+    (case kind
+      :text-delta
+      [(assoc state :stream-text (:text event)) nil]
+
+      :tool-start
+      (let [id   (:tool-id event)
+            tc   {:name   (:tool-name event)
+                  :args   ""
+                  :status :pending
+                  :result nil
+                  :is-error false}]
+        [(-> state
+             (assoc-in [:tool-calls id] tc)
+             (update :tool-order conj id))
+         nil])
+
+      :tool-delta
+      [(assoc-in state [:tool-calls (:tool-id event) :args]
+                 (:arguments event))
+       nil]
+
+      :tool-executing
+      [(-> state
+           (assoc-in [:tool-calls (:tool-id event) :status] :running)
+           (assoc-in [:tool-calls (:tool-id event) :parsed-args]
+                     (:parsed-args event)))
+       nil]
+
+      :tool-result
+      [(-> state
+           (assoc-in [:tool-calls (:tool-id event) :status]
+                     (if (:is-error event) :error :success))
+           (assoc-in [:tool-calls (:tool-id event) :result]
+                     (:result-text event))
+           (assoc-in [:tool-calls (:tool-id event) :is-error]
+                     (:is-error event)))
+       nil]
+
+      ;; unknown event-kind — ignore
+      [state nil])))
+
 (defn- handle-agent-result
   "Process completed agent result."
   [state result]
@@ -261,9 +319,12 @@
         display (if (seq text) text "(no response)")]
     [(-> state
          (update :messages conj {:role :assistant :text display})
-         (assoc :phase :idle
-                :error error
-                :queue nil))
+         (assoc :phase       :idle
+                :error       error
+                :queue       nil
+                :stream-text nil
+                :tool-calls  {}
+                :tool-order  []))
      nil]))
 
 (defn- handle-agent-poll
@@ -306,15 +367,25 @@
       (and (has-active-dialog? state) (msg/key-press? m))
       (or (handle-dialog-key state m) [state nil])
 
+      ;; Agent progress event (tool start, delta, result, text delta)
+      (agent-event? m)
+      (let [[new-state cmd] (handle-agent-event state m)]
+        [new-state (or cmd (poll-cmd (:queue state)))])
+
       ;; Agent result
       (agent-result? m)
       (handle-agent-result state (:result m))
 
       ;; Agent error
       (agent-error? m)
-      [(assoc state :phase :idle
-              :error (:error m)
-              :queue nil) nil]
+      [(-> state
+           (assoc :phase       :idle
+                  :error       (:error m)
+                  :queue       nil
+                  :stream-text nil
+                  :tool-calls  {}
+                  :tool-order  []))
+       nil]
 
       ;; Agent poll timeout → advance spinner, keep polling
       (agent-poll? m)
@@ -449,19 +520,96 @@
         ;; fallback
         ""))))
 
+;; ── Tool progress rendering ──────────────────────────────────
+
+(def ^:private tool-result-preview-lines 5)
+
+(defn- tool-header
+  "Format tool name and key argument for display."
+  [tool-name parsed-args args-str]
+  (let [args (or parsed-args
+                 (try (json/parse-string args-str)
+                      (catch Exception _ nil)))]
+    (case tool-name
+      "read"  (str (charm/render tool-style "read")  " " (get args "path" "…"))
+      "bash"  (str (charm/render tool-style "$")      " " (get args "command" "…"))
+      "edit"  (str (charm/render tool-style "edit")  " " (get args "path" "…"))
+      "write" (str (charm/render tool-style "write") " " (get args "path" "…"))
+      (str (charm/render tool-style tool-name)))))
+
+(defn- tool-status-indicator
+  "Status icon for a tool execution."
+  [status spinner-char]
+  (case status
+    :pending (str spinner-char)
+    :running (str spinner-char)
+    :success (charm/render tool-ok-style "✓")
+    :error   (charm/render tool-err-style "✗")
+    ""))
+
+(defn- truncate-result
+  "Truncate tool result to N lines."
+  [text max-lines]
+  (when (and text (not (str/blank? text)))
+    (let [lines (str/split-lines text)
+          n     (count lines)]
+      (if (<= n max-lines)
+        text
+        (str (str/join "\n" (take max-lines lines))
+             "\n" (charm/render dim-style
+                                (str "… (" (- n max-lines) " more lines)")))))))
+
+(defn- render-tool-calls
+  "Render all tool calls for the current turn."
+  [tool-calls tool-order spinner-char]
+  (when (seq tool-order)
+    (str/join
+     "\n"
+     (for [id tool-order
+           :let [tc (get tool-calls id)]
+           :when tc]
+       (let [status-icon (tool-status-indicator (:status tc) spinner-char)
+             header      (tool-header (:name tc) (:parsed-args tc) (:args tc))
+             result      (truncate-result (:result tc) tool-result-preview-lines)
+             result-style (if (:is-error tc) tool-err-style tool-dim-style)]
+         (str "  " status-icon " " header
+              (when result
+                (str "\n"
+                     (str/join "\n"
+                               (map #(str "    " (charm/render result-style %))
+                                    (str/split-lines result)))))))))))
+
+(defn- render-stream-text
+  "Render accumulated streaming text from the LLM."
+  [text]
+  (when (and text (not (str/blank? text)))
+    (let [lines       (str/split-lines text)
+          first-line  (str (charm/render assist-style "ψ: ") (first lines))
+          rest-lines  (map #(str "   " %) (rest lines))]
+      (str (str/join "\n" (cons first-line rest-lines)) "\n"))))
+
 (defn view
   "Render the full TUI state to a string."
   [state]
   (let [{:keys [messages phase error input spinner-frame model-name
-                prompt-templates skills extension-summary ui-state-atom]} state
+                prompt-templates skills extension-summary ui-state-atom
+                stream-text tool-calls tool-order]} state
         spinner-char (nth spinner-frames (mod spinner-frame (count spinner-frames)))
-        dialog-active? (has-active-dialog? state)]
+        dialog-active? (has-active-dialog? state)
+        has-progress? (or (seq stream-text) (seq tool-order))]
     (str (render-banner model-name prompt-templates skills extension-summary)
          "\n"
          (render-messages messages)
+         ;; Current turn progress
          (when (= :streaming phase)
-           (str "\n" (charm/render assist-style "ψ: ")
-                spinner-char " thinking…\n"))
+           (if has-progress?
+             ;; Show live progress: streaming text + tool calls
+             (str (render-stream-text stream-text)
+                  (render-tool-calls tool-calls tool-order spinner-char)
+                  "\n")
+             ;; No progress yet — show thinking spinner
+             (str "\n" (charm/render assist-style "ψ: ")
+                  spinner-char " thinking…\n")))
          (when error
            (str "\n" (charm/render error-style (str "[error: " error "]")) "\n"))
          ;; Widgets above editor
