@@ -15,14 +15,126 @@
     :supports-text true
     :context-window 200000
     :max-tokens 8192
-    :input-cost 3.0      ;; $/million tokens
+    :input-cost 3.0
     :output-cost 15.0
     :cache-read-cost 0.3
     :cache-write-cost 3.75}
-   
+
    :claude-3-5-haiku
    {:id "claude-3-5-haiku-20241022"
     :name "Claude 3.5 Haiku"
+    :provider :anthropic
+    :api :anthropic-messages
+    :base-url "https://api.anthropic.com"
+    :supports-reasoning false
+    :supports-images true
+    :supports-text true
+    :context-window 200000
+    :max-tokens 8192
+    :input-cost 1.0
+    :output-cost 5.0
+    :cache-read-cost 0.1
+    :cache-write-cost 1.25}
+
+   :sonnet-4
+   {:id "claude-sonnet-4-20250514"
+    :name "Claude Sonnet 4"
+    :provider :anthropic
+    :api :anthropic-messages
+    :base-url "https://api.anthropic.com"
+    :supports-reasoning true
+    :supports-images true
+    :supports-text true
+    :context-window 200000
+    :max-tokens 16384
+    :input-cost 3.0
+    :output-cost 15.0
+    :cache-read-cost 0.3
+    :cache-write-cost 3.75}
+
+   :opus-4
+   {:id "claude-opus-4-20250514"
+    :name "Claude Opus 4"
+    :provider :anthropic
+    :api :anthropic-messages
+    :base-url "https://api.anthropic.com"
+    :supports-reasoning true
+    :supports-images true
+    :supports-text true
+    :context-window 200000
+    :max-tokens 32768
+    :input-cost 15.0
+    :output-cost 75.0
+    :cache-read-cost 1.5
+    :cache-write-cost 18.75}
+
+   :sonnet-4.5
+   {:id "claude-sonnet-4-5"
+    :name "Claude Sonnet 4.5"
+    :provider :anthropic
+    :api :anthropic-messages
+    :base-url "https://api.anthropic.com"
+    :supports-reasoning true
+    :supports-images true
+    :supports-text true
+    :context-window 200000
+    :max-tokens 16384
+    :input-cost 3.0
+    :output-cost 15.0
+    :cache-read-cost 0.3
+    :cache-write-cost 3.75}
+
+   :opus-4.5
+   {:id "claude-opus-4-5"
+    :name "Claude Opus 4.5"
+    :provider :anthropic
+    :api :anthropic-messages
+    :base-url "https://api.anthropic.com"
+    :supports-reasoning true
+    :supports-images true
+    :supports-text true
+    :context-window 200000
+    :max-tokens 32768
+    :input-cost 15.0
+    :output-cost 75.0
+    :cache-read-cost 1.5
+    :cache-write-cost 18.75}
+
+   :sonnet-4.6
+   {:id "claude-sonnet-4-6"
+    :name "Claude Sonnet 4.6"
+    :provider :anthropic
+    :api :anthropic-messages
+    :base-url "https://api.anthropic.com"
+    :supports-reasoning true
+    :supports-images true
+    :supports-text true
+    :context-window 200000
+    :max-tokens 16384
+    :input-cost 3.0
+    :output-cost 15.0
+    :cache-read-cost 0.3
+    :cache-write-cost 3.75}
+
+   :opus-4.6
+   {:id "claude-opus-4-6"
+    :name "Claude Opus 4.6"
+    :provider :anthropic
+    :api :anthropic-messages
+    :base-url "https://api.anthropic.com"
+    :supports-reasoning true
+    :supports-images true
+    :supports-text true
+    :context-window 200000
+    :max-tokens 32768
+    :input-cost 15.0
+    :output-cost 75.0
+    :cache-read-cost 1.5
+    :cache-write-cost 18.75}
+
+   :haiku-4.5
+   {:id "claude-haiku-4-5"
+    :name "Claude Haiku 4.5"
     :provider :anthropic
     :api :anthropic-messages
     :base-url "https://api.anthropic.com"
@@ -52,7 +164,7 @@
     :output-cost 10.0
     :cache-read-cost 1.25
     :cache-write-cost 5.0}
-   
+
    :o1-preview
    {:id "o1-preview"
     :name "GPT-o1 Preview"
@@ -97,7 +209,7 @@
   "List models that support images"
   []
   (->> all-models
-       (filter (fn [[_ model]] 
+       (filter (fn [[_ model]]
                  (and (:supports-images model)
                       (:supports-text model))))
        (into {})))
@@ -110,14 +222,14 @@
   (let [{:keys [input-cost output-cost cache-read-cost cache-write-cost]} model
         {:keys [input-tokens output-tokens cache-read-tokens cache-write-tokens]} usage
         input-cost-total (* (/ input-tokens 1000000.0) input-cost)
-        output-cost-total (* (/ output-tokens 1000000.0) output-cost) 
+        output-cost-total (* (/ output-tokens 1000000.0) output-cost)
         cache-read-cost-total (* (/ cache-read-tokens 1000000.0) cache-read-cost)
         cache-write-cost-total (* (/ cache-write-tokens 1000000.0) cache-write-cost)]
     {:input input-cost-total
      :output output-cost-total
      :cache-read cache-read-cost-total
      :cache-write cache-write-cost-total
-     :total (+ input-cost-total output-cost-total 
+     :total (+ input-cost-total output-cost-total
                cache-read-cost-total cache-write-cost-total)}))
 
 ;; Model validation

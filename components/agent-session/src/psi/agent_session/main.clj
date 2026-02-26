@@ -3,7 +3,7 @@
 
    Usage:
      clojure -M:run
-     clojure -M:run --model claude-3-5-haiku
+     clojure -M:run --model sonnet-4.6
      clojure -M:run --log-level DEBUG
      clojure -M:run --tui
      clojure -M:run --nrepl            # random port
@@ -117,7 +117,7 @@
 ;; Model resolution
 ;; ============================================================
 
-(def ^:private default-model-key :claude-3-5-haiku)
+(def ^:private default-model-key :sonnet-4.6)
 
 (defn- resolve-model
   "Return an ai.schemas.Model map for `model-key` keyword."
