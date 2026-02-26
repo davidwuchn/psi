@@ -646,6 +646,35 @@ creating a self-sustaining loop that ends when the agent is done.
 common function name. Don't name your entry point `run!` to avoid
 shadowing `clojure.core/run!`. Use `start!` instead.
 
+### λ Always Require, Never Inline-Qualify in Tests
+
+Using `clojure.string/includes?` or `charm.components.text-input/value`
+inline (without a `:require`) compiles fine but triggers clj-kondo
+"Unresolved namespace" warnings.  This bit us twice in the same session.
+
+**Rule**: always add the namespace to `:require` with an alias:
+```clojure
+;; ✗ inline — triggers clj-kondo warning
+(is (clojure.string/includes? out "hello"))
+(is (= "hi" (charm.components.text-input/value (:input s))))
+
+;; ✓ required + aliased
+(:require [clojure.string :as str]
+          [charm.components.text-input :as text-input])
+(is (str/includes? out "hello"))
+(is (= "hi" (text-input/value (:input s))))
+```
+
+### λ clojure-lsp Caches Stale Diagnostics via Pi Tool
+
+After editing a file, the pi `clojure_lsp` tool may report warnings that
+no longer exist in the source.  Verify with `grep` before chasing phantom
+errors:
+```bash
+grep -n 'clojure\.string/' components/tui/test/psi/tui/app_test.clj
+```
+If grep finds nothing but clojure-lsp still warns, the cache is stale.
+
 ### λ clj-kondo Cache Goes Stale After Refactors
 
 After adding new public vars to a namespace, clj-kondo's `.cache/` still
