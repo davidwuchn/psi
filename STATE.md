@@ -47,7 +47,7 @@ clojure -M:run --nrepl 7888              # specific port
 clojure -M:run --tui --nrepl             # TUI + nREPL for live introspection
 ```
 
-In-session commands: `/status`, `/history`, `/new`, `/help`, `/quit`, `/exit`
+In-session commands: `/status`, `/history`, `/new`, `/help`, `/quit`, `/exit`, `/skills`, `/prompts`, `/skill:<name>`
 
 nREPL introspection (from connected REPL):
 ```clojure
@@ -88,10 +88,12 @@ Caught by `jline-terminal-keymap-test` smoke test.
 | `core.clj`                      | Public API, create-context, global wrappers       |
 | `statechart.clj`                | Session statechart (idle/streaming/compacting/retrying) |
 | `session.clj`                   | AgentSession data model, malli schemas            |
+| `skills.clj`                    | Skill discovery, validation, prompt formatting    |
+| `system_prompt.clj`             | System prompt assembly (tools, context, skills)   |
 | `compaction.clj`                | Compaction algorithm (stub, injectable fn)        |
 | `extensions.clj`                | Extension registry + broadcast dispatch           |
 | `persistence.clj`               | Append-only journal                               |
-| `resolvers.clj`                 | EQL resolvers (:psi.agent-session/*)              |
+| `resolvers.clj`                 | EQL resolvers (:psi.agent-session/*, :psi.skill/*)|
 | `tools.clj`                     | Built-in tool implementations                     |
 | `turn_statechart.clj`           | Per-turn streaming statechart (idle→text⇄tool→done) |
 | `executor.clj`                  | ai ↔ agent-core streaming bridge (statechart-driven) |
@@ -99,7 +101,7 @@ Caught by `jline-terminal-keymap-test` smoke test.
 
 ## Test Status
 
-179 tests, 637 assertions, 0 failures. 0 clj-kondo warnings. 0 clojure-lsp diagnostics.
+222 tests, 897 assertions, 0 failures. 0 clj-kondo warnings. 0 clojure-lsp diagnostics.
 
 ## Specs
 
@@ -109,6 +111,7 @@ Caught by `jline-terminal-keymap-test` smoke test.
 | `agent.allium`             | `agent-core`            | ✓ implemented                         |
 | `ai-abstract-model.allium` | `ai`                    | ✓ implemented                         |
 | `coding-agent.allium`      | `agent-session`         | ✓ split → 3 sub-specs; ✓ implemented  |
+| `skills.allium`            | `agent-session/skills`  | ✓ implemented                         |
 | `tui.allium`               | `tui`                   | partial — session loop not yet working|
 
 ## Open Questions

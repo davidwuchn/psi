@@ -41,6 +41,8 @@
    [psi.agent-session.executor :as executor]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.prompt-templates :as pt]
+   [psi.agent-session.skills :as skills]
+   [psi.agent-session.system-prompt :as sys-prompt]
    [psi.agent-session.tools :as tools]
    [psi.agent-core.core :as agent]
    [psi.ai.models :as models]
@@ -130,7 +132,7 @@
 ;; Output helpers
 ;; ============================================================
 
-(defn- print-banner [model templates]
+(defn- print-banner [model templates loaded-skills]
   (println)
   (println "╔══════════════════════════════════════╗")
   (println "║  ψ  Psi Agent Session                ║")
@@ -141,6 +143,11 @@
     (println (str "  Prompts : " (count templates) " loaded"))
     (doseq [t templates]
       (println (str "    /" (:name t) " — " (:description t)))))
+  (when (seq loaded-skills)
+    (let [visible (skills/visible-skills loaded-skills)
+          hidden  (skills/hidden-skills loaded-skills)]
+      (println (str "  Skills  : " (count visible) " available"
+                    (when (seq hidden) (str ", " (count hidden) " hidden"))))))
   (println "  /help for commands, /quit to exit")
   (println))
 
@@ -182,13 +189,22 @@
   (println "  /status  — show session diagnostics")
   (println "  /history — show message history")
   (println "  /prompts — list available prompt templates")
+  (println "  /skills  — list available skills")
   (println "  /new     — start a fresh session")
   (println "  /help    — show this help")
+  (println "  /skill:name — invoke a skill (loads full content)")
   (let [templates (:prompt-templates (session/get-session-data-in ctx))]
     (when (seq templates)
       (println "  ── Prompt Templates ─────────────────")
       (doseq [t templates]
         (println (str "  /" (:name t) " — " (:description t))))))
+  (let [loaded-skills (:skills (session/get-session-data-in ctx))]
+    (when (seq loaded-skills)
+      (println "  ── Skills ───────────────────────────")
+      (doseq [s loaded-skills]
+        (println (str "  /skill:" (:name s)
+                      (when (:disable-model-invocation s) " [hidden]")
+                      " — " (:description s))))))
   (println "  (anything else is sent to the agent)")
   (println "───────────────────────────────────────\n"))
 
@@ -203,6 +219,18 @@
                              "")]
           (println (str "  /" (:name t) placeholders " — " (:description t)
                         " [" (name (:source t)) "]")))))
+    (println "───────────────────────────────────────\n")))
+
+(defn- print-skills [ctx]
+  (let [loaded-skills (:skills (session/get-session-data-in ctx))]
+    (println "\n── Skills ─────────────────────────────")
+    (if (empty? loaded-skills)
+      (println "  (none discovered)")
+      (doseq [s loaded-skills]
+        (println (str "  /skill:" (:name s)
+                      (when (:disable-model-invocation s) " [hidden]")
+                      " — " (:description s)
+                      " [" (name (:source s)) "]"))))
     (println "───────────────────────────────────────\n")))
 
 ;; ============================================================
@@ -227,18 +255,25 @@
 ;; ============================================================
 
 (defn- expand-input
-  "Expand user input through prompt templates if it matches /name.
+  "Expand user input through skills (/skill:name) or prompt templates (/name).
    Returns the (possibly expanded) text to send to the agent.
    Extension commands are excluded — they are handled by the command dispatch."
   [ctx text]
-  (let [sd        (session/get-session-data-in ctx)
-        templates (:prompt-templates sd)
-        commands  (ext/command-names-in (:extension-registry ctx))]
-    (if-let [result (pt/invoke-template templates commands text)]
+  (let [sd            (session/get-session-data-in ctx)
+        loaded-skills (:skills sd)
+        templates     (:prompt-templates sd)
+        commands      (ext/command-names-in (:extension-registry ctx))]
+    ;; Try skill expansion first (/skill:name)
+    (if-let [skill-result (skills/invoke-skill loaded-skills text)]
       (do
-        (println (str "[Template: " (:source-template result) "]\n"))
-        (:content result))
-      text)))
+        (println (str "[Skill: " (:skill-name skill-result) "]\n"))
+        (:content skill-result))
+      ;; Then try prompt template expansion (/name)
+      (if-let [tpl-result (pt/invoke-template templates commands text)]
+        (do
+          (println (str "[Template: " (:source-template tpl-result) "]\n"))
+          (:content tpl-result))
+        text))))
 
 ;; ============================================================
 ;; Core: one prompt → response cycle
@@ -269,26 +304,35 @@
         ai-ctx   nil
         ;; Discover prompt templates from global + project dirs
         templates (pt/discover-templates)
+        ;; Discover skills from global + project dirs
+        {:keys [skills diagnostics]} (skills/discover-skills)
+        _         (doseq [d diagnostics]
+                    (timbre/warn "Skill" (:type d) ":" (:message d) (:path d)))
+        ;; Build system prompt with context files and skills
+        cwd       (System/getProperty "user.dir")
+        ctx-files (sys-prompt/discover-context-files cwd)
+        system-prompt (sys-prompt/build-system-prompt
+                       {:cwd           cwd
+                        :context-files ctx-files
+                        :skills        skills})
         ;; session context — agent-core + statechart + extension registry
         ctx      (session/create-context
                   {:initial-session {:model {:provider (name (:provider ai-model))
                                              :id       (:id ai-model)
                                              :reasoning (:supports-reasoning ai-model)}
-                                    :prompt-templates templates}})]
+                                    :prompt-templates templates
+                                    :skills          skills
+                                    :system-prompt   system-prompt}})]
     ;; Wire agent-session resolvers into the global query graph so
     ;; :psi.agent-session/* attributes are queryable.
     (session/register-resolvers!)
     ;; Register built-in tools into agent-core
     (agent/set-tools-in! (:agent-ctx ctx) tools/all-tool-schemas)
-    (agent/set-system-prompt-in!
-     (:agent-ctx ctx)
-     (str "You are ψ (Psi), a helpful AI coding assistant.\n"
-          "Working directory: " (System/getProperty "user.dir") "\n"
-          "You have access to tools: read, bash, edit, write.\n"
-          "Use them to help with coding tasks."))
+    ;; Set the assembled system prompt (introspectable)
+    (agent/set-system-prompt-in! (:agent-ctx ctx) system-prompt)
     ;; Expose state for nREPL introspection
     (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model})
-    (print-banner ai-model templates)
+    (print-banner ai-model templates skills)
     (loop []
       (print "刀: ")
       (flush)
@@ -306,6 +350,9 @@
 
             (= trimmed "/prompts")
             (do (print-prompts ctx) (recur))
+
+            (= trimmed "/skills")
+            (do (print-skills ctx) (recur))
 
             (= trimmed "/new")
             (do (session/new-session-in! ctx)
@@ -337,19 +384,25 @@
   (let [ai-model  (resolve-model model-key)
         ai-ctx    nil
         templates (pt/discover-templates)
+        {:keys [skills diagnostics]} (skills/discover-skills)
+        _         (doseq [d diagnostics]
+                    (timbre/warn "Skill" (:type d) ":" (:message d) (:path d)))
+        cwd       (System/getProperty "user.dir")
+        ctx-files (sys-prompt/discover-context-files cwd)
+        system-prompt (sys-prompt/build-system-prompt
+                       {:cwd           cwd
+                        :context-files ctx-files
+                        :skills        skills})
         ctx       (session/create-context
                    {:initial-session {:model {:provider (name (:provider ai-model))
                                               :id       (:id ai-model)
                                               :reasoning (:supports-reasoning ai-model)}
-                                     :prompt-templates templates}})
+                                     :prompt-templates templates
+                                     :skills          skills
+                                     :system-prompt   system-prompt}})
         _         (session/register-resolvers!)
         _         (agent/set-tools-in! (:agent-ctx ctx) tools/all-tool-schemas)
-        _         (agent/set-system-prompt-in!
-                   (:agent-ctx ctx)
-                   (str "You are ψ (Psi), a helpful AI coding assistant.\n"
-                        "Working directory: " (System/getProperty "user.dir") "\n"
-                        "You have access to tools: read, bash, edit, write.\n"
-                        "Use them to help with coding tasks."))
+        _         (agent/set-system-prompt-in! (:agent-ctx ctx) system-prompt)
 
         ;; Expose state for nREPL introspection
         _         (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model})

@@ -40,13 +40,24 @@
    :psi.prompt-template/names             — vector of template name strings
    :psi.prompt-template/count             — number of discovered templates
    :psi.prompt-template/by-source         — templates grouped by source
-   :psi.prompt-template/detail            — single enriched template (seed: :psi.prompt-template/name)"
+   :psi.prompt-template/detail            — single enriched template (seed: :psi.prompt-template/name)
+
+   Skill introspection
+   ───────────────────
+   :psi.skill/summary                     — overall skill summary
+   :psi.skill/names                       — vector of skill name strings
+   :psi.skill/count                       — total discovered skills
+   :psi.skill/visible-count               — skills available to model
+   :psi.skill/hidden-count                — skills with disable-model-invocation
+   :psi.skill/by-source                   — skills grouped by source
+   :psi.skill/detail                      — single enriched skill (seed: :psi.skill/name)"
   (:require
    [com.wsscode.pathom3.connect.operation :as pco]
    [com.wsscode.pathom3.connect.indexes :as pci]
    [com.wsscode.pathom3.interface.eql :as p.eql]
    [psi.agent-session.session :as session]
    [psi.agent-session.prompt-templates :as pt]
+   [psi.agent-session.skills :as skills]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.statechart :as sc]
    [psi.agent-session.turn-statechart :as turn-sc]))
@@ -266,6 +277,38 @@
     {:psi.prompt-template/detail
      (when tpl (pt/enrich-template tpl))}))
 
+;; ── Skill introspection ──────────────────────────────────
+
+(pco/defresolver skill-summary-resolver
+  "Resolve skill summary: count, visible/hidden counts, per-source grouping."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.skill/summary
+                 :psi.skill/names
+                 :psi.skill/count
+                 :psi.skill/visible-count
+                 :psi.skill/hidden-count
+                 :psi.skill/by-source]}
+  (let [all-skills (:skills @(:session-data-atom agent-session-ctx))
+        summary    (skills/skill-summary all-skills)]
+    {:psi.skill/summary       summary
+     :psi.skill/names         (skills/skill-names all-skills)
+     :psi.skill/count         (:skill-count summary)
+     :psi.skill/visible-count (:visible-count summary)
+     :psi.skill/hidden-count  (:hidden-count summary)
+     :psi.skill/by-source     (skills/skills-by-source all-skills)}))
+
+(pco/defresolver skill-detail-resolver
+  "Resolve a single enriched skill by name.
+   Seed input: {:psi.skill/name \"skill-name\"}"
+  [{:keys [psi/agent-session-ctx psi.skill/name]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.skill/name]
+   ::pco/output [:psi.skill/detail]}
+  (let [all-skills (:skills @(:session-data-atom agent-session-ctx))
+        skill      (skills/find-skill all-skills name)]
+    {:psi.skill/detail
+     (when skill (skills/enrich-skill skill))}))
+
 ;; ── All resolvers ───────────────────────────────────────
 
 (def all-resolvers
@@ -281,7 +324,9 @@
    agent-session-stats
    agent-session-turn
    prompt-template-summary-resolver
-   prompt-template-detail-resolver])
+   prompt-template-detail-resolver
+   skill-summary-resolver
+   skill-detail-resolver])
 
 ;; ── Local Pathom env (for component-local queries) ──────
 

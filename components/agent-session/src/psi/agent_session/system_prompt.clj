@@ -1,0 +1,177 @@
+(ns psi.agent-session.system-prompt
+  "System prompt assembly for the agent session.
+
+   The system prompt is built from:
+     - Tool descriptions (available tools)
+     - Context files (AGENTS.md / CLAUDE.md discovered up directory tree)
+     - Skills (progressive disclosure: name + description only)
+     - Custom/append prompt overrides
+     - Current date/time and working directory
+
+   The assembled prompt is introspectable: stored in session data as
+   :system-prompt and queryable via EQL :psi.agent-session/system-prompt.
+
+   Follows the same pattern as pi's system-prompt.ts — skills are appended
+   as XML when the read tool is available."
+  (:require
+   [clojure.java.io :as io]
+   [clojure.string :as str]
+   [psi.agent-session.skills :as skills]))
+
+;; ============================================================
+;; Tool descriptions (built-in)
+;; ============================================================
+
+(def ^:private tool-descriptions
+  {"read"  "Read file contents"
+   "bash"  "Execute bash commands (ls, grep, find, etc.)"
+   "edit"  "Make surgical edits to files (find exact text and replace)"
+   "write" "Create or overwrite files"})
+
+;; ============================================================
+;; Context file discovery
+;; ============================================================
+
+(defn- load-context-file-from-dir
+  "Look for AGENTS.md or CLAUDE.md in `dir`. Returns {:path :content} or nil."
+  [dir]
+  (let [candidates ["AGENTS.md" "CLAUDE.md"]]
+    (some (fn [filename]
+            (let [f (io/file dir filename)]
+              (when (.exists f)
+                (try
+                  {:path    (.getAbsolutePath f)
+                   :content (slurp f)}
+                  (catch Exception _ nil)))))
+          candidates)))
+
+(defn discover-context-files
+  "Walk from `cwd` up to filesystem root, collecting AGENTS.md/CLAUDE.md files.
+   Also checks `agent-dir` for a global context file.
+   Returns [{:path :content}] in root-first order."
+  ([cwd] (discover-context-files cwd nil))
+  ([cwd agent-dir]
+   (let [seen      (atom #{})
+         result    (atom [])
+         ;; Global context first
+         _         (when agent-dir
+                     (when-let [ctx (load-context-file-from-dir agent-dir)]
+                       (swap! seen conj (:path ctx))
+                       (swap! result conj ctx)))
+         ;; Walk up from cwd
+         ancestors (atom [])
+         root      (.getAbsolutePath (io/file "/"))]
+     (loop [dir (io/file cwd)]
+       (when dir
+         (when-let [ctx (load-context-file-from-dir (.getAbsolutePath dir))]
+           (when-not (@seen (:path ctx))
+             (swap! seen conj (:path ctx))
+             (swap! ancestors conj ctx)))
+         (let [parent (.getParentFile dir)]
+           (when (and parent
+                      (not= (.getAbsolutePath dir) root))
+             (recur parent)))))
+     ;; ancestors were collected child-first, reverse to get root-first
+     (into @result (reverse @ancestors)))))
+
+;; ============================================================
+;; Prompt assembly
+;; ============================================================
+
+(defn build-system-prompt
+  "Build the complete system prompt from all sources.
+
+   Options:
+     :cwd               — working directory (default: user.dir)
+     :custom-prompt      — replaces the default prompt entirely
+     :append-prompt      — text appended after the main prompt
+     :selected-tools     — tool name strings (default: read bash edit write)
+     :context-files      — [{:path :content}] pre-loaded context files
+     :skills             — [Skill] pre-loaded skills
+
+   The assembled prompt is returned as a string."
+  ([] (build-system-prompt {}))
+  ([{:keys [cwd custom-prompt append-prompt selected-tools
+            context-files skills]}]
+   (let [resolved-cwd  (or cwd (System/getProperty "user.dir"))
+         tool-names    (or selected-tools ["read" "bash" "edit" "write"])
+         has-read?     (some #(= "read" %) tool-names)
+         loaded-skills (or skills [])
+         loaded-ctx    (or context-files [])
+
+         ;; Date/time stamp
+         now    (java.time.ZonedDateTime/now)
+         fmt    (java.time.format.DateTimeFormatter/ofPattern
+                 "EEEE, MMMM d, yyyy 'at' hh:mm:ss a z")
+         dt-str (.format now fmt)
+
+         ;; Tool list
+         tools-section
+         (let [known (filter #(contains? tool-descriptions %) tool-names)]
+           (if (seq known)
+             (str/join "\n" (map #(str "- " % ": " (get tool-descriptions %)) known))
+             "(none)"))
+
+         ;; Guidelines based on available tools
+         guidelines
+         (cond-> []
+           (some #(= "bash" %) tool-names)
+           (conj "Use bash for file operations like ls, rg, find")
+
+           (and has-read? (some #(= "edit" %) tool-names))
+           (conj "Use read to examine files before editing. You must use this tool instead of cat or sed.")
+
+           (some #(= "edit" %) tool-names)
+           (conj "Use edit for precise changes (old text must match exactly)")
+
+           (some #(= "write" %) tool-names)
+           (conj "Use write only for new files or complete rewrites")
+
+           (or (some #(= "edit" %) tool-names)
+               (some #(= "write" %) tool-names))
+           (conj "When summarizing your actions, output plain text directly - do NOT use cat or bash to display what you did")
+
+           true
+           (conj "Be concise in your responses")
+
+           true
+           (conj "Show file paths clearly when working with files"))
+
+         guidelines-section (str/join "\n" (map #(str "- " %) guidelines))
+
+         ;; Append section
+         append-section (when append-prompt (str "\n\n" append-prompt))
+
+         ;; Context files section
+         context-section
+         (when (seq loaded-ctx)
+           (str "\n\n# Project Context\n\n"
+                "Project-specific instructions and guidelines:\n\n"
+                (str/join "\n\n"
+                          (map (fn [{:keys [path content]}]
+                                 (str "## " path "\n\n" content))
+                               loaded-ctx))))
+
+         ;; Skills section (only if read tool available)
+         skills-section
+         (when (and has-read? (seq loaded-skills))
+           (skills/format-skills-for-prompt loaded-skills))
+
+         ;; Main prompt
+         base-prompt
+         (if custom-prompt
+           custom-prompt
+           (str "You are ψ (Psi), an expert coding assistant operating inside psi, a coding agent harness. "
+                "You help users by reading files, executing commands, editing code, and writing new files.\n\n"
+                "Available tools:\n"
+                tools-section "\n\n"
+                "In addition to the tools above, you may have access to other custom tools depending on the project.\n\n"
+                "Guidelines:\n"
+                guidelines-section))]
+
+     (str base-prompt
+          (or append-section "")
+          (or context-section "")
+          (or skills-section "")
+          "\nCurrent date and time: " dt-str
+          "\nCurrent working directory: " resolved-cwd))))
