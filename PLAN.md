@@ -88,11 +88,11 @@ Register domain resolvers, surface capability graph via EQL
 ### Deferred (agent-session)
 - `TreeNavigated` branch tree navigation
 - Session persistence to disk (journal currently in-memory only)
-  - Spec: `spec/session-persistence.allium` ✓ (distilled from pi-mono SessionManager)
-  - Implement: `persistence.clj` write path (NDJSON append, lazy flush)
-  - Implement: `persistence.clj` read path (parse, migrate, rebuild index)
-  - Implement: `core.clj` `resume-session-in!` (actually load from disk)
-  - Implement: session directory layout + discovery + listing
+  - Spec: `spec/session-persistence.allium` ✓
+  - `persistence.clj`: NDEDN write (lazy flush, bulk + append), read, migration, listing ✓
+  - `core.clj`: `resume-session-in!` loads from disk, `new-session-in!` creates file ✓
+  - Session directory layout + discovery + listing ✓
+  - 70 new assertions, 286 total, 0 failures ✓
 - `SkillCommandExpanded` / `PromptTemplateExpanded` events
 - Streaming token printing during TUI session
 - Extension UI: dialog timeouts, widget ordering, theme maps for renderers,
