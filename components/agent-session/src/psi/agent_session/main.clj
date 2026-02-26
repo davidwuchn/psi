@@ -61,18 +61,26 @@
 ;; ============================================================
 
 (defn- start-nrepl!
-  "Start an nREPL server on `port` (0 = random). Returns the server."
+  "Start an nREPL server on `port` (0 = random). Returns the server.
+   Writes the bound port to .nrepl-port for editor auto-discovery."
   [port]
   (let [start-server (requiring-resolve 'nrepl.server/start-server)
-        server       (start-server :port port)]
+        server       (start-server :port port)
+        port-file    (java.io.File. ".nrepl-port")]
+    (spit port-file (str (:port server)))
+    (.deleteOnExit port-file)
     (println (str "  nREPL : localhost:" (:port server)
                   " (connect with your editor)"))
     server))
 
 (defn- stop-nrepl! [server]
   (when server
-    (let [stop-server (requiring-resolve 'nrepl.server/stop-server)]
-      (stop-server server))))
+    (let [stop-server (requiring-resolve 'nrepl.server/stop-server)
+          port-file   (java.io.File. ".nrepl-port")]
+      (stop-server server)
+      (when (.exists port-file)
+        (when (= (str/trim (slurp port-file)) (str (:port server)))
+          (.delete port-file))))))
 
 (defn- nrepl-port-from-args
   "If --nrepl is present, return the port (next arg if numeric, else 0).
