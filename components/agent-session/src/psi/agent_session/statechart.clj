@@ -43,12 +43,48 @@
 (defn- agent-end-event? [data]
   (= :agent-end (:type (:pending-agent-event data))))
 
+(defn- last-assistant-message [data]
+  (let [m (last (:messages (:pending-agent-event data)))]
+    (when (= "assistant" (:role m)) m)))
+
+(defn- overflow-error? [msg]
+  (let [stop-reason (or (:stop-reason msg) (:stopReason msg))]
+    (and (or (= :error stop-reason)
+             (= "error" stop-reason))
+         (session/context-overflow-error? (:error-message msg)))))
+
+(defn- threshold-reached? [sd config]
+  (let [tokens  (:context-tokens sd)
+        window  (:context-window sd)
+        reserve (long (or (:auto-compaction-reserve-tokens config) 16384))
+        cutoff  (when (and (number? window) (pos? window))
+                  (max 0 (- window reserve)))]
+    (and (number? tokens)
+         (number? cutoff)
+         (> tokens cutoff))))
+
+(defn- auto-compaction-reason [data]
+  (let [sd      @(:session-data-atom data)
+        config  (:config data)
+        last-msg (last-assistant-message data)]
+    (cond
+      (and (agent-end-event? data)
+           (:auto-compaction-enabled sd)
+           (map? last-msg)
+           (overflow-error? last-msg))
+      :overflow
+
+      (and (agent-end-event? data)
+           (:auto-compaction-enabled sd)
+           (threshold-reached? sd config)
+           (not (overflow-error? last-msg)))
+      :threshold
+
+      :else
+      nil)))
+
 (defn- should-auto-compact? [data]
-  (let [sd        @(:session-data-atom data)
-        threshold (get-in data [:config :auto-compaction-threshold] 0.8)]
-    (and (agent-end-event? data)
-         (:auto-compaction-enabled sd)
-         (session/above-compaction-threshold? sd threshold))))
+  (boolean (auto-compaction-reason data)))
 
 (defn- should-retry? [data]
   (let [sd     @(:session-data-atom data)
@@ -58,13 +94,17 @@
     (and (agent-end-event? data)
          (:auto-retry-enabled sd)
          (< (:retry-attempt sd) max-r)
+         (not (session/context-overflow-error? (:error-message last-m)))
          (session/retry-error? (:stop-reason last-m)
                                (:error-message last-m)
                                (:http-status last-m)))))
 
 (defn- dispatch! [data action-key]
   (when-let [af (:actions-fn data)]
-    (af action-key)))
+    (try
+      (af action-key data)
+      (catch clojure.lang.ArityException _
+        (af action-key)))))
 
 ;; ============================================================
 ;; Statechart definition

@@ -50,6 +50,7 @@
    attributes to the global Pathom graph.  For isolated (test) contexts,
    use `register-resolvers-in!` with a QueryContext from psi.query.core."
   (:require
+   [clojure.java.io :as io]
    [psi.agent-core.core :as agent]
    [psi.agent-session.compaction :as compaction]
    [psi.agent-session.extensions :as ext]
@@ -71,60 +72,147 @@
 ;; Actions dispatcher
 ;; ============================================================
 
-(defn- make-actions-fn
-  "Return the side-effect dispatcher wired into the statechart working memory.
-  The statechart calls (actions-fn action-key) from guard/entry/script fns."
-  [ctx]
-  (fn [action-key]
-    (case action-key
-      :on-streaming-entered
-      (swap! (:session-data-atom ctx) assoc :is-streaming true)
+(defn- last-assistant-message-from-event
+  [event]
+  (let [m (last (:messages event))]
+    (when (= "assistant" (:role m))
+      m)))
 
-      :on-agent-done
-      (swap! (:session-data-atom ctx) assoc
-             :is-streaming false
-             :retry-attempt 0)
+(defn- overflow-error-assistant?
+  [msg]
+  (let [stop-reason (or (:stop-reason msg)
+                        (:stopReason msg))]
+    (and (map? msg)
+         (or (= :error stop-reason)
+             (= "error" stop-reason))
+         (session/context-overflow-error? (:error-message msg)))))
 
-      :on-abort
-      (do (agent/abort-in! (:agent-ctx ctx))
-          (swap! (:session-data-atom ctx) assoc :is-streaming false))
+(defn- threshold-auto-compact?
+  [session-data config]
+  (let [tokens   (:context-tokens session-data)
+        window   (:context-window session-data)
+        reserve  (long (or (:auto-compaction-reserve-tokens config) 16384))
+        cutoff   (when (and (number? window) (pos? window))
+                   (max 0 (- window reserve)))]
+    (and (number? tokens)
+         (number? cutoff)
+         (> tokens cutoff))))
 
-      :on-auto-compact-triggered
-      (do (swap! (:session-data-atom ctx) assoc :is-compacting true)
-          (future
-            (try
-              (execute-compaction-in! ctx nil)
-              (catch Exception _e nil)
-              (finally
-                (sc/send-event! (:sc-env ctx) (:sc-session-id ctx)
-                                :session/compact-done)))))
+(defn- auto-compaction-reason
+  "Return :overflow, :threshold, or nil from statechart working-memory `data`."
+  [data]
+  (let [sd     @(:session-data-atom data)
+        config (:config data)
+        event  (:pending-agent-event data)
+        last-m (last-assistant-message-from-event event)]
+    (cond
+      (and (:auto-compaction-enabled sd)
+           (overflow-error-assistant? last-m))
+      :overflow
 
-      :on-compacting-entered
-      (swap! (:session-data-atom ctx) assoc :is-compacting true)
+      (and (:auto-compaction-enabled sd)
+           (threshold-auto-compact? sd config)
+           (let [stop-reason (or (:stop-reason last-m)
+                                 (:stopReason last-m))]
+             (not (or (= :error stop-reason)
+                      (= "error" stop-reason)))))
+      :threshold
 
-      :on-compact-done
-      (swap! (:session-data-atom ctx) assoc :is-compacting false)
-
-      :on-retry-triggered
-      (let [sd       @(:session-data-atom ctx)
-            attempt  (:retry-attempt sd)
-            base-ms  (get-in ctx [:config :auto-retry-base-delay-ms] 2000)
-            max-ms   (get-in ctx [:config :auto-retry-max-delay-ms] 60000)
-            delay-ms (session/exponential-backoff-ms attempt base-ms max-ms)]
-        (swap! (:session-data-atom ctx) update :retry-attempt inc)
-        (future
-          (Thread/sleep ^long delay-ms)
-          (sc/send-event! (:sc-env ctx) (:sc-session-id ctx) :session/retry-done)))
-
-      :on-retrying-entered
-      nil ;; retry-attempt increment handled in :on-retry-triggered
-
-      :on-retry-resume
-      (agent/start-loop-in! (:agent-ctx ctx) [])
-
-      ;; unknown action — ignore
+      :else
       nil)))
 
+(defn- drop-trailing-overflow-error!
+  [ctx]
+  (let [messages (:messages (agent/get-data-in (:agent-ctx ctx)))
+        last-msg (last messages)]
+    (when (overflow-error-assistant? last-msg)
+      (agent/replace-messages-in! (:agent-ctx ctx) (vec (butlast messages))))))
+
+(defn- make-actions-fn
+  "Return the side-effect dispatcher wired into the statechart working memory.
+  The statechart calls (actions-fn action-key data) from guard/entry/script fns."
+  [ctx]
+  (letfn [(dispatch-action [action-key data]
+            (case action-key
+              :on-streaming-entered
+              (swap! (:session-data-atom ctx) assoc :is-streaming true)
+
+              :on-agent-done
+              (swap! (:session-data-atom ctx) assoc
+                     :is-streaming false
+                     :retry-attempt 0)
+
+              :on-abort
+              (do (agent/abort-in! (:agent-ctx ctx))
+                  (swap! (:session-data-atom ctx) assoc :is-streaming false))
+
+              :on-auto-compact-triggered
+              (let [reason      (or (some-> data auto-compaction-reason) :threshold)
+                    will-retry? (= :overflow reason)
+                    continue?   (atom false)
+                    reg         (:extension-registry ctx)]
+                (swap! (:session-data-atom ctx) assoc :is-compacting true)
+                (ext/dispatch-in reg "auto_compaction_start" {:reason reason})
+                (when will-retry?
+                  (drop-trailing-overflow-error! ctx))
+                (future
+                  (try
+                    (let [result (execute-compaction-in! ctx nil)]
+                      (if result
+                        (do
+                          (ext/dispatch-in reg "auto_compaction_end"
+                                           {:result     result
+                                            :aborted    false
+                                            :will-retry will-retry?})
+                          (when (or will-retry?
+                                    (agent/has-queued-messages-in? (:agent-ctx ctx)))
+                            (reset! continue? true)))
+                        (ext/dispatch-in reg "auto_compaction_end"
+                                         {:result     nil
+                                          :aborted    true
+                                          :will-retry false})))
+                    (catch Exception e
+                      (ext/dispatch-in reg "auto_compaction_end"
+                                       {:result        nil
+                                        :aborted       false
+                                        :will-retry    false
+                                        :error-message (ex-message e)}))
+                    (finally
+                      (sc/send-event! (:sc-env ctx) (:sc-session-id ctx)
+                                      :session/compact-done)
+                      (when @continue?
+                        (sc/send-event! (:sc-env ctx) (:sc-session-id ctx) :session/prompt)
+                        (agent/start-loop-in! (:agent-ctx ctx) [])))))
+                nil)
+
+              :on-compacting-entered
+              (swap! (:session-data-atom ctx) assoc :is-compacting true)
+
+              :on-compact-done
+              (swap! (:session-data-atom ctx) assoc :is-compacting false)
+
+              :on-retry-triggered
+              (let [sd       @(:session-data-atom ctx)
+                    attempt  (:retry-attempt sd)
+                    base-ms  (get-in ctx [:config :auto-retry-base-delay-ms] 2000)
+                    max-ms   (get-in ctx [:config :auto-retry-max-delay-ms] 60000)
+                    delay-ms (session/exponential-backoff-ms attempt base-ms max-ms)]
+                (swap! (:session-data-atom ctx) update :retry-attempt inc)
+                (future
+                  (Thread/sleep ^long delay-ms)
+                  (sc/send-event! (:sc-env ctx) (:sc-session-id ctx) :session/retry-done)))
+
+              :on-retrying-entered
+              nil ;; retry-attempt increment handled in :on-retry-triggered
+
+              :on-retry-resume
+              (agent/start-loop-in! (:agent-ctx ctx) [])
+
+              ;; unknown action — ignore
+              nil))]
+    (fn
+      ([action-key] (dispatch-action action-key nil))
+      ([action-key data] (dispatch-action action-key data)))))
 ;; ============================================================
 ;; Context creation (Nullable pattern)
 ;; ============================================================
@@ -311,7 +399,7 @@
               (reset! (:journal-atom ctx) [])
               (reset! (:flush-state-atom ctx)
                       {:flushed? false
-                       :session-file (clojure.java.io/file session-path)}))
+                       :session-file (io/file session-path)}))
           (let [{:keys [header entries]} loaded
                 session-id (:id header)
                 ;; Restore model/thinking from last model/thinking entries
@@ -321,14 +409,12 @@
                                  {:provider (get-in model-entry [:data :provider])
                                   :id       (get-in model-entry [:data :model-id])})
                 thinking-level (or (get-in thinking-entry [:data :thinking-level]) :off)
-                ;; Rebuild agent messages from journal
-                messages       (keep #(when (= :message (:kind %))
-                                        (get-in % [:data :message]))
-                                     entries)]
+                ;; Rebuild agent messages from journal (handles compaction)
+                messages       (compaction/rebuild-messages-from-journal-entries (vec entries))]
             (reset! (:journal-atom ctx) (vec entries))
             (reset! (:flush-state-atom ctx)
                     {:flushed? true
-                     :session-file (clojure.java.io/file session-path)})
+                     :session-file (io/file session-path)})
             (swap-session! ctx assoc
                            :session-id     session-id
                            :session-file   session-path
@@ -463,27 +549,32 @@
 (defn execute-compaction-in!
   "Execute a compaction cycle: prepare → dispatch before-compact → run
   compaction-fn → append entry → rebuild agent messages → dispatch compact.
-  Returns the CompactionResult, or nil if cancelled."
+  Returns the CompactionResult, or nil when cancelled or no-op." 
   ([ctx] (execute-compaction-in! ctx nil))
   ([ctx custom-instructions]
-   (let [sd                        (get-session-data-in ctx)
-         preparation               (compaction/prepare-compaction sd)
-         reg                       (:extension-registry ctx)
-         {:keys [cancelled? override]}
-         (ext/dispatch-in reg "session_before_compact"
-                          {:preparation         preparation
-                           :custom-instructions custom-instructions})]
-     (when-not cancelled?
-       (let [result   (or override
-                          ((:compaction-fn ctx) sd preparation custom-instructions))
-             entry    (persist/compaction-entry result false)
-             new-msgs (compaction/rebuild-messages-from-entries result sd)]
-         (journal-append! ctx entry)
-         (agent/replace-messages-in! (:agent-ctx ctx) new-msgs)
-         (swap-session! ctx assoc :is-compacting false :context-tokens nil)
-         (ext/dispatch-in reg "session_compact" {})
-         result)))))
-
+   (let [sd                (get-session-data-in ctx)
+         keep-recent       (get-in ctx [:config :auto-compaction-keep-recent-tokens] 20000)
+         preparation       (compaction/prepare-compaction sd keep-recent)
+         reg               (:extension-registry ctx)]
+     (when preparation
+       (let [{:keys [cancelled? override]}
+             (ext/dispatch-in reg "session_before_compact"
+                              {:preparation         preparation
+                               :branch-entries      (:session-entries sd)
+                               :custom-instructions custom-instructions})]
+         (when-not cancelled?
+           (let [from-extension? (some? override)
+                 result   (or override
+                              ((:compaction-fn ctx) sd preparation custom-instructions))
+                 entry    (persist/compaction-entry result from-extension?)
+                 new-msgs (compaction/rebuild-messages-from-entries result sd)]
+             (journal-append! ctx entry)
+             (agent/replace-messages-in! (:agent-ctx ctx) new-msgs)
+             (swap-session! ctx assoc :is-compacting false :context-tokens nil)
+             (ext/dispatch-in reg "session_compact"
+                              {:compaction-entry entry
+                               :from-extension  from-extension?})
+             result)))))))
 (defn manual-compact-in!
   "User-triggered compaction. Aborts agent if running, then compacts synchronously."
   ([ctx] (manual-compact-in! ctx nil))

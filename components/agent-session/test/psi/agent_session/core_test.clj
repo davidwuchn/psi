@@ -172,7 +172,7 @@
           reg (:extension-registry ctx)]
       (ext/register-extension-in! reg "/ext/c")
       (ext/register-handler-in! reg "/ext/c" "session_before_compact"
-                                (fn [_] {:result custom-result}))
+                                (fn [_] {:compaction custom-result}))
       (let [result (session/manual-compact-in! ctx)]
         (is (= "ext summary" (:summary result)))))))
 

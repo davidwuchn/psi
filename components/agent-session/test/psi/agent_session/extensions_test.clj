@@ -130,6 +130,26 @@
       (let [dispatch-result (ext/dispatch-in reg "session_before_compact" {})]
         (is (= result (:override dispatch-result))))))
 
+  (testing ":compaction in handler return is captured as :override"
+    (let [reg    (ext/create-registry)
+          result {:summary "custom" :first-kept-entry-id "e2" :tokens-before 2000}
+          h      (fn [_] {:compaction result})]
+      (ext/register-extension-in! reg "/ext/a")
+      (ext/register-handler-in! reg "/ext/a" "session_before_compact" h)
+      (let [dispatch-result (ext/dispatch-in reg "session_before_compact" {})]
+        (is (= result (:override dispatch-result))))))
+
+  (testing "last override wins when multiple handlers return override payloads"
+    (let [reg    (ext/create-registry)
+          r1     {:summary "first" :first-kept-entry-id "e1" :tokens-before 100}
+          r2     {:summary "second" :first-kept-entry-id "e2" :tokens-before 200}]
+      (ext/register-extension-in! reg "/ext/a")
+      (ext/register-extension-in! reg "/ext/b")
+      (ext/register-handler-in! reg "/ext/a" "session_before_compact" (fn [_] {:result r1}))
+      (ext/register-handler-in! reg "/ext/b" "session_before_compact" (fn [_] {:compaction r2}))
+      (let [dispatch-result (ext/dispatch-in reg "session_before_compact" {})]
+        (is (= r2 (:override dispatch-result))))))
+
   (testing "no override when handler returns nil"
     (let [reg (ext/create-registry)
           h   (fn [_] nil)]

@@ -189,8 +189,8 @@
    Returns a map:
      :cancelled?  — true if any handler returned {:cancel true}
      :results     — vector of all handler return values (nil for void handlers)
-     :override    — first :result value from a handler, or nil
-                    (used by session_before_compact to supply custom compaction)"
+     :override    — last explicit override payload from handlers, or nil.
+                    Accepts {:result x} and {:compaction x} (for compat)."
   [reg event-name event]
   (let [state             @(:state reg)
         ordered-paths     (:registration-order state)
@@ -201,9 +201,13 @@
                                   (try (handler event)
                                        (catch Exception e
                                          {:error (.getMessage e)})))
-                                all-handlers)]
+                                all-handlers)
+        overrides         (keep (fn [r]
+                                  (or (:result r)
+                                      (:compaction r)))
+                                results)]
     {:cancelled? (boolean (some :cancel results))
-     :override   (first (keep :result results))
+     :override   (last overrides)
      :results    results}))
 
 ;; ============================================================
