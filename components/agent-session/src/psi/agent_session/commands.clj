@@ -289,7 +289,3 @@
       :else
       nil)))
 
-(defn command?
-  "Return true if `text` would be dispatched as a command."
-  [ctx text opts]
-  (some? (dispatch ctx text opts)))

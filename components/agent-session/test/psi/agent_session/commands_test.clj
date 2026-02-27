@@ -162,12 +162,3 @@
         s   (commands/format-skills ctx)]
     (is (str/includes? s "(none discovered)"))))
 
-;; ── command? predicate ──────────────────────────────────────
-
-(deftest command?-test
-  (let [ctx (make-test-ctx)]
-    (is (true? (commands/command? ctx "/quit" cmd-opts)))
-    (is (true? (commands/command? ctx "/new" cmd-opts)))
-    (is (true? (commands/command? ctx "/status" cmd-opts)))
-    (is (false? (commands/command? ctx "hello" cmd-opts)))
-    (is (false? (commands/command? ctx "/unknown-thing" cmd-opts)))))
