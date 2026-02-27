@@ -91,6 +91,44 @@
           [s3 _]    (update-fn s2 (msg/key-press :backspace))]
       (is (= "a" (text-input/value (:input s3)))))))
 
+(deftest keyword-space-inserts-immediately-test
+  (testing "keyword :space input inserts a space immediately"
+    (let [update-fn (app/make-update (stub-agent-fn ""))
+          state     (assoc (init-state)
+                           :input (charm/text-input-set-value (:input (init-state)) "hi"))
+          [s1 _]    (update-fn state (msg/key-press :space))]
+      (is (= "hi " (text-input/value (:input s1)))))))
+
+(deftest alt-backspace-deletes-word-test
+  (testing "alt+backspace deletes previous word"
+    (let [update-fn (app/make-update (stub-agent-fn ""))
+          state     (-> (init-state)
+                        (assoc :input (charm/text-input-set-value (:input (init-state)) "hello world")))
+          [s1 _]    (update-fn state (msg/key-press :backspace :alt true))]
+      (is (= "hello " (text-input/value (:input s1)))))))
+
+(deftest modifier-enter-adds-newline-test
+  (testing "shift+enter inserts newline and does not submit"
+    (let [submitted (atom nil)
+          agent-fn  (fn [text _queue] (reset! submitted text))
+          update-fn (app/make-update agent-fn)
+          state     (assoc (init-state) :input (charm/text-input-set-value (:input (init-state)) "line1"))
+          [s1 _]    (update-fn state (msg/key-press :enter :shift true))]
+      (is (= :idle (:phase s1)))
+      (is (= "line1\n" (text-input/value (:input s1))))
+      (is (nil? @submitted)))))
+
+(deftest backslash-enter-adds-newline-test
+  (testing "trailing backslash + enter inserts newline continuation"
+    (let [submitted (atom nil)
+          agent-fn  (fn [text _queue] (reset! submitted text))
+          update-fn (app/make-update agent-fn)
+          state     (assoc (init-state) :input (charm/text-input-set-value (:input (init-state)) "line1\\"))
+          [s1 _]    (update-fn state (msg/key-press :enter))]
+      (is (= :idle (:phase s1)))
+      (is (= "line1\n" (text-input/value (:input s1))))
+      (is (nil? @submitted)))))
+
 ;;;; Update — submit
 
 (deftest submit-starts-streaming-test

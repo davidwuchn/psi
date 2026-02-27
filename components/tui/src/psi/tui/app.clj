@@ -22,6 +22,7 @@
      the spinner animation on each poll timeout."
   (:require
    [charm.core :as charm]
+   [charm.input.handler :as charm-input-handler]
    [charm.input.keymap] ; loaded so we can patch before use
    [charm.message :as msg]
    [charm.render.core]  ; loaded so we can patch enter-alt-screen!
@@ -74,6 +75,78 @@
       (charm-term/clear-screen terminal)
       (charm-term/cursor-home terminal))
     (swap! renderer assoc :alt-screen true))))
+
+;; ── Extended key fallback patch ─────────────────────────────
+;; Some terminals emit modified keys as CSI-u or modifyOtherKeys
+;; sequences that charm.clj currently leaves as :unknown. Decode the
+;; subset we need for the prompt UX.
+
+(def ^:private kitty-csi-u-pattern #"^\[(\d+);(\d+)u$")
+(def ^:private modify-other-keys-pattern #"^\[27;(\d+);(\d+)~$")
+
+(defn- kitty-mod-code->mods
+  [mod-code]
+  (let [c (dec mod-code)]
+    {:shift (pos? (bit-and c 1))
+     ;; Treat Super/Meta as Alt so existing key bindings continue to work
+     ;; (e.g. cmd+backspace => alt+backspace delete-word-backward).
+     :alt   (or (pos? (bit-and c 2))    ; alt
+                (pos? (bit-and c 8))    ; super
+                (pos? (bit-and c 32)))  ; meta
+     :ctrl  (pos? (bit-and c 4))}))
+
+(defn- keycode->event
+  [code]
+  (cond
+    (or (= code 13) (= code 10)) {:type :enter}
+    (or (= code 127) (= code 8)) {:type :backspace}
+    (<= 32 code 126)             {:type :runes :runes (str (char code))}
+    :else                        nil))
+
+(defn- parse-extended-key
+  [escape-seq]
+  (or
+   (when-let [[_ code-s mod-s] (re-matches kitty-csi-u-pattern (or escape-seq ""))]
+     (let [code (Long/parseLong code-s)
+           mods (kitty-mod-code->mods (Long/parseLong mod-s))]
+       (when-let [base (keycode->event code)]
+         (merge base mods))))
+   (when-let [[_ mod-s code-s] (re-matches modify-other-keys-pattern (or escape-seq ""))]
+     (let [mods (kitty-mod-code->mods (Long/parseLong mod-s))
+           code (Long/parseLong code-s)]
+       (when-let [base (keycode->event code)]
+         (merge base mods))))))
+
+(defn- normalize-parsed-event
+  [parsed]
+  (if (and (= :runes (:type parsed))
+           (:alt parsed)
+           (string? (:runes parsed))
+           (= 1 (count ^String (:runes parsed))))
+    (let [ch (:runes parsed)]
+      (cond
+        (or (= ch "\r") (= ch "\n")) (-> parsed (dissoc :runes) (assoc :type :enter))
+        (or (= ch "\u007f") (= ch "\u0008")) (-> parsed (dissoc :runes) (assoc :type :backspace))
+        (= ch " ") (-> parsed (dissoc :runes) (assoc :type :space))
+        :else parsed))
+    parsed))
+
+(alter-var-root
+ #'charm-input-handler/parse-input
+ (fn [orig]
+   (fn
+     ([byte-val]
+      (normalize-parsed-event (orig byte-val)))
+     ([byte-val escape-seq]
+      (normalize-parsed-event (orig byte-val escape-seq)))
+     ([byte-val escape-seq keymap]
+      (let [parsed (orig byte-val escape-seq keymap)
+            parsed (if (and (= :unknown (:type parsed))
+                            (string? escape-seq))
+                     (or (parse-extended-key escape-seq)
+                         parsed)
+                     parsed)]
+        (normalize-parsed-event parsed))))))
 
 ;; ── Styles ──────────────────────────────────────────────────
 
@@ -321,6 +394,11 @@
 
 ;; ── Init ────────────────────────────────────────────────────
 
+(defn- key-debug-enabled?
+  []
+  (contains? #{"1" "true" "yes" "on"}
+             (some-> (System/getenv "PSI_TUI_DEBUG_KEYS") str/lower-case)))
+
 (defn make-init
   "Create an init function for the charm program.
    `model-name` is displayed in the banner.
@@ -552,6 +630,43 @@
           ;; Not a command — send to agent
           (submit-to-agent state run-agent-fn! text))))))
 
+(defn- continue-input-line
+  "Insert a newline in the text input instead of submitting.
+   Supports modifier-enter and trailing backslash continuation."
+  [state]
+  (let [value       (charm/text-input-value (:input state))
+        backslash?  (str/ends-with? value "\\")
+        value'      (if backslash?
+                      (subs value 0 (dec (count value)))
+                      value)
+        next-input  (charm/text-input-set-value (:input state) (str value' "\n"))]
+    [(assoc state :input next-input) nil]))
+
+(defn- delete-prev-word
+  "Delete previous word from charm text input state.
+   Needed because charm currently matches plain `backspace` before
+   `alt+backspace` when modifiers are present."
+  [input]
+  (let [s   (charm/text-input-value input)
+        pos (long (or (:pos input) (count s)))]
+    (if (<= pos 0)
+      input
+      (let [i1 (loop [i (dec pos)]
+                 (if (and (>= i 0)
+                          (Character/isWhitespace (.charAt s i)))
+                   (recur (dec i))
+                   i))
+            i2 (loop [i i1]
+                 (if (and (>= i 0)
+                          (not (Character/isWhitespace (.charAt s i))))
+                   (recur (dec i))
+                   i))
+            start (inc i2)
+            s'    (str (subs s 0 start) (subs s pos))]
+        (-> input
+            (assoc :value (vec s'))
+            (assoc :pos start))))))
+
 (defn- handle-agent-event
   "Process an intermediate progress event from the executor."
   [state event]
@@ -638,6 +753,12 @@
       (ext-ui/dismiss-expired! ui-atom)
       (ext-ui/dismiss-overflow! ui-atom))
 
+    (when (and (key-debug-enabled?) (msg/key-press? m))
+      (println (str "[key-debug] key=" (pr-str (:key m))
+                    " ctrl=" (boolean (:ctrl m))
+                    " alt=" (boolean (:alt m))
+                    " shift=" (boolean (:shift m)))))
+
     (cond
       ;; Quit: ctrl+c always; escape when idle and no dialog
       (msg/key-match? m "ctrl+c")
@@ -697,10 +818,42 @@
       (= :selecting-session (:phase state))
       (handle-selector-key state m)
 
+      ;; Alt/Meta+Backspace delete previous word.
+      ;; (Explicit handling to avoid charm's binding-order issue.)
+      (and (= :idle (:phase state))
+           (msg/key-match? m "alt+backspace"))
+      (let [before (charm/text-input-value (:input state))
+            new-state (update state :input delete-prev-word)
+            after  (charm/text-input-value (:input new-state))]
+        (when (key-debug-enabled?)
+          (println (str "[key-debug] branch=alt+backspace before=" (pr-str before)
+                        " after=" (pr-str after)
+                        " pos=" (:pos (:input new-state)))))
+        [new-state nil])
+
+      ;; Enter behavior:
+      ;; - shift/alt/cmd(ctrl+alt)+enter => newline continuation
+      ;; - trailing "\\" + enter => newline continuation
+      ;; - plain enter => submit
+      (and (= :idle (:phase state))
+           (msg/key-match? m "enter")
+           (or (:shift m)
+               (:alt m)
+               (and (:ctrl m) (:alt m))
+               (str/ends-with? (charm/text-input-value (:input state)) "\\")))
+      (continue-input-line state)
+
       ;; Enter → submit (idle + has text)
       (and (= :idle (:phase state))
            (msg/key-match? m "enter"))
       (submit-input state run-agent-fn!)
+
+      ;; Space from terminal input may arrive as keyword :space (not " ").
+      ;; Normalize to a printable char so it inserts immediately.
+      (and (= :idle (:phase state))
+           (msg/key-match? m "space"))
+      (let [[new-input cmd] (charm/text-input-update (:input state) (msg/key-press " "))]
+        [(assoc state :input new-input) cmd])
 
       ;; All other keys → text input (idle only)
       (and (= :idle (:phase state))
@@ -1027,53 +1180,47 @@
 ;; ── Text input word wrap ─────────────────────────────────────
 
 (defn- wrap-chunks
-  "Split plain text into word-wrapped chunks with position tracking.
+  "Split plain text into display chunks with position tracking.
+   Preserves whitespace exactly (including trailing spaces), and treats
+   newline as a hard break.
+
    Returns [{:text \"line\" :start N :end N} ...] where start/end are
-   character indices in the original text. Whitespace at break points
-   is consumed (trimmed from line end, skipped at next line start)."
+   character indices in the original text."
   [^String text max-width]
   (if (or (nil? text) (empty? text))
     [{:text "" :start 0 :end 0}]
-    (let [len (count text)]
+    (let [len   (count text)
+          width (max 1 (or max-width 1))]
       (loop [start 0, chunks []]
         (if (>= start len)
           (if (empty? chunks)
             [{:text "" :start 0 :end 0}]
             chunks)
-          (let [[end-idx]
-                (loop [j start, col 0, last-break -1]
+          (let [[end-idx hard-break?]
+                (loop [j start, col 0]
                   (if (>= j len)
-                    [j]
-                    (let [c (.charAt text j)
-                          cw (ansi/char-width c)]
-                      (if (> (+ col cw) max-width)
-                        ;; Overflow — break at word boundary or hard break
-                        (if (pos? last-break)
-                          [last-break]
-                          [j])
-                        ;; Fits — advance; track break after space before non-space
-                        (recur (inc j) (+ col cw)
-                               (if (and (Character/isWhitespace c)
-                                        (< (inc j) len)
-                                        (not (Character/isWhitespace
-                                              (.charAt text (inc j)))))
-                                 (inc j)
-                                 last-break))))))
-                chunk-text (str/trimr (subs text start end-idx))
-                ;; Skip whitespace for next line start
-                next-start (loop [ns (long end-idx)]
-                             (if (and (< ns len)
-                                      (Character/isWhitespace (.charAt text ns)))
-                               (recur (inc ns))
-                               ns))]
-            (if (= next-start start)
-              ;; Safety: force progress
-              (recur (inc start)
-                     (conj chunks {:text (str (.charAt text start))
-                                   :start start :end (inc start)}))
-              (recur next-start
-                     (conj chunks {:text chunk-text
-                                   :start start :end end-idx})))))))))
+                    [j false]
+                    (let [c (.charAt text j)]
+                      (cond
+                        (= c \newline)
+                        [j true]
+
+                        :else
+                        (let [cw (ansi/char-width c)]
+                          (if (> (+ col cw) width)
+                            (if (= j start)
+                              [(inc j) false]
+                              [j false])
+                            (recur (inc j) (+ col cw))))))))
+                chunk-text (subs text start end-idx)
+                next-start (if hard-break? (inc end-idx) end-idx)]
+            (let [chunks' (conj chunks {:text chunk-text
+                                        :start start
+                                        :end end-idx})
+                  chunks' (if (and hard-break? (>= next-start len))
+                            (conj chunks' {:text "" :start len :end len})
+                            chunks')]
+              (recur next-start chunks'))))))))
 
 (defn- wrap-text-input-view
   "Render text input with word wrapping at terminal width.
