@@ -1,0 +1,722 @@
+(ns extensions.subagent-widget
+  "Subagent widget backed by extension workflows.
+
+   Commands/tools:
+   - /sub <task>
+   - /subcont <id> <prompt>
+   - /subrm <id>
+   - /subclear
+   - /sublist
+
+   Workflow model:
+   - one workflow per subagent id
+   - explicit states: :idle -> :running -> :done | :error
+   - continue transitions: :done/:error -> :running
+
+   No extension-managed runner futures or ticker loops."
+  (:require
+   [clojure.set :as set]
+   [clojure.string :as str]
+   [com.fulcrologic.statecharts.chart :as chart]
+   [com.fulcrologic.statecharts.elements :as ele]
+   [psi.agent-core.core :as agent]
+   [psi.agent-session.executor :as executor]
+   [psi.agent-session.tools :as tools]
+   [psi.ai.models :as models]))
+
+(defonce state
+  (atom {:api        nil
+         :query-fn   nil
+         :ui         nil
+         :ext-path   nil
+         :next-id    1
+         :widget-ids #{}}))
+
+(def ^:private subagent-type :subagent)
+(def ^:private subagent-tool-names #{"read" "bash" "edit" "write"})
+
+(def ^:private workflow-eql
+  [{:psi.extension/workflows
+    [:psi.extension/path
+     :psi.extension.workflow/id
+     :psi.extension.workflow/type
+     :psi.extension.workflow/phase
+     :psi.extension.workflow/running?
+     :psi.extension.workflow/done?
+     :psi.extension.workflow/error?
+     :psi.extension.workflow/error-message
+     :psi.extension.workflow/input
+     :psi.extension.workflow/data
+     :psi.extension.workflow/result
+     :psi.extension.workflow/elapsed-ms
+     :psi.extension.workflow/started-at]}])
+
+(defn- now-ms [] (System/currentTimeMillis))
+
+(defn- parse-int [x]
+  (cond
+    (number? x) (long x)
+    (string? x) (try (Long/parseLong (str/trim x)) (catch Exception _ nil))
+    :else nil))
+
+(defn- task-preview [s n]
+  (let [s (or s "")]
+    (if (> (count s) n)
+      (str (subs s 0 (max 0 (- n 3))) "...")
+      s)))
+
+(defn- provider-name [p]
+  (cond
+    (keyword? p) (name p)
+    (string? p) p
+    :else nil))
+
+(defn- instant->ms [x]
+  (when (instance? java.time.Instant x)
+    (.toEpochMilli ^java.time.Instant x)))
+
+(defn- query!
+  [q]
+  (when-let [qf (:query-fn @state)]
+    (try
+      (qf q)
+      (catch Exception _ nil))))
+
+(defn- mutate!
+  [op params]
+  (when-let [mf (some-> @state :api :mutate)]
+    (try
+      (mf op params)
+      (catch Exception _ nil))))
+
+(defn- all-workflows []
+  (or (:psi.extension/workflows (query! workflow-eql))
+      []))
+
+(defn- subagent-workflows []
+  (let [ext-path (:ext-path @state)]
+    (->> (all-workflows)
+         (filter (fn [wf]
+                   (and (= ext-path (:psi.extension/path wf))
+                        (= subagent-type (:psi.extension.workflow/type wf)))))
+         (sort-by (fn [wf]
+                    (or (parse-int (:psi.extension.workflow/id wf))
+                        Long/MAX_VALUE))))))
+
+(defn- workflow-by-id [id]
+  (let [sid (str id)]
+    (some #(when (= sid (:psi.extension.workflow/id %)) %) (subagent-workflows))))
+
+(defn- resolve-active-model [query-fn]
+  (let [m        (when query-fn
+                   (:psi.agent-session/model (query-fn [:psi.agent-session/model])))
+        provider (provider-name (:provider m))
+        id       (:id m)]
+    (or (some (fn [model]
+                (when (and (= provider (provider-name (:provider model)))
+                           (= id (:id model)))
+                  model))
+              (vals models/all-models))
+        (get models/all-models :sonnet-4.6))))
+
+(defn- current-system-prompt [query-fn]
+  (when query-fn
+    (:psi.agent-session/system-prompt
+     (query-fn [:psi.agent-session/system-prompt]))))
+
+(defn- create-sub-agent-ctx [query-fn]
+  (let [agent-ctx (agent/create-context)
+        tools     (->> tools/all-tools
+                       (filter #(contains? subagent-tool-names (:name %)))
+                       vec)]
+    (agent/create-agent-in! agent-ctx)
+    (agent/set-tools-in! agent-ctx tools)
+    (agent/set-thinking-level-in! agent-ctx :off)
+    (when-let [sp (current-system-prompt query-fn)]
+      (agent/set-system-prompt-in! agent-ctx sp))
+    agent-ctx))
+
+(defn- wf-phase [wf]
+  (or (:psi.extension.workflow/phase wf)
+      (cond
+        (:psi.extension.workflow/running? wf) :running
+        (:psi.extension.workflow/error? wf) :error
+        (:psi.extension.workflow/done? wf) :done
+        :else :unknown)))
+
+(defn- phase-label [wf]
+  (case (wf-phase wf)
+    :running "RUN"
+    :done "DONE"
+    :error "ERR"
+    :idle "IDLE"
+    (-> wf wf-phase name str/upper-case)))
+
+(defn- phase-badge [wf]
+  (str "[" (phase-label wf) "]"))
+
+(defn- status-icon [wf]
+  (case (wf-phase wf)
+    :running "●"
+    :error "✗"
+    :done "✓"
+    :idle "○"
+    "?"))
+
+(defn- wf-data [wf]
+  (or (:psi.extension.workflow/data wf) {}))
+
+(defn- wf-turn-count [wf]
+  (or (:subagent/turn-count (wf-data wf)) 1))
+
+(defn- wf-task [wf]
+  (or (:subagent/current-prompt (wf-data wf))
+      (get-in wf [:psi.extension.workflow/input :task])
+      ""))
+
+(defn- wf-last-text [wf]
+  (or (:subagent/last-text (wf-data wf))
+      (:psi.extension.workflow/result wf)
+      (:psi.extension.workflow/error-message wf)
+      ""))
+
+(defn- elapsed-seconds [wf]
+  (let [running?   (:psi.extension.workflow/running? wf)
+        elapsed-ms (or (:psi.extension.workflow/elapsed-ms wf) 0)
+        started-ms (instant->ms (:psi.extension.workflow/started-at wf))]
+    (if (and running? started-ms)
+      (quot (- (now-ms) started-ms) 1000)
+      (quot elapsed-ms 1000))))
+
+(defn- last-non-blank-line [s]
+  (->> (str/split-lines (or s ""))
+       (remove str/blank?)
+       last))
+
+(defn- clean-error-line [s]
+  (some-> s
+          str/trim
+          (str/replace #"(?i)^error:\s*" "")
+          not-empty))
+
+(defn- wf-error-line [wf]
+  (or (clean-error-line (:psi.extension.workflow/error-message wf))
+      (some-> (wf-last-text wf) last-non-blank-line clean-error-line)))
+
+(defn- widget-detail-line [wf]
+  (cond
+    (:psi.extension.workflow/error? wf)
+    (when-let [err (wf-error-line wf)]
+      (str "  ! " (task-preview err 100)))
+
+    :else
+    (when-let [last-line (some-> (wf-last-text wf) last-non-blank-line str/trim not-empty)]
+      (str "  "
+           (if (:psi.extension.workflow/done? wf) "↳ " "… ")
+           (task-preview last-line 100)))))
+
+(defn- widget-action-line [wf]
+  (when (and (not (:psi.extension.workflow/running? wf))
+             (or (:psi.extension.workflow/done? wf)
+                 (:psi.extension.workflow/error? wf)))
+    (str "  /subcont " (:psi.extension.workflow/id wf) " <prompt> · /subrm "
+         (:psi.extension.workflow/id wf))))
+
+(defn- widget-lines [wf]
+  (let [line-1      (str (status-icon wf)
+                         " Subagent #" (:psi.extension.workflow/id wf)
+                         " " (phase-badge wf)
+                         " · T" (wf-turn-count wf)
+                         " · " (elapsed-seconds wf) "s"
+                         " · " (task-preview (wf-task wf) 52))
+        detail-line (widget-detail-line wf)
+        action-line (widget-action-line wf)]
+    (cond-> [line-1]
+      (seq detail-line) (conj detail-line)
+      (seq action-line) (conj action-line))))
+
+(defn- clear-widget! [id]
+  (when-let [ui (:ui @state)]
+    ((:clear-widget ui) (str "sub-" id))))
+
+(defn- refresh-widgets! []
+  (when-let [ui (:ui @state)]
+    (let [wfs         (subagent-workflows)
+          current-ids (into #{} (map #(str "sub-" (:psi.extension.workflow/id %)) wfs))
+          old-ids     (:widget-ids @state)
+          removed     (set/difference old-ids current-ids)]
+      (doseq [wid removed]
+        ((:clear-widget ui) wid))
+      (doseq [wf wfs]
+        ((:set-widget ui)
+         (str "sub-" (:psi.extension.workflow/id wf))
+         :above-editor
+         (widget-lines wf)))
+      (swap! state assoc :widget-ids current-ids))))
+
+(defn- refresh-widgets-later! []
+  ;; Workflow completion callbacks run during statechart event processing,
+  ;; before the workflow runtime commits the new snapshot. Defer a refresh
+  ;; so widgets render the committed phase (e.g. DONE/ERR instead of stale RUN).
+  (future
+    (Thread/sleep 30)
+    (refresh-widgets!)))
+
+(defn- notify! [text level]
+  (if-let [ui (:ui @state)]
+    ((:notify ui) text level)
+    (println text)))
+
+(defn- emit-result-message!
+  [{:keys [id prompt turn-count ok? elapsed-ms result-text]}]
+  (let [seconds  (quot (or elapsed-ms 0) 1000)
+        heading  (str "Subagent #" id
+                      (when (> (or turn-count 1) 1)
+                        (str " (Turn " turn-count ")"))
+                      " finished \"" prompt "\" in " seconds "s")
+        full     (str heading "\n\nResult:\n"
+                      (if (> (count (or result-text "")) 8000)
+                        (str (subs result-text 0 8000) "\n\n... [truncated]")
+                        (or result-text "")))]
+    (when-let [mutate-fn (some-> @state :api :mutate)]
+      (try
+        (mutate-fn 'psi.extension/append-entry
+                   {:custom-type "subagent-result"
+                    :data        full})
+        (catch Exception _ nil))
+      (try
+        (mutate-fn 'psi.extension/send-message
+                   {:role        "assistant"
+                    :content     full
+                    :custom-type "subagent-result"})
+        (catch Exception _ nil)))
+    (println "\n[subagent-result]" heading "\n")
+    (when (seq result-text)
+      (println (task-preview result-text 800)))
+    (notify! (str "Subagent #" id " "
+                  (if ok? "done" "error")
+                  " in " seconds "s")
+             (if ok? :info :error))))
+
+(defn- result->text [result]
+  (->> (:content result)
+       (keep (fn [c]
+               (case (:type c)
+                 :text (:text c)
+                 :error (:text c)
+                 nil)))
+       (str/join "\n")))
+
+(defn- run-subagent-job
+  [{:keys [agent-ctx prompt query-fn get-api-key-fn]}]
+  (let [started (now-ms)]
+    (try
+      (let [model   (resolve-active-model query-fn)
+            _       (when-not model
+                      (throw (ex-info "No active model available" {})))
+            api-key (when (fn? get-api-key-fn)
+                      (get-api-key-fn (:provider model)))
+            user-msg {:role      "user"
+                      :content   [{:type :text :text (or prompt "")}]
+                      :timestamp (java.time.Instant/now)}
+            result  (executor/run-agent-loop!
+                     nil
+                     agent-ctx
+                     model
+                     [user-msg]
+                     (cond-> {}
+                       api-key (assoc :api-key api-key)))
+            text    (result->text result)
+            ok?     (not= :error (:stop-reason result))
+            elapsed (- (now-ms) started)]
+        {:ok?           ok?
+         :text          text
+         :elapsed-ms    elapsed
+         :error-message (:error-message result)})
+      (catch Exception e
+        {:ok?           false
+         :text          (str "Error: " (ex-message e))
+         :elapsed-ms    (- (now-ms) started)
+         :error-message (ex-message e)}))))
+
+(defn- start-script
+  [_ data]
+  (let [prompt   (str/trim (or (get-in data [:_event :data :prompt])
+                               (get-in data [:workflow/input :task])
+                               ""))
+        turn     (max 1 (long (or (:subagent/turn-count data) 1)))
+        on-start (:subagent/on-start data)]
+    (when (fn? on-start)
+      (on-start {:id (:workflow/id data)
+                 :prompt prompt
+                 :turn-count turn}))
+    [{:op :assign
+      :data {:subagent/current-prompt prompt
+             :subagent/turn-count turn
+             :subagent/last-text ""
+             :subagent/elapsed-ms 0
+             :workflow/error-message nil
+             :workflow/result nil}}]))
+
+(defn- continue-script
+  [_ data]
+  (let [prompt   (str/trim (or (get-in data [:_event :data :prompt])
+                               (:subagent/current-prompt data)
+                               ""))
+        turn     (inc (long (or (:subagent/turn-count data) 1)))
+        on-start (:subagent/on-start data)]
+    (when (fn? on-start)
+      (on-start {:id (:workflow/id data)
+                 :prompt prompt
+                 :turn-count turn}))
+    [{:op :assign
+      :data {:subagent/current-prompt prompt
+             :subagent/turn-count turn
+             :subagent/last-text ""
+             :subagent/elapsed-ms 0
+             :workflow/error-message nil
+             :workflow/result nil}}]))
+
+(defn- invoke-ok?
+  [_ data]
+  (true? (get-in data [:_event :data :ok?])))
+
+(defn- done-script
+  [_ data]
+  (let [ev          (get-in data [:_event :data])
+        text        (or (:text ev) "")
+        elapsed-ms  (long (or (:elapsed-ms ev) 0))
+        prompt      (or (:subagent/current-prompt data) "")
+        turn-count  (long (or (:subagent/turn-count data) 1))
+        on-finished (:subagent/on-finished data)]
+    (when (fn? on-finished)
+      (on-finished {:id          (:workflow/id data)
+                    :prompt      prompt
+                    :turn-count  turn-count
+                    :ok?         true
+                    :elapsed-ms  elapsed-ms
+                    :result-text text}))
+    [{:op :assign
+      :data {:subagent/last-text text
+             :subagent/elapsed-ms elapsed-ms
+             :workflow/error-message nil
+             :workflow/result text}}]))
+
+(defn- error-script
+  [_ data]
+  (let [ev          (get-in data [:_event :data])
+        msg         (or (:error-message ev) "Unknown error")
+        text        (or (:text ev) (str "Error: " msg))
+        elapsed-ms  (long (or (:elapsed-ms ev) 0))
+        prompt      (or (:subagent/current-prompt data) "")
+        turn-count  (long (or (:subagent/turn-count data) 1))
+        on-finished (:subagent/on-finished data)]
+    (when (fn? on-finished)
+      (on-finished {:id          (:workflow/id data)
+                    :prompt      prompt
+                    :turn-count  turn-count
+                    :ok?         false
+                    :elapsed-ms  elapsed-ms
+                    :result-text text}))
+    [{:op :assign
+      :data {:subagent/last-text text
+             :subagent/elapsed-ms elapsed-ms
+             :workflow/error-message msg
+             :workflow/result text}}]))
+
+(def ^:private subagent-chart
+  (chart/statechart {:id :subagent-workflow}
+    (ele/state {:id :idle}
+      (ele/transition {:event :subagent/start :target :running}
+        (ele/script {:expr start-script})))
+
+    (ele/state {:id :running}
+      (ele/invoke {:id     :runner
+                   :type   :future
+                   :params (fn [_ data]
+                             {:agent-ctx       (:subagent/agent-ctx data)
+                              :prompt          (:subagent/current-prompt data)
+                              :query-fn        (:subagent/query-fn data)
+                              :get-api-key-fn  (:subagent/get-api-key-fn data)})
+                   :src    run-subagent-job})
+      (ele/transition {:event :done.invoke.runner
+                       :target :done
+                       :cond   invoke-ok?}
+        (ele/script {:expr done-script}))
+      (ele/transition {:event :done.invoke.runner
+                       :target :error}
+        (ele/script {:expr error-script})))
+
+    (ele/state {:id :done}
+      (ele/transition {:event :subagent/continue :target :running}
+        (ele/script {:expr continue-script})))
+
+    (ele/state {:id :error}
+      (ele/transition {:event :subagent/continue :target :running}
+        (ele/script {:expr continue-script})))))
+
+(defn- register-subagent-workflow-type! []
+  (let [qf          (:query-fn @state)
+        get-api-key (some-> @state :api :get-api-key)
+        on-start    (fn [_]
+                      (refresh-widgets-later!))
+        on-finished (fn [{:keys [id prompt turn-count ok? elapsed-ms result-text]}]
+                      (refresh-widgets-later!)
+                      (emit-result-message! {:id          (or (parse-int id) id)
+                                             :prompt      prompt
+                                             :turn-count  turn-count
+                                             :ok?         ok?
+                                             :elapsed-ms  elapsed-ms
+                                             :result-text result-text}))
+        r           (mutate! 'psi.extension.workflow/register-type
+                             {:type            subagent-type
+                              :description     "Run a background subagent workflow."
+                              :chart           subagent-chart
+                              :start-event     :subagent/start
+                              :initial-data-fn (fn [_input]
+                                                 {:subagent/agent-ctx      (create-sub-agent-ctx qf)
+                                                  :subagent/query-fn       qf
+                                                  :subagent/get-api-key-fn get-api-key
+                                                  :subagent/on-start       on-start
+                                                  :subagent/on-finished    on-finished
+                                                  :subagent/turn-count     0
+                                                  :subagent/current-prompt nil
+                                                  :subagent/last-text      ""
+                                                  :subagent/elapsed-ms     0})
+                              :public-data-fn  (fn [data]
+                                                 (select-keys data
+                                                              [:subagent/turn-count
+                                                               :subagent/current-prompt
+                                                               :subagent/last-text
+                                                               :subagent/elapsed-ms]))})]
+    (when-let [e (:psi.extension.workflow/error r)]
+      (notify! (str "Failed to register subagent workflow type: " e) :error))))
+
+(defn- spawn-subagent!
+  [task]
+  (let [task (str/trim (or task ""))]
+    (if (str/blank? task)
+      {:error "task is required"}
+      (let [id (:next-id @state)
+            r  (mutate! 'psi.extension.workflow/create
+                        {:type  subagent-type
+                         :id    (str id)
+                         :input {:task task}})]
+        (if (:psi.extension.workflow/created? r)
+          (do
+            (swap! state update :next-id inc)
+            (refresh-widgets!)
+            {:ok id})
+          {:error (or (:psi.extension.workflow/error r)
+                      "Failed to create workflow")})))))
+
+(defn- continue-subagent!
+  [id prompt]
+  (let [wf (workflow-by-id id)
+        prompt (str/trim (or prompt ""))]
+    (cond
+      (nil? wf)
+      {:error (str "No subagent #" id " found.")}
+
+      (:psi.extension.workflow/running? wf)
+      {:error (str "Subagent #" id " is still running.")}
+
+      (str/blank? prompt)
+      {:error "prompt is required"}
+
+      :else
+      (let [r (mutate! 'psi.extension.workflow/send-event
+                       {:id    (str id)
+                        :event :subagent/continue
+                        :data  {:prompt prompt}})]
+        (if (:psi.extension.workflow/event-accepted? r)
+          (do (refresh-widgets!) {:ok true})
+          {:error (or (:psi.extension.workflow/error r)
+                      (str "Failed to continue subagent #" id))})))))
+
+(defn- remove-subagent!
+  [id]
+  (let [r (mutate! 'psi.extension.workflow/remove {:id (str id)})]
+    (if (:psi.extension.workflow/removed? r)
+      (do
+        (clear-widget! id)
+        (refresh-widgets!)
+        {:ok true})
+      {:error (or (:psi.extension.workflow/error r)
+                  (str "No subagent #" id " found."))})))
+
+(defn- clear-all-subagents! []
+  (let [ids (map :psi.extension.workflow/id (subagent-workflows))]
+    (doseq [sid ids]
+      (remove-subagent! sid))
+    (swap! state assoc :next-id 1)
+    (refresh-widgets!)
+    (count ids)))
+
+(defn- list-subagents-text []
+  (let [subs (subagent-workflows)]
+    (if (empty? subs)
+      "No active subagents."
+      (let [running (count (filter :psi.extension.workflow/running? subs))
+            done    (count (filter :psi.extension.workflow/done? subs))
+            errors  (count (filter :psi.extension.workflow/error? subs))
+            lines   (mapcat
+                     (fn [s]
+                       (let [base (str "#" (:psi.extension.workflow/id s)
+                                       " " (phase-badge s)
+                                       " · T" (wf-turn-count s)
+                                       " · " (elapsed-seconds s) "s"
+                                       " · " (task-preview (wf-task s) 70))
+                             err  (when (:psi.extension.workflow/error? s)
+                                    (when-let [e (wf-error-line s)]
+                                      (str "   ! " (task-preview e 100))))]
+                         (cond-> [base]
+                           (seq err) (conj err))))
+                     subs)]
+        (str "Subagents (" (count subs)
+             " total · " running " running · " done " done · " errors " error):\n"
+             (str/join "\n" lines))))))
+
+(defn- parse-subcont-args [args]
+  (let [trimmed (str/trim (or args ""))
+        idx     (str/index-of trimmed " ")]
+    (when (and idx (pos? idx))
+      (let [n      (parse-int (subs trimmed 0 idx))
+            prompt (str/trim (subs trimmed (inc idx)))]
+        (when (and n (seq prompt))
+          {:id n :prompt prompt})))))
+
+(defn init [api]
+  (swap! state assoc
+         :api        api
+         :query-fn   (:query api)
+         :ui         (:ui api)
+         :ext-path   (:path api)
+         :next-id    1
+         :widget-ids #{})
+
+  (register-subagent-workflow-type!)
+
+  ;; Tools (for main agent orchestration)
+  ((:register-tool api)
+   {:name        "subagent_create"
+    :label       "Subagent Create"
+    :description "Spawn a background subagent workflow for a task."
+    :parameters  (pr-str {:type       "object"
+                          :properties {"task" {:type "string"
+                                                 :description "Task for the subagent"}}
+                          :required   ["task"]})
+    :execute     (fn [args]
+                   (let [task (str/trim (or (get args "task") ""))]
+                     (if (str/blank? task)
+                       {:content "Error: task is required." :is-error true}
+                       (let [r (spawn-subagent! task)]
+                         (if-let [e (:error r)]
+                           {:content (str "Error: " e) :is-error true}
+                           {:content (str "Subagent #" (:ok r) " spawned in background.")
+                            :is-error false})))))} )
+
+  ((:register-tool api)
+   {:name        "subagent_continue"
+    :label       "Subagent Continue"
+    :description "Continue an existing subagent conversation."
+    :parameters  (pr-str {:type       "object"
+                          :properties {"id" {:type "integer"}
+                                       "prompt" {:type "string"}}
+                          :required   ["id" "prompt"]})
+    :execute     (fn [args]
+                   (let [id     (parse-int (get args "id"))
+                         prompt (str/trim (or (get args "prompt") ""))]
+                     (cond
+                       (nil? id)
+                       {:content "Error: id is required." :is-error true}
+
+                       (str/blank? prompt)
+                       {:content "Error: prompt is required." :is-error true}
+
+                       :else
+                       (let [result (continue-subagent! id prompt)]
+                         (if-let [e (:error result)]
+                           {:content e :is-error true}
+                           {:content (str "Subagent #" id " continuing in background.")
+                            :is-error false})))))} )
+
+  ((:register-tool api)
+   {:name        "subagent_remove"
+    :label       "Subagent Remove"
+    :description "Remove a subagent workflow."
+    :parameters  (pr-str {:type       "object"
+                          :properties {"id" {:type "integer"}}
+                          :required   ["id"]})
+    :execute     (fn [args]
+                   (let [id (parse-int (get args "id"))]
+                     (if (nil? id)
+                       {:content "Error: id is required." :is-error true}
+                       (let [result (remove-subagent! id)]
+                         (if-let [e (:error result)]
+                           {:content e :is-error true}
+                           {:content (str "Subagent #" id " removed.") :is-error false})))))} )
+
+  ((:register-tool api)
+   {:name        "subagent_list"
+    :label       "Subagent List"
+    :description "List all subagents and their status."
+    :parameters  (pr-str {:type "object" :properties {}})
+    :execute     (fn [_args]
+                   {:content  (list-subagents-text)
+                    :is-error false})})
+
+  ;; Slash commands
+  ((:register-command api) "sub"
+                           {:description "Spawn a subagent: /sub <task>"
+                            :handler     (fn [args]
+                                           (let [task (str/trim (or args ""))
+                                                 r    (spawn-subagent! task)]
+                                             (if-let [e (:error r)]
+                                               (println (str "Error: " e))
+                                               (println (str "Spawned Subagent #" (:ok r))))))})
+
+  ((:register-command api) "subcont"
+                           {:description "Continue a subagent: /subcont <id> <prompt>"
+                            :handler     (fn [args]
+                                           (if-let [{:keys [id prompt]} (parse-subcont-args args)]
+                                             (let [result (continue-subagent! id prompt)]
+                                               (if-let [e (:error result)]
+                                                 (println e)
+                                                 (println (str "Continuing Subagent #" id "..."))))
+                                             (println "Usage: /subcont <id> <prompt>")))})
+
+  ((:register-command api) "subrm"
+                           {:description "Remove a subagent: /subrm <id>"
+                            :handler     (fn [args]
+                                           (let [id (parse-int (str/trim (or args "")))]
+                                             (if (nil? id)
+                                               (println "Usage: /subrm <id>")
+                                               (let [result (remove-subagent! id)]
+                                                 (if-let [e (:error result)]
+                                                   (println e)
+                                                   (println (str "Removed Subagent #" id)))))))})
+
+  ((:register-command api) "subclear"
+                           {:description "Clear all subagents"
+                            :handler     (fn [_args]
+                                           (let [n (clear-all-subagents!)]
+                                             (println (if (zero? n)
+                                                        "No subagents to clear."
+                                                        (str "Cleared " n " subagent"
+                                                             (when (not= 1 n) "s") ".")))))} )
+
+  ((:register-command api) "sublist"
+                           {:description "List all subagents"
+                            :handler     (fn [_args]
+                                           (println (list-subagents-text)))})
+
+  ;; Session lifecycle cleanup
+  ((:on api) "session_switch"
+             (fn [_event]
+               (clear-all-subagents!)
+               (swap! state assoc :next-id 1 :widget-ids #{})
+               (refresh-widgets!)))
+
+  (refresh-widgets!)
+  (notify! "subagent-widget loaded (workflow runtime)" :info))

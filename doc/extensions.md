@@ -34,6 +34,53 @@ Create `~/.psi/agent/extensions/hello_ext.clj`:
 
 Psi discovers and loads it automatically on startup.
 
+## Testing Extensions (Nullable API)
+
+Psi includes a **nullable ExtensionAPI test fixture** for fast,
+state-based extension tests without mocks/spies.
+
+Location:
+- `components/extension-test-helpers/src/psi/extension_test_helpers/nullable_api.clj`
+
+Main entry points:
+- `create-nullable-extension-api` → returns `{:api .. :state atom}`
+- `with-user-dir` → macro to run tests with a temporary `user.dir`
+
+The nullable API keeps in-memory state for:
+- registered tools/commands/handlers/flags/shortcuts
+- workflow type and workflow mutations
+- query/mutation calls
+- UI calls (`:notify`, `:set-widget`, `:clear-widget`, `:set-status`)
+
+This enables **narrow tests** that assert outcomes/state, e.g. "did
+`init` register the expected commands".
+
+Example:
+
+```clojure
+(ns extensions.hello-ext-test
+  (:require
+   [clojure.test :refer [deftest is]]
+   [extensions.hello-ext :as sut]
+   [psi.extension-test-helpers.nullable-api :as nullable]))
+
+(deftest init-registers-hello-command
+  (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                             {:path "/test/hello_ext.clj"})]
+    (sut/init api)
+    (is (= "hello" (get-in @state [:commands "hello" :name])))
+    (is (= 1 (count (get-in @state [:handlers "session_switch"]))))))
+```
+
+For cwd-sensitive extensions (e.g. reading `.psi/agents`), wrap with
+`with-user-dir`:
+
+```clojure
+(nullable/with-user-dir (.getAbsolutePath tmp-dir)
+  (sut/init api)
+  ...)
+```
+
 ## Discovery
 
 Extensions are discovered from three locations, in order:
