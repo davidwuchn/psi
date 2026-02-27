@@ -668,21 +668,24 @@
                                 (if error
                                   (reply! queue (str "✗ " error))
                                   (let [{:keys [url login-state]} (oauth/begin-login! oauth-ctx (:id provider))]
-                                    (if (:uses-callback-server provider)
+                                    (if (and (:uses-callback-server provider)
+                                             (:callback-server login-state))
                                       (do
                                         ;; Callback-server providers (e.g. OpenAI):
-                                        ;; auto-complete when the browser redirect arrives.
+                                        ;; emit progress text, then auto-complete when callback arrives.
                                         (swap! session-state dissoc :pending-login)
-                                        (reply! queue (str "🔑 Login to " (:name provider)
-                                                           "\n\nOpen this URL in your browser:\n" url
-                                                           "\n\nWaiting for browser callback…"))
+                                        (.put queue {:type       :agent-event
+                                                     :event-kind :text-delta
+                                                     :text       (str "🔑 Login to " (:name provider)
+                                                                      "\n\nOpen this URL in your browser:\n" url
+                                                                      "\n\nWaiting for browser callback…")})
                                         (future
                                           (try
                                             (oauth/complete-login! oauth-ctx (:id provider) nil login-state)
                                             (reply! queue (str "✓ Logged in to " (:name provider)))
                                             (catch Exception e
                                               (reply! queue (str "✗ Login failed: " (ex-message e)))))))
-                                      ;; Manual-code providers (e.g. Anthropic):
+                                      ;; Manual-code providers (or callback server unavailable):
                                       ;; store state and wait for pasted code on next input.
                                       (do
                                         (swap! session-state assoc :pending-login
@@ -691,7 +694,9 @@
                                                 :login-state   login-state})
                                         (reply! queue (str "🔑 Login to " (:name provider)
                                                            "\n\nOpen this URL in your browser:\n" url
-                                                           "\n\nPaste the authorization code below ↓")))))))
+                                                           (if (:uses-callback-server provider)
+                                                             "\n\n(Local callback server unavailable; paste full redirect URL or code below ↓)"
+                                                             "\n\nPaste the authorization code below ↓"))))))))
                               (catch Exception e
                                 (reply! queue (str "✗ Login failed: " (ex-message e)))))
 

@@ -269,14 +269,28 @@
 
 (defn poll-cmd
   "Command that polls the agent queue with a short timeout.
-   Returns :agent-result, :agent-error, or :agent-poll (keep polling)."
+   Returns :agent-result, :agent-error, :agent-event, or :agent-poll.
+
+   Queue payloads accepted:
+   - {:kind :done  :result ...}
+   - {:kind :error :message ...}
+   - {:type :agent-event ...}  ; progress events
+   "
   [^LinkedBlockingQueue queue]
   (charm/cmd
    (fn []
      (if-let [event (.poll queue 120 TimeUnit/MILLISECONDS)]
-       (case (:kind event)
-         :done  {:type :agent-result :result (:result event)}
-         :error {:type :agent-error  :error  (:message event)}
+       (cond
+         (= :done (:kind event))
+         {:type :agent-result :result (:result event)}
+
+         (= :error (:kind event))
+         {:type :agent-error :error (:message event)}
+
+         (= :agent-event (:type event))
+         event
+
+         :else
          {:type :agent-poll})
        {:type :agent-poll}))))
 
