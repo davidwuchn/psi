@@ -28,10 +28,12 @@
    [charm.terminal :as charm-term]
    [cheshire.core :as json]
    [clojure.string :as str]
+   [psi.agent-session.persistence :as persist]
    [psi.tui.ansi :as ansi]
    [psi.tui.extension-ui :as ext-ui]
    [psi.tui.markdown :as md])
   (:import
+   [java.time Instant]
    [java.util.concurrent LinkedBlockingQueue TimeUnit]
    [org.jline.keymap KeyMap]
    [org.jline.terminal Terminal]))
@@ -165,6 +167,104 @@
 
         :else [state nil]))))
 
+;; ── Session selector ────────────────────────────────────────
+;;
+;; State lives under :session-selector in the app state map:
+;;   {:sessions     [SessionInfo ...]   — loaded for current scope
+;;    :all-sessions [SessionInfo ...]   — loaded for "all" scope (lazy)
+;;    :scope        :current | :all
+;;    :search       ""                  — current search string
+;;    :selected     0                   — cursor index into filtered list
+;;    :loading?     false}
+;;
+;; Sessions are displayed as a flat filtered list (no tree for simplicity).
+;; Tab toggles scope.  Type to search.  ↑/↓ navigate.  Enter selects.  Esc cancels.
+
+(defn- format-age
+  "Human-readable age string from a timestamp (Instant or Date)."
+  [ts]
+  (when ts
+    (let [epoch-ms (cond
+                     (instance? Instant ts) (.toEpochMilli ^Instant ts)
+                     (instance? java.util.Date ts) (.getTime ^java.util.Date ts)
+                     :else nil)]
+      (when epoch-ms
+        (let [diff-ms   (- (System/currentTimeMillis) epoch-ms)
+              diff-mins (quot diff-ms 60000)
+              diff-hrs  (quot diff-ms 3600000)
+              diff-days (quot diff-ms 86400000)]
+          (cond
+            (< diff-mins 1)   "now"
+            (< diff-mins 60)  (str diff-mins "m")
+            (< diff-hrs 24)   (str diff-hrs "h")
+            (< diff-days 7)   (str diff-days "d")
+            (< diff-days 30)  (str (quot diff-days 7) "w")
+            (< diff-days 365) (str (quot diff-days 30) "mo")
+            :else             (str (quot diff-days 365) "y")))))))
+
+(defn- filter-sessions
+  "Return sessions matching `query` (case-insensitive substring on first-message + name)."
+  [sessions query]
+  (if (str/blank? query)
+    sessions
+    (let [q (str/lower-case (str/trim query))]
+      (filterv (fn [s]
+                 (or (str/includes? (str/lower-case (or (:first-message s) "")) q)
+                     (str/includes? (str/lower-case (or (:name s) "")) q)
+                     (str/includes? (str/lower-case (or (:cwd s) "")) q)))
+               sessions))))
+
+(defn- session-selector-init
+  "Build the initial session selector state for `cwd`."
+  [cwd current-session-file]
+  (let [dir      (persist/session-dir-for cwd)
+        sessions (persist/list-sessions dir)]
+    {:sessions              sessions
+     :all-sessions          nil       ;; loaded lazily on Tab
+     :scope                 :current
+     :search                ""
+     :selected              0
+     :loading?              false
+     :current-session-file  current-session-file}))
+
+(defn- selector-sessions
+  "Return the active sessions list for the current scope."
+  [{:keys [scope sessions all-sessions]}]
+  (if (= :current scope) sessions (or all-sessions [])))
+
+(defn- selector-filtered
+  "Return filtered + bounded sessions."
+  [sel-state]
+  (filter-sessions (selector-sessions sel-state) (:search sel-state)))
+
+(defn- selector-clamp
+  "Clamp :selected to valid range after list changes."
+  [sel-state]
+  (let [n (count (selector-filtered sel-state))]
+    (update sel-state :selected #(max 0 (min % (dec (max 1 n)))))))
+
+(defn- selector-move
+  "Move cursor by `delta`, clamped."
+  [sel-state delta]
+  (let [n (count (selector-filtered sel-state))]
+    (selector-clamp
+     (update sel-state :selected #(max 0 (min (dec (max 1 n)) (+ % delta)))))))
+
+(defn- selector-type
+  "Append/delete character from search string."
+  [sel-state key-str]
+  (let [new-search (cond
+                     (= "backspace" key-str)
+                     (let [s (:search sel-state)]
+                       (if (pos? (count s)) (subs s 0 (dec (count s))) s))
+
+                     (and (= 1 (count key-str))
+                          (>= (int (.charAt ^String key-str 0)) 32))
+                     (str (:search sel-state) key-str)
+
+                     :else (:search sel-state))]
+    (selector-clamp (assoc sel-state :search new-search))))
+
 ;; ── Commands ────────────────────────────────────────────────
 
 (defn poll-cmd
@@ -189,44 +289,129 @@
                   introspect the session for prompt templates, etc.
    `ui-state-atom` — optional extension UI state atom; when present,
                      the TUI renders widgets, status, notifications,
-                     and dialogs from extensions."
+                     and dialogs from extensions.
+   `opts` map:
+     :cwd                  — working directory string (for /resume)
+     :current-session-file — current session file path (highlighted in selector)
+     :resume-fn!           — (fn [session-path]) called when user selects a session"
   ([model-name] (make-init model-name nil))
   ([model-name query-fn] (make-init model-name query-fn nil))
-  ([model-name query-fn ui-state-atom]
+  ([model-name query-fn ui-state-atom] (make-init model-name query-fn ui-state-atom {}))
+  ([model-name query-fn ui-state-atom opts]
    (fn []
      (let [introspected (when query-fn
                           (query-fn [:psi.agent-session/prompt-templates
                                      :psi.agent-session/skills
-                                     :psi.agent-session/extension-summary]))]
-       [{:messages          []
-         :phase             :idle
-         :error             nil
-         :input             (charm/text-input :prompt "刀: "
-                                              :placeholder "Type a message…"
-                                              :focused true)
-         :spinner-frame     0
-         :model-name        model-name
-         :prompt-templates  (or (:psi.agent-session/prompt-templates introspected) [])
-         :skills            (or (:psi.agent-session/skills introspected) [])
-         :extension-summary (or (:psi.agent-session/extension-summary introspected) {})
-         :ui-state-atom     ui-state-atom
-         :queue             nil
-         :width             80
-         :height            24
+                                     :psi.agent-session/extension-summary
+                                     :psi.agent-session/session-file]))]
+       [{:messages              []
+         :phase                 :idle
+         :error                 nil
+         :input                 (charm/text-input :prompt "刀: "
+                                                  :placeholder "Type a message…"
+                                                  :focused true)
+         :spinner-frame         0
+         :model-name            model-name
+         :prompt-templates      (or (:psi.agent-session/prompt-templates introspected) [])
+         :skills                (or (:psi.agent-session/skills introspected) [])
+         :extension-summary     (or (:psi.agent-session/extension-summary introspected) {})
+         :ui-state-atom         ui-state-atom
+         :cwd                   (or (:cwd opts) (System/getProperty "user.dir"))
+         :current-session-file  (or (:current-session-file opts)
+                                    (:psi.agent-session/session-file introspected))
+         :resume-fn!            (:resume-fn! opts)
+         :session-selector      nil   ;; non-nil when /resume is active
+         :queue                 nil
+         :width                 80
+         :height                24
          ;; Live turn progress
-         :stream-text       nil       ;; accumulated LLM text for current turn
-         :tool-calls        {}        ;; tool-id → {:name :args :status :result :is-error}
-         :tool-order        []}
+         :stream-text           nil
+         :tool-calls            {}
+         :tool-order            []}
         nil]))))
 
 ;; ── Update helpers ──────────────────────────────────────────
+
+(defn- open-session-selector
+  "Enter session-selector phase."
+  [state]
+  (let [sel (session-selector-init (:cwd state) (:current-session-file state))]
+    [(assoc state
+            :phase            :selecting-session
+            :session-selector sel
+            :input            (charm/text-input-reset (:input state)))
+     nil]))
 
 (defn- handle-command
   "Process a /command, returning [new-state cmd] or nil if unrecognised."
   [state text]
   (case text
-    ("/quit" "/exit") [state charm/quit-cmd]
+    ("/quit" "/exit")   [state charm/quit-cmd]
+    ("/resume")         (open-session-selector state)
     nil))
+
+(defn- handle-selector-key
+  "Handle a keypress while the session selector is open.
+  Returns [new-state cmd]."
+  [state m]
+  (let [sel     (:session-selector state)
+        key-str (when (msg/key-press? m) (:key m))]
+    (cond
+      ;; Escape — cancel, return to idle
+      (msg/key-match? m "escape")
+      [(assoc state :phase :idle :session-selector nil) nil]
+
+      ;; Ctrl+C — quit
+      (msg/key-match? m "ctrl+c")
+      [state charm/quit-cmd]
+
+      ;; Tab — toggle scope
+      (msg/key-match? m "tab")
+      (let [new-scope (if (= :current (:scope sel)) :all :current)
+            new-sel   (if (and (= :all new-scope) (nil? (:all-sessions sel)))
+                        ;; Lazily load all sessions on first Tab to :all
+                        (let [all (persist/list-all-sessions)]
+                          (-> sel
+                              (assoc :scope :all :all-sessions all)
+                              selector-clamp))
+                        (-> sel
+                            (assoc :scope new-scope)
+                            selector-clamp))]
+        [(assoc state :session-selector new-sel) nil])
+
+      ;; Up
+      (msg/key-match? m "up")
+      [(update state :session-selector selector-move -1) nil]
+
+      ;; Down
+      (msg/key-match? m "down")
+      [(update state :session-selector selector-move 1) nil]
+
+      ;; Enter — select the highlighted session
+      (msg/key-match? m "enter")
+      (let [filtered (selector-filtered sel)
+            chosen   (nth filtered (:selected sel) nil)]
+        (if chosen
+          (let [path      (:path chosen)
+                resume-fn (:resume-fn! state)
+                new-state (-> state
+                              (assoc :phase            :idle
+                                     :session-selector nil
+                                     :current-session-file path
+                                     :messages         []
+                                     :stream-text      nil
+                                     :tool-calls       {}
+                                     :tool-order       []))]
+            (when resume-fn (resume-fn path))
+            [new-state nil])
+          ;; Nothing selected — just close
+          [(assoc state :phase :idle :session-selector nil) nil]))
+
+      ;; Backspace / printable chars — update search
+      (msg/key-press? m)
+      [(update state :session-selector selector-type key-str) nil]
+
+      :else [state nil])))
 
 (defn- submit-to-agent
   "Start the agent with `text`, return [new-state cmd]."
@@ -392,6 +577,10 @@
       ;; Agent poll timeout → advance spinner, keep polling
       (agent-poll? m)
       (handle-agent-poll state)
+
+      ;; Session selector active — route all key input to selector handler
+      (= :selecting-session (:phase state))
+      (handle-selector-key state m)
 
       ;; Enter → submit (idle + has text)
       (and (= :idle (:phase state))
@@ -627,6 +816,70 @@
                 (str prefix text))))
           chunks))))))
 
+;; ── Session selector rendering ──────────────────────────────
+
+(def ^:private selector-title-style  (charm/style :fg charm/magenta :bold true))
+(def ^:private selector-sel-style    (charm/style :fg charm/cyan :bold true))
+(def ^:private selector-cur-style    (charm/style :fg charm/yellow))
+(def ^:private selector-hint-style   dim-style)
+(def ^:private selector-search-style (charm/style :fg charm/green))
+
+(defn- shorten-path [p]
+  (let [home (System/getProperty "user.home")]
+    (if (and p (.startsWith ^String p home))
+      (str "~" (subs p (count home)))
+      (or p ""))))
+
+(defn- render-session-selector
+  "Render the /resume session picker."
+  [sel-state current-session-file width]
+  (let [{:keys [scope search selected]} sel-state
+        filtered  (selector-filtered sel-state)
+        n         (count filtered)
+        scope-str (if (= :current scope)
+                    (str (charm/render selector-sel-style "◉ Current") "  ○ All")
+                    (str "○ Current  " (charm/render selector-sel-style "◉ All")))
+        title     (str (charm/render selector-title-style "Resume Session")
+                       "  " scope-str
+                       "  " (charm/render selector-hint-style "[Tab=scope ↑↓=nav Enter=select Esc=cancel]"))]
+    (str title "\n"
+         (charm/render selector-search-style (str "Search: " search "█")) "\n"
+         (render-separator) "\n"
+         (if (zero? n)
+           (charm/render dim-style "  (no sessions found)\n")
+           (str/join "\n"
+                     (map-indexed
+                      (fn [i info]
+                        (let [is-sel     (= i selected)
+                              is-current (= (:path info) current-session-file)
+                              age        (format-age (:modified info))
+                              label      (or (:name info) (:first-message info) "(empty)")
+                              label      (str/replace label #"\n" " ")
+                              cwd-part   (when (= :all scope)
+                                           (str " " (charm/render dim-style
+                                                                  (shorten-path (:cwd info)))))
+                              right      (str (charm/render dim-style
+                                                            (str (:message-count info) " " age))
+                                              (or cwd-part ""))
+                              right-w    (count right) ; approximate
+                              avail      (max 10 (- width 4 right-w))
+                              label-tr   (if (> (count label) avail)
+                                           (str (subs label 0 (- avail 1)) "…")
+                                           label)
+                              cursor     (if is-sel
+                                           (charm/render selector-sel-style "▸ ")
+                                           "  ")
+                              styled-lbl (cond
+                                           is-current (charm/render selector-cur-style label-tr)
+                                           is-sel     (charm/render selector-sel-style label-tr)
+                                           :else      label-tr)
+                              pad        (str/join (repeat (max 1 (- width 2 (count label-tr) right-w)) " "))]
+                          (str cursor styled-lbl pad right)))
+                      filtered)))
+         "\n"
+         (when (pos? n)
+           (charm/render dim-style (str "  " (inc selected) "/" n "\n"))))))
+
 ;; ── Tool progress rendering ──────────────────────────────────
 
 (def ^:private tool-result-preview-lines 5)
@@ -701,41 +954,47 @@
   [state]
   (let [{:keys [messages phase error input spinner-frame model-name
                 prompt-templates skills extension-summary ui-state-atom
-                stream-text tool-calls tool-order width]} state
-        spinner-char (nth spinner-frames (mod spinner-frame (count spinner-frames)))
+                stream-text tool-calls tool-order
+                session-selector current-session-file width]} state
+        spinner-char   (nth spinner-frames (mod spinner-frame (count spinner-frames)))
         dialog-active? (has-active-dialog? state)
-        has-progress? (or (seq stream-text) (seq tool-order))]
-    (str (render-banner model-name prompt-templates skills extension-summary)
-         "\n"
-         (render-messages messages)
-         ;; Current turn progress
-         (when (= :streaming phase)
-           (if has-progress?
-             ;; Show live progress: streaming text + tool calls
-             (str (render-stream-text stream-text)
-                  (render-tool-calls tool-calls tool-order spinner-char)
-                  "\n")
-             ;; No progress yet — show thinking spinner
-             (str "\n" (charm/render assist-style "ψ: ")
-                  spinner-char " thinking…\n")))
-         (when error
-           (str "\n" (charm/render error-style (str "[error: " error "]")) "\n"))
-         ;; Widgets above editor
-         (render-widgets ui-state-atom :above-editor)
-         "\n"
-         (render-separator) "\n"
-         ;; Dialog replaces editor when active
-         (if dialog-active?
-           (render-dialog ui-state-atom)
-           (if (= :idle phase)
-             (wrap-text-input-view input width)
-             (charm/render dim-style "(waiting for response…)")))
-         ;; Widgets below editor
-         (render-widgets ui-state-atom :below-editor)
-         ;; Status footer
-         (render-statuses ui-state-atom)
-         ;; Notifications toast
-         (render-notifications ui-state-atom))))
+        has-progress?  (or (seq stream-text) (seq tool-order))
+        term-width     (or width 80)]
+    (if (= :selecting-session phase)
+      ;; Session selector takes over the whole screen
+      (str (render-banner model-name prompt-templates skills extension-summary)
+           "\n"
+           (render-session-selector session-selector current-session-file term-width))
+      ;; Normal chat view
+      (str (render-banner model-name prompt-templates skills extension-summary)
+           "\n"
+           (render-messages messages)
+           ;; Current turn progress
+           (when (= :streaming phase)
+             (if has-progress?
+               (str (render-stream-text stream-text)
+                    (render-tool-calls tool-calls tool-order spinner-char)
+                    "\n")
+               (str "\n" (charm/render assist-style "ψ: ")
+                    spinner-char " thinking…\n")))
+           (when error
+             (str "\n" (charm/render error-style (str "[error: " error "]")) "\n"))
+           ;; Widgets above editor
+           (render-widgets ui-state-atom :above-editor)
+           "\n"
+           (render-separator) "\n"
+           ;; Dialog replaces editor when active
+           (if dialog-active?
+             (render-dialog ui-state-atom)
+             (if (= :idle phase)
+               (wrap-text-input-view input term-width)
+               (charm/render dim-style "(waiting for response…)")))
+           ;; Widgets below editor
+           (render-widgets ui-state-atom :below-editor)
+           ;; Status footer
+           (render-statuses ui-state-atom)
+           ;; Notifications toast
+           (render-notifications ui-state-atom)))))
 
 ;; ── Public entry point ──────────────────────────────────────
 
