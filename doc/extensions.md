@@ -16,14 +16,16 @@ Create `~/.psi/agent/extensions/hello_ext.clj`:
 (ns my.hello-ext)
 
 (defn init [api]
-  ;; Register a slash command
-  ((:register-command api) "hello"
-   {:description "Say hello"
-    :handler     (fn [_args] (println "Hello from extension!"))})
+  ;; Register a slash command (ext-path is injected automatically)
+  ((:mutate api) 'psi.extension/register-command
+   {:name "hello"
+    :opts {:description "Say hello"
+           :handler     (fn [_args] (println "Hello from extension!"))}})
 
   ;; Listen to events
-  ((:on api) "session_switch"
-   (fn [ev] (println "Session switched:" (:reason ev))))
+  ((:mutate api) 'psi.extension/register-handler
+   {:event-name "session_switch"
+    :handler-fn (fn [ev] (println "Session switched:" (:reason ev)))})
 
   ;; Show a status line in the TUI footer
   (when-let [ui (:ui api)]
@@ -60,6 +62,30 @@ The `init` function receives a map with these keys:
 | `:register-command`  | `(fn [name opts])`                        | Register a `/name` slash command     |
 | `:register-flag`     | `(fn [name opts])`                        | Register a toggleable flag           |
 | `:register-shortcut` | `(fn [key opts])`                         | Register a keyboard shortcut         |
+
+### Runtime Surface
+
+| Key      | Signature                   | Description                                  |
+|----------|-----------------------------|----------------------------------------------|
+| `:query` | `(fn [eql-query])`          | Run an EQL query through the session runtime |
+| `:mutate`| `(fn [op-sym params])`      | Run an EQL mutation through the runtime      |
+
+`(:mutate api)` is extension-scoped for `psi.extension/*` mutations:
+
+- If `op-sym` is in the `psi.extension` namespace and `params` is a map,
+  psi automatically injects `:ext-path` for the current extension when it
+  is missing.
+- Non-`psi.extension/*` mutations are passed through unchanged.
+- If `:ext-path` is explicitly provided, it is respected.
+
+Example (no explicit `:ext-path` required):
+
+```clojure
+((:mutate api) 'psi.extension/register-command
+ {:name "hello"
+  :opts {:description "Say hello"
+         :handler (fn [_] (println "hi"))}})
+```
 
 ### Session Actions
 
