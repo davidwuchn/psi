@@ -488,7 +488,13 @@
      :mutate
      (fn [op-sym params]
        (if-let [f (:mutate-fn runtime-fns)]
-         (f op-sym params)
+         (let [params' (if (and (symbol? op-sym)
+                                (= "psi.extension" (namespace op-sym))
+                                (map? params)
+                                (not (contains? params :ext-path)))
+                         (assoc params :ext-path ext-path)
+                         params)]
+           (f op-sym params'))
          (not-init :mutate)))
 
      ;; ── Event bus ──────────────────────────────────────

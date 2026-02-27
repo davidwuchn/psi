@@ -463,8 +463,12 @@
           _           (ext/register-extension-in! reg "/ext/test")
           runtime-fns {:mutate-fn (fn [op params] {:op op :params params})}
           api         (ext/create-extension-api reg "/ext/test" runtime-fns)]
-      (is (= {:op 'psi.extension/test :params {:a 1}}
-             ((:mutate api) 'psi.extension/test {:a 1}))))))
+      (is (= {:op 'psi.extension/test :params {:a 1 :ext-path "/ext/test"}}
+             ((:mutate api) 'psi.extension/test {:a 1})))
+      (is (= {:op 'psi.other/test :params {:a 1}}
+             ((:mutate api) 'psi.other/test {:a 1})))
+      (is (= {:op 'psi.extension/test :params {:a 1 :ext-path "/custom"}}
+             ((:mutate api) 'psi.extension/test {:a 1 :ext-path "/custom"}))))))
 
 ;; ── Extension loading from file ─────────────────────────────────────────────
 
