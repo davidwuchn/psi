@@ -343,13 +343,15 @@
         ext-paths (ext/discover-extension-paths [] cwd)]
     ;; Reusable bootstrap: session file, query graph, base tools, system prompt,
     ;; mutation-driven startup loading, extension tool merge.
-    (let [summary (session/bootstrap-session-in!
-                   ctx {:register-global-query? true
-                        :base-tools             (vec tools/all-tools)
-                        :system-prompt          system-prompt
-                        :templates              templates
-                        :skills                 skills
-                        :extension-paths        ext-paths})]
+    ;; eql_query tool closes over ctx for live session introspection.
+    (let [eql-tool (tools/make-eql-query-tool (fn [q] (session/query-in ctx q)))
+          summary  (session/bootstrap-session-in!
+                    ctx {:register-global-query? true
+                         :base-tools             (conj (vec tools/all-tools) eql-tool)
+                         :system-prompt          system-prompt
+                         :templates              templates
+                         :skills                 skills
+                         :extension-paths        ext-paths})]
       (doseq [{:keys [path error]} (:extension-errors summary)]
         (timbre/warn "Extension error:" path error))
       (when (pos? (:extension-loaded-count summary))
@@ -458,9 +460,11 @@
         ext-paths (ext/discover-extension-paths [] cwd)
         ;; Reusable bootstrap: session file, query graph, base tools, system prompt,
         ;; mutation-driven startup loading, extension tool merge.
+        ;; eql_query tool closes over ctx for live session introspection.
+        eql-tool  (tools/make-eql-query-tool (fn [q] (session/query-in ctx q)))
         summary   (session/bootstrap-session-in!
                    ctx {:register-global-query? true
-                        :base-tools             (vec tools/all-tools)
+                        :base-tools             (conj (vec tools/all-tools) eql-tool)
                         :system-prompt          system-prompt
                         :templates              templates
                         :skills                 skills

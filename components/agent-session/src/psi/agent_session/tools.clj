@@ -48,8 +48,16 @@
                                       :content {:type "string" :description "Content to write"}}
                          :required   ["path" "content"]})})
 
+(def eql-query-tool
+  {:name        "eql_query"
+   :label       "EQL Query"
+   :description "Execute an EQL query against the live session graph. Returns session state, tool info, extension status, and more. Input is an EDN vector, e.g. [:psi.agent-session/phase :psi.agent-session/model]"
+   :parameters  (pr-str {:type       "object"
+                         :properties {:query {:type "string" :description "EQL query vector as EDN string, e.g. \"[:psi.agent-session/phase :psi.agent-session/session-id]\""}}
+                         :required   ["query"]})})
+
 (def all-tool-schemas
-  [read-tool bash-tool edit-tool write-tool])
+  [read-tool bash-tool edit-tool write-tool eql-query-tool])
 
 ;; ============================================================
 ;; Tool implementations
@@ -103,9 +111,31 @@
     {:content  (str "Wrote " path)
      :is-error false}))
 
+(defn make-eql-query-tool
+  "Create an eql_query tool with an :execute fn that closes over `query-fn`.
+   `query-fn` should be (fn [eql-query-vec] -> result-map), typically
+   `(partial resolvers/query-in ctx)` or `(fn [q] (session/query-in ctx q))`."
+  [query-fn]
+  (assoc eql-query-tool
+         :execute
+         (fn [{:strs [query]}]
+           (try
+             (let [q (binding [*read-eval* false]
+                       (read-string query))]
+               (when-not (vector? q)
+                 (throw (ex-info "Query must be an EDN vector" {:input query})))
+               (let [result (query-fn q)]
+                 {:content  (pr-str result)
+                  :is-error false}))
+             (catch Exception e
+               {:content  (str "EQL query error: " (ex-message e))
+                :is-error true})))))
+
 (def all-tools
   "Built-in tool definitions including execution fns.
-   Use this when registering tools into agent state."
+   Use this when registering tools into agent state.
+   Note: eql_query is excluded — it requires a session context.
+   Use `make-eql-query-tool` to create it with a query-fn."
   [{:name        (:name read-tool)
     :label       (:label read-tool)
     :description (:description read-tool)
@@ -133,7 +163,9 @@
 
 (defn execute-tool
   "Dispatch a tool call by name. Returns {:content string :is-error boolean}.
-  Throws ex-info for unknown tools."
+  Throws ex-info for unknown tools.
+  Note: eql_query is not dispatched here — it requires a session context
+  and is handled via the tool registry's :execute fn."
   [tool-name args-map]
   (case tool-name
     "read"  (execute-read args-map)
