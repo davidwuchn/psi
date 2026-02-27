@@ -563,7 +563,8 @@
                      :cwd                  cwd
                      :current-session-file (:session-file (session/get-session-data-in ctx))
                      :resume-fn!           resume-fn!
-                     :event-queue          event-queue})))
+                     :event-queue          event-queue
+                     :alt-screen           false})))
 
 ;; ============================================================
 ;; -main

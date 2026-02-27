@@ -1370,11 +1370,14 @@
                        :ui-state-atom       — extension UI state atom
                        :cwd                 — working directory for /resume filtering
                        :current-session-file — current session file path for highlight
-                       :resume-fn!          — (fn [session-path]) => [{:role :user/:assistant :text ...}]"
+                       :resume-fn!          — (fn [session-path]) => [{:role :user/:assistant :text ...}]
+                       :alt-screen          — true/false (default true)"
   ([model-name run-agent-fn!]
    (start! model-name run-agent-fn! {}))
   ([model-name run-agent-fn! opts]
-   (charm/run {:init   (make-init model-name (:query-fn opts) (:ui-state-atom opts) opts)
-               :update (make-update run-agent-fn!)
-               :view   view
-               :alt-screen true})))
+   (charm/run {:init       (make-init model-name (:query-fn opts) (:ui-state-atom opts) opts)
+               :update     (make-update run-agent-fn!)
+               :view       view
+               :alt-screen (if (contains? opts :alt-screen)
+                             (boolean (:alt-screen opts))
+                             true)})))
