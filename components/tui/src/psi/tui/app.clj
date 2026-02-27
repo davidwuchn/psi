@@ -1183,25 +1183,59 @@
              "\n" (charm/render dim-style
                                 (str "… (" (- n max-lines) " more lines)")))))))
 
+(defn- wrap-tool-result-line
+  "Wrap a single tool result line to fit within `avail`
+   visible columns. Returns a seq of wrapped strings."
+  [line avail]
+  (if (or (nil? avail) (<= (ansi/visible-width line) avail))
+    [line]
+    (ansi/word-wrap-ansi line avail)))
+
 (defn- render-tool-calls
-  "Render all tool calls for the current turn."
-  [tool-calls tool-order spinner-char]
+  "Render all tool calls for the current turn.
+   `width` is the terminal column count."
+  [tool-calls tool-order spinner-char width]
   (when (seq tool-order)
-    (str/join
-     "\n"
-     (for [id tool-order
-           :let [tc (get tool-calls id)]
-           :when tc]
-       (let [status-icon (tool-status-indicator (:status tc) spinner-char)
-             header      (tool-header (:name tc) (:parsed-args tc) (:args tc))
-             result      (truncate-result (:result tc) tool-result-preview-lines)
-             result-style (if (:is-error tc) tool-err-style tool-dim-style)]
-         (str "  " status-icon " " header
-              (when result
-                (str "\n"
-                     (str/join "\n"
-                               (map #(str "    " (charm/render result-style %))
-                                    (str/split-lines result)))))))))))
+    (let [;; "  ✓ " prefix = 4 visible cols for header
+          header-avail (when (and width (> width 4))
+                         (- width 4))
+          ;; "    " prefix = 4 visible cols for result
+          result-avail (when (and width (> width 4))
+                         (- width 4))]
+      (str/join
+       "\n"
+       (for [id tool-order
+             :let [tc (get tool-calls id)]
+             :when tc]
+         (let [status-icon (tool-status-indicator
+                            (:status tc) spinner-char)
+               header      (tool-header (:name tc)
+                                        (:parsed-args tc)
+                                        (:args tc))
+               header      (if header-avail
+                             (ansi/truncate-to-width
+                              header header-avail)
+                             header)
+               result      (truncate-result
+                            (:result tc)
+                            tool-result-preview-lines)
+               result-style (if (:is-error tc)
+                              tool-err-style
+                              tool-dim-style)]
+           (str "  " status-icon " " header
+                (when result
+                  (str "\n"
+                       (str/join
+                        "\n"
+                        (mapcat
+                         (fn [line]
+                           (let [wrapped (wrap-tool-result-line
+                                          line result-avail)]
+                             (map #(str "    "
+                                        (charm/render
+                                         result-style %))
+                                  wrapped)))
+                         (str/split-lines result))))))))))))
 
 (defn- render-stream-text
   "Render accumulated streaming text from the LLM
@@ -1242,7 +1276,7 @@
            (when (= :streaming phase)
              (if has-progress?
                (str (render-stream-text stream-text term-width)
-                    (render-tool-calls tool-calls tool-order spinner-char)
+                    (render-tool-calls tool-calls tool-order spinner-char term-width)
                     "\n")
                (str "\n" (charm/render assist-style "ψ: ")
                     spinner-char " thinking…\n")))
