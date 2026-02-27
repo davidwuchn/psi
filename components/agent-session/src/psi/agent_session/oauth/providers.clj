@@ -13,6 +13,7 @@
   (:require [clj-http.client :as http]
             [clojure.string :as str]
             [cheshire.core :as json]
+            [psi.agent-session.oauth.callback-server :as cb]
             [psi.agent-session.oauth.pkce :as pkce])
   (:import [java.net URI URLDecoder URLEncoder]
            [java.util UUID]))
@@ -228,62 +229,84 @@
 
 (defn- openai-begin-login
   "Generate PKCE + authorize URL for OpenAI OAuth.
+   Starts a local callback server on /auth/callback when possible.
    Returns {:url ... :login-state ...}."
   []
   (let [{:keys [verifier challenge]} (pkce/generate-pkce)
-        state   (str (UUID/randomUUID))
-        auth-url (str openai-authorize-url "?"
-                      (build-query-string
-                       {"response_type"             "code"
-                        "client_id"                 openai-client-id
-                        "redirect_uri"              openai-redirect-uri
-                        "scope"                     openai-scopes
-                        "code_challenge"            challenge
-                        "code_challenge_method"     "S256"
-                        "state"                     state
-                        "id_token_add_organizations" "true"
-                        "codex_cli_simplified_flow"  "true"
-                        "originator"                "psi"}))]
+        state           (str (UUID/randomUUID))
+        callback-server (try
+                          (cb/start-server {:port 1455 :path "/auth/callback"})
+                          (catch Exception _ nil))
+        redirect-uri    (if callback-server
+                          (str "http://localhost:" (:port callback-server) "/auth/callback")
+                          openai-redirect-uri)
+        auth-url        (str openai-authorize-url "?"
+                             (build-query-string
+                              {"response_type"              "code"
+                               "client_id"                  openai-client-id
+                               "redirect_uri"               redirect-uri
+                               "scope"                      openai-scopes
+                               "code_challenge"             challenge
+                               "code_challenge_method"      "S256"
+                               "state"                      state
+                               "id_token_add_organizations" "true"
+                               "codex_cli_simplified_flow"  "true"
+                               "originator"                 "psi"}))]
     (open-browser! auth-url)
     {:url         auth-url
-     :login-state {:verifier verifier
-                   :state    state}}))
+     :login-state {:verifier        verifier
+                   :state           state
+                   :redirect-uri    redirect-uri
+                   :callback-server callback-server}}))
 
 (defn- openai-complete-login
   "Exchange OpenAI authorization code for tokens.
-   `input` may be a raw code, query params, code#state, or full redirect URL."
+   `input` may be a raw code, query params, code#state, full URL, or nil.
+   If input has no code and callback-server is present, waits for callback."
   [input login-state]
-  (let [{:keys [code state]} (parse-authorization-input input)
-        expected-state       (:state login-state)]
-    (when-not (seq code)
-      (throw (ex-info "Missing authorization code" {:provider :openai})))
-    (when (and (seq state) (not= state expected-state))
-      (throw (ex-info "State mismatch" {:provider :openai})))
-    (let [response (http/post openai-token-url
-                              {:content-type  :x-www-form-urlencoded
-                               :as            :json
-                               :cookie-policy :none
-                               :form-params   {"grant_type"    "authorization_code"
-                                               "client_id"     openai-client-id
-                                               "code"          code
-                                               "code_verifier" (:verifier login-state)
-                                               "redirect_uri"  openai-redirect-uri}})
-          {:keys [access_token refresh_token expires_in]} (:body response)]
-      (when-not (and (seq access_token) (seq refresh_token) (number? expires_in))
-        (throw (ex-info "OpenAI token response missing fields"
-                        {:provider :openai :body (:body response)})))
-      {:type    :oauth
-       :refresh refresh_token
-       :access  access_token
-       :expires (expires-at-from-seconds expires_in)})))
+  (let [callback-server (:callback-server login-state)
+        expected-state  (:state login-state)]
+    (try
+      (let [{input-code :code input-state :state}
+            (parse-authorization-input input)
+            callback-result (when (and (not (seq input-code)) callback-server)
+                              ((:wait-for-code callback-server) 180000))
+            code  (or input-code (:code callback-result))
+            state (or input-state (:state callback-result))]
+        (when-not (seq code)
+          (throw (ex-info "Missing authorization code" {:provider :openai})))
+        (when (and (seq state) (not= state expected-state))
+          (throw (ex-info "State mismatch" {:provider :openai})))
+        (let [response (http/post openai-token-url
+                                  {:content-type  :x-www-form-urlencoded
+                                   :as            :json
+                                   :cookie-policy :none
+                                   :form-params   {"grant_type"    "authorization_code"
+                                                   "client_id"     openai-client-id
+                                                   "code"          code
+                                                   "code_verifier" (:verifier login-state)
+                                                   "redirect_uri"  (or (:redirect-uri login-state)
+                                                                       openai-redirect-uri)}})
+              {:keys [access_token refresh_token expires_in]} (:body response)]
+          (when-not (and (seq access_token) (seq refresh_token) (number? expires_in))
+            (throw (ex-info "OpenAI token response missing fields"
+                            {:provider :openai :body (:body response)})))
+          {:type    :oauth
+           :refresh refresh_token
+           :access  access_token
+           :expires (expires-at-from-seconds expires_in)}))
+      (finally
+        (when callback-server
+          ((:close callback-server)))))))
 
 (defn- openai-login
-  "Run OpenAI OAuth authorization flow (callback-based)."
+  "Run OpenAI OAuth authorization flow (callback-based).
+   Users can paste a code/URL, or press Enter to wait for browser callback."
   [callbacks]
   (let [{:keys [url login-state]} (openai-begin-login)]
     ((:on-auth callbacks) {:url url})
     (let [input ((:on-prompt callbacks)
-                 {:message "Paste the authorization code (or full redirect URL):"})]
+                 {:message "Paste authorization code/URL, or press Enter to wait for callback:"})]
       (openai-complete-login input login-state))))
 
 (defn- openai-refresh
@@ -308,7 +331,7 @@
 (def openai-provider
   {:id                   :openai
    :name                 "OpenAI (ChatGPT Plus/Pro)"
-   :uses-callback-server false
+   :uses-callback-server true
    :login                openai-login
    :begin-login          openai-begin-login
    :complete-login       openai-complete-login

@@ -668,13 +668,30 @@
                                 (if error
                                   (reply! queue (str "✗ " error))
                                   (let [{:keys [url login-state]} (oauth/begin-login! oauth-ctx (:id provider))]
-                                    (swap! session-state assoc :pending-login
-                                           {:provider-id   (:id provider)
-                                            :provider-name (:name provider)
-                                            :login-state   login-state})
-                                    (reply! queue (str "🔑 Login to " (:name provider)
-                                                       "\n\nOpen this URL in your browser:\n" url
-                                                       "\n\nPaste the authorization code below ↓")))))
+                                    (if (:uses-callback-server provider)
+                                      (do
+                                        ;; Callback-server providers (e.g. OpenAI):
+                                        ;; auto-complete when the browser redirect arrives.
+                                        (swap! session-state dissoc :pending-login)
+                                        (reply! queue (str "🔑 Login to " (:name provider)
+                                                           "\n\nOpen this URL in your browser:\n" url
+                                                           "\n\nWaiting for browser callback…"))
+                                        (future
+                                          (try
+                                            (oauth/complete-login! oauth-ctx (:id provider) nil login-state)
+                                            (reply! queue (str "✓ Logged in to " (:name provider)))
+                                            (catch Exception e
+                                              (reply! queue (str "✗ Login failed: " (ex-message e)))))))
+                                      ;; Manual-code providers (e.g. Anthropic):
+                                      ;; store state and wait for pasted code on next input.
+                                      (do
+                                        (swap! session-state assoc :pending-login
+                                               {:provider-id   (:id provider)
+                                                :provider-name (:name provider)
+                                                :login-state   login-state})
+                                        (reply! queue (str "🔑 Login to " (:name provider)
+                                                           "\n\nOpen this URL in your browser:\n" url
+                                                           "\n\nPaste the authorization code below ↓")))))))
                               (catch Exception e
                                 (reply! queue (str "✗ Login failed: " (ex-message e)))))
 
