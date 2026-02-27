@@ -21,6 +21,45 @@ use "./agent.allium" as agent
 use "./extension-system.allium" as ext
 
 ------------------------------------------------------------
+-- External Entities
+------------------------------------------------------------
+
+external entity Model {
+    provider: String
+    id: String
+    reasoning: Boolean
+}
+
+external entity Agent {
+    -- The core LLM agent (specified in agent.allium).
+    state: agent/AgentState
+    is_streaming: Boolean
+}
+
+external entity AgentSession {
+    -- Session fields touched by compaction rules.
+    model: Model?
+    agent: Agent
+    isCompacting: Boolean
+    autoCompactionEnabled: Boolean
+    is_idle: Boolean
+}
+
+external entity SessionEntry {
+    id: String
+    parentId: String?
+    timestamp: Timestamp
+}
+
+external entity CompactionEntry {
+    summary: String
+    firstKeptEntryId: String
+    tokensBefore: Integer
+    details: String?
+    fromHook: Boolean
+}
+
+------------------------------------------------------------
 -- Value Types
 ------------------------------------------------------------
 
@@ -90,6 +129,11 @@ rule ManualCompaction {
     ensures: ext/SessionCompactDispatched(session)
 }
 
+rule SetAutoCompaction {
+    when: SetAutoCompaction(session, enabled)
+    ensures: session.autoCompactionEnabled = enabled
+}
+
 -- ── Auto-compaction: threshold ──────────────────────────
 
 rule AutoCompactionTriggered {
@@ -133,6 +177,14 @@ rule BranchSummarised {
     let context = PrepareForBranchSummary(abandonedEntries, config.branch_summary_reserve_tokens)
 
     ensures: result = BranchSummaryExecuted(session, context, customInstructions)
+}
+
+------------------------------------------------------------
+-- Actor Declarations
+------------------------------------------------------------
+
+actor User {
+    identified_by: HumanOperator
 }
 
 ------------------------------------------------------------

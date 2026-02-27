@@ -4,12 +4,11 @@
 --        with sessions, extensions, skills, resources, compaction, and run modes.
 --
 -- Includes:
---   AgentSession — lifecycle, prompting, model/thinking management, compaction,
+--   AgentSession — lifecycle, prompting, model/thinking management,
 --                  session branching, retry, queued messages
 --   Session entry structure — message, compaction, branch, custom entries
 --   Session lifecycle — new, resume, fork, tree navigation
 --   Model and thinking level management
---   Compaction — auto and manual triggering
 --   Auto-retry on transient errors
 --   Tool management — active tool set
 --   System prompt assembly
@@ -20,6 +19,7 @@
 --   Extension system (extension-system.allium)
 --   Skills (skills.allium)
 --   Prompt templates (prompt-templates.allium)
+--   Compaction (compaction.allium)
 --   Default interactive footer behaviour (default-footer.allium)
 --
 -- Excludes:
@@ -36,6 +36,7 @@ use "./skills.allium" as skills
 use "./extension-system.allium" as ext
 use "./oauth-auth.allium" as auth
 use "./default-footer.allium" as footer
+use "./compaction.allium" as compaction
 
 ------------------------------------------------------------
 -- External Entities
@@ -89,31 +90,6 @@ value ModelCycleResult {
     model: Model
     thinkingLevel: off | minimal | low | medium | high | xhigh
     isScoped: Boolean
-}
-
-value CompactionPreparation {
-    -- Computed slice of entries to be summarised and those to be kept.
-    entriesToSummarise: List<SessionEntry>
-    firstKeptEntryId: String
-    tokensBefore: Integer
-}
-
-value CompactionResult {
-    summary: String
-    firstKeptEntryId: String
-    tokensBefore: Integer
-    details: String?        -- extension-provided JSON metadata
-}
-
-value BranchSummaryResult {
-    summary: String
-    details: String?
-}
-
-value ContextUsage {
-    tokens: Integer?            -- null immediately after compaction
-    contextWindow: Integer
-    percent: Decimal?
 }
 
 value PathMetadata {
@@ -254,10 +230,6 @@ entity AgentSession {
 ------------------------------------------------------------
 
 config {
-    auto_compaction_threshold: Decimal = 0.8    -- fraction of context window
-    auto_compaction_reserve_tokens: Integer = 16384
-    auto_compaction_keep_recent_tokens: Integer = 20000
-    branch_summary_reserve_tokens: Integer = 16384
     auto_retry_enabled: Boolean = true
     auto_retry_max_retries: Integer = 3
     auto_retry_base_delay: Duration = 2.seconds
@@ -381,7 +353,7 @@ rule TreeNavigated {
     ensures: agent/ReplaceMessages(session.agent, EntriesUpTo(targetId))
     ensures:
         if summarize:
-            let summary = BranchSummarised(session, abandonedEntries, customInstructions)
+            let summary = compaction/BranchSummarised(session, abandonedEntries, customInstructions)
             BranchSummaryEntry.created(
                 fromId: oldLeafId,
                 summary: summary.summary,
@@ -453,57 +425,10 @@ rule ActiveToolsSet {
     ensures: session.systemPrompt = RebuildSystemPrompt(session, toolNames)
 }
 
--- ── Compaction ──────────────────────────────────────────
+-- ── Compaction (see compaction.allium) ──────────────────
 
-rule ManualCompaction {
-    -- User triggers /compact. Agent is aborted first.
-    when: ManualCompaction(session, customInstructions?)
-
-    requires: exists session.model
-
-    ensures: session.agent.abort()
-    ensures: session.isCompacting = true
-    ensures: SessionBeforeCompactDispatched(session, preparation, customInstructions)
-    ensures:
-        let result = CompactionExecuted(session, preparation, customInstructions)
-        CompactionEntry.created(
-            summary: result.summary,
-            firstKeptEntryId: result.firstKeptEntryId,
-            tokensBefore: result.tokensBefore,
-            details: result.details,
-            fromHook: false
-        )
-        agent/ReplaceMessages(session.agent, RebuildFromEntries(session))
-    ensures: session.isCompacting = false
-    ensures: SessionCompactDispatched(session)
-}
-
-rule AutoCompactionTriggered {
-    -- Fires after each agent turn when context exceeds threshold.
-    when: session: AgentSession.autoCompactionEnabled
-    when: _: agent/AgentEndEvent.emitted
-
-    requires: session.autoCompactionEnabled
-    requires: ContextFractionUsed(session) >= config.auto_compaction_threshold
-
-    ensures: AutoCompactionStartDispatched(session, reason: threshold)
-    ensures: ManualCompaction(session, customInstructions: null)
-    ensures: AutoCompactionEndDispatched(session)
-}
-
-rule AutoCompactionOnOverflow {
-    -- Fires when the LLM reports a context overflow error.
-    when: _: agent/AgentEndEvent.emitted
-
-    requires: session.autoCompactionEnabled
-    requires: LastAssistantMessage(session).stopReason = error
-    requires: IsContextOverflow(LastAssistantMessage(session))
-
-    ensures: AutoCompactionStartDispatched(session, reason: overflow)
-    ensures: ManualCompaction(session, customInstructions: null)
-    ensures: AutoCompactionEndDispatched(session)
-    -- session re-prompts after compaction
-}
+-- ManualCompaction, AutoCompactionTriggered, and AutoCompactionOnOverflow
+-- are specified in compaction.allium.
 
 -- ── Auto-retry ──────────────────────────────────────────
 
@@ -643,14 +568,14 @@ surface AgentSessionApi {
         ThinkingLevelSet(caller, session, level)
         ThinkingLevelCycled(caller, session)
             when session.model.reasoning
-        ManualCompaction(caller, session, customInstructions?)
+        compaction/ManualCompaction(caller, session, customInstructions?)
             when session.is_idle
         ActiveToolsSet(caller, session, toolNames)
         ext/ExtensionsReloaded(caller, session)
 
     guidance:
         -- session.is_idle = not isStreaming and not isCompacting.
-        -- Callers must check is_idle before calling UserPrompts or ManualCompaction.
+        -- Callers must check is_idle before calling UserPrompts or compaction/ManualCompaction.
         -- During streaming, route input via UserPromptsWhileStreaming.
 }
 
@@ -747,8 +672,6 @@ surface ResourceLoaderApi {
 -- Deferred Specifications
 ------------------------------------------------------------
 
-deferred CompactionAlgorithm.execute    -- see: compaction details in pi-agent-core
-deferred BranchSummarisation.execute    -- see: branch-summarization.ts
 deferred SystemPromptAssembly.build     -- see: system-prompt.ts
 deferred ModelRegistry.resolve          -- see: oauth-auth.allium (API key resolution, provider registration)
 
@@ -760,8 +683,6 @@ deferred ModelRegistry.resolve          -- see: oauth-auth.allium (API key resol
 -- extension-system, session-management, and compaction are separate specs.
 
 -- Extension event ordering open question moved to extension-system.allium.
-
-open_question "Compaction threshold: is config.auto_compaction_threshold a session-level or global setting? The code uses per-session settings but the config block implies global."
 
 open_question "RPC mode: should the JSON stdio protocol be a separate allium spec, or is the surface declaration here sufficient?"
 
