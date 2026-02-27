@@ -143,9 +143,11 @@
       (let [r (introspection/query-agent-session-in
                ctx [:psi.startup/prompt-count
                     :psi.startup/skill-count
+                    :psi.startup/tool-count
                     :psi.startup/extension-loaded-count
                     :psi.startup/extension-error-count
                     :psi.startup/mutations])]
         (is (= 1 (:psi.startup/prompt-count r)))
         (is (= 0 (:psi.startup/skill-count r)))
-        (is (vector? (:psi.startup/mutations r))))))
+        (is (= 0 (:psi.startup/tool-count r)))
+        (is (vector? (:psi.startup/mutations r)))))))

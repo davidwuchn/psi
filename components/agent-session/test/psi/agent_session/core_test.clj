@@ -341,6 +341,15 @@
         (is (string? (:psi.agent-session/cwd result)))
         (is (contains? result :psi.agent-session/git-branch)))))
 
+  (testing "query-in resolves tool summary"
+    (let [ctx  (session/create-context)
+          tool {:name "foo" :label "Foo" :description "Bar" :parameters "{}"}]
+      (agent-core/set-tools-in! (:agent-ctx ctx) [tool])
+      (let [summary (session/query-in ctx [:psi.tool/count :psi.tool/names :psi.tool/summary])]
+        (is (= 1 (:psi.tool/count summary)))
+        (is (= ["foo"] (:psi.tool/names summary)))
+        (is (= "foo" (get-in summary [:psi.tool/summary :tools 0 :name]))))))
+
 ;; ── API error diagnostics (hierarchical EQL) ────────────────────────────────
 
 (defn- inject-messages!
@@ -520,16 +529,20 @@
         (is (= :idle (:psi.agent-session/phase result)))))))
 
 (deftest startup-resources-via-mutations-test
-  (testing "load-startup-resources-via-mutations-in! adds prompts/skills"
+  (testing "load-startup-resources-via-mutations-in! adds prompts/skills/tools"
     (let [ctx      (session/create-context)
           template {:name "greet" :description "d" :content "c" :source :project :file-path "/tmp/greet.md"}
           skill    {:name "coding" :description "d" :file-path "/tmp/SKILL.md"
-                    :base-dir "/tmp" :source :project :disable-model-invocation false}]
+                    :base-dir "/tmp" :source :project :disable-model-invocation false}
+          tool     {:name "foo" :label "Foo" :description "bar" :parameters "{}"}]
       (session/load-startup-resources-via-mutations-in!
-       ctx {:templates [template] :skills [skill] :extension-paths []})
-      (let [sd (session/get-session-data-in ctx)]
+       ctx {:templates [template] :skills [skill] :tools [tool] :extension-paths []})
+      (let [sd (session/get-session-data-in ctx)
+            ad (agent-core/get-data-in (:agent-ctx ctx))]
         (is (= 1 (count (:prompt-templates sd))))
-        (is (= 1 (count (:skills sd))))))))
+        (is (= 1 (count (:skills sd))))
+        (is (= 1 (count (:tools ad))))
+        (is (= "foo" (:name (first (:tools ad)))))))))
 
 (deftest bootstrap-session-test
   (testing "bootstrap-session-in! stores startup summary and applies resources"
@@ -537,17 +550,22 @@
           template {:name "greet" :description "d" :content "c" :source :project :file-path "/tmp/greet.md"}
           skill    {:name "coding" :description "d" :file-path "/tmp/SKILL.md"
                     :base-dir "/tmp" :source :project :disable-model-invocation false}
+          tool     {:name "foo" :label "Foo" :description "bar" :parameters "{}"}
           summary  (session/bootstrap-session-in!
                     ctx {:register-global-query? false
                          :base-tools             []
                          :system-prompt          "sys"
                          :templates              [template]
                          :skills                 [skill]
+                         :tools                  [tool]
                          :extension-paths        []})
-          sd       (session/get-session-data-in ctx)]
+          sd       (session/get-session-data-in ctx)
+          ad       (agent-core/get-data-in (:agent-ctx ctx))]
       (is (= 1 (:prompt-count summary)))
       (is (= 1 (:skill-count summary)))
+      (is (= 1 (:tool-count summary)))
       (is (= 0 (:extension-error-count summary)))
       (is (map? (:startup-bootstrap sd)))
       (is (= 1 (count (:prompt-templates sd))))
-      (is (= 1 (count (:skills sd)))))))
+      (is (= 1 (count (:skills sd))))
+      (is (= 1 (count (:tools ad)))))))

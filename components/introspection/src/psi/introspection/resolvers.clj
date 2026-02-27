@@ -41,6 +41,7 @@
      :psi.startup/bootstrap-timestamp    — bootstrap finished timestamp
      :psi.startup/prompt-count           — prompts loaded at startup
      :psi.startup/skill-count            — skills loaded at startup
+     :psi.startup/tool-count             — tools loaded at startup
      :psi.startup/extension-loaded-count — successful extension loads
      :psi.startup/extension-error-count  — failed extension loads
      :psi.startup/extension-errors       — [{:path :error}] failures
@@ -147,6 +148,7 @@
                  :psi.startup/bootstrap-timestamp
                  :psi.startup/prompt-count
                  :psi.startup/skill-count
+                 :psi.startup/tool-count
                  :psi.startup/extension-loaded-count
                  :psi.startup/extension-error-count
                  :psi.startup/extension-errors
@@ -156,6 +158,7 @@
      :psi.startup/bootstrap-timestamp    (:timestamp summary)
      :psi.startup/prompt-count           (:prompt-count summary 0)
      :psi.startup/skill-count            (:skill-count summary 0)
+     :psi.startup/tool-count             (:tool-count summary 0)
      :psi.startup/extension-loaded-count (:extension-loaded-count summary 0)
      :psi.startup/extension-error-count  (:extension-error-count summary 0)
      :psi.startup/extension-errors       (:extension-errors summary [])

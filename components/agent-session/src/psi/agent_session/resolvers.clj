@@ -135,6 +135,13 @@
    :psi.skill/by-source                   — skills grouped by source
    :psi.skill/detail                      — single enriched skill (seed: :psi.skill/name)
 
+   Tool introspection
+   ──────────────────
+   :psi.tool/summary                      — overall tool summary
+   :psi.tool/names                        — vector of active tool names
+   :psi.tool/count                        — number of active tools
+   :psi.tool/detail                       — single tool map (seed: :psi.tool/name)
+
    Extension UI state (read-only)
    ──────────────────────────────
    :psi.ui/dialog-queue-empty?            — true when no dialogs active or pending
@@ -165,6 +172,7 @@
    :psi.startup/bootstrap-timestamp         — Instant when bootstrap finished
    :psi.startup/prompt-count                — prompts loaded during bootstrap
    :psi.startup/skill-count                 — skills loaded during bootstrap
+   :psi.startup/tool-count                  — tools loaded during bootstrap
    :psi.startup/extension-loaded-count      — extensions loaded successfully
    :psi.startup/extension-error-count       — extension load errors
    :psi.startup/extension-errors            — [{:path :error}] extension failures
@@ -804,6 +812,32 @@
     {:psi.skill/detail
      (when skill (skills/enrich-skill skill))}))
 
+;; ── Tool introspection ───────────────────────────────────
+
+(pco/defresolver tool-summary-resolver
+  "Resolve active tool summary: count and names."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.tool/summary
+                 :psi.tool/names
+                 :psi.tool/count]}
+  (let [tools (:tools (agent/get-data-in (:agent-ctx agent-session-ctx)))
+        names (mapv :name tools)]
+    {:psi.tool/summary {:tool-count (count tools)
+                        :tools      (mapv #(select-keys % [:name :label :description]) tools)}
+     :psi.tool/names   names
+     :psi.tool/count   (count tools)}))
+
+(pco/defresolver tool-detail-resolver
+  "Resolve a single active tool by name.
+   Seed input: {:psi.tool/name \"tool-name\"}"
+  [{:keys [psi/agent-session-ctx psi.tool/name]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.tool/name]
+   ::pco/output [:psi.tool/detail]}
+  (let [tools (:tools (agent/get-data-in (:agent-ctx agent-session-ctx)))
+        tool  (first (filter #(= (:name %) name) tools))]
+    {:psi.tool/detail tool}))
+
 ;; ── Session listing ─────────────────────────────────────
 
 (defn- session-info->eql
@@ -1039,6 +1073,7 @@
                  :psi.startup/bootstrap-timestamp
                  :psi.startup/prompt-count
                  :psi.startup/skill-count
+                 :psi.startup/tool-count
                  :psi.startup/extension-loaded-count
                  :psi.startup/extension-error-count
                  :psi.startup/extension-errors
@@ -1048,6 +1083,7 @@
      :psi.startup/bootstrap-timestamp    (:timestamp summary)
      :psi.startup/prompt-count           (:prompt-count summary 0)
      :psi.startup/skill-count            (:skill-count summary 0)
+     :psi.startup/tool-count             (:tool-count summary 0)
      :psi.startup/extension-loaded-count (:extension-loaded-count summary 0)
      :psi.startup/extension-error-count  (:extension-error-count summary 0)
      :psi.startup/extension-errors       (:extension-errors summary [])
@@ -1090,6 +1126,8 @@
    prompt-template-detail-resolver
    skill-summary-resolver
    skill-detail-resolver
+   tool-summary-resolver
+   tool-detail-resolver
    ;; Extension introspection
    extension-paths-resolver
    extension-handlers-resolver

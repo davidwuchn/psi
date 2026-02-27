@@ -111,6 +111,7 @@
       [:timestamp inst?]
       [:prompt-count :int]
       [:skill-count :int]
+      [:tool-count :int]
       [:extension-loaded-count :int]
       [:extension-error-count :int]
       [:extension-errors [:vector [:map [:path :string] [:error :string]]]]

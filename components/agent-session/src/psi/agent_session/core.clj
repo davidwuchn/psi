@@ -792,6 +792,18 @@
      :path    extension
      :error   error}))
 
+(defn add-tool-in!
+  "Add `tool` to the active agent tool set if its :name is not already present.
+   Returns {:added? bool :count int}."
+  [ctx tool]
+  (let [agent-ctx (:agent-ctx ctx)
+        tools     (:tools (agent/get-data-in agent-ctx))
+        existing? (some #(= (:name %) (:name tool)) tools)]
+    (when-not existing?
+      (agent/set-tools-in! agent-ctx (conj (vec tools) tool)))
+    {:added? (not existing?)
+     :count  (count (:tools (agent/get-data-in agent-ctx)))}))
+
 (pco/defmutation add-prompt-template
   [_ {:keys [psi/agent-session-ctx template]}]
   {::pco/params [:psi/agent-session-ctx :template]
@@ -821,10 +833,20 @@
      :psi.extension/path    path
      :psi.extension/error   error}))
 
+(pco/defmutation add-tool
+  [_ {:keys [psi/agent-session-ctx tool]}]
+  {::pco/params [:psi/agent-session-ctx :tool]
+   ::pco/output [:psi.tool/added?
+                 :psi.tool/count]}
+  (let [{:keys [added? count]} (add-tool-in! agent-session-ctx tool)]
+    {:psi.tool/added? added?
+     :psi.tool/count  count}))
+
 (def all-mutations
   [add-prompt-template
    add-skill
-   add-extension])
+   add-extension
+   add-tool])
 
 (defn register-resolvers-in!
   "Register all agent-session resolvers into an isolated `qctx` query context.
@@ -873,19 +895,20 @@
        op-sym))
 
 (defn load-startup-resources-via-mutations-in!
-  "Load startup prompt templates, skills, and extension paths by executing
+  "Load startup prompt templates, skills, tools, and extension paths by executing
    EQL mutations (one mutation call per resource).
 
    opts keys:
    :templates       — vector of prompt template maps
    :skills          — vector of skill maps
+   :tools           — vector of tool maps
    :extension-paths — vector of extension file paths
 
-   Returns {:prompt-count int :skill-count int :extension-results [result-map ...]}.
+   Returns {:prompt-count int :skill-count int :tool-count int :extension-results [result-map ...]}.
    Each extension result map includes :psi.extension/loaded?, :psi.extension/path,
    and optional :psi.extension/error."
-  [ctx {:keys [templates skills extension-paths]
-        :or   {templates [] skills [] extension-paths []}}]
+  [ctx {:keys [templates skills tools extension-paths]
+        :or   {templates [] skills [] tools [] extension-paths []}}]
   (let [qctx (query/create-query-context)
         _    (register-resolvers-in! qctx false)
         _    (register-mutations-in! qctx true)]
@@ -897,6 +920,10 @@
       (run-mutation-in! qctx 'psi.agent-session.core/add-skill
                         {:psi/agent-session-ctx ctx
                          :skill                s}))
+    (doseq [tool tools]
+      (run-mutation-in! qctx 'psi.agent-session.core/add-tool
+                        {:psi/agent-session-ctx ctx
+                         :tool                 tool}))
     (let [ext-results (mapv (fn [p]
                               (run-mutation-in! qctx 'psi.agent-session.core/add-extension
                                                 {:psi/agent-session-ctx ctx
@@ -904,6 +931,7 @@
                             extension-paths)]
       {:prompt-count      (count (:prompt-templates (get-session-data-in ctx)))
        :skill-count       (count (:skills (get-session-data-in ctx)))
+       :tool-count        (count (:tools (agent/get-data-in (:agent-ctx ctx))))
        :extension-results ext-results})))
 
 (defn bootstrap-session-in!
@@ -913,7 +941,7 @@
    1) ensure a session file exists (new-session-in!)
    2) optionally register global query resolvers/mutations
    3) register base tools and set system prompt
-   4) load prompts/skills/extensions via EQL mutations
+   4) load prompts/skills/tools/extensions via EQL mutations
    5) merge extension tools into active tools
    6) persist startup summary to :startup-bootstrap in session data
 
@@ -923,26 +951,29 @@
    :system-prompt          — prompt string (default empty string)
    :templates              — prompt template maps (default [])
    :skills                 — skill maps (default [])
+   :tools                  — tool maps (default [])
    :extension-paths        — extension file paths (default [])
 
    Returns startup summary map stored at :startup-bootstrap."
-  [ctx {:keys [register-global-query? base-tools system-prompt templates skills extension-paths]
+  [ctx {:keys [register-global-query? base-tools system-prompt templates skills tools extension-paths]
         :or   {register-global-query? true
                base-tools             []
                system-prompt          ""
                templates              []
                skills                 []
+               tools                  []
                extension-paths        []}}]
   (new-session-in! ctx)
   (when register-global-query?
     (register-resolvers!)
     (register-mutations!))
-  (agent/set-tools-in! (:agent-ctx ctx) (vec base-tools))
   (agent/set-system-prompt-in! (:agent-ctx ctx) system-prompt)
-  (let [{:keys [prompt-count skill-count extension-results]}
+  (let [startup-tools (into (vec base-tools) (vec tools))
+        {:keys [prompt-count skill-count tool-count extension-results]}
         (load-startup-resources-via-mutations-in!
          ctx {:templates templates
               :skills skills
+              :tools startup-tools
               :extension-paths extension-paths})
         ext-errors (keep (fn [r]
                            (when-let [e (:psi.extension/error r)]
@@ -950,16 +981,19 @@
                               :error e}))
                          extension-results)
         ext-tools (ext/all-tools-in (:extension-registry ctx))
+        active-tools (:tools (agent/get-data-in (:agent-ctx ctx)))
         _         (agent/set-tools-in! (:agent-ctx ctx)
-                                       (into (vec base-tools) ext-tools))
+                                       (into (vec active-tools) ext-tools))
         summary   {:timestamp              (java.time.Instant/now)
                    :prompt-count           prompt-count
                    :skill-count            skill-count
+                   :tool-count             tool-count
                    :extension-loaded-count (count (filter :psi.extension/loaded? extension-results))
                    :extension-error-count  (count ext-errors)
                    :extension-errors       (vec ext-errors)
                    :mutations              ['psi.agent-session.core/add-prompt-template
                                             'psi.agent-session.core/add-skill
+                                            'psi.agent-session.core/add-tool
                                             'psi.agent-session.core/add-extension]}]
     (swap-session! ctx assoc :startup-bootstrap summary)
     summary))
