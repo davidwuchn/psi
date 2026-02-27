@@ -278,7 +278,7 @@
             tool-items  (map (fn [tc]
                                (let [raw-id          (or (:id tc) (str "call_" (UUID/randomUUID)))
                                      [call-id item-id] (if (str/includes? raw-id "|")
-                                                         (str/split raw-id #"\\|" 2)
+                                                         (str/split raw-id #"\|" 2)
                                                          [raw-id nil])]
                                  (cond-> {"type"      "function_call"
                                           "call_id"   call-id
@@ -302,7 +302,7 @@
 (defn- tool-result->codex-item
   [msg]
   (let [raw-id  (or (:tool-call-id msg) "")
-        call-id (or (first (str/split raw-id #"\\|" 2))
+        call-id (or (first (str/split raw-id #"\|" 2))
                     (str "call_" (UUID/randomUUID)))
         text    (if (map? (:content msg))
                   (or (get-in msg [:content :text]) "")

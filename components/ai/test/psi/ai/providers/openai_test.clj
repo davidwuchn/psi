@@ -93,3 +93,27 @@
       (is (= :error (:type (first @events))))
       (is (re-find #"chatgpt_account_id"
                    (:error-message (first @events)))))))
+
+(deftest codex-tool-call-id-roundtrip-test
+  (testing "tool call ids split into call_id + item id (not single-char prefixes)"
+    (let [call-id "call_abc123"
+          item-id "fc_456def"
+          full-id (str call-id "|" item-id)
+          convo   (-> (conv/create "sys")
+                      (conv/add-user-message "ls")
+                      (conv/add-assistant-message
+                       {:content
+                        {:kind :structured
+                         :blocks [{:kind  :tool-call
+                                   :id    full-id
+                                   :name  "bash"
+                                   :input {"command" "ls"}}]}})
+                      (conv/add-tool-result full-id "bash" {:kind :text :text "ok"} false))
+          input   ((deref #'openai/codex-input-messages) convo)
+          call    (second input)
+          result  (nth input 2)]
+      (is (= "function_call" (get call "type")))
+      (is (= call-id (get call "call_id")))
+      (is (= item-id (get call "id")))
+      (is (= "function_call_output" (get result "type")))
+      (is (= call-id (get result "call_id"))))))
