@@ -394,15 +394,17 @@
         (if chosen
           (let [path      (:path chosen)
                 resume-fn (:resume-fn! state)
+                ;; resume-fn! returns [{:role :user/:assistant :text "..."}...]
+                ;; or nil if it fails
+                restored  (when resume-fn (resume-fn path))
                 new-state (-> state
                               (assoc :phase            :idle
                                      :session-selector nil
                                      :current-session-file path
-                                     :messages         []
+                                     :messages         (or restored [])
                                      :stream-text      nil
                                      :tool-calls       {}
                                      :tool-order       []))]
-            (when resume-fn (resume-fn path))
             [new-state nil])
           ;; Nothing selected — just close
           [(assoc state :phase :idle :session-selector nil) nil]))
@@ -1006,12 +1008,15 @@
                        must put {:kind :done :result msg} or
                        {:kind :error :message str} on queue.
    `opts`           — optional map:
-                       :query-fn      — (fn [eql-query]) for session introspection
-                       :ui-state-atom — extension UI state atom"
+                       :query-fn            — (fn [eql-query]) for session introspection
+                       :ui-state-atom       — extension UI state atom
+                       :cwd                 — working directory for /resume filtering
+                       :current-session-file — current session file path for highlight
+                       :resume-fn!          — (fn [session-path]) => [{:role :user/:assistant :text ...}]"
   ([model-name run-agent-fn!]
    (start! model-name run-agent-fn! {}))
   ([model-name run-agent-fn! opts]
-   (charm/run {:init   (make-init model-name (:query-fn opts) (:ui-state-atom opts))
+   (charm/run {:init   (make-init model-name (:query-fn opts) (:ui-state-atom opts) opts)
                :update (make-update run-agent-fn!)
                :view   view
                :alt-screen true})))

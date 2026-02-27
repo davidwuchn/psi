@@ -277,6 +277,44 @@
     (when (and (empty? text) (empty? errors))
       (println "\nψ: (no response)\n"))))
 
+(defn- message->display-text
+  "Extract display text from an agent-core message map.
+   Includes :text blocks and :error blocks."  
+  [msg]
+  (let [content (:content msg)]
+    (cond
+      (string? content)
+      content
+
+      (sequential? content)
+      (->> content
+           (keep (fn [block]
+                   (case (:type block)
+                     :text  (:text block)
+                     :error (str "[error] " (:text block))
+                     nil)))
+           (str/join "\n"))
+
+      :else
+      "")))
+
+(defn- agent-messages->tui-messages
+  "Convert agent-core history to TUI display messages.
+   Keeps user/assistant roles, skips toolResult messages."  
+  [messages]
+  (->> messages
+       (keep (fn [msg]
+               (when-let [role (case (:role msg)
+                                 "user"      :user
+                                 "assistant" :assistant
+                                 nil)]
+                 (let [text (message->display-text msg)]
+                   {:role role
+                    :text (if (str/blank? text)
+                            (str "[" (:role msg) "]")
+                            text)}))))
+       vec))
+
 ;; ============================================================
 ;; Prompt template expansion
 ;; ============================================================
@@ -543,6 +581,18 @@
                                  :result {:role    "assistant"
                                           :content [{:type :text :text text}]}}))
 
+        ;; Resume callback used by the TUI /resume selector.
+        ;; Returns TUI message maps to display immediately after loading.
+        resume-fn! (fn [session-path]
+                     (try
+                       (session/resume-session-in! ctx session-path)
+                       (let [messages (:messages (agent/get-data-in (:agent-ctx ctx)))]
+                         (agent-messages->tui-messages messages))
+                       (catch Exception e
+                         (timbre/error e "Resume failed:" session-path)
+                         [{:role :assistant
+                           :text (str "✗ Resume failed: " (ex-message e))}])))
+
         ;; run-agent-fn! — called by the TUI update fn on submit.
         ;; Two-step login: /login shows URL → next input is the auth code.
         run-agent-fn! (fn [text ^java.util.concurrent.LinkedBlockingQueue queue]
@@ -607,8 +657,11 @@
                                   (.put queue {:kind :error :message (ex-message e)})))))))]
 
     (tui-app/start! (:name ai-model) run-agent-fn!
-                    {:query-fn      (fn [q] (session/query-in ctx q))
-                     :ui-state-atom (:ui-state-atom ctx)})))
+                    {:query-fn             (fn [q] (session/query-in ctx q))
+                     :ui-state-atom        (:ui-state-atom ctx)
+                     :cwd                  cwd
+                     :current-session-file (:session-file (session/get-session-data-in ctx))
+                     :resume-fn!           resume-fn!})))
 
 ;; ============================================================
 ;; -main

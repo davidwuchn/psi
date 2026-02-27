@@ -9,6 +9,7 @@
    [charm.core :as charm]
    [charm.input.keymap :as keymap]
    [charm.message :as msg]
+   [psi.agent-session.persistence :as persist]
    [psi.tui.app :as app])
   (:import
    [java.util.concurrent LinkedBlockingQueue]))
@@ -17,11 +18,20 @@
 
 (defn- init-state
   "Create a fresh state from make-init."
-  ([] (init-state "test-model"))
-  ([model-name]
-   (let [init-fn (app/make-init model-name)
+  ([] (init-state "test-model" {}))
+  ([model-name] (init-state model-name {}))
+  ([model-name opts]
+   (let [init-fn (app/make-init model-name nil nil opts)
          [state _cmd] (init-fn)]
      state)))
+
+(defn- type-text
+  "Type all chars of s into the update loop, returning new state."
+  [update-fn state s]
+  (reduce (fn [st ch]
+            (first (update-fn st (msg/key-press (str ch)))))
+          state
+          s))
 
 (defn- stub-agent-fn
   "A stub run-agent-fn! that immediately puts a done result on the queue."
@@ -98,6 +108,67 @@
           [s1 cmd]  (update-fn state (msg/key-press :enter))]
       (is (= :idle (:phase s1)))
       (is (nil? cmd)))))
+
+;;;; Update — /resume session selector
+
+(deftest resume-command-opens-selector-test
+  (testing "/resume enters :selecting-session phase"
+    (with-redefs [persist/session-dir-for (fn [_cwd] "/tmp/psi-test")
+                  persist/list-sessions
+                  (fn [_dir]
+                    [{:path "/tmp/psi-test/a.ndedn"
+                      :name "Session A"
+                      :first-message "hello"
+                      :message-count 3
+                      :modified (java.time.Instant/now)
+                      :cwd "/tmp/psi-test"}])]
+      (let [update-fn (app/make-update (stub-agent-fn ""))
+            state     (init-state "test-model" {:cwd "/tmp/psi-test"})
+            typed     (type-text update-fn state "/resume")
+            [s1 _]    (update-fn typed (msg/key-press :enter))]
+        (is (= :selecting-session (:phase s1)))
+        (is (some? (:session-selector s1)))))))
+
+(deftest resume-selection-restores-messages-test
+  (testing "selecting a session calls resume-fn! and loads returned messages"
+    (let [selected-path (atom nil)
+          restored      [{:role :user :text "restored user"}
+                         {:role :assistant :text "restored assistant"}]]
+      (with-redefs [persist/session-dir-for (fn [_cwd] "/tmp/psi-test")
+                    persist/list-sessions
+                    (fn [_dir]
+                      [{:path "/tmp/psi-test/a.ndedn"
+                        :name "Session A"
+                        :first-message "hello"
+                        :message-count 3
+                        :modified (java.time.Instant/now)
+                        :cwd "/tmp/psi-test"}])]
+        (let [update-fn (app/make-update (stub-agent-fn ""))
+              state     (init-state "test-model"
+                                    {:cwd "/tmp/psi-test"
+                                     :resume-fn! (fn [path]
+                                                   (reset! selected-path path)
+                                                   restored)})
+              typed     (type-text update-fn state "/resume")
+              [s1 _]    (update-fn typed (msg/key-press :enter))
+              [s2 _]    (update-fn s1 (msg/key-press :enter))]
+          (is (= :idle (:phase s2)))
+          (is (= restored (:messages s2)))
+          (is (= "/tmp/psi-test/a.ndedn" @selected-path))
+          (is (= "/tmp/psi-test/a.ndedn" (:current-session-file s2))))))))
+
+(deftest resume-selector-escape-cancels-test
+  (testing "escape from selector returns to idle without changing messages"
+    (with-redefs [persist/session-dir-for (fn [_cwd] "/tmp/psi-test")
+                  persist/list-sessions (fn [_dir] [])]
+      (let [update-fn (app/make-update (stub-agent-fn ""))
+            state     (assoc (init-state "test-model" {:cwd "/tmp/psi-test"})
+                             :messages [{:role :assistant :text "keep me"}])
+            typed     (type-text update-fn state "/resume")
+            [s1 _]    (update-fn typed (msg/key-press :enter))
+            [s2 _]    (update-fn s1 (msg/key-press :escape))]
+        (is (= :idle (:phase s2)))
+        (is (= [{:role :assistant :text "keep me"}] (:messages s2)))))))
 
 ;;;; Update — agent results
 
