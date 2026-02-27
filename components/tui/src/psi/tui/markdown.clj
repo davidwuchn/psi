@@ -63,12 +63,13 @@
 (defn- node-children
   "Return a seq of direct child nodes."
   [node]
-  (when-let [first-child (.getFirstChild node)]
-    (loop [c first-child, acc []]
-      (let [acc' (conj acc c)]
-        (if-let [n (.getNext c)]
-          (recur n acc')
-          acc')))))
+  (when node
+    (when-let [first-child (.getFirstChild node)]
+      (loop [c first-child, acc []]
+        (let [acc' (conj acc c)]
+          (if-let [n (.getNext c)]
+            (recur n acc')
+            acc'))))))
 
 ;; ── Render context ──────────────────────────────────────────
 ;; A plain map threaded through rendering to track:

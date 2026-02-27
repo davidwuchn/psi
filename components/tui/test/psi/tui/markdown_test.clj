@@ -159,7 +159,11 @@
     ;; During streaming, text may be incomplete — should not throw
     (is (some? (md/render-markdown "# Heading\n\nSome text so far")))
     (is (some? (md/render-markdown "```clojure\n(+ 1")))
-    (is (some? (md/render-markdown "- item\n- ite")))))
+    (is (some? (md/render-markdown "- item\n- ite"))))
+
+  (testing "dangling list markers render without throwing"
+    (doseq [snippet ["-" "-\n" "- \n" "- item\n-" "1." "1.\n" "1. \n"]]
+      (is (some? (md/render-markdown snippet))))))
 
 ;; ── Plain text passthrough ──────────────────────────────────
 
