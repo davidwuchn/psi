@@ -5,6 +5,8 @@
   pattern) — no global-state mutations, no ordering dependencies."
   (:require
    [clojure.test :refer [deftest testing is]]
+   [com.fulcrologic.statecharts.chart :as chart]
+   [com.fulcrologic.statecharts.elements :as ele]
    [psi.agent-session.core :as session]
    [psi.agent-session.session :as session-data]
    [psi.agent-core.core :as agent-core]
@@ -527,6 +529,65 @@
                                     :psi.agent-session/phase])]
         (is (string? (:psi.agent-session/session-id result)))
         (is (= :idle (:psi.agent-session/phase result)))))))
+
+(deftest workflow-mutations-and-resolvers-test
+  (testing "workflow mutation ops and resolver attrs are wired"
+    (let [ctx    (session/create-context)
+          qctx   (query/create-query-context)
+          chart  (chart/statechart {:id :wf-test}
+                   (ele/state {:id :idle}
+                     (ele/transition {:event :workflow/start :target :running}))
+                   (ele/state {:id :running}
+                     (ele/transition {:event :workflow/finish :target :done}
+                       (ele/script {:expr (fn [_ data]
+                                            [{:op :assign
+                                              :data {:result (get-in data [:_event :data :result])}}])})))
+                   (ele/final {:id :done}))
+          mutate (fn [op params]
+                   (get (query/query-in qctx
+                                        {:psi/agent-session-ctx ctx}
+                                        [(list op (assoc params :psi/agent-session-ctx ctx))])
+                        op))]
+      (session/register-resolvers-in! qctx false)
+      (session/register-mutations-in! qctx true)
+
+      (let [r1 (mutate 'psi.extension.workflow/register-type
+                       {:ext-path "/ext/a"
+                        :type     :simple
+                        :chart    chart})
+            r2 (mutate 'psi.extension.workflow/create
+                       {:ext-path "/ext/a"
+                        :type     :simple
+                        :id       "w1"
+                        :auto-start? false})
+            r3 (mutate 'psi.extension.workflow/send-event
+                       {:ext-path "/ext/a"
+                        :id       "w1"
+                        :event    :workflow/start})
+            r4 (mutate 'psi.extension.workflow/send-event
+                       {:ext-path "/ext/a"
+                        :id       "w1"
+                        :event    :workflow/finish
+                        :data     {:result 99}})
+            q  (session/query-in ctx
+                                 [:psi.extension.workflow/count
+                                  :psi.extension.workflow/running-count
+                                  {:psi.extension/workflows
+                                   [:psi.extension/path
+                                    :psi.extension.workflow/id
+                                    :psi.extension.workflow/phase
+                                    :psi.extension.workflow/result]}])]
+        (is (true? (:psi.extension.workflow.type/registered? r1)))
+        (is (true? (:psi.extension.workflow/created? r2)))
+        (is (true? (:psi.extension.workflow/event-accepted? r3)))
+        (is (true? (:psi.extension.workflow/event-accepted? r4)))
+        (is (= 1 (:psi.extension.workflow/count q)))
+        (is (= 0 (:psi.extension.workflow/running-count q)))
+        (is (= [{:psi.extension/path "/ext/a"
+                 :psi.extension.workflow/id "w1"
+                 :psi.extension.workflow/phase :done
+                 :psi.extension.workflow/result 99}]
+               (:psi.extension/workflows q)))))))
 
 (deftest startup-resources-via-mutations-test
   (testing "load-startup-resources-via-mutations-in! adds prompts/skills/tools"

@@ -489,8 +489,12 @@
      :mutate
      (fn [op-sym params]
        (if-let [f (:mutate-fn runtime-fns)]
-         (let [params' (if (and (symbol? op-sym)
-                                (= "psi.extension" (namespace op-sym))
+         (let [ext-op? (and (symbol? op-sym)
+                            (let [ns* (namespace op-sym)]
+                              (or (= "psi.extension" ns*)
+                                  (and (string? ns*)
+                                       (str/starts-with? ns* "psi.extension.")))))
+               params' (if (and ext-op?
                                 (map? params)
                                 (not (contains? params :ext-path)))
                          (assoc params :ext-path ext-path)

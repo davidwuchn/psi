@@ -37,6 +37,7 @@
    :session-data-atom   — atom holding AgentSession data map
    :agent-ctx           — agent-core context (owns the LLM loop)
    :extension-registry  — ExtensionRegistry record
+   :workflow-registry   — WorkflowRegistry record (extension workflows)
    :journal-atom        — atom of [SessionEntry]
    :flush-state-atom    — atom {:flushed? bool :session-file File?}
    :cwd                 — working directory string (used for session dir layout)
@@ -57,6 +58,7 @@
    [psi.agent-session.compaction :as compaction]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.oauth.core :as oauth]
+   [psi.agent-session.workflows :as wf]
    [psi.tui.extension-ui :as ext-ui]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.resolvers :as resolvers]
@@ -245,6 +247,7 @@
          session-data-atom (atom (session/initial-session (or initial-session {})))
          agent-ctx         (agent/create-context)
          ext-reg           (ext/create-registry)
+         wf-reg            (wf/create-registry)
          journal-atom      (persist/create-journal)
          flush-state-atom  (persist/create-flush-state)
          ui-state-atom     (ext-ui/create-ui-state)
@@ -255,6 +258,7 @@
                             :session-data-atom  session-data-atom
                             :agent-ctx          agent-ctx
                             :extension-registry ext-reg
+                            :workflow-registry  wf-reg
                             :journal-atom       journal-atom
                             :flush-state-atom   flush-state-atom
                             :turn-ctx-atom      (atom nil)
@@ -376,6 +380,7 @@
    (let [reg                  (:extension-registry ctx)
          {:keys [cancelled?]} (ext/dispatch-in reg "session_before_switch" {:reason :new})]
      (when-not cancelled?
+       (wf/clear-all-in! (:workflow-registry ctx))
        (agent/reset-agent-in! (:agent-ctx ctx))
        (let [new-session-id (str (java.util.UUID/randomUUID))]
          (swap-session! ctx assoc
@@ -408,6 +413,7 @@
   (let [reg                  (:extension-registry ctx)
         {:keys [cancelled?]} (ext/dispatch-in reg "session_before_switch" {:reason :resume})]
     (when-not cancelled?
+      (wf/clear-all-in! (:workflow-registry ctx))
       (let [loaded (persist/load-session-file session-path)]
         (if-not loaded
           ;; File missing or invalid — treat as new session at that path
@@ -718,6 +724,47 @@
   [ctx]
   (ext/extension-details-in (:extension-registry ctx)))
 
+(defn register-workflow-type-in!
+  "Register or replace an extension workflow type."
+  [ctx ext-path type {:keys [description chart start-event initial-data-fn public-data-fn]}]
+  (wf/register-type-in! (:workflow-registry ctx)
+                        ext-path
+                        {:type            type
+                         :description     description
+                         :chart           chart
+                         :start-event     start-event
+                         :initial-data-fn initial-data-fn
+                         :public-data-fn  public-data-fn}))
+
+(defn create-workflow-in!
+  "Create a workflow instance for an extension."
+  [ctx ext-path {:keys [type id input meta auto-start? start-event]}]
+  (wf/create-workflow-in! (:workflow-registry ctx)
+                          ext-path
+                          {:type        type
+                           :id          id
+                           :input       input
+                           :meta        meta
+                           :auto-start? auto-start?
+                           :start-event start-event}))
+
+(defn send-workflow-event-in!
+  "Send an event to an extension workflow instance."
+  [ctx ext-path id event data]
+  (wf/send-event-in! (:workflow-registry ctx) ext-path id event data))
+
+(defn abort-workflow-in!
+  "Abort an extension workflow instance."
+  ([ctx ext-path id]
+   (abort-workflow-in! ctx ext-path id nil))
+  ([ctx ext-path id reason]
+   (wf/abort-workflow-in! (:workflow-registry ctx) ext-path id reason)))
+
+(defn remove-workflow-in!
+  "Remove an extension workflow instance."
+  [ctx ext-path id]
+  (wf/remove-workflow-in! (:workflow-registry ctx) ext-path id))
+
 ;; ============================================================
 ;; Session naming
 ;; ============================================================
@@ -762,6 +809,8 @@
      :auto-compaction-enabled (:auto-compaction-enabled sd)
      :context-fraction        (session/context-fraction-used sd)
      :extension-count         (ext/extension-count-in (:extension-registry ctx))
+     :workflow-count          (wf/workflow-count-in (:workflow-registry ctx))
+     :workflow-running-count  (wf/running-count-in (:workflow-registry ctx))
      :journal-entries         (count @(:journal-atom ctx))
      :agent-diagnostics       (agent/diagnostics-in (:agent-ctx ctx))}))
 
@@ -1013,6 +1062,186 @@
    ::pco/output  [:psi.extension/path]}
   (register-extension-shortcut-in! agent-session-ctx ext-path key opts))
 
+(defn- elapsed-ms
+  [created-at finished-at]
+  (when created-at
+    (let [end (or finished-at (java.time.Instant/now))]
+      (- (.toEpochMilli ^java.time.Instant end)
+         (.toEpochMilli ^java.time.Instant created-at)))))
+
+(defn- workflow->attrs
+  [workflow]
+  (if-not workflow
+    {}
+    {:psi.extension.workflow/id            (:id workflow)
+     :psi.extension/path                   (:ext-path workflow)
+     :psi.extension.workflow/type          (:type workflow)
+     :psi.extension.workflow/phase         (:phase workflow)
+     :psi.extension.workflow/configuration (:configuration workflow)
+     :psi.extension.workflow/running?      (:running? workflow)
+     :psi.extension.workflow/done?         (:done? workflow)
+     :psi.extension.workflow/error?        (:error? workflow)
+     :psi.extension.workflow/error-message (:error-message workflow)
+     :psi.extension.workflow/input         (:input workflow)
+     :psi.extension.workflow/meta          (:meta workflow)
+     :psi.extension.workflow/data          (:data workflow)
+     :psi.extension.workflow/result        (:result workflow)
+     :psi.extension.workflow/created-at    (:created-at workflow)
+     :psi.extension.workflow/started-at    (:started-at workflow)
+     :psi.extension.workflow/updated-at    (:updated-at workflow)
+     :psi.extension.workflow/finished-at   (:finished-at workflow)
+     :psi.extension.workflow/elapsed-ms    (elapsed-ms (:created-at workflow)
+                                                       (:finished-at workflow))
+     :psi.extension.workflow/event-count   (:event-count workflow)
+     :psi.extension.workflow/last-event    (:last-event workflow)
+     :psi.extension.workflow/events        (:events workflow)}))
+
+(pco/defmutation register-workflow-type
+  [_ {:keys [psi/agent-session-ctx ext-path type description chart start-event initial-data-fn public-data-fn]}]
+  {::pco/op-name 'psi.extension.workflow/register-type
+   ::pco/params  [:psi/agent-session-ctx :ext-path :type :chart]
+   ::pco/output  [:psi.extension/path
+                  :psi.extension.workflow.type/name
+                  :psi.extension.workflow.type/registered?
+                  :psi.extension.workflow.type/names
+                  :psi.extension.workflow/error]}
+  (let [{:keys [registered? type type-names error]}
+        (register-workflow-type-in!
+         agent-session-ctx
+         ext-path
+         type
+         {:description     description
+          :chart           chart
+          :start-event     start-event
+          :initial-data-fn initial-data-fn
+          :public-data-fn  public-data-fn})]
+    {:psi.extension/path                            ext-path
+     :psi.extension.workflow.type/name              type
+     :psi.extension.workflow.type/registered?       registered?
+     :psi.extension.workflow.type/names             type-names
+     :psi.extension.workflow/error                  error}))
+
+(pco/defmutation create-workflow
+  [_ {:keys [psi/agent-session-ctx ext-path type id input meta auto-start? start-event]}]
+  {::pco/op-name 'psi.extension.workflow/create
+   ::pco/params  [:psi/agent-session-ctx :ext-path :type]
+   ::pco/output  [:psi.extension.workflow/created?
+                  :psi.extension.workflow/error
+                  :psi.extension.workflow/id
+                  :psi.extension/path
+                  :psi.extension.workflow/type
+                  :psi.extension.workflow/phase
+                  :psi.extension.workflow/configuration
+                  :psi.extension.workflow/running?
+                  :psi.extension.workflow/done?
+                  :psi.extension.workflow/error?
+                  :psi.extension.workflow/error-message
+                  :psi.extension.workflow/input
+                  :psi.extension.workflow/meta
+                  :psi.extension.workflow/data
+                  :psi.extension.workflow/result
+                  :psi.extension.workflow/created-at
+                  :psi.extension.workflow/started-at
+                  :psi.extension.workflow/updated-at
+                  :psi.extension.workflow/finished-at
+                  :psi.extension.workflow/elapsed-ms
+                  :psi.extension.workflow/event-count
+                  :psi.extension.workflow/last-event
+                  :psi.extension.workflow/events]}
+  (let [{:keys [created? workflow error]}
+        (create-workflow-in!
+         agent-session-ctx
+         ext-path
+         {:type        type
+          :id          id
+          :input       input
+          :meta        meta
+          :auto-start? auto-start?
+          :start-event start-event})]
+    (merge {:psi.extension.workflow/created? created?
+            :psi.extension.workflow/error    error}
+           (workflow->attrs workflow))))
+
+(pco/defmutation send-workflow-event
+  [_ {:keys [psi/agent-session-ctx ext-path id event data]}]
+  {::pco/op-name 'psi.extension.workflow/send-event
+   ::pco/params  [:psi/agent-session-ctx :ext-path :id :event]
+   ::pco/output  [:psi.extension.workflow/event-accepted?
+                  :psi.extension.workflow/error
+                  :psi.extension.workflow/id
+                  :psi.extension/path
+                  :psi.extension.workflow/type
+                  :psi.extension.workflow/phase
+                  :psi.extension.workflow/configuration
+                  :psi.extension.workflow/running?
+                  :psi.extension.workflow/done?
+                  :psi.extension.workflow/error?
+                  :psi.extension.workflow/error-message
+                  :psi.extension.workflow/input
+                  :psi.extension.workflow/meta
+                  :psi.extension.workflow/data
+                  :psi.extension.workflow/result
+                  :psi.extension.workflow/created-at
+                  :psi.extension.workflow/started-at
+                  :psi.extension.workflow/updated-at
+                  :psi.extension.workflow/finished-at
+                  :psi.extension.workflow/elapsed-ms
+                  :psi.extension.workflow/event-count
+                  :psi.extension.workflow/last-event
+                  :psi.extension.workflow/events]}
+  (let [{:keys [event-accepted? workflow error]}
+        (send-workflow-event-in! agent-session-ctx ext-path id event data)]
+    (merge {:psi.extension.workflow/event-accepted? event-accepted?
+            :psi.extension.workflow/error           error}
+           (workflow->attrs workflow))))
+
+(pco/defmutation abort-workflow
+  [_ {:keys [psi/agent-session-ctx ext-path id reason]}]
+  {::pco/op-name 'psi.extension.workflow/abort
+   ::pco/params  [:psi/agent-session-ctx :ext-path :id]
+   ::pco/output  [:psi.extension.workflow/aborted?
+                  :psi.extension.workflow/error
+                  :psi.extension.workflow/id
+                  :psi.extension/path
+                  :psi.extension.workflow/type
+                  :psi.extension.workflow/phase
+                  :psi.extension.workflow/configuration
+                  :psi.extension.workflow/running?
+                  :psi.extension.workflow/done?
+                  :psi.extension.workflow/error?
+                  :psi.extension.workflow/error-message
+                  :psi.extension.workflow/input
+                  :psi.extension.workflow/meta
+                  :psi.extension.workflow/data
+                  :psi.extension.workflow/result
+                  :psi.extension.workflow/created-at
+                  :psi.extension.workflow/started-at
+                  :psi.extension.workflow/updated-at
+                  :psi.extension.workflow/finished-at
+                  :psi.extension.workflow/elapsed-ms
+                  :psi.extension.workflow/event-count
+                  :psi.extension.workflow/last-event
+                  :psi.extension.workflow/events]}
+  (let [{:keys [aborted? workflow error]}
+        (abort-workflow-in! agent-session-ctx ext-path id reason)]
+    (merge {:psi.extension.workflow/aborted? aborted?
+            :psi.extension.workflow/error    error}
+           (workflow->attrs workflow))))
+
+(pco/defmutation remove-workflow
+  [_ {:keys [psi/agent-session-ctx ext-path id]}]
+  {::pco/op-name 'psi.extension.workflow/remove
+   ::pco/params  [:psi/agent-session-ctx :ext-path :id]
+   ::pco/output  [:psi.extension.workflow/removed?
+                  :psi.extension.workflow/error
+                  :psi.extension/path
+                  :psi.extension.workflow/id]}
+  (let [{:keys [removed? id error]} (remove-workflow-in! agent-session-ctx ext-path id)]
+    {:psi.extension.workflow/removed? removed?
+     :psi.extension.workflow/error    error
+     :psi.extension/path              ext-path
+     :psi.extension.workflow/id       id}))
+
 (def all-mutations
   [add-prompt-template
    add-skill
@@ -1029,7 +1258,12 @@
    register-command
    register-handler
    register-flag
-   register-shortcut])
+   register-shortcut
+   register-workflow-type
+   create-workflow
+   send-workflow-event
+   abort-workflow
+   remove-workflow])
 
 (defn register-resolvers-in!
   "Register all agent-session resolvers into an isolated `qctx` query context.

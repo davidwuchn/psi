@@ -188,6 +188,7 @@
    [psi.agent-session.prompt-templates :as pt]
    [psi.agent-session.skills :as skills]
    [psi.agent-session.extensions :as ext]
+   [psi.agent-session.workflows :as wf]
    [psi.tui.extension-ui :as ext-ui]
    [psi.agent-session.statechart :as sc]
    [psi.agent-session.turn-statechart :as turn-sc]
@@ -365,6 +366,107 @@
    ::pco/output [:psi.extension/detail]}
   {:psi.extension/detail
    (ext/extension-detail-in (:extension-registry agent-session-ctx) path)})
+
+;; ── Extension workflow introspection ───────────────────
+
+(def ^:private workflow-event-output
+  [:psi.extension.workflow.event/name
+   :psi.extension.workflow.event/data
+   :psi.extension.workflow.event/timestamp])
+
+(def ^:private workflow-output
+  [:psi.extension.workflow/id
+   :psi.extension/path
+   :psi.extension.workflow/type
+   :psi.extension.workflow/phase
+   :psi.extension.workflow/configuration
+   :psi.extension.workflow/running?
+   :psi.extension.workflow/done?
+   :psi.extension.workflow/error?
+   :psi.extension.workflow/error-message
+   :psi.extension.workflow/input
+   :psi.extension.workflow/meta
+   :psi.extension.workflow/data
+   :psi.extension.workflow/result
+   :psi.extension.workflow/created-at
+   :psi.extension.workflow/started-at
+   :psi.extension.workflow/updated-at
+   :psi.extension.workflow/finished-at
+   :psi.extension.workflow/elapsed-ms
+   :psi.extension.workflow/event-count
+   :psi.extension.workflow/last-event
+   {:psi.extension.workflow/events workflow-event-output}])
+
+(defn- event->eql
+  [event]
+  {:psi.extension.workflow.event/name      (:name event)
+   :psi.extension.workflow.event/data      (:data event)
+   :psi.extension.workflow.event/timestamp (:timestamp event)})
+
+(defn- workflow->eql
+  [workflow]
+  (let [created-at (:created-at workflow)
+        finished-at (:finished-at workflow)
+        elapsed-ms (when created-at
+                     (let [end (or finished-at (java.time.Instant/now))]
+                       (- (.toEpochMilli ^java.time.Instant end)
+                          (.toEpochMilli ^java.time.Instant created-at))))]
+    {:psi.extension.workflow/id            (:id workflow)
+     :psi.extension/path                   (:ext-path workflow)
+     :psi.extension.workflow/type          (:type workflow)
+     :psi.extension.workflow/phase         (:phase workflow)
+     :psi.extension.workflow/configuration (:configuration workflow)
+     :psi.extension.workflow/running?      (:running? workflow)
+     :psi.extension.workflow/done?         (:done? workflow)
+     :psi.extension.workflow/error?        (:error? workflow)
+     :psi.extension.workflow/error-message (:error-message workflow)
+     :psi.extension.workflow/input         (:input workflow)
+     :psi.extension.workflow/meta          (:meta workflow)
+     :psi.extension.workflow/data          (:data workflow)
+     :psi.extension.workflow/result        (:result workflow)
+     :psi.extension.workflow/created-at    created-at
+     :psi.extension.workflow/started-at    (:started-at workflow)
+     :psi.extension.workflow/updated-at    (:updated-at workflow)
+     :psi.extension.workflow/finished-at   finished-at
+     :psi.extension.workflow/elapsed-ms    elapsed-ms
+     :psi.extension.workflow/event-count   (:event-count workflow)
+     :psi.extension.workflow/last-event    (:last-event workflow)
+     :psi.extension.workflow/events        (mapv event->eql (:events workflow))}))
+
+(pco/defresolver extension-workflow-summary-resolver
+  "Resolve workflow counts and workflow type names across extensions."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.extension.workflow/count
+                 :psi.extension.workflow/running-count
+                 :psi.extension.workflow/type-names]}
+  (let [reg (:workflow-registry agent-session-ctx)]
+    {:psi.extension.workflow/count         (wf/workflow-count-in reg)
+     :psi.extension.workflow/running-count (wf/running-count-in reg)
+     :psi.extension.workflow/type-names    (wf/type-names-in reg)}))
+
+(pco/defresolver extension-workflows-resolver
+  "Resolve workflow instances.
+   When :psi.extension/path is present in the seed/entity, results are filtered
+   to that extension; otherwise all workflows are returned."
+  [entity]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [{:psi.extension/workflows workflow-output}]}
+  (let [agent-session-ctx (:psi/agent-session-ctx entity)
+        path              (:psi.extension/path entity)
+        reg               (:workflow-registry agent-session-ctx)]
+    {:psi.extension/workflows
+     (mapv workflow->eql (wf/workflows-in reg path))}))
+
+(pco/defresolver extension-workflow-detail-resolver
+  "Resolve one workflow instance by extension path + id.
+   Seed input includes :psi.extension/path and :psi.extension.workflow/id."
+  [{:keys [psi/agent-session-ctx psi.extension/path psi.extension.workflow/id]}]
+  {::pco/input  [:psi/agent-session-ctx :psi.extension/path :psi.extension.workflow/id]
+   ::pco/output [:psi.extension.workflow/detail]}
+  (let [reg (:workflow-registry agent-session-ctx)]
+    {:psi.extension.workflow/detail
+     (some-> (wf/workflow-in reg path id) workflow->eql)}))
 
 ;; ── Context usage ───────────────────────────────────────
 
@@ -1136,6 +1238,9 @@
    extension-flags-resolver
    extension-details-resolver
    extension-detail-by-path-resolver
+   extension-workflow-summary-resolver
+   extension-workflows-resolver
+   extension-workflow-detail-resolver
    ;; Extension UI
    extension-ui-resolver
    ;; Session listing

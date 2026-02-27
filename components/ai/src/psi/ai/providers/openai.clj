@@ -106,6 +106,52 @@
         (try (json/parse-string data true)
              (catch Exception _ nil))))))
 
+(defn- body->text
+  [body]
+  (try
+    (cond
+      (nil? body) nil
+      (string? body) body
+      (instance? java.io.InputStream body) (slurp body)
+      :else (str body))
+    (catch Exception _ nil)))
+
+(defn- parse-error-message
+  [body-text]
+  (when (seq body-text)
+    (try
+      (let [m (json/parse-string body-text true)]
+        (or (get-in m [:error :message])
+            (get-in m [:message])
+            body-text))
+      (catch Exception _
+        body-text))))
+
+(defn- request-id-from-headers
+  [headers]
+  (or (get headers "x-request-id")
+      (get headers "x-oai-request-id")
+      (get headers "x-openai-request-id")
+      (get headers "X-Request-ID")
+      (get headers "X-OAI-Request-ID")
+      (get headers "X-OpenAI-Request-ID")))
+
+(defn- exception->error
+  [e]
+  (let [data       (ex-data e)
+        status     (:status data)
+        body-text  (body->text (:body data))
+        parsed-msg (parse-error-message body-text)
+        base-msg   (or parsed-msg (ex-message e) (str e))
+        req-id     (request-id-from-headers (:headers data))
+        full-msg   (str base-msg
+                        (when status
+                          (str " (status " status ")"))
+                        (when req-id
+                          (str " [request-id " req-id "]")))]
+    (cond-> {:type :error :error-message full-msg}
+      status (assoc :http-status status))))
+
 (defn stream-openai
   "Stream response from OpenAI Chat Completions API.
 
@@ -205,8 +251,7 @@
                       (consume-fn {:type   :done
                                    :reason (keyword (:finish_reason choice))})))))))))
       (catch Exception e
-        (consume-fn (cond-> {:type :error :error-message (str e)}
-                      (:status (ex-data e)) (assoc :http-status (:status (ex-data e)))))))))
+        (consume-fn (exception->error e))))))
 
 ;; ───────────────────────────────────────────────────────────────────────────
 ;; OpenAI Codex Responses API (ChatGPT backend)
@@ -485,10 +530,14 @@
                                        :reason (codex-status->reason status)}
                                 usage-map (assoc :usage usage-map))))))
 
-            (emit-error! [msg]
-              (when-not @done?
-                (reset! done? true)
-                (consume-fn {:type :error :error-message msg})))]
+            (emit-error!
+              ([msg]
+               (emit-error! msg nil))
+              ([msg http-status]
+               (when-not @done?
+                 (reset! done? true)
+                 (consume-fn (cond-> {:type :error :error-message msg}
+                               http-status (assoc :http-status http-status))))))]
 
       (try
         (let [request  (build-codex-request conversation model options)
@@ -591,7 +640,8 @@
             (emit-start!)
             (emit-done! {:response {:status "completed"}})))
         (catch Exception e
-          (emit-error! (str e)))))))
+          (let [{:keys [error-message http-status]} (exception->error e)]
+            (emit-error! error-message http-status)))))))
 
 ;; ───────────────────────────────────────────────────────────────────────────
 ;; Provider implementation (dispatch by model :api)

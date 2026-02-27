@@ -73,9 +73,9 @@ The `init` function receives a map with these keys:
 
 `(:mutate api)` is extension-scoped for `psi.extension/*` mutations:
 
-- If `op-sym` is in the `psi.extension` namespace and `params` is a map,
-  psi automatically injects `:ext-path` for the current extension when it
-  is missing.
+- If `op-sym` is in the `psi.extension` namespace (or a sub-namespace like
+  `psi.extension.workflow`) and `params` is a map, psi automatically injects
+  `:ext-path` for the current extension when it is missing.
 - Non-`psi.extension/*` mutations are passed through unchanged.
 - If `:ext-path` is explicitly provided, it is respected.
 
