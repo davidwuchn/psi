@@ -99,6 +99,7 @@
 (defn agent-error?  [m] (= :agent-error  (:type m)))
 (defn agent-poll?   [m] (= :agent-poll   (:type m)))
 (defn agent-event?  [m] (= :agent-event  (:type m)))
+(defn external-message? [m] (= :external-message (:type m)))
 
 (defn- key-token->string
   "Normalize charm key token to a string when possible."
@@ -287,13 +288,15 @@
 ;; ── Commands ────────────────────────────────────────────────
 
 (defn poll-cmd
-  "Command that polls the agent queue with a short timeout.
-   Returns :agent-result, :agent-error, :agent-event, or :agent-poll.
+  "Command that polls the shared event queue with a short timeout.
+   Returns :agent-result, :agent-error, :agent-event, :external-message,
+   or :agent-poll.
 
    Queue payloads accepted:
    - {:kind :done  :result ...}
    - {:kind :error :message ...}
-   - {:type :agent-event ...}  ; progress events
+   - {:type :agent-event ...}       ; progress events
+   - {:type :external-message ...}  ; async extension transcript message
    "
   [^LinkedBlockingQueue queue]
   (charm/cmd
@@ -307,6 +310,9 @@
          {:type :agent-error :error (:message event)}
 
          (= :agent-event (:type event))
+         event
+
+         (= :external-message (:type event))
          event
 
          :else
@@ -327,7 +333,8 @@
      :cwd                  — working directory string (for /resume)
      :current-session-file — current session file path (highlighted in selector)
      :resume-fn!           — (fn [session-path]) called when user selects a session
-     :dispatch-fn          — (fn [text]) → command result map or nil; central command dispatch"
+     :dispatch-fn          — (fn [text]) → command result map or nil; central command dispatch
+     :event-queue          — shared LinkedBlockingQueue for agent + extension events"
   ([model-name] (make-init model-name nil))
   ([model-name query-fn] (make-init model-name query-fn nil))
   ([model-name query-fn ui-state-atom] (make-init model-name query-fn ui-state-atom {}))
@@ -338,33 +345,34 @@
                                      :psi.agent-session/skills
                                      :psi.agent-session/extension-summary
                                      :psi.agent-session/session-file]))]
-       [{:messages              []
-         :phase                 :idle
-         :error                 nil
-         :input                 (charm/text-input :prompt "刀: "
-                                                  :placeholder "Type a message…"
-                                                  :focused true)
-         :spinner-frame         0
-         :model-name            model-name
-         :prompt-templates      (or (:psi.agent-session/prompt-templates introspected) [])
-         :skills                (or (:psi.agent-session/skills introspected) [])
-         :extension-summary     (or (:psi.agent-session/extension-summary introspected) {})
-         :query-fn              query-fn
-         :ui-state-atom         ui-state-atom
-         :dispatch-fn           (:dispatch-fn opts)
-         :cwd                   (or (:cwd opts) (System/getProperty "user.dir"))
-         :current-session-file  (or (:current-session-file opts)
-                                    (:psi.agent-session/session-file introspected))
-         :resume-fn!            (:resume-fn! opts)
-         :session-selector      nil   ;; non-nil when /resume is active
-         :queue                 nil
-         :width                 80
-         :height                24
-         ;; Live turn progress
-         :stream-text           nil
-         :tool-calls            {}
-         :tool-order            []}
-        nil]))))
+       (let [queue (or (:event-queue opts) (LinkedBlockingQueue.))]
+         [{:messages              []
+           :phase                 :idle
+           :error                 nil
+           :input                 (charm/text-input :prompt "刀: "
+                                                    :placeholder "Type a message…"
+                                                    :focused true)
+           :spinner-frame         0
+           :model-name            model-name
+           :prompt-templates      (or (:psi.agent-session/prompt-templates introspected) [])
+           :skills                (or (:psi.agent-session/skills introspected) [])
+           :extension-summary     (or (:psi.agent-session/extension-summary introspected) {})
+           :query-fn              query-fn
+           :ui-state-atom         ui-state-atom
+           :dispatch-fn           (:dispatch-fn opts)
+           :cwd                   (or (:cwd opts) (System/getProperty "user.dir"))
+           :current-session-file  (or (:current-session-file opts)
+                                      (:psi.agent-session/session-file introspected))
+           :resume-fn!            (:resume-fn! opts)
+           :session-selector      nil   ;; non-nil when /resume is active
+           :queue                 queue
+           :width                 80
+           :height                24
+           ;; Live turn progress
+           :stream-text           nil
+           :tool-calls            {}
+           :tool-order            []}
+          (poll-cmd queue)])))))
 
 ;; ── Update helpers ──────────────────────────────────────────
 
@@ -512,14 +520,13 @@
 (defn- submit-to-agent
   "Start the agent with `text`, return [new-state cmd]."
   [state run-agent-fn! text]
-  (let [queue (LinkedBlockingQueue.)]
+  (let [queue (:queue state)]
     (run-agent-fn! text queue)
     [(-> state
          (update :messages conj {:role :user :text text})
          (assoc :phase         :streaming
                 :error         nil
                 :input         (charm/text-input-reset (:input state))
-                :queue         queue
                 :spinner-frame 0
                 :stream-text   nil
                 :tool-calls    {}
@@ -604,11 +611,10 @@
          (update :messages conj {:role :assistant :text display})
          (assoc :phase       :idle
                 :error       error
-                :queue       nil
                 :stream-text nil
                 :tool-calls  {}
                 :tool-order  []))
-     nil]))
+     (poll-cmd (:queue state))]))
 
 (defn- handle-agent-poll
   "Agent still running — advance spinner, keep polling."
@@ -655,6 +661,18 @@
       (let [[new-state cmd] (handle-agent-event state m)]
         [new-state (or cmd (poll-cmd (:queue state)))])
 
+      ;; Async external transcript message (e.g. extension background completion)
+      (external-message? m)
+      (let [msg        (:message m)
+            text       (or (some #(when (= :text (:type %)) (:text %)) (:content msg))
+                           "")
+            custom-type (:custom-type msg)]
+        [(cond-> state
+           (seq text) (update :messages conj {:role :assistant
+                                              :text text
+                                              :custom-type custom-type}))
+         (poll-cmd (:queue state))])
+
       ;; Agent result
       (agent-result? m)
       (handle-agent-result state (:result m))
@@ -664,15 +682,16 @@
       [(-> state
            (assoc :phase       :idle
                   :error       (:error m)
-                  :queue       nil
                   :stream-text nil
                   :tool-calls  {}
                   :tool-order  []))
-       nil]
+       (poll-cmd (:queue state))]
 
-      ;; Agent poll timeout → advance spinner, keep polling
+      ;; Agent poll timeout → keep polling (and animate spinner while streaming)
       (agent-poll? m)
-      (handle-agent-poll state)
+      (if (= :streaming (:phase state))
+        (handle-agent-poll state)
+        [state (poll-cmd (:queue state))])
 
       ;; Session selector active — route all key input to selector handler
       (= :selecting-session (:phase state))
@@ -716,25 +735,48 @@
                 "\n"))
          (charm/render dim-style "  ESC to quit") "\n")))
 
+(def ^:private subagent-title-style (charm/style :fg charm/yellow :bold true))
+(def ^:private subagent-head-style (charm/style :fg charm/cyan :bold true))
+
+(defn- render-subagent-result
+  "Render a rich block for subagent-result custom messages."
+  [text width]
+  (let [lines     (str/split-lines (or text ""))
+        heading   (or (first lines) "Subagent result")
+        body      (->> (rest lines)
+                       (drop-while str/blank?)
+                       (str/join "\n"))
+        md-width  (when (and width (> width 4)) (- width 4))
+        body-text (or (md/render-markdown body md-width) body)
+        body-lines (if (seq body-text) (str/split-lines body-text) [])]
+    (str/join "\n"
+              (concat
+               [(str (charm/render subagent-title-style "ψ: ⎇ Subagent Result"))
+                (str "   " (charm/render subagent-head-style heading))]
+               (when (seq body-lines)
+                 (cons "   " (map #(str "   " %) body-lines)))))))
+
 (defn- render-message
   "Render a single chat message. `width` is the terminal
    column count for word wrapping (nil = no wrap)."
-  [{:keys [role text]} width]
+  [{:keys [role text custom-type]} width]
   (case role
     :user
     (str (charm/render user-style "刀: ") text)
 
     :assistant
-    (let [;; "ψ: " prefix is 3 visible cols; continuation
-          ;; lines get 3-space indent. Wrap to width - 3.
-          md-width (when (and width (> width 3))
-                     (- width 3))
-          rendered (or (md/render-markdown text md-width) text)
-          lines    (str/split-lines rendered)
-          first-line (str (charm/render assist-style "ψ: ")
-                          (first lines))
-          rest-lines (map #(str "   " %) (rest lines))]
-      (str/join "\n" (cons first-line rest-lines)))
+    (if (= "subagent-result" custom-type)
+      (render-subagent-result text width)
+      (let [;; "ψ: " prefix is 3 visible cols; continuation
+            ;; lines get 3-space indent. Wrap to width - 3.
+            md-width (when (and width (> width 3))
+                       (- width 3))
+            rendered (or (md/render-markdown text md-width) text)
+            lines    (str/split-lines rendered)
+            first-line (str (charm/render assist-style "ψ: ")
+                            (first lines))
+            rest-lines (map #(str "   " %) (rest lines))]
+        (str/join "\n" (cons first-line rest-lines))))
 
     ;; fallback
     (str "[" (name role) "] " text)))

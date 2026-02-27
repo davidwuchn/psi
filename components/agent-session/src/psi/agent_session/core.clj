@@ -234,7 +234,7 @@
     :cwd               — working directory for session file layout (default: process cwd)
     :persist?          — if false, disable all disk I/O (default: true)"
   ([] (create-context {}))
-  ([{:keys [initial-session compaction-fn branch-summary-fn agent-initial config cwd persist?]
+  ([{:keys [initial-session compaction-fn branch-summary-fn agent-initial config cwd persist? event-queue]
      :or   {persist? true}}]
    (let [sc-env            (sc/create-sc-env)
          sc-session-id     (java.util.UUID/randomUUID)
@@ -256,6 +256,7 @@
                             :flush-state-atom   flush-state-atom
                             :turn-ctx-atom      (atom nil)
                             :ui-state-atom      ui-state-atom
+                            :event-queue        event-queue
                             :cwd                resolved-cwd
                             :persist?           persist?
                             :compaction-fn      (or compaction-fn compaction/stub-compaction-fn)
@@ -573,7 +574,7 @@
 (defn execute-compaction-in!
   "Execute a compaction cycle: prepare → dispatch before-compact → run
   compaction-fn → append entry → rebuild agent messages → dispatch compact.
-  Returns the CompactionResult, or nil when cancelled or no-op." 
+  Returns the CompactionResult, or nil when cancelled or no-op."
   ([ctx] (execute-compaction-in! ctx nil))
   ([ctx custom-instructions]
    (let [sd                (get-session-data-in ctx)
@@ -780,6 +781,24 @@
     {:added? (not existing?)
      :count  (count (:skills (get-session-data-in ctx)))}))
 
+(defn send-extension-message-in!
+  "Append an extension-injected message to agent history and emit message events.
+   Optionally fan out to the TUI event queue for immediate transcript updates."
+  [ctx role content custom-type]
+  (let [msg {:role      role
+             :content   [{:type :text :text (str content)}]
+             :timestamp (java.time.Instant/now)}
+        msg (cond-> msg
+              custom-type (assoc :custom-type custom-type))]
+    (agent/append-message-in! (:agent-ctx ctx) msg)
+    (agent/emit-in! (:agent-ctx ctx) {:type :message-start :message msg})
+    (agent/emit-in! (:agent-ctx ctx) {:type :message-end :message msg})
+    (when-let [q (:event-queue ctx)]
+      (.offer ^java.util.concurrent.LinkedBlockingQueue q
+              {:type    :external-message
+               :message msg}))
+    msg))
+
 (defn add-extension-in!
   "Load one extension file path into this session's extension registry.
    Returns {:loaded? bool :path string? :error string?}."
@@ -934,6 +953,17 @@
                    (persist/custom-message-entry custom-type (str data) nil false))
   {:psi.agent-session/session-entry-count (count @(:journal-atom agent-session-ctx))})
 
+(pco/defmutation send-message
+  [_ {:keys [psi/agent-session-ctx role content custom-type]}]
+  {::pco/op-name 'psi.extension/send-message
+   ::pco/params  [:psi/agent-session-ctx :role :content]
+   ::pco/output  [:psi.extension/message]}
+  {:psi.extension/message
+   (send-extension-message-in! agent-session-ctx
+                               (or role "assistant")
+                               (or content "")
+                               custom-type)})
+
 (pco/defmutation register-tool
   [_ {:keys [psi/agent-session-ctx ext-path tool]}]
   {::pco/op-name 'psi.extension/register-tool
@@ -984,6 +1014,7 @@
    abort
    compact
    append-entry
+   send-message
    register-tool
    register-command
    register-handler

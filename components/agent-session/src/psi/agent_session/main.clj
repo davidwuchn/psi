@@ -436,6 +436,7 @@
   (let [ai-model  (resolve-model model-key)
         ai-ctx    nil
         oauth-ctx (oauth/create-context)
+        event-queue (java.util.concurrent.LinkedBlockingQueue.)
         templates (pt/discover-templates)
         {:keys [skills diagnostics]} (skills/discover-skills)
         _         (doseq [d diagnostics]
@@ -450,7 +451,8 @@
                    {:initial-session {:model {:provider (name (:provider ai-model))
                                               :id       (:id ai-model)
                                               :reasoning (:supports-reasoning ai-model)}
-                                      :system-prompt   system-prompt}})
+                                      :system-prompt   system-prompt}
+                    :event-queue event-queue})
         ext-paths (ext/discover-extension-paths [] cwd)
         ;; Reusable bootstrap: session file, query graph, base tools, system prompt,
         ;; mutation-driven startup loading, extension tool merge.
@@ -558,7 +560,8 @@
                      :dispatch-fn          dispatch-fn
                      :cwd                  cwd
                      :current-session-file (:session-file (session/get-session-data-in ctx))
-                     :resume-fn!           resume-fn!})))
+                     :resume-fn!           resume-fn!
+                     :event-queue          event-queue})))
 
 ;; ============================================================
 ;; -main

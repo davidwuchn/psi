@@ -63,11 +63,11 @@
 ;;;; Init
 
 (deftest init-test
-  (testing "init returns idle state with nil cmd"
+  (testing "init returns idle state and starts queue polling cmd"
     (let [init-fn (app/make-init "test-model")
           [state cmd] (init-fn)]
       (is (= :idle (:phase state)))
-      (is (nil? cmd))
+      (is (some? cmd))
       (is (empty? (:messages state)))
       (is (nil? (:error state)))
       (is (= "test-model" (:model-name state))))))
@@ -230,32 +230,30 @@
           state     (init-state)
           ;; Simulate streaming state
           streaming (assoc state :phase :streaming
-                                :messages [{:role :user :text "hi"}]
-                                :queue (LinkedBlockingQueue.))
+                           :messages [{:role :user :text "hi"}])
           result    {:role "assistant" :content [{:type :text :text "hello"}]}
-          [s1 _]    (update-fn streaming {:type :agent-result :result result})]
+          [s1 cmd]  (update-fn streaming {:type :agent-result :result result})]
       (is (= :idle (:phase s1)))
       (is (= 2 (count (:messages s1))))
-      (is (= "hello" (:text (second (:messages s1))))))))
+      (is (= "hello" (:text (second (:messages s1)))))
+      (is (some? cmd)))))
 
 (deftest agent-error-transitions-to-idle-test
   (testing "agent-error message sets error and goes idle"
     (let [update-fn (app/make-update (error-agent-fn "boom"))
-          streaming (assoc (init-state) :phase :streaming
-                                        :queue (LinkedBlockingQueue.))
-          [s1 _]    (update-fn streaming {:type :agent-error :error "boom"})]
+          streaming (assoc (init-state) :phase :streaming)
+          [s1 cmd]  (update-fn streaming {:type :agent-error :error "boom"})]
       (is (= :idle (:phase s1)))
-      (is (= "boom" (:error s1))))))
+      (is (= "boom" (:error s1)))
+      (is (some? cmd)))))
 
 ;;;; Update — poll advances spinner
 
 (deftest poll-advances-spinner-test
   (testing "agent-poll increments spinner-frame"
     (let [update-fn (app/make-update (stub-agent-fn ""))
-          queue     (LinkedBlockingQueue.)
           streaming (assoc (init-state) :phase :streaming
-                                        :queue queue
-                                        :spinner-frame 0)
+                           :spinner-frame 0)
           [s1 cmd]  (update-fn streaming {:type :agent-poll})]
       (is (= 1 (:spinner-frame s1)))
       (is (some? cmd)))))
@@ -273,16 +271,14 @@
 (deftest ctrl-c-always-quits-test
   (testing "ctrl+c quits even during streaming"
     (let [update-fn (app/make-update (stub-agent-fn ""))
-          streaming (assoc (init-state) :phase :streaming
-                                        :queue (LinkedBlockingQueue.))
+          streaming (assoc (init-state) :phase :streaming)
           [_s cmd]  (update-fn streaming (msg/key-press "c" :ctrl true))]
       (is (some? cmd)))))
 
 (deftest keys-ignored-during-streaming-test
   (testing "printable keys are ignored while streaming"
     (let [update-fn (app/make-update (stub-agent-fn ""))
-          streaming (assoc (init-state) :phase :streaming
-                                        :queue (LinkedBlockingQueue.))
+          streaming (assoc (init-state) :phase :streaming)
           [s1 cmd]  (update-fn streaming (msg/key-press "x"))]
       (is (= :streaming (:phase s1)))
       (is (nil? cmd)))))
@@ -354,10 +350,10 @@ clojure-lsp"}]})
                            :stream-text nil
                            :tool-order ["t1"]
                            :tool-calls {"t1" {:name "bash"
-                                               :args "{\"command\":\"echo hi\"}"
-                                               :status :success
-                                               :result "ok"
-                                               :is-error false}}))
+                                              :args "{\"command\":\"echo hi\"}"
+                                              :status :success
+                                              :result "ok"
+                                              :is-error false}}))
           out   (app/view state)]
       (is (str/includes? out "⠋ waiting for response…"))
       (is (not (str/includes? out "(waiting for response…)"))))))
@@ -370,10 +366,10 @@ clojure-lsp"}]})
                            :stream-text nil
                            :tool-order ["t1"]
                            :tool-calls {"t1" {:name "bash"
-                                               :args "{\"command\":\"echo hi\"}"
-                                               :status :running
-                                               :result nil
-                                               :is-error false}}))
+                                              :args "{\"command\":\"echo hi\"}"
+                                              :status :running
+                                              :result nil
+                                              :is-error false}}))
           out   (app/view state)]
       (is (str/includes? out "(waiting for response…)"))
       (is (not (str/includes? out "⠋ waiting for response…"))))))
@@ -392,6 +388,30 @@ clojure-lsp"}]})
           [s1 _]    (update-fn state (msg/window-size 120 40))]
       (is (= 120 (:width s1)))
       (is (= 40 (:height s1))))))
+
+(deftest external-message-appended-to-transcript-test
+  (testing "external-message appends assistant text and keeps polling"
+    (let [update-fn (app/make-update (stub-agent-fn ""))
+          state     (init-state)
+          event     {:type :external-message
+                     :message {:role "assistant"
+                               :content [{:type :text :text "Subagent complete"}]}}
+          [s1 cmd]  (update-fn state event)]
+      (is (= 1 (count (:messages s1))))
+      (is (= :assistant (:role (first (:messages s1)))))
+      (is (= "Subagent complete" (:text (first (:messages s1)))))
+      (is (some? cmd)))))
+
+(deftest subagent-result-rich-render-test
+  (testing "subagent-result custom-type renders rich heading"
+    (let [state (assoc (init-state)
+                       :messages [{:role :assistant
+                                   :custom-type "subagent-result"
+                                   :text "Subagent #1 finished \"do thing\" in 2s\n\nResult:\nAll good"}])
+          out   (app/view state)]
+      (is (str/includes? out "Subagent Result"))
+      (is (str/includes? out "Subagent #1 finished"))
+      (is (str/includes? out "All good")))))
 
 ;;;; Text input word wrap
 
