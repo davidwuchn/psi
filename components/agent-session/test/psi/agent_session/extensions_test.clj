@@ -451,16 +451,20 @@
       ((:register-flag api) "debug" {:type :boolean :default false})
       (is (= false ((:get-flag api) "debug")))))
 
-  (testing "API action fns delegate to session"
-    (let [reg        (ext/create-registry)
-          name-atom  (atom nil)
-          _          (ext/register-extension-in! reg "/ext/test")
-          action-fns {:set-session-name-fn (fn [n] (reset! name-atom n))
-                      :get-session-name-fn (fn [] @name-atom)}
-          api        (ext/create-extension-api reg "/ext/test" action-fns)]
-      ((:set-session-name api) "my session")
-      (is (= "my session" @name-atom))
-      (is (= "my session" ((:get-session-name api)))))))
+  (testing "API :query delegates to runtime query fn"
+    (let [reg         (ext/create-registry)
+          _           (ext/register-extension-in! reg "/ext/test")
+          runtime-fns {:query-fn (fn [q] {:echo q})}
+          api         (ext/create-extension-api reg "/ext/test" runtime-fns)]
+      (is (= {:echo [:x]} ((:query api) [:x])))))
+
+  (testing "API :mutate delegates to runtime mutate fn"
+    (let [reg         (ext/create-registry)
+          _           (ext/register-extension-in! reg "/ext/test")
+          runtime-fns {:mutate-fn (fn [op params] {:op op :params params})}
+          api         (ext/create-extension-api reg "/ext/test" runtime-fns)]
+      (is (= {:op 'psi.extension/test :params {:a 1}}
+             ((:mutate api) 'psi.extension/test {:a 1}))))))
 
 ;; ── Extension loading from file ─────────────────────────────────────────────
 

@@ -60,7 +60,7 @@
             "identity resolver should appear in graph summary")
         (is (contains? r-syms 'psi.agent-session.resolvers/agent-session-phase)
             "phase resolver should appear in graph summary")
-        (is (contains? m-syms 'psi.agent-session.core/add-prompt-template)
+        (is (contains? m-syms 'psi.extension/add-prompt-template)
             "startup prompt mutation should appear in graph summary"))))
 
   (testing "register-resolvers-in! skips agent-session resolvers when no session ctx"

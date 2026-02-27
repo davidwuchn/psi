@@ -412,143 +412,84 @@
 
 (defn create-extension-api
   "Build the ExtensionAPI map for an extension at `ext-path`.
-   The API provides registration and action methods.
+   The API provides registration methods plus EQL runtime access.
 
-   `action-fns` is a map of session-level action implementations:
-     :send-message-fn     — (fn [msg opts])
-     :send-user-message-fn — (fn [content opts])
-     :append-entry-fn     — (fn [custom-type data])
-     :set-session-name-fn — (fn [name])
-     :get-session-name-fn — (fn [])
-     :set-label-fn        — (fn [entry-id label])
-     :get-active-tools-fn — (fn [])
-     :set-active-tools-fn — (fn [tool-names])
-     :get-model-fn        — (fn [])
-     :set-model-fn        — (fn [model])
-     :is-idle-fn          — (fn [])
-     :abort-fn            — (fn [])
-     :compact-fn          — (fn [opts])
-     :get-system-prompt-fn — (fn [])
+   `runtime-fns` is a map of runtime implementations:
+     :query-fn     — (fn [eql-query])
+     :mutate-fn    — (fn [op-sym params])
+     :ui-state-atom — atom used to build extension UI context
 
-   Any missing action key returns a no-op or throws."
-  [reg ext-path action-fns]
+   Any missing runtime key throws."
+  [reg ext-path runtime-fns]
   (let [not-init #(throw (ex-info "Extension runtime not initialized" {:action %}))]
     {:path ext-path
 
-     ;; ── Event subscription ──────────────────────────────
+     ;; ── Event subscription (via mutation) ─────────────
      :on
      (fn [event-name handler-fn]
-       (register-handler-in! reg ext-path event-name handler-fn))
+       (if-let [f (:mutate-fn runtime-fns)]
+         (f 'psi.extension/register-handler
+            {:ext-path   ext-path
+             :event-name event-name
+             :handler-fn handler-fn})
+         (register-handler-in! reg ext-path event-name handler-fn)))
 
-     ;; ── Tool registration ──────────────────────────────
+     ;; ── Tool registration (via mutation) ──────────────
      :register-tool
      (fn [tool]
-       (register-tool-in! reg ext-path tool))
+       (if-let [f (:mutate-fn runtime-fns)]
+         (f 'psi.extension/register-tool
+            {:ext-path ext-path
+             :tool     tool})
+         (register-tool-in! reg ext-path tool)))
 
-     ;; ── Command registration ────────────────────────────
+     ;; ── Command registration (via mutation) ───────────
      :register-command
      (fn [name opts]
-       (register-command-in! reg ext-path (assoc opts :name name)))
+       (if-let [f (:mutate-fn runtime-fns)]
+         (f 'psi.extension/register-command
+            {:ext-path ext-path
+             :name     name
+             :opts     opts})
+         (register-command-in! reg ext-path (assoc opts :name name))))
 
-     ;; ── Shortcut registration ──────────────────────────
+     ;; ── Shortcut registration (via mutation) ──────────
      :register-shortcut
      (fn [key opts]
-       (register-shortcut-in! reg ext-path (assoc opts :key key)))
+       (if-let [f (:mutate-fn runtime-fns)]
+         (f 'psi.extension/register-shortcut
+            {:ext-path ext-path
+             :key      key
+             :opts     opts})
+         (register-shortcut-in! reg ext-path (assoc opts :key key))))
 
-     ;; ── Flag registration ──────────────────────────────
+     ;; ── Flag registration (via mutation) ──────────────
      :register-flag
      (fn [name opts]
-       (register-flag-in! reg ext-path (assoc opts :name name)))
+       (if-let [f (:mutate-fn runtime-fns)]
+         (f 'psi.extension/register-flag
+            {:ext-path ext-path
+             :name     name
+             :opts     opts})
+         (register-flag-in! reg ext-path (assoc opts :name name))))
 
      ;; ── Flag access ────────────────────────────────────
      :get-flag
      (fn [name]
        (get-flag-in reg name))
 
-     ;; ── Actions (delegate to session) ──────────────────
-     :send-message
-     (fn [msg & [opts]]
-       (if-let [f (:send-message-fn action-fns)]
-         (f msg opts)
-         (not-init :send-message)))
+     ;; ── EQL runtime surface ────────────────────────────
+     :query
+     (fn [eql-query]
+       (if-let [f (:query-fn runtime-fns)]
+         (f eql-query)
+         (not-init :query)))
 
-     :send-user-message
-     (fn [content & [opts]]
-       (if-let [f (:send-user-message-fn action-fns)]
-         (f content opts)
-         (not-init :send-user-message)))
-
-     :append-entry
-     (fn [custom-type & [data]]
-       (if-let [f (:append-entry-fn action-fns)]
-         (f custom-type data)
-         (not-init :append-entry)))
-
-     :set-session-name
-     (fn [name]
-       (if-let [f (:set-session-name-fn action-fns)]
-         (f name)
-         (not-init :set-session-name)))
-
-     :get-session-name
-     (fn []
-       (if-let [f (:get-session-name-fn action-fns)]
-         (f)
-         (not-init :get-session-name)))
-
-     :set-label
-     (fn [entry-id label]
-       (if-let [f (:set-label-fn action-fns)]
-         (f entry-id label)
-         (not-init :set-label)))
-
-     :get-active-tools
-     (fn []
-       (if-let [f (:get-active-tools-fn action-fns)]
-         (f)
-         (not-init :get-active-tools)))
-
-     :set-active-tools
-     (fn [tool-names]
-       (if-let [f (:set-active-tools-fn action-fns)]
-         (f tool-names)
-         (not-init :set-active-tools)))
-
-     :get-model
-     (fn []
-       (if-let [f (:get-model-fn action-fns)]
-         (f)
-         (not-init :get-model)))
-
-     :set-model
-     (fn [model]
-       (if-let [f (:set-model-fn action-fns)]
-         (f model)
-         (not-init :set-model)))
-
-     :is-idle
-     (fn []
-       (if-let [f (:is-idle-fn action-fns)]
-         (f)
-         (not-init :is-idle)))
-
-     :abort
-     (fn []
-       (if-let [f (:abort-fn action-fns)]
-         (f)
-         (not-init :abort)))
-
-     :compact
-     (fn [& [opts]]
-       (if-let [f (:compact-fn action-fns)]
-         (f opts)
-         (not-init :compact)))
-
-     :get-system-prompt
-     (fn []
-       (if-let [f (:get-system-prompt-fn action-fns)]
-         (f)
-         (not-init :get-system-prompt)))
+     :mutate
+     (fn [op-sym params]
+       (if-let [f (:mutate-fn runtime-fns)]
+         (f op-sym params)
+         (not-init :mutate)))
 
      ;; ── Event bus ──────────────────────────────────────
      :events
@@ -558,7 +499,7 @@
      ;; ── UI context ─────────────────────────────────────
      ;; nil when headless (no TUI); present when TUI is active.
      :ui
-     (ext-ui/create-ui-context (:ui-state-atom action-fns) ext-path)}))
+     (ext-ui/create-ui-context (:ui-state-atom runtime-fns) ext-path)}))
 
 ;; ============================================================
 ;; Extension loading
@@ -636,9 +577,9 @@
 (defn load-extension-in!
   "Load a single extension from `ext-path` into `reg`.
    The file must define an `init` function in its namespace.
-   `action-fns` is passed through to `create-extension-api`.
+   `runtime-fns` is passed through to `create-extension-api`.
    Returns {:extension ext-path :error nil} or {:extension nil :error msg}."
-  [reg ext-path action-fns]
+  [reg ext-path runtime-fns]
   (try
     (let [f (io/file ext-path)]
       (when-not (.exists f)
@@ -665,7 +606,7 @@
             _       (when-not init-var
                       (throw (ex-info (str "Extension " ns-sym " does not define `init` fn")
                                       {:path ext-path :ns ns-sym})))
-            api     (create-extension-api reg ext-path action-fns)]
+            api     (create-extension-api reg ext-path runtime-fns)]
         (init-var api)
         {:extension ext-path :error nil}))
     (catch Exception e
@@ -675,18 +616,18 @@
 (defn load-extensions-in!
   "Discover and load all extensions into `reg`.
    `configured-paths` are explicit CLI paths.
-   `action-fns` is passed to each extension's API.
+   `runtime-fns` is passed to each extension's API.
    Returns {:loaded [paths] :errors [{:path :error}]}."
   ([reg] (load-extensions-in! reg {} []))
-  ([reg action-fns] (load-extensions-in! reg action-fns []))
-  ([reg action-fns configured-paths]
-   (load-extensions-in! reg action-fns configured-paths nil))
-  ([reg action-fns configured-paths cwd]
+  ([reg runtime-fns] (load-extensions-in! reg runtime-fns []))
+  ([reg runtime-fns configured-paths]
+   (load-extensions-in! reg runtime-fns configured-paths nil))
+  ([reg runtime-fns configured-paths cwd]
    (let [paths  (discover-extension-paths configured-paths cwd)
          loaded (atom [])
          errors (atom [])]
      (doseq [p paths]
-       (let [result (load-extension-in! reg p action-fns)]
+       (let [result (load-extension-in! reg p runtime-fns)]
          (if (:error result)
            (swap! errors conj {:path p :error (:error result)})
            (swap! loaded conj p))))
@@ -696,11 +637,11 @@
   "Unregister all extensions and re-discover/load them.
    Returns the load result."
   ([reg] (reload-extensions-in! reg {} []))
-  ([reg action-fns] (reload-extensions-in! reg action-fns []))
-  ([reg action-fns configured-paths]
-   (reload-extensions-in! reg action-fns configured-paths nil))
-  ([reg action-fns configured-paths cwd]
+  ([reg runtime-fns] (reload-extensions-in! reg runtime-fns []))
+  ([reg runtime-fns configured-paths]
+   (reload-extensions-in! reg runtime-fns configured-paths nil))
+  ([reg runtime-fns configured-paths cwd]
    (unregister-all-in! reg)
-   (load-extensions-in! reg action-fns configured-paths cwd)))
+   (load-extensions-in! reg runtime-fns configured-paths cwd)))
 
 

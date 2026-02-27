@@ -68,6 +68,8 @@
 
 (declare execute-compaction-in!)
 (declare set-session-name-in!)
+(declare register-resolvers-in!)
+(declare register-mutations-in!)
 
 ;; ============================================================
 ;; Actions dispatcher
@@ -645,35 +647,33 @@
   [ctx event-name event-data]
   (ext/dispatch-in (:extension-registry ctx) event-name event-data))
 
-(defn- make-extension-action-fns
-  "Build the action-fns map that extension APIs delegate to.
-   These close over the session context so extensions can interact with
-   the session without holding a reference to the context directly."
+(defn- run-extension-mutation-in!
+  "Execute a single EQL mutation op against `ctx` and return its payload.
+   `op-sym` must be a qualified mutation symbol."
+  [ctx op-sym params]
+  (let [qctx (query/create-query-context)
+        _    (register-resolvers-in! qctx false)
+        _    (register-mutations-in! qctx true)
+        seed {:psi/agent-session-ctx ctx}
+        full-params (assoc params :psi/agent-session-ctx ctx)]
+    (get (query/query-in qctx seed [(list op-sym full-params)]) op-sym)))
+
+(defn- make-extension-runtime-fns
+  "Build the runtime-fns map for extension API EQL access.
+   Extensions interact with session state via query/mutation only."
   [ctx]
-  {:send-message-fn     (fn [_msg _opts] nil) ;; stub — wired by run mode
-   :send-user-message-fn (fn [_content _opts] nil)
-   :append-entry-fn     (fn [custom-type data]
-                          (journal-append! ctx
-                                           (persist/custom-message-entry
-                                            custom-type (str data) nil false)))
-   :set-session-name-fn (fn [name] (set-session-name-in! ctx name))
-   :get-session-name-fn (fn [] (:session-name (get-session-data-in ctx)))
-   :set-label-fn        (fn [entry-id label]
-                          (journal-append! ctx (persist/label-entry entry-id label)))
-   :get-active-tools-fn (fn [] (mapv :name (:tools (agent/get-data-in (:agent-ctx ctx)))))
-   :set-active-tools-fn (fn [tool-names]
-                          (let [current-tools (:tools (agent/get-data-in (:agent-ctx ctx)))
-                                name-set      (set tool-names)]
-                            (agent/set-tools-in! (:agent-ctx ctx)
-                                                 (filterv #(name-set (:name %))
-                                                          current-tools))))
-   :get-model-fn        (fn [] (:model (get-session-data-in ctx)))
-   :set-model-fn        (fn [model] (set-model-in! ctx model))
-   :is-idle-fn          (fn [] (idle-in? ctx))
-   :abort-fn            (fn [] (abort-in! ctx))
-   :compact-fn          (fn [_opts] (manual-compact-in! ctx))
-   :get-system-prompt-fn (fn [] (:system-prompt (get-session-data-in ctx)))
-   :ui-state-atom       (:ui-state-atom ctx)})
+  {:query-fn
+   (fn [eql-query]
+     (let [qctx (query/create-query-context)
+           _    (register-resolvers-in! qctx false)
+           _    (register-mutations-in! qctx true)]
+       (query/query-in qctx {:psi/agent-session-ctx ctx} eql-query)))
+
+   :mutate-fn
+   (fn [op-sym params]
+     (run-extension-mutation-in! ctx op-sym params))
+
+   :ui-state-atom (:ui-state-atom ctx)})
 
 (defn load-extensions-in!
   "Discover and load all extensions into this session's registry.
@@ -683,8 +683,8 @@
   ([ctx configured-paths]
    (load-extensions-in! ctx configured-paths nil))
   ([ctx configured-paths cwd]
-   (let [action-fns (make-extension-action-fns ctx)]
-     (ext/load-extensions-in! (:extension-registry ctx) action-fns
+   (let [runtime-fns (make-extension-runtime-fns ctx)]
+     (ext/load-extensions-in! (:extension-registry ctx) runtime-fns
                               configured-paths cwd))))
 
 (defn reload-extensions-in!
@@ -693,8 +693,8 @@
   ([ctx configured-paths]
    (reload-extensions-in! ctx configured-paths nil))
   ([ctx configured-paths cwd]
-   (let [action-fns (make-extension-action-fns ctx)]
-     (ext/reload-extensions-in! (:extension-registry ctx) action-fns
+   (let [runtime-fns (make-extension-runtime-fns ctx)]
+     (ext/reload-extensions-in! (:extension-registry ctx) runtime-fns
                                 configured-paths cwd))))
 
 (defn extension-summary-in
@@ -787,7 +787,7 @@
   (let [{:keys [extension error]}
         (ext/load-extension-in! (:extension-registry ctx)
                                 path
-                                (make-extension-action-fns ctx))]
+                                (make-extension-runtime-fns ctx))]
     {:loaded? (some? extension)
      :path    extension
      :error   error}))
@@ -804,30 +804,62 @@
     {:added? (not existing?)
      :count  (count (:tools (agent/get-data-in agent-ctx)))}))
 
+(defn register-extension-tool-in!
+  [ctx ext-path tool]
+  (ext/register-tool-in! (:extension-registry ctx) ext-path tool)
+  {:psi.extension/path ext-path
+   :psi.extension/tool-names (vec (ext/tool-names-in (:extension-registry ctx)))})
+
+(defn register-extension-command-in!
+  [ctx ext-path name opts]
+  (ext/register-command-in! (:extension-registry ctx) ext-path (assoc opts :name name))
+  {:psi.extension/path ext-path
+   :psi.extension/command-names (vec (ext/command-names-in (:extension-registry ctx)))})
+
+(defn register-extension-handler-in!
+  [ctx ext-path event-name handler-fn]
+  (ext/register-handler-in! (:extension-registry ctx) ext-path event-name handler-fn)
+  {:psi.extension/path ext-path
+   :psi.extension/handler-count (ext/handler-count-in (:extension-registry ctx))})
+
+(defn register-extension-flag-in!
+  [ctx ext-path name opts]
+  (ext/register-flag-in! (:extension-registry ctx) ext-path (assoc opts :name name))
+  {:psi.extension/path ext-path
+   :psi.extension/flag-names (vec (ext/flag-names-in (:extension-registry ctx)))})
+
+(defn register-extension-shortcut-in!
+  [ctx ext-path key opts]
+  (ext/register-shortcut-in! (:extension-registry ctx) ext-path (assoc opts :key key))
+  {:psi.extension/path ext-path})
+
 (pco/defmutation add-prompt-template
   [_ {:keys [psi/agent-session-ctx template]}]
-  {::pco/params [:psi/agent-session-ctx :template]
-   ::pco/output [:psi.prompt-template/added?
-                 :psi.prompt-template/count]}
+  {::pco/op-name 'psi.extension/add-prompt-template
+   ::pco/params  [:psi/agent-session-ctx :template]
+   ::pco/output  [:psi.prompt-template/added?
+                  :psi.prompt-template/count]}
   (let [{:keys [added? count]} (add-prompt-template-in! agent-session-ctx template)]
     {:psi.prompt-template/added? added?
      :psi.prompt-template/count  count}))
 
 (pco/defmutation add-skill
   [_ {:keys [psi/agent-session-ctx skill]}]
-  {::pco/params [:psi/agent-session-ctx :skill]
-   ::pco/output [:psi.skill/added?
-                 :psi.skill/count]}
+  {::pco/op-name 'psi.extension/add-skill
+   ::pco/params  [:psi/agent-session-ctx :skill]
+   ::pco/output  [:psi.skill/added?
+                  :psi.skill/count]}
   (let [{:keys [added? count]} (add-skill-in! agent-session-ctx skill)]
     {:psi.skill/added? added?
      :psi.skill/count  count}))
 
 (pco/defmutation add-extension
   [_ {:keys [psi/agent-session-ctx path]}]
-  {::pco/params [:psi/agent-session-ctx :path]
-   ::pco/output [:psi.extension/loaded?
-                 :psi.extension/path
-                 :psi.extension/error]}
+  {::pco/op-name 'psi.extension/add-extension
+   ::pco/params  [:psi/agent-session-ctx :path]
+   ::pco/output  [:psi.extension/loaded?
+                  :psi.extension/path
+                  :psi.extension/error]}
   (let [{:keys [loaded? error]} (add-extension-in! agent-session-ctx path)]
     {:psi.extension/loaded? loaded?
      :psi.extension/path    path
@@ -835,18 +867,128 @@
 
 (pco/defmutation add-tool
   [_ {:keys [psi/agent-session-ctx tool]}]
-  {::pco/params [:psi/agent-session-ctx :tool]
-   ::pco/output [:psi.tool/added?
-                 :psi.tool/count]}
+  {::pco/op-name 'psi.extension/add-tool
+   ::pco/params  [:psi/agent-session-ctx :tool]
+   ::pco/output  [:psi.tool/added?
+                  :psi.tool/count]}
   (let [{:keys [added? count]} (add-tool-in! agent-session-ctx tool)]
     {:psi.tool/added? added?
      :psi.tool/count  count}))
+
+(pco/defmutation set-session-name
+  [_ {:keys [psi/agent-session-ctx name]}]
+  {::pco/op-name 'psi.extension/set-session-name
+   ::pco/params  [:psi/agent-session-ctx :name]
+   ::pco/output  [:psi.agent-session/session-name]}
+  (let [sd (set-session-name-in! agent-session-ctx name)]
+    {:psi.agent-session/session-name (:session-name sd)}))
+
+(pco/defmutation set-active-tools
+  [_ {:keys [psi/agent-session-ctx tool-names]}]
+  {::pco/op-name 'psi.extension/set-active-tools
+   ::pco/params  [:psi/agent-session-ctx :tool-names]
+   ::pco/output  [:psi.tool/count
+                  :psi.tool/names]}
+  (let [agent-ctx      (:agent-ctx agent-session-ctx)
+        current-tools  (:tools (agent/get-data-in agent-ctx))
+        by-name        (into {} (map (juxt :name identity)) current-tools)
+        selected-tools (vec (keep by-name tool-names))]
+    (agent/set-tools-in! agent-ctx selected-tools)
+    {:psi.tool/count (count selected-tools)
+     :psi.tool/names (mapv :name selected-tools)}))
+
+(pco/defmutation set-model
+  [_ {:keys [psi/agent-session-ctx model]}]
+  {::pco/op-name 'psi.extension/set-model
+   ::pco/params  [:psi/agent-session-ctx :model]
+   ::pco/output  [:psi.agent-session/model
+                  :psi.agent-session/thinking-level]}
+  (let [sd (set-model-in! agent-session-ctx model)]
+    {:psi.agent-session/model          (:model sd)
+     :psi.agent-session/thinking-level (:thinking-level sd)}))
+
+(pco/defmutation abort
+  [_ {:keys [psi/agent-session-ctx]}]
+  {::pco/op-name 'psi.extension/abort
+   ::pco/params  [:psi/agent-session-ctx]
+   ::pco/output  [:psi.agent-session/is-idle]}
+  (abort-in! agent-session-ctx)
+  {:psi.agent-session/is-idle (idle-in? agent-session-ctx)})
+
+(pco/defmutation compact
+  [_ {:keys [psi/agent-session-ctx instructions]}]
+  {::pco/op-name 'psi.extension/compact
+   ::pco/params  [:psi/agent-session-ctx]
+   ::pco/output  [:psi.agent-session/is-compacting
+                  :psi.agent-session/session-entry-count]}
+  (manual-compact-in! agent-session-ctx instructions)
+  {:psi.agent-session/is-compacting false
+   :psi.agent-session/session-entry-count (count @(:journal-atom agent-session-ctx))})
+
+(pco/defmutation append-entry
+  [_ {:keys [psi/agent-session-ctx custom-type data]}]
+  {::pco/op-name 'psi.extension/append-entry
+   ::pco/params  [:psi/agent-session-ctx :custom-type]
+   ::pco/output  [:psi.agent-session/session-entry-count]}
+  (journal-append! agent-session-ctx
+                   (persist/custom-message-entry custom-type (str data) nil false))
+  {:psi.agent-session/session-entry-count (count @(:journal-atom agent-session-ctx))})
+
+(pco/defmutation register-tool
+  [_ {:keys [psi/agent-session-ctx ext-path tool]}]
+  {::pco/op-name 'psi.extension/register-tool
+   ::pco/params  [:psi/agent-session-ctx :ext-path :tool]
+   ::pco/output  [:psi.extension/path
+                  :psi.extension/tool-names]}
+  (register-extension-tool-in! agent-session-ctx ext-path tool))
+
+(pco/defmutation register-command
+  [_ {:keys [psi/agent-session-ctx ext-path name opts]}]
+  {::pco/op-name 'psi.extension/register-command
+   ::pco/params  [:psi/agent-session-ctx :ext-path :name :opts]
+   ::pco/output  [:psi.extension/path
+                  :psi.extension/command-names]}
+  (register-extension-command-in! agent-session-ctx ext-path name opts))
+
+(pco/defmutation register-handler
+  [_ {:keys [psi/agent-session-ctx ext-path event-name handler-fn]}]
+  {::pco/op-name 'psi.extension/register-handler
+   ::pco/params  [:psi/agent-session-ctx :ext-path :event-name :handler-fn]
+   ::pco/output  [:psi.extension/path
+                  :psi.extension/handler-count]}
+  (register-extension-handler-in! agent-session-ctx ext-path event-name handler-fn))
+
+(pco/defmutation register-flag
+  [_ {:keys [psi/agent-session-ctx ext-path name opts]}]
+  {::pco/op-name 'psi.extension/register-flag
+   ::pco/params  [:psi/agent-session-ctx :ext-path :name :opts]
+   ::pco/output  [:psi.extension/path
+                  :psi.extension/flag-names]}
+  (register-extension-flag-in! agent-session-ctx ext-path name opts))
+
+(pco/defmutation register-shortcut
+  [_ {:keys [psi/agent-session-ctx ext-path key opts]}]
+  {::pco/op-name 'psi.extension/register-shortcut
+   ::pco/params  [:psi/agent-session-ctx :ext-path :key :opts]
+   ::pco/output  [:psi.extension/path]}
+  (register-extension-shortcut-in! agent-session-ctx ext-path key opts))
 
 (def all-mutations
   [add-prompt-template
    add-skill
    add-extension
-   add-tool])
+   add-tool
+   set-session-name
+   set-active-tools
+   set-model
+   abort
+   compact
+   append-entry
+   register-tool
+   register-command
+   register-handler
+   register-flag
+   register-shortcut])
 
 (defn register-resolvers-in!
   "Register all agent-session resolvers into an isolated `qctx` query context.
@@ -913,19 +1055,19 @@
         _    (register-resolvers-in! qctx false)
         _    (register-mutations-in! qctx true)]
     (doseq [t templates]
-      (run-mutation-in! qctx 'psi.agent-session.core/add-prompt-template
+      (run-mutation-in! qctx 'psi.extension/add-prompt-template
                         {:psi/agent-session-ctx ctx
                          :template              t}))
     (doseq [s skills]
-      (run-mutation-in! qctx 'psi.agent-session.core/add-skill
+      (run-mutation-in! qctx 'psi.extension/add-skill
                         {:psi/agent-session-ctx ctx
                          :skill                s}))
     (doseq [tool tools]
-      (run-mutation-in! qctx 'psi.agent-session.core/add-tool
+      (run-mutation-in! qctx 'psi.extension/add-tool
                         {:psi/agent-session-ctx ctx
                          :tool                 tool}))
     (let [ext-results (mapv (fn [p]
-                              (run-mutation-in! qctx 'psi.agent-session.core/add-extension
+                              (run-mutation-in! qctx 'psi.extension/add-extension
                                                 {:psi/agent-session-ctx ctx
                                                  :path                  p}))
                             extension-paths)]
@@ -991,10 +1133,10 @@
                    :extension-loaded-count (count (filter :psi.extension/loaded? extension-results))
                    :extension-error-count  (count ext-errors)
                    :extension-errors       (vec ext-errors)
-                   :mutations              ['psi.agent-session.core/add-prompt-template
-                                            'psi.agent-session.core/add-skill
-                                            'psi.agent-session.core/add-tool
-                                            'psi.agent-session.core/add-extension]}]
+                   :mutations              ['psi.extension/add-prompt-template
+                                            'psi.extension/add-skill
+                                            'psi.extension/add-tool
+                                            'psi.extension/add-extension]}]
     (swap-session! ctx assoc :startup-bootstrap summary)
     summary))
 
