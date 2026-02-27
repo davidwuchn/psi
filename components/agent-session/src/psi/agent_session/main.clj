@@ -210,7 +210,7 @@
   (println "  /prompts — list available prompt templates")
   (println "  /skills  — list available skills")
   (println "  /new     — start a fresh session")
-  (println "  /login   — login with an OAuth provider")
+  (println "  /login [provider] — login with an OAuth provider")
   (println "  /logout  — logout from an OAuth provider")
   (println "  /help    — show this help")
   (println "  /skill:name — invoke a skill (loads full content)")
@@ -314,6 +314,52 @@
                             (str "[" (:role msg) "]")
                             text)}))))
        vec))
+
+;; ============================================================
+;; OAuth login provider selection
+;; ============================================================
+
+(def ^:private provider-env-vars
+  {:anthropic "ANTHROPIC_API_KEY"
+   :openai    "OPENAI_API_KEY"})
+
+(defn select-login-provider
+  "Select OAuth provider for /login.
+
+   Inputs:
+     providers         — seq of provider maps with :id
+     active-provider   — provider keyword for current model (e.g. :openai)
+     requested-provider — optional string from `/login <provider>`
+
+   Returns one of:
+     {:provider provider-map}
+     {:error :message-string}
+
+   Behavior:
+   - If requested-provider is supplied, it must match a registered OAuth provider.
+   - Otherwise, choose the provider matching active-provider.
+   - If no match exists, return a helpful error (no silent fallback to another provider)."
+  [providers active-provider requested-provider]
+  (let [by-id        (into {} (map (juxt :id identity) providers))
+        available    (->> (keys by-id) (map name) sort)
+        requested-id (some-> requested-provider str/trim not-empty keyword)
+        active-id    (keyword active-provider)]
+    (cond
+      requested-id
+      (if-let [provider (get by-id requested-id)]
+        {:provider provider}
+        {:error (str "Unknown OAuth provider: " (name requested-id)
+                     (when (seq available)
+                       (str ". Available: " (str/join ", " available))))})
+
+      :else
+      (if-let [provider (get by-id active-id)]
+        {:provider provider}
+        {:error (str "OAuth login is not available for model provider " (name active-id) ". "
+                     (when-let [env-var (get provider-env-vars active-id)]
+                       (str "Set " env-var " for this model. "))
+                     (when (seq available)
+                       (str "Available OAuth providers: " (str/join ", " available) ".")))}))))
 
 ;; ============================================================
 ;; Prompt template expansion
@@ -611,19 +657,24 @@
                                   (swap! session-state dissoc :pending-login)
                                   (reply! queue (str "✗ Login failed: " (ex-message e))))))
 
-                            ;; Step 1: /login — generate URL, store state, wait for code
-                            (= trimmed "/login")
+                            ;; Step 1: /login [provider] — generate URL, store state, wait for code
+                            (or (= trimmed "/login")
+                                (str/starts-with? trimmed "/login "))
                             (try
-                              (let [providers (oauth/available-providers oauth-ctx)
-                                    provider  (first providers)
-                                    {:keys [url login-state]} (oauth/begin-login! oauth-ctx (:id provider))]
-                                (swap! session-state assoc :pending-login
-                                       {:provider-id   (:id provider)
-                                        :provider-name (:name provider)
-                                        :login-state   login-state})
-                                (reply! queue (str "🔑 Login to " (:name provider)
-                                                   "\n\nOpen this URL in your browser:\n" url
-                                                   "\n\nPaste the authorization code below ↓")))
+                              (let [provider-arg (second (str/split trimmed #"\s+" 2))
+                                    providers    (oauth/available-providers oauth-ctx)
+                                    {:keys [provider error]}
+                                    (select-login-provider providers (:provider ai-model) provider-arg)]
+                                (if error
+                                  (reply! queue (str "✗ " error))
+                                  (let [{:keys [url login-state]} (oauth/begin-login! oauth-ctx (:id provider))]
+                                    (swap! session-state assoc :pending-login
+                                           {:provider-id   (:id provider)
+                                            :provider-name (:name provider)
+                                            :login-state   login-state})
+                                    (reply! queue (str "🔑 Login to " (:name provider)
+                                                       "\n\nOpen this URL in your browser:\n" url
+                                                       "\n\nPaste the authorization code below ↓")))))
                               (catch Exception e
                                 (reply! queue (str "✗ Login failed: " (ex-message e)))))
 
