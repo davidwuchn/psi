@@ -14,7 +14,8 @@
             [clojure.string :as str]
             [cheshire.core :as json]
             [psi.agent-session.oauth.pkce :as pkce])
-  (:import [java.net URLEncoder]))
+  (:import [java.net URI URLDecoder URLEncoder]
+           [java.util UUID]))
 
 ;;; Provider registry
 
@@ -46,6 +47,69 @@
   (->> params
        (map (fn [[k v]] (str (url-encode (name k)) "=" (url-encode (str v)))))
        (clojure.string/join "&")))
+
+(defn- parse-query-string
+  "Parse a URL query string into a map of string keys/values."
+  [^String query]
+  (if (str/blank? query)
+    {}
+    (->> (str/split query #"&")
+         (keep (fn [part]
+                 (let [[k v] (str/split part #"=" 2)]
+                   (when (and k v)
+                     [(URLDecoder/decode k "UTF-8")
+                      (URLDecoder/decode v "UTF-8")]))))
+         (into {}))))
+
+(defn- parse-authorization-input
+  "Parse user-pasted authorization input.
+
+   Accepts any of:
+   - full URL (query contains code/state)
+   - code#state
+   - code=...&state=...
+   - raw code
+
+   Returns {:code string? :state string?}."
+  [input]
+  (let [value (str/trim (or input ""))]
+    (cond
+      (str/blank? value)
+      {:code nil :state nil}
+
+      ;; full URL
+      (re-find #"^https?://" value)
+      (try
+        (let [uri   (URI. value)
+              m     (parse-query-string (.getQuery uri))
+              code  (get m "code")
+              state (get m "state")]
+          {:code (or code value)
+           :state state})
+        (catch Exception _
+          {:code value :state nil}))
+
+      ;; code#state format
+      (str/includes? value "#")
+      (let [[code state] (str/split value #"#" 2)]
+        {:code (not-empty code)
+         :state (not-empty state)})
+
+      ;; key=value&... format
+      (or (str/includes? value "code=") (str/includes? value "state="))
+      (let [q (if (str/starts-with? value "?") (subs value 1) value)
+            m (parse-query-string q)]
+        {:code (get m "code")
+         :state (get m "state")})
+
+      :else
+      {:code value :state nil})))
+
+(defn- expires-at-from-seconds
+  "Convert OAuth expires_in seconds to epoch millis with a 5-minute safety buffer."
+  [expires-in]
+  (- (+ (System/currentTimeMillis) (* expires-in 1000))
+     (* 5 60 1000)))
 
 ;;; Browser open
 
@@ -88,28 +152,31 @@
 
 (defn- anthropic-complete-login
   "Exchange authorization code for tokens.
-   `input` is the code#state string from the redirect page.
+   `input` may be code#state, query params, full URL, or raw code.
    `login-state` is the map returned by begin-login."
   [input login-state]
-  (let [[code state] (str/split input #"#" 2)
-        response  (http/post anthropic-token-url
-                             {:content-type :json
-                              :as           :json
-                              :cookie-policy :none
-                              :body         (json/generate-string
-                                             {"grant_type"    "authorization_code"
-                                              "client_id"     anthropic-client-id
-                                              "code"          code
-                                              "state"         state
-                                              "redirect_uri"  anthropic-redirect-uri
-                                              "code_verifier" (:verifier login-state)})})
-        {:keys [access_token refresh_token expires_in]} (:body response)
-        expires-at (- (+ (System/currentTimeMillis) (* expires_in 1000))
-                      (* 5 60 1000))]
-    {:type    :oauth
-     :refresh refresh_token
-     :access  access_token
-     :expires expires-at}))
+  (let [{:keys [code state]} (parse-authorization-input input)
+        expected-state       (:verifier login-state)]
+    (when-not (seq code)
+      (throw (ex-info "Missing authorization code" {:provider :anthropic})))
+    (when (and (seq state) (not= state expected-state))
+      (throw (ex-info "State mismatch" {:provider :anthropic})))
+    (let [response (http/post anthropic-token-url
+                              {:content-type  :json
+                               :as            :json
+                               :cookie-policy :none
+                               :body          (json/generate-string
+                                               {"grant_type"    "authorization_code"
+                                                "client_id"     anthropic-client-id
+                                                "code"          code
+                                                "state"         (or state expected-state)
+                                                "redirect_uri"  anthropic-redirect-uri
+                                                "code_verifier" (:verifier login-state)})})
+          {:keys [access_token refresh_token expires_in]} (:body response)]
+      {:type    :oauth
+       :refresh refresh_token
+       :access  access_token
+       :expires (expires-at-from-seconds expires_in)})))
 
 (defn- anthropic-login
   "Run Anthropic OAuth authorization code + PKCE flow (callback-based).
@@ -128,19 +195,18 @@
   "Refresh an Anthropic OAuth token."
   [credential]
   (let [response (http/post anthropic-token-url
-                            {:content-type :json
-                             :as           :json
+                            {:content-type  :json
+                             :as            :json
                              :cookie-policy :none
-                             :body         (json/generate-string
-                                            {"grant_type"    "refresh_token"
-                                             "client_id"     anthropic-client-id
-                                             "refresh_token" (:refresh credential)})})
+                             :body          (json/generate-string
+                                             {"grant_type"    "refresh_token"
+                                              "client_id"     anthropic-client-id
+                                              "refresh_token" (:refresh credential)})})
         {:keys [access_token refresh_token expires_in]} (:body response)]
     {:type    :oauth
      :refresh refresh_token
      :access  access_token
-     :expires (- (+ (System/currentTimeMillis) (* expires_in 1000))
-                 (* 5 60 1000))}))
+     :expires (expires-at-from-seconds expires_in)}))
 
 (def anthropic-provider
   {:id                   :anthropic
@@ -152,9 +218,107 @@
    :refresh-token        anthropic-refresh
    :get-api-key          :access})
 
+;;; OpenAI OAuth provider
+
+(def ^:private openai-client-id "app_EMoamEEZ73f0CkXaXp7hrann")
+(def ^:private openai-authorize-url "https://auth.openai.com/oauth/authorize")
+(def ^:private openai-token-url "https://auth.openai.com/oauth/token")
+(def ^:private openai-redirect-uri "http://localhost:1455/auth/callback")
+(def ^:private openai-scopes "openid profile email offline_access")
+
+(defn- openai-begin-login
+  "Generate PKCE + authorize URL for OpenAI OAuth.
+   Returns {:url ... :login-state ...}."
+  []
+  (let [{:keys [verifier challenge]} (pkce/generate-pkce)
+        state   (str (UUID/randomUUID))
+        auth-url (str openai-authorize-url "?"
+                      (build-query-string
+                       {"response_type"             "code"
+                        "client_id"                 openai-client-id
+                        "redirect_uri"              openai-redirect-uri
+                        "scope"                     openai-scopes
+                        "code_challenge"            challenge
+                        "code_challenge_method"     "S256"
+                        "state"                     state
+                        "id_token_add_organizations" "true"
+                        "codex_cli_simplified_flow"  "true"
+                        "originator"                "psi"}))]
+    (open-browser! auth-url)
+    {:url         auth-url
+     :login-state {:verifier verifier
+                   :state    state}}))
+
+(defn- openai-complete-login
+  "Exchange OpenAI authorization code for tokens.
+   `input` may be a raw code, query params, code#state, or full redirect URL."
+  [input login-state]
+  (let [{:keys [code state]} (parse-authorization-input input)
+        expected-state       (:state login-state)]
+    (when-not (seq code)
+      (throw (ex-info "Missing authorization code" {:provider :openai})))
+    (when (and (seq state) (not= state expected-state))
+      (throw (ex-info "State mismatch" {:provider :openai})))
+    (let [response (http/post openai-token-url
+                              {:content-type  :x-www-form-urlencoded
+                               :as            :json
+                               :cookie-policy :none
+                               :form-params   {"grant_type"    "authorization_code"
+                                               "client_id"     openai-client-id
+                                               "code"          code
+                                               "code_verifier" (:verifier login-state)
+                                               "redirect_uri"  openai-redirect-uri}})
+          {:keys [access_token refresh_token expires_in]} (:body response)]
+      (when-not (and (seq access_token) (seq refresh_token) (number? expires_in))
+        (throw (ex-info "OpenAI token response missing fields"
+                        {:provider :openai :body (:body response)})))
+      {:type    :oauth
+       :refresh refresh_token
+       :access  access_token
+       :expires (expires-at-from-seconds expires_in)})))
+
+(defn- openai-login
+  "Run OpenAI OAuth authorization flow (callback-based)."
+  [callbacks]
+  (let [{:keys [url login-state]} (openai-begin-login)]
+    ((:on-auth callbacks) {:url url})
+    (let [input ((:on-prompt callbacks)
+                 {:message "Paste the authorization code (or full redirect URL):"})]
+      (openai-complete-login input login-state))))
+
+(defn- openai-refresh
+  "Refresh an OpenAI OAuth token."
+  [credential]
+  (let [response (http/post openai-token-url
+                            {:content-type  :x-www-form-urlencoded
+                             :as            :json
+                             :cookie-policy :none
+                             :form-params   {"grant_type"    "refresh_token"
+                                             "refresh_token" (:refresh credential)
+                                             "client_id"     openai-client-id}})
+        {:keys [access_token refresh_token expires_in]} (:body response)]
+    (when-not (and (seq access_token) (number? expires_in))
+      (throw (ex-info "OpenAI refresh response missing fields"
+                      {:provider :openai :body (:body response)})))
+    {:type    :oauth
+     :refresh (or refresh_token (:refresh credential))
+     :access  access_token
+     :expires (expires-at-from-seconds expires_in)}))
+
+(def openai-provider
+  {:id                   :openai
+   :name                 "OpenAI (ChatGPT Plus/Pro)"
+   :uses-callback-server false
+   :login                openai-login
+   :begin-login          openai-begin-login
+   :complete-login       openai-complete-login
+   :refresh-token        openai-refresh
+   :get-api-key          :access})
+
 ;;; Registration
 
 (defn register-default-providers!
   "Register all built-in OAuth providers."
   []
-  (register-provider! anthropic-provider))
+  (register-provider! anthropic-provider)
+  (register-provider! openai-provider))

@@ -17,6 +17,15 @@
       (is (number? (:expires cred)))
       (is (oauth/has-auth? ctx :anthropic))))
 
+  (testing "openai login stores oauth credential and returns it"
+    (let [ctx  (oauth/create-null-context)
+          cred (oauth/login! ctx :openai
+                             {:on-auth     (fn [_])
+                              :on-prompt   (fn [_] "fake-code")
+                              :on-progress (fn [_])})]
+      (is (= :oauth (:type cred)))
+      (is (oauth/has-auth? ctx :openai))))
+
   (testing "login with unknown provider throws"
     (let [ctx (oauth/create-null-context)]
       (is (thrown-with-msg? Exception #"Unknown OAuth provider"
@@ -67,9 +76,10 @@
 
 (deftest available-providers-test
   (testing "lists registered providers"
-    (let [ctx (oauth/create-null-context)]
-      (is (= 1 (count (oauth/available-providers ctx))))
-      (is (= :anthropic (:id (first (oauth/available-providers ctx))))))))
+    (let [ctx (oauth/create-null-context)
+          ids (set (map :id (oauth/available-providers ctx)))]
+      (is (contains? ids :anthropic))
+      (is (contains? ids :openai)))))
 
 (deftest logged-in-providers-test
   (testing "returns only providers with oauth credentials"

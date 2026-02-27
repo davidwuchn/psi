@@ -49,34 +49,38 @@
                                      :expires (+ (System/currentTimeMillis) 3600000)})}]})"
   ([] (create-null-context {}))
   ([{:keys [credentials providers login-fn refresh-fn]}]
-   (let [test-providers (or providers
-                             [{:id                   :anthropic
-                               :name                 "Anthropic (Test)"
-                               :uses-callback-server false
-                               :login                (or login-fn
-                                                         (fn [_callbacks]
-                                                           {:type    :oauth
-                                                            :refresh "test-refresh"
-                                                            :access  "test-access"
-                                                            :expires (+ (System/currentTimeMillis)
-                                                                        3600000)}))
-                               :begin-login          (fn []
-                                                       {:url         "https://test.example.com/auth"
-                                                        :login-state {:verifier "test-verifier"}})
-                               :complete-login       (fn [_input _login-state]
-                                                       {:type    :oauth
-                                                        :refresh "test-refresh"
-                                                        :access  "test-access"
-                                                        :expires (+ (System/currentTimeMillis)
-                                                                    3600000)})
-                               :refresh-token        (or refresh-fn
-                                                         (fn [_cred]
-                                                           {:type    :oauth
-                                                            :refresh "refreshed-refresh"
-                                                            :access  "refreshed-access"
-                                                            :expires (+ (System/currentTimeMillis)
-                                                                        3600000)}))
-                               :get-api-key          :access}])
+   (let [mk-test-provider
+         (fn [id name]
+           {:id                   id
+            :name                 name
+            :uses-callback-server false
+            :login                (or login-fn
+                                      (fn [_callbacks]
+                                        {:type    :oauth
+                                         :refresh "test-refresh"
+                                         :access  "test-access"
+                                         :expires (+ (System/currentTimeMillis)
+                                                     3600000)}))
+            :begin-login          (fn []
+                                    {:url         "https://test.example.com/auth"
+                                     :login-state {:verifier "test-verifier" :state "test-state"}})
+            :complete-login       (fn [_input _login-state]
+                                    {:type    :oauth
+                                     :refresh "test-refresh"
+                                     :access  "test-access"
+                                     :expires (+ (System/currentTimeMillis)
+                                                 3600000)})
+            :refresh-token        (or refresh-fn
+                                      (fn [_cred]
+                                        {:type    :oauth
+                                         :refresh "refreshed-refresh"
+                                         :access  "refreshed-access"
+                                         :expires (+ (System/currentTimeMillis)
+                                                     3600000)}))
+            :get-api-key          :access})
+         test-providers (or providers
+                            [(mk-test-provider :anthropic "Anthropic (Test)")
+                             (mk-test-provider :openai "OpenAI (Test)")])
          provider-map   (into {} (map (fn [p] [(:id p) p]) test-providers))]
      {:store        (store/create-null-store (or credentials {}))
       :providers-fn (fn [] test-providers)
