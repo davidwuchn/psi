@@ -4,7 +4,9 @@
   (:require
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
-   [psi.tui.ansi :as ansi]))
+   [psi.tui.ansi :as ansi])
+  (:import
+   [org.jline.utils AttributedString]))
 
 ;;;; visible-width
 
@@ -40,13 +42,19 @@
 ;;;; reset-line
 
 (deftest reset-line-test
-  ;; reset-line appends SGR reset + OSC 8 reset.
+  ;; reset-line appends SGR reset.
   (testing "reset-line"
-    (testing "appends reset sequences"
+    (testing "appends reset sequence"
       (let [result (ansi/reset-line "text")]
         (is (str/starts-with? result "text"))
-        (is (str/includes? result "\u001b[0m"))
-        (is (str/includes? result "\u001b]8;;\u0007"))))))
+        (is (str/includes? result "\u001b[0m"))))))
+
+(deftest reset-line-jline-width-test
+  ;; Regression: reset suffix must not add visible columns in JLine.
+  (testing "reset-line does not change JLine display width"
+    (let [s (ansi/reset-line "text")
+          a (AttributedString/fromAnsi s)]
+      (is (= 4 (.columnLength a))))))
 
 ;;;; truncate-to-width
 

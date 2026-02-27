@@ -8,7 +8,7 @@
    strip-ansi          — remove all escape sequences from a string
    truncate-to-width   — cut at N visible columns, append ellipsis, reset codes
    word-wrap           — wrap a (possibly ANSI-styled) string at N columns
-   reset-line          — append SGR reset + OSC 8 reset to a line
+   reset-line          — append SGR reset to a line
    find-marker         — locate cursor marker position in a line vector
    strip-marker        — remove cursor marker from a line vector
    move-cursor-to      — produce ANSI cursor-move sequence
@@ -25,8 +25,7 @@
 ;;;; Constants
 
 (def ^:const reset-seq  "\u001b[0m")
-(def ^:const osc8-reset "\u001b]8;;\u0007")
-(def ^:const line-reset (str reset-seq osc8-reset))
+(def ^:const line-reset reset-seq)
 
 ;;; Regex matching all common ANSI / VT escape sequences.
 ;;  CSI: ESC [ ... (final byte A-~)
@@ -104,7 +103,7 @@
   (display-width (strip-ansi s)))
 
 (defn reset-line
-  "Append a full SGR reset and OSC 8 hyperlink reset to line.
+  "Append a full SGR reset to line.
    Implements LineResetAfterRender."
   [line]
   (str line line-reset))
