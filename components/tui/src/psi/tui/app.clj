@@ -792,6 +792,12 @@
 (defn- render-separator []
   (charm/render sep-style (apply str (repeat 40 "─"))))
 
+(def ^:private clear-to-end-seq
+  "ANSI CSI J — clear from cursor to end of screen.
+   Appended to each frame to prevent stale lines when the next render is
+   shorter than the previous one (e.g. after /new)."
+  "\u001b[J")
+
 ;; ── Extension UI rendering ──────────────────────────────────
 
 (def ^:private notify-info-style    dim-style)
@@ -1319,7 +1325,8 @@
       ;; Session selector takes over the whole screen
       (str (render-banner model-name prompt-templates skills extension-summary)
            "\n"
-           (render-session-selector session-selector current-session-file term-width))
+           (render-session-selector session-selector current-session-file term-width)
+           clear-to-end-seq)
       ;; Normal chat view
       (str (render-banner model-name prompt-templates skills extension-summary)
            "\n"
@@ -1354,7 +1361,8 @@
            ;; Default footer (path, stats, statuses)
            (render-footer state term-width)
            ;; Notifications toast
-           (render-notifications ui-state-atom)))))
+           (render-notifications ui-state-atom)
+           clear-to-end-seq))))
 
 ;; ── Public entry point ──────────────────────────────────────
 
