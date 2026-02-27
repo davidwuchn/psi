@@ -480,7 +480,8 @@
       [(-> state
            (assoc :messages []
                   :error    nil
-                  :input    (charm/text-input-reset (:input state)))
+                  :input    (charm/text-input-reset (:input state))
+                  :force-clear? true)
            (update :messages conj {:role :assistant :text (:message result)}))
        nil]
 
@@ -748,122 +749,126 @@
    or {:kind :error :message str} on queue when finished."
   [run-agent-fn!]
   (fn [state m]
-    ;; Dismiss expired notifications on every tick
-    (when-let [ui-atom (:ui-state-atom state)]
-      (ext-ui/dismiss-expired! ui-atom)
-      (ext-ui/dismiss-overflow! ui-atom))
+    ;; One-shot render flag used by view for explicit full-screen clears.
+    (let [state (if (:force-clear? state)
+                  (assoc state :force-clear? false)
+                  state)]
+      ;; Dismiss expired notifications on every tick
+      (when-let [ui-atom (:ui-state-atom state)]
+        (ext-ui/dismiss-expired! ui-atom)
+        (ext-ui/dismiss-overflow! ui-atom))
 
-    (when (and (key-debug-enabled?) (msg/key-press? m))
-      (println (str "[key-debug] key=" (pr-str (:key m))
-                    " ctrl=" (boolean (:ctrl m))
-                    " alt=" (boolean (:alt m))
-                    " shift=" (boolean (:shift m)))))
+      (when (and (key-debug-enabled?) (msg/key-press? m))
+        (println (str "[key-debug] key=" (pr-str (:key m))
+                      " ctrl=" (boolean (:ctrl m))
+                      " alt=" (boolean (:alt m))
+                      " shift=" (boolean (:shift m)))))
 
-    (cond
+      (cond
       ;; Quit: ctrl+c always; escape when idle and no dialog
-      (msg/key-match? m "ctrl+c")
-      [state charm/quit-cmd]
+        (msg/key-match? m "ctrl+c")
+        [state charm/quit-cmd]
 
-      (and (= :idle (:phase state))
-           (not (has-active-dialog? state))
-           (msg/key-match? m "escape"))
-      [state charm/quit-cmd]
+        (and (= :idle (:phase state))
+             (not (has-active-dialog? state))
+             (msg/key-match? m "escape"))
+        [state charm/quit-cmd]
 
       ;; Window resize
-      (msg/window-size? m)
-      [(assoc state :width (:width m) :height (:height m)) nil]
+        (msg/window-size? m)
+        [(assoc state :width (:width m) :height (:height m)) nil]
 
       ;; Dialog active — route all key input to dialog handler
-      (and (has-active-dialog? state) (msg/key-press? m))
-      (or (handle-dialog-key state m) [state nil])
+        (and (has-active-dialog? state) (msg/key-press? m))
+        (or (handle-dialog-key state m) [state nil])
 
       ;; Agent progress event (tool start, delta, result, text delta)
-      (agent-event? m)
-      (let [[new-state cmd] (handle-agent-event state m)]
-        [new-state (or cmd (poll-cmd (:queue state)))])
+        (agent-event? m)
+        (let [[new-state cmd] (handle-agent-event state m)]
+          [new-state (or cmd (poll-cmd (:queue state)))])
 
       ;; Async external transcript message (e.g. extension background completion)
-      (external-message? m)
-      (let [msg        (:message m)
-            text       (or (some #(when (= :text (:type %)) (:text %)) (:content msg))
-                           "")
-            custom-type (:custom-type msg)]
-        [(cond-> state
-           (seq text) (update :messages conj {:role :assistant
-                                              :text text
-                                              :custom-type custom-type}))
-         (poll-cmd (:queue state))])
+        (external-message? m)
+        (let [msg        (:message m)
+              text       (or (some #(when (= :text (:type %)) (:text %)) (:content msg))
+                             "")
+              custom-type (:custom-type msg)]
+          [(cond-> state
+             (seq text) (update :messages conj {:role :assistant
+                                                :text text
+                                                :custom-type custom-type}))
+           (poll-cmd (:queue state))])
 
       ;; Agent result
-      (agent-result? m)
-      (handle-agent-result state (:result m))
+        (agent-result? m)
+        (handle-agent-result state (:result m))
 
       ;; Agent error
-      (agent-error? m)
-      [(-> state
-           (assoc :phase       :idle
-                  :error       (:error m)
-                  :stream-text nil
-                  :tool-calls  {}
-                  :tool-order  []))
-       (poll-cmd (:queue state))]
+        (agent-error? m)
+        [(-> state
+             (assoc :phase       :idle
+                    :error       (:error m)
+                    :stream-text nil
+                    :tool-calls  {}
+                    :tool-order  []))
+         (poll-cmd (:queue state))]
 
       ;; Agent poll timeout → keep polling (and animate spinner while streaming)
-      (agent-poll? m)
-      (if (= :streaming (:phase state))
-        (handle-agent-poll state)
-        [state (poll-cmd (:queue state))])
+        (agent-poll? m)
+        (if (= :streaming (:phase state))
+          (handle-agent-poll state)
+          [state (poll-cmd (:queue state))])
 
       ;; Session selector active — route all key input to selector handler
-      (= :selecting-session (:phase state))
-      (handle-selector-key state m)
+        (= :selecting-session (:phase state))
+        (handle-selector-key state m)
 
       ;; Alt/Meta+Backspace delete previous word.
       ;; (Explicit handling to avoid charm's binding-order issue.)
-      (and (= :idle (:phase state))
-           (msg/key-match? m "alt+backspace"))
-      (let [before (charm/text-input-value (:input state))
-            new-state (update state :input delete-prev-word)
-            after  (charm/text-input-value (:input new-state))]
-        (when (key-debug-enabled?)
-          (println (str "[key-debug] branch=alt+backspace before=" (pr-str before)
-                        " after=" (pr-str after)
-                        " pos=" (:pos (:input new-state)))))
-        [new-state nil])
+        (and (= :idle (:phase state))
+             (msg/key-match? m "alt+backspace"))
+        (let [before (charm/text-input-value (:input state))
+              new-state (update state :input delete-prev-word)
+              after  (charm/text-input-value (:input new-state))]
+          (when (key-debug-enabled?)
+            (println (str "[key-debug] branch=alt+backspace before=" (pr-str before)
+                          " after=" (pr-str after)
+                          " pos=" (:pos (:input new-state)))))
+          [new-state nil])
 
       ;; Enter behavior:
       ;; - shift/alt/cmd(ctrl+alt)+enter => newline continuation
       ;; - trailing "\\" + enter => newline continuation
       ;; - plain enter => submit
-      (and (= :idle (:phase state))
-           (msg/key-match? m "enter")
-           (or (:shift m)
-               (:alt m)
-               (and (:ctrl m) (:alt m))
-               (str/ends-with? (charm/text-input-value (:input state)) "\\")))
-      (continue-input-line state)
+        (and (= :idle (:phase state))
+             (msg/key-match? m "enter")
+             (or (:shift m)
+                 (:alt m)
+                 (and (:ctrl m) (:alt m))
+                 (str/ends-with? (charm/text-input-value (:input state)) "\\")))
+        (continue-input-line state)
 
       ;; Enter → submit (idle + has text)
-      (and (= :idle (:phase state))
-           (msg/key-match? m "enter"))
-      (submit-input state run-agent-fn!)
+        (and (= :idle (:phase state))
+             (msg/key-match? m "enter"))
+        (submit-input state run-agent-fn!)
 
       ;; Space from terminal input may arrive as keyword :space (not " ").
       ;; Normalize to a printable char so it inserts immediately.
-      (and (= :idle (:phase state))
-           (msg/key-match? m "space"))
-      (let [[new-input cmd] (charm/text-input-update (:input state) (msg/key-press " "))]
-        [(assoc state :input new-input) cmd])
+        (and (= :idle (:phase state))
+             (msg/key-match? m "space"))
+        (let [[new-input cmd] (charm/text-input-update (:input state) (msg/key-press " "))]
+          [(assoc state :input new-input) cmd])
 
       ;; All other keys → text input (idle only)
-      (and (= :idle (:phase state))
-           (msg/key-press? m))
-      (let [[new-input cmd] (charm/text-input-update (:input state) m)]
-        [(assoc state :input new-input) cmd])
+        (and (= :idle (:phase state))
+             (msg/key-press? m))
+        (let [[new-input cmd] (charm/text-input-update (:input state) m)]
+          [(assoc state :input new-input) cmd])
 
       ;; Ignore everything else (keys during streaming, etc.)
-      :else
-      [state nil])))
+        :else
+        [state nil]))))
 
 ;; ── View ────────────────────────────────────────────────────
 
@@ -950,6 +955,12 @@
    Appended to each frame to prevent stale lines when the next render is
    shorter than the previous one (e.g. after /new)."
   "\u001b[J")
+
+(def ^:private clear-line-end-seq
+  "ANSI CSI K — clear from cursor to end of current line.
+   Applied on dynamic footer rows so shorter re-renders don't leave
+   stale trailing characters to the right."
+  "\u001b[K")
 
 ;; ── Extension UI rendering ──────────────────────────────────
 
@@ -1127,8 +1138,9 @@
 
 (defn- render-footer
   [state width]
-  (let [lines (build-footer-lines state width)]
-    (str (str/join "\n" lines) "\n")))
+  (let [lines (build-footer-lines state width)
+        cleared-lines (map #(str % clear-line-end-seq) lines)]
+    (str (str/join "\n" cleared-lines) "\n")))
 
 (defn- render-notifications [ui-state-atom]
   (when ui-state-atom
