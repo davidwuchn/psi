@@ -19,9 +19,15 @@
      - Thematic breaks (---)       → horizontal rule
      - Links                       → text + dimmed URL
      - Images                      → [image: alt] + dimmed URL
-     - Soft/hard line breaks       → newlines"
+     - Soft/hard line breaks       → newlines
+
+   Width-aware wrapping:
+     When a width is provided, paragraph text is word-wrapped
+     to fit within the available columns (accounting for indent).
+     Code blocks are never wrapped (preformatted)."
   (:require
-   [clojure.string :as str])
+   [clojure.string :as str]
+   [psi.tui.ansi :as ansi])
   (:import
    [org.commonmark.parser Parser]
    [org.commonmark.node
@@ -77,10 +83,13 @@
 ;;   :list-index  — counter for ordered lists (atom per list)
 ;;   :inline-styles — stack of ANSI codes for nested inline styles
 
-(defn- make-ctx []
-  {:indent ""
-   :list-index nil
-   :inline-styles []})
+(defn- make-ctx
+  ([] (make-ctx nil))
+  ([width]
+   {:indent ""
+    :width  width
+    :list-index nil
+    :inline-styles []}))
 
 ;; ── Inline rendering ────────────────────────────────────────
 ;; Inline nodes (Text, Code, Emphasis, StrongEmphasis, Link, Image,
@@ -176,9 +185,24 @@
       (str (:indent ctx) style hdr " " text sgr-reset "\n"))
 
     Paragraph
-    (let [text (render-inline-children node ctx)]
-      ;; Apply indent to each line (inline content may contain soft breaks)
-      (str (indent-lines text (:indent ctx)) "\n"))
+    (let [text   (render-inline-children node ctx)
+          indent (:indent ctx)
+          indent-w (ansi/visible-width indent)
+          avail  (when-let [w (:width ctx)]
+                   (- w indent-w))]
+      ;; Word-wrap paragraph text if width is set,
+      ;; then apply indent to each line.
+      (if (and avail (pos? avail))
+        (let [;; Split on existing soft breaks first
+              segments (str/split-lines text)
+              wrapped  (mapcat
+                        #(ansi/word-wrap-ansi % avail)
+                        segments)]
+          (str (str/join "\n"
+                         (map #(str indent %) wrapped))
+               "\n"))
+        ;; No width: indent only
+        (str (indent-lines text indent) "\n")))
 
     FencedCodeBlock
     (let [info    (.getInfo ^FencedCodeBlock node)
@@ -279,8 +303,13 @@
 
    The output is suitable for display in a terminal that supports
    256-color ANSI escapes. All styles are properly reset so they
-   don't bleed into surrounding content."
-  [^String markdown-text]
-  (when (and markdown-text (not (str/blank? markdown-text)))
-    (let [doc (.parse parser markdown-text)]
-      (render-block doc (make-ctx)))))
+   don't bleed into surrounding content.
+
+   When `width` is provided, paragraph text is word-wrapped to fit.
+   Code blocks are never wrapped."
+  ([^String markdown-text]
+   (render-markdown markdown-text nil))
+  ([^String markdown-text width]
+   (when (and markdown-text (not (str/blank? markdown-text)))
+     (let [doc (.parse parser markdown-text)]
+       (render-block doc (make-ctx width))))))

@@ -153,6 +153,54 @@
         ;; "刀" is 2 cols, "人" is 2 cols, width 3 can't fit both
         (is (every? #(<= (ansi/visible-width %) 3) lines))))))
 
+;;;; ANSI-preserving word wrap
+
+(deftest word-wrap-ansi-empty-test
+  (testing "empty/nil input returns single empty line"
+    (is (= [""] (ansi/word-wrap-ansi "" 10)))
+    (is (= [""] (ansi/word-wrap-ansi nil 10)))))
+
+(deftest word-wrap-ansi-short-test
+  (testing "short plain text stays on one line"
+    (is (= ["hello"] (ansi/word-wrap-ansi "hello" 10)))))
+
+(deftest word-wrap-ansi-plain-wrap-test
+  (testing "plain text wraps at word boundaries"
+    (let [lines (ansi/word-wrap-ansi "one two three" 8)]
+      (is (= ["one two" "three"] lines)))))
+
+(deftest word-wrap-ansi-preserves-ansi-test
+  (testing "ANSI codes are preserved across wrap"
+    (let [bold  "\u001b[1m"
+          reset "\u001b[0m"
+          s     (str bold "hello world" reset)
+          lines (ansi/word-wrap-ansi s 7)]
+      ;; Should wrap into two lines
+      (is (= 2 (count lines)))
+      ;; First line should contain the bold code
+      (is (str/includes? (first lines) bold))
+      ;; Content should be present
+      (is (str/includes? (ansi/strip-ansi
+                          (str/join " " lines))
+                         "hello"))
+      (is (str/includes? (ansi/strip-ansi
+                          (str/join " " lines))
+                         "world")))))
+
+(deftest word-wrap-ansi-width-respected-test
+  (testing "all lines fit within width"
+    (let [s "the quick brown fox jumps over the lazy dog"
+          w 15
+          lines (ansi/word-wrap-ansi s w)]
+      (is (every? #(<= (ansi/visible-width %) w) lines)))))
+
+(deftest word-wrap-ansi-hard-break-test
+  (testing "word wider than width is hard-broken"
+    (let [lines (ansi/word-wrap-ansi "abcdefghij" 4)]
+      (is (every? #(<= (ansi/visible-width %) 4) lines))
+      (is (= "abcdefghij"
+             (str/join (map ansi/strip-ansi lines)))))))
+
 ;;;; find-marker / strip-marker
 
 (deftest find-marker-test

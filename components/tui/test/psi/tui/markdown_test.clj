@@ -165,6 +165,33 @@
     (doseq [snippet ["-" "-\n" "- \n" "- item\n-" "1." "1.\n" "1. \n"]]
       (is (some? (md/render-markdown snippet))))))
 
+;; ── Width-aware wrapping ─────────────────────────────────────
+
+(deftest paragraph-wrapping-test
+  (testing "paragraph wraps at specified width"
+    (let [text "This is a long paragraph that should be wrapped to fit within a narrow terminal width."
+          result (md/render-markdown text 30)
+          plain  (strip-ansi result)
+          lines  (str/split-lines plain)]
+      (is (> (count lines) 1)
+          "long paragraph should wrap to multiple lines")
+      (is (every? #(<= (count %) 30) lines)
+          "all lines should fit within width")))
+
+  (testing "code blocks are NOT wrapped"
+    (let [long-code "```\nthis-is-a-very-long-line-of-code-that-should-not-be-wrapped-by-the-renderer\n```"
+          result (md/render-markdown long-code 30)
+          plain  (strip-ansi result)]
+      (is (some #(> (count (str/trim %)) 30)
+                (str/split-lines plain))
+          "code block lines should not be wrapped")))
+
+  (testing "nil width behaves like no wrapping"
+    (let [text   "Short text."
+          with-w (strip-ansi (md/render-markdown text 80))
+          no-w   (strip-ansi (md/render-markdown text))]
+      (is (= with-w no-w)))))
+
 ;; ── Plain text passthrough ──────────────────────────────────
 
 (deftest plain-text-test

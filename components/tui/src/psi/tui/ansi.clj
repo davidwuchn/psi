@@ -223,6 +223,94 @@
                             (recur token-chars (StringBuilder.) 0 (conj acc (str sb)))))))]
                 (recur (next remaining) new-sb new-cols new-acc)))))))))
 
+;;;; ANSI-preserving word wrap
+
+(defn word-wrap-ansi
+  "Wrap an ANSI-styled string at `width` visible columns.
+   Returns a vector of strings with ANSI codes preserved.
+   Breaks on whitespace boundaries; words wider than
+   width are hard-broken."
+  [s width]
+  (if (or (nil? s) (str/blank? s))
+    [""]
+    (let [esc-re (re-pattern (str "^" esc-seq-str))
+          chars  (seq s)]
+      (if (nil? chars)
+        [""]
+        (loop [remaining  chars
+               line-buf   (StringBuilder.)
+               line-cols  0
+               break-buf  nil
+               break-cols 0
+               after-buf  (StringBuilder.)
+               after-cols 0
+               lines      []]
+          (if (nil? remaining)
+            (conj lines (str line-buf))
+            (let [c (first remaining)]
+              (if (= c \u001b)
+                ;; ANSI escape: copy verbatim, zero width
+                (let [raw (apply str remaining)
+                      m   (re-find esc-re raw)
+                      esc (if m m (subs raw 0 (min 2 (count raw))))
+                      n   (count esc)]
+                  (.append line-buf esc)
+                  (.append after-buf esc)
+                  (recur (seq (drop n remaining))
+                         line-buf line-cols
+                         break-buf break-cols
+                         after-buf after-cols
+                         lines))
+                ;; Printable character
+                (let [cw (char-width c)]
+                  (if (Character/isWhitespace c)
+                    ;; Whitespace: potential break point
+                    (if (> (+ line-cols cw) width)
+                      ;; Overflow on space: wrap
+                      (recur (next remaining)
+                             (StringBuilder.) 0
+                             nil 0
+                             (StringBuilder.) 0
+                             (conj lines (str line-buf)))
+                      ;; Space fits: mark break
+                      (do
+                        (.append line-buf c)
+                        (recur (next remaining)
+                               line-buf (+ line-cols cw)
+                               (str line-buf) (+ line-cols cw)
+                               (StringBuilder.) 0
+                               lines)))
+                    ;; Non-whitespace
+                    (if (> (+ line-cols cw) width)
+                      ;; Overflow on word char
+                      (if break-buf
+                        ;; Break at last whitespace
+                        (let [new-buf (StringBuilder.
+                                       (str after-buf c))]
+                          (recur (next remaining)
+                                 new-buf (+ after-cols cw)
+                                 nil 0
+                                 (StringBuilder.) 0
+                                 (conj lines
+                                       (str/trimr break-buf))))
+                        ;; No break point: hard break
+                        (let [new-buf (doto (StringBuilder.)
+                                        (.append c))]
+                          (recur (next remaining)
+                                 new-buf cw
+                                 nil 0
+                                 (StringBuilder.) 0
+                                 (conj lines (str line-buf)))))
+                      ;; Fits
+                      (do
+                        (.append line-buf c)
+                        (.append after-buf c)
+                        (recur (next remaining)
+                               line-buf (+ line-cols cw)
+                               break-buf break-cols
+                               after-buf (+ after-cols cw)
+                               lines)))))))))))))
+
 ;;;; Cursor marker
 
 (defn find-marker

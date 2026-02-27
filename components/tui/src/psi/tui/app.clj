@@ -716,24 +716,36 @@
                 "\n"))
          (charm/render dim-style "  ESC to quit") "\n")))
 
-(defn- render-message [{:keys [role text]}]
+(defn- render-message
+  "Render a single chat message. `width` is the terminal
+   column count for word wrapping (nil = no wrap)."
+  [{:keys [role text]} width]
   (case role
     :user
     (str (charm/render user-style "刀: ") text)
 
     :assistant
-    (let [rendered (or (md/render-markdown text) text)
+    (let [;; "ψ: " prefix is 3 visible cols; continuation
+          ;; lines get 3-space indent. Wrap to width - 3.
+          md-width (when (and width (> width 3))
+                     (- width 3))
+          rendered (or (md/render-markdown text md-width) text)
           lines    (str/split-lines rendered)
-          first-line (str (charm/render assist-style "ψ: ") (first lines))
+          first-line (str (charm/render assist-style "ψ: ")
+                          (first lines))
           rest-lines (map #(str "   " %) (rest lines))]
       (str/join "\n" (cons first-line rest-lines)))
 
     ;; fallback
     (str "[" (name role) "] " text)))
 
-(defn- render-messages [messages]
+(defn- render-messages
+  "Render all chat messages. `width` is terminal columns."
+  [messages width]
   (when (seq messages)
-    (str (str/join "\n\n" (map render-message messages)) "\n")))
+    (str (str/join "\n\n"
+                   (map #(render-message % width) messages))
+         "\n")))
 
 (defn- render-separator []
   (charm/render sep-style (apply str (repeat 40 "─"))))
@@ -1192,14 +1204,19 @@
                                     (str/split-lines result)))))))))))
 
 (defn- render-stream-text
-  "Render accumulated streaming text from the LLM with markdown styling."
-  [text]
+  "Render accumulated streaming text from the LLM
+   with markdown styling. `width` is terminal columns."
+  [text width]
   (when (and text (not (str/blank? text)))
-    (let [rendered (or (md/render-markdown text) text)
+    (let [md-width (when (and width (> width 3))
+                     (- width 3))
+          rendered (or (md/render-markdown text md-width) text)
           lines    (str/split-lines rendered)
-          first-line (str (charm/render assist-style "ψ: ") (first lines))
+          first-line (str (charm/render assist-style "ψ: ")
+                          (first lines))
           rest-lines (map #(str "   " %) (rest lines))]
-      (str (str/join "\n" (cons first-line rest-lines)) "\n"))))
+      (str (str/join "\n" (cons first-line rest-lines))
+           "\n"))))
 
 (defn view
   "Render the full TUI state to a string."
@@ -1220,11 +1237,11 @@
       ;; Normal chat view
       (str (render-banner model-name prompt-templates skills extension-summary)
            "\n"
-           (render-messages messages)
+           (render-messages messages term-width)
            ;; Current turn progress
            (when (= :streaming phase)
              (if has-progress?
-               (str (render-stream-text stream-text)
+               (str (render-stream-text stream-text term-width)
                     (render-tool-calls tool-calls tool-order spinner-char)
                     "\n")
                (str "\n" (charm/render assist-style "ψ: ")
