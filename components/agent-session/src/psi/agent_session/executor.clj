@@ -321,6 +321,18 @@
   [assistant-msg]
   (filter #(= :tool-call (:type %)) (:content assistant-msg)))
 
+(defn- execute-tool-with-registry
+  "Execute a tool by name, preferring an :execute fn from the current
+   agent tool registry when present. Falls back to built-in tools.
+
+   Tool contract: (fn [args-map] -> {:content string :is-error boolean})"
+  [agent-ctx tool-name args]
+  (let [tool-def (some #(when (= tool-name (:name %)) %) (:tools (agent/get-data-in agent-ctx)))
+        execute-fn (:execute tool-def)]
+    (if (fn? execute-fn)
+      (execute-fn args)
+      (tools/execute-tool tool-name args))))
+
 (defn- run-tool-call!
   "Execute one tool call, record the result in agent-core, return the result map."
   [agent-ctx tool-call progress-queue]
@@ -335,7 +347,7 @@
                      :parsed-args args})
     (let [{:keys [content is-error]}
           (try
-            (tools/execute-tool name args)
+            (execute-tool-with-registry agent-ctx name args)
             (catch Exception e
               {:content  (str "Error: " (ex-message e))
                :is-error true}))

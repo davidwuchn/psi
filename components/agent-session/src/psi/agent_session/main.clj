@@ -344,7 +344,7 @@
     ;; mutation-driven startup loading, extension tool merge.
     (let [summary (session/bootstrap-session-in!
                    ctx {:register-global-query? true
-                        :base-tools             (vec tools/all-tool-schemas)
+                        :base-tools             (vec tools/all-tools)
                         :system-prompt          system-prompt
                         :templates              templates
                         :skills                 skills
@@ -456,7 +456,7 @@
         ;; mutation-driven startup loading, extension tool merge.
         summary   (session/bootstrap-session-in!
                    ctx {:register-global-query? true
-                        :base-tools             (vec tools/all-tool-schemas)
+                        :base-tools             (vec tools/all-tools)
                         :system-prompt          system-prompt
                         :templates              templates
                         :skills                 skills

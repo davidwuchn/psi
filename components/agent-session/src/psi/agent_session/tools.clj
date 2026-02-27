@@ -103,6 +103,30 @@
     {:content  (str "Wrote " path)
      :is-error false}))
 
+(def all-tools
+  "Built-in tool definitions including execution fns.
+   Use this when registering tools into agent state."
+  [{:name        (:name read-tool)
+    :label       (:label read-tool)
+    :description (:description read-tool)
+    :parameters  (:parameters read-tool)
+    :execute     execute-read}
+   {:name        (:name bash-tool)
+    :label       (:label bash-tool)
+    :description (:description bash-tool)
+    :parameters  (:parameters bash-tool)
+    :execute     execute-bash}
+   {:name        (:name edit-tool)
+    :label       (:label edit-tool)
+    :description (:description edit-tool)
+    :parameters  (:parameters edit-tool)
+    :execute     execute-edit}
+   {:name        (:name write-tool)
+    :label       (:label write-tool)
+    :description (:description write-tool)
+    :parameters  (:parameters write-tool)
+    :execute     execute-write}])
+
 ;; ============================================================
 ;; Dispatch
 ;; ============================================================
