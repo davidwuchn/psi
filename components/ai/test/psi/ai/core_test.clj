@@ -74,7 +74,9 @@
     (doseq [k [:gpt-5.2-codex :gpt-5.3-codex :gpt-5.3-codex-spark]]
       (let [model (models/get-model k)]
         (is (schemas/valid? schemas/Model model) (str "valid model schema for " k))
-        (is (= :openai (:provider model)) (str "openai provider for " k))))))
+        (is (= :openai (:provider model)) (str "openai provider for " k))
+        (is (= :openai-codex-responses (:api model))
+            (str "codex api for " k))))))
 
 (deftest test-stream-options-validation
   (testing "Valid stream options"

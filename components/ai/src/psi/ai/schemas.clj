@@ -11,7 +11,7 @@
   [:enum :anthropic :openai])
 
 (def Api  
-  [:enum :anthropic-messages :openai-completions])
+  [:enum :anthropic-messages :openai-completions :openai-codex-responses])
 
 (def MessageRole
   [:enum :user :assistant :tool-result])

@@ -129,8 +129,10 @@ Currently supports:
 - o1-preview (reasoning)
 - GPT-5 family (gpt-5, gpt-5.1, gpt-5.2, gpt-5-pro)
 - GPT-5 Codex family (gpt-5.1-codex, gpt-5.2-codex, gpt-5.3-codex, gpt-5.3-codex-spark)
-- Chat Completions API with streaming
+- Chat Completions API with streaming (`:openai-completions`)
+- Codex Responses streaming via ChatGPT backend (`:openai-codex-responses`)
 - Tool calling support
+- Note: Codex responses require a ChatGPT OAuth access token (contains `chatgpt_account_id`)
 
 ## Testing
 

@@ -233,12 +233,12 @@
    {:id "gpt-5-codex"
     :name "GPT-5 Codex"
     :provider :openai
-    :api :openai-completions
-    :base-url "https://api.openai.com/v1"
+    :api :openai-codex-responses
+    :base-url "https://chatgpt.com/backend-api"
     :supports-reasoning true
     :supports-images true
     :supports-text true
-    :context-window 400000
+    :context-window 272000
     :max-tokens 128000
     :input-cost 1.25
     :output-cost 10.0
@@ -329,12 +329,12 @@
    {:id "gpt-5.1-codex"
     :name "GPT-5.1 Codex"
     :provider :openai
-    :api :openai-completions
-    :base-url "https://api.openai.com/v1"
+    :api :openai-codex-responses
+    :base-url "https://chatgpt.com/backend-api"
     :supports-reasoning true
     :supports-images true
     :supports-text true
-    :context-window 400000
+    :context-window 272000
     :max-tokens 128000
     :input-cost 1.25
     :output-cost 10.0
@@ -345,12 +345,12 @@
    {:id "gpt-5.1-codex-max"
     :name "GPT-5.1 Codex Max"
     :provider :openai
-    :api :openai-completions
-    :base-url "https://api.openai.com/v1"
+    :api :openai-codex-responses
+    :base-url "https://chatgpt.com/backend-api"
     :supports-reasoning true
     :supports-images true
     :supports-text true
-    :context-window 400000
+    :context-window 272000
     :max-tokens 128000
     :input-cost 1.25
     :output-cost 10.0
@@ -361,12 +361,12 @@
    {:id "gpt-5.1-codex-mini"
     :name "GPT-5.1 Codex Mini"
     :provider :openai
-    :api :openai-completions
-    :base-url "https://api.openai.com/v1"
+    :api :openai-codex-responses
+    :base-url "https://chatgpt.com/backend-api"
     :supports-reasoning true
     :supports-images true
     :supports-text true
-    :context-window 400000
+    :context-window 272000
     :max-tokens 128000
     :input-cost 0.25
     :output-cost 2.0
@@ -409,12 +409,12 @@
    {:id "gpt-5.2-codex"
     :name "GPT-5.2 Codex"
     :provider :openai
-    :api :openai-completions
-    :base-url "https://api.openai.com/v1"
+    :api :openai-codex-responses
+    :base-url "https://chatgpt.com/backend-api"
     :supports-reasoning true
     :supports-images true
     :supports-text true
-    :context-window 400000
+    :context-window 272000
     :max-tokens 128000
     :input-cost 1.75
     :output-cost 14.0
@@ -441,12 +441,12 @@
    {:id "gpt-5.3-codex"
     :name "GPT-5.3 Codex"
     :provider :openai
-    :api :openai-completions
-    :base-url "https://api.openai.com/v1"
+    :api :openai-codex-responses
+    :base-url "https://chatgpt.com/backend-api"
     :supports-reasoning true
     :supports-images true
     :supports-text true
-    :context-window 400000
+    :context-window 272000
     :max-tokens 128000
     :input-cost 1.75
     :output-cost 14.0
@@ -457,16 +457,16 @@
    {:id "gpt-5.3-codex-spark"
     :name "GPT-5.3 Codex Spark"
     :provider :openai
-    :api :openai-completions
-    :base-url "https://api.openai.com/v1"
+    :api :openai-codex-responses
+    :base-url "https://chatgpt.com/backend-api"
     :supports-reasoning true
-    :supports-images true
+    :supports-images false
     :supports-text true
     :context-window 128000
-    :max-tokens 32000
-    :input-cost 1.75
-    :output-cost 14.0
-    :cache-read-cost 0.175
+    :max-tokens 128000
+    :input-cost 0.0
+    :output-cost 0.0
+    :cache-read-cost 0.0
     :cache-write-cost 0.0}})
 
 (def all-models
