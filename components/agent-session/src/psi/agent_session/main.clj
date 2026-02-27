@@ -469,6 +469,9 @@
                                      :prompt-templates templates
                                      :skills          skills
                                      :system-prompt   system-prompt}})]
+    ;; Ensure a backing session file exists from the start so journaling can
+    ;; flush to disk on the first assistant message.
+    (session/new-session-in! ctx)
     ;; Wire agent-session resolvers into the global query graph so
     ;; :psi.agent-session/* attributes are queryable.
     (session/register-resolvers!)
@@ -625,6 +628,9 @@
                                       :prompt-templates templates
                                       :skills          skills
                                       :system-prompt   system-prompt}})
+        ;; Ensure a backing session file exists from the start so journaling can
+        ;; flush to disk on the first assistant message.
+        _         (session/new-session-in! ctx)
         _         (session/register-resolvers!)
         _         (agent/set-tools-in! (:agent-ctx ctx) tools/all-tool-schemas)
         _         (agent/set-system-prompt-in! (:agent-ctx ctx) system-prompt)
