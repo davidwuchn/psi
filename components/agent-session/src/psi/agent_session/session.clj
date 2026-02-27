@@ -105,6 +105,16 @@
    [:prompt-templates [:vector prompt-template-schema]]
    [:extensions [:map-of :string extension-schema]]
    [:session-entries [:vector session-entry-schema]]
+   [:startup-bootstrap {:optional true}
+    [:maybe
+     [:map
+      [:timestamp inst?]
+      [:prompt-count :int]
+      [:skill-count :int]
+      [:extension-loaded-count :int]
+      [:extension-error-count :int]
+      [:extension-errors [:vector [:map [:path :string] [:error :string]]]]
+      [:mutations [:vector qualified-symbol?]]]]]
    [:context-tokens {:optional true} [:maybe :int]]
    [:context-window {:optional true} [:maybe :int]]])
 

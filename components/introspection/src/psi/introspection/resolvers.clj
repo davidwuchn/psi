@@ -33,7 +33,18 @@
      :psi.graph/mutation-count  — number of registered mutations
      :psi.graph/resolver-syms   — set of registered resolver qualified symbols
      :psi.graph/mutation-syms   — set of registered mutation qualified symbols
-     :psi.graph/env-built       — boolean, true if env has been compiled"
+     :psi.graph/env-built       — boolean, true if env has been compiled
+
+   Agent-session startup bootstrap
+     :psi/agent-session-ctx              — session context seed (optional)
+     :psi.startup/bootstrap-summary      — bootstrap summary map
+     :psi.startup/bootstrap-timestamp    — bootstrap finished timestamp
+     :psi.startup/prompt-count           — prompts loaded at startup
+     :psi.startup/skill-count            — skills loaded at startup
+     :psi.startup/extension-loaded-count — successful extension loads
+     :psi.startup/extension-error-count  — failed extension loads
+     :psi.startup/extension-errors       — [{:path :error}] failures
+     :psi.startup/mutations              — mutation symbols used"
   (:require
    [com.wsscode.pathom3.connect.operation :as pco]
    [psi.engine.core :as engine]
@@ -127,9 +138,33 @@
 ;; All resolvers
 ;; ─────────────────────────────────────────────────────────────────────────────
 
+(pco/defresolver startup-bootstrap-summary
+  "Resolve startup bootstrap summary from agent-session context.
+   Safe when no bootstrap has run yet: returns nil/zero defaults."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.startup/bootstrap-summary
+                 :psi.startup/bootstrap-timestamp
+                 :psi.startup/prompt-count
+                 :psi.startup/skill-count
+                 :psi.startup/extension-loaded-count
+                 :psi.startup/extension-error-count
+                 :psi.startup/extension-errors
+                 :psi.startup/mutations]}
+  (let [summary (:startup-bootstrap @(:session-data-atom agent-session-ctx))]
+    {:psi.startup/bootstrap-summary      summary
+     :psi.startup/bootstrap-timestamp    (:timestamp summary)
+     :psi.startup/prompt-count           (:prompt-count summary 0)
+     :psi.startup/skill-count            (:skill-count summary 0)
+     :psi.startup/extension-loaded-count (:extension-loaded-count summary 0)
+     :psi.startup/extension-error-count  (:extension-error-count summary 0)
+     :psi.startup/extension-errors       (:extension-errors summary [])
+     :psi.startup/mutations              (:mutations summary [])}))
+
 (def all-resolvers
   [engine-all-engines
    engine-system-state
    engine-transitions
    engine-single-detail
-   query-graph-summary])
+   query-graph-summary
+   startup-bootstrap-summary])

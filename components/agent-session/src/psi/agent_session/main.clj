@@ -338,30 +338,21 @@
                   {:initial-session {:model {:provider (name (:provider ai-model))
                                              :id       (:id ai-model)
                                              :reasoning (:supports-reasoning ai-model)}
-                                     :prompt-templates templates
-                                     :skills          skills
-                                     :system-prompt   system-prompt}})]
-    ;; Ensure a backing session file exists from the start so journaling can
-    ;; flush to disk on the first assistant message.
-    (session/new-session-in! ctx)
-    ;; Wire agent-session resolvers into the global query graph so
-    ;; :psi.agent-session/* attributes are queryable.
-    (session/register-resolvers!)
-    ;; Register built-in tools into agent-core
-    (agent/set-tools-in! (:agent-ctx ctx) tools/all-tool-schemas)
-    ;; Set the assembled system prompt (introspectable)
-    (agent/set-system-prompt-in! (:agent-ctx ctx) system-prompt)
-    ;; Discover and load extensions
-    (let [{:keys [loaded errors]} (session/load-extensions-in! ctx)]
-      (doseq [{:keys [path error]} errors]
+                                     :system-prompt   system-prompt}})
+        ext-paths (ext/discover-extension-paths [] cwd)]
+    ;; Reusable bootstrap: session file, query graph, base tools, system prompt,
+    ;; mutation-driven startup loading, extension tool merge.
+    (let [summary (session/bootstrap-session-in!
+                   ctx {:register-global-query? true
+                        :base-tools             (vec tools/all-tool-schemas)
+                        :system-prompt          system-prompt
+                        :templates              templates
+                        :skills                 skills
+                        :extension-paths        ext-paths})]
+      (doseq [{:keys [path error]} (:extension-errors summary)]
         (timbre/warn "Extension error:" path error))
-      (when (seq loaded)
-        (timbre/debug "Extensions loaded:" (count loaded))))
-    ;; Register extension tools alongside built-ins
-    (let [ext-tools (ext/all-tools-in (:extension-registry ctx))]
-      (when (seq ext-tools)
-        (agent/set-tools-in! (:agent-ctx ctx)
-                             (into (vec tools/all-tool-schemas) ext-tools))))
+      (when (pos? (:extension-loaded-count summary))
+        (timbre/debug "Extensions loaded:" (:extension-loaded-count summary))))
     ;; Expose state for nREPL introspection
     (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model
                            :oauth-ctx oauth-ctx})
@@ -459,27 +450,21 @@
                    {:initial-session {:model {:provider (name (:provider ai-model))
                                               :id       (:id ai-model)
                                               :reasoning (:supports-reasoning ai-model)}
-                                      :prompt-templates templates
-                                      :skills          skills
                                       :system-prompt   system-prompt}})
-        ;; Ensure a backing session file exists from the start so journaling can
-        ;; flush to disk on the first assistant message.
-        _         (session/new-session-in! ctx)
-        _         (session/register-resolvers!)
-        _         (agent/set-tools-in! (:agent-ctx ctx) tools/all-tool-schemas)
-        _         (agent/set-system-prompt-in! (:agent-ctx ctx) system-prompt)
-
-        ;; Discover and load extensions
-        _         (let [{:keys [loaded errors]} (session/load-extensions-in! ctx)]
-                    (doseq [{:keys [path error]} errors]
-                      (timbre/warn "Extension error:" path error))
-                    (when (seq loaded)
-                      (timbre/debug "Extensions loaded:" (count loaded))))
-        ;; Register extension tools alongside built-ins
-        _         (let [ext-tools (ext/all-tools-in (:extension-registry ctx))]
-                    (when (seq ext-tools)
-                      (agent/set-tools-in! (:agent-ctx ctx)
-                                           (into (vec tools/all-tool-schemas) ext-tools))))
+        ext-paths (ext/discover-extension-paths [] cwd)
+        ;; Reusable bootstrap: session file, query graph, base tools, system prompt,
+        ;; mutation-driven startup loading, extension tool merge.
+        summary   (session/bootstrap-session-in!
+                   ctx {:register-global-query? true
+                        :base-tools             (vec tools/all-tool-schemas)
+                        :system-prompt          system-prompt
+                        :templates              templates
+                        :skills                 skills
+                        :extension-paths        ext-paths})
+        _         (doseq [{:keys [path error]} (:extension-errors summary)]
+                    (timbre/warn "Extension error:" path error))
+        _         (when (pos? (:extension-loaded-count summary))
+                    (timbre/debug "Extensions loaded:" (:extension-loaded-count summary)))
 
         ;; Expose state for nREPL introspection
         _         (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model

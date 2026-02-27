@@ -2,7 +2,6 @@
   (:require
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
-   [psi.agent-core.core :as agent]
    [psi.agent-session.commands :as commands]
    [psi.agent-session.core :as session]
    [psi.agent-session.extensions :as ext]
@@ -62,11 +61,11 @@
                     skills/discover-skills (fn [] {:skills [] :diagnostics []})
                     sys-prompt/discover-context-files (fn [_] [])
                     sys-prompt/build-system-prompt (fn [_] "")
-                    session/register-resolvers! (fn [] nil)
-                    session/load-extensions-in! (fn [_] {:loaded [] :errors []})
-                    ext/all-tools-in (fn [_] [])
-                    agent/set-tools-in! (fn [& _] nil)
-                    agent/set-system-prompt-in! (fn [& _] nil)
+                    ext/discover-extension-paths (fn [& _] [])
+                    session/bootstrap-session-in!
+                    (fn [ctx _]
+                      (session/new-session-in! ctx)
+                      {:extension-errors [] :extension-loaded-count 0})
                     clojure.core/read-line (let [calls (atom 0)]
                                              (fn []
                                                (if (= 1 (swap! calls inc))
@@ -95,11 +94,11 @@
                     skills/discover-skills (fn [] {:skills [] :diagnostics []})
                     sys-prompt/discover-context-files (fn [_] [])
                     sys-prompt/build-system-prompt (fn [_] "")
-                    session/register-resolvers! (fn [] nil)
-                    session/load-extensions-in! (fn [_] {:loaded [] :errors []})
-                    ext/all-tools-in (fn [_] [])
-                    agent/set-tools-in! (fn [& _] nil)
-                    agent/set-system-prompt-in! (fn [& _] nil)
+                    ext/discover-extension-paths (fn [& _] [])
+                    session/bootstrap-session-in!
+                    (fn [ctx _]
+                      (session/new-session-in! ctx)
+                      {:extension-errors [] :extension-loaded-count 0})
                     tui-app/start! (fn [_model-name _run-agent-fn opts]
                                      (reset! captured opts)
                                      :ok)]

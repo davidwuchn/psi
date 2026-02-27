@@ -49,16 +49,19 @@
 ;; ─────────────────────────────────────────────────────────────────────────────
 
 (deftest register-resolvers-in!-with-session-test
-  (testing "register-resolvers-in! registers agent-session resolvers when ctx has session"
+  (testing "register-resolvers-in! registers agent-session resolvers/mutations when ctx has session"
     (let [session-ctx (session/create-context)
           ctx         (introspection/create-context {:agent-session-ctx session-ctx})]
       (introspection/register-resolvers-in! ctx)
-      (let [result (introspection/query-graph-summary-in ctx)
-            syms   (:psi.graph/resolver-syms result)]
-        (is (contains? syms 'psi.agent-session.resolvers/agent-session-identity)
+      (let [result  (introspection/query-graph-summary-in ctx)
+            r-syms  (:psi.graph/resolver-syms result)
+            m-syms  (:psi.graph/mutation-syms result)]
+        (is (contains? r-syms 'psi.agent-session.resolvers/agent-session-identity)
             "identity resolver should appear in graph summary")
-        (is (contains? syms 'psi.agent-session.resolvers/agent-session-phase)
-            "phase resolver should appear in graph summary"))))
+        (is (contains? r-syms 'psi.agent-session.resolvers/agent-session-phase)
+            "phase resolver should appear in graph summary")
+        (is (contains? m-syms 'psi.agent-session.core/add-prompt-template)
+            "startup prompt mutation should appear in graph summary"))))
 
   (testing "register-resolvers-in! skips agent-session resolvers when no session ctx"
     (let [ctx (introspection/create-context)]
@@ -119,3 +122,30 @@
           "Engine substrate should be true after bootstrap")
       (is (= :idle phase)
           "Agent session phase should be :idle"))))
+
+(deftest startup-bootstrap-introspection-test
+  (testing "startup bootstrap summary is queryable via introspection graph"
+    (let [session-ctx (session/create-context)
+          _           (session/bootstrap-session-in!
+                       session-ctx {:register-global-query? false
+                                    :base-tools             []
+                                    :system-prompt          "sys"
+                                    :templates              [{:name "greet"
+                                                              :description "desc"
+                                                              :content "body"
+                                                              :source :project
+                                                              :file-path "/tmp/greet.md"}]
+                                    :skills                 []
+                                    :extension-paths        []})
+          ctx         (introspection/create-context {:agent-session-ctx session-ctx})]
+      (engine/bootstrap-system-in! (:engine-ctx ctx))
+      (introspection/register-resolvers-in! ctx)
+      (let [r (introspection/query-agent-session-in
+               ctx [:psi.startup/prompt-count
+                    :psi.startup/skill-count
+                    :psi.startup/extension-loaded-count
+                    :psi.startup/extension-error-count
+                    :psi.startup/mutations])]
+        (is (= 1 (:psi.startup/prompt-count r)))
+        (is (= 0 (:psi.startup/skill-count r)))
+        (is (vector? (:psi.startup/mutations r))))))

@@ -51,6 +51,7 @@
    use `register-resolvers-in!` with a QueryContext from psi.query.core."
   (:require
    [clojure.java.io :as io]
+   [com.wsscode.pathom3.connect.operation :as pco]
    [psi.agent-core.core :as agent]
    [psi.agent-session.compaction :as compaction]
    [psi.agent-session.extensions :as ext]
@@ -386,7 +387,9 @@
              (reset! (:flush-state-atom ctx) {:flushed? false :session-file file})))
          (journal-append! ctx
                           (persist/thinking-level-entry
-                           (:thinking-level (get-session-data-in ctx)))))
+                           (:thinking-level (get-session-data-in ctx))))
+         (when-let [model (:model (get-session-data-in ctx))]
+           (journal-append! ctx (persist/model-entry (:provider model) (:id model)))))
        (ext/dispatch-in reg "session_switch" {:reason :new})
        (get-session-data-in ctx)))))
 
@@ -407,16 +410,26 @@
                       {:flushed? false
                        :session-file (io/file session-path)}))
           (let [{:keys [header entries]} loaded
-                session-id (:id header)
-                ;; Restore model/thinking from last model/thinking entries
-                model-entry    (last (filter #(= :model (:kind %)) entries))
-                thinking-entry (last (filter #(= :thinking-level (:kind %)) entries))
-                model          (when model-entry
-                                 {:provider (get-in model-entry [:data :provider])
-                                  :id       (get-in model-entry [:data :model-id])})
-                thinking-level (or (get-in thinking-entry [:data :thinking-level]) :off)
+                session-id             (:id header)
+                current-sd             (get-session-data-in ctx)
+                current-model          (:model current-sd)
+                current-thinking-level (:thinking-level current-sd)
+                ;; Restore model/thinking from last model/thinking entries.
+                model-entry            (last (filter #(= :model (:kind %)) entries))
+                thinking-entry         (last (filter #(= :thinking-level (:kind %)) entries))
+                model-from-entry       (let [provider (get-in model-entry [:data :provider])
+                                             model-id (get-in model-entry [:data :model-id])]
+                                         (when (and provider model-id)
+                                           {:provider provider
+                                            :id       model-id}))
+                ;; Some sessions (especially older ones) may have no model entry.
+                ;; Fall back to the currently configured model in that case.
+                model                  (or model-from-entry current-model)
+                thinking-level         (or (get-in thinking-entry [:data :thinking-level])
+                                           current-thinking-level
+                                           :off)
                 ;; Rebuild agent messages from journal (handles compaction)
-                messages       (compaction/rebuild-messages-from-journal-entries (vec entries))]
+                messages               (compaction/rebuild-messages-from-journal-entries (vec entries))]
             (reset! (:journal-atom ctx) (vec entries))
             (reset! (:flush-state-atom ctx)
                     {:flushed? true
@@ -430,6 +443,9 @@
                            :model          model
                            :thinking-level thinking-level)
             (agent/reset-agent-in! (:agent-ctx ctx))
+            (when model
+              (agent/set-model-in! (:agent-ctx ctx) model))
+            (agent/set-thinking-level-in! (:agent-ctx ctx) thinking-level)
             (agent/replace-messages-in! (:agent-ctx ctx) (vec messages)))))
       (ext/dispatch-in reg "session_switch" {:reason :resume})
       (get-session-data-in ctx))))
@@ -739,13 +755,81 @@
      :agent-diagnostics       (agent/diagnostics-in (:agent-ctx ctx))}))
 
 ;; ============================================================
-;; Global query graph registration
+;; Query graph registration (resolvers + mutations)
 ;; ============================================================
+
+(defn add-prompt-template-in!
+  "Add `template` to session data if its :name is not already present.
+   Returns {:added? bool :count int}."
+  [ctx template]
+  (let [existing? (some #(= (:name %) (:name template))
+                        (:prompt-templates (get-session-data-in ctx)))]
+    (when-not existing?
+      (swap-session! ctx update :prompt-templates conj template))
+    {:added? (not existing?)
+     :count  (count (:prompt-templates (get-session-data-in ctx)))}))
+
+(defn add-skill-in!
+  "Add `skill` to session data if its :name is not already present.
+   Returns {:added? bool :count int}."
+  [ctx skill]
+  (let [existing? (some #(= (:name %) (:name skill))
+                        (:skills (get-session-data-in ctx)))]
+    (when-not existing?
+      (swap-session! ctx update :skills conj skill))
+    {:added? (not existing?)
+     :count  (count (:skills (get-session-data-in ctx)))}))
+
+(defn add-extension-in!
+  "Load one extension file path into this session's extension registry.
+   Returns {:loaded? bool :path string? :error string?}."
+  [ctx path]
+  (let [{:keys [extension error]}
+        (ext/load-extension-in! (:extension-registry ctx)
+                                path
+                                (make-extension-action-fns ctx))]
+    {:loaded? (some? extension)
+     :path    extension
+     :error   error}))
+
+(pco/defmutation add-prompt-template
+  [_ {:keys [psi/agent-session-ctx template]}]
+  {::pco/params [:psi/agent-session-ctx :template]
+   ::pco/output [:psi.prompt-template/added?
+                 :psi.prompt-template/count]}
+  (let [{:keys [added? count]} (add-prompt-template-in! agent-session-ctx template)]
+    {:psi.prompt-template/added? added?
+     :psi.prompt-template/count  count}))
+
+(pco/defmutation add-skill
+  [_ {:keys [psi/agent-session-ctx skill]}]
+  {::pco/params [:psi/agent-session-ctx :skill]
+   ::pco/output [:psi.skill/added?
+                 :psi.skill/count]}
+  (let [{:keys [added? count]} (add-skill-in! agent-session-ctx skill)]
+    {:psi.skill/added? added?
+     :psi.skill/count  count}))
+
+(pco/defmutation add-extension
+  [_ {:keys [psi/agent-session-ctx path]}]
+  {::pco/params [:psi/agent-session-ctx :path]
+   ::pco/output [:psi.extension/loaded?
+                 :psi.extension/path
+                 :psi.extension/error]}
+  (let [{:keys [loaded? error]} (add-extension-in! agent-session-ctx path)]
+    {:psi.extension/loaded? loaded?
+     :psi.extension/path    path
+     :psi.extension/error   error}))
+
+(def all-mutations
+  [add-prompt-template
+   add-skill
+   add-extension])
 
 (defn register-resolvers-in!
   "Register all agent-session resolvers into an isolated `qctx` query context.
    Rebuilds the env unless `rebuild?` is false (useful when the caller will
-   rebuild after adding further resolvers).
+   rebuild after adding further operations).
    Use in tests to avoid touching global state."
   ([qctx] (register-resolvers-in! qctx true))
   ([qctx rebuild?]
@@ -754,13 +838,131 @@
    (when rebuild?
      (query/rebuild-env-in! qctx))))
 
+(defn register-mutations-in!
+  "Register all agent-session mutations into an isolated `qctx` query context."
+  ([qctx] (register-mutations-in! qctx true))
+  ([qctx rebuild?]
+   (doseq [m all-mutations]
+     (query/register-mutation-in! qctx m))
+   (when rebuild?
+     (query/rebuild-env-in! qctx))))
+
 (defn register-resolvers!
   "Register all agent-session resolvers into the global query graph and
-   rebuild the environment.  Call once at system startup."
+   rebuild the environment."
   []
   (doseq [r resolvers/all-resolvers]
     (query/register-resolver! r))
   (query/rebuild-env!))
+
+(defn register-mutations!
+  "Register all agent-session mutations into the global query graph and
+   rebuild the environment."
+  []
+  (doseq [m all-mutations]
+    (query/register-mutation! m))
+  (query/rebuild-env!))
+
+(defn- run-mutation-in!
+  "Execute a registered mutation op in `qctx` with `params`.
+   `op-sym` must be the qualified mutation symbol.
+   Returns the mutation payload map (value under op-sym key)."
+  [qctx op-sym params]
+  (get (query/query-in qctx {}
+                       [(list op-sym params)])
+       op-sym))
+
+(defn load-startup-resources-via-mutations-in!
+  "Load startup prompt templates, skills, and extension paths by executing
+   EQL mutations (one mutation call per resource).
+
+   opts keys:
+   :templates       — vector of prompt template maps
+   :skills          — vector of skill maps
+   :extension-paths — vector of extension file paths
+
+   Returns {:prompt-count int :skill-count int :extension-results [result-map ...]}.
+   Each extension result map includes :psi.extension/loaded?, :psi.extension/path,
+   and optional :psi.extension/error."
+  [ctx {:keys [templates skills extension-paths]
+        :or   {templates [] skills [] extension-paths []}}]
+  (let [qctx (query/create-query-context)
+        _    (register-resolvers-in! qctx false)
+        _    (register-mutations-in! qctx true)]
+    (doseq [t templates]
+      (run-mutation-in! qctx 'psi.agent-session.core/add-prompt-template
+                        {:psi/agent-session-ctx ctx
+                         :template              t}))
+    (doseq [s skills]
+      (run-mutation-in! qctx 'psi.agent-session.core/add-skill
+                        {:psi/agent-session-ctx ctx
+                         :skill                s}))
+    (let [ext-results (mapv (fn [p]
+                              (run-mutation-in! qctx 'psi.agent-session.core/add-extension
+                                                {:psi/agent-session-ctx ctx
+                                                 :path                  p}))
+                            extension-paths)]
+      {:prompt-count      (count (:prompt-templates (get-session-data-in ctx)))
+       :skill-count       (count (:skills (get-session-data-in ctx)))
+       :extension-results ext-results})))
+
+(defn bootstrap-session-in!
+  "Reusable session bootstrap for CLI/TUI and tests.
+
+   Steps:
+   1) ensure a session file exists (new-session-in!)
+   2) optionally register global query resolvers/mutations
+   3) register base tools and set system prompt
+   4) load prompts/skills/extensions via EQL mutations
+   5) merge extension tools into active tools
+   6) persist startup summary to :startup-bootstrap in session data
+
+   opts keys:
+   :register-global-query? — register agent-session resolvers/mutations globally (default true)
+   :base-tools             — base tool schema vector (default [])
+   :system-prompt          — prompt string (default empty string)
+   :templates              — prompt template maps (default [])
+   :skills                 — skill maps (default [])
+   :extension-paths        — extension file paths (default [])
+
+   Returns startup summary map stored at :startup-bootstrap."
+  [ctx {:keys [register-global-query? base-tools system-prompt templates skills extension-paths]
+        :or   {register-global-query? true
+               base-tools             []
+               system-prompt          ""
+               templates              []
+               skills                 []
+               extension-paths        []}}]
+  (new-session-in! ctx)
+  (when register-global-query?
+    (register-resolvers!)
+    (register-mutations!))
+  (agent/set-tools-in! (:agent-ctx ctx) (vec base-tools))
+  (agent/set-system-prompt-in! (:agent-ctx ctx) system-prompt)
+  (let [{:keys [prompt-count skill-count extension-results]}
+        (load-startup-resources-via-mutations-in!
+         ctx {:templates templates
+              :skills skills
+              :extension-paths extension-paths})
+        ext-errors (keep (fn [r]
+                           (when-let [e (:psi.extension/error r)]
+                             {:path  (:psi.extension/path r)
+                              :error e}))
+                         extension-results)
+        ext-tools (ext/all-tools-in (:extension-registry ctx))
+        _         (agent/set-tools-in! (:agent-ctx ctx)
+                                       (into (vec base-tools) ext-tools))
+        summary   {:timestamp              (java.time.Instant/now)
+                   :prompt-count           prompt-count
+                   :skill-count            skill-count
+                   :extension-loaded-count (count (filter :psi.extension/loaded? extension-results))
+                   :extension-error-count  (count ext-errors)
+                   :extension-errors       (vec ext-errors)
+                   :mutations              ['psi.agent-session.core/add-prompt-template
+                                            'psi.agent-session.core/add-skill
+                                            'psi.agent-session.core/add-extension]}]
+    (swap-session! ctx assoc :startup-bootstrap summary)
+    summary))
 
 ;; ============================================================
 ;; EQL query surface

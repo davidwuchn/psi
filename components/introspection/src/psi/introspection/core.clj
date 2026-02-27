@@ -49,14 +49,15 @@
 ;; ─────────────────────────────────────────────────────────────────────────────
 
 (defn register-resolvers!
-  "Register all introspection and agent-session resolvers into the global
-   query graph.  Rebuilds the env once after all resolvers are registered.
-   Call once at system startup before issuing queries."
+  "Register all introspection + agent-session resolvers, plus agent-session
+   mutations, into the global query graph. Rebuilds env once at the end."
   []
   (doseq [r resolvers/all-resolvers]
     (query/register-resolver! r))
   (doseq [r as-resolvers/all-resolvers]
     (query/register-resolver! r))
+  (doseq [m agent-session/all-mutations]
+    (query/register-mutation! m))
   (query/rebuild-env!))
 
 ;; ─────────────────────────────────────────────────────────────────────────────
@@ -89,18 +90,20 @@
 ;; ─────────────────────────────────────────────────────────────────────────────
 
 (defn register-resolvers-in!
-  "Register introspection resolvers (and optionally agent-session resolvers)
-   into `ctx`'s query context, then rebuild the env once.
+  "Register introspection resolvers (and optionally agent-session operations)
+   into `ctx`'s query context, then rebuild env once.
 
-   If `ctx` carries an :agent-session-ctx, agent-session resolvers are also
-   registered so :psi.agent-session/* attributes are queryable."
+   If `ctx` carries an :agent-session-ctx, agent-session resolvers + mutations
+   are also registered so :psi.agent-session/* and mutation-backed workflows are
+   queryable/executable."
   [ctx]
   (let [qctx (:query-ctx ctx)]
     (doseq [r resolvers/all-resolvers]
       (query/register-resolver-in! qctx r))
     (when (:agent-session-ctx ctx)
-      ;; Pass rebuild?=false — we rebuild once below after all resolvers are in.
-      (agent-session/register-resolvers-in! qctx false))
+      ;; Pass rebuild?=false — we rebuild once below after all operations are in.
+      (agent-session/register-resolvers-in! qctx false)
+      (agent-session/register-mutations-in! qctx false))
     (query/rebuild-env-in! qctx)))
 
 (defn query-system-state-in

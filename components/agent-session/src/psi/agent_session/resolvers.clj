@@ -157,7 +157,18 @@
    :psi.agent-session/usage-cost-total
    :psi.agent-session/model-provider
    :psi.agent-session/model-id
-   :psi.agent-session/model-reasoning"
+   :psi.agent-session/model-reasoning
+
+   Startup bootstrap introspection
+   ──────────────────────────────
+   :psi.startup/bootstrap-summary           — map of bootstrap execution details
+   :psi.startup/bootstrap-timestamp         — Instant when bootstrap finished
+   :psi.startup/prompt-count                — prompts loaded during bootstrap
+   :psi.startup/skill-count                 — skills loaded during bootstrap
+   :psi.startup/extension-loaded-count      — extensions loaded successfully
+   :psi.startup/extension-error-count       — extension load errors
+   :psi.startup/extension-errors            — [{:path :error}] extension failures
+   :psi.startup/mutations                   — mutation symbols used by bootstrap"
   (:require
    [clojure.set :as set]
    [clojure.string :as str]
@@ -1020,6 +1031,28 @@
   {:psi.agent-session/model-reasoning
    (boolean (:reasoning (:model @(:session-data-atom agent-session-ctx))))})
 
+(pco/defresolver startup-bootstrap-resolver
+  "Resolve startup bootstrap summary and derived fields."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.startup/bootstrap-summary
+                 :psi.startup/bootstrap-timestamp
+                 :psi.startup/prompt-count
+                 :psi.startup/skill-count
+                 :psi.startup/extension-loaded-count
+                 :psi.startup/extension-error-count
+                 :psi.startup/extension-errors
+                 :psi.startup/mutations]}
+  (let [summary (:startup-bootstrap @(:session-data-atom agent-session-ctx))]
+    {:psi.startup/bootstrap-summary      summary
+     :psi.startup/bootstrap-timestamp    (:timestamp summary)
+     :psi.startup/prompt-count           (:prompt-count summary 0)
+     :psi.startup/skill-count            (:skill-count summary 0)
+     :psi.startup/extension-loaded-count (:extension-loaded-count summary 0)
+     :psi.startup/extension-error-count  (:extension-error-count summary 0)
+     :psi.startup/extension-errors       (:extension-errors summary [])
+     :psi.startup/mutations              (:mutations summary [])}))
+
 ;; ── All resolvers ───────────────────────────────────────
 
 (def all-resolvers
@@ -1044,6 +1077,7 @@
    agent-session-model-provider
    agent-session-model-id
    agent-session-model-reasoning
+   startup-bootstrap-resolver
    agent-session-tool-calls
    tool-call-result
    ;; API error diagnostics (hierarchical)

@@ -10,7 +10,9 @@
    [psi.agent-core.core :as agent-core]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.persistence :as persist]
-   [psi.query.core :as query]))
+   [psi.query.core :as query])
+  (:import
+   (java.io File)))
 
 ;; ── Context creation and isolation ─────────────────────────────────────────
 
@@ -53,7 +55,39 @@
       (let [old-id (:session-id (session/get-session-data-in ctx))]
         (session/new-session-in! ctx)
         ;; session-id unchanged because cancelled
-        (is (= old-id (:session-id (session/get-session-data-in ctx))))))))
+        (is (= old-id (:session-id (session/get-session-data-in ctx)))))))
+
+  (testing "new-session-in! appends active model entry when model exists"
+    (let [model {:provider "anthropic" :id "claude-3-5-sonnet" :reasoning false}
+          ctx   (session/create-context {:initial-session {:model model}})]
+      (session/new-session-in! ctx)
+      (is (some #(and (= :model (:kind %))
+                      (= "anthropic" (get-in % [:data :provider]))
+                      (= "claude-3-5-sonnet" (get-in % [:data :model-id])))
+                @(:journal-atom ctx))))))
+
+(deftest resume-session-model-fallback-test
+  (testing "resume-session-in! keeps current model when resumed journal has no model entry"
+    (let [initial-model {:provider "openai" :id "gpt-5.3-codex" :reasoning true}
+          ctx           (session/create-context {:initial-session {:model initial-model
+                                                                  :thinking-level :high}})
+          f             (File/createTempFile "psi-resume-no-model" ".ndedn")
+          entries       [(persist/thinking-level-entry :minimal)
+                         (persist/message-entry {:role "user"
+                                                 :content [{:type :text :text "hello"}]
+                                                 :timestamp (java.time.Instant/now)})]]
+      (.deleteOnExit f)
+      (persist/flush-journal! f "sess-no-model" "/tmp/project" nil entries)
+      (session/resume-session-in! ctx (.getAbsolutePath f))
+      (let [sd (session/get-session-data-in ctx)
+            r  (session/query-in ctx [:psi.agent-session/model-provider
+                                      :psi.agent-session/model-id
+                                      :psi.agent-session/thinking-level])]
+        (is (= initial-model (:model sd)))
+        (is (= :minimal (:thinking-level sd)))
+        (is (= "openai" (:psi.agent-session/model-provider r)))
+        (is (= "gpt-5.3-codex" (:psi.agent-session/model-id r)))
+        (is (= :minimal (:psi.agent-session/thinking-level r)))))))
 
 ;; ── Model management ────────────────────────────────────────────────────────
 
@@ -484,3 +518,36 @@
                                     :psi.agent-session/phase])]
         (is (string? (:psi.agent-session/session-id result)))
         (is (= :idle (:psi.agent-session/phase result)))))))
+
+(deftest startup-resources-via-mutations-test
+  (testing "load-startup-resources-via-mutations-in! adds prompts/skills"
+    (let [ctx      (session/create-context)
+          template {:name "greet" :description "d" :content "c" :source :project :file-path "/tmp/greet.md"}
+          skill    {:name "coding" :description "d" :file-path "/tmp/SKILL.md"
+                    :base-dir "/tmp" :source :project :disable-model-invocation false}]
+      (session/load-startup-resources-via-mutations-in!
+       ctx {:templates [template] :skills [skill] :extension-paths []})
+      (let [sd (session/get-session-data-in ctx)]
+        (is (= 1 (count (:prompt-templates sd))))
+        (is (= 1 (count (:skills sd))))))))
+
+(deftest bootstrap-session-test
+  (testing "bootstrap-session-in! stores startup summary and applies resources"
+    (let [ctx      (session/create-context)
+          template {:name "greet" :description "d" :content "c" :source :project :file-path "/tmp/greet.md"}
+          skill    {:name "coding" :description "d" :file-path "/tmp/SKILL.md"
+                    :base-dir "/tmp" :source :project :disable-model-invocation false}
+          summary  (session/bootstrap-session-in!
+                    ctx {:register-global-query? false
+                         :base-tools             []
+                         :system-prompt          "sys"
+                         :templates              [template]
+                         :skills                 [skill]
+                         :extension-paths        []})
+          sd       (session/get-session-data-in ctx)]
+      (is (= 1 (:prompt-count summary)))
+      (is (= 1 (:skill-count summary)))
+      (is (= 0 (:extension-error-count summary)))
+      (is (map? (:startup-bootstrap sd)))
+      (is (= 1 (count (:prompt-templates sd))))
+      (is (= 1 (count (:skills sd)))))))
