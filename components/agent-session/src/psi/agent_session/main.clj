@@ -40,6 +40,7 @@
    [psi.agent-session.commands :as commands]
    [psi.agent-session.core :as session]
    [psi.agent-session.executor :as executor]
+   [psi.agent-session.persistence :as persist]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.prompt-templates :as pt]
@@ -298,6 +299,7 @@
         user-msg {:role      "user"
                   :content   [{:type :text :text expanded}]
                   :timestamp (java.time.Instant/now)}
+        _        (session/journal-append-in! ctx (persist/message-entry user-msg))
         api-key  (resolve-api-key oauth-ctx ai-model)
         result   (executor/run-agent-loop! ai-ctx (:agent-ctx ctx) ai-model [user-msg]
                                            {:turn-ctx-atom (:turn-ctx-atom ctx)
@@ -551,6 +553,8 @@
                                       user-msg {:role      "user"
                                                 :content   [{:type :text :text expanded}]
                                                 :timestamp (java.time.Instant/now)}
+                                      _        (session/journal-append-in!
+                                                ctx (persist/message-entry user-msg))
                                       api-key  (resolve-api-key oauth-ctx ai-model)
                                       result   (executor/run-agent-loop!
                                                 ai-ctx (:agent-ctx ctx)

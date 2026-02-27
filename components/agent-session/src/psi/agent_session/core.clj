@@ -340,6 +340,12 @@
        (:cwd ctx)
        (:session-file sd)))))
 
+(defn journal-append-in!
+  "Public: append `entry` to the journal and persist.
+   Use `persist/message-entry` et al. to build entries."
+  [ctx entry]
+  (journal-append! ctx entry))
+
 (defn sc-phase-in
   "Return the active statechart phase for `ctx`."
   [ctx]
