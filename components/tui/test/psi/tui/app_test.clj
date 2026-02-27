@@ -340,8 +340,43 @@ clojure-lsp"}]})
 
 (deftest view-shows-spinner-during-streaming-test
   (testing "view shows spinner while streaming"
-    (let [state (assoc (init-state) :phase :streaming)]
-      (is (str/includes? (app/view state) "thinking")))))
+    (let [state (assoc (init-state) :phase :streaming)
+          out   (app/view state)]
+      (is (str/includes? out "thinking"))
+      (is (str/includes? out "(waiting for response…)"))
+      (is (not (str/includes? out "⠋ waiting for response…"))))))
+
+(deftest view-shows-spinner-in-waiting-indicator-with-tool-history-test
+  (testing "streaming view keeps a visible spinner even after tools complete"
+    (let [state (-> (init-state)
+                    (assoc :phase :streaming
+                           :spinner-frame 0
+                           :stream-text nil
+                           :tool-order ["t1"]
+                           :tool-calls {"t1" {:name "bash"
+                                               :args "{\"command\":\"echo hi\"}"
+                                               :status :success
+                                               :result "ok"
+                                               :is-error false}}))
+          out   (app/view state)]
+      (is (str/includes? out "⠋ waiting for response…"))
+      (is (not (str/includes? out "(waiting for response…)"))))))
+
+(deftest view-hides-waiting-spinner-when-tool-spinner-visible-test
+  (testing "waiting indicator stays static when tool list already shows spinner"
+    (let [state (-> (init-state)
+                    (assoc :phase :streaming
+                           :spinner-frame 0
+                           :stream-text nil
+                           :tool-order ["t1"]
+                           :tool-calls {"t1" {:name "bash"
+                                               :args "{\"command\":\"echo hi\"}"
+                                               :status :running
+                                               :result nil
+                                               :is-error false}}))
+          out   (app/view state)]
+      (is (str/includes? out "(waiting for response…)"))
+      (is (not (str/includes? out "⠋ waiting for response…"))))))
 
 (deftest view-shows-error-test
   (testing "view shows error message"

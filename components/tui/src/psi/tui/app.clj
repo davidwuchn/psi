@@ -1262,6 +1262,16 @@
         spinner-char   (nth spinner-frames (mod spinner-frame (count spinner-frames)))
         dialog-active? (has-active-dialog? state)
         has-progress?  (or (seq stream-text) (seq tool-order))
+        active-tool-spinner?
+        (boolean
+         (some (fn [id]
+                 (let [status (get-in tool-calls [id :status])]
+                   (or (= :pending status)
+                       (= :running status))))
+               tool-order))
+        progress-spinner-visible?
+        (and (= :streaming phase)
+             (or (not has-progress?) active-tool-spinner?))
         term-width     (or width 80)]
     (if (= :selecting-session phase)
       ;; Session selector takes over the whole screen
@@ -1291,7 +1301,10 @@
              (render-dialog ui-state-atom)
              (if (= :idle phase)
                (wrap-text-input-view input term-width)
-               (charm/render dim-style "(waiting for response…)")))
+               (charm/render dim-style
+                             (if progress-spinner-visible?
+                               "(waiting for response…)"
+                               (str spinner-char " waiting for response…")))))
            "\n"
            (render-separator) "\n"
            ;; Widgets below editor
