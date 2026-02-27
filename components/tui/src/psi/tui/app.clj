@@ -99,6 +99,24 @@
 (defn agent-poll?   [m] (= :agent-poll   (:type m)))
 (defn agent-event?  [m] (= :agent-event  (:type m)))
 
+(defn- key-token->string
+  "Normalize charm key token to a string when possible."
+  [k]
+  (cond
+    (string? k)  k
+    (keyword? k) (name k)
+    (char? k)    (str k)
+    :else        nil))
+
+(defn- printable-key
+  "Return a single printable character string for key token, else nil."
+  [k]
+  (let [s (key-token->string k)]
+    (when (and (string? s)
+               (= 1 (count s))
+               (>= (int (.charAt ^String s 0)) 32))
+      s)))
+
 ;; ── Dialog state helpers ────────────────────────────────────
 
 (defn- has-active-dialog? [state]
@@ -159,8 +177,8 @@
             [state nil])
 
         (and (= :input (:kind dialog)) (msg/key-press? m))
-        (let [ch (:key m)]
-          (when (and ch (= 1 (count ch)))
+        (let [ch (printable-key (:key m))]
+          (when ch
             (swap! ui-atom update-in [:dialog-queue :active :input-text]
                    (fn [s] (str (or s "") ch))))
           [state nil])
@@ -252,17 +270,17 @@
 
 (defn- selector-type
   "Append/delete character from search string."
-  [sel-state key-str]
-  (let [new-search (cond
+  [sel-state key-token]
+  (let [key-str    (key-token->string key-token)
+        new-search (cond
                      (= "backspace" key-str)
                      (let [s (:search sel-state)]
                        (if (pos? (count s)) (subs s 0 (dec (count s))) s))
 
-                     (and (= 1 (count key-str))
-                          (>= (int (.charAt ^String key-str 0)) 32))
-                     (str (:search sel-state) key-str)
-
-                     :else (:search sel-state))]
+                     :else
+                     (if-let [ch (printable-key key-token)]
+                       (str (:search sel-state) ch)
+                       (:search sel-state)))]
     (selector-clamp (assoc sel-state :search new-search))))
 
 ;; ── Commands ────────────────────────────────────────────────
@@ -369,8 +387,8 @@
   "Handle a keypress while the session selector is open.
   Returns [new-state cmd]."
   [state m]
-  (let [sel     (:session-selector state)
-        key-str (when (msg/key-press? m) (:key m))]
+  (let [sel       (:session-selector state)
+        key-token (when (msg/key-press? m) (:key m))]
     (cond
       ;; Escape — cancel, return to idle
       (msg/key-match? m "escape")
@@ -426,7 +444,7 @@
 
       ;; Backspace / printable chars — update search
       (msg/key-press? m)
-      [(update state :session-selector selector-type key-str) nil]
+      [(update state :session-selector selector-type key-token) nil]
 
       :else [state nil])))
 

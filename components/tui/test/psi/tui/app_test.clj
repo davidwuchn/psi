@@ -170,6 +170,45 @@
         (is (= :idle (:phase s2)))
         (is (= [{:role :assistant :text "keep me"}] (:messages s2)))))))
 
+(deftest resume-selector-keyword-key-ignored-test
+  (testing "non-printable keyword keys in selector are ignored (no exception)"
+    (with-redefs [persist/session-dir-for (fn [_cwd] "/tmp/psi-test")
+                  persist/list-sessions
+                  (fn [_dir]
+                    [{:path "/tmp/psi-test/a.ndedn"
+                      :name "Session A"
+                      :first-message "hello"
+                      :message-count 3
+                      :modified (java.time.Instant/now)
+                      :cwd "/tmp/psi-test"}])]
+      (let [update-fn (app/make-update (stub-agent-fn ""))
+            state     (init-state "test-model" {:cwd "/tmp/psi-test"})
+            typed     (type-text update-fn state "/resume")
+            [s1 _]    (update-fn typed (msg/key-press :enter))
+            [s2 _]    (update-fn s1 (msg/key-press :left))]
+        (is (= :selecting-session (:phase s2)))
+        (is (= "" (get-in s2 [:session-selector :search])))))))
+
+(deftest resume-selector-backspace-keyword-test
+  (testing "keyword backspace edits selector search"
+    (with-redefs [persist/session-dir-for (fn [_cwd] "/tmp/psi-test")
+                  persist/list-sessions
+                  (fn [_dir]
+                    [{:path "/tmp/psi-test/a.ndedn"
+                      :name "Session A"
+                      :first-message "hello"
+                      :message-count 3
+                      :modified (java.time.Instant/now)
+                      :cwd "/tmp/psi-test"}])]
+      (let [update-fn (app/make-update (stub-agent-fn ""))
+            state     (init-state "test-model" {:cwd "/tmp/psi-test"})
+            typed     (type-text update-fn state "/resume")
+            [s1 _]    (update-fn typed (msg/key-press :enter))
+            [s2 _]    (update-fn s1 (msg/key-press "a"))
+            [s3 _]    (update-fn s2 (msg/key-press :backspace))]
+        (is (= "a" (get-in s2 [:session-selector :search])))
+        (is (= "" (get-in s3 [:session-selector :search])))))))
+
 ;;;; Update — agent results
 
 (deftest agent-result-transitions-to-idle-test
