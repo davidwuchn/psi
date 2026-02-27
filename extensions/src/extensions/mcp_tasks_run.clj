@@ -537,84 +537,13 @@
   (:psi.agent-session/system-prompt
    (query! [:psi.agent-session/system-prompt])))
 
-(defn- resolve-path
-  [worktree-dir path]
-  (let [f (io/file (str path))]
-    (if (.isAbsolute f)
-      f
-      (io/file worktree-dir (str path)))))
-
-(defn- read-tool* [worktree-dir]
-  {:name        "read"
-   :label       "Read"
-   :description (:description session-tools/read-tool)
-   :parameters  (:parameters session-tools/read-tool)
-   :execute     (fn [{:strs [path]}]
-                  (try
-                    (let [f (resolve-path worktree-dir path)]
-                      (if (.exists f)
-                        {:content (slurp f) :is-error false}
-                        {:content (str "File not found: " (.getPath f)) :is-error true}))
-                    (catch Exception e
-                      {:content (ex-message e) :is-error true})))})
-
-(defn- bash-tool* [worktree-dir]
-  {:name        "bash"
-   :label       "Bash"
-   :description (:description session-tools/bash-tool)
-   :parameters  (:parameters session-tools/bash-tool)
-   :execute     (fn [{:strs [command]}]
-                  (let [res (proc/shell {:dir      worktree-dir
-                                         :out      :string
-                                         :err      :string
-                                         :continue true
-                                         :in       (java.io.File. "/dev/null")}
-                                        "bash" "-c" command)
-                        out (str (:out res) (:err res))]
-                    {:content  (if (str/blank? out) "[no output]" out)
-                     :is-error (not= 0 (:exit res))}))})
-
-(defn- edit-tool* [worktree-dir]
-  {:name        "edit"
-   :label       "Edit"
-   :description (:description session-tools/edit-tool)
-   :parameters  (:parameters session-tools/edit-tool)
-   :execute     (fn [{:strs [path oldText newText]}]
-                  (try
-                    (let [f       (resolve-path worktree-dir path)
-                          content (slurp f)]
-                      (if (str/includes? content oldText)
-                        (do
-                          (spit f (str/replace-first content oldText newText))
-                          {:content (str "Edited " (.getPath f)) :is-error false})
-                        {:content "oldText not found in file" :is-error true}))
-                    (catch Exception e
-                      {:content (ex-message e) :is-error true})))})
-
-(defn- write-tool* [worktree-dir]
-  {:name        "write"
-   :label       "Write"
-   :description (:description session-tools/write-tool)
-   :parameters  (:parameters session-tools/write-tool)
-   :execute     (fn [{:strs [path content]}]
-                  (try
-                    (let [f (resolve-path worktree-dir path)]
-                      (io/make-parents f)
-                      (spit f content)
-                      {:content (str "Wrote " (.getPath f)) :is-error false})
-                    (catch Exception e
-                      {:content (ex-message e) :is-error true})))})
-
 (defn- create-step-agent-ctx
   [worktree-dir]
   (let [ctx (agent/create-context)]
     (agent/create-agent-in! ctx)
     (agent/set-tools-in!
      ctx
-     [(read-tool* worktree-dir)
-      (bash-tool* worktree-dir)
-      (edit-tool* worktree-dir)
-      (write-tool* worktree-dir)])
+     (session-tools/make-tools-with-cwd worktree-dir))
     (agent/set-thinking-level-in! ctx :off)
     (when-let [sp (current-system-prompt)]
       (agent/set-system-prompt-in! ctx sp))

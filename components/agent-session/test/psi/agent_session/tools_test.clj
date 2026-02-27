@@ -1,5 +1,7 @@
 (ns psi.agent-session.tools-test
   (:require
+   [clojure.java.io :as io]
+   [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.core :as session]
    [psi.agent-session.tools :as tools]))
@@ -69,7 +71,7 @@
 (deftest execute-tool-dispatch-test
   (testing "built-in dispatch does not handle eql_query"
     (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unknown tool"
-          (tools/execute-tool "eql_query" {"query" "[:foo]"})))))
+                          (tools/execute-tool "eql_query" {"query" "[:foo]"})))))
 
 (deftest eql-query-tool-integration-test
   (testing "eql_query tool works with a real session context"
@@ -92,3 +94,133 @@
           parsed   (read-string (:content result))]
       (is (false? (:is-error result)))
       (is (string? (:psi.agent-session/session-id parsed))))))
+
+;;; CWD support tests
+
+(defn- with-temp-dir
+  "Create a temp dir, run f with its path, clean up."
+  [f]
+  (let [tmp (java.io.File/createTempFile "psi-tools-test" "")]
+    (.delete tmp)
+    (.mkdirs tmp)
+    (try
+      (f (.getAbsolutePath tmp))
+      (finally
+        (doseq [file (reverse (file-seq tmp))]
+          (.delete file))))))
+
+(deftest execute-read-cwd-test
+  (testing "read resolves relative path against cwd"
+    (with-temp-dir
+      (fn [dir]
+        (spit (io/file dir "hello.txt") "world")
+        (let [result (tools/execute-read {"path" "hello.txt"} {:cwd dir})]
+          (is (false? (:is-error result)))
+          (is (= "world" (:content result)))))))
+
+  (testing "read with absolute path ignores cwd"
+    (with-temp-dir
+      (fn [dir]
+        (let [abs-path (.getAbsolutePath (io/file dir "abs.txt"))]
+          (spit abs-path "absolute")
+          (let [result (tools/execute-read {"path" abs-path} {:cwd "/nonexistent"})]
+            (is (false? (:is-error result)))
+            (is (= "absolute" (:content result))))))))
+
+  (testing "read without cwd works as before"
+    (with-temp-dir
+      (fn [dir]
+        (let [abs-path (.getAbsolutePath (io/file dir "plain.txt"))]
+          (spit abs-path "plain")
+          (let [result (tools/execute-read {"path" abs-path})]
+            (is (false? (:is-error result)))
+            (is (= "plain" (:content result)))))))))
+
+(deftest execute-bash-cwd-test
+  (testing "bash runs in cwd when provided"
+    (with-temp-dir
+      (fn [dir]
+        (spit (io/file dir "marker.txt") "found")
+        (let [result (tools/execute-bash {"command" "cat marker.txt"} {:cwd dir})]
+          (is (false? (:is-error result)))
+          (is (str/includes? (:content result) "found"))))))
+
+  (testing "bash without cwd works as before"
+    (let [result (tools/execute-bash {"command" "echo hello"})]
+      (is (false? (:is-error result)))
+      (is (str/includes? (:content result) "hello")))))
+
+(deftest execute-edit-cwd-test
+  (testing "edit resolves relative path against cwd"
+    (with-temp-dir
+      (fn [dir]
+        (spit (io/file dir "edit-me.txt") "old text here")
+        (let [result (tools/execute-edit
+                      {"path" "edit-me.txt" "oldText" "old text" "newText" "new text"}
+                      {:cwd dir})]
+          (is (false? (:is-error result)))
+          (is (= "new text here" (slurp (io/file dir "edit-me.txt"))))))))
+
+  (testing "edit without cwd works as before"
+    (with-temp-dir
+      (fn [dir]
+        (let [abs-path (.getAbsolutePath (io/file dir "edit-abs.txt"))]
+          (spit abs-path "before")
+          (let [result (tools/execute-edit
+                        {"path" abs-path "oldText" "before" "newText" "after"})]
+            (is (false? (:is-error result)))
+            (is (= "after" (slurp abs-path)))))))))
+
+(deftest execute-write-cwd-test
+  (testing "write resolves relative path against cwd"
+    (with-temp-dir
+      (fn [dir]
+        (let [result (tools/execute-write
+                      {"path" "sub/output.txt" "content" "written"}
+                      {:cwd dir})]
+          (is (false? (:is-error result)))
+          (is (= "written" (slurp (io/file dir "sub" "output.txt"))))))))
+
+  (testing "write without cwd works as before"
+    (with-temp-dir
+      (fn [dir]
+        (let [abs-path (.getAbsolutePath (io/file dir "write-abs.txt"))
+              result   (tools/execute-write
+                        {"path" abs-path "content" "abs-written"})]
+          (is (false? (:is-error result)))
+          (is (= "abs-written" (slurp abs-path))))))))
+
+(deftest make-tools-with-cwd-test
+  (testing "returns four tools scoped to cwd"
+    (with-temp-dir
+      (fn [dir]
+        (let [tools-vec (tools/make-tools-with-cwd dir)]
+          (is (= 4 (count tools-vec)))
+          (is (= #{"read" "bash" "edit" "write"}
+                 (into #{} (map :name) tools-vec)))))))
+
+  (testing "tools execute in the scoped directory"
+    (with-temp-dir
+      (fn [dir]
+        (spit (io/file dir "scoped.txt") "scoped-content")
+        (let [tools-vec  (tools/make-tools-with-cwd dir)
+              read-tool  (first (filter #(= "read" (:name %)) tools-vec))
+              bash-tool  (first (filter #(= "bash" (:name %)) tools-vec))
+              write-tool (first (filter #(= "write" (:name %)) tools-vec))
+              edit-tool  (first (filter #(= "edit" (:name %)) tools-vec))]
+          ;; read
+          (let [r ((:execute read-tool) {"path" "scoped.txt"})]
+            (is (false? (:is-error r)))
+            (is (= "scoped-content" (:content r))))
+          ;; bash
+          (let [r ((:execute bash-tool) {"command" "cat scoped.txt"})]
+            (is (false? (:is-error r)))
+            (is (str/includes? (:content r) "scoped-content")))
+          ;; write
+          (let [r ((:execute write-tool) {"path" "new.txt" "content" "new-content"})]
+            (is (false? (:is-error r)))
+            (is (= "new-content" (slurp (io/file dir "new.txt")))))
+          ;; edit
+          (let [r ((:execute edit-tool) {"path" "new.txt" "oldText" "new-content" "newText" "edited"})]
+            (is (false? (:is-error r)))
+            (is (= "edited" (slurp (io/file dir "new.txt"))))))))))

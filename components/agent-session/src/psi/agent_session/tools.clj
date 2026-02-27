@@ -63,53 +63,76 @@
 ;; Tool implementations
 ;; ============================================================
 
-(defn- slurp-file [path]
-  (let [f (io/file path)]
-    (when-not (.exists f)
-      (throw (ex-info (str "File not found: " path) {:path path})))
-    (slurp f)))
+(defn- resolve-path
+  "Resolve a path against an optional cwd. When cwd is provided and path
+   is relative, returns the resolved file. Otherwise returns the path as-is."
+  ^java.io.File [cwd path]
+  (let [f (io/file (str path))]
+    (if (and cwd (not (.isAbsolute f)))
+      (io/file cwd (str path))
+      f)))
+
+(defn- slurp-file
+  ([path] (slurp-file nil path))
+  ([cwd path]
+   (let [f (resolve-path cwd path)]
+     (when-not (.exists f)
+       (throw (ex-info (str "File not found: " (.getPath f)) {:path (.getPath f)})))
+     (slurp f))))
 
 (defn execute-read
-  "Read a file and return its contents."
-  [{:strs [path]}]
-  (let [content (slurp-file path)]
-    {:content  content
-     :is-error false}))
+  "Read a file and return its contents.
+   Accepts optional :cwd in opts to resolve relative paths."
+  ([args] (execute-read args nil))
+  ([{:strs [path]} {:keys [cwd]}]
+   (let [content (slurp-file cwd path)]
+     {:content  content
+      :is-error false})))
 
 (defn execute-bash
   "Run a shell command via babashka.process, returning combined stdout+stderr.
-  Stdin is bound to /dev/null so tools like rg don't misdetect a readable
-  pipe and search stdin instead of the working directory."
-  [{:strs [command]}]
-  (let [result (proc/shell {:out      :string
-                            :err      :string
-                            :continue true
-                            :in       (java.io.File. "/dev/null")}
-                           "bash" "-c" command)
-        out    (str (:out result) (:err result))]
-    {:content  (if (str/blank? out) "[no output]" out)
-     :is-error (not= 0 (:exit result))}))
+   Stdin is bound to /dev/null so tools like rg don't misdetect a readable
+   pipe and search stdin instead of the working directory.
+   Accepts optional :cwd in opts to set the working directory."
+  ([args] (execute-bash args nil))
+  ([{:strs [command]} {:keys [cwd]}]
+   (let [result (proc/shell (cond-> {:out      :string
+                                     :err      :string
+                                     :continue true
+                                     :in       (java.io.File. "/dev/null")}
+                              cwd (assoc :dir cwd))
+                            "bash" "-c" command)
+         out    (str (:out result) (:err result))]
+     {:content  (if (str/blank? out) "[no output]" out)
+      :is-error (not= 0 (:exit result))})))
 
 (defn execute-edit
-  "Replace oldText with newText in a file."
-  [{:strs [path oldText newText]}]
-  (let [content (slurp-file path)]
-    (when-not (str/includes? content oldText)
-      (throw (ex-info "oldText not found in file"
-                      {:path path :oldText (subs oldText 0 (min 80 (count oldText)))})))
-    (let [updated (str/replace-first content oldText newText)]
-      (spit path updated)
-      {:content  (str "Edited " path)
-       :is-error false})))
+  "Replace oldText with newText in a file.
+   Accepts optional :cwd in opts to resolve relative paths."
+  ([args] (execute-edit args nil))
+  ([{:strs [path oldText newText]} {:keys [cwd]}]
+   (let [f       (resolve-path cwd path)
+         fpath   (.getPath f)
+         content (slurp-file cwd path)]
+     (when-not (str/includes? content oldText)
+       (throw (ex-info "oldText not found in file"
+                       {:path fpath :oldText (subs oldText 0 (min 80 (count oldText)))})))
+     (let [updated (str/replace-first content oldText newText)]
+       (spit f updated)
+       {:content  (str "Edited " fpath)
+        :is-error false}))))
 
 (defn execute-write
-  "Write content to a file (creates parent dirs if needed)."
-  [{:strs [path content]}]
-  (let [f (io/file path)]
-    (io/make-parents f)
-    (spit f content)
-    {:content  (str "Wrote " path)
-     :is-error false}))
+  "Write content to a file (creates parent dirs if needed).
+   Accepts optional :cwd in opts to resolve relative paths."
+  ([args] (execute-write args nil))
+  ([{:strs [path content]} {:keys [cwd]}]
+   (let [f     (resolve-path cwd path)
+         fpath (.getPath f)]
+     (io/make-parents f)
+     (spit f content)
+     {:content  (str "Wrote " fpath)
+      :is-error false})))
 
 (defn make-eql-query-tool
   "Create an eql_query tool with an :execute fn that closes over `query-fn`.
@@ -156,6 +179,39 @@
     :description (:description write-tool)
     :parameters  (:parameters write-tool)
     :execute     execute-write}])
+
+;; ============================================================
+;; CWD-scoped tools
+;; ============================================================
+
+(defn make-tools-with-cwd
+  "Return the four standard tool maps (read, bash, edit, write) with :execute
+   fns that resolve relative paths and run commands in `cwd`.
+
+   This is the preferred way for extensions/sub-agents to get tools scoped
+   to a specific working directory without redefining tool wrappers."
+  [cwd]
+  (let [opts {:cwd cwd}]
+    [{:name        (:name read-tool)
+      :label       (:label read-tool)
+      :description (:description read-tool)
+      :parameters  (:parameters read-tool)
+      :execute     (fn [args] (execute-read args opts))}
+     {:name        (:name bash-tool)
+      :label       (:label bash-tool)
+      :description (:description bash-tool)
+      :parameters  (:parameters bash-tool)
+      :execute     (fn [args] (execute-bash args opts))}
+     {:name        (:name edit-tool)
+      :label       (:label edit-tool)
+      :description (:description edit-tool)
+      :parameters  (:parameters edit-tool)
+      :execute     (fn [args] (execute-edit args opts))}
+     {:name        (:name write-tool)
+      :label       (:label write-tool)
+      :description (:description write-tool)
+      :parameters  (:parameters write-tool)
+      :execute     (fn [args] (execute-write args opts))}]))
 
 ;; ============================================================
 ;; Dispatch
