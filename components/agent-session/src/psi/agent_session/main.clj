@@ -22,7 +22,7 @@
    Environment variables:
      ANTHROPIC_API_KEY   — required for Anthropic models
      OPENAI_API_KEY      — required for OpenAI models
-     PSI_MODEL           — model key override (e.g. claude-3-5-haiku, gpt-4o)
+     PSI_MODEL           — model key override (e.g. claude-3-5-haiku, gpt-4o, gpt-5.3-codex)
 
    nREPL introspection (from a connected REPL):
      @psi.agent-session.main/session-state  — live session context

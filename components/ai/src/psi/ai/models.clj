@@ -163,7 +163,7 @@
     :input-cost 2.5
     :output-cost 10.0
     :cache-read-cost 1.25
-    :cache-write-cost 5.0}
+    :cache-write-cost 0.0}
 
    :o1-preview
    {:id "o1-preview"
@@ -179,7 +179,295 @@
     :input-cost 15.0
     :output-cost 60.0
     :cache-read-cost 7.5
-    :cache-write-cost 30.0}})
+    :cache-write-cost 0.0}
+
+   :codex-mini-latest
+   {:id "codex-mini-latest"
+    :name "Codex Mini"
+    :provider :openai
+    :api :openai-completions
+    :base-url "https://api.openai.com/v1"
+    :supports-reasoning true
+    :supports-images false
+    :supports-text true
+    :context-window 200000
+    :max-tokens 100000
+    :input-cost 1.5
+    :output-cost 6.0
+    :cache-read-cost 0.375
+    :cache-write-cost 0.0}
+
+   :gpt-5
+   {:id "gpt-5"
+    :name "GPT-5"
+    :provider :openai
+    :api :openai-completions
+    :base-url "https://api.openai.com/v1"
+    :supports-reasoning true
+    :supports-images true
+    :supports-text true
+    :context-window 400000
+    :max-tokens 128000
+    :input-cost 1.25
+    :output-cost 10.0
+    :cache-read-cost 0.125
+    :cache-write-cost 0.0}
+
+   :gpt-5-chat-latest
+   {:id "gpt-5-chat-latest"
+    :name "GPT-5 Chat Latest"
+    :provider :openai
+    :api :openai-completions
+    :base-url "https://api.openai.com/v1"
+    :supports-reasoning false
+    :supports-images true
+    :supports-text true
+    :context-window 128000
+    :max-tokens 16384
+    :input-cost 1.25
+    :output-cost 10.0
+    :cache-read-cost 0.125
+    :cache-write-cost 0.0}
+
+   :gpt-5-codex
+   {:id "gpt-5-codex"
+    :name "GPT-5 Codex"
+    :provider :openai
+    :api :openai-completions
+    :base-url "https://api.openai.com/v1"
+    :supports-reasoning true
+    :supports-images true
+    :supports-text true
+    :context-window 400000
+    :max-tokens 128000
+    :input-cost 1.25
+    :output-cost 10.0
+    :cache-read-cost 0.125
+    :cache-write-cost 0.0}
+
+   :gpt-5-mini
+   {:id "gpt-5-mini"
+    :name "GPT-5 Mini"
+    :provider :openai
+    :api :openai-completions
+    :base-url "https://api.openai.com/v1"
+    :supports-reasoning true
+    :supports-images true
+    :supports-text true
+    :context-window 400000
+    :max-tokens 128000
+    :input-cost 0.25
+    :output-cost 2.0
+    :cache-read-cost 0.025
+    :cache-write-cost 0.0}
+
+   :gpt-5-nano
+   {:id "gpt-5-nano"
+    :name "GPT-5 Nano"
+    :provider :openai
+    :api :openai-completions
+    :base-url "https://api.openai.com/v1"
+    :supports-reasoning true
+    :supports-images true
+    :supports-text true
+    :context-window 400000
+    :max-tokens 128000
+    :input-cost 0.05
+    :output-cost 0.4
+    :cache-read-cost 0.005
+    :cache-write-cost 0.0}
+
+   :gpt-5-pro
+   {:id "gpt-5-pro"
+    :name "GPT-5 Pro"
+    :provider :openai
+    :api :openai-completions
+    :base-url "https://api.openai.com/v1"
+    :supports-reasoning true
+    :supports-images true
+    :supports-text true
+    :context-window 400000
+    :max-tokens 272000
+    :input-cost 15.0
+    :output-cost 120.0
+    :cache-read-cost 0.0
+    :cache-write-cost 0.0}
+
+   :gpt-5.1
+   {:id "gpt-5.1"
+    :name "GPT-5.1"
+    :provider :openai
+    :api :openai-completions
+    :base-url "https://api.openai.com/v1"
+    :supports-reasoning true
+    :supports-images true
+    :supports-text true
+    :context-window 400000
+    :max-tokens 128000
+    :input-cost 1.25
+    :output-cost 10.0
+    :cache-read-cost 0.13
+    :cache-write-cost 0.0}
+
+   :gpt-5.1-chat-latest
+   {:id "gpt-5.1-chat-latest"
+    :name "GPT-5.1 Chat"
+    :provider :openai
+    :api :openai-completions
+    :base-url "https://api.openai.com/v1"
+    :supports-reasoning true
+    :supports-images true
+    :supports-text true
+    :context-window 128000
+    :max-tokens 16384
+    :input-cost 1.25
+    :output-cost 10.0
+    :cache-read-cost 0.125
+    :cache-write-cost 0.0}
+
+   :gpt-5.1-codex
+   {:id "gpt-5.1-codex"
+    :name "GPT-5.1 Codex"
+    :provider :openai
+    :api :openai-completions
+    :base-url "https://api.openai.com/v1"
+    :supports-reasoning true
+    :supports-images true
+    :supports-text true
+    :context-window 400000
+    :max-tokens 128000
+    :input-cost 1.25
+    :output-cost 10.0
+    :cache-read-cost 0.125
+    :cache-write-cost 0.0}
+
+   :gpt-5.1-codex-max
+   {:id "gpt-5.1-codex-max"
+    :name "GPT-5.1 Codex Max"
+    :provider :openai
+    :api :openai-completions
+    :base-url "https://api.openai.com/v1"
+    :supports-reasoning true
+    :supports-images true
+    :supports-text true
+    :context-window 400000
+    :max-tokens 128000
+    :input-cost 1.25
+    :output-cost 10.0
+    :cache-read-cost 0.125
+    :cache-write-cost 0.0}
+
+   :gpt-5.1-codex-mini
+   {:id "gpt-5.1-codex-mini"
+    :name "GPT-5.1 Codex Mini"
+    :provider :openai
+    :api :openai-completions
+    :base-url "https://api.openai.com/v1"
+    :supports-reasoning true
+    :supports-images true
+    :supports-text true
+    :context-window 400000
+    :max-tokens 128000
+    :input-cost 0.25
+    :output-cost 2.0
+    :cache-read-cost 0.025
+    :cache-write-cost 0.0}
+
+   :gpt-5.2
+   {:id "gpt-5.2"
+    :name "GPT-5.2"
+    :provider :openai
+    :api :openai-completions
+    :base-url "https://api.openai.com/v1"
+    :supports-reasoning true
+    :supports-images true
+    :supports-text true
+    :context-window 400000
+    :max-tokens 128000
+    :input-cost 1.75
+    :output-cost 14.0
+    :cache-read-cost 0.175
+    :cache-write-cost 0.0}
+
+   :gpt-5.2-chat-latest
+   {:id "gpt-5.2-chat-latest"
+    :name "GPT-5.2 Chat"
+    :provider :openai
+    :api :openai-completions
+    :base-url "https://api.openai.com/v1"
+    :supports-reasoning true
+    :supports-images true
+    :supports-text true
+    :context-window 128000
+    :max-tokens 16384
+    :input-cost 1.75
+    :output-cost 14.0
+    :cache-read-cost 0.175
+    :cache-write-cost 0.0}
+
+   :gpt-5.2-codex
+   {:id "gpt-5.2-codex"
+    :name "GPT-5.2 Codex"
+    :provider :openai
+    :api :openai-completions
+    :base-url "https://api.openai.com/v1"
+    :supports-reasoning true
+    :supports-images true
+    :supports-text true
+    :context-window 400000
+    :max-tokens 128000
+    :input-cost 1.75
+    :output-cost 14.0
+    :cache-read-cost 0.175
+    :cache-write-cost 0.0}
+
+   :gpt-5.2-pro
+   {:id "gpt-5.2-pro"
+    :name "GPT-5.2 Pro"
+    :provider :openai
+    :api :openai-completions
+    :base-url "https://api.openai.com/v1"
+    :supports-reasoning true
+    :supports-images true
+    :supports-text true
+    :context-window 400000
+    :max-tokens 128000
+    :input-cost 21.0
+    :output-cost 168.0
+    :cache-read-cost 0.0
+    :cache-write-cost 0.0}
+
+   :gpt-5.3-codex
+   {:id "gpt-5.3-codex"
+    :name "GPT-5.3 Codex"
+    :provider :openai
+    :api :openai-completions
+    :base-url "https://api.openai.com/v1"
+    :supports-reasoning true
+    :supports-images true
+    :supports-text true
+    :context-window 400000
+    :max-tokens 128000
+    :input-cost 1.75
+    :output-cost 14.0
+    :cache-read-cost 0.175
+    :cache-write-cost 0.0}
+
+   :gpt-5.3-codex-spark
+   {:id "gpt-5.3-codex-spark"
+    :name "GPT-5.3 Codex Spark"
+    :provider :openai
+    :api :openai-completions
+    :base-url "https://api.openai.com/v1"
+    :supports-reasoning true
+    :supports-images true
+    :supports-text true
+    :context-window 128000
+    :max-tokens 32000
+    :input-cost 1.75
+    :output-cost 14.0
+    :cache-read-cost 0.175
+    :cache-write-cost 0.0}})
 
 (def all-models
   (merge anthropic-models openai-models))
