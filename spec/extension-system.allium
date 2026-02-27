@@ -102,10 +102,11 @@ config {
     global_extension_dirs: List<Path> = [~/.psi/agent/extensions]
     project_extension_dirs: List<Path> = [.psi/extensions]
     extension_event_ordering: registration_order
-    -- When multiple extensions handle the same event, they fire in the
-    -- order they were registered.  All handlers fire (broadcast); a handler
-    -- returning { cancel: true } blocks the associated session action but
-    -- does not suppress remaining handlers.
+    -- Handlers fire in registration order.
+    -- For session_before_* events, the first handler returning {cancel: true}
+    -- short-circuits remaining handlers and aborts the session action.
+    -- When no cancellation occurs, non-void session_before_* handler results
+    -- are last-writer-wins (the last returned value is observed by caller).
 }
 
 ------------------------------------------------------------
@@ -209,7 +210,8 @@ rule BeforeAgentStartFired {
 
 -- These rules capture when extension event handlers fire.
 -- Each corresponds to a named event in the extension API.
--- Handlers fire in registration order (broadcast semantics).
+-- Handlers fire in registration order. session_before_* events may
+-- short-circuit on cancel.
 
 -- ── Resource events ─────────────────────────────────────
 
@@ -243,14 +245,23 @@ rule SessionForkDispatched {
 }
 
 rule SessionBeforeCompactDispatched {
-    when: SessionBeforeCompactDispatched(session, preparation, customInstructions)
-    ensures: ExtensionEvent.emitted(session, {type: session_before_compact, preparation: preparation, customInstructions: customInstructions})
+    when: SessionBeforeCompactDispatched(session, preparation, branchEntries, customInstructions)
+    ensures: ExtensionEvent.emitted(session, {
+        type: session_before_compact,
+        preparation: preparation,
+        branchEntries: branchEntries,
+        customInstructions: customInstructions
+    })
     -- Handler may return cancel: true or supply its own CompactionResult
 }
 
 rule SessionCompactDispatched {
-    when: SessionCompactDispatched(session)
-    ensures: ExtensionEvent.emitted(session, {type: session_compact})
+    when: SessionCompactDispatched(session, compactionEntry, fromExtension)
+    ensures: ExtensionEvent.emitted(session, {
+        type: session_compact,
+        compactionEntry: compactionEntry,
+        fromExtension: fromExtension
+    })
 }
 
 rule SessionBeforeTreeDispatched {
@@ -284,8 +295,14 @@ rule AutoCompactionStartDispatched {
 }
 
 rule AutoCompactionEndDispatched {
-    when: AutoCompactionEndDispatched(session)
-    ensures: AgentSessionEvent.emitted(session, {type: auto_compaction_end})
+    when: AutoCompactionEndDispatched(session, result, aborted, willRetry, errorMessage?)
+    ensures: AgentSessionEvent.emitted(session, {
+        type: auto_compaction_end,
+        result: result,
+        aborted: aborted,
+        willRetry: willRetry,
+        errorMessage: errorMessage
+    })
 }
 
 rule AutoRetryStartDispatched {
@@ -382,14 +399,10 @@ surface ExtensionApi {
         -- Extension handlers receive an ExtensionContext with session state.
         -- Command handlers receive an ExtensionCommandContext with session control.
         -- Handlers fire in registration order (first registered, first called).
-        -- All registered handlers for an event fire (broadcast semantics).
-        -- session_before_* events may return { cancel: true } to block the action;
-        --   this stops the session action but does not suppress remaining handlers.
+        -- session_before_* events are cancellable and short-circuit on first cancel.
+        -- session_before_* result payloads are last-writer-wins when not cancelled.
         -- session_before_compact may supply a custom CompactionResult to replace
         --   the default LLM-based summarisation.
-        -- A handler returning cancel: true for session_before_compact or
-        --   session_before_switch takes precedence; later handlers still fire
-        --   but their cancel return is ignored once one cancel has been seen.
         -- Extension commands shadow prompt templates with the same name.
 }
 
@@ -404,7 +417,7 @@ deferred ResourceDiscovery.scan         -- skill/template/theme path scanning
 -- Open Questions
 ------------------------------------------------------------
 
-open_question "Extension event ordering: the spec guarantees registration order and broadcast. Should a cancel from handler N also suppress handlers N+1..M, or should all handlers always fire regardless?"
+open_question "Session-before handler composition: beyond last-writer-wins, should the runner support explicit merge strategies for handler results (e.g. deep-merge for options objects)?"
 
 open_question "Tool wrapping: should ToolCallDispatched be able to *replace* the tool arguments (not just block), enabling extension-level argument transformation?"
 

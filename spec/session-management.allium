@@ -208,7 +208,7 @@ config {
     auto_retry_base_delay: Duration = 2.seconds
     auto_retry_max_delay: Duration = 60.seconds
     default_active_tools: Set<String> = {"read", "bash", "edit", "write"}
-    -- Compaction thresholds live in compaction.allium config.
+    -- Compaction settings live in compaction.allium config.
     -- These are global defaults; AgentSession may override per-session.
 }
 
