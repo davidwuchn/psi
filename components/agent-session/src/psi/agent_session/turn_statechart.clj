@@ -22,7 +22,7 @@
    :toolcall-start → :turn/toolcall-start {:content-index n :tool-id \"...\" :tool-name \"...\"}
    :toolcall-delta → :turn/toolcall-delta {:content-index n :delta \"...\"}
    :toolcall-end   → :turn/toolcall-end   {:content-index n}
-   :done           → :turn/done           {:reason kw}
+   :done           → :turn/done           {:reason kw :usage map?}
    :error          → :turn/error          {:error-message \"...\"}
    (reset)         → :turn/reset"
   (:require
@@ -158,10 +158,12 @@
               content (cond-> []
                         (seq text-buffer) (conj {:type :text :text text-buffer})
                         :always           (into tc-blocks))
-              final {:role        "assistant"
-                     :content     content
-                     :stop-reason (or (:reason data) :stop)
-                     :timestamp   (java.time.Instant/now)}]
+              usage (:usage data)
+              final (cond-> {:role        "assistant"
+                             :content     content
+                             :stop-reason (or (:reason data) :stop)
+                             :timestamp   (java.time.Instant/now)}
+                      (map? usage) (assoc :usage usage))]
           (swap! td assoc :final-message final)
           (when done-p (deliver done-p final)))
 

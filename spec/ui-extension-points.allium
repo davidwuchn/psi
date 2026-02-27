@@ -34,6 +34,7 @@
 use "./extension-system.allium" as ext
 use "./coding-agent.allium" as session
 use "./tui.allium" as tui
+use "./default-footer.allium" as footer
 
 ------------------------------------------------------------
 -- External Entities
@@ -562,6 +563,9 @@ surface TUIViewIntegration {
         -- Tool renderers are looked up by tool-name during message rendering.
         -- If no custom renderer is registered, the default renderer is used.
         -- Message renderers are looked up by customType for CustomMessageEntry display.
+        --
+        -- Built-in footer composition (path, usage/model stats, status line)
+        -- is specified in footer/DefaultFooterView.
         --
         -- All render fns return ANSI strings. The view fn inserts them directly.
 }

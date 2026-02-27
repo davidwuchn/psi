@@ -20,6 +20,7 @@
 --   Extension system (extension-system.allium)
 --   Skills (skills.allium)
 --   Prompt templates (prompt-templates.allium)
+--   Default interactive footer behaviour (default-footer.allium)
 --
 -- Excludes:
 --   Core LLM agent loop and streaming (see agent.allium)
@@ -34,6 +35,7 @@ use "./prompt-templates.allium" as prompts
 use "./skills.allium" as skills
 use "./extension-system.allium" as ext
 use "./oauth-auth.allium" as auth
+use "./default-footer.allium" as footer
 
 ------------------------------------------------------------
 -- External Entities

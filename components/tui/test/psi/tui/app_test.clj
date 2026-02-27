@@ -252,6 +252,40 @@
       (is (str/includes? (app/view state) "hello"))
       (is (str/includes? (app/view state) "world")))))
 
+(deftest view-renders-default-footer-from-query-test
+  (testing "footer renders path, stats, provider/model, and statuses from EQL query data"
+    (let [qfn (fn [_q]
+                {:psi.agent-session/cwd "/repo/project"
+                 :psi.agent-session/git-branch "master"
+                 :psi.agent-session/session-name "session-a"
+                 :psi.agent-session/usage-input 76000
+                 :psi.agent-session/usage-output 3600
+                 :psi.agent-session/usage-cache-read 1400000
+                 :psi.agent-session/usage-cache-write 0
+                 :psi.agent-session/usage-cost-total 0.434
+                 :psi.agent-session/context-fraction 0.176
+                 :psi.agent-session/context-window 400000
+                 :psi.agent-session/auto-compaction-enabled true
+                 :psi.agent-session/model-provider "openai"
+                 :psi.agent-session/model-id "gpt-5.3-codex"
+                 :psi.agent-session/model-reasoning true
+                 :psi.agent-session/thinking-level :xhigh
+                 :psi.ui/statuses [{:extension-id "b" :text "TS+ESL,Prett"}
+                                   {:extension-id "a" :text "Clojure-LSP
+clojure-lsp"}]})
+          init-fn (app/make-init "test-model" qfn nil {:cwd "/repo/project"})
+          [state _] (init-fn)
+          out (app/view (assoc state :width 120))]
+      (is (str/includes? out "/repo/project (master) • session-a"))
+      (is (str/includes? out "↑76k"))
+      (is (str/includes? out "↓3.6k"))
+      (is (str/includes? out "R1.4M"))
+      (is (str/includes? out "$0.434"))
+      (is (str/includes? out "17.6%/400k (auto)"))
+      (is (str/includes? out "(openai) gpt-5.3-codex • xhigh"))
+      ;; status sort + sanitization (a before b, newline collapsed to space)
+      (is (str/includes? out "Clojure-LSP clojure-lsp TS+ESL,Prett")))))
+
 (deftest view-shows-spinner-during-streaming-test
   (testing "view shows spinner while streaming"
     (let [state (assoc (init-state) :phase :streaming)]

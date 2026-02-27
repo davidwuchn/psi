@@ -397,6 +397,29 @@
   (when oauth-ctx
     (oauth/get-api-key oauth-ctx (:provider ai-model))))
 
+(defn- usage->context-tokens
+  "Best-effort context token count from an assistant usage map.
+   Returns nil when usage is missing or unknown."
+  [usage]
+  (when (map? usage)
+    (let [input  (or (:input-tokens usage) 0)
+          output (or (:output-tokens usage) 0)
+          read   (or (:cache-read-tokens usage) 0)
+          write  (or (:cache-write-tokens usage) 0)
+          total  (or (:total-tokens usage)
+                     (+ input output read write))]
+      (when (and (number? total) (pos? total))
+        total))))
+
+(defn- update-context-usage-from-result!
+  "Update session context usage from a completed assistant result when usage is available.
+   Keeps context tokens nil when providers do not return reliable usage."
+  [ctx ai-model result]
+  (let [tokens (usage->context-tokens (:usage result))
+        window (:context-window ai-model)]
+    (when (and (some? tokens) (number? window) (pos? window))
+      (session/update-context-usage-in! ctx tokens window))))
+
 (defn- run-prompt!
   "Send `text` to the agent and block until done, printing the response.
    Expands prompt templates before sending."
@@ -409,6 +432,7 @@
         result   (executor/run-agent-loop! ai-ctx (:agent-ctx ctx) ai-model [user-msg]
                                            {:turn-ctx-atom (:turn-ctx-atom ctx)
                                             :api-key       api-key})]
+    (update-context-usage-from-result! ctx ai-model result)
     (print-assistant-message result)))
 
 ;; ============================================================
@@ -725,6 +749,7 @@
                                                 {:turn-ctx-atom  (:turn-ctx-atom ctx)
                                                  :api-key        api-key
                                                  :progress-queue queue})]
+                                  (update-context-usage-from-result! ctx ai-model result)
                                   (.put queue {:kind :done :result result}))
                                 (catch Exception e
                                   (.put queue {:kind :error :message (ex-message e)})))))))]

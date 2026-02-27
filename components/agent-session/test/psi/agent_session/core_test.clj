@@ -7,7 +7,9 @@
    [clojure.test :refer [deftest testing is]]
    [psi.agent-session.core :as session]
    [psi.agent-session.session :as session-data]
+   [psi.agent-core.core :as agent-core]
    [psi.agent-session.extensions :as ext]
+   [psi.agent-session.persistence :as persist]
    [psi.query.core :as query]))
 
 ;; ── Context creation and isolation ─────────────────────────────────────────
@@ -254,7 +256,56 @@
     (let [ctx    (session/create-context)
           result (session/query-in ctx [:psi.agent-session/stats])]
       (is (map? (:psi.agent-session/stats result)))
-      (is (contains? (:psi.agent-session/stats result) :session-id)))))
+      (is (contains? (:psi.agent-session/stats result) :session-id))))
+
+  (testing "query-in resolves usage aggregates from journal assistant usage"
+    (let [ctx (session/create-context)
+          assistant-1 {:role "assistant"
+                       :content [{:type :text :text "a"}]
+                       :usage {:input-tokens 1000
+                               :output-tokens 200
+                               :cache-read-tokens 50
+                               :cache-write-tokens 10
+                               :cost {:total 0.123}}
+                       :timestamp (java.time.Instant/now)}
+          assistant-2 {:role "assistant"
+                       :content [{:type :text :text "b"}]
+                       :usage {:input 500
+                               :output 100
+                               :cache-read 0
+                               :cache-write 0
+                               :cost {:total 0.050}}
+                       :timestamp (java.time.Instant/now)}]
+      (swap! (:journal-atom ctx)
+             into
+             [(persist/message-entry assistant-1)
+              (persist/message-entry assistant-2)])
+      (let [result (session/query-in ctx [:psi.agent-session/usage-input
+                                          :psi.agent-session/usage-output
+                                          :psi.agent-session/usage-cache-read
+                                          :psi.agent-session/usage-cache-write
+                                          :psi.agent-session/usage-cost-total])]
+        (is (= 1500 (:psi.agent-session/usage-input result)))
+        (is (= 300 (:psi.agent-session/usage-output result)))
+        (is (= 50 (:psi.agent-session/usage-cache-read result)))
+        (is (= 10 (:psi.agent-session/usage-cache-write result)))
+        (is (< (Math/abs (- 0.173 (double (:psi.agent-session/usage-cost-total result))))
+               1.0e-9))))))
+
+  (testing "query-in resolves model provider/id/reasoning attrs"
+    (let [ctx (session/create-context)
+          model {:provider "openai" :id "gpt-5.3-codex" :reasoning true}]
+      (session/set-model-in! ctx model)
+      (let [result (session/query-in ctx [:psi.agent-session/model-provider
+                                          :psi.agent-session/model-id
+                                          :psi.agent-session/model-reasoning
+                                          :psi.agent-session/cwd
+                                          :psi.agent-session/git-branch])]
+        (is (= "openai" (:psi.agent-session/model-provider result)))
+        (is (= "gpt-5.3-codex" (:psi.agent-session/model-id result)))
+        (is (true? (:psi.agent-session/model-reasoning result)))
+        (is (string? (:psi.agent-session/cwd result)))
+        (is (contains? result :psi.agent-session/git-branch)))))
 
 ;; ── API error diagnostics (hierarchical EQL) ────────────────────────────────
 
@@ -263,7 +314,7 @@
   [ctx msgs]
   (let [agent-ctx (:agent-ctx ctx)]
     (doseq [m msgs]
-      (psi.agent-core.core/append-message-in! agent-ctx m))))
+      (agent-core/append-message-in! agent-ctx m))))
 
 (defn- make-user-msg [text]
   {:role "user" :content [{:type :text :text text}]
@@ -414,8 +465,7 @@
 
 (deftest register-resolvers-in!-test
   (testing "register-resolvers-in! wires agent-session into an isolated query ctx"
-    (let [session-ctx (session/create-context)
-          qctx        (query/create-query-context)]
+    (let [qctx (query/create-query-context)]
       (session/register-resolvers-in! qctx)
       ;; Agent-session resolvers should now be in the isolated graph
       (let [syms (query/resolver-syms-in qctx)]

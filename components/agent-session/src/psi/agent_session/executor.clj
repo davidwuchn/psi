@@ -190,10 +190,12 @@
               content (cond-> []
                         (seq text-buffer) (conj {:type :text :text text-buffer})
                         :always           (into tc-blocks))
-              final {:role        "assistant"
-                     :content     content
-                     :stop-reason (or (:reason data) :stop)
-                     :timestamp   (java.time.Instant/now)}]
+              usage   (:usage data)
+              final   (cond-> {:role        "assistant"
+                               :content     content
+                               :stop-reason (or (:reason data) :stop)
+                               :timestamp   (java.time.Instant/now)}
+                        (map? usage) (assoc :usage usage))]
           (swap! td assoc :final-message final)
           (agent/end-stream-in! agent-ctx final)
           (deliver done-p final))
@@ -285,7 +287,8 @@
 
                     :done
                     (turn-sc/send-event! turn-ctx :turn/done
-                                         {:reason (:reason event)})
+                                         {:reason (:reason event)
+                                          :usage  (:usage event)})
 
                     :error
                     (turn-sc/send-event! turn-ctx :turn/error

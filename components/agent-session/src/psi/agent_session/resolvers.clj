@@ -144,9 +144,23 @@
    :psi.ui/statuses                       — vector of status entry maps
    :psi.ui/visible-notifications          — vector of non-dismissed notification maps
    :psi.ui/tool-renderers                 — vector of tool renderer metadata maps
-   :psi.ui/message-renderers              — vector of message renderer metadata maps"
+   :psi.ui/message-renderers              — vector of message renderer metadata maps
+
+   Session-derived usage and git attrs (read-only)
+   ───────────────────────────────────────────────
+   :psi.agent-session/cwd
+   :psi.agent-session/git-branch          — nil when outside git, \"detached\" on detached HEAD
+   :psi.agent-session/usage-input
+   :psi.agent-session/usage-output
+   :psi.agent-session/usage-cache-read
+   :psi.agent-session/usage-cache-write
+   :psi.agent-session/usage-cost-total
+   :psi.agent-session/model-provider
+   :psi.agent-session/model-id
+   :psi.agent-session/model-reasoning"
   (:require
    [clojure.set :as set]
+   [clojure.string :as str]
    [com.wsscode.pathom3.connect.operation :as pco]
    [com.wsscode.pathom3.connect.indexes :as pci]
    [com.wsscode.pathom3.interface.eql :as p.eql]
@@ -817,7 +831,7 @@
 
 (pco/defresolver session-list-all-resolver
   "Resolve all sessions across all project directories, sorted by modified desc."
-  [{:keys [psi/agent-session-ctx]}]
+  [{_ctx :psi/agent-session-ctx}]
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [{:psi.session/list-all
                   [:psi.session-info/path
@@ -866,6 +880,146 @@
        :psi.ui/tool-renderers        []
        :psi.ui/message-renderers     []})))
 
+;; ── Footer data ───────────────────────────────────────
+
+(defn- usage-number
+  [usage k1 k2]
+  (let [v (or (get usage k1) (get usage k2) 0)]
+    (if (number? v) v 0)))
+
+(defn- usage-cost-total
+  [usage]
+  (let [v (or (get-in usage [:cost :total])
+              (:cost-total usage)
+              0.0)]
+    (if (number? v) v 0.0)))
+
+(defn- session-usage-totals
+  [agent-session-ctx]
+  (reduce
+   (fn [acc entry]
+     (let [msg (get-in entry [:data :message])]
+       (if (and (= :message (:kind entry))
+                (= "assistant" (:role msg))
+                (map? (:usage msg)))
+         (let [u (:usage msg)]
+           (-> acc
+               (update :input + (usage-number u :input-tokens :input))
+               (update :output + (usage-number u :output-tokens :output))
+               (update :cache-read + (usage-number u :cache-read-tokens :cache-read))
+               (update :cache-write + (usage-number u :cache-write-tokens :cache-write))
+               (update :cost + (usage-cost-total u))))
+         acc)))
+   {:input 0 :output 0 :cache-read 0 :cache-write 0 :cost 0.0}
+   @(:journal-atom agent-session-ctx)))
+
+(defn- find-git-head-path
+  [cwd]
+  (loop [dir (when cwd (java.io.File. cwd))]
+    (when dir
+      (let [git-path (java.io.File. dir ".git")]
+        (if (.exists git-path)
+          (try
+            (cond
+              (.isDirectory git-path)
+              (let [head (java.io.File. git-path "HEAD")]
+                (when (.exists head)
+                  (.getAbsolutePath head)))
+
+              (.isFile git-path)
+              (let [content (str/trim (slurp git-path))]
+                (when (str/starts-with? content "gitdir: ")
+                  (let [git-dir (subs content 8)
+                        head    (java.io.File. (java.io.File. dir git-dir) "HEAD")]
+                    (when (.exists head)
+                      (.getAbsolutePath head)))))
+
+              :else nil)
+            (catch Exception _ nil))
+          (recur (.getParentFile dir)))))))
+
+(defn- git-branch-from-cwd
+  [cwd]
+  (try
+    (when-let [head-path (find-git-head-path cwd)]
+      (let [content (str/trim (slurp head-path))]
+        (if (str/starts-with? content "ref: refs/heads/")
+          (subs content 16)
+          "detached")))
+    (catch Exception _ nil)))
+
+(pco/defresolver agent-session-cwd
+  "Resolve working directory for the current session context."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.agent-session/cwd]}
+  {:psi.agent-session/cwd (:cwd agent-session-ctx)})
+
+(pco/defresolver agent-session-git-branch
+  "Resolve current git branch for :psi.agent-session/cwd.
+   Returns nil outside git repos and \"detached\" for detached HEAD."
+  [{:keys [psi.agent-session/cwd]}]
+  {::pco/input  [:psi.agent-session/cwd]
+   ::pco/output [:psi.agent-session/git-branch]}
+  {:psi.agent-session/git-branch (git-branch-from-cwd cwd)})
+
+(pco/defresolver agent-session-usage-input
+  "Resolve cumulative input tokens across assistant messages in the session journal."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.agent-session/usage-input]}
+  {:psi.agent-session/usage-input (:input (session-usage-totals agent-session-ctx))})
+
+(pco/defresolver agent-session-usage-output
+  "Resolve cumulative output tokens across assistant messages in the session journal."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.agent-session/usage-output]}
+  {:psi.agent-session/usage-output (:output (session-usage-totals agent-session-ctx))})
+
+(pco/defresolver agent-session-usage-cache-read
+  "Resolve cumulative cache-read tokens across assistant messages in the session journal."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.agent-session/usage-cache-read]}
+  {:psi.agent-session/usage-cache-read (:cache-read (session-usage-totals agent-session-ctx))})
+
+(pco/defresolver agent-session-usage-cache-write
+  "Resolve cumulative cache-write tokens across assistant messages in the session journal."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.agent-session/usage-cache-write]}
+  {:psi.agent-session/usage-cache-write (:cache-write (session-usage-totals agent-session-ctx))})
+
+(pco/defresolver agent-session-usage-cost-total
+  "Resolve cumulative total cost across assistant messages in the session journal."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.agent-session/usage-cost-total]}
+  {:psi.agent-session/usage-cost-total (:cost (session-usage-totals agent-session-ctx))})
+
+(pco/defresolver agent-session-model-provider
+  "Resolve active model provider string from session state."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.agent-session/model-provider]}
+  {:psi.agent-session/model-provider (:provider (:model @(:session-data-atom agent-session-ctx)))})
+
+(pco/defresolver agent-session-model-id
+  "Resolve active model id from session state."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.agent-session/model-id]}
+  {:psi.agent-session/model-id (:id (:model @(:session-data-atom agent-session-ctx)))})
+
+(pco/defresolver agent-session-model-reasoning
+  "Resolve whether the active model supports reasoning."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.agent-session/model-reasoning]}
+  {:psi.agent-session/model-reasoning
+   (boolean (:reasoning (:model @(:session-data-atom agent-session-ctx))))})
+
 ;; ── All resolvers ───────────────────────────────────────
 
 (def all-resolvers
@@ -879,6 +1033,17 @@
    agent-session-context-usage
    agent-session-journal
    agent-session-stats
+   ;; Session-derived usage/git attrs
+   agent-session-cwd
+   agent-session-git-branch
+   agent-session-usage-input
+   agent-session-usage-output
+   agent-session-usage-cache-read
+   agent-session-usage-cache-write
+   agent-session-usage-cost-total
+   agent-session-model-provider
+   agent-session-model-id
+   agent-session-model-reasoning
    agent-session-tool-calls
    tool-call-result
    ;; API error diagnostics (hierarchical)
