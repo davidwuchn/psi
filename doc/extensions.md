@@ -67,8 +67,9 @@ The `init` function receives a map with these keys:
 
 | Key      | Signature                   | Description                                  |
 |----------|-----------------------------|----------------------------------------------|
-| `:query` | `(fn [eql-query])`          | Run an EQL query through the session runtime |
-| `:mutate`| `(fn [op-sym params])`      | Run an EQL mutation through the runtime      |
+| `:query`       | `(fn [eql-query])`          | Run an EQL query through the session runtime |
+| `:mutate`      | `(fn [op-sym params])`      | Run an EQL mutation through the runtime      |
+| `:get-api-key` | `(fn [provider])`           | Resolve provider API key (narrow capability) |
 
 `(:mutate api)` is extension-scoped for `psi.extension/*` mutations:
 

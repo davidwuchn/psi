@@ -43,6 +43,7 @@
    :compaction-fn       — (fn [session-data preparation instructions]) → CompactionResult
    :branch-summary-fn   — (fn [session-data entries instructions]) → BranchSummaryResult
    :config              — merged config map (global defaults + per-session overrides)
+   :oauth-ctx           — OAuth context (optional; used by extension runtime for auth helpers)
 
    Global query graph integration
    ──────────────────────────────
@@ -55,6 +56,7 @@
    [psi.agent-core.core :as agent]
    [psi.agent-session.compaction :as compaction]
    [psi.agent-session.extensions :as ext]
+   [psi.agent-session.oauth.core :as oauth]
    [psi.tui.extension-ui :as ext-ui]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.resolvers :as resolvers]
@@ -232,9 +234,10 @@
     :agent-initial     — initial data overrides for the agent-core context
     :config            — config overrides merged over session/default-config
     :cwd               — working directory for session file layout (default: process cwd)
-    :persist?          — if false, disable all disk I/O (default: true)"
+    :persist?          — if false, disable all disk I/O (default: true)
+    :oauth-ctx         — optional OAuth context for extension auth helpers"
   ([] (create-context {}))
-  ([{:keys [initial-session compaction-fn branch-summary-fn agent-initial config cwd persist? event-queue]
+  ([{:keys [initial-session compaction-fn branch-summary-fn agent-initial config cwd persist? event-queue oauth-ctx]
      :or   {persist? true}}]
    (let [sc-env            (sc/create-sc-env)
          sc-session-id     (java.util.UUID/randomUUID)
@@ -259,6 +262,7 @@
                             :event-queue        event-queue
                             :cwd                resolved-cwd
                             :persist?           persist?
+                            :oauth-ctx          oauth-ctx
                             :compaction-fn      (or compaction-fn compaction/stub-compaction-fn)
                             :branch-summary-fn  (or branch-summary-fn compaction/stub-branch-summary-fn)
                             :config             merged-config}
@@ -661,7 +665,8 @@
 
 (defn- make-extension-runtime-fns
   "Build the runtime-fns map for extension API EQL access.
-   Extensions interact with session state via query/mutation only."
+   Extensions interact with session state via query/mutation only.
+   Secrets are exposed via narrow capability fns (not queryable resolvers)."
   [ctx]
   {:query-fn
    (fn [eql-query]
@@ -673,6 +678,11 @@
    :mutate-fn
    (fn [op-sym params]
      (run-extension-mutation-in! ctx op-sym params))
+
+   :get-api-key-fn
+   (fn [provider]
+     (when-let [oauth-ctx (:oauth-ctx ctx)]
+       (oauth/get-api-key oauth-ctx provider)))
 
    :ui-state-atom (:ui-state-atom ctx)})
 

@@ -415,8 +415,9 @@
    The API provides registration methods plus EQL runtime access.
 
    `runtime-fns` is a map of runtime implementations:
-     :query-fn     — (fn [eql-query])
-     :mutate-fn    — (fn [op-sym params])
+     :query-fn      — (fn [eql-query])
+     :mutate-fn     — (fn [op-sym params])
+     :get-api-key-fn — (fn [provider]) ; narrow auth capability
      :ui-state-atom — atom used to build extension UI context
 
    Any missing runtime key throws."
@@ -496,6 +497,13 @@
                          params)]
            (f op-sym params'))
          (not-init :mutate)))
+
+     ;; ── Narrow auth helper (not queryable) ─────────────
+     :get-api-key
+     (fn [provider]
+       (if-let [f (:get-api-key-fn runtime-fns)]
+         (f provider)
+         (not-init :get-api-key)))
 
      ;; ── Event bus ──────────────────────────────────────
      :events

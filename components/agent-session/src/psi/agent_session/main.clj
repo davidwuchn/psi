@@ -338,7 +338,8 @@
                   {:initial-session {:model {:provider (name (:provider ai-model))
                                              :id       (:id ai-model)
                                              :reasoning (:supports-reasoning ai-model)}
-                                     :system-prompt   system-prompt}})
+                                     :system-prompt   system-prompt}
+                   :oauth-ctx oauth-ctx})
         ext-paths (ext/discover-extension-paths [] cwd)]
     ;; Reusable bootstrap: session file, query graph, base tools, system prompt,
     ;; mutation-driven startup loading, extension tool merge.
@@ -452,7 +453,8 @@
                                               :id       (:id ai-model)
                                               :reasoning (:supports-reasoning ai-model)}
                                       :system-prompt   system-prompt}
-                    :event-queue event-queue})
+                    :event-queue event-queue
+                    :oauth-ctx oauth-ctx})
         ext-paths (ext/discover-extension-paths [] cwd)
         ;; Reusable bootstrap: session file, query graph, base tools, system prompt,
         ;; mutation-driven startup loading, extension tool merge.

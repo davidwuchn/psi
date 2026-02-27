@@ -468,7 +468,14 @@
       (is (= {:op 'psi.other/test :params {:a 1}}
              ((:mutate api) 'psi.other/test {:a 1})))
       (is (= {:op 'psi.extension/test :params {:a 1 :ext-path "/custom"}}
-             ((:mutate api) 'psi.extension/test {:a 1 :ext-path "/custom"}))))))
+             ((:mutate api) 'psi.extension/test {:a 1 :ext-path "/custom"})))))
+
+  (testing "API :get-api-key delegates to runtime get-api-key fn"
+    (let [reg         (ext/create-registry)
+          _           (ext/register-extension-in! reg "/ext/test")
+          runtime-fns {:get-api-key-fn (fn [provider] (str "key-for-" provider))}
+          api         (ext/create-extension-api reg "/ext/test" runtime-fns)]
+      (is (= "key-for-openai" ((:get-api-key api) "openai"))))))
 
 ;; ── Extension loading from file ─────────────────────────────────────────────
 

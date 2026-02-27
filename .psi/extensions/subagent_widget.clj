@@ -142,6 +142,10 @@
       (agent/set-system-prompt-in! agent-ctx sp))
     agent-ctx))
 
+(defn- resolve-subagent-api-key [model]
+  (when-let [f (some-> @state :api :get-api-key)]
+    (f (:provider model))))
+
 (defn- update-sub! [id f & args]
   (apply swap! state update-in [:agents id] f args)
   (refresh-widgets!))
@@ -168,7 +172,8 @@
     (when-not sub
       (throw (ex-info "No such subagent" {:id id})))
     (let [agent-ctx (:agent-ctx sub)
-          model    (resolve-active-model)]
+          model    (resolve-active-model)
+          api-key  (resolve-subagent-api-key model)]
       (when-not model
         (throw (ex-info "No active model available" {})))
       (update-sub! id
@@ -192,7 +197,8 @@
                       agent-ctx
                       model
                       nil
-                      {:progress-queue q})
+                      {:progress-queue q
+                       :api-key       api-key})
                      (catch Exception e
                        {:role          "assistant"
                         :stop-reason   :error
