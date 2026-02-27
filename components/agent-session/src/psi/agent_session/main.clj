@@ -421,7 +421,9 @@
               (= :extension-cmd (:type result))
               (do (try
                     (when-let [handler (:handler result)]
-                      (handler (:args result)))
+                      (let [captured (with-out-str (handler (:args result)))]
+                        (when-not (str/blank? captured)
+                          (println (str "\n" (str/trimr captured) "\n")))))
                     (catch Exception e
                       (println (str "\n[Command error: " (ex-message e) "]\n"))))
                   (recur))

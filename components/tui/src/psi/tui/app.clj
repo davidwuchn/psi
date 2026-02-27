@@ -411,14 +411,17 @@
        nil]
 
       :extension-cmd
-      (do (try
-            (when-let [handler (:handler result)]
-              (handler (:args result)))
-            (catch Exception e
-              ;; Extension errors are swallowed to TUI state
-              (timbre/warn "Extension command error:" (ex-message e))))
-          [(assoc state :input (charm/text-input-reset (:input state)))
-           nil])
+      (let [output (try
+                     (when-let [handler (:handler result)]
+                       (let [captured (with-out-str (handler (:args result)))]
+                         (when-not (str/blank? captured)
+                           (str/trimr captured))))
+                     (catch Exception e
+                       (timbre/warn "Extension command error:" (ex-message e))
+                       (str "[command error: " (ex-message e) "]")))]
+        [(cond-> (assoc state :input (charm/text-input-reset (:input state)))
+           output (update :messages conj {:role :assistant :text output}))
+         nil])
 
       ;; Login start — show URL. For callback-server providers, the
       ;; dispatch-fn in main.clj kicks off async completion. For manual-code

@@ -406,6 +406,76 @@ clojure-lsp"}]})
       ;; Cursor renders on first char, so check for rest of placeholder
       (is (str/includes? out "ype a message")))))
 
+;;;; Extension command output capture
+
+(deftest extension-cmd-println-captured-as-message-test
+  (testing "extension command println output appears as assistant message"
+    (let [dispatch-fn (fn [text]
+                        (when (= text "/hello")
+                          {:type    :extension-cmd
+                           :name    "hello"
+                           :args    ""
+                           :handler (fn [_args] (println "Hello from extension!"))}))
+          update-fn   (app/make-update (stub-agent-fn ""))
+          state       (init-state "test-model" {:dispatch-fn dispatch-fn})
+          typed       (type-text update-fn state "/hello")
+          [s1 _]      (update-fn typed (msg/key-press :enter))]
+      (is (= :idle (:phase s1)))
+      (is (= 1 (count (:messages s1))))
+      (is (= :assistant (:role (first (:messages s1)))))
+      (is (= "Hello from extension!" (:text (first (:messages s1))))))))
+
+(deftest extension-cmd-no-output-no-message-test
+  (testing "extension command with no println adds no message"
+    (let [called      (atom false)
+          dispatch-fn (fn [text]
+                        (when (= text "/silent")
+                          {:type    :extension-cmd
+                           :name    "silent"
+                           :args    ""
+                           :handler (fn [_args] (reset! called true))}))
+          update-fn   (app/make-update (stub-agent-fn ""))
+          state       (init-state "test-model" {:dispatch-fn dispatch-fn})
+          typed       (type-text update-fn state "/silent")
+          [s1 _]      (update-fn typed (msg/key-press :enter))]
+      (is @called)
+      (is (= :idle (:phase s1)))
+      (is (empty? (:messages s1))))))
+
+(deftest extension-cmd-error-shown-as-message-test
+  (testing "extension command exception appears as error message"
+    (let [dispatch-fn (fn [text]
+                        (when (= text "/boom")
+                          {:type    :extension-cmd
+                           :name    "boom"
+                           :args    ""
+                           :handler (fn [_args] (throw (ex-info "kaboom" {})))}))
+          update-fn   (app/make-update (stub-agent-fn ""))
+          state       (init-state "test-model" {:dispatch-fn dispatch-fn})
+          typed       (type-text update-fn state "/boom")
+          [s1 _]      (update-fn typed (msg/key-press :enter))]
+      (is (= :idle (:phase s1)))
+      (is (= 1 (count (:messages s1))))
+      (is (str/includes? (:text (first (:messages s1))) "kaboom")))))
+
+(deftest extension-cmd-multiline-output-test
+  (testing "extension command with multiple printlns captured as single message"
+    (let [dispatch-fn (fn [text]
+                        (when (= text "/multi")
+                          {:type    :extension-cmd
+                           :name    "multi"
+                           :args    ""
+                           :handler (fn [_args]
+                                      (println "Line 1")
+                                      (println "Line 2"))}))
+          update-fn   (app/make-update (stub-agent-fn ""))
+          state       (init-state "test-model" {:dispatch-fn dispatch-fn})
+          typed       (type-text update-fn state "/multi")
+          [s1 _]      (update-fn typed (msg/key-press :enter))]
+      (is (= 1 (count (:messages s1))))
+      (is (str/includes? (:text (first (:messages s1))) "Line 1"))
+      (is (str/includes? (:text (first (:messages s1))) "Line 2")))))
+
 ;;;; JLine integration smoke test
 
 (deftest jline-terminal-keymap-test
