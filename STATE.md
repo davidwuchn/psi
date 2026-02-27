@@ -26,7 +26,7 @@ Current truth about the Psi system.
 - ✓ Git history resolvers
 - ✓ Introspection (engine queries itself)
 - ✓ Coding-agent session orchestration (agent-session component)
-- ✓ Built-in tools (read, bash, edit, write)
+- ✓ Built-in tools (read, bash, edit, write, eql_query)
 - ✓ Executor (bridges ai streaming → agent-core loop protocol)
 - ✓ Turn statechart (per-turn streaming state, EQL queryable)
 - ✓ Runnable entry point (`clojure -M:run`)
@@ -53,6 +53,15 @@ clojure -M:run --tui --nrepl             # TUI + nREPL for live introspection
 ```
 
 In-session commands: `/status`, `/history`, `/new`, `/help`, `/quit`, `/exit`, `/skills`, `/prompts`, `/skill:<name>`, plus extension commands
+
+Built-in tools: `read`, `bash`, `edit`, `write`, `eql_query`
+
+The `eql_query` tool enables in-session EQL introspection without nREPL:
+```
+eql_query(query: "[:psi.agent-session/phase :psi.agent-session/session-id]")
+eql_query(query: "[{:psi.agent-session/stats [:total-messages :context-tokens]}]")
+eql_query(query: "[:psi.tool/names :psi.skill/names]")
+```
 
 nREPL introspection (from connected REPL):
 ```clojure
@@ -117,7 +126,7 @@ Caught by `jline-terminal-keymap-test` smoke test.
 
 ## Test Status
 
-290 tests, 1243 assertions, 0 failures. 0 clj-kondo errors.
+382 tests, 1593 assertions, 0 failures. 0 clj-kondo errors.
 
 ## Specs
 
