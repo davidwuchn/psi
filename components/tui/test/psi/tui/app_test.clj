@@ -16,12 +16,25 @@
 
 ;;;; Helpers
 
+(defn- default-dispatch-fn
+  "Minimal dispatch-fn for tests: handles /quit, /resume, /new.
+   Returns result maps matching the commands.clj contract."
+  [text]
+  (case text
+    ("/quit" "/exit")  {:type :quit}
+    "/resume"          {:type :resume}
+    "/new"             {:type :new-session :message "[New session started]"}
+    "/status"          {:type :text :message "test status"}
+    "/help"            {:type :text :message "test help"}
+    nil))
+
 (defn- init-state
   "Create a fresh state from make-init."
   ([] (init-state "test-model" {}))
   ([model-name] (init-state model-name {}))
   ([model-name opts]
-   (let [init-fn (app/make-init model-name nil nil opts)
+   (let [init-fn (app/make-init model-name nil nil
+                                (merge {:dispatch-fn default-dispatch-fn} opts))
          [state _cmd] (init-fn)]
      state)))
 

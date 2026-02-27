@@ -37,6 +37,7 @@
   (:require
    [clojure.string :as str]
    [taoensso.timbre :as timbre]
+   [psi.agent-session.commands :as commands]
    [psi.agent-session.core :as session]
    [psi.agent-session.executor :as executor]
    [psi.agent-session.extensions :as ext]
@@ -170,95 +171,8 @@
   (println "  /help for commands, /quit to exit")
   (println))
 
-(defn- print-status [ctx]
-  (let [d (session/query-in ctx
-                            [:psi.agent-session/phase
-                             :psi.agent-session/session-id
-                             :psi.agent-session/model
-                             :psi.agent-session/thinking-level
-                             :psi.agent-session/extension-summary
-                             :psi.agent-session/session-entry-count
-                             :psi.agent-session/context-tokens
-                             :psi.agent-session/context-window
-                             :psi.agent-session/context-fraction])]
-    (println "\n── Session status ─────────────────────")
-    (println (str "  Phase   : " (:psi.agent-session/phase d)))
-    (println (str "  ID      : " (:psi.agent-session/session-id d)))
-    (println (str "  Model   : " (get-in d [:psi.agent-session/model :id] "none")))
-    (println (str "  Entries : " (:psi.agent-session/session-entry-count d)))
-    (when-let [frac (:psi.agent-session/context-fraction d)]
-      (println (str "  Context : " (int (* 100 frac)) "%")))
-    (println "───────────────────────────────────────\n")))
-
-(defn- print-history [ctx]
-  (let [msgs (:messages (agent/get-data-in (:agent-ctx ctx)))]
-    (println "\n── Message history ────────────────────")
-    (if (empty? msgs)
-      (println "  (empty)")
-      (doseq [msg msgs]
-        (let [role  (:role msg)
-              text  (or (some #(when (= :text (:type %)) (:text %)) (:content msg))
-                        (str "[" (:role msg) "]"))]
-          (println (str "  [" role "] " (subs text 0 (min 120 (count text))))))))
-    (println "───────────────────────────────────────\n")))
-
-(defn- print-help [ctx]
-  (println "\n── Commands ───────────────────────────")
-  (println "  /quit    — exit the session")
-  (println "  /status  — show session diagnostics")
-  (println "  /history — show message history")
-  (println "  /prompts — list available prompt templates")
-  (println "  /skills  — list available skills")
-  (println "  /new     — start a fresh session")
-  (println "  /login [provider] — login with an OAuth provider")
-  (println "  /logout  — logout from an OAuth provider")
-  (println "  /help    — show this help")
-  (println "  /skill:name — invoke a skill (loads full content)")
-  (let [templates (:prompt-templates (session/get-session-data-in ctx))]
-    (when (seq templates)
-      (println "  ── Prompt Templates ─────────────────")
-      (doseq [t templates]
-        (println (str "  /" (:name t) " — " (:description t))))))
-  (let [loaded-skills (:skills (session/get-session-data-in ctx))]
-    (when (seq loaded-skills)
-      (println "  ── Skills ───────────────────────────")
-      (doseq [s loaded-skills]
-        (println (str "  /skill:" (:name s)
-                      (when (:disable-model-invocation s) " [hidden]")
-                      " — " (:description s))))))
-  (let [ext-cmds (ext/all-commands-in (:extension-registry ctx))]
-    (when (seq ext-cmds)
-      (println "  ── Extension Commands ───────────────")
-      (doseq [c ext-cmds]
-        (println (str "  /" (:name c)
-                      (when (:description c) (str " — " (:description c))))))))
-  (println "  (anything else is sent to the agent)")
-  (println "───────────────────────────────────────\n"))
-
-(defn- print-prompts [ctx]
-  (let [templates (:prompt-templates (session/get-session-data-in ctx))]
-    (println "\n── Prompt Templates ───────────────────")
-    (if (empty? templates)
-      (println "  (none discovered)")
-      (doseq [t templates]
-        (let [placeholders (if (pt/has-placeholders? (:content t))
-                             (str " [$" (pt/placeholder-count (:content t)) " args]")
-                             "")]
-          (println (str "  /" (:name t) placeholders " — " (:description t)
-                        " [" (name (:source t)) "]")))))
-    (println "───────────────────────────────────────\n")))
-
-(defn- print-skills [ctx]
-  (let [loaded-skills (:skills (session/get-session-data-in ctx))]
-    (println "\n── Skills ─────────────────────────────")
-    (if (empty? loaded-skills)
-      (println "  (none discovered)")
-      (doseq [s loaded-skills]
-        (println (str "  /skill:" (:name s)
-                      (when (:disable-model-invocation s) " [hidden]")
-                      " — " (:description s)
-                      " [" (name (:source s)) "]"))))
-    (println "───────────────────────────────────────\n")))
+;; print-status, print-history, print-help, print-prompts, print-skills
+;; moved to psi.agent-session.commands as format-* functions
 
 ;; ============================================================
 ;; Response printing — streams to stdout as tokens arrive
@@ -279,7 +193,7 @@
 
 (defn- message->display-text
   "Extract display text from an agent-core message map.
-   Includes :text blocks and :error blocks."  
+   Includes :text blocks and :error blocks."
   [msg]
   (let [content (:content msg)]
     (cond
@@ -300,7 +214,7 @@
 
 (defn- agent-messages->tui-messages
   "Convert agent-core history to TUI display messages.
-   Keeps user/assistant roles, skips toolResult messages."  
+   Keeps user/assistant roles, skips toolResult messages."
   [messages]
   (->> messages
        (keep (fn [msg]
@@ -315,51 +229,7 @@
                             text)}))))
        vec))
 
-;; ============================================================
-;; OAuth login provider selection
-;; ============================================================
-
-(def ^:private provider-env-vars
-  {:anthropic "ANTHROPIC_API_KEY"
-   :openai    "OPENAI_API_KEY"})
-
-(defn select-login-provider
-  "Select OAuth provider for /login.
-
-   Inputs:
-     providers         — seq of provider maps with :id
-     active-provider   — provider keyword for current model (e.g. :openai)
-     requested-provider — optional string from `/login <provider>`
-
-   Returns one of:
-     {:provider provider-map}
-     {:error :message-string}
-
-   Behavior:
-   - If requested-provider is supplied, it must match a registered OAuth provider.
-   - Otherwise, choose the provider matching active-provider.
-   - If no match exists, return a helpful error (no silent fallback to another provider)."
-  [providers active-provider requested-provider]
-  (let [by-id        (into {} (map (juxt :id identity) providers))
-        available    (->> (keys by-id) (map name) sort)
-        requested-id (some-> requested-provider str/trim not-empty keyword)
-        active-id    (keyword active-provider)]
-    (cond
-      requested-id
-      (if-let [provider (get by-id requested-id)]
-        {:provider provider}
-        {:error (str "Unknown OAuth provider: " (name requested-id)
-                     (when (seq available)
-                       (str ". Available: " (str/join ", " available))))})
-
-      :else
-      (if-let [provider (get by-id active-id)]
-        {:provider provider}
-        {:error (str "OAuth login is not available for model provider " (name active-id) ". "
-                     (when-let [env-var (get provider-env-vars active-id)]
-                       (str "Set " env-var " for this model. "))
-                     (when (seq available)
-                       (str "Available OAuth providers: " (str/join ", " available) ".")))}))))
+;; select-login-provider moved to psi.agent-session.commands
 
 ;; ============================================================
 ;; Prompt template expansion
@@ -494,111 +364,71 @@
     (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model
                            :oauth-ctx oauth-ctx})
     (print-banner ai-model templates skills ctx)
-    (loop []
-      (print "刀: ")
-      (flush)
-      (when-let [line (try (read-line) (catch Exception _ nil))]
-        (let [trimmed (str/trim line)]
-          (cond
-            (or (= trimmed "/quit") (= trimmed "/exit"))
-            (println "\nψ: Goodbye.\n")
+    (let [cmd-opts {:oauth-ctx oauth-ctx :ai-model ai-model}]
+      (loop []
+        (print "刀: ")
+        (flush)
+        (when-let [line (try (read-line) (catch Exception _ nil))]
+          (let [trimmed (str/trim line)
+                result  (when-not (str/blank? trimmed)
+                          (commands/dispatch ctx trimmed cmd-opts))]
+            (cond
+              (nil? result)
+              (if (str/blank? trimmed)
+                (recur)
+                (do (try
+                      (run-prompt! ctx ai-ctx ai-model oauth-ctx trimmed)
+                      (catch Exception e
+                        (println (str "\n[Error: " (ex-message e) "]\n"))))
+                    (recur)))
 
-            (= trimmed "/status")
-            (do (print-status ctx) (recur))
+              (= :quit (:type result))
+              (println "\nψ: Goodbye.\n")
 
-            (= trimmed "/history")
-            (do (print-history ctx) (recur))
+              (= :resume (:type result))
+              (do (println "\n  /resume is only available in TUI mode (--tui).\n")
+                  (recur))
 
-            (= trimmed "/prompts")
-            (do (print-prompts ctx) (recur))
+              (#{:text :new-session :logout} (:type result))
+              (do (println (str "\n" (:message result) "\n"))
+                  (recur))
 
-            (= trimmed "/skills")
-            (do (print-skills ctx) (recur))
+              (= :login-start (:type result))
+              (do (println "\n── OAuth Login ────────────────────────")
+                  (let [{:keys [provider url login-state uses-callback-server]} result]
+                    (println (str "  Open: " url "\n"))
+                    (if uses-callback-server
+                      (do (println "  Waiting for browser callback…")
+                          (try
+                            (oauth/complete-login! oauth-ctx (:id provider) nil login-state)
+                            (println (str "\n  ✓ Logged in to " (:name provider) "\n"))
+                            (catch Exception e
+                              (println (str "\n  ✗ Login failed: " (ex-message e) "\n")))))
+                      (do (print "  Paste authorization code: ")
+                          (flush)
+                          (when-let [code (try (read-line) (catch Exception _ nil))]
+                            (try
+                              (oauth/complete-login! oauth-ctx (:id provider) (str/trim code) login-state)
+                              (println (str "\n  ✓ Logged in to " (:name provider) "\n"))
+                              (catch Exception e
+                                (println (str "\n  ✗ Login failed: " (ex-message e) "\n"))))))))
+                  (recur))
 
-            (= trimmed "/new")
-            (do (session/new-session-in! ctx)
-                (println "\n[New session started]\n")
-                (recur))
+              (= :login-error (:type result))
+              (do (println (str "\n  " (:message result) "\n"))
+                  (recur))
 
-            (or (= trimmed "/help") (= trimmed "/?"))
-            (do (print-help ctx) (recur))
+              (= :extension-cmd (:type result))
+              (do (try
+                    (when-let [handler (:handler result)]
+                      (handler (:args result)))
+                    (catch Exception e
+                      (println (str "\n[Command error: " (ex-message e) "]\n"))))
+                  (recur))
 
-            ;; /login — OAuth login flow
-            (= trimmed "/login")
-            (do (println "\n── OAuth Login ────────────────────────")
-                (let [providers (oauth/available-providers oauth-ctx)]
-                  (doseq [[i p] (map-indexed vector providers)]
-                    (let [logged-in? (some #(= (:id p) (:id %))
-                                           (oauth/logged-in-providers oauth-ctx))]
-                      (println (str "  " (inc i) ". " (:name p)
-                                    (when logged-in? " ✓ logged in")))))
-                  (print "  Select provider (number): ")
-                  (flush)
-                  (when-let [choice (try (read-line) (catch Exception _ nil))]
-                    (let [idx (try (dec (Integer/parseInt (str/trim choice)))
-                                   (catch Exception _ -1))]
-                      (if-let [provider (nth providers idx nil)]
-                        (try
-                          (oauth/login! oauth-ctx (:id provider)
-                                        {:on-auth     (fn [{:keys [url]}]
-                                                        (println (str "\n  Open: " url "\n")))
-                                         :on-prompt   (fn [{:keys [message]}]
-                                                        (println (str "  " message))
-                                                        (print "  > ")
-                                                        (flush)
-                                                        (or (read-line) ""))
-                                         :on-progress (fn [msg] (println (str "  " msg)))})
-                          (println (str "\n  ✓ Logged in to " (:name provider) "\n"))
-                          (catch Exception e
-                            (println (str "\n  ✗ Login failed: " (ex-message e) "\n"))))
-                        (println "\n  Invalid selection.\n")))))
-                (recur))
-
-            ;; /logout — OAuth logout
-            (= trimmed "/logout")
-            (do (let [logged-in (oauth/logged-in-providers oauth-ctx)]
-                  (if (empty? logged-in)
-                    (println "\n  No OAuth providers logged in. Use /login first.\n")
-                    (do
-                      (println "\n── OAuth Logout ───────────────────────")
-                      (doseq [[i p] (map-indexed vector logged-in)]
-                        (println (str "  " (inc i) ". " (:name p))))
-                      (print "  Select provider (number): ")
-                      (flush)
-                      (when-let [choice (try (read-line) (catch Exception _ nil))]
-                        (let [idx (try (dec (Integer/parseInt (str/trim choice)))
-                                       (catch Exception _ -1))]
-                          (if-let [provider (nth logged-in idx nil)]
-                            (do (oauth/logout! oauth-ctx (:id provider))
-                                (println (str "\n  ✓ Logged out of " (:name provider) "\n")))
-                            (println "\n  Invalid selection.\n")))))))
-                (recur))
-
-            ;; Extension command: /name args
-            (and (str/starts-with? trimmed "/")
-                 (let [cmd-name (first (str/split (subs trimmed 1) #"\s" 2))]
-                   (ext/get-command-in (:extension-registry ctx) cmd-name)))
-            (let [parts    (str/split (subs trimmed 1) #"\s" 2)
-                  cmd-name (first parts)
-                  args-str (or (second parts) "")
-                  cmd      (ext/get-command-in (:extension-registry ctx) cmd-name)]
-              (try
-                (when-let [handler (:handler cmd)]
-                  (handler args-str))
-                (catch Exception e
-                  (println (str "\n[Command error: " (ex-message e) "]\n"))))
-              (recur))
-
-            (str/blank? trimmed)
-            (recur)
-
-            :else
-            (do
-              (try
-                (run-prompt! ctx ai-ctx ai-model oauth-ctx trimmed)
-                (catch Exception e
-                  (println (str "\n[Error: " (ex-message e) "]\n"))))
-              (recur))))))))
+              :else
+              (do (println (str "\n" result "\n"))
+                  (recur)))))))))
 
 ;; ============================================================
 ;; TUI session (charm.clj Elm Architecture)
@@ -669,8 +499,32 @@
                          [{:role :assistant
                            :text (str "✗ Resume failed: " (ex-message e))}])))
 
-        ;; run-agent-fn! — called by the TUI update fn on submit.
-        ;; Two-step login: /login shows URL → next input is the auth code.
+        cmd-opts  {:oauth-ctx oauth-ctx :ai-model ai-model}
+
+        ;; dispatch-fn — called synchronously by the TUI on submit.
+        ;; Returns a command result map, or nil if not a command.
+        ;; When a login is pending (waiting for auth code), returns nil
+        ;; so the input falls through to run-agent-fn! which handles it.
+        dispatch-fn (fn [text]
+                      (if (:pending-login @session-state)
+                        nil  ;; fall through to run-agent-fn! for login code
+                        (let [result (commands/dispatch ctx text cmd-opts)]
+                          (when (= :login-start (:type result))
+                            (if (:uses-callback-server result)
+                              ;; Callback-server: start async completion in background.
+                              ;; TUI shows URL immediately; future will put completion
+                              ;; message on the session when callback arrives.
+                              ;; (The TUI can't receive this — it's fire-and-forget.)
+                              nil
+                              ;; Manual-code: store pending state so next input is the code.
+                              (swap! session-state assoc :pending-login
+                                     {:provider-id   (get-in result [:provider :id])
+                                      :provider-name (get-in result [:provider :name])
+                                      :login-state   (:login-state result)})))
+                          result)))
+
+        ;; run-agent-fn! — called by the TUI for non-command input.
+        ;; Handles pending-login step 2 and agent execution.
         run-agent-fn! (fn [text ^java.util.concurrent.LinkedBlockingQueue queue]
                         (let [trimmed (str/trim text)
                               pending (:pending-login @session-state)]
@@ -686,59 +540,6 @@
                                 (catch Exception e
                                   (swap! session-state dissoc :pending-login)
                                   (reply! queue (str "✗ Login failed: " (ex-message e))))))
-
-                            ;; Step 1: /login [provider] — generate URL, store state, wait for code
-                            (or (= trimmed "/login")
-                                (str/starts-with? trimmed "/login "))
-                            (try
-                              (let [provider-arg (second (str/split trimmed #"\s+" 2))
-                                    providers    (oauth/available-providers oauth-ctx)
-                                    {:keys [provider error]}
-                                    (select-login-provider providers (:provider ai-model) provider-arg)]
-                                (if error
-                                  (reply! queue (str "✗ " error))
-                                  (let [{:keys [url login-state]} (oauth/begin-login! oauth-ctx (:id provider))]
-                                    (if (and (:uses-callback-server provider)
-                                             (:callback-server login-state))
-                                      (do
-                                        ;; Callback-server providers (e.g. OpenAI):
-                                        ;; emit progress text, then auto-complete when callback arrives.
-                                        (swap! session-state dissoc :pending-login)
-                                        (.put queue {:type       :agent-event
-                                                     :event-kind :text-delta
-                                                     :text       (str "🔑 Login to " (:name provider)
-                                                                      "\n\nOpen this URL in your browser:\n" url
-                                                                      "\n\nWaiting for browser callback…")})
-                                        (future
-                                          (try
-                                            (oauth/complete-login! oauth-ctx (:id provider) nil login-state)
-                                            (reply! queue (str "✓ Logged in to " (:name provider)))
-                                            (catch Exception e
-                                              (reply! queue (str "✗ Login failed: " (ex-message e)))))))
-                                      ;; Manual-code providers (or callback server unavailable):
-                                      ;; store state and wait for pasted code on next input.
-                                      (do
-                                        (swap! session-state assoc :pending-login
-                                               {:provider-id   (:id provider)
-                                                :provider-name (:name provider)
-                                                :login-state   login-state})
-                                        (reply! queue (str "🔑 Login to " (:name provider)
-                                                           "\n\nOpen this URL in your browser:\n" url
-                                                           (if (:uses-callback-server provider)
-                                                             "\n\n(Local callback server unavailable; paste full redirect URL or code below ↓)"
-                                                             "\n\nPaste the authorization code below ↓"))))))))
-                              (catch Exception e
-                                (reply! queue (str "✗ Login failed: " (ex-message e)))))
-
-                            ;; /logout — remove OAuth credentials
-                            (= trimmed "/logout")
-                            (let [logged-in (oauth/logged-in-providers oauth-ctx)]
-                              (if (empty? logged-in)
-                                (reply! queue "No OAuth providers logged in. Use /login first.")
-                                (do (doseq [p logged-in]
-                                      (oauth/logout! oauth-ctx (:id p)))
-                                    (reply! queue (str "✓ Logged out of: "
-                                                       (str/join ", " (map :name logged-in)))))))
 
                             ;; Everything else — send to agent
                             :else
@@ -763,6 +564,7 @@
     (tui-app/start! (:name ai-model) run-agent-fn!
                     {:query-fn             (fn [q] (session/query-in ctx q))
                      :ui-state-atom        (:ui-state-atom ctx)
+                     :dispatch-fn          dispatch-fn
                      :cwd                  cwd
                      :current-session-file (:session-file (session/get-session-data-in ctx))
                      :resume-fn!           resume-fn!})))

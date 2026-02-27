@@ -28,6 +28,7 @@
    [charm.terminal :as charm-term]
    [cheshire.core :as json]
    [clojure.string :as str]
+   [taoensso.timbre :as timbre]
    [psi.agent-session.persistence :as persist]
    [psi.tui.ansi :as ansi]
    [psi.tui.extension-ui :as ext-ui]
@@ -325,7 +326,8 @@
    `opts` map:
      :cwd                  — working directory string (for /resume)
      :current-session-file — current session file path (highlighted in selector)
-     :resume-fn!           — (fn [session-path]) called when user selects a session"
+     :resume-fn!           — (fn [session-path]) called when user selects a session
+     :dispatch-fn          — (fn [text]) → command result map or nil; central command dispatch"
   ([model-name] (make-init model-name nil))
   ([model-name query-fn] (make-init model-name query-fn nil))
   ([model-name query-fn ui-state-atom] (make-init model-name query-fn ui-state-atom {}))
@@ -349,6 +351,7 @@
          :extension-summary     (or (:psi.agent-session/extension-summary introspected) {})
          :query-fn              query-fn
          :ui-state-atom         ui-state-atom
+         :dispatch-fn           (:dispatch-fn opts)
          :cwd                   (or (:cwd opts) (System/getProperty "user.dir"))
          :current-session-file  (or (:current-session-file opts)
                                     (:psi.agent-session/session-file introspected))
@@ -375,13 +378,68 @@
             :input            (charm/text-input-reset (:input state)))
      nil]))
 
-(defn- handle-command
-  "Process a /command, returning [new-state cmd] or nil if unrecognised."
-  [state text]
-  (case text
-    ("/quit" "/exit")   [state charm/quit-cmd]
-    ("/resume")         (open-session-selector state)
-    nil))
+(defn- handle-dispatch-result
+  "Translate a command dispatch result map into [new-state cmd].
+   Returns nil if the result is nil (not a command)."
+  [state result]
+  (when result
+    (case (:type result)
+      :quit
+      [state charm/quit-cmd]
+
+      :resume
+      (open-session-selector state)
+
+      :new-session
+      [(-> state
+           (assoc :messages []
+                  :error    nil
+                  :input    (charm/text-input-reset (:input state)))
+           (update :messages conj {:role :assistant :text (:message result)}))
+       nil]
+
+      :text
+      [(-> state
+           (assoc :input (charm/text-input-reset (:input state)))
+           (update :messages conj {:role :assistant :text (:message result)}))
+       nil]
+
+      (:login-error :logout)
+      [(-> state
+           (assoc :input (charm/text-input-reset (:input state)))
+           (update :messages conj {:role :assistant :text (:message result)}))
+       nil]
+
+      :extension-cmd
+      (do (try
+            (when-let [handler (:handler result)]
+              (handler (:args result)))
+            (catch Exception e
+              ;; Extension errors are swallowed to TUI state
+              (timbre/warn "Extension command error:" (ex-message e))))
+          [(assoc state :input (charm/text-input-reset (:input state)))
+           nil])
+
+      ;; Login start — show URL. For callback-server providers, the
+      ;; dispatch-fn in main.clj kicks off async completion. For manual-code
+      ;; providers, the next input will be treated as the auth code.
+      :login-start
+      [(-> state
+           (assoc :input (charm/text-input-reset (:input state)))
+           (update :messages conj
+                   {:role :assistant
+                    :text (str "🔑 Login to " (get-in result [:provider :name])
+                               "\n\nOpen this URL in your browser:\n" (:url result)
+                               (if (:uses-callback-server result)
+                                 "\n\nWaiting for browser callback…"
+                                 "\n\nPaste the authorization code below ↓"))}))
+       nil]
+
+      ;; Fallback — treat as text
+      [(-> state
+           (assoc :input (charm/text-input-reset (:input state)))
+           (update :messages conj {:role :assistant :text (str result)}))
+       nil])))
 
 (defn- handle-selector-key
   "Handle a keypress while the session selector is open.
@@ -467,22 +525,22 @@
 
 (defn- submit-input
   "Extract text from input, start agent, return [new-state cmd].
-   Built-in commands (/quit, /exit) are handled directly.
-   All other /name input is forwarded to the agent where prompt
-   template expansion and extension command dispatch occur."
+   Commands are dispatched via the dispatch-fn stored in state.
+   Non-command input is forwarded to the agent."
   [state run-agent-fn!]
   (let [text (str/trim (charm/text-input-value (:input state)))]
     (cond
       (str/blank? text)
       [state nil]
 
-      ;; Built-in TUI commands
-      (some? (handle-command state text))
-      (handle-command state text)
-
-      ;; Everything else — including /template-name — goes to the agent
+      ;; Dispatch commands via central dispatcher
       :else
-      (submit-to-agent state run-agent-fn! text))))
+      (let [dispatch-fn (:dispatch-fn state)
+            result      (when dispatch-fn (dispatch-fn text))]
+        (if result
+          (handle-dispatch-result state result)
+          ;; Not a command — send to agent
+          (submit-to-agent state run-agent-fn! text))))))
 
 (defn- handle-agent-event
   "Process an intermediate progress event from the executor."
