@@ -15,6 +15,26 @@ Running `mcp-tasks add/update` from the wrong directory can create/use
 Always execute task mutations with an explicit project working directory
 (shell `:dir`) and verify `pwd` before any write operation.
 
+### λ Extension Workflow Futures Must Keep Invoke IDs Free of Runtime Keys
+
+Fulcrologic statecharts `:future` invocation runtime tracks active futures in
+an internal map keyed by `child-session-id = <session-id>.<invokeid>`.
+When the parent state exits, `stop-invocation!` looks up that key and calls
+`future-cancel` on the stored value.
+
+If workflow data injects keys that collide with invoke metadata (e.g. `:control`
+or other invoke-runtime keys), the runtime can store/read a non-Future value
+for the invoke slot and fail with:
+
+`class clojure.lang.Keyword cannot be cast to class java.util.concurrent.Future`
+
+Observed symptom in `mcp-tasks-run`: workflow entered `:running`, then failed
+immediately on `done.invoke.runner` with the Future cast exception before any
+step execution.
+
+Rule: keep extension runtime control values namespaced and avoid generic keys
+that may overlap invocation internals.
+
 ### λ Standard Tool `:cwd` Support Prevents Extension Tool Forking
 
 Worktree-aware orchestration needs tools to run relative to a worktree.

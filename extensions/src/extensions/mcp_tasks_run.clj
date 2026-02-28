@@ -755,11 +755,13 @@
       error-message (assoc :error-message error-message))))
 
 (defn- run-loop-job
-  [{:keys [run-id task-id project-dir worktree-dir run-control max-steps]}]
+  [{:keys [run-id task-id project-dir worktree-dir max-steps]}]
   (let [started-ms (now-ms)
         max-steps* (long (or max-steps max-steps-default))
-        ctrl       (if (instance? clojure.lang.IAtom run-control)
-                     run-control
+        ctrl0      (or (control-for run-id)
+                       (ensure-control! run-id))
+        ctrl       (if (instance? clojure.lang.IAtom ctrl0)
+                     ctrl0
                      (atom {:pause? false :cancel? false :merge? false}))]
     (try
       (let [{wt :worktree-dir wt-error :error}
@@ -1071,7 +1073,8 @@
 (defn- start-script
   [_ data]
   (let [run-id  (:run/id data)
-        control (:run/control data)]
+        control (or (control-for run-id)
+                    (ensure-control! run-id))]
     (when (instance? clojure.lang.IAtom control)
       (reset! control {:pause? false :cancel? false :merge? false}))
     (set-live-progress!
@@ -1098,7 +1101,6 @@
    :task-id      (:run/task-id data)
    :project-dir  (:run/project-dir data)
    :worktree-dir (:run/worktree-dir data)
-   :run-control  (:run/control data)
    :max-steps    (:run/max-steps data)})
 
 (defn- ev-status [data]
@@ -1147,9 +1149,10 @@
 
 (defn- resume-script
   [_ data]
-  (let [control (:run/control data)
-        merge?  (boolean (get-in data [:_event :data :merge?]))
-        run-id  (:run/id data)]
+  (let [run-id  (:run/id data)
+        control (or (control-for run-id)
+                    (ensure-control! run-id))
+        merge?  (boolean (get-in data [:_event :data :merge?]))]
     (when (instance? clojure.lang.IAtom control)
       (swap! control assoc :pause? false :cancel? false :merge? merge?))
     (set-live-progress!
@@ -1164,8 +1167,9 @@
 
 (defn- retry-script
   [_ data]
-  (let [control (:run/control data)
-        run-id  (:run/id data)]
+  (let [run-id  (:run/id data)
+        control (or (control-for run-id)
+                    (ensure-control! run-id))]
     (when (instance? clojure.lang.IAtom control)
       (swap! control assoc :pause? false :cancel? false :merge? false))
     (set-live-progress!
@@ -1254,7 +1258,6 @@
                                           :run/last-output    nil
                                           :run/steps-completed 0
                                           :run/history        []
-                                          :run/control        (ensure-control! run-id)
                                           :run/max-steps      (long (or (:max-steps input)
                                                                         max-steps-default))}))
                     :public-data-fn  (fn [data]
