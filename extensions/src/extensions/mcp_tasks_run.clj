@@ -581,13 +581,13 @@
 
 (defn- build-step-request
   [{:keys [step-name prompt-body task-id entity-type
-           project-dir worktree-dir task children state]}]
+           project-dir worktree-dir task children derived-state]}]
   (let [prompt* (interpolate-arguments prompt-body task-id)]
     (str
      "You are executing ONE mcp-tasks workflow step as a sub-agent.\n\n"
      "Step: " step-name "\n"
      "Entity: " (name entity-type) " #" task-id "\n"
-     "Current derived state: " (name state) "\n"
+     "Current derived state: " (name derived-state) "\n"
      "Project root: " project-dir "\n"
      "Worktree dir: " worktree-dir "\n\n"
 
@@ -625,7 +625,7 @@
 
 (defn- run-step-subagent!
   [{:keys [run-id step-name prompt-body task-id entity-type
-           project-dir worktree-dir task children state]}]
+           project-dir worktree-dir task children derived-state]}]
   (let [started (now-ms)
         model   (resolve-active-model)
         api-key (when-let [f (some-> @state :api :get-api-key)]
@@ -638,14 +638,14 @@
                                      :worktree-dir worktree-dir
                                      :task task
                                      :children children
-                                     :state state})
+                                     :derived-state derived-state})
         user-msg {:role      "user"
                   :content   [{:type :text :text req}]
                   :timestamp (java.time.Instant/now)}]
     (set-live-progress!
      run-id
      {:status  :running
-      :state   state
+      :state   derived-state
       :step    step-name
       :message (str "Executing step " step-name)})
     (try
@@ -663,7 +663,7 @@
         (set-live-progress!
          run-id
          {:status  (if ok? :running :error)
-          :state   state
+          :state   derived-state
           :step    step-name
           :message (task-preview (or (some-> text str/split-lines last) "") 100)})
         {:ok?           ok?
@@ -674,7 +674,7 @@
         (set-live-progress!
          run-id
          {:status  :error
-          :state   state
+          :state   derived-state
           :step    step-name
           :message (str "Error: " (ex-message e))})
         {:ok?           false
@@ -889,7 +889,7 @@
                                              :worktree-dir wt
                                              :task task
                                              :children children
-                                             :state step-state})
+                                             :derived-state step-state})
                               step-elapsed (- (now-ms) step-start)
                               base-entry   {:state      step-state
                                             :step       prompt-name
