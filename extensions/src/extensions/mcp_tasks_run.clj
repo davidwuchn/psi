@@ -755,7 +755,7 @@
       error-message (assoc :error-message error-message))))
 
 (defn- run-loop-job
-  [{:keys [run-id task-id project-dir worktree-dir control max-steps]}]
+  [{:keys [run-id task-id project-dir worktree-dir run-control max-steps]}]
   (let [started-ms (now-ms)
         max-steps* (long (or max-steps max-steps-default))]
     (try
@@ -791,7 +791,7 @@
                            :started-ms    started-ms
                            :error-message (str "Reached max steps (" max-steps* ")")})
 
-              (:cancel? @control)
+              (:cancel? @run-control)
               (run-result {:status        :cancelled
                            :run-id        run-id
                            :task-id       task-id
@@ -803,7 +803,7 @@
                            :started-ms    started-ms
                            :final-state   :cancelled})
 
-              (:pause? @control)
+              (:pause? @run-control)
               (run-result {:status        :paused
                            :run-id        run-id
                            :task-id       task-id
@@ -830,7 +830,7 @@
                                :error-message err})
 
                   (let [{:keys [task children entity-type state completed-count]} derived
-                        merge?     (:merge? @control)
+                        merge?     (:merge? @run-control)
                         step-state (if (and (= state :wait-pr-merge) merge?)
                                      :merging-pr
                                      state)]
@@ -905,7 +905,7 @@
 
                             (do
                               (when (= step-state :merging-pr)
-                                (swap! control assoc :merge? false))
+                                (swap! run-control assoc :merge? false))
                               (let [derived2 (derive-current! project-dir wt task-id)]
                                 (if-let [err2 (:error derived2)]
                                   (let [history' (conj history (assoc base-entry :ok? true))]
@@ -1091,12 +1091,12 @@
 
 (defn- invoke-params
   [_ data]
-  {:run-id      (:run/id data)
-   :task-id     (:run/task-id data)
-   :project-dir (:run/project-dir data)
+  {:run-id       (:run/id data)
+   :task-id      (:run/task-id data)
+   :project-dir  (:run/project-dir data)
    :worktree-dir (:run/worktree-dir data)
-   :control     (:run/control data)
-   :max-steps   (:run/max-steps data)})
+   :run-control  (:run/control data)
+   :max-steps    (:run/max-steps data)})
 
 (defn- ev-status [data]
   (keyword (or (some-> data (get-in [:_event :data :status]) name)
