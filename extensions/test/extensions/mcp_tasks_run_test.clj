@@ -126,6 +126,36 @@
           (is (= :derive-state (:current-state step-3)))
           (is (= 2 (:steps-completed step-3))))))))
 
+(deftest workflow-native-legacy-phase-normalization-test
+  (testing "run-loop-job recovers from legacy derived phase values"
+    (let [ctrl           (atom {:pause? false :cancel? false :merge? false})
+          derived-states (atom [{:state :has-tasks :completed-count 0}
+                                {:state :done :completed-count 1}])]
+      (with-redefs [sut/derive-current! (fn [_project-dir _worktree-dir _task-id]
+                                          (let [{:keys [state completed-count]}
+                                                (or (first @derived-states)
+                                                    {:state :done :completed-count 1})]
+                                            (swap! derived-states #(if (seq %) (vec (rest %)) %))
+                                            {:task {:id 42 :type :story}
+                                             :children [{:id 100 :status :open}]
+                                             :entity-type :story
+                                             :state state
+                                             :completed-count completed-count}))
+                    sut/resolve-step-prompt (fn [_project-dir _prompt-name] "prompt")
+                    sut/run-step-subagent! (fn [_] {:ok? true :text "ok"})]
+        (let [res (#'sut/run-loop-job {:run-id "run-1"
+                                       :task-id 42
+                                       :project-dir "/tmp"
+                                       :worktree-dir "/tmp/wt"
+                                       :control ctrl
+                                       :current-state "has-tasks"
+                                       :steps 0
+                                       :history []
+                                       :max-steps 10})]
+          (is (= :running (:status res)))
+          (is (= :derive-state (:current-state res)))
+          (is (= 1 (:steps-completed res))))))))
+
 (deftest workflow-native-wait-pr-merge-test
   (testing "run-loop-job pauses explicitly at wait-pr-merge without merge authorization"
     (let [ctrl (atom {:pause? false :cancel? false :merge? false})]

@@ -796,6 +796,26 @@
 ;; Run loop job
 ;; ---------------------------------------------------------------------------
 
+(def ^:private orchestrator-phases
+  #{:ensure-worktree :derive-state :select-step :run-step :rederive-state
+    :wait-pr-merge :wait-user-confirmation})
+
+(def ^:private recoverable-legacy-phases
+  #{:unrefined :refined :has-tasks :done :awaiting-pr :complete
+    :terminated :merging-pr :paused})
+
+(defn- normalize-run-phase
+  [phase]
+  (let [phase* (cond
+                 (keyword? phase) phase
+                 (string? phase) (keyword phase)
+                 (nil? phase) :ensure-worktree
+                 :else phase)]
+    (cond
+      (= phase* :idle) :ensure-worktree
+      (contains? recoverable-legacy-phases phase*) :derive-state
+      :else phase*)))
+
 (defn- summarize-run
   [{:keys [status run-id task-id entity-type steps elapsed-ms final-state
            error-message pause-reason]}]
@@ -959,7 +979,7 @@
         max-steps* (long (or max-steps max-steps-default))
         steps      (long (or steps 0))
         history    (vec (or history []))
-        phase      (or current-state :ensure-worktree)
+        phase      (normalize-run-phase current-state)
         merge?     (boolean (:merge? @control))
         answer     (or (:answer @control) user-answer)]
     (try
@@ -1037,8 +1057,7 @@
                      :user-answer       nil
                      :error-message     "Resume requires explicit answer payload for user confirmation."})
 
-        (contains? #{:derive-state :select-step :run-step :rederive-state
-                     :wait-pr-merge :wait-user-confirmation} phase)
+        (contains? orchestrator-phases phase)
         (let [derived (derive-current! project-dir worktree-dir task-id)]
           (if-let [err (:error derived)]
             (run-result {:status        :error
