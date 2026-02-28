@@ -72,6 +72,18 @@
    (str "Squash merge the PR on GitHub, in the context of the current story\n\n"
         "Pull the merged remote changes to local.")
 
+   ;; Override built-in behavior to continue active in-progress children first.
+   "execute-story-child"
+   (str "Execute the next runnable child task from the story.\n\n"
+        "Parse $ARGUMENTS as story id/spec.\n\n"
+        "Process:\n"
+        "1) Resolve the story and confirm it is type story.\n"
+        "2) Prefer active work: try `mcp-tasks list --parent-id <story-id> --status in-progress --blocked false --limit 1 --format edn`.\n"
+        "3) If none in-progress, pick first open unblocked child: `mcp-tasks list --parent-id <story-id> --status open --blocked false --limit 1 --format edn`.\n"
+        "4) If no runnable child exists, report blockers clearly (including child ids) and stop.\n"
+        "5) For selected child, ensure status in-progress, load category prompt, execute category instructions, update parent shared context, and mark child done on success.\n"
+        "6) Never mark the parent story done in this step.\n")
+
    ;; mcp-tasks currently does not expose a built-in create-task-pr prompt.
    "create-task-pr"
    (str "Create a pull request for the current task.\n\n"

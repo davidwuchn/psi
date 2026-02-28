@@ -444,6 +444,12 @@
                    :category-prompt nil})]
       (is (not (re-find #"Pre-resolved category instructions" result))))))
 
+(deftest resolve-step-prompt-overrides-story-child-test
+  (testing "resolve-step-prompt prefers local execute-story-child override"
+    (let [result (#'sut/resolve-step-prompt "/tmp" "execute-story-child")]
+      (is (re-find #"(?i)in-progress" result))
+      (is (re-find #"Never mark the parent story done" result)))))
+
 (deftest resolve-category-for-step-execute-task-test
   (testing "resolve-category-for-step extracts category from task for execute-task"
     (with-redefs [sut/load-mcp-prompt! (fn [_dir cat]
