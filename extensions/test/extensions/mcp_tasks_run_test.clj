@@ -2,6 +2,7 @@
   (:require
    [clojure.test :refer [deftest is testing]]
    [extensions.mcp-tasks-run :as sut]
+   [psi.agent-session.executor :as executor]
    [psi.extension-test-helpers.nullable-api :as nullable]))
 
 (deftest derive-task-state-test
@@ -634,3 +635,45 @@
                  []
                  :task
                  "/tmp"))))))
+
+(deftest run-step-subagent-executor-arg-order-test
+  (testing "run-step-subagent passes executor args in run-agent-loop order"
+    (let [captured          (atom nil)
+          fake-agent-ctx    {:fake :agent-ctx}
+          fake-session-ctx  {:agent-ctx fake-agent-ctx
+                             :session-data-atom (atom {:tool-output-overrides {}})
+                             :tool-output-stats-atom (atom {:calls []
+                                                            :aggregates {:total-context-bytes 0
+                                                                         :by-tool {}
+                                                                         :limit-hits-by-tool {}}})}
+          fake-model        {:provider "anthropic" :id "sonnet"}]
+      (with-redefs [sut/resolve-active-model (fn [] fake-model)
+                    sut/create-step-agent-ctx (fn [_] fake-agent-ctx)
+                    sut/create-step-session-ctx (fn [agent-ctx]
+                                                  (is (= fake-agent-ctx agent-ctx))
+                                                  fake-session-ctx)
+                    sut/set-live-progress! (fn [& _])
+                    executor/run-agent-loop! (fn [& args]
+                                               (reset! captured args)
+                                               {:role "assistant"
+                                                :stop-reason :stop
+                                                :content [{:type :text :text "ok"}]})]
+        (let [result (#'sut/run-step-subagent!
+                      {:run-id "run-1"
+                       :step-name "refine-task"
+                       :prompt-body "prompt"
+                       :task-id 42
+                       :entity-type :task
+                       :project-dir "/tmp"
+                       :worktree-dir "/tmp/wt"
+                       :task {:id 42}
+                       :children []
+                       :state :unrefined})]
+          (is (:ok? result))
+          (is (= 6 (count @captured)))
+          (is (nil? (nth @captured 0)))
+          (is (= fake-session-ctx (nth @captured 1)))
+          (is (= fake-agent-ctx (nth @captured 2)))
+          (is (= fake-model (nth @captured 3)))
+          (is (= "user" (get-in (nth @captured 4) [0 :role])))
+          (is (= {:turn-ctx-atom nil} (nth @captured 5))))))))

@@ -663,6 +663,17 @@
       (agent/set-system-prompt-in! ctx sp))
     ctx))
 
+(defn- create-step-session-ctx
+  [agent-ctx]
+  {:agent-ctx agent-ctx
+   :session-data-atom
+   (atom {:tool-output-overrides {}})
+   :tool-output-stats-atom
+   (atom {:calls []
+          :aggregates {:total-context-bytes 0
+                       :by-tool {}
+                       :limit-hits-by-tool {}}})})
+
 (defn- result->text
   [result]
   (->> (:content result)
@@ -788,17 +799,19 @@
       :step    step-name
       :message (str "Executing step " step-name)})
     (try
-      (let [agent-ctx (create-step-agent-ctx worktree-dir)
-            result   (executor/run-agent-loop!
-                      nil
-                      agent-ctx
-                      model
-                      [user-msg]
-                      (cond-> {:turn-ctx-atom nil}
-                        api-key (assoc :api-key api-key)))
-            elapsed  (- (now-ms) started)
-            text     (result->text result)
-            ok?      (not= :error (:stop-reason result))]
+      (let [agent-ctx        (create-step-agent-ctx worktree-dir)
+            step-session-ctx (create-step-session-ctx agent-ctx)
+            result           (executor/run-agent-loop!
+                              nil
+                              step-session-ctx
+                              agent-ctx
+                              model
+                              [user-msg]
+                              (cond-> {:turn-ctx-atom nil}
+                                api-key (assoc :api-key api-key)))
+            elapsed          (- (now-ms) started)
+            text             (result->text result)
+            ok?              (not= :error (:stop-reason result))]
         (set-live-progress!
          run-id
          {:status  (if ok? :running :error)
