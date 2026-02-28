@@ -13,6 +13,8 @@
      :is-streaming          — true while the agent loop is running
      :is-compacting         — true while a compaction is executing
      :system-prompt         — assembled system prompt string
+     :developer-prompt      — optional developer instruction layer string
+     :developer-prompt-source — :fallback | :env | :explicit
      :steering-messages     — queued steer texts (injected mid-run)
      :follow-up-messages    — queued follow-up texts (delivered after run)
      :retry-attempt         — current retry counter (0 = not retrying)
@@ -95,6 +97,8 @@
    [:is-streaming :boolean]
    [:is-compacting :boolean]
    [:system-prompt :string]
+   [:developer-prompt {:optional true} [:maybe :string]]
+   [:developer-prompt-source {:optional true} [:enum :fallback :env :explicit]]
    [:steering-messages [:vector :string]]
    [:follow-up-messages [:vector :string]]
    [:retry-attempt :int]
@@ -160,6 +164,8 @@
      :is-streaming            false
      :is-compacting           false
      :system-prompt           ""
+     :developer-prompt        nil
+     :developer-prompt-source :fallback
      :steering-messages       []
      :follow-up-messages      []
      :retry-attempt           0

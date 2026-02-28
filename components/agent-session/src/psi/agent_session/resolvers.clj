@@ -19,6 +19,9 @@
    :psi.agent-session/is-idle
    :psi.agent-session/phase               — statechart phase keyword
    :psi.agent-session/system-prompt
+   :psi.agent-session/developer-prompt
+   :psi.agent-session/developer-prompt-source
+   :psi.agent-session/prompt-layers
    :psi.agent-session/pending-message-count
    :psi.agent-session/has-pending-messages
    :psi.agent-session/retry-attempt
@@ -261,16 +264,27 @@
 ;; ── Queues and message counts ───────────────────────────
 
 (pco/defresolver agent-session-queues
-  "Resolve queue depths and system prompt."
+  "Resolve queue depths and prompt layers."
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.agent-session/system-prompt
+                 :psi.agent-session/developer-prompt
+                 :psi.agent-session/developer-prompt-source
+                 :psi.agent-session/prompt-layers
                  :psi.agent-session/pending-message-count
                  :psi.agent-session/has-pending-messages
                  :psi.agent-session/steering-messages
                  :psi.agent-session/follow-up-messages]}
-  (let [sd @(:session-data-atom agent-session-ctx)]
-    {:psi.agent-session/system-prompt          (:system-prompt sd)
+  (let [sd         @(:session-data-atom agent-session-ctx)
+        sys        (:system-prompt sd)
+        dev        (:developer-prompt sd)
+        dev-source (:developer-prompt-source sd)]
+    {:psi.agent-session/system-prompt          sys
+     :psi.agent-session/developer-prompt       dev
+     :psi.agent-session/developer-prompt-source dev-source
+     :psi.agent-session/prompt-layers          {:system-prompt sys
+                                                :developer-prompt dev
+                                                :developer-prompt-source dev-source}
      :psi.agent-session/pending-message-count  (session/pending-message-count sd)
      :psi.agent-session/has-pending-messages   (session/has-pending-messages? sd)
      :psi.agent-session/steering-messages      (:steering-messages sd)

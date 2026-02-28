@@ -276,6 +276,19 @@
       (let [result (session/query-in ctx [:psi.agent-session/model])]
         (is (= model (:psi.agent-session/model result))))))
 
+  (testing "query-in resolves developer prompt"
+    (let [ctx (session/create-context {:initial-session {:developer-prompt "dev layer"
+                                                         :developer-prompt-source :explicit}})
+          result (session/query-in ctx [:psi.agent-session/developer-prompt
+                                        :psi.agent-session/developer-prompt-source
+                                        :psi.agent-session/prompt-layers])]
+      (is (= "dev layer" (:psi.agent-session/developer-prompt result)))
+      (is (= :explicit (:psi.agent-session/developer-prompt-source result)))
+      (is (= {:system-prompt ""
+              :developer-prompt "dev layer"
+              :developer-prompt-source :explicit}
+             (:psi.agent-session/prompt-layers result)))))
+
   (testing "query-in resolves context fraction"
     (let [ctx (session/create-context)]
       (session/update-context-usage-in! ctx 4000 10000)
@@ -683,6 +696,19 @@
       (is (= 1 (:tool-count summary)))
       (is (= 0 (:extension-error-count summary)))
       (is (map? (:startup-bootstrap sd)))
+      (is (= "sys" (:developer-prompt sd)))
+      (is (= :fallback (:developer-prompt-source sd)))
       (is (= 1 (count (:prompt-templates sd))))
       (is (= 1 (count (:skills sd))))
       (is (= 1 (count (:tools ad)))))))
+
+(deftest bootstrap-session-developer-prompt-override-test
+  (testing "bootstrap-session-in! accepts explicit developer prompt"
+    (let [ctx (session/create-context)]
+      (session/bootstrap-session-in!
+       ctx {:register-global-query? false
+            :system-prompt          "sys"
+            :developer-prompt       "dev"
+            :developer-prompt-source :explicit})
+      (is (= "dev" (:developer-prompt (session/get-session-data-in ctx))))
+      (is (= :explicit (:developer-prompt-source (session/get-session-data-in ctx)))))))

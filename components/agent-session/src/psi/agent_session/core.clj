@@ -1370,16 +1370,20 @@
    :register-global-query? — register agent-session resolvers/mutations globally (default true)
    :base-tools             — base tool schema vector (default [])
    :system-prompt          — prompt string (default empty string)
+   :developer-prompt       — optional developer instruction string (default nil)
+   :developer-prompt-source — :fallback | :env | :explicit (default :fallback)
    :templates              — prompt template maps (default [])
    :skills                 — skill maps (default [])
    :tools                  — tool maps (default [])
    :extension-paths        — extension file paths (default [])
 
    Returns startup summary map stored at :startup-bootstrap."
-  [ctx {:keys [register-global-query? base-tools system-prompt templates skills tools extension-paths]
+  [ctx {:keys [register-global-query? base-tools system-prompt developer-prompt developer-prompt-source templates skills tools extension-paths]
         :or   {register-global-query? true
                base-tools             []
                system-prompt          ""
+               developer-prompt       ::unset
+               developer-prompt-source :fallback
                templates              []
                skills                 []
                tools                  []
@@ -1388,7 +1392,17 @@
   (when register-global-query?
     (register-resolvers!)
     (register-mutations!))
-  (agent/set-system-prompt-in! (:agent-ctx ctx) system-prompt)
+  (let [resolved-developer-prompt (if (= developer-prompt ::unset)
+                                    system-prompt
+                                    developer-prompt)
+        resolved-source (if (= developer-prompt ::unset)
+                          :fallback
+                          developer-prompt-source)]
+    (swap-session! ctx assoc
+                   :system-prompt system-prompt
+                   :developer-prompt resolved-developer-prompt
+                   :developer-prompt-source resolved-source)
+    (agent/set-system-prompt-in! (:agent-ctx ctx) system-prompt))
   (let [startup-tools (into (vec base-tools) (vec tools))
         {:keys [prompt-count skill-count tool-count extension-results]}
         (load-startup-resources-via-mutations-in!

@@ -23,6 +23,7 @@
      ANTHROPIC_API_KEY   — required for Anthropic models
      OPENAI_API_KEY      — required for OpenAI models
      PSI_MODEL           — model key override (e.g. claude-3-5-haiku, gpt-4o, gpt-5.3-codex)
+     PSI_DEVELOPER_PROMPT — optional developer instruction text
 
    nREPL introspection (from a connected REPL):
      @psi.agent-session.main/session-state  — live session context
@@ -138,6 +139,14 @@
      (or (second (drop-while #(not= "--model" %) args))
          env-model
          (name default-model-key)))))
+
+(defn- developer-prompt-from-env
+  "Return optional developer prompt text from PSI_DEVELOPER_PROMPT.
+   Blank values are treated as nil."
+  []
+  (let [v (System/getenv "PSI_DEVELOPER_PROMPT")]
+    (when-not (str/blank? v)
+      v)))
 
 ;; ============================================================
 ;; Output helpers
@@ -333,6 +342,7 @@
                        {:cwd           cwd
                         :context-files ctx-files
                         :skills        skills})
+        developer-prompt (developer-prompt-from-env)
         ;; session context — agent-core + statechart + extension registry
         ctx      (session/create-context
                   {:initial-session {:model {:provider (name (:provider ai-model))
@@ -349,6 +359,8 @@
                     ctx {:register-global-query? true
                          :base-tools             (conj (vec tools/all-tools) eql-tool)
                          :system-prompt          system-prompt
+                         :developer-prompt       developer-prompt
+                         :developer-prompt-source (if developer-prompt :env :fallback)
                          :templates              templates
                          :skills                 skills
                          :extension-paths        ext-paths})]
@@ -450,6 +462,7 @@
                        {:cwd           cwd
                         :context-files ctx-files
                         :skills        skills})
+        developer-prompt (developer-prompt-from-env)
         ctx       (session/create-context
                    {:initial-session {:model {:provider (name (:provider ai-model))
                                               :id       (:id ai-model)
@@ -466,6 +479,8 @@
                    ctx {:register-global-query? true
                         :base-tools             (conj (vec tools/all-tools) eql-tool)
                         :system-prompt          system-prompt
+                        :developer-prompt       developer-prompt
+                        :developer-prompt-source (if developer-prompt :env :fallback)
                         :templates              templates
                         :skills                 skills
                         :extension-paths        ext-paths})
