@@ -1,0 +1,204 @@
+-- tui-input-interrupts.allium
+--
+-- Scope: Observable interrupt/clear/exit behavior at the prompt-input boundary.
+--
+-- Distilled from:
+--   - ~/src/pi-mono/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
+--   - ~/src/pi-mono/packages/coding-agent/src/modes/interactive/interactive-mode.ts
+--   - ~/src/pi-mono/packages/coding-agent/src/core/keybindings.ts
+--   - ~/src/pi-mono/packages/coding-agent/README.md
+--
+-- Observable intent:
+--   - Escape interrupts active work (agent run, bash run, compaction, retry wait)
+--   - Escape in bash-draft mode clears and exits bash draft
+--   - Double Escape on empty input opens /tree or /fork (configurable)
+--   - Ctrl+C clears input; second Ctrl+C within window exits
+--   - Ctrl+D exits only when input is empty
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    double_press_window_ms: Integer = 500
+}
+
+------------------------------------------------------------
+-- Entities
+------------------------------------------------------------
+
+entity PromptInput {
+    text: String
+    mode: normal | bash_draft
+
+    is_empty: IsBlank(text)
+}
+
+entity SessionControl {
+    input: PromptInput
+    lifecycle: running | exiting
+
+    run_state: idle | agent_working | bash_running | compacting | retry_wait
+    double_escape_action: tree | fork | none
+
+    last_escape_at: Timestamp?
+    last_clear_at: Timestamp?
+
+    escape_armed: WithinWindow(last_escape_at, config.double_press_window_ms)
+    clear_armed: WithinWindow(last_clear_at, config.double_press_window_ms)
+
+    queued_messages: List<QueuedMessage>
+}
+
+value QueuedMessage {
+    text: String
+    delivery: steering | follow_up
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+rule EscapeCancelsAgentWorkAndRestoresQueuedMessages {
+    when: UserPressesEscape(control)
+
+    requires: control.run_state = agent_working
+
+    let queued_text = JoinQueuedMessages(control.queued_messages)
+
+    ensures: control.input.text = MergeQueuedAndDraft(queued_text, control.input.text)
+    ensures: control.queued_messages = []
+    ensures: WorkCancellationRequested(control, target: agent_run)
+}
+
+rule EscapeCancelsBashExecution {
+    when: UserPressesEscape(control)
+
+    requires: control.run_state = bash_running
+
+    ensures: WorkCancellationRequested(control, target: bash_run)
+}
+
+rule EscapeCancelsCompaction {
+    when: UserPressesEscape(control)
+
+    requires: control.run_state = compacting
+
+    ensures: WorkCancellationRequested(control, target: compaction)
+}
+
+rule EscapeCancelsRetryWait {
+    when: UserPressesEscape(control)
+
+    requires: control.run_state = retry_wait
+
+    ensures: WorkCancellationRequested(control, target: retry_wait)
+}
+
+rule EscapeClearsBashDraft {
+    when: UserPressesEscape(control)
+
+    requires: control.run_state = idle
+    requires: control.input.mode = bash_draft
+
+    ensures: control.input.text = ""
+    ensures: control.input.mode = normal
+}
+
+rule FirstEscapeArmsDoubleEscapeAction {
+    when: UserPressesEscape(control)
+
+    requires: control.run_state = idle
+    requires: control.input.is_empty
+    requires: control.double_escape_action != none
+    requires: not control.escape_armed
+
+    ensures: control.last_escape_at = now
+}
+
+rule SecondEscapeExecutesDoubleEscapeAction {
+    when: UserPressesEscape(control)
+
+    requires: control.run_state = idle
+    requires: control.input.is_empty
+    requires: control.double_escape_action != none
+    requires: control.escape_armed
+
+    ensures:
+        if control.double_escape_action = tree:
+            SessionTreeOpened(control)
+        else:
+            SessionForkSelectorOpened(control)
+
+    ensures: control.last_escape_at = null
+}
+
+rule CtrlCFirstPressClearsInput {
+    when: UserPressesClear(control)
+
+    requires: not control.clear_armed
+
+    ensures: control.input.text = ""
+    ensures: control.last_clear_at = now
+}
+
+rule CtrlCSecondPressRequestsExit {
+    when: UserPressesClear(control)
+
+    requires: control.clear_armed
+
+    ensures: control.lifecycle = exiting
+    ensures: ExitRequested(control)
+    ensures: control.last_clear_at = null
+}
+
+rule CtrlDRequestsExitWhenInputEmpty {
+    when: UserPressesExit(control)
+
+    requires: control.input.text.length = 0
+
+    ensures: control.lifecycle = exiting
+    ensures: ExitRequested(control)
+}
+
+rule CtrlDIgnoredWhenInputNotEmpty {
+    when: UserPressesExit(control)
+
+    requires: control.input.text.length > 0
+
+    ensures: control.lifecycle = control.lifecycle
+    ensures: control.input.text = control.input.text
+}
+
+------------------------------------------------------------
+-- Surface
+------------------------------------------------------------
+
+surface PromptInterruptContract {
+    for user: PromptInputUser
+
+    context control: SessionControl
+
+    provides:
+        UserPressesEscape(control)
+        UserPressesClear(control)
+        UserPressesExit(control)
+
+    exposes:
+        control.run_state
+        control.double_escape_action
+        control.lifecycle
+
+    guidance:
+        -- Default keybindings map actions to:
+        --   Escape => interrupt
+        --   Ctrl+C => clear
+        --   Ctrl+D => exit-when-empty
+        -- Users may remap keys, but action semantics remain stable.
+}
+
+------------------------------------------------------------
+-- Open Questions
+------------------------------------------------------------
+
+open_question "Should double-press timing be independently configurable for Escape and Ctrl+C?"

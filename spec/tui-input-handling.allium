@@ -1,0 +1,27 @@
+-- tui-input-handling.allium
+--
+-- Composition contract for interactive prompt input handling.
+--
+-- Modules:
+--   - tui-input-autocomplete.allium
+--   - tui-input-history.allium
+--   - tui-input-interrupts.allium
+
+use "./tui-input-autocomplete.allium" as autocomplete
+use "./tui-input-history.allium" as history
+use "./tui-input-interrupts.allium" as interrupts
+
+surface TuiPromptInputContract {
+    for caller: InteractivePromptRuntime
+
+    exposes:
+        autocomplete/PromptAutocompleteContract
+        history/PromptHistoryContract
+        interrupts/PromptInterruptContract
+
+    guidance:
+        -- Prompt input handling is split by concern:
+        --   1) completion suggestions and acceptance
+        --   2) history recording and recall navigation
+        --   3) interrupt/clear/exit control actions
+}
