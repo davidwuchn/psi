@@ -1,0 +1,119 @@
+-- tools/path-resolution.allium
+--
+-- Scope: Canonical path normalization and resolution for built-in file tools.
+--
+-- Includes:
+--   - leading @ normalization
+--   - unicode-space normalization
+--   - ~ and ~/ expansion
+--   - cwd-relative resolution
+--   - read-specific fallback variants for macOS filename quirks
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value PathResolutionInput {
+    rawPath: String
+    cwd: String
+}
+
+value PathResolutionResult {
+    expandedPath: String
+    resolvedPath: String
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    narrow_no_break_space: String = "\u202F"
+    read_path_variant_order: List<String> = [
+        "resolved",
+        "am_pm_variant",
+        "nfd_variant",
+        "curly_quote_variant",
+        "nfd_curly_variant"
+    ]
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+rule AtPrefixRemoved {
+    when: ExpandPathCalled(rawPath)
+    requires: StartsWith(rawPath, "@")
+
+    ensures: noAt = Substring(rawPath, 1)
+}
+
+rule UnicodeSpacesNormalized {
+    when: ExpandPathCalled(rawPath)
+
+    ensures: spacesNormalized = ReplaceUnicodeSpaces(rawPath, " ")
+}
+
+rule HomeExpanded {
+    when: ExpandPathCalled(rawPath)
+
+    ensures:
+        if rawPath = "~":
+            expanded = HomeDir()
+        else if StartsWith(rawPath, "~/"):
+            expanded = HomeDir() + Substring(rawPath, 1)
+        else:
+            expanded = rawPath
+}
+
+rule ResolveToCwd {
+    when: ResolveToCwdCalled(path, cwd)
+
+    ensures:
+        if IsAbsolutePath(path):
+            resolved = path
+        else:
+            resolved = JoinPath(cwd, path)
+}
+
+rule ResolveReadPathTriesVariants {
+    -- read path resolution attempts macOS-specific filename variants if
+    -- the directly resolved path does not exist.
+    when: ResolveReadPathCalled(rawPath, cwd)
+
+    let expanded = ExpandPath(rawPath)
+    let resolved = ResolveToCwd(expanded, cwd)
+
+    ensures:
+        if File.exists(resolved):
+            final = resolved
+        else:
+            final = FirstExisting([
+                resolved,
+                MacOsAmPmVariant(resolved, config.narrow_no_break_space),
+                NormalizeUnicodeNFD(resolved),
+                CurlyQuoteVariant(resolved),
+                CurlyQuoteVariant(NormalizeUnicodeNFD(resolved))
+            ]) or resolved
+}
+
+rule ImageExtensionIsNotTrustedForRead {
+    -- Path extension alone must not decide content type for read.
+    when: ResolveReadPathCalled(rawPath, cwd)
+
+    ensures: MimeTypeDecisionSource = file_magic_bytes
+}
+
+------------------------------------------------------------
+-- Surface
+------------------------------------------------------------
+
+surface PathResolutionApi {
+    for caller: ReadTool | EditTool | WriteTool | FindTool | GrepTool | LsTool
+
+    provides:
+        ExpandPath(rawPath)
+        ResolveToCwd(path, cwd)
+        ResolveReadPath(rawPath, cwd)
+}

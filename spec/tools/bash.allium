@@ -1,0 +1,192 @@
+-- tools/bash.allium
+--
+-- Scope: Target behavior for the bash tool.
+--
+-- Includes:
+--   - execution via shell + bash -c with cwd support
+--   - optional command prefix and spawn hook
+--   - merged stdout/stderr output
+--   - streaming partial updates with cumulative truncated tail
+--   - tail truncation under effective policy
+--   - full-output spill file when truncated
+--   - timeout and abort semantics
+--   - pluggable operations support
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value BashArgs {
+    command: String
+    timeout: Integer?             -- seconds
+}
+
+value BashOptions {
+    cwd: String?
+    commandPrefix: String?
+    spawnHook: Function?          -- (command,cwd,env) -> adjusted context
+    operations: ToolOperations?
+}
+
+value BashTruncation {
+    truncated: Boolean
+    truncatedBy: lines | bytes | none
+    totalLines: Integer
+    totalBytes: Integer
+    outputLines: Integer
+    outputBytes: Integer
+    maxLines: Integer
+    maxBytes: Integer
+    lastLinePartial: Boolean
+}
+
+value BashDetails {
+    truncation: BashTruncation?
+    fullOutputPath: String?
+}
+
+value BashPartialResult {
+    content: String
+    details: BashDetails?
+}
+
+value BashResult {
+    content: String
+    is-error: Boolean
+    details: BashDetails?
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+rule BashCommandPrefixApplied {
+    when: ExecuteBash(args, opts)
+    requires: opts.commandPrefix != null
+
+    ensures: resolvedCommand = opts.commandPrefix + "\n" + args.command
+}
+
+rule BashSpawnHookApplied {
+    when: ExecuteBash(args, opts)
+    requires: opts.spawnHook != null
+
+    ensures: spawnContext = opts.spawnHook({
+        command: ResolvedCommand(args, opts),
+        cwd: opts.cwd,
+        env: ShellEnvironment()
+    })
+}
+
+rule BashExecutesWithShellDashC {
+    when: ExecuteBash(args, opts)
+
+    ensures: Process.spawned(shell, shellArgs + [ResolvedCommand(args, opts)])
+    ensures: Process.options.include({out: string, err: string, continue: true, in: "/dev/null"})
+}
+
+rule BashRunsInCwdWhenProvided {
+    when: ExecuteBash(args, {cwd: cwd})
+    requires: cwd != null
+
+    ensures: Process.options.include({dir: cwd})
+}
+
+rule BashUsesProvidedOperationsWhenPresent {
+    when: ExecuteBash(args, opts)
+    requires: opts.operations != null
+
+    ensures: BashExecutionAdapter = opts.operations
+}
+
+rule BashStreamingUpdateCarriesCumulativeTail {
+    -- onUpdate receives cumulative output snapshot truncated from tail.
+    when: BashOutputChunkReceived(chunk)
+
+    let rolling = RollingOutputBuffer()
+    let truncation = TailTruncate(rolling, EffectiveOutputPolicy(bash))
+
+    ensures: OnUpdate(BashPartialResult{
+        content: truncation.content,
+        details: BashDetails{
+            truncation: if truncation.truncated then truncation else null,
+            fullOutputPath: CurrentTempOutputPath()
+        }
+    })
+}
+
+rule BashCreatesTempArtifactWhenOutputExceedsByteThreshold {
+    when: BashOutputChunkReceived(chunk)
+    requires: TotalOutputBytesSeen() > EffectiveOutputPolicy(bash).maxBytes
+    requires: CurrentTempOutputPath() = null
+
+    ensures: path = PersistTruncatedFullOutput(toolName: "bash", fullText: OutputSeenSoFar())
+    ensures: CurrentTempOutputPath() = path
+}
+
+rule BashFinalResultUsesTailTruncation {
+    when: BashProcessFinished(stdout, stderr, exitCode)
+
+    let merged = stdout + stderr
+    let truncation = TailTruncate(merged, EffectiveOutputPolicy(bash))
+
+    ensures: baseText = if IsBlank(truncation.content) then "(no output)" else truncation.content
+    ensures: result.details.truncation = if truncation.truncated then truncation else null
+}
+
+rule BashFinalResultIncludesFullOutputPathWhenTruncated {
+    when: BashProcessFinished(stdout, stderr, exitCode)
+    let merged = stdout + stderr
+    let truncation = TailTruncate(merged, EffectiveOutputPolicy(bash))
+    requires: truncation.truncated
+
+    ensures: path = CurrentTempOutputPath() or PersistTruncatedFullOutput("bash", merged)
+    ensures: result.details.fullOutputPath = path
+    ensures: result.content includes "Full output"
+    ensures: result.content includes path
+}
+
+rule BashNonZeroExitMarksError {
+    when: BashProcessFinished(stdout, stderr, exitCode)
+    requires: exitCode != 0
+
+    ensures: result.is-error = true
+    ensures: result.content includes "Command exited with code " + exitCode
+}
+
+rule BashTimeoutMarksError {
+    when: BashTimeoutReached(timeoutSeconds)
+
+    ensures: Process.killed()
+    ensures: result.is-error = true
+    ensures: result.content includes "Command timed out after " + timeoutSeconds + " seconds"
+}
+
+rule BashAbortMarksError {
+    when: BashAbortRequested()
+
+    ensures: Process.killed()
+    ensures: result.is-error = true
+    ensures: result.content includes "Command aborted"
+}
+
+rule BashTempArtifactsStoredInProcessStore {
+    when: PersistTruncatedFullOutput(toolName: "bash", fullText)
+
+    ensures: path in ActiveProcessTempStore().rootDir
+}
+
+------------------------------------------------------------
+-- Surface
+------------------------------------------------------------
+
+surface BashToolApi {
+    for caller: AgentToolDispatcher
+
+    provides:
+        ExecuteBash(args: BashArgs, opts?: BashOptions, onUpdate?): BashResult
+
+    guidance:
+        -- Truncated bash output must provide recoverable fullOutputPath metadata.
+        -- Timeout/abort should preserve best-effort output gathered so far.
+}

@@ -1,0 +1,163 @@
+-- tools/edit.allium
+--
+-- Scope: Target behavior for the edit tool.
+--
+-- Includes:
+--   - cwd-aware path resolution
+--   - exact-first then fuzzy match fallback
+--   - uniqueness checks in normalized space
+--   - BOM + line-ending preservation
+--   - replacement validation
+--   - structured diff metadata with first changed line
+--   - pluggable operations support
+
+use "./path-resolution.allium" as path
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value EditArgs {
+    path: String
+    oldText: String
+    newText: String
+}
+
+value EditOptions {
+    cwd: String?
+    operations: ToolOperations?
+}
+
+value EditDiff {
+    diff: String
+    firstChangedLine: Integer?
+}
+
+value EditResult {
+    content: String
+    is-error: Boolean
+    details: EditDiff?
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+rule EditResolvesPathAgainstCwd {
+    when: ExecuteEdit(args, opts)
+
+    ensures: resolved = path/ResolveToCwd(args.path, opts.cwd)
+}
+
+rule EditUsesProvidedOperationsWhenPresent {
+    when: ExecuteEdit(args, opts)
+    requires: opts.operations != null
+
+    ensures: EditExecutionAdapter = opts.operations
+}
+
+rule EditFailsWhenFileMissingOrNoAccess {
+    when: ExecuteEdit(args, opts)
+    let resolved = path/ResolveToCwd(args.path, opts.cwd)
+
+    requires: not File.readWriteAccessible(resolved)
+    ensures: Error.thrown("File not found: " + args.path)
+}
+
+rule EditNormalizesForMatching {
+    when: ExecuteEdit(args, opts)
+
+    let rawContent = File.read(path/ResolveToCwd(args.path, opts.cwd))
+    let bom = Utf8BomPrefix(rawContent)
+    let contentNoBom = StripBom(rawContent)
+    let lineEnding = DetectLineEnding(contentNoBom)
+
+    ensures: normalizedContent = NormalizeToLF(contentNoBom)
+    ensures: normalizedOld = NormalizeToLF(args.oldText)
+    ensures: normalizedNew = NormalizeToLF(args.newText)
+}
+
+rule EditExactMatchPreferred {
+    when: ExecuteEdit(args, opts)
+
+    ensures:
+        if Contains(normalizedContent, normalizedOld):
+            match = ExactMatch(normalizedContent, normalizedOld)
+}
+
+rule EditFuzzyMatchFallback {
+    -- Fuzzy normalization includes trailing-space trim per line,
+    -- smart-quote normalization, dash normalization, and unicode-space normalization.
+    when: ExecuteEdit(args, opts)
+    requires: not Contains(normalizedContent, normalizedOld)
+
+    ensures: match = FuzzyMatch(normalizedContent, normalizedOld)
+}
+
+rule EditFailsWhenNoMatch {
+    when: ExecuteEdit(args, opts)
+    requires: MatchFound() = false
+
+    ensures: Error.thrown("Could not find the exact text")
+}
+
+rule EditFailsWhenMatchNotUnique {
+    when: ExecuteEdit(args, opts)
+    requires: MatchOccurrencesInNormalizedSpace() > 1
+
+    ensures: Error.thrown("text must be unique")
+}
+
+rule EditPerformsReplacement {
+    when: ExecuteEdit(args, opts)
+    requires: MatchFound() = true
+    requires: MatchOccurrencesInNormalizedSpace() = 1
+
+    ensures: replaced = ReplaceAtMatch(ContentForReplacement(), Match(), normalizedNew)
+    ensures: replaced != ContentForReplacement()
+}
+
+rule EditFailsWhenReplacementNoOp {
+    when: ExecuteEdit(args, opts)
+    requires: replaced = ContentForReplacement()
+
+    ensures: Error.thrown("No changes made")
+}
+
+rule EditRestoresBOMAndLineEndings {
+    when: ExecuteEdit(args, opts)
+    requires: ReplacementSucceeded()
+
+    ensures: withEndings = RestoreLineEndings(replaced, lineEnding)
+    ensures: final = bom + withEndings
+    ensures: File.write(path/ResolveToCwd(args.path, opts.cwd), final)
+}
+
+rule EditReturnsDiffMetadata {
+    when: ExecuteEdit(args, opts)
+    requires: ReplacementSucceeded()
+
+    ensures: diff = UnifiedDiff(ContentForReplacement(), replaced)
+    ensures: firstChangedLine = DiffFirstChangedLine(diff)
+    ensures: result = EditResult{
+        content: "Successfully replaced text in " + args.path + ".",
+        is-error: false,
+        details: EditDiff{diff: diff, firstChangedLine: firstChangedLine}
+    }
+}
+
+------------------------------------------------------------
+-- Surface
+------------------------------------------------------------
+
+surface EditToolApi {
+    for caller: AgentToolDispatcher
+
+    provides:
+        ExecuteEdit(args: EditArgs, opts?: EditOptions): EditResult
+
+    guidance:
+        -- Matching is exact-first, fuzzy-second.
+        -- Replacement must be unique and non-noop.
+        -- Preserve original file BOM + dominant line endings.
+}

@@ -1,0 +1,81 @@
+-- tools/write.allium
+--
+-- Scope: Target behavior for the write tool.
+--
+-- Includes:
+--   - cwd-aware path resolution with path normalization
+--   - parent directory creation
+--   - overwrite write semantics
+--   - success message including bytes written
+--   - pluggable operations support
+
+use "./path-resolution.allium" as path
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value WriteArgs {
+    path: String
+    content: String
+}
+
+value WriteOptions {
+    cwd: String?
+    operations: ToolOperations?
+}
+
+value WriteResult {
+    content: String
+    is-error: Boolean
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+rule WriteResolvesPathAgainstCwd {
+    when: ExecuteWrite(args, opts)
+
+    ensures: resolved = path/ResolveToCwd(args.path, opts.cwd)
+}
+
+rule WriteUsesProvidedOperationsWhenPresent {
+    when: ExecuteWrite(args, opts)
+    requires: opts.operations != null
+
+    ensures: WriteExecutionAdapter = opts.operations
+}
+
+rule WriteCreatesParents {
+    when: ExecuteWrite(args, opts)
+    let resolved = path/ResolveToCwd(args.path, opts.cwd)
+
+    ensures: Directory.makeParents(resolved)
+}
+
+rule WriteOverwritesFile {
+    when: ExecuteWrite(args, opts)
+    let resolved = path/ResolveToCwd(args.path, opts.cwd)
+
+    ensures: File.writeUtf8(resolved, args.content)
+    ensures: bytes = Utf8Bytes(args.content)
+    ensures: result = WriteResult{
+        content: "Successfully wrote " + bytes + " bytes to " + args.path,
+        is-error: false
+    }
+}
+
+------------------------------------------------------------
+-- Surface
+------------------------------------------------------------
+
+surface WriteToolApi {
+    for caller: AgentToolDispatcher
+
+    provides:
+        ExecuteWrite(args: WriteArgs, opts?: WriteOptions): WriteResult
+
+    guidance:
+        -- write is create-or-overwrite, never append.
+}

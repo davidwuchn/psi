@@ -1,0 +1,40 @@
+-- tool-output-handling.allium
+--
+-- Compatibility index (deprecated as primary source).
+--
+-- Status:
+--   Superseded by tool-specific target contracts in tools/*.allium.
+--
+-- Rationale:
+--   Target behavior now lives in per-tool specs to avoid duplicated policy text
+--   and keep behavior close to each tool contract.
+--
+-- Canonical references:
+--   - tools/runtime.allium          (shared limits, process temp store, stats, EQL attrs)
+--   - tools/read.allium             (offset/limit + image/binary + truncation)
+--   - tools/bash.allium             (tail truncation + full-output temp artifact + timeout/abort)
+--   - tools/ls.allium               (entry/byte truncation)
+--   - tools/find.allium             (result/byte truncation)
+--   - tools/grep.allium             (line/match/byte truncation)
+--   - tools/eql-query.allium        (query truncation + full-output temp artifact)
+
+use "./tools/runtime.allium" as runtime
+use "./tools/read.allium" as read
+use "./tools/bash.allium" as bash
+use "./tools/ls.allium" as ls
+use "./tools/find.allium" as find
+use "./tools/grep.allium" as grep
+use "./tools/eql-query.allium" as eql
+
+surface ToolOutputHandlingCompat {
+    for caller: RuntimeEngineer
+
+    exposes:
+        runtime/BuiltInToolsApi
+        read/ReadToolApi
+        bash/BashToolApi
+        ls/LsToolApi
+        find/FindToolApi
+        grep/GrepToolApi
+        eql/EqlQueryToolApi
+}

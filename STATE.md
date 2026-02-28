@@ -136,6 +136,8 @@ Caught by `jline-terminal-keymap-test` smoke test.
 | `agent.allium`             | `agent-core`            | ✓ implemented                         |
 | `ai-abstract-model.allium` | `ai`                    | ✓ implemented                         |
 | `coding-agent.allium`      | `agent-session`         | ✓ split → 3 sub-specs; ✓ implemented  |
+| `tools.allium`             | `agent-session/tools`   | ◇ target contracts (runtime policy + read/bash/edit/write/ls/find/grep/eql_query + path resolution + introspection) |
+| `tool-output-handling.allium` | `agent-session/tools` | ◇ compatibility index (superseded by tools/*.allium) |
 | `skills.allium`            | `agent-session/skills`  | ✓ implemented                         |
 | `tui.allium`               | `tui`                   | partial — session loop not yet working|
 | `ui-extension-points.allium` | `tui/extension_ui`    | ✓ implemented                         |

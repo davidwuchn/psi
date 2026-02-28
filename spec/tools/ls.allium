@@ -1,0 +1,147 @@
+-- tools/ls.allium
+--
+-- Scope: Target behavior for the ls tool.
+--
+-- Includes:
+--   - cwd-aware path resolution
+--   - directory validation
+--   - alphabetic case-insensitive listing including dotfiles
+--   - trailing '/' for directories
+--   - entry-limit + byte-limit truncation semantics
+--   - truncation metadata + notices
+--   - pluggable operations support
+
+use "./path-resolution.allium" as path
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value LsArgs {
+    path: String?
+    limit: Integer?
+}
+
+value LsOptions {
+    cwd: String?
+    operations: ToolOperations?
+}
+
+value LsDetails {
+    truncation: ToolOutputTruncation?
+    entryLimitReached: Integer?
+}
+
+value LsResult {
+    content: String
+    is-error: Boolean
+    details: LsDetails?
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    ls_default_entry_limit: Integer = 500
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+rule LsResolvesPathAgainstCwd {
+    when: ExecuteLs(args, opts)
+
+    ensures: resolved = path/ResolveToCwd(args.path or ".", opts.cwd)
+}
+
+rule LsUsesProvidedOperationsWhenPresent {
+    when: ExecuteLs(args, opts)
+    requires: opts.operations != null
+
+    ensures: LsExecutionAdapter = opts.operations
+}
+
+rule LsFailsWhenPathMissing {
+    when: ExecuteLs(args, opts)
+    let resolved = path/ResolveToCwd(args.path or ".", opts.cwd)
+
+    requires: not File.exists(resolved)
+    ensures: Error.thrown("Path not found: " + resolved)
+}
+
+rule LsFailsWhenNotDirectory {
+    when: ExecuteLs(args, opts)
+    let resolved = path/ResolveToCwd(args.path or ".", opts.cwd)
+
+    requires: File.exists(resolved)
+    requires: not File.isDirectory(resolved)
+    ensures: Error.thrown("Not a directory: " + resolved)
+}
+
+rule LsListsEntriesSortedCaseInsensitive {
+    when: ExecuteLs(args, opts)
+    let resolved = path/ResolveToCwd(args.path or ".", opts.cwd)
+
+    requires: File.isDirectory(resolved)
+    ensures: entries = ListDir(resolved, includeDotfiles: true)
+    ensures: sorted = SortCaseInsensitive(entries)
+}
+
+rule LsAppendsDirectorySuffix {
+    when: ExecuteLs(args, opts)
+
+    ensures:
+        for entry in sorted:
+            if File.isDirectory(JoinPath(resolved, entry)):
+                emittedEntry = entry + "/"
+            else:
+                emittedEntry = entry
+}
+
+rule LsAppliesEntryLimitThenByteTruncation {
+    when: ExecuteLs(args, opts)
+
+    let entryLimit = args.limit or config.ls_default_entry_limit
+    let primary = Take(EmittedEntries(), entryLimit)
+    let truncation = HeadTruncate(JoinLines(primary), ToolOutputPolicy{
+        maxLines: 9007199254740991,
+        maxBytes: EffectiveOutputPolicy(ls).maxBytes
+    })
+
+    ensures: result.content =
+        if Count(primary) = 0:
+            "(empty directory)"
+        else:
+            truncation.content
+
+    ensures:
+        if Count(EmittedEntries()) > entryLimit:
+            result.details.entryLimitReached = entryLimit
+
+    ensures:
+        if truncation.truncated:
+            result.details.truncation = truncation
+}
+
+rule LsAppendsTruncationNotices {
+    when: ExecuteLs(args, opts)
+    requires: result.details.entryLimitReached != null or result.details.truncation.truncated
+
+    ensures: result.content includes "limit reached"
+}
+
+------------------------------------------------------------
+-- Surface
+------------------------------------------------------------
+
+surface LsToolApi {
+    for caller: AgentToolDispatcher
+
+    provides:
+        ExecuteLs(args: LsArgs, opts?: LsOptions): LsResult
+
+    guidance:
+        -- ls applies semantic entry limit first, then byte truncation.
+}

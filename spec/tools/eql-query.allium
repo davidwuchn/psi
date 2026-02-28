@@ -1,0 +1,166 @@
+-- tools/eql-query.allium
+--
+-- Scope: Target behavior for the eql_query tool.
+--
+-- Includes:
+--   - tool factory requiring injected query-fn
+--   - EDN parsing with *read-eval* disabled
+--   - vector-shape validation for EQL query
+--   - EDN serialization of query results
+--   - head truncation under effective policy
+--   - full-output spill file when truncated
+--   - truncation guidance for narrowing queries
+--
+-- Excludes:
+--   - direct inclusion in all-tools runtime list
+--   - execute-tool dispatcher support (factory-only)
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value EqlQueryArgs {
+    query: String
+}
+
+value EqlQueryTruncation {
+    truncated: Boolean
+    truncatedBy: lines | bytes | none
+    totalLines: Integer
+    totalBytes: Integer
+    outputLines: Integer
+    outputBytes: Integer
+    maxLines: Integer
+    maxBytes: Integer
+    firstLineExceedsLimit: Boolean
+}
+
+value EqlQueryDetails {
+    truncation: EqlQueryTruncation?
+    fullOutputPath: String?
+}
+
+value EqlQueryResult {
+    content: String
+    is-error: Boolean
+    details: EqlQueryDetails?
+}
+
+entity EqlQueryTool {
+    name: "eql_query"
+    label: "EQL Query"
+    description: String
+    parameters: String
+    execute: Function
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+rule EqlQueryToolCreatedFromQueryFn {
+    when: MakeEqlQueryToolCalled(query-fn)
+
+    ensures: tool = EqlQueryTool
+    ensures: tool.execute closes_over query-fn
+}
+
+rule EqlQueryParsesEdnWithReadEvalDisabled {
+    when: tool.execute({query: queryText})
+
+    ensures: DynamicBinding(*read-eval*, false)
+    ensures: parsed = EdnReadString(queryText)
+}
+
+rule EqlQueryRequiresVector {
+    when: tool.execute({query: queryText})
+    requires: ParsedEdn(queryText) is not Vector
+
+    ensures: result = EqlQueryResult{
+        content: "EQL query error: Query must be an EDN vector",
+        is-error: true
+    }
+}
+
+rule EqlQueryExecutesAndSerializes {
+    when: tool.execute({query: queryText})
+    requires: ParsedEdn(queryText) is Vector
+
+    ensures: q = ParsedEdn(queryText)
+    ensures: raw = query-fn(q)
+    ensures: serialized = PrStr(raw)
+}
+
+rule EqlQueryAppliesHeadTruncation {
+    when: tool.execute({query: queryText})
+    requires: ParsedEdn(queryText) is Vector
+
+    let serialized = PrStr(query-fn(ParsedEdn(queryText)))
+    let policy = EffectiveOutputPolicy(eql_query)
+    let truncation = HeadTruncate(serialized, policy)
+
+    ensures: result.is-error = false
+    ensures: result.content = truncation.content
+    ensures:
+        if truncation.truncated:
+            result.details.truncation = truncation
+}
+
+rule EqlQueryWritesFullOutputFileWhenTruncated {
+    when: tool.execute({query: queryText})
+    requires: ParsedEdn(queryText) is Vector
+
+    let serialized = PrStr(query-fn(ParsedEdn(queryText)))
+    let truncation = HeadTruncate(serialized, EffectiveOutputPolicy(eql_query))
+    requires: truncation.truncated
+
+    ensures: path = PersistTruncatedFullOutput(toolName: "eql_query", fullText: serialized)
+    ensures: result.details.fullOutputPath = path
+    ensures: result.content includes "Output truncated"
+    ensures: result.content includes "Full output"
+    ensures: result.content includes path
+}
+
+rule EqlQueryAddsNarrowingGuidanceWhenTruncated {
+    when: tool.execute({query: queryText})
+    requires: LastEqlQueryResult().details.truncation.truncated = true
+
+    ensures: LastEqlQueryResult().content includes "Use a narrower query"
+}
+
+rule EqlQueryTruncatedFilesUseProcessTempStore {
+    when: PersistTruncatedFullOutput(toolName: "eql_query", fullText)
+
+    ensures: path in ActiveProcessTempStore().rootDir
+}
+
+rule EqlQueryConvertsExceptionsToErrorPayload {
+    when: tool.execute(args)
+    requires: ExceptionThrown(e)
+
+    ensures: result = EqlQueryResult{
+        content: "EQL query error: " + Message(e),
+        is-error: true
+    }
+}
+
+rule EqlQueryExcludedFromDirectDispatcher {
+    when: ExecuteToolCalled("eql_query", args)
+
+    ensures: Error.thrown("Unknown tool: eql_query")
+}
+
+------------------------------------------------------------
+-- Surface
+------------------------------------------------------------
+
+surface EqlQueryToolApi {
+    for caller: AgentSessionRuntime
+
+    provides:
+        MakeEqlQueryTool(query-fn)
+
+    guidance:
+        -- eql_query is factory-only because it requires live query context.
+        -- Truncated outputs must include recoverable fullOutputPath metadata.
+}

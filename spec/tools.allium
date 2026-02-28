@@ -1,0 +1,46 @@
+-- tools.allium
+--
+-- Scope: Built-in tools suite (target behavior).
+--
+-- Primary specs:
+--   - tools/runtime.allium          (registry, dispatch, limits, temp store, stats, adapters)
+--   - tools/path-resolution.allium  (path normalization + read-path fallbacks)
+--   - tools/read.allium             (offset/limit + image/binary handling + truncation)
+--   - tools/bash.allium             (tail truncation + temp artifacts + timeout/abort)
+--   - tools/edit.allium             (exact/fuzzy matching + line-ending/BOM preservation + diff metadata)
+--   - tools/write.allium            (overwrite write + bytes-written response)
+--   - tools/ls.allium               (listing + entry/byte truncation)
+--   - tools/find.allium             (glob search + result/byte truncation)
+--   - tools/grep.allium             (pattern search + line/match/byte truncation)
+--   - tools/eql-query.allium        (safe EQL query tool + truncation + full-output artifact)
+--
+-- Notes:
+--   - This suite is the normative tools contract.
+--   - tool-output-handling.allium is retained as a compatibility index.
+
+use "./tools/runtime.allium" as runtime
+use "./tools/path-resolution.allium" as path
+use "./tools/read.allium" as read
+use "./tools/bash.allium" as bash
+use "./tools/edit.allium" as edit
+use "./tools/write.allium" as write
+use "./tools/ls.allium" as ls
+use "./tools/find.allium" as find
+use "./tools/grep.allium" as grep
+use "./tools/eql-query.allium" as eql
+
+surface ToolSuiteIndex {
+    for caller: RuntimeEngineer
+
+    exposes:
+        runtime/BuiltInToolsApi
+        path/PathResolutionApi
+        read/ReadToolApi
+        bash/BashToolApi
+        edit/EditToolApi
+        write/WriteToolApi
+        ls/LsToolApi
+        find/FindToolApi
+        grep/GrepToolApi
+        eql/EqlQueryToolApi
+}

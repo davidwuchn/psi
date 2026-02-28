@@ -20,6 +20,7 @@
 --   Skills (skills.allium)
 --   Prompt templates (prompt-templates.allium)
 --   Compaction (compaction.allium)
+--   Built-in tool suite (tools.allium)
 --   Default interactive footer behaviour (default-footer.allium)
 --
 -- Excludes:
@@ -37,6 +38,7 @@ use "./extension-system.allium" as ext
 use "./oauth-auth.allium" as auth
 use "./default-footer.allium" as footer
 use "./compaction.allium" as compaction
+use "./tools.allium" as tools
 
 ------------------------------------------------------------
 -- External Entities
