@@ -657,8 +657,14 @@
      "  - complete-task=> mcp-tasks complete\n"
      "  - work-on      => mcp-tasks work-on\n"
      "  - why-blocked  => mcp-tasks why-blocked\n"
-     "- If the prompt asks an interactive user question, choose a deterministic\n"
-     "  and safe default that can continue execution.\n"
+     "- For trivial/mechanical questions (overwrite branch, retry transient error,\n"
+     "  confirm file overwrite), choose a safe default silently and continue.\n"
+     "- For material questions (design choices, proceeding despite warnings like\n"
+     "  \"task is unrefined\", ambiguous requirements, user preferences), output\n"
+     "  the confirmation sentinel as the LAST line of your response:\n"
+     "  MCP_TASKS_RUN_USER_CONFIRMATION: {:question \"...\" :context \"...\" :expected-answer \"...\"}\n"
+     "  :question is required. :context and :expected-answer are optional.\n"
+     "  Do not output anything after the sentinel line.\n"
      "- Keep changes scoped to this one step.\n\n"
 
      "Workflow prompt body:\n"
@@ -873,6 +879,10 @@
                        " · " elapsed "s")
         detail    (when (seq (str/trim (str message)))
                     (str "  " (task-preview (str/trim (str message)) 100)))
+        question  (when (= pause-rsn :wait-user-confirmation)
+                    (when-let [q (:question (:run/user-confirmation data))]
+                      (when (seq (str/trim q))
+                        (str "  ❓ " (task-preview (str/trim q) 200)))))
         actions   (cond
                     (= phase :running)
                     (str "  /mcp-tasks-run pause " id " · /mcp-tasks-run cancel " id)
@@ -893,8 +903,9 @@
 
                     :else nil)]
     (cond-> [top]
-      (seq detail)  (conj detail)
-      (seq actions) (conj actions))))
+      (seq detail)   (conj detail)
+      (seq question) (conj question)
+      (seq actions)  (conj actions))))
 
 (defn- refresh-widgets!
   []
@@ -1549,7 +1560,11 @@
                 (when reason
                   (str " · reason " (name reason)))))
           (when (seq (str/trim (str msg)))
-            (println (str "   " (task-preview (str/trim (str msg)) 120)))))))))
+            (println (str "   " (task-preview (str/trim (str msg)) 120))))
+          (when (= reason :wait-user-confirmation)
+            (when-let [q (:question (:run/user-confirmation data))]
+              (when (seq (str/trim q))
+                (println (str "   ❓ " (task-preview (str/trim q) 200)))))))))))
 
 (defn- pause-run!
   [run-id]
