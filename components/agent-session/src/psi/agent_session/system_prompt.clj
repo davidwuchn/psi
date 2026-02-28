@@ -23,10 +23,11 @@
 ;; ============================================================
 
 (def ^:private tool-descriptions
-  {"read"  "Read file contents"
-   "bash"  "Execute bash commands (ls, grep, find, etc.)"
-   "edit"  "Make surgical edits to files (find exact text and replace)"
-   "write" "Create or overwrite files"})
+  {"read"      "Read file contents"
+   "bash"      "Execute bash commands (ls, grep, find, etc.)"
+   "edit"      "Make surgical edits to files (find exact text and replace)"
+   "write"     "Create or overwrite files"
+   "eql_query" "Execute an EQL query against the live session graph. Returns session state, tool info, extension status, and more."})
 
 ;; ============================================================
 ;; Context file discovery
@@ -85,7 +86,7 @@
      :cwd               — working directory (default: user.dir)
      :custom-prompt      — replaces the default prompt entirely
      :append-prompt      — text appended after the main prompt
-     :selected-tools     — tool name strings (default: read bash edit write)
+     :selected-tools     — tool name strings (default: read bash edit write eql_query)
      :context-files      — [{:path :content}] pre-loaded context files
      :skills             — [Skill] pre-loaded skills
 
@@ -94,7 +95,7 @@
   ([{:keys [cwd custom-prompt append-prompt selected-tools
             context-files skills]}]
    (let [resolved-cwd  (or cwd (System/getProperty "user.dir"))
-         tool-names    (or selected-tools ["read" "bash" "edit" "write"])
+         tool-names    (or selected-tools ["read" "bash" "edit" "write" "eql_query"])
          has-read?     (some #(= "read" %) tool-names)
          loaded-skills (or skills [])
          loaded-ctx    (or context-files [])

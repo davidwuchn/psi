@@ -62,6 +62,7 @@
     (let [prompt (sys-prompt/build-system-prompt {:cwd "/test/dir"})]
       (is (str/includes? prompt "Available tools:"))
       (is (str/includes? prompt "read: Read file contents"))
+      (is (str/includes? prompt "eql_query: Execute an EQL query against the live session graph."))
       (is (str/includes? prompt "Guidelines:"))
       (is (str/includes? prompt "/test/dir"))))
 
