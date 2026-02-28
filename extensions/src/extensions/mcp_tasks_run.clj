@@ -757,7 +757,10 @@
 (defn- run-loop-job
   [{:keys [run-id task-id project-dir worktree-dir run-control max-steps]}]
   (let [started-ms (now-ms)
-        max-steps* (long (or max-steps max-steps-default))]
+        max-steps* (long (or max-steps max-steps-default))
+        ctrl       (if (instance? clojure.lang.IAtom run-control)
+                     run-control
+                     (atom {:pause? false :cancel? false :merge? false}))]
     (try
       (let [{wt :worktree-dir wt-error :error}
             (if (seq worktree-dir)
@@ -791,7 +794,7 @@
                            :started-ms    started-ms
                            :error-message (str "Reached max steps (" max-steps* ")")})
 
-              (:cancel? @run-control)
+              (:cancel? @ctrl)
               (run-result {:status        :cancelled
                            :run-id        run-id
                            :task-id       task-id
@@ -803,7 +806,7 @@
                            :started-ms    started-ms
                            :final-state   :cancelled})
 
-              (:pause? @run-control)
+              (:pause? @ctrl)
               (run-result {:status        :paused
                            :run-id        run-id
                            :task-id       task-id
@@ -830,7 +833,7 @@
                                :error-message err})
 
                   (let [{:keys [task children entity-type state completed-count]} derived
-                        merge?     (:merge? @run-control)
+                        merge?     (:merge? @ctrl)
                         step-state (if (and (= state :wait-pr-merge) merge?)
                                      :merging-pr
                                      state)]
@@ -905,7 +908,7 @@
 
                             (do
                               (when (= step-state :merging-pr)
-                                (swap! run-control assoc :merge? false))
+                                (swap! ctrl assoc :merge? false))
                               (let [derived2 (derive-current! project-dir wt task-id)]
                                 (if-let [err2 (:error derived2)]
                                   (let [history' (conj history (assoc base-entry :ok? true))]
