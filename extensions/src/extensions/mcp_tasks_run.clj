@@ -33,6 +33,7 @@
 
 (def ^:private run-workflow-type :mcp-tasks-run)
 (def ^:private max-steps-default 50)
+(def ^:private max-has-tasks-no-progress-default 5)
 
 (def ^:private workflow-eql
   [{:psi.extension/workflows
@@ -342,6 +343,16 @@
   (and (= pre-state new-state)
        (= pre-completed-children new-completed-children)
        (= pre-snapshot new-snapshot)))
+
+(defn- has-tasks-no-progress-streak
+  [history]
+  (->> (or history [])
+       reverse
+       (take-while (fn [entry]
+                     (and (= false (:progress? entry))
+                          (= :has-tasks (:state entry))
+                          (= :has-tasks (:next-state entry)))))
+       count))
 
 ;; ---------------------------------------------------------------------------
 ;; Shell + mcp/gh helpers
@@ -1238,22 +1249,15 @@
                                     history-entry  (assoc base-entry
                                                           :ok? true
                                                           :next-state next-state
-                                                          :completed-count next-completed)
-                                    history''      (conj history history-entry)]
-                                (if-not progress?
-                                  (run-result {:status        :error
-                                               :run-id        run-id
-                                               :task-id       task-id
-                                               :entity-type   entity-type
-                                               :worktree-dir  worktree-dir
-                                               :current-state next-state
-                                               :steps         (inc steps)
-                                               :history       history''
-                                               :last-step     prompt-name
-                                               :last-output   (task-preview (:text step-result) 500)
-                                               :started-ms    started-ms
-                                               :error-message (str "No progress after step " prompt-name
-                                                                   ", state remained " (name next-state))})
+                                                          :completed-count next-completed
+                                                          :progress? progress?)
+                                    history''      (conj history history-entry)
+                                    has-tasks-stall? (and (= state :has-tasks)
+                                                          (= next-state :has-tasks))
+                                    no-progress-streak (when has-tasks-stall?
+                                                         (has-tasks-no-progress-streak history''))]
+                                (cond
+                                  progress?
                                   (do
                                     (when (= step-state :merging-pr)
                                       (swap! control assoc :merge? false))
@@ -1267,7 +1271,40 @@
                                                  :history       history''
                                                  :last-step     prompt-name
                                                  :last-output   (task-preview (:text step-result) 500)
-                                                 :started-ms    started-ms}))))))))))
+                                                 :started-ms    started-ms}))
+
+                                  (and has-tasks-stall?
+                                       (< no-progress-streak max-has-tasks-no-progress-default))
+                                  (run-result {:status        :running
+                                               :run-id        run-id
+                                               :task-id       task-id
+                                               :entity-type   entity-type
+                                               :worktree-dir  worktree-dir
+                                               :current-state :derive-state
+                                               :steps         (inc steps)
+                                               :history       history''
+                                               :last-step     prompt-name
+                                               :last-output   (task-preview (:text step-result) 500)
+                                               :started-ms    started-ms})
+
+                                  :else
+                                  (run-result {:status        :error
+                                               :run-id        run-id
+                                               :task-id       task-id
+                                               :entity-type   entity-type
+                                               :worktree-dir  worktree-dir
+                                               :current-state next-state
+                                               :steps         (inc steps)
+                                               :history       history''
+                                               :last-step     prompt-name
+                                               :last-output   (task-preview (:text step-result) 500)
+                                               :started-ms    started-ms
+                                               :error-message (if has-tasks-stall?
+                                                                (str "No progress after step " prompt-name
+                                                                     ", state remained " (name next-state)
+                                                                     " for " no-progress-streak " consecutive attempt(s)")
+                                                                (str "No progress after step " prompt-name
+                                                                     ", state remained " (name next-state)))})))))))))
                   (run-result {:status        :error
                                :run-id        run-id
                                :task-id       task-id

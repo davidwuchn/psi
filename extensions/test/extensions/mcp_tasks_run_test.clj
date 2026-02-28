@@ -193,6 +193,57 @@
           (is (= :derive-state (:current-state res)))
           (is (= 1 (:steps-completed res))))))))
 
+(deftest workflow-story-child-transient-no-progress-test
+  (testing "run-loop-job tolerates transient no-progress at :has-tasks"
+    (let [ctrl (atom {:pause? false :cancel? false :merge? false})
+          snapshot {:task {:id 42 :type :story :status :open :meta {:refined "true"}}
+                    :children [{:id 100 :status :open :meta {:refined "true"}}]
+                    :entity-type :story
+                    :state :has-tasks
+                    :completed-count 0}]
+      (with-redefs [sut/derive-current! (fn [_project-dir _worktree-dir _task-id]
+                                          snapshot)
+                    sut/resolve-step-prompt (fn [_project-dir _prompt-name] "prompt")
+                    sut/run-step-subagent! (fn [_] {:ok? true :text "ok"})]
+        (let [res (#'sut/run-loop-job {:run-id "run-1"
+                                       :task-id 42
+                                       :project-dir "/tmp"
+                                       :worktree-dir "/tmp/wt"
+                                       :control ctrl
+                                       :current-state :derive-state
+                                       :steps 0
+                                       :history []
+                                       :max-steps 10})]
+          (is (= :running (:status res)))
+          (is (= :derive-state (:current-state res)))
+          (is (= 1 (:steps-completed res)))
+          (is (= false (:progress? (last (:history res))))))))))
+
+(deftest workflow-story-child-no-progress-threshold-test
+  (testing "run-loop-job errors after repeated no-progress at :has-tasks"
+    (let [ctrl (atom {:pause? false :cancel? false :merge? false})
+          snapshot {:task {:id 42 :type :story :status :open :meta {:refined "true"}}
+                    :children [{:id 100 :status :open :meta {:refined "true"}}]
+                    :entity-type :story
+                    :state :has-tasks
+                    :completed-count 0}
+          history (vec (repeat 4 {:state :has-tasks :next-state :has-tasks :progress? false}))]
+      (with-redefs [sut/derive-current! (fn [_project-dir _worktree-dir _task-id]
+                                          snapshot)
+                    sut/resolve-step-prompt (fn [_project-dir _prompt-name] "prompt")
+                    sut/run-step-subagent! (fn [_] {:ok? true :text "ok"})]
+        (let [res (#'sut/run-loop-job {:run-id "run-1"
+                                       :task-id 42
+                                       :project-dir "/tmp"
+                                       :worktree-dir "/tmp/wt"
+                                       :control ctrl
+                                       :current-state :derive-state
+                                       :steps 4
+                                       :history history
+                                       :max-steps 10})]
+          (is (= :error (:status res)))
+          (is (re-find #"consecutive attempt" (:error-message res))))))))
+
 (deftest workflow-native-wait-pr-merge-test
   (testing "run-loop-job pauses explicitly at wait-pr-merge without merge authorization"
     (let [ctrl (atom {:pause? false :cancel? false :merge? false})]
