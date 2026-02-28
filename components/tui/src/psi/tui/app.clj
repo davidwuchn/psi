@@ -76,6 +76,27 @@
       (charm-term/cursor-home terminal))
     (swap! renderer assoc :alt-screen true))))
 
+;; ── Resize repaint fix ──────────────────────────────────────
+;; On terminal height changes, JLine Display can retain stale rows from the
+;; previous frame in some terminals. Force a hard repaint + clear so shrinking
+;; and re-expanding the viewport never leaves garbage lines behind.
+
+(alter-var-root
+ #'charm.render.core/update-size!
+ (constantly
+  (fn [renderer width height]
+    (let [{:keys [display height old-height]}
+          (assoc @renderer :old-height (:height @renderer))
+          height-changed? (not= old-height height)]
+      (.resize ^org.jline.utils.Display display height width)
+      (swap! renderer assoc :width width :height height)
+      (when height-changed?
+        ;; Reset Display diff baseline and hard-clear terminal buffer.
+        (.clear ^org.jline.utils.Display display)
+        (let [terminal (:terminal @renderer)]
+          (charm-term/clear-screen terminal)
+          (charm-term/cursor-home terminal)))))))
+
 ;; ── Extended key fallback patch ─────────────────────────────
 ;; Some terminals emit modified keys as CSI-u or modifyOtherKeys
 ;; sequences that charm.clj currently leaves as :unknown. Decode the
