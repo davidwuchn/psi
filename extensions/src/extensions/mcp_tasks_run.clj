@@ -15,7 +15,7 @@
    Notes:
    - Reimplements derive-task-state/derive-story-state and flow logic.
    - Uses extension workflow runtime.
-   - Prompts are loaded from `mcp-tasks prompts show` with local copied
+   - Prompts are loaded from `mcp-tasks prompts show --cli` with local copied
      prompts for `complete-story` and `squash-merge-on-gh` (and a local
      fallback for missing `create-task-pr`)."
   (:require
@@ -470,25 +470,30 @@
 (defn- prompt-cache-key [project-dir prompt-name]
   [(or project-dir "") prompt-name])
 
+(defn- prompt-content
+  [res]
+  (let [parsed (:parsed res)]
+    (when (and (map? parsed)
+               (string? (:content parsed)))
+      (:content parsed))))
+
+(defn- show-prompt
+  [project-dir prompt-name cli?]
+  (run-shell
+   {:dir  project-dir
+    :args (cond-> ["mcp-tasks" "prompts" "show" prompt-name]
+            cli? (conj "--cli")
+            true (conj "--format" "edn"))}))
+
 (defn- load-mcp-prompt!
   [project-dir prompt-name]
   (let [k     (prompt-cache-key project-dir prompt-name)
         cache (:prompt-cache @state)]
     (if-let [cached (get @cache k)]
       cached
-      (let [res (run-shell {:dir  project-dir
-                            :args ["mcp-tasks" "prompts" "show"
-                                   prompt-name "--format" "edn"]})
-            parsed (:parsed res)
-            content (cond
-                      (string? (get parsed :content))
-                      (:content parsed)
-
-                      (and (map? parsed)
-                           (string? (:error parsed)))
-                      nil
-
-                      :else nil)]
+      (let [content (or (prompt-content (show-prompt project-dir prompt-name true))
+                        ;; Backward compatibility with older mcp-tasks versions.
+                        (prompt-content (show-prompt project-dir prompt-name false)))]
         (if (seq content)
           (do
             (swap! cache assoc k content)
