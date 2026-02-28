@@ -4,6 +4,22 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-02-28 - System Prompt Introspection
+
+### λ System prompt is intentionally queryable verbatim via EQL
+
+There is a first-class resolver for `:psi.agent-session/system-prompt` in
+`components/agent-session/src/psi/agent_session/resolvers.clj`.
+
+Use this query to retrieve the exact assembled prompt for the current session:
+
+```clojure
+[:psi.agent-session/system-prompt]
+```
+
+This is the canonical runtime source of truth (better than reconstructing from
+files), and enables direct debugging/auditing of prompt assembly.
+
 ## 2026-02-28 - EQL Prompt Querying
 
 ### λ Query only resolver-backed attrs in eql_query

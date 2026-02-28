@@ -17,6 +17,8 @@
 --   - tools/find.allium             (result/byte truncation)
 --   - tools/grep.allium             (line/match/byte truncation)
 --   - tools/eql-query.allium        (query truncation + full-output temp artifact)
+--   - tool-output-rendering.allium  (interactive rendering contract)
+--   - tool-output-display.allium    (interactive lifecycle + expansion controls)
 
 use "./tools/runtime.allium" as runtime
 use "./tools/read.allium" as read
@@ -25,6 +27,8 @@ use "./tools/ls.allium" as ls
 use "./tools/find.allium" as find
 use "./tools/grep.allium" as grep
 use "./tools/eql-query.allium" as eql
+use "./tool-output-rendering.allium" as render
+use "./tool-output-display.allium" as display
 
 surface ToolOutputHandlingCompat {
     for caller: RuntimeEngineer
@@ -37,4 +41,6 @@ surface ToolOutputHandlingCompat {
         find/FindToolApi
         grep/GrepToolApi
         eql/EqlQueryToolApi
+        render/ToolOutputRenderer
+        display/ToolOutputDisplayApi
 }
