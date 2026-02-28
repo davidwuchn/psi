@@ -4,6 +4,28 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-02-27 - mcp-tasks-run Orchestration + Tool Scoping
+
+### λ mcp-tasks CLI Is CWD-Sensitive
+
+Running `mcp-tasks add/update` from the wrong directory can create/use
+`.mcp-tasks` in an unexpected parent and write tasks to the wrong repo
+(observed: `/Users/duncan/projects/hugoduncan/.mcp-tasks/tasks.ednl`).
+
+Always execute task mutations with an explicit project working directory
+(shell `:dir`) and verify `pwd` before any write operation.
+
+### λ Standard Tool `:cwd` Support Prevents Extension Tool Forking
+
+Worktree-aware orchestration needs tools to run relative to a worktree.
+Re-defining `read/bash/edit/write` inside an extension duplicates behavior
+and drifts from core semantics.
+
+Better pattern:
+- built-in tools accept optional `:cwd`
+- expose a shared factory (e.g. `make-tools-with-cwd`)
+- extensions/sub-agents reuse standard tools with scoped cwd
+
 ## 2026-02-26 - Hierarchical API Error Resolvers
 
 ### λ Hierarchical Resolver Pattern — Cheap List, Lazy Detail
