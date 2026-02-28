@@ -776,7 +776,11 @@
 
       ;; Window resize
         (msg/window-size? m)
-        [(assoc state :width (:width m) :height (:height m)) nil]
+        [(assoc state
+                :width (:width m)
+                :height (:height m)
+                :force-clear? true)
+         nil]
 
       ;; Dialog active — route all key input to dialog handler
         (and (has-active-dialog? state) (msg/key-press? m))
@@ -961,6 +965,12 @@
    Applied on dynamic footer rows so shorter re-renders don't leave
    stale trailing characters to the right."
   "\u001b[K")
+
+(def ^:private clear-screen-home-seq
+  "ANSI full clear + cursor home.
+   Used as a one-shot prefix when we need a hard redraw (e.g. resize in
+   terminals that don't maintain a clean alt-screen backing buffer)."
+  "\u001b[2J\u001b[H")
 
 ;; ── Extension UI rendering ──────────────────────────────────
 
@@ -1465,7 +1475,7 @@
   (let [{:keys [messages phase error input spinner-frame model-name
                 prompt-templates skills extension-summary ui-state-atom
                 stream-text tool-calls tool-order
-                session-selector current-session-file width]} state
+                session-selector current-session-file width force-clear?]} state
         spinner-char   (nth spinner-frames (mod spinner-frame (count spinner-frames)))
         dialog-active? (has-active-dialog? state)
         has-progress?  (or (seq stream-text) (seq tool-order))
@@ -1480,48 +1490,51 @@
         (and (= :streaming phase)
              (or (not has-progress?) active-tool-spinner?))
         term-width     (or width 80)]
-    (if (= :selecting-session phase)
-      ;; Session selector takes over the whole screen
-      (str (render-banner model-name prompt-templates skills extension-summary)
-           "\n"
-           (render-session-selector session-selector current-session-file term-width)
-           clear-to-end-seq)
-      ;; Normal chat view
-      (str (render-banner model-name prompt-templates skills extension-summary)
-           "\n"
-           (render-messages messages term-width)
-           ;; Current turn progress
-           (when (= :streaming phase)
-             (if has-progress?
-               (str (render-stream-text stream-text term-width)
-                    (render-tool-calls tool-calls tool-order spinner-char term-width)
-                    "\n")
-               (str "\n" (charm/render assist-style "ψ: ")
-                    spinner-char " thinking…\n")))
-           (when error
-             (str "\n" (charm/render error-style (str "[error: " error "]")) "\n"))
-           ;; Widgets above editor
-           (render-widgets ui-state-atom :above-editor)
-           "\n"
-           (render-separator) "\n"
-           ;; Dialog replaces editor when active
-           (if dialog-active?
-             (render-dialog ui-state-atom)
-             (if (= :idle phase)
-               (wrap-text-input-view input term-width)
-               (charm/render dim-style
-                             (if progress-spinner-visible?
-                               "(waiting for response…)"
-                               (str spinner-char " waiting for response…")))))
-           "\n"
-           (render-separator) "\n"
-           ;; Widgets below editor
-           (render-widgets ui-state-atom :below-editor)
-           ;; Default footer (path, stats, statuses)
-           (render-footer state term-width)
-           ;; Notifications toast
-           (render-notifications ui-state-atom)
-           clear-to-end-seq))))
+    (str
+     (when force-clear?
+       clear-screen-home-seq)
+     (if (= :selecting-session phase)
+       ;; Session selector takes over the whole screen
+       (str (render-banner model-name prompt-templates skills extension-summary)
+            "\n"
+            (render-session-selector session-selector current-session-file term-width)
+            clear-to-end-seq)
+       ;; Normal chat view
+       (str (render-banner model-name prompt-templates skills extension-summary)
+            "\n"
+            (render-messages messages term-width)
+            ;; Current turn progress
+            (when (= :streaming phase)
+              (if has-progress?
+                (str (render-stream-text stream-text term-width)
+                     (render-tool-calls tool-calls tool-order spinner-char term-width)
+                     "\n")
+                (str "\n" (charm/render assist-style "ψ: ")
+                     spinner-char " thinking…\n")))
+            (when error
+              (str "\n" (charm/render error-style (str "[error: " error "]")) "\n"))
+            ;; Widgets above editor
+            (render-widgets ui-state-atom :above-editor)
+            "\n"
+            (render-separator) "\n"
+            ;; Dialog replaces editor when active
+            (if dialog-active?
+              (render-dialog ui-state-atom)
+              (if (= :idle phase)
+                (wrap-text-input-view input term-width)
+                (charm/render dim-style
+                              (if progress-spinner-visible?
+                                "(waiting for response…)"
+                                (str spinner-char " waiting for response…")))))
+            "\n"
+            (render-separator) "\n"
+            ;; Widgets below editor
+            (render-widgets ui-state-atom :below-editor)
+            ;; Default footer (path, stats, statuses)
+            (render-footer state term-width)
+            ;; Notifications toast
+            (render-notifications ui-state-atom)
+            clear-to-end-seq)))))
 
 ;; ── Public entry point ──────────────────────────────────────
 

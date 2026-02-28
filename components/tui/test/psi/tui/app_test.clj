@@ -433,12 +433,15 @@ clojure-lsp"}]})
 ;;;; Window resize
 
 (deftest window-resize-updates-dimensions-test
-  (testing "window-size message updates width and height"
+  (testing "window-size message updates width and height and requests a hard clear"
     (let [update-fn (app/make-update (stub-agent-fn ""))
           state     (init-state)
-          [s1 _]    (update-fn state (msg/window-size 120 40))]
+          [s1 _]    (update-fn state (msg/window-size 120 40))
+          out       (app/view s1)]
       (is (= 120 (:width s1)))
-      (is (= 40 (:height s1))))))
+      (is (= 40 (:height s1)))
+      (is (true? (:force-clear? s1)))
+      (is (str/starts-with? out "\u001b[2J\u001b[H")))))
 
 (deftest external-message-appended-to-transcript-test
   (testing "external-message appends assistant text and keeps polling"
