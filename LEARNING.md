@@ -4,6 +4,28 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-02-28 - EQL Prompt Querying
+
+### λ Query only resolver-backed attrs in eql_query
+
+`eql_query` succeeds for `:psi.agent-session/system-prompt`, but queries that include
+non-existent attrs (for example `:psi.agent-session/prompt`,
+`:psi.agent-session/instructions`, `:psi.agent-session/messages`) can fail the whole
+request.
+
+Known-good prompt introspection queries:
+
+```clojure
+[:psi.agent-session/system-prompt]
+
+[{:psi.agent-session/request-shape
+  [:psi.request-shape/system-prompt-chars
+   :psi.request-shape/estimated-tokens
+   :psi.request-shape/total-chars]}]
+```
+
+Practical rule: start narrow, then expand with only attrs confirmed by resolvers.
+
 ## 2026-02-28 - Tool Output Delta
 
 ### λ Tool-output EQL introspection contract (stable attrs)
