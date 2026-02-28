@@ -303,13 +303,45 @@
     :else
     :unrefined))
 
+(defn- progress-task-snapshot
+  [task]
+  (-> (or task {})
+      (select-keys [:id :type :status :meta :pr-num :code-reviewed])
+      (update :status (fn [x]
+                        (cond
+                          (keyword? x) x
+                          (string? x) (keyword x)
+                          :else :open)))))
+
+(defn- progress-children-snapshot
+  [children]
+  (->> (or children [])
+       (map (fn [child]
+              (-> child
+                  (select-keys [:id :status :meta :pr-num :code-reviewed
+                                :is-blocked :category :parent-id])
+                  (update :status (fn [x]
+                                    (cond
+                                      (keyword? x) x
+                                      (string? x) (keyword x)
+                                      :else :open))))))
+       (sort-by (comp str :id))
+       vec))
+
+(defn- progress-snapshot
+  [entity-type task children completed-count]
+  (cond-> {:entity-type entity-type
+           :task        (progress-task-snapshot task)}
+    (= :story entity-type)
+    (assoc :children        (progress-children-snapshot children)
+           :completed-count completed-count)))
+
 (defn- no-progress?
-  [pre-state new-state pre-completed-children new-completed-children]
-  (let [was-has-tasks (= :has-tasks pre-state)
-        is-has-tasks  (= :has-tasks new-state)]
-    (if (and was-has-tasks is-has-tasks)
-      (= pre-completed-children new-completed-children)
-      (= pre-state new-state))))
+  [pre-state new-state pre-completed-children new-completed-children
+   pre-snapshot new-snapshot]
+  (and (= pre-state new-state)
+       (= pre-completed-children new-completed-children)
+       (= pre-snapshot new-snapshot)))
 
 ;; ---------------------------------------------------------------------------
 ;; Shell + mcp/gh helpers
@@ -1187,9 +1219,22 @@
                                            :error-message err2})
                               (let [next-state     (:state derived2)
                                     next-completed (:completed-count derived2)
-                                    progress?      (not (no-progress? state next-state
+                                    next-task      (:task derived2)
+                                    next-children  (:children derived2)
+                                    pre-snapshot   (progress-snapshot entity-type
+                                                                      task
+                                                                      children
+                                                                      completed-count)
+                                    next-snapshot  (progress-snapshot entity-type
+                                                                      next-task
+                                                                      next-children
+                                                                      next-completed)
+                                    progress?      (not (no-progress? state
+                                                                      next-state
                                                                       completed-count
-                                                                      next-completed))
+                                                                      next-completed
+                                                                      pre-snapshot
+                                                                      next-snapshot))
                                     history-entry  (assoc base-entry
                                                           :ok? true
                                                           :next-state next-state
