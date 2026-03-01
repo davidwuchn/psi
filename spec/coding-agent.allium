@@ -13,7 +13,7 @@
 --   Tool management — active tool set
 --   System prompt assembly
 --   Session persistence
---   Run modes — interactive (TUI), print (headless), RPC (JSON stdio)
+--   Run modes — interactive (TUI), print (headless), RPC (EDN stdio)
 --
 -- Delegates to:
 --   Extension system (extension-system.allium)
@@ -22,6 +22,7 @@
 --   Compaction (compaction.allium)
 --   Built-in tool suite (tools.allium)
 --   Default interactive footer behaviour (default-footer.allium)
+--   Emacs frontend protocol (emacs-frontend.allium)
 --
 -- Excludes:
 --   Core LLM agent loop and streaming (see agent.allium)
@@ -584,14 +585,14 @@ surface AgentSessionApi {
 -- ExtensionApi surface declared in ext/ExtensionApi.
 
 surface RpcApi {
-    -- JSON-lines stdio protocol for headless / programmatic control.
+    -- EDN-lines stdio protocol for headless / programmatic control.
     for client: RpcClient
 
     context session: AgentSession
 
     exposes:
-        -- All commands produce a typed JSON response on stdout.
-        -- Events are emitted asynchronously as JSON lines.
+        -- All commands produce a typed EDN response on stdout.
+        -- Events are emitted asynchronously as EDN lines.
 
     provides:
         -- Prompting
@@ -637,10 +638,10 @@ surface RpcApi {
         get_commands()
 
     guidance:
-        -- Commands are sent as JSON lines on stdin: { id?, type, ...params }
-        -- Responses are emitted as JSON lines on stdout: { id?, type, ...data }
-        -- Events are interleaved with responses; callers match by id where present.
-        -- The RpcClient may integrate as a library (rpc-client.ts) or over stdio.
+        -- Commands, responses, events, and errors use canonical EDN envelopes over stdio.
+        -- Events are interleaved with responses; callers match by :id where present.
+        -- The RpcClient may integrate as a library or over stdio.
+        -- Canonical frame shapes, event payload catalog, and MUST/SHOULD compatibility/versioning policy are specified in emacs-frontend.allium.
 }
 
 surface ResourceLoaderApi {
@@ -686,6 +687,6 @@ deferred ModelRegistry.resolve          -- see: oauth-auth.allium (API key resol
 
 -- Extension event ordering open question moved to extension-system.allium.
 
-open_question "RPC mode: should the JSON stdio protocol be a separate allium spec, or is the surface declaration here sufficient?"
+-- RPC mode protocol details are split into emacs-frontend.allium.
 
 -- Skills collision policy open question moved to skills.allium.

@@ -75,7 +75,7 @@ Register domain resolvers, surface capability graph via EQL
    openapi spec + martian client, surface via Pathom mutations
 
 9. Step 9 — RPC surface
-   JSON stdio protocol for headless / programmatic control
+   EDN stdio protocol for headless / programmatic control (including Emacs frontend parity)
 
 10. Step 10 — Memory layer
     Combine query + history + knowledge into queryable memory
