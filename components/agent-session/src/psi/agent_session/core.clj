@@ -65,6 +65,7 @@
    [psi.agent-session.resolvers :as resolvers]
    [psi.agent-session.session :as session]
    [psi.agent-session.statechart :as sc]
+   [psi.memory.runtime :as memory-runtime]
    [psi.query.core :as query]))
 
 ;; ============================================================
@@ -302,7 +303,13 @@
                                  flush-state-atom
                                  (:session-id @session-data-atom)
                                  resolved-cwd
-                                 (:session-file @session-data-atom))))))
+                                 (:session-file @session-data-atom)))
+                              (try
+                                (memory-runtime/remember-session-message!
+                                 msg
+                                 {:session-id (:session-id @session-data-atom)})
+                                (catch Exception _
+                                  nil)))))
                         (sc/send-event! sc-env sc-session-id
                                         :session/agent-event
                                         {:pending-agent-event ev}))))))

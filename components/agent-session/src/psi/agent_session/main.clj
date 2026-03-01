@@ -52,6 +52,7 @@
    [psi.agent-core.core :as agent]
    [psi.ai.models :as models]
    [psi.introspection.core :as introspection]
+   [psi.memory.runtime :as memory-runtime]
    [psi.tui.app :as tui-app])
   (:gen-class))
 
@@ -238,7 +239,7 @@
    with toolResult messages by tool-call-id."
   [messages]
   (reduce
-   (fn [{:keys [messages tool-calls tool-order] :as acc} msg]
+   (fn [acc msg]
      (case (:role msg)
        "user"
        (let [text (message->display-text msg)]
@@ -361,15 +362,33 @@
     (when (and (some? tokens) (number? window) (pos? window))
       (session/update-context-usage-in! ctx tokens window))))
 
+(defn- safe-recover-memory!
+  [query-text]
+  (try
+    (memory-runtime/recover-for-query! query-text)
+    (catch Exception _
+      nil)))
+
+(defn- safe-remember-session-message!
+  [ctx msg]
+  (try
+    (memory-runtime/remember-session-message!
+     msg
+     {:session-id (:session-id (session/get-session-data-in ctx))})
+    (catch Exception _
+      nil)))
+
 (defn- run-prompt!
   "Send `text` to the agent and block until done, printing the response.
    Expands prompt templates before sending."
   [ctx ai-ctx ai-model oauth-ctx text]
   (let [expanded (expand-input ctx text)
+        _        (safe-recover-memory! expanded)
         user-msg {:role      "user"
                   :content   [{:type :text :text expanded}]
                   :timestamp (java.time.Instant/now)}
         _        (session/journal-append-in! ctx (persist/message-entry user-msg))
+        _        (safe-remember-session-message! ctx user-msg)
         api-key  (resolve-api-key oauth-ctx ai-model)
         result   (executor/run-agent-loop! ai-ctx ctx (:agent-ctx ctx) ai-model [user-msg]
                                            {:turn-ctx-atom (:turn-ctx-atom ctx)
@@ -425,7 +444,8 @@
                          :templates              templates
                          :skills                 skills
                          :extension-paths        ext-paths})
-          _       (introspection/register-resolvers!)]
+          _       (introspection/register-resolvers!)
+          _       (memory-runtime/sync-memory-layer! {:cwd cwd})]
       (doseq [{:keys [path error]} (:extension-errors summary)]
         (timbre/warn "Extension error:" path error))
       (when (pos? (:extension-loaded-count summary))
@@ -547,6 +567,7 @@
                         :skills                 skills
                         :extension-paths        ext-paths})
         _         (introspection/register-resolvers!)
+        _         (memory-runtime/sync-memory-layer! {:cwd cwd})
         _         (doseq [{:keys [path error]} (:extension-errors summary)]
                     (timbre/warn "Extension error:" path error))
         _         (when (pos? (:extension-loaded-count summary))
@@ -631,11 +652,13 @@
                             (future
                               (try
                                 (let [expanded (expand-input ctx text)
+                                      _        (safe-recover-memory! expanded)
                                       user-msg {:role      "user"
                                                 :content   [{:type :text :text expanded}]
                                                 :timestamp (java.time.Instant/now)}
                                       _        (session/journal-append-in!
                                                 ctx (persist/message-entry user-msg))
+                                      _        (safe-remember-session-message! ctx user-msg)
                                       api-key  (resolve-api-key oauth-ctx ai-model)
                                       result   (executor/run-agent-loop!
                                                 ai-ctx ctx (:agent-ctx ctx)

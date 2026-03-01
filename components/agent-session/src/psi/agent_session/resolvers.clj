@@ -207,6 +207,8 @@
    [com.wsscode.pathom3.connect.indexes :as pci]
    [com.wsscode.pathom3.interface.eql :as p.eql]
    [psi.introspection.graph :as graph]
+   [psi.memory.core :as memory]
+   [psi.memory.resolvers :as memory-resolvers]
    [psi.query.registry :as registry]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.session :as session]
@@ -1376,11 +1378,13 @@
 ;; ── Local Pathom env (for component-local queries) ──────
 
 (defn build-env
-  "Build a Pathom3 environment for querying an agent-session context."
+  "Build a Pathom3 environment for querying an agent-session context.
+   Includes memory resolvers locally so :psi.memory/* attrs are queryable via
+   agent-session/query-in."
   []
-  (pci/register all-resolvers))
+  (pci/register (into (vec all-resolvers) memory-resolvers/all-resolvers)))
 
-(defonce ^:private query-env (atom nil))
+(def ^:private query-env (atom nil))
 
 (defn- ensure-query-env! []
   (or @query-env (reset! query-env (build-env))))
@@ -1389,5 +1393,7 @@
   "Run EQL `q` against `ctx` using this component's Pathom graph."
   [ctx q]
   (p.eql/process (ensure-query-env!)
-                 {:psi/agent-session-ctx ctx}
+                 {:psi/agent-session-ctx ctx
+                  :psi/memory-ctx        (or (:memory-ctx ctx)
+                                             (memory/global-context))}
                  q))
