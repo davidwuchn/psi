@@ -1466,3 +1466,28 @@ When a spec decision affects roadmap shape, record it in:
 This prevents "spec-only truth" where decisions are discoverable only by
 reading `.allium` files, and keeps future ψ aligned during execution.
 
+---
+
+## 2026-03-01 - Step 11 Feed-Forward Trigger/Approval Policy
+
+### λ Step 11 Trigger Model: Event-Driven, No Background Cadence
+
+For Step 11, choose **explicit/manual + event-driven hooks** and avoid periodic
+background cadence initially.  This keeps recursion deterministic and easier to
+reason about while the loop is new.
+
+Implementation guardrail in spec:
+- `accepted_trigger_types` defines supported trigger classes
+- `enabled_trigger_hooks` defines runtime-enabled subset
+- disabled hooks are ignored without creating cycles
+
+### λ Approval Policy: Manual by Default, Trusted Local Opt-In for Low Risk
+
+Keep human approval as default policy.  Allow low-risk auto-approval only when
+trusted local mode is explicitly enabled:
+
+- `trusted_local_mode_enabled = true`
+- `auto_approve_low_risk_in_trusted_local_mode = true`
+
+This preserves safety-by-default while enabling faster local iteration.
+

@@ -89,7 +89,11 @@ Ordered steps toward AI COMPLETE.
     - Surface memory via EQL (`:psi.memory/*`) with recovery over session + history + graph
 
 11. Step 11 — Feed-forward recursion
-    AI tooling hooks + FUTURE_STATE
+    - Spec: `spec/feed-forward-recursion.allium`
+    - AI tooling hooks + FUTURE_STATE
+    - Recursion loop: observe → plan → approve → execute → verify → learn
+    - Guardrails: approval gate, atomic actions, required verification, rollback on verify failure
+    - Decisions: no periodic cadence in Step 11; enabled hooks are config-driven; manual approval default with opt-in low-risk auto-approve in trusted local mode
 
 12. AI COMPLETE
 

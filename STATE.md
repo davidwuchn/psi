@@ -144,6 +144,7 @@ Caught by `jline-terminal-keymap-test` smoke test.
 | `oauth-auth.allium`        | `agent-session/oauth`   | ✓ implemented (Anthropic provider)    |
 | `graph-emergence.allium`   | `query` + `introspection` | ◇ Step 7 spec authored (attribute links implicit; mutation side-effects deferred) |
 | `memory-layer.allium`      | `query` + `history` + `introspection` | ◇ Step 10 spec authored (provenance, graph snapshots/deltas, recovery over session+history+graph) |
+| `feed-forward-recursion.allium` | `memory` + `introspection` + `engine` | ◇ Step 11 spec authored (FUTURE_STATE loop, hooks, guardrails, memory writeback) |
 
 ## Step 7 Decisions (Spec)
 
@@ -157,6 +158,13 @@ Caught by `jline-terminal-keymap-test` smoke test.
 - Recovery ranking defaults: text relevance 50%, recency 25%, capability proximity 25%
 - Graph history retention: fixed-window compaction (keep latest 200 snapshots and 1000 deltas), trim oldest
 - No graph-history summary entities in Step 10 (defer richer compaction/summarization)
+
+## Step 11 Decisions (Spec)
+
+- Source: `spec/feed-forward-recursion.allium`
+- Trigger model in Step 11 is explicit/manual + event-driven hooks only (no periodic/background cadence)
+- Active hooks are runtime-configured via `config.enabled_trigger_hooks`
+- Manual approval remains default; low-risk proposals can auto-approve only in opt-in trusted local mode (`trusted_local_mode_enabled` + `auto_approve_low_risk_in_trusted_local_mode`)
 
 ## Open Questions
 

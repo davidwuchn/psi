@@ -1,0 +1,606 @@
+-- feed-forward-recursion.allium
+--
+-- Scope: Step 11 — Feed-forward recursion.
+--
+-- AI tooling hooks + FUTURE_STATE = Recursion
+--
+-- Includes:
+--   - FUTURE_STATE model and lifecycle
+--   - Trigger/hook driven recursion cycles
+--   - Observe → Plan → Approve → Execute → Verify → Learn loop
+--   - Safety guardrails (approval, atomicity, rollback)
+--   - Memory writeback integration for cycle outcomes
+--   - EQL surface requirements for recursion control/introspection
+--
+-- Excludes:
+--   - Transport protocols (HTTP/RPC)
+--   - Provider-specific LLM internals
+--   - Rich long-term side-effect ontologies (beyond memory + graph links)
+
+use "./memory-layer.allium" as memory
+use "./graph-emergence.allium" as graph
+
+------------------------------------------------------------
+-- External Entities
+------------------------------------------------------------
+
+external entity SystemState {
+    query_ready: Boolean
+    graph_ready: Boolean
+    introspection_ready: Boolean
+    memory_ready: Boolean
+    evolution_stage: bootstrap | developing | integrating | complete
+}
+
+external entity MemoryLayer {
+    status: initializing | ready | querying | error
+    canRemember: Boolean
+    canRecover: Boolean
+}
+
+external entity CapabilityGraph {
+    status: emerging | stable | expanding | error
+    generatedAt: Timestamp?
+    nodeCount: Integer
+    edgeCount: Integer
+    capabilityCount: Integer
+}
+
+external entity GitRepository {
+    currentCommit: String?
+    hasChanges: Boolean
+}
+
+external entity RecursionEqlSurface {
+    attrs: Set<String>
+}
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value FutureGoal {
+    id: String
+    title: String
+    description: String
+    priority: low | medium | high
+
+    successCriteria: Set<String>
+    constraints: Set<String>
+
+    status: proposed | active | blocked | complete
+}
+
+value FutureStateSnapshot {
+    version: Integer
+    generatedAt: Timestamp
+
+    horizon: short | medium | long
+    goals: List<FutureGoal>
+
+    assumptions: Set<String>
+    stopConditions: Set<String>
+}
+
+value TriggerSignal {
+    type: manual | session_end | graph_changed | memory_updated | verification_failed
+    reason: String
+    payload: Map<String, Any>
+    timestamp: Timestamp
+}
+
+value ProposedAction {
+    id: String
+    title: String
+    description: String
+
+    domain: planning | code | tests | docs | tasks | config
+    risk: low | medium | high
+    atomic: Boolean
+
+    expectedImpact: Set<String>
+    verificationHints: Set<String>
+}
+
+value VerificationCheckResult {
+    name: String
+    passed: Boolean
+    details: String?
+}
+
+value VerificationReport {
+    checks: List<VerificationCheckResult>
+    passedAll: Boolean
+    completedAt: Timestamp
+}
+
+value GuardrailPolicy {
+    requireHumanApproval: Boolean
+    maxActionsPerCycle: Integer
+    atomicOnly: Boolean
+    rollbackOnVerificationFailure: Boolean
+    maxRetriesPerGoal: Integer
+}
+
+value CycleOutcome {
+    status: success | failed | blocked | aborted
+    summary: String
+    evidence: Set<String>
+    changedGoals: Set<String>
+}
+
+------------------------------------------------------------
+-- Feed-forward Entities
+------------------------------------------------------------
+
+entity FeedForwardController {
+    status: idle | observing | planning | awaiting_approval | executing | verifying | learning | paused | error
+
+    currentFutureState: FutureStateSnapshot?
+    policy: GuardrailPolicy
+
+    hooks: List<ToolingHook>
+    cycles: List<RecursionCycle>
+
+    pausedReason: String?
+    lastError: String?
+
+    -- Derived
+    activeCycleCount: ActiveCycles(cycles).count
+    canStartCycle: status in [idle] and activeCycleCount = 0
+}
+
+entity ToolingHook {
+    id: String
+    triggerType: manual | session_end | graph_changed | memory_updated | verification_failed
+    enabled: Boolean
+    timeoutMs: Integer?
+}
+
+entity RecursionCycle {
+    controller: FeedForwardController
+
+    cycleId: String
+    trigger: TriggerSignal
+
+    startedAt: Timestamp
+    endedAt: Timestamp?
+
+    status: blocked | observing | planning | awaiting_approval | executing | verifying | learning | completed | failed | aborted
+
+    observation: Observation?
+    proposal: PlanProposal?
+    executionAttempts: List<ExecutionAttempt>
+    verification: VerificationReport?
+    outcome: CycleOutcome?
+
+    learningMemoryIds: Set<String>
+}
+
+entity Observation {
+    cycle: RecursionCycle
+
+    capturedAt: Timestamp
+
+    readiness: Map<String, Boolean>
+    graphSignals: Set<String>
+    memorySignals: Set<String>
+
+    gaps: List<String>
+    opportunities: List<String>
+}
+
+entity PlanProposal {
+    cycle: RecursionCycle
+
+    actions: List<ProposedAction>
+    risk: low | medium | high
+
+    requiresApproval: Boolean
+    approved: Boolean?
+    approvalBy: String?
+    approvalNotes: String?
+
+    generatedAt: Timestamp
+}
+
+entity ExecutionAttempt {
+    cycle: RecursionCycle
+    actionId: String
+
+    startedAt: Timestamp
+    endedAt: Timestamp?
+
+    status: success | failed | aborted
+    outputSummary: String?
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    default_horizon: short | medium | long = medium
+
+    default_require_human_approval: Boolean = true
+
+    -- Opt-in trust mode policy:
+    -- low-risk proposals may bypass manual approval only when both are true.
+    trusted_local_mode_enabled: Boolean = false
+    auto_approve_low_risk_in_trusted_local_mode: Boolean = true
+
+    default_max_actions_per_cycle: Integer = 1
+    default_atomic_only: Boolean = true
+    default_rollback_on_verification_failure: Boolean = true
+    default_max_retries_per_goal: Integer = 2
+
+    required_verification_checks: Set<String> = {
+        "tests", "lint", "eql-health"
+    }
+
+    -- Step 11 supports explicit/manual and event-driven hooks only.
+    -- Periodic/background cadence is intentionally excluded.
+    accepted_trigger_types: Set<String> = {
+        "manual", "session_end", "graph_changed", "memory_updated", "verification_failed"
+    }
+
+    -- Runtime-selectable subset of accepted trigger types.
+    -- This controls which hooks are active in a given deployment/session.
+    enabled_trigger_hooks: Set<String> = {
+        "manual", "session_end", "graph_changed", "memory_updated", "verification_failed"
+    }
+
+    required_recursion_eql_attrs: Set<String> = {
+        ":psi.recursion/status",
+        ":psi.recursion/paused?",
+        ":psi.recursion/current-cycle",
+        ":psi.recursion/current-future-state",
+        ":psi.recursion/policy",
+        ":psi.recursion/recent-cycles",
+        ":psi.recursion/last-outcome",
+        ":psi.recursion/hooks"
+    }
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+rule FeedForwardTriggerAccepted {
+    when: FeedForwardTriggerReceived(controller, trigger, state)
+
+    requires: trigger.type in config.accepted_trigger_types
+    requires: trigger.type in config.enabled_trigger_hooks
+    requires: controller.canStartCycle
+
+    requires: state.query_ready = true
+    requires: state.graph_ready = true
+    requires: state.introspection_ready = true
+    requires: state.memory_ready = true
+
+    ensures: controller.status = observing
+
+    ensures: exists cycle = RecursionCycle.created(
+        controller: controller,
+        cycleId: NewCycleId(),
+        trigger: trigger,
+        startedAt: now,
+        status: observing
+    )
+}
+
+rule FeedForwardTriggerBlocked {
+    when: FeedForwardTriggerReceived(controller, trigger, state)
+
+    requires: trigger.type in config.accepted_trigger_types
+    requires: trigger.type in config.enabled_trigger_hooks
+    requires:
+        state.query_ready = false or
+        state.graph_ready = false or
+        state.introspection_ready = false or
+        state.memory_ready = false
+
+    ensures: controller.status = paused
+    ensures: controller.pausedReason = "recursion_prerequisites_not_ready"
+
+    ensures: exists cycle = RecursionCycle.created(
+        controller: controller,
+        cycleId: NewCycleId(),
+        trigger: trigger,
+        startedAt: now,
+        endedAt: now,
+        status: blocked
+    )
+}
+
+rule FeedForwardTriggerIgnoredWhenDisabled {
+    when: FeedForwardTriggerReceived(controller, trigger, state)
+
+    requires: trigger.type in config.accepted_trigger_types
+    requires: trigger.type not in config.enabled_trigger_hooks
+
+    ensures: ControllerStateUnchanged(controller)
+    ensures: NoCycleCreatedForTrigger(controller, trigger)
+}
+
+rule ObservePhaseBuildsObservation {
+    when: ObserveRequested(controller, cycle, state, graphState, memoryLayer)
+
+    requires: cycle.status = observing
+
+    ensures: exists obs = Observation.created(
+        cycle: cycle,
+        capturedAt: now,
+        readiness: {
+            query: state.query_ready,
+            graph: state.graph_ready,
+            introspection: state.introspection_ready,
+            memory: state.memory_ready
+        },
+        graphSignals: GraphSignalsFrom(graphState),
+        memorySignals: MemorySignalsFrom(memoryLayer),
+        gaps: IdentifiedGaps(state, graphState, memoryLayer),
+        opportunities: IdentifiedOpportunities(state, graphState, memoryLayer)
+    )
+
+    ensures: cycle.observation = obs
+    ensures: cycle.status = planning
+    ensures: controller.status = planning
+}
+
+rule FutureStateSynthesized {
+    when: FutureStateSynthesisRequested(controller, cycle)
+
+    requires: cycle.status = planning
+    requires: cycle.observation != null
+
+    ensures: exists fs = FutureStateSnapshot.created(
+        version: PreviousFutureStateVersion(controller.currentFutureState) + 1,
+        generatedAt: now,
+        horizon: config.default_horizon,
+        goals: PrioritizedGoalsFromObservation(cycle.observation, controller.currentFutureState),
+        assumptions: AssumptionsFromObservation(cycle.observation),
+        stopConditions: StopConditionsFromPolicy(controller.policy)
+    )
+
+    ensures: controller.currentFutureState = fs
+}
+
+rule PlanProposalGenerated {
+    when: PlanRequested(controller, cycle)
+
+    requires: cycle.status = planning
+    requires: controller.currentFutureState != null
+
+    let actions = ProposedActionsFromFutureState(controller.currentFutureState, cycle.observation)
+    let risk = AggregateRiskFromActions(actions)
+
+    ensures: exists proposal = PlanProposal.created(
+        cycle: cycle,
+        actions: actions,
+        risk: risk,
+        requiresApproval: config.default_require_human_approval,
+        generatedAt: now
+    )
+
+    ensures: proposal.actions.count <= config.default_max_actions_per_cycle
+    ensures: proposal.actions.each(a => a.atomic = true) if config.default_atomic_only = true
+
+    ensures: cycle.proposal = proposal
+}
+
+rule ApprovalGateRequired {
+    when: ProposalReady(controller, cycle, proposal)
+
+    requires: cycle.status = planning
+    requires:
+        (proposal.requiresApproval = true or proposal.risk in [medium, high]) and
+        not (
+            proposal.risk = low and
+            config.trusted_local_mode_enabled = true and
+            config.auto_approve_low_risk_in_trusted_local_mode = true
+        )
+
+    ensures: cycle.status = awaiting_approval
+    ensures: controller.status = awaiting_approval
+}
+
+rule ProposalAutoApproved {
+    when: ProposalReady(controller, cycle, proposal)
+
+    requires: cycle.status = planning
+    requires: proposal.risk = low
+    requires:
+        proposal.requiresApproval = false or
+        (
+            config.trusted_local_mode_enabled = true and
+            config.auto_approve_low_risk_in_trusted_local_mode = true
+        )
+
+    ensures: proposal.requiresApproval = false
+    ensures: proposal.approved = true
+    ensures: cycle.status = executing
+    ensures: controller.status = executing
+}
+
+rule ProposalApprovedByUser {
+    when: ProposalApprovalReceived(controller, cycle, proposal, approver, decision, notes)
+
+    requires: cycle.status = awaiting_approval
+    requires: decision = approve
+
+    ensures: proposal.approved = true
+    ensures: proposal.approvalBy = approver
+    ensures: proposal.approvalNotes = notes
+
+    ensures: cycle.status = executing
+    ensures: controller.status = executing
+}
+
+rule ProposalRejectedByUser {
+    when: ProposalApprovalReceived(controller, cycle, proposal, approver, decision, notes)
+
+    requires: cycle.status = awaiting_approval
+    requires: decision = reject
+
+    ensures: proposal.approved = false
+    ensures: proposal.approvalBy = approver
+    ensures: proposal.approvalNotes = notes
+
+    ensures: cycle.status = learning
+    ensures: controller.status = learning
+}
+
+rule ExecuteActionsViaHooks {
+    when: ExecutionRequested(controller, cycle, proposal, hooks)
+
+    requires: cycle.status = executing
+    requires: proposal.approved = true or proposal.requiresApproval = false
+
+    ensures:
+        for action in proposal.actions:
+            exists attempt = ExecutionAttempt.created(
+                cycle: cycle,
+                actionId: action.id,
+                startedAt: now,
+                status: ExecuteActionViaHooks(action, hooks)
+            )
+
+    ensures: cycle.status = verifying
+    ensures: controller.status = verifying
+}
+
+rule VerificationRunsRequiredChecks {
+    when: VerificationRequested(controller, cycle)
+
+    requires: cycle.status = verifying
+
+    let checks = RunVerificationChecks(config.required_verification_checks)
+
+    ensures: exists report = VerificationReport{
+        checks: checks,
+        passedAll: checks.each(c => c.passed = true),
+        completedAt: now
+    }
+
+    ensures: cycle.verification = report
+    ensures: cycle.status = learning
+    ensures: controller.status = learning
+}
+
+rule RollbackOnVerificationFailure {
+    when: VerificationCompleted(controller, cycle, report, repo)
+
+    requires: cycle.status = learning
+    requires: report.passedAll = false
+    requires: config.default_rollback_on_verification_failure = true
+
+    ensures: repo.currentCommit = CommitBeforeCycle(cycle)
+    ensures: cycle.outcome.status = failed
+    ensures: cycle.outcome.summary = "verification_failed_rolled_back"
+}
+
+rule LearnFromCycleOutcome {
+    when: LearningRequested(controller, cycle, memoryLayer)
+
+    requires: cycle.status = learning
+    requires: memoryLayer.status = ready
+
+    ensures: memory/RememberRequested(
+        memoryLayer,
+        ActiveMemorySession(memoryLayer),
+        discovery,
+        LearningSummaryForCycle(cycle),
+        {"feed-forward", "cycle", "step-11"},
+        LearningProvenanceForCycle(cycle)
+    )
+
+    ensures: cycle.learningMemoryIds = cycle.learningMemoryIds + {LastMemoryId(memoryLayer)}
+}
+
+rule UpdateFutureStateAfterSuccess {
+    when: CycleOutcomeComputed(controller, cycle)
+
+    requires: cycle.outcome.status = success
+    requires: controller.currentFutureState != null
+
+    ensures: controller.currentFutureState = AdvanceGoals(controller.currentFutureState, cycle)
+}
+
+rule UpdateFutureStateAfterFailure {
+    when: CycleOutcomeComputed(controller, cycle)
+
+    requires: cycle.outcome.status in [failed, blocked, aborted]
+    requires: controller.currentFutureState != null
+
+    ensures: controller.currentFutureState = AddBlockersAndHypotheses(controller.currentFutureState, cycle)
+}
+
+rule CycleCompletes {
+    when: CycleFinalizeRequested(controller, cycle)
+
+    requires: cycle.status = learning
+
+    ensures: cycle.endedAt = now
+    ensures:
+        if cycle.outcome.status = success:
+            cycle.status = completed
+        else:
+            cycle.status = failed
+
+    ensures: controller.status = idle
+    ensures: controller.pausedReason = null
+}
+
+rule RecursionSurfacedViaEql {
+    when: RecursionResolversRegistered(surface, controller)
+
+    requires: controller != null
+
+    ensures: config.required_recursion_eql_attrs.each(a => surface.attrs contains a)
+}
+
+------------------------------------------------------------
+-- Surface
+------------------------------------------------------------
+
+actor FeedForwardOperator { identified_by: id = "feed-forward-operator" }
+
+surface FeedForwardControlApi {
+    for operator: FeedForwardOperator
+
+    context controller: FeedForwardController
+
+    exposes:
+        controller.status
+        controller.currentFutureState
+        controller.cycles
+        controller.policy
+        controller.pausedReason
+
+    provides:
+        TriggerFeedForward(operator, reason)
+            when controller.canStartCycle
+            when "manual" in config.enabled_trigger_hooks
+
+        ApproveProposal(operator, cycleId, notes)
+            when exists c: controller.cycles with c.cycleId = cycleId and c.status = awaiting_approval
+
+        RejectProposal(operator, cycleId, notes)
+            when exists c: controller.cycles with c.cycleId = cycleId and c.status = awaiting_approval
+
+        PauseFeedForward(operator, reason)
+            when controller.status != paused
+
+        ResumeFeedForward(operator)
+            when controller.status = paused
+
+    related:
+        memory/QueryableMemoryApi(ActiveMemoryLayer())
+        graph/CapabilityGraphApi(ActiveCapabilityGraph())
+}
+
+-- Resolved: Step 11 uses explicit/manual + event-driven hooks (no periodic cadence).
+-- Hook activation is controlled by config.enabled_trigger_hooks.
+-- Resolved: manual approval remains default; low-risk auto-approval is opt-in
+-- via trusted_local_mode_enabled + auto_approve_low_risk_in_trusted_local_mode.
