@@ -83,7 +83,10 @@ Ordered steps toward AI COMPLETE.
    EDN stdio protocol for headless / programmatic control (including Emacs frontend parity)
 
 10. Step 10 — Memory layer
-    Combine query + history + knowledge into queryable memory
+    - Spec: `spec/memory-layer.allium`
+    - Combine query + history + knowledge into queryable memory
+    - Capture memory provenance (session/git/graph/op symbols), graph snapshots + deltas
+    - Surface memory via EQL (`:psi.memory/*`) with recovery over session + history + graph
 
 11. Step 11 — Feed-forward recursion
     AI tooling hooks + FUTURE_STATE

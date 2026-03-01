@@ -1,0 +1,490 @@
+-- memory-layer.allium
+--
+-- Scope: Step 10 — queryable memory layer that combines query, history,
+--        knowledge graph context, and recoverability.
+--
+-- Includes:
+--   - Memory layer readiness and lifecycle
+--   - Memory sessions, records, provenance, and recovery runs
+--   - Graph snapshots/deltas as memory artifacts
+--   - Recovery behavior that composes session + history + graph signals
+--   - EQL surface requirements for memory queries
+--
+-- Excludes:
+--   - HTTP / RPC transports (Steps 8/9)
+--   - Feed-forward execution loop and autonomous planning policy (Step 11)
+--   - Rich mutation side-effect entities (deferred from Step 7)
+
+use "./graph-emergence.allium" as graph
+
+------------------------------------------------------------
+-- External Entities
+------------------------------------------------------------
+
+external entity QueryGraphSummary {
+    resolverCount: Integer
+    mutationCount: Integer
+    resolverSymbols: Set<String>
+    mutationSymbols: Set<String>
+    envBuilt: Boolean
+}
+
+external entity GitRepository {
+    path: String
+    currentCommit: String?
+    status: clean | modified | staged | error
+    hasHistory: Boolean
+}
+
+external entity CapabilityGraph {
+    status: emerging | stable | expanding | error
+    generatedAt: Timestamp?
+    nodeCount: Integer
+    edgeCount: Integer
+    capabilityIds: Set<String>
+    operationSymbols: Set<String>
+}
+
+external entity SystemState {
+    history_ready: Boolean
+    knowledge_ready: Boolean
+    memory_ready: Boolean
+    graph_ready: Boolean
+}
+
+external entity MemoryEqlSurface {
+    attrs: Set<String>
+}
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value MemoryProvenance {
+    sessionId: String?
+    gitCommit: String?
+
+    resolverSymbols: Set<String>
+    mutationSymbols: Set<String>
+
+    graphFingerprint: String?
+    capabilityIds: Set<String>
+
+    sources: Set<String>          -- {"session", "history", "graph", "manual"}
+}
+
+value RecoveryFilter {
+    tags: Set<String>?
+    capabilityIds: Set<String>?
+    contentTypes: Set<String>?
+    since: Timestamp?
+}
+
+value DomainCoverage {
+    domain: String
+    resolverCount: Integer
+    mutationCount: Integer
+    hasCoverage: Boolean
+}
+
+value MemoryIndexStats {
+    totalMemories: Integer
+    byType: Map<String, Integer>
+    byTag: Map<String, Integer>
+    bySource: Map<String, Integer>
+    capabilityLinkCount: Integer
+    graphSnapshotCount: Integer
+}
+
+------------------------------------------------------------
+-- Memory Entities
+------------------------------------------------------------
+
+entity MemoryLayer {
+    status: initializing | ready | querying | error
+
+    queryGraph: QueryGraphSummary?
+    gitRepository: GitRepository?
+    capabilityGraph: CapabilityGraph?
+
+    memorySessions: List<MemorySession>
+    graphSnapshots: List<GraphSnapshot>
+    graphDeltas: List<GraphDelta>
+
+    indexStats: MemoryIndexStats
+
+    -- Derived
+    canRemember: status = ready and queryGraph != null
+    canRecover: status = ready and gitRepository != null and gitRepository.hasHistory = true
+    hasKnowledgeIndex: graphSnapshots.count > 0
+}
+
+entity MemorySession {
+    memoryLayer: MemoryLayer
+    sessionId: String
+    startedAt: Timestamp
+    endedAt: Timestamp?
+
+    memories: List<MemoryRecord>
+    recoveries: List<Recovery>
+
+    -- Derived
+    isActive: endedAt = null
+    memoryCount: memories.count
+    recoveryCount: recoveries.count
+}
+
+entity MemoryRecord {
+    session: MemorySession
+    contentType: learning | discovery | state | pattern
+    content: String
+    timestamp: Timestamp
+
+    tags: Set<String>
+    provenance: MemoryProvenance
+
+    -- Derived
+    hasTags: tags.count > 0
+    hasProvenance: provenance != null
+    isCommitted: provenance.gitCommit != null
+}
+
+entity GraphSnapshot {
+    memoryLayer: MemoryLayer
+
+    fingerprint: String
+    capturedAt: Timestamp
+
+    nodeCount: Integer
+    edgeCount: Integer
+    capabilityCount: Integer
+
+    domainCoverage: List<DomainCoverage>
+}
+
+entity GraphDelta {
+    memoryLayer: MemoryLayer
+
+    fromFingerprint: String
+    toFingerprint: String
+    capturedAt: Timestamp
+
+    addedCapabilities: Set<String>
+    removedCapabilities: Set<String>
+
+    addedOperations: Set<String>
+    removedOperations: Set<String>
+}
+
+entity Recovery {
+    session: MemorySession
+
+    query: String
+    filter: RecoveryFilter?
+    sourcesUsed: Set<String>
+
+    recoveredMemories: Set<MemoryRecord>
+    recoveryTime: Timestamp
+
+    resultsLimit: Integer
+    resultsTruncated: Boolean
+
+    -- Derived
+    foundMemories: recoveredMemories.count > 0
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    default_recovery_limit: Integer = 50
+
+    required_recovery_sources: Set<String> = {
+        "session", "history", "graph"
+    }
+
+    -- Resolved: default recovery ranking weights.
+    -- Sum must remain 100.
+    default_recovery_weight_recency_pct: Integer = 25
+    default_recovery_weight_text_relevance_pct: Integer = 50
+    default_recovery_weight_capability_proximity_pct: Integer = 25
+
+    require_provenance_on_write: Boolean = true
+    capture_graph_snapshot_on_change: Boolean = true
+
+    -- Resolved: fixed-window retention, no summary entities in Step 10.
+    graph_history_retention_policy: String = "fixed-window"
+    graph_snapshot_retention_max: Integer = 200
+    graph_delta_retention_max: Integer = 1000
+
+    required_memory_eql_attrs: Set<String> = {
+        ":psi.memory/status",
+        ":psi.memory/entry-count",
+        ":psi.memory/entries",
+        ":psi.memory/search-results",
+        ":psi.memory/recovery-count",
+        ":psi.memory/recoveries",
+        ":psi.memory/graph-snapshots",
+        ":psi.memory/graph-deltas",
+        ":psi.memory/by-tag",
+        ":psi.memory/capability-history",
+        ":psi.memory/index-stats"
+    }
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+rule MemoryLayerActivates {
+    -- Aligns with bootstrap-system MemoryLayerActivates, but adds graph context.
+    when: MemoryLayerInitializeRequested(layer, querySummary, repo, capabilityGraph, state)
+
+    requires: querySummary.envBuilt = true
+    requires: repo.hasHistory = true
+    requires: capabilityGraph.status in [stable, expanding]
+
+    ensures: layer.status = ready
+    ensures: layer.queryGraph = querySummary
+    ensures: layer.gitRepository = repo
+    ensures: layer.capabilityGraph = capabilityGraph
+
+    ensures: state.history_ready = true
+    ensures: state.knowledge_ready = true
+    ensures: state.memory_ready = true
+}
+
+rule MemoryLayerActivationFails {
+    when: MemoryLayerInitializeRequested(layer, querySummary, repo, capabilityGraph, state)
+
+    requires: querySummary.envBuilt = false or repo.hasHistory = false
+
+    ensures: layer.status = error
+    ensures: state.memory_ready = false
+}
+
+rule MemoryWriteCreatesRecord {
+    when: RememberRequested(layer, session, contentType, content, tags, provenance)
+
+    requires: layer.status = ready
+    requires: content != null
+    requires: content != ""
+    requires:
+        if config.require_provenance_on_write:
+            provenance != null
+
+    ensures: exists memory = MemoryRecord.created(
+        session: session,
+        contentType: contentType,
+        content: content,
+        timestamp: now,
+        tags: tags,
+        provenance: provenance
+    )
+
+    ensures: IndexUpdated(layer, memory)
+}
+
+rule MemoryWriteLinksGraphContext {
+    -- Every memory write in Step 10 links to graph context when available.
+    when: RememberRequested(layer, session, contentType, content, tags, provenance)
+
+    requires: layer.status = ready
+    requires: layer.capabilityGraph != null
+
+    ensures: provenance.graphFingerprint = CurrentGraphFingerprint(layer.capabilityGraph)
+    ensures: provenance.capabilityIds = RelevantCapabilityIds(content, layer.capabilityGraph)
+}
+
+rule GraphSnapshotCapturedOnChange {
+    when: CapabilityGraphComputed(layer, capabilityGraph)
+
+    requires: layer.status = ready
+    requires: config.capture_graph_snapshot_on_change = true
+    requires: capabilityGraph.status in [stable, expanding]
+    requires: LatestGraphFingerprint(layer) != CurrentGraphFingerprint(capabilityGraph)
+
+    ensures: exists snapshot = GraphSnapshot.created(
+        memoryLayer: layer,
+        fingerprint: CurrentGraphFingerprint(capabilityGraph),
+        capturedAt: now,
+        nodeCount: capabilityGraph.nodeCount,
+        edgeCount: capabilityGraph.edgeCount,
+        capabilityCount: capabilityGraph.capabilityIds.count,
+        domainCoverage: CurrentDomainCoverage(capabilityGraph)
+    )
+
+    ensures: layer.graphSnapshots = layer.graphSnapshots + [snapshot]
+}
+
+rule GraphDeltaDerivedFromSnapshots {
+    when: CapabilityGraphComputed(layer, capabilityGraph)
+
+    requires: layer.status = ready
+    requires: layer.graphSnapshots.count > 0
+    requires: LatestGraphFingerprint(layer) != CurrentGraphFingerprint(capabilityGraph)
+
+    let previous = LatestGraphSnapshot(layer)
+
+    ensures: exists delta = GraphDelta.created(
+        memoryLayer: layer,
+        fromFingerprint: previous.fingerprint,
+        toFingerprint: CurrentGraphFingerprint(capabilityGraph),
+        capturedAt: now,
+        addedCapabilities: AddedCapabilities(previous, capabilityGraph),
+        removedCapabilities: RemovedCapabilities(previous, capabilityGraph),
+        addedOperations: AddedOperations(previous, capabilityGraph),
+        removedOperations: RemovedOperations(previous, capabilityGraph)
+    )
+
+    ensures: layer.graphDeltas = layer.graphDeltas + [delta]
+}
+
+rule GraphHistoryCompactedByFixedWindow {
+    -- Resolved retention policy: keep most recent N, trim oldest,
+    -- and do not introduce summary entities in Step 10.
+    when: GraphHistoryCompactionRequested(layer)
+
+    requires: layer.status = ready
+    requires: config.graph_history_retention_policy = "fixed-window"
+    requires:
+        layer.graphSnapshots.count > config.graph_snapshot_retention_max or
+        layer.graphDeltas.count > config.graph_delta_retention_max
+
+    ensures:
+        layer.graphSnapshots = KeepMostRecent(
+            layer.graphSnapshots,
+            config.graph_snapshot_retention_max
+        )
+
+    ensures:
+        layer.graphDeltas = KeepMostRecent(
+            layer.graphDeltas,
+            config.graph_delta_retention_max
+        )
+
+    ensures: GraphHistorySummaries(layer).count = 0
+}
+
+rule RecoveryComposesSessionHistoryAndGraph {
+    when: RecoverRequested(layer, session, searchQuery, filter, limit?)
+
+    requires: layer.status = ready
+    requires: searchQuery != null
+    requires: searchQuery != ""
+
+    let effectiveLimit = limit or config.default_recovery_limit
+
+    ensures: exists recovery = Recovery.created(
+        session: session,
+        query: searchQuery,
+        filter: filter,
+        sourcesUsed: config.required_recovery_sources,
+        recoveredMemories: RankedDeduplicatedMemories(
+            layer,
+            session,
+            searchQuery,
+            filter,
+            effectiveLimit,
+            {
+                recency: config.default_recovery_weight_recency_pct,
+                textRelevance: config.default_recovery_weight_text_relevance_pct,
+                capabilityProximity: config.default_recovery_weight_capability_proximity_pct
+            }
+        ),
+        recoveryTime: now,
+        resultsLimit: effectiveLimit,
+        resultsTruncated: RecoveryWouldExceedLimit(layer, searchQuery, filter, effectiveLimit)
+    )
+
+    ensures: recovery.recoveredMemories.count <= effectiveLimit
+}
+
+rule RecoveryRankingUsesDefaultWeights {
+    when: RecoverRequested(layer, session, searchQuery, filter, limit?)
+
+    requires: layer.status = ready
+
+    ensures:
+        config.default_recovery_weight_recency_pct +
+        config.default_recovery_weight_text_relevance_pct +
+        config.default_recovery_weight_capability_proximity_pct = 100
+
+    ensures: RecoveryScore(memory, searchQuery, filter) =
+        WeightedScore(
+            text_relevance(memory, searchQuery),
+            recency(memory.timestamp),
+            capability_proximity(memory.provenance.capabilityIds, filter.capabilityIds),
+            {
+                textRelevance: config.default_recovery_weight_text_relevance_pct,
+                recency: config.default_recovery_weight_recency_pct,
+                capabilityProximity: config.default_recovery_weight_capability_proximity_pct
+            }
+        )
+}
+
+rule RecoverySupportsCapabilityHistory {
+    when: RecoverRequested(layer, session, searchQuery, filter, limit?)
+
+    requires: layer.status = ready
+    requires: filter != null
+    requires: filter.capabilityIds != null
+
+    ensures: RecoveryByCapabilityIds(layer, filter.capabilityIds).each(m =>
+        Intersects(m.provenance.capabilityIds, filter.capabilityIds)
+    )
+}
+
+rule MemoryQueryLifecycle {
+    when: MemoryQueryStarted(layer)
+    requires: layer.status = ready
+    ensures: layer.status = querying
+}
+
+rule MemoryQueryLifecycleCompletes {
+    when: MemoryQueryFinished(layer)
+    requires: layer.status = querying
+    ensures: layer.status = ready
+}
+
+rule MemorySurfacedViaEql {
+    when: MemoryResolversRegistered(surface, layer)
+
+    requires: layer.status in [ready, querying]
+
+    ensures: config.required_memory_eql_attrs.each(a => surface.attrs contains a)
+}
+
+------------------------------------------------------------
+-- Surface
+------------------------------------------------------------
+
+actor MemoryConsumer { identified_by: id = "memory-client" }
+
+surface QueryableMemoryApi {
+    for client: MemoryConsumer
+
+    context layer: MemoryLayer with layer.status in [ready, querying]
+
+    exposes:
+        layer.status
+        layer.indexStats
+        layer.graphSnapshots
+        layer.graphDeltas
+
+    provides:
+        Remember(client, session, contentType, content, tags)
+            when layer.canRemember = true
+
+        Recover(client, session, searchQuery, filter)
+            when layer.canRecover = true
+
+        QueryCapabilityHistory(client, capabilityId)
+            when layer.hasKnowledgeIndex = true
+}
+
+-- Resolved decisions:
+-- 1) Recovery ranking defaults: text relevance 50, recency 25, capability proximity 25.
+-- 2) Graph history retention: fixed-window compaction (keep latest 200 snapshots,
+--    latest 1000 deltas), trim oldest, no summary entities in Step 10.
