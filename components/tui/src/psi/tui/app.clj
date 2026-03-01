@@ -28,6 +28,7 @@
    [charm.render.core]  ; loaded so we can patch enter-alt-screen!
    [charm.terminal :as charm-term]
    [cheshire.core :as json]
+   [clojure.java.io :as io]
    [clojure.string :as str]
    [taoensso.timbre :as timbre]
    [psi.agent-session.persistence :as persist]
@@ -186,6 +187,418 @@
 
 (def ^:private spinner-frames
   ["⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"])
+
+(def ^:private prompt-history-max-entries 100)
+
+(defn- initial-prompt-input-state
+  []
+  {:autocomplete {:prefix ""
+                  :candidates []
+                  :selected-index 0
+                  :context nil
+                  :trigger-mode nil}
+   :history {:entries []
+             :browse-index nil
+             :max-entries prompt-history-max-entries}
+   :timing {:last-ctrl-c-ms nil
+            :last-escape-ms nil}})
+
+(def ^:private builtin-slash-commands
+  ["/quit" "/exit" "/resume" "/new" "/status" "/help"])
+
+(defn- input-value [state]
+  (charm/text-input-value (:input state)))
+
+(defn- input-pos [state]
+  (let [v (input-value state)]
+    (min (max 0 (or (get-in state [:input :pos]) (count v))) (count v))))
+
+(defn- set-input-value
+  [state s]
+  (assoc state :input (charm/text-input-set-value (:input state) s)))
+
+(defn- clear-history-browse
+  [state]
+  (assoc-in state [:prompt-input-state :history :browse-index] nil))
+
+(defn- set-input-model
+  [state input]
+  (-> state
+      (assoc :input input)
+      clear-history-browse))
+
+(defn- now-ms [] (System/currentTimeMillis))
+
+(defn- double-press-window-ms
+  [state]
+  (or (:double-press-window-ms state) 500))
+
+(defn- within-double-press-window?
+  [last-ms now-ms window-ms]
+  (and (some? last-ms)
+       (<= (- now-ms last-ms) window-ms)))
+
+(defn- append-assistant-status
+  [state text]
+  (if (str/blank? text)
+    state
+    (update state :messages conj {:role :assistant :text text})))
+
+(defn- merge-queued-and-draft
+  [queued-text draft-text]
+  (let [queued (str/trim (or queued-text ""))
+        draft  (str/trim (or draft-text ""))]
+    (cond
+      (and (str/blank? queued) (str/blank? draft)) ""
+      (str/blank? queued) draft
+      (str/blank? draft) queued
+      :else (str queued "\n" draft))))
+
+(defn- history-entries
+  [state]
+  (vec (get-in state [:prompt-input-state :history :entries] [])))
+
+(defn- history-max-entries
+  [state]
+  (or (get-in state [:prompt-input-state :history :max-entries])
+      prompt-history-max-entries))
+
+(defn- record-history-entry
+  [state text]
+  (let [entry (str/trim (or text ""))]
+    (if (str/blank? entry)
+      state
+      (let [entries      (history-entries state)
+            last-entry   (peek entries)
+            max-entries  (history-max-entries state)
+            next-entries (if (= last-entry entry)
+                           entries
+                           (let [appended (conj entries entry)
+                                 extra    (max 0 (- (count appended) max-entries))]
+                             (if (pos? extra)
+                               (vec (subvec appended extra))
+                               appended)))]
+        (-> state
+            (assoc-in [:prompt-input-state :history :entries] next-entries)
+            (assoc-in [:prompt-input-state :history :browse-index] nil))))))
+
+(defn- history-current-entry
+  [state idx]
+  (let [entries (history-entries state)]
+    (when (and (some? idx)
+               (<= 0 idx)
+               (< idx (count entries)))
+      (nth entries idx))))
+
+(defn- browse-history
+  [state direction]
+  (let [entries (history-entries state)
+        n       (count entries)
+        idx     (get-in state [:prompt-input-state :history :browse-index])
+        input   (input-value state)]
+    (if (zero? n)
+      state
+      (case direction
+        :up
+        (cond
+          (and (nil? idx) (str/blank? input))
+          (let [new-idx (dec n)]
+            (-> state
+                (assoc-in [:prompt-input-state :history :browse-index] new-idx)
+                (set-input-value (history-current-entry state new-idx))))
+
+          (some? idx)
+          (let [new-idx (max 0 (dec idx))]
+            (-> state
+                (assoc-in [:prompt-input-state :history :browse-index] new-idx)
+                (set-input-value (history-current-entry state new-idx))))
+
+          :else
+          state)
+
+        :down
+        (if (some? idx)
+          (if (>= idx (dec n))
+            (-> state
+                (assoc-in [:prompt-input-state :history :browse-index] nil)
+                (set-input-value ""))
+            (let [new-idx (min (dec n) (inc idx))]
+              (-> state
+                  (assoc-in [:prompt-input-state :history :browse-index] new-idx)
+                  (set-input-value (history-current-entry state new-idx)))))
+          state)
+
+        state))))
+
+(defn- whitespace-char?
+  [^Character c]
+  (Character/isWhitespace c))
+
+(defn- token-context-at-cursor
+  "Derive token context at cursor.
+   Returns {:text :pos :before :after :token :token-start :token-end :context :prefix}"
+  [state]
+  (let [text        (input-value state)
+        pos         (input-pos state)
+        before      (subs text 0 pos)
+        after       (subs text pos)
+        token-start (or (some->> (keep-indexed (fn [i ch]
+                                                 (when (whitespace-char? ch) i))
+                                               before)
+                                 last
+                                 inc)
+                        0)
+        token       (subs before token-start)
+        context     (cond
+                      (and (= token-start 0)
+                           (str/starts-with? token "/"))
+                      :slash_command
+
+                      (str/starts-with? token "@")
+                      :file_reference
+
+                      :else
+                      :file_path)]
+    {:text text
+     :pos pos
+     :before before
+     :after after
+     :token token
+     :token-start token-start
+     :token-end pos
+     :context context
+     :prefix token}))
+
+(defn- slash-candidates
+  [state prefix]
+  (let [templates  (mapv (fn [{:keys [name]}] (str "/" name)) (:prompt-templates state))
+        skills     (mapv (fn [{:keys [name]}] (str "/skill:" name)) (:skills state))
+        ext-cmds   (vec (:extension-command-names state))
+        all        (->> (concat builtin-slash-commands templates skills ext-cmds)
+                        (remove str/blank?)
+                        distinct
+                        sort)
+        pfx        (or prefix "/")
+        lowered    (str/lower-case pfx)]
+    (->> all
+         (filter #(str/starts-with? (str/lower-case %) lowered))
+         (mapv (fn [cmd]
+                 {:value cmd
+                  :label cmd
+                  :description nil
+                  :kind :slash_command
+                  :is-directory false})))))
+
+(defn- rel-path
+  [cwd ^java.io.File f]
+  (let [cwd-path (.toPath (io/file cwd))
+        file-path (.toPath f)]
+    (-> (.relativize cwd-path file-path)
+        (.normalize)
+        (.toString))))
+
+(defn- hidden-or-git-path?
+  [rel]
+  (or (= ".git" rel)
+      (str/starts-with? rel ".git/")
+      (str/includes? rel "/.git/")
+      (str/ends-with? rel "/.git")))
+
+(defn- quote-if-needed [s]
+  (if (str/includes? s " ")
+    (str "\"" s "\"")
+    s))
+
+(defn- file-reference-candidates
+  [state prefix]
+  (let [cwd        (:cwd state)
+        token      (or prefix "@")
+        typed      (subs token (min 1 (count token)))
+        typed      (str/replace typed #"^\"" "")
+        query      (str/lower-case typed)
+        root       (io/file cwd)]
+    (->> (file-seq root)
+         (remove #(.equals root %))
+         (map (fn [^java.io.File f]
+                (let [rel (rel-path cwd f)]
+                  {:file f :rel rel :dir? (.isDirectory f)})))
+         (remove #(hidden-or-git-path? (:rel %)))
+         (filter (fn [{:keys [rel]}]
+                   (or (str/blank? query)
+                       (str/includes? (str/lower-case rel) query))))
+         (sort-by (juxt (fn [{:keys [dir?]}] (if dir? 0 1)) :rel))
+         (take 100)
+         (mapv (fn [{:keys [rel dir?]}]
+                 (let [v (cond-> rel
+                           dir? (str "/"))
+                       v (quote-if-needed v)]
+                   {:value v
+                    :label v
+                    :description nil
+                    :kind :file_reference
+                    :is-directory dir?}))))))
+
+(defn- path-completion-candidates
+  [state prefix]
+  (let [cwd          (:cwd state)
+        token        (or prefix "")
+        slash-idx    (str/last-index-of token "/")
+        [dir-part name-part] (if slash-idx
+                               [(subs token 0 (inc slash-idx))
+                                (subs token (inc slash-idx))]
+                               ["" token])
+        base         (io/file cwd dir-part)
+        dir-exists?  (.isDirectory base)]
+    (if-not dir-exists?
+      []
+      (->> (.listFiles base)
+           (filter some?)
+           (map (fn [^java.io.File f]
+                  (let [nm (.getName f)
+                        rel (str dir-part nm)]
+                    {:name nm
+                     :rel rel
+                     :dir? (.isDirectory f)})))
+           (remove #(hidden-or-git-path? (:rel %)))
+           (filter (fn [{:keys [name]}]
+                     (str/starts-with? (str/lower-case name)
+                                       (str/lower-case name-part))))
+           (sort-by (juxt (fn [{:keys [dir?]}] (if dir? 0 1)) :rel))
+           (mapv (fn [{:keys [rel dir?]}]
+                   (let [v (cond-> rel
+                             dir? (str "/"))]
+                     {:value v
+                      :label v
+                      :description nil
+                      :kind :file_path
+                      :is-directory dir?})))))))
+
+(defn- clear-autocomplete
+  [state]
+  (assoc-in state [:prompt-input-state :autocomplete]
+            {:prefix ""
+             :candidates []
+             :selected-index 0
+             :context nil
+             :trigger-mode nil}))
+
+(defn- open-autocomplete
+  [state {:keys [prefix context trigger-mode token-start token-end]} candidates]
+  (if (seq candidates)
+    (assoc-in state [:prompt-input-state :autocomplete]
+              {:prefix prefix
+               :candidates candidates
+               :selected-index 0
+               :context context
+               :trigger-mode trigger-mode
+               :token-start token-start
+               :token-end token-end})
+    (clear-autocomplete state)))
+
+(defn- context-candidates
+  [state context prefix]
+  (case context
+    :slash_command (slash-candidates state prefix)
+    :file_reference (file-reference-candidates state prefix)
+    :file_path (path-completion-candidates state prefix)
+    []))
+
+(defn- refresh-autocomplete
+  [state trigger-mode]
+  (let [{:keys [context prefix token-start token-end]} (token-context-at-cursor state)
+        candidates (context-candidates state context prefix)]
+    (open-autocomplete state {:prefix prefix
+                              :context context
+                              :trigger-mode trigger-mode
+                              :token-start token-start
+                              :token-end token-end}
+                       candidates)))
+
+(defn- autocomplete-open?
+  [state]
+  (seq (get-in state [:prompt-input-state :autocomplete :candidates])))
+
+(defn- move-autocomplete-selection
+  [state delta]
+  (let [cands (get-in state [:prompt-input-state :autocomplete :candidates])
+        cnt   (count cands)]
+    (if (zero? cnt)
+      state
+      (update-in state [:prompt-input-state :autocomplete :selected-index]
+                 (fn [i]
+                   (let [i (or i 0)]
+                     (mod (+ i delta) cnt)))))))
+
+(defn- drop-duplicate-closing-quote-in-after
+  [replacement after]
+  (if (and (str/ends-with? replacement "\"")
+           (str/starts-with? (or after "") "\""))
+    (subs after 1)
+    after))
+
+(defn- apply-selected-autocomplete
+  [state]
+  (let [ac         (get-in state [:prompt-input-state :autocomplete])
+        idx        (or (:selected-index ac) 0)
+        candidate  (nth (:candidates ac) idx nil)
+        text       (input-value state)
+        start      (or (:token-start ac) (count text))
+        end        (or (:token-end ac) (count text))
+        before     (subs text 0 (min start (count text)))
+        after      (subs text (min end (count text)))
+        context    (:context ac)]
+    (if-not candidate
+      state
+      (let [base-value (:value candidate)
+            replacement (case context
+                          :file_reference (str "@" base-value)
+                          base-value)
+            after       (drop-duplicate-closing-quote-in-after replacement after)
+            replacement (if (and (= :file_reference context)
+                                 (not (:is-directory candidate)))
+                          (str replacement " ")
+                          replacement)
+            text'      (str before replacement after)]
+        (-> state
+            (set-input-value text')
+            clear-autocomplete)))))
+
+(declare printable-key)
+
+(defn- maybe-auto-open-autocomplete
+  [state key-token]
+  (let [ch (printable-key key-token)]
+    (if-not (or (= ch "/") (= ch "@"))
+      state
+      (let [{:keys [context token]} (token-context-at-cursor state)]
+        (cond
+          (and (= ch "/") (= :slash_command context))
+          (refresh-autocomplete state :auto)
+
+          (and (= ch "@") (= :file_reference context)
+               (str/starts-with? token "@"))
+          (refresh-autocomplete state :auto)
+
+          :else
+          state)))))
+
+(defn- open-tab-autocomplete
+  [state]
+  (let [{:keys [token token-start token-end]} (token-context-at-cursor state)
+        context    (if (and (= token-start 0) (str/starts-with? token "/"))
+                     :slash_command
+                     :file_path)
+        candidates (context-candidates state context token)
+        opened     (open-autocomplete state {:prefix token
+                                             :context context
+                                             :trigger-mode :tab
+                                             :token-start token-start
+                                             :token-end token-end}
+                                      candidates)]
+    (if (and (= :file_path context)
+             (= 1 (count candidates)))
+      (apply-selected-autocomplete opened)
+      opened)))
 
 ;; ── Custom message predicates ───────────────────────────────
 
@@ -384,11 +797,12 @@
 (defn poll-cmd
   "Command that polls the shared event queue with a short timeout.
    Returns :agent-result, :agent-error, :agent-event, :external-message,
-   or :agent-poll.
+   :agent-aborted, or :agent-poll.
 
    Queue payloads accepted:
    - {:kind :done  :result ...}
    - {:kind :error :message ...}
+   - {:kind :aborted :message ... :queued-text ...}
    - {:type :agent-event ...}       ; progress events
    - {:type :external-message ...}  ; async extension transcript message
    "
@@ -402,6 +816,11 @@
 
          (= :error (:kind event))
          {:type :agent-error :error (:message event)}
+
+         (= :aborted (:kind event))
+         {:type :agent-aborted
+          :message (:message event)
+          :queued-text (:queued-text event)}
 
          (= :agent-event (:type event))
          event
@@ -434,6 +853,9 @@
      :resume-fn!           — (fn [session-path]) called when user selects a session;
                               returns {:messages [...], :tool-calls {...}, :tool-order [...]}
      :dispatch-fn          — (fn [text]) → command result map or nil; central command dispatch
+     :on-interrupt-fn!     — (fn [state]) -> {:queued-text str? :message str?} | nil
+     :double-press-window-ms — ctrl+c / escape timing window (default 500)
+     :double-escape-action — :tree | :fork | :none (default :none)
      :event-queue          — shared LinkedBlockingQueue for agent + extension events"
   ([model-name] (make-init model-name nil))
   ([model-name query-fn] (make-init model-name query-fn nil))
@@ -444,7 +866,8 @@
                           (query-fn [:psi.agent-session/prompt-templates
                                      :psi.agent-session/skills
                                      :psi.agent-session/extension-summary
-                                     :psi.agent-session/session-file]))]
+                                     :psi.agent-session/session-file
+                                     :psi.extension/command-names]))]
        (let [queue (or (:event-queue opts) (LinkedBlockingQueue.))]
          [{:messages              []
            :phase                 :idle
@@ -457,14 +880,19 @@
            :prompt-templates      (or (:psi.agent-session/prompt-templates introspected) [])
            :skills                (or (:psi.agent-session/skills introspected) [])
            :extension-summary     (or (:psi.agent-session/extension-summary introspected) {})
+           :extension-command-names (vec (:psi.extension/command-names introspected))
            :query-fn              query-fn
            :ui-state-atom         ui-state-atom
            :dispatch-fn           (:dispatch-fn opts)
+           :on-interrupt-fn!      (:on-interrupt-fn! opts)
+           :double-press-window-ms (or (:double-press-window-ms opts) 500)
+           :double-escape-action  (or (:double-escape-action opts) :none)
            :cwd                   (or (:cwd opts) (System/getProperty "user.dir"))
            :current-session-file  (or (:current-session-file opts)
                                       (:psi.agent-session/session-file introspected))
            :resume-fn!            (:resume-fn! opts)
            :session-selector      nil   ;; non-nil when /resume is active
+           :prompt-input-state    (initial-prompt-input-state)
            :queue                 queue
            :width                 80
            :height                24
@@ -481,10 +909,10 @@
   "Enter session-selector phase."
   [state]
   (let [sel (session-selector-init (:cwd state) (:current-session-file state))]
-    [(assoc state
-            :phase            :selecting-session
-            :session-selector sel
-            :input            (charm/text-input-reset (:input state)))
+    [(-> state
+         (assoc :phase :selecting-session
+                :session-selector sel)
+         (set-input-model (charm/text-input-reset (:input state))))
      nil]))
 
 (defn- handle-dispatch-result
@@ -503,20 +931,20 @@
       [(-> state
            (assoc :messages []
                   :error    nil
-                  :input    (charm/text-input-reset (:input state))
                   :force-clear? true)
+           (set-input-model (charm/text-input-reset (:input state)))
            (update :messages conj {:role :assistant :text (:message result)}))
        nil]
 
       :text
       [(-> state
-           (assoc :input (charm/text-input-reset (:input state)))
+           (set-input-model (charm/text-input-reset (:input state)))
            (update :messages conj {:role :assistant :text (:message result)}))
        nil]
 
       (:login-error :logout)
       [(-> state
-           (assoc :input (charm/text-input-reset (:input state)))
+           (set-input-model (charm/text-input-reset (:input state)))
            (update :messages conj {:role :assistant :text (:message result)}))
        nil]
 
@@ -529,7 +957,7 @@
                      (catch Exception e
                        (timbre/warn "Extension command error:" (ex-message e))
                        (str "[command error: " (ex-message e) "]")))]
-        [(cond-> (assoc state :input (charm/text-input-reset (:input state)))
+        [(cond-> (set-input-model state (charm/text-input-reset (:input state)))
            output (update :messages conj {:role :assistant :text output}))
          nil])
 
@@ -538,7 +966,7 @@
       ;; providers, the next input will be treated as the auth code.
       :login-start
       [(-> state
-           (assoc :input (charm/text-input-reset (:input state)))
+           (set-input-model (charm/text-input-reset (:input state)))
            (update :messages conj
                    {:role :assistant
                     :text (str "🔑 Login to " (get-in result [:provider :name])
@@ -550,7 +978,7 @@
 
       ;; Fallback — treat as text
       [(-> state
-           (assoc :input (charm/text-input-reset (:input state)))
+           (set-input-model (charm/text-input-reset (:input state)))
            (update :messages conj {:role :assistant :text (str result)}))
        nil])))
 
@@ -633,9 +1061,9 @@
          (update :messages conj {:role :user :text text})
          (assoc :phase         :streaming
                 :error         nil
-                :input         (charm/text-input-reset (:input state))
                 :spinner-frame 0
-                :stream-text   nil))
+                :stream-text   nil)
+         (set-input-model (charm/text-input-reset (:input state))))
      (poll-cmd queue)]))
 
 (defn- submit-input
@@ -650,7 +1078,8 @@
 
       ;; Dispatch commands via central dispatcher
       :else
-      (let [dispatch-fn (:dispatch-fn state)
+      (let [state       (record-history-entry state text)
+            dispatch-fn (:dispatch-fn state)
             result      (when dispatch-fn (dispatch-fn text))]
         (if result
           (handle-dispatch-result state result)
@@ -667,7 +1096,7 @@
                       (subs value 0 (dec (count value)))
                       value)
         next-input  (charm/text-input-set-value (:input state) (str value' "\n"))]
-    [(assoc state :input next-input) nil]))
+    [(set-input-model state next-input) nil]))
 
 (defn- delete-prev-word
   "Delete previous word from charm text input state.
@@ -789,6 +1218,77 @@
     [(update state :spinner-frame #(mod (inc %) n))
      (poll-cmd (:queue state))]))
 
+(defn- handle-ctrl-c
+  [state]
+  (let [now          (now-ms)
+        window-ms    (double-press-window-ms state)
+        last-clear   (get-in state [:prompt-input-state :timing :last-ctrl-c-ms])]
+    (if (within-double-press-window? last-clear now window-ms)
+      [(assoc-in state [:prompt-input-state :timing :last-ctrl-c-ms] nil)
+       charm/quit-cmd]
+      [(-> state
+           (set-input-value "")
+           (assoc-in [:prompt-input-state :timing :last-ctrl-c-ms] now))
+       nil])))
+
+(defn- handle-ctrl-d
+  [state]
+  (if (str/blank? (input-value state))
+    [state charm/quit-cmd]
+    [state nil]))
+
+(defn- handle-idle-escape
+  [state]
+  (let [current-text   (input-value state)
+        now            (now-ms)
+        window-ms      (double-press-window-ms state)
+        action         (:double-escape-action state :none)
+        last-escape    (get-in state [:prompt-input-state :timing :last-escape-ms])
+        second-escape? (within-double-press-window? last-escape now window-ms)]
+    (cond
+      (not (str/blank? current-text))
+      [state nil]
+
+      (= action :none)
+      [state nil]
+
+      second-escape?
+      (case action
+        :tree
+        [(-> state
+             (assoc-in [:prompt-input-state :timing :last-escape-ms] nil)
+             (append-assistant-status "Double Escape action '/tree' is not available in this runtime."))
+         nil]
+
+        :fork
+        [(-> state
+             (assoc-in [:prompt-input-state :timing :last-escape-ms] nil)
+             (append-assistant-status "Double Escape action '/fork' is not available in this runtime."))
+         nil]
+
+        [(-> state
+             (assoc-in [:prompt-input-state :timing :last-escape-ms] nil)
+             (append-assistant-status (str "Unsupported double Escape action: " (pr-str action))))
+         nil])
+
+      :else
+      [(assoc-in state [:prompt-input-state :timing :last-escape-ms] now) nil])))
+
+(defn- handle-streaming-escape
+  [state]
+  (if-let [interrupt-fn (:on-interrupt-fn! state)]
+    (let [{:keys [queued-text message]} (or (interrupt-fn state) {})
+          merged-text (merge-queued-and-draft queued-text (input-value state))
+          next-state  (-> state
+                          (set-input-value merged-text)
+                          (assoc :phase :idle
+                                 :stream-text nil)
+                          (clear-autocomplete)
+                          (assoc-in [:prompt-input-state :timing :last-escape-ms] (now-ms))
+                          (append-assistant-status (or message "Interrupted.")))]
+      [next-state (poll-cmd (:queue state))])
+    [(append-assistant-status state "Interrupt unavailable in this runtime.") nil]))
+
 ;; ── Update ──────────────────────────────────────────────────
 
 (defn make-update
@@ -819,14 +1319,31 @@
                       " shift=" (boolean (:shift m)))))
 
       (cond
-      ;; Quit: ctrl+c always; escape when idle and no dialog
+      ;; Ctrl+C — clear first, then quit on second press within window.
         (msg/key-match? m "ctrl+c")
-        [state charm/quit-cmd]
+        (handle-ctrl-c state)
 
+      ;; Ctrl+D — exit only when input is empty.
+        (and (= :idle (:phase state))
+             (msg/key-match? m "ctrl+d"))
+        (handle-ctrl-d state)
+
+      ;; Escape closes autocomplete first.
+        (and (= :idle (:phase state))
+             (autocomplete-open? state)
+             (msg/key-match? m "escape"))
+        [(clear-autocomplete state) nil]
+
+      ;; Escape in streaming interrupts active work.
+        (and (= :streaming (:phase state))
+             (msg/key-match? m "escape"))
+        (handle-streaming-escape state)
+
+      ;; Escape while idle delegates to interrupt/double-escape behavior.
         (and (= :idle (:phase state))
              (not (has-active-dialog? state))
              (msg/key-match? m "escape"))
-        [state charm/quit-cmd]
+        (handle-idle-escape state)
 
       ;; Window resize
         (msg/window-size? m)
@@ -869,6 +1386,18 @@
                     :stream-text nil))
          (poll-cmd (:queue state))]
 
+      ;; Agent aborted via interrupt
+        (= :agent-aborted (:type m))
+        (let [queued-text (:queued-text m)
+              merged-text (merge-queued-and-draft queued-text (input-value state))
+              status-msg  (or (:message m) "Interrupted.")]
+          [(-> state
+               (set-input-value merged-text)
+               (assoc :phase :idle
+                      :stream-text nil)
+               (append-assistant-status status-msg))
+           (poll-cmd (:queue state))])
+
       ;; Agent poll timeout → keep polling (and animate spinner while streaming)
         (agent-poll? m)
         (if (= :streaming (:phase state))
@@ -900,10 +1429,44 @@
                           " pos=" (:pos (:input new-state)))))
           [new-state nil])
 
+      ;; Up/Down navigate autocomplete selection when menu is open.
+        (and (= :idle (:phase state))
+             (autocomplete-open? state)
+             (msg/key-match? m "up"))
+        [(move-autocomplete-selection state -1) nil]
+
+        (and (= :idle (:phase state))
+             (autocomplete-open? state)
+             (msg/key-match? m "down"))
+        [(move-autocomplete-selection state 1) nil]
+
+      ;; Up/Down browse prompt history when autocomplete is closed.
+        (and (= :idle (:phase state))
+             (not (autocomplete-open? state))
+             (msg/key-match? m "up"))
+        [(browse-history state :up) nil]
+
+        (and (= :idle (:phase state))
+             (not (autocomplete-open? state))
+             (msg/key-match? m "down"))
+        [(browse-history state :down) nil]
+
+      ;; Tab accepts selected autocomplete suggestion.
+        (and (= :idle (:phase state))
+             (autocomplete-open? state)
+             (msg/key-match? m "tab"))
+        [(apply-selected-autocomplete state) nil]
+
+      ;; Tab opens contextual slash/path autocomplete when no menu exists.
+        (and (= :idle (:phase state))
+             (msg/key-match? m "tab"))
+        [(open-tab-autocomplete state) nil]
+
       ;; Enter behavior:
       ;; - shift/alt/cmd(ctrl+alt)+enter => newline continuation
       ;; - trailing "\\" + enter => newline continuation
-      ;; - plain enter => submit
+      ;; - plain enter accepts autocomplete (and submits slash command)
+      ;; - otherwise plain enter submits
         (and (= :idle (:phase state))
              (msg/key-match? m "enter")
              (or (:shift m)
@@ -912,23 +1475,51 @@
                  (str/ends-with? (charm/text-input-value (:input state)) "\\")))
         (continue-input-line state)
 
+        (and (= :idle (:phase state))
+             (autocomplete-open? state)
+             (msg/key-match? m "enter"))
+        (let [slash? (= :slash_command (get-in state [:prompt-input-state :autocomplete :context]))
+              s1     (apply-selected-autocomplete state)]
+          (if slash?
+            (submit-input s1 run-agent-fn!)
+            [s1 nil]))
+
       ;; Enter → submit (idle + has text)
         (and (= :idle (:phase state))
              (msg/key-match? m "enter"))
         (submit-input state run-agent-fn!)
 
+      ;; Backspace edits text then refreshes open autocomplete.
+        (and (= :idle (:phase state))
+             (msg/key-match? m "backspace"))
+        (let [[new-input cmd] (charm/text-input-update (:input state) m)
+              next-state      (set-input-model state new-input)
+              next-state      (if (autocomplete-open? state)
+                                (refresh-autocomplete next-state (get-in state [:prompt-input-state :autocomplete :trigger-mode]))
+                                next-state)]
+          [next-state cmd])
+
       ;; Space from terminal input may arrive as keyword :space (not " ").
       ;; Normalize to a printable char so it inserts immediately.
         (and (= :idle (:phase state))
              (msg/key-match? m "space"))
-        (let [[new-input cmd] (charm/text-input-update (:input state) (msg/key-press " "))]
-          [(assoc state :input new-input) cmd])
+        (let [[new-input cmd] (charm/text-input-update (:input state) (msg/key-press " "))
+              next-state      (set-input-model state new-input)
+              next-state      (if (autocomplete-open? state)
+                                (refresh-autocomplete next-state (get-in state [:prompt-input-state :autocomplete :trigger-mode]))
+                                (maybe-auto-open-autocomplete next-state :space))]
+          [next-state cmd])
 
       ;; All other keys → text input (idle only)
         (and (= :idle (:phase state))
              (msg/key-press? m))
-        (let [[new-input cmd] (charm/text-input-update (:input state) m)]
-          [(assoc state :input new-input) cmd])
+        (let [key-token       (:key m)
+              [new-input cmd] (charm/text-input-update (:input state) m)
+              next-state      (set-input-model state new-input)
+              next-state      (if (autocomplete-open? state)
+                                (refresh-autocomplete next-state (get-in state [:prompt-input-state :autocomplete :trigger-mode]))
+                                (maybe-auto-open-autocomplete next-state key-token))]
+          [next-state cmd])
 
       ;; Ignore everything else (keys during streaming, etc.)
         :else
@@ -955,7 +1546,7 @@
            (str (charm/render dim-style
                               (str "  Exts: " ext-count " loaded"))
                 "\n"))
-         (charm/render dim-style "  ESC to quit") "\n")))
+         (charm/render dim-style "  ESC=interrupt  Ctrl+C=clear/quit  Ctrl+D=exit-empty") "\n")))
 
 (def ^:private subagent-title-style (charm/style :fg charm/yellow :bold true))
 (def ^:private subagent-head-style (charm/style :fg charm/cyan :bold true))
@@ -1624,10 +2215,10 @@
                warning-lines  (into [] (concat (detail-warning-lines (:details tc))
                                                (when hint-line [hint-line])))
                result-render  (extension-result-render ui-state-atom tc
-                                                      {:expanded? expanded?
-                                                       :width width
-                                                       :tool-id id
-                                                       :tool-name (:name tc)})
+                                                       {:expanded? expanded?
+                                                        :width width
+                                                        :tool-id id
+                                                        :tool-name (:name tc)})
                result-lines   (if (seq result-render)
                                 (str/split-lines result-render)
                                 lines)
@@ -1758,6 +2349,9 @@
                                               {:messages [...]
                                                :tool-calls {...}
                                                :tool-order [...]}
+                       :on-interrupt-fn!    — (fn [state]) -> {:queued-text str? :message str?}
+                       :double-press-window-ms — ctrl+c / escape timing window (default 500)
+                       :double-escape-action — :tree | :fork | :none (default :none)
                        :alt-screen          — true/false (default true)"
   ([model-name run-agent-fn!]
    (start! model-name run-agent-fn! {}))
