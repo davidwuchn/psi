@@ -38,6 +38,7 @@
      query-engine-detail-in        — single-engine diagnostics (ctx)
      query-agent-session-in        — EQL query over :psi.agent-session/* (ctx, q)"
   (:require
+   [com.wsscode.pathom3.connect.operation :as pco]
    [psi.introspection.graph :as graph]
    [psi.introspection.resolvers :as resolvers]
    [psi.engine.core :as engine]
@@ -62,30 +63,44 @@
    - History resolvers
    - Introspection resolvers
    - Memory resolvers
-   - Agent-session resolvers + mutations"
+   - Agent-session resolvers + mutations
+
+   Idempotent: skips operations already present in the global registry."
   []
-  ;; AI resolvers (register directly to avoid per-domain env rebuilds)
-  (query/register-resolver! ai/ai-model-resolver)
-  (query/register-resolver! ai/ai-model-list-resolver)
-  (query/register-resolver! ai/ai-provider-models-resolver)
-  (query/register-resolver! ai/ai-provider-registry-resolver)
+  (let [existing-resolvers (registry/registered-resolver-syms)
+        existing-mutations (registry/registered-mutation-syms)
+        register-resolver-if-missing!
+        (fn [resolver]
+          (let [sym (-> resolver pco/operation-config ::pco/op-name)]
+            (when-not (contains? existing-resolvers sym)
+              (query/register-resolver! resolver))))
+        register-mutation-if-missing!
+        (fn [mutation]
+          (let [sym (-> mutation pco/operation-config ::pco/op-name)]
+            (when-not (contains? existing-mutations sym)
+              (query/register-mutation! mutation))))]
+    ;; AI resolvers (register directly to avoid per-domain env rebuilds)
+    (register-resolver-if-missing! ai/ai-model-resolver)
+    (register-resolver-if-missing! ai/ai-model-list-resolver)
+    (register-resolver-if-missing! ai/ai-provider-models-resolver)
+    (register-resolver-if-missing! ai/ai-provider-registry-resolver)
 
-  ;; History + Introspection + Memory + Agent-session resolvers
-  (doseq [r history-resolvers/all-resolvers]
-    (query/register-resolver! r))
-  (doseq [r resolvers/all-resolvers]
-    (query/register-resolver! r))
-  (doseq [r memory-resolvers/all-resolvers]
-    (query/register-resolver! r))
-  (doseq [r as-resolvers/all-resolvers]
-    (query/register-resolver! r))
+    ;; History + Introspection + Memory + Agent-session resolvers
+    (doseq [r history-resolvers/all-resolvers]
+      (register-resolver-if-missing! r))
+    (doseq [r resolvers/all-resolvers]
+      (register-resolver-if-missing! r))
+    (doseq [r memory-resolvers/all-resolvers]
+      (register-resolver-if-missing! r))
+    (doseq [r as-resolvers/all-resolvers]
+      (register-resolver-if-missing! r))
 
-  ;; Agent-session mutations
-  (doseq [m agent-session/all-mutations]
-    (query/register-mutation! m))
+    ;; Agent-session mutations
+    (doseq [m agent-session/all-mutations]
+      (register-mutation-if-missing! m))
 
-  ;; Single env rebuild after all operations are registered.
-  (query/rebuild-env!))
+    ;; Single env rebuild after all operations are registered.
+    (query/rebuild-env!)))
 
 ;; ─────────────────────────────────────────────────────────────────────────────
 ;; Isolated introspection context (Nullable pattern)

@@ -51,6 +51,7 @@
    [psi.agent-session.tools :as tools]
    [psi.agent-core.core :as agent]
    [psi.ai.models :as models]
+   [psi.introspection.core :as introspection]
    [psi.tui.app :as tui-app])
   (:gen-class))
 
@@ -416,14 +417,15 @@
     ;; eql_query tool closes over ctx for live session introspection.
     (let [eql-tool (tools/make-eql-query-tool (fn [q] (session/query-in ctx q)))
           summary  (session/bootstrap-session-in!
-                    ctx {:register-global-query? true
+                    ctx {:register-global-query? false
                          :base-tools             (conj (vec tools/all-tools) eql-tool)
                          :system-prompt          system-prompt
                          :developer-prompt       developer-prompt
                          :developer-prompt-source (if developer-prompt :env :fallback)
                          :templates              templates
                          :skills                 skills
-                         :extension-paths        ext-paths})]
+                         :extension-paths        ext-paths})
+          _       (introspection/register-resolvers!)]
       (doseq [{:keys [path error]} (:extension-errors summary)]
         (timbre/warn "Extension error:" path error))
       (when (pos? (:extension-loaded-count summary))
@@ -536,7 +538,7 @@
         ;; eql_query tool closes over ctx for live session introspection.
         eql-tool  (tools/make-eql-query-tool (fn [q] (session/query-in ctx q)))
         summary   (session/bootstrap-session-in!
-                   ctx {:register-global-query? true
+                   ctx {:register-global-query? false
                         :base-tools             (conj (vec tools/all-tools) eql-tool)
                         :system-prompt          system-prompt
                         :developer-prompt       developer-prompt
@@ -544,6 +546,7 @@
                         :templates              templates
                         :skills                 skills
                         :extension-paths        ext-paths})
+        _         (introspection/register-resolvers!)
         _         (doseq [{:keys [path error]} (:extension-errors summary)]
                     (timbre/warn "Extension error:" path error))
         _         (when (pos? (:extension-loaded-count summary))
