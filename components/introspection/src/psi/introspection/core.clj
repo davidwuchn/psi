@@ -38,9 +38,13 @@
      query-engine-detail-in        — single-engine diagnostics (ctx)
      query-agent-session-in        — EQL query over :psi.agent-session/* (ctx, q)"
   (:require
+   [psi.introspection.graph :as graph]
    [psi.introspection.resolvers :as resolvers]
    [psi.engine.core :as engine]
    [psi.query.core :as query]
+   [psi.query.registry :as registry]
+   [psi.ai.core :as ai]
+   [psi.history.resolvers :as history-resolvers]
    [psi.agent-session.core :as agent-session]
    [psi.agent-session.resolvers :as as-resolvers]))
 
@@ -49,15 +53,33 @@
 ;; ─────────────────────────────────────────────────────────────────────────────
 
 (defn register-resolvers!
-  "Register all introspection + agent-session resolvers, plus agent-session
-   mutations, into the global query graph. Rebuilds env once at the end."
+  "Register Step 7 startup domains into the global query graph and rebuild once.
+
+   Domains:
+   - AI resolvers
+   - History resolvers
+   - Introspection resolvers
+   - Agent-session resolvers + mutations"
   []
+  ;; AI resolvers (register directly to avoid per-domain env rebuilds)
+  (query/register-resolver! ai/ai-model-resolver)
+  (query/register-resolver! ai/ai-model-list-resolver)
+  (query/register-resolver! ai/ai-provider-models-resolver)
+  (query/register-resolver! ai/ai-provider-registry-resolver)
+
+  ;; History + Introspection + Agent-session resolvers
+  (doseq [r history-resolvers/all-resolvers]
+    (query/register-resolver! r))
   (doseq [r resolvers/all-resolvers]
     (query/register-resolver! r))
   (doseq [r as-resolvers/all-resolvers]
     (query/register-resolver! r))
+
+  ;; Agent-session mutations
   (doseq [m agent-session/all-mutations]
     (query/register-mutation! m))
+
+  ;; Single env rebuild after all operations are registered.
   (query/rebuild-env!))
 
 ;; ─────────────────────────────────────────────────────────────────────────────
@@ -89,22 +111,73 @@
 ;; Context-aware helpers
 ;; ─────────────────────────────────────────────────────────────────────────────
 
+(defn reconcile-graph-readiness-in!
+  "Derive Step 7 graph readiness from computed graph shape and update engine state.
+
+   Ready gate:
+   - node-count > 0
+   - edge-count > 0
+
+   Stage semantics:
+   - ready => :integrating
+   - not ready => :developing"
+  [ctx]
+  (let [qctx    (:query-ctx ctx)
+        ectx    (:engine-ctx ctx)
+        cgraph  (graph/derive-capability-graph
+                 {:resolver-ops (mapv #(graph/operation->metadata :resolver %)
+                                      (registry/all-resolvers-in (:reg qctx)))
+                  :mutation-ops (mapv #(graph/operation->metadata :mutation %)
+                                      (registry/all-mutations-in (:reg qctx)))})
+        ready?  (and (pos? (count (:nodes cgraph)))
+                     (pos? (count (:edges cgraph))))
+        stage   (if ready? :integrating :developing)]
+    (engine/update-system-component-in! ectx :query-ready true)
+    (engine/update-system-component-in! ectx :graph-ready ready?)
+    (engine/set-evolution-stage-in! ectx stage)
+    {:graph-ready ready?
+     :evolution-stage stage
+     :node-count (count (:nodes cgraph))
+     :edge-count (count (:edges cgraph))}))
+
 (defn register-resolvers-in!
-  "Register introspection resolvers (and optionally agent-session operations)
-   into `ctx`'s query context, then rebuild env once.
+  "Register Step 7 startup domains into `ctx`'s query context and rebuild once.
+
+   Domains:
+   - AI resolvers
+   - History resolvers
+   - Introspection resolvers
+   - Agent-session resolvers + mutations (when :agent-session-ctx is present)
 
    If `ctx` carries an :agent-session-ctx, agent-session resolvers + mutations
    are also registered so :psi.agent-session/* and mutation-backed workflows are
-   queryable/executable."
+   queryable/executable.
+
+   Also derives and applies runtime Step 7 readiness:
+   - :graph-ready true when graph has nodes and edges, else false
+   - :evolution-stage set to :integrating when ready, else :developing"
   [ctx]
   (let [qctx (:query-ctx ctx)]
+    ;; AI resolvers
+    (query/register-resolver-in! qctx ai/ai-model-resolver)
+    (query/register-resolver-in! qctx ai/ai-model-list-resolver)
+    (query/register-resolver-in! qctx ai/ai-provider-models-resolver)
+    (query/register-resolver-in! qctx ai/ai-provider-registry-resolver)
+
+    ;; History + Introspection resolvers
+    (doseq [r history-resolvers/all-resolvers]
+      (query/register-resolver-in! qctx r))
     (doseq [r resolvers/all-resolvers]
       (query/register-resolver-in! qctx r))
+
     (when (:agent-session-ctx ctx)
       ;; Pass rebuild?=false — we rebuild once below after all operations are in.
       (agent-session/register-resolvers-in! qctx false)
       (agent-session/register-mutations-in! qctx false))
-    (query/rebuild-env-in! qctx)))
+
+    ;; Single env rebuild after all operations are registered.
+    (query/rebuild-env-in! qctx)
+    (reconcile-graph-readiness-in! ctx)))
 
 (defn query-system-state-in
   "Return system state + derived properties via EQL using `ctx`."
@@ -136,7 +209,7 @@
                     [:psi.engine/recent-transitions])))
 
 (defn query-graph-summary-in
-  "Return query graph statistics via EQL using `ctx`."
+  "Return query graph statistics and Step 7 capability graph attrs via EQL using `ctx`."
   [ctx]
   (let [{:keys [query-ctx]} ctx]
     (query/query-in query-ctx {:psi/query-ctx query-ctx}
@@ -144,7 +217,11 @@
                      :psi.graph/mutation-count
                      :psi.graph/resolver-syms
                      :psi.graph/mutation-syms
-                     :psi.graph/env-built])))
+                     :psi.graph/env-built
+                     :psi.graph/nodes
+                     :psi.graph/edges
+                     :psi.graph/capabilities
+                     :psi.graph/domain-coverage])))
 
 (defn query-all-engines-in
   "Return all registered engines and count via EQL using `ctx`."

@@ -52,8 +52,8 @@
       (testing ":psi.system/mode is a keyword"
         (is (keyword? (:psi.system/mode result))))
 
-      (testing ":psi.system/evolution-stage is :bootstrap"
-        (is (= :bootstrap (:psi.system/evolution-stage result))))
+      (testing ":psi.system/evolution-stage is :integrating after graph emergence"
+        (is (= :integrating (:psi.system/evolution-stage result))))
 
       (testing ":psi.system/readiness contains expected keys"
         (let [readiness (:psi.system/readiness result)]
@@ -64,7 +64,10 @@
       (testing "has-substrate is true after bootstrap"
         (is (true? (:psi.system/has-substrate result))))
 
-      (testing "is-ai-complete is false at bootstrap stage"
+      (testing "readiness includes derived :graph-ready true"
+        (is (true? (get-in result [:psi.system/readiness :graph-ready]))))
+
+      (testing "is-ai-complete is false at integrating stage"
         (is (false? (:psi.system/is-ai-complete result)))))))
 
 ;; ─────────────────────────────────────────────────────────────────────────────
@@ -149,8 +152,9 @@
 
 (deftest query-graph-summary-test
   (testing "Query graph statistics are queryable"
-    (let [ctx    (bootstrapped-ctx)
-          result (introspection/query-graph-summary-in ctx)]
+    (let [ctx     (bootstrapped-ctx)
+          result  (introspection/query-graph-summary-in ctx)
+          result2 (introspection/query-graph-summary-in ctx)]
 
       (testing ":psi.graph/resolver-count includes introspection resolvers"
         (is (pos? (:psi.graph/resolver-count result))))
@@ -163,8 +167,36 @@
       (testing ":psi.graph/env-built is true"
         (is (true? (:psi.graph/env-built result))))
 
+      (testing "Step 7 startup domains are registered in same graph"
+        (let [syms (:psi.graph/resolver-syms result)]
+          (is (contains? syms 'psi.ai.core/ai-model-list-resolver)
+              "AI resolver should be present")
+          (is (contains? syms 'psi.history.resolvers/git-repo-status)
+              "History resolver should be present")
+          (is (contains? syms 'psi.introspection.resolvers/query-graph-summary)
+              "Introspection resolver should be present")))
+
       (testing ":psi.graph/mutation-count is a non-negative integer"
-        (is (nat-int? (:psi.graph/mutation-count result)))))))
+        (is (nat-int? (:psi.graph/mutation-count result))))
+
+      (testing "Step 7 capability graph attrs are exposed"
+        (is (vector? (:psi.graph/nodes result)))
+        (is (vector? (:psi.graph/edges result)))
+        (is (vector? (:psi.graph/capabilities result)))
+        (is (vector? (:psi.graph/domain-coverage result))))
+
+      (testing "domain coverage includes required domains"
+        (let [domains (set (map :domain (:psi.graph/domain-coverage result)))]
+          (is (contains? domains :ai))
+          (is (contains? domains :history))
+          (is (contains? domains :agent-session))
+          (is (contains? domains :introspection))))
+
+      (testing "repeated queries are deterministic for graph attrs"
+        (is (= (:psi.graph/nodes result) (:psi.graph/nodes result2)))
+        (is (= (:psi.graph/edges result) (:psi.graph/edges result2)))
+        (is (= (:psi.graph/capabilities result) (:psi.graph/capabilities result2)))
+        (is (= (:psi.graph/domain-coverage result) (:psi.graph/domain-coverage result2)))))))
 
 (deftest graph-self-describes-test
   (testing "Introspection resolvers appear in the graph summary"
@@ -184,18 +216,28 @@
 ;; ─────────────────────────────────────────────────────────────────────────────
 
 (deftest derived-properties-test
-  (testing "Derived system properties update as components become ready"
+  (testing "Derived system properties reflect Step 7 readiness reconciliation"
     (let [ctx        (bootstrapped-ctx)
           engine-ctx (:engine-ctx ctx)]
 
-      ;; Initially only engine is ready (bootstrap marks engine-ready=true)
+      ;; Bootstrapped introspection registration derives query+graph readiness.
       (let [r1 (introspection/query-system-state-in ctx)]
-        (is (false? (:psi.system/has-interface r1))
-            "No interface before query is marked ready"))
+        (is (true? (:psi.system/has-interface r1))
+            "Has interface when engine + query both ready")
+        (is (true? (get-in r1 [:psi.system/readiness :graph-ready]))
+            "graph-ready should be true when graph has nodes+edges")
+        (is (= :integrating (:psi.system/evolution-stage r1))
+            "evolution stage should be integrating when graph emerges"))
 
-      ;; Mark query as ready too
-      (engine/update-system-component-in! engine-ctx :query-ready true)
+      ;; Negative path: clear readiness flags and set emerging semantics.
+      (engine/update-system-component-in! engine-ctx :query-ready false)
+      (engine/update-system-component-in! engine-ctx :graph-ready false)
+      (engine/set-evolution-stage-in! engine-ctx :developing)
 
       (let [r2 (introspection/query-system-state-in ctx)]
-        (is (true? (:psi.system/has-interface r2))
-            "Has interface when engine + query both ready")))))
+        (is (false? (:psi.system/has-interface r2))
+            "No interface after query-ready is cleared")
+        (is (false? (get-in r2 [:psi.system/readiness :graph-ready]))
+            "graph-ready should be false when gate does not hold")
+        (is (= :developing (:psi.system/evolution-stage r2))
+            "evolution stage should reflect emerging semantics")))))
