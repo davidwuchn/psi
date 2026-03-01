@@ -150,6 +150,22 @@
     (is (= "fp-123" (get-in record [:provenance :graphFingerprint])))
     (is (= [:cap/a :cap/b] (get-in record [:provenance :capabilityIds])))))
 
+(deftest remember-in-appends-capability-history-events
+  (let [memory-ctx (memory/create-context)
+        _          (memory/remember-in! memory-ctx
+                                        {:content-type :learning
+                                         :content "Linked to graph"
+                                         :tags [:graph]
+                                         :provenance {:source :session
+                                                      :capabilityIds [:cap/a :cap/b]}
+                                         :timestamp (java.time.Instant/parse "2026-02-25T00:00:00Z")})
+        history    (:capability-history (memory/get-state-in memory-ctx))]
+    (is (= 2 (count history)))
+    (is (= #{:memory-linked} (set (map :event-type history))))
+    (is (= #{:cap/a :cap/b} (set (map :capability-id history))))
+    (is (every? #(= :session (:source %)) history))
+    (is (every? string? (map :record-id history)))))
+
 (deftest capture-graph-change-creates-snapshot-and-delta-on-fingerprint-change
   (let [memory-ctx (memory/create-context)
         first      (memory/capture-graph-change-in! memory-ctx
@@ -175,6 +191,36 @@
     (is (= 1 (count (:graph-deltas state))))
     (is (= [:cap/b]
            (get-in state [:graph-deltas 0 :added-capability-ids])))))
+
+(deftest capture-graph-change-appends-capability-history-events
+  (let [memory-ctx (memory/create-context)
+        _          (memory/capture-graph-change-in! memory-ctx
+                                                    {:fingerprint "fp-1"
+                                                     :capability-ids [:cap/a :cap/b]
+                                                     :operations [:op/read]})
+        _          (memory/capture-graph-change-in! memory-ctx
+                                                    {:fingerprint "fp-2"
+                                                     :capability-ids [:cap/b :cap/c]
+                                                     :operations [:op/read :op/write]})
+        history    (:capability-history (memory/get-state-in memory-ctx))]
+    (is (= 4 (count history)))
+    (is (= #{:graph-capability-baseline
+             :graph-capability-added
+             :graph-capability-removed}
+           (set (map :event-type history))))
+    (is (= #{:cap/a :cap/b :cap/c}
+           (set (map :capability-id history))))
+    (is (= 2 (count (filter #(= :graph-capability-baseline (:event-type %)) history))))
+    (is (= [:cap/c]
+           (->> history
+                (filter #(= :graph-capability-added (:event-type %)))
+                (map :capability-id)
+                vec)))
+    (is (= [:cap/a]
+           (->> history
+                (filter #(= :graph-capability-removed (:event-type %)))
+                (map :capability-id)
+                vec)))))
 
 (deftest capture-graph-change-noop-when-fingerprint-unchanged
   (let [memory-ctx (memory/create-context)
@@ -276,6 +322,41 @@
     (is (false? (:resultsTruncated result)))
     (is (every? #(= :note (:content-type %)) (:results result)))
     (is (every? #(some #{:t1} (:tags %)) (:results result)))))
+
+(deftest recover-appends-capability-history-hit-events
+  (let [memory-ctx (memory/create-context)
+        _          (memory/remember-in! memory-ctx
+                                        {:content-type :note
+                                         :content "alpha session"
+                                         :tags [:recover]
+                                         :provenance {:source :session
+                                                      :capabilityIds [:cap/a :cap/b]}
+                                         :timestamp (java.time.Instant/parse "2026-02-25T00:00:00Z")})
+        _          (memory/remember-in! memory-ctx
+                                        {:content-type :note
+                                         :content "alpha history"
+                                         :tags [:recover]
+                                         :provenance {:source :history
+                                                      :capabilityIds [:cap/b]}
+                                         :timestamp (java.time.Instant/parse "2026-02-26T00:00:00Z")})
+        before-count (count (:capability-history (memory/get-state-in memory-ctx)))
+        result      (memory/recover-in! memory-ctx
+                                        {:sources [:session :history :graph]
+                                         :query-text "alpha"
+                                         :capability-ids [:cap/b]
+                                         :now (java.time.Instant/parse "2026-03-01T00:00:00Z")})
+        state       (memory/get-state-in memory-ctx)
+        history     (:capability-history state)
+        recovery-id (get-in result [:recovery :recovery-id])
+        recovery-events (filter #(= :recovery-hit (:event-type %)) history)]
+    (is (true? (:ok? result)))
+    (is (= 2 (:result-count result)))
+    (is (= (+ before-count 2) (count history)))
+    (is (= 2 (count recovery-events)))
+    (is (= #{:cap/b} (set (map :capability-id recovery-events))))
+    (is (= #{recovery-id} (set (map :recovery-id recovery-events))))
+    (is (= #{:session :history} (set (map :source recovery-events))))
+    (is (= #{"alpha"} (set (map :query-text recovery-events))))))
 
 (deftest recover-rejects-missing-required-sources
   (let [memory-ctx (memory/create-context)

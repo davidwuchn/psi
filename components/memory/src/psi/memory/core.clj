@@ -104,8 +104,8 @@
    - query env built
    - git repository has history
    - capability graph status in #{:stable :expanding}"
-  [ctx {:keys [query-ctx git-ctx capability-graph-status]
-        :or   {git-ctx (git/create-context)}}]
+  [_ctx {:keys [query-ctx git-ctx capability-graph-status]
+         :or   {git-ctx (git/create-context)}}]
   (let [query-summary   (query/graph-summary-in query-ctx)
         commits         (try
                           (git/log git-ctx {:n 1})
@@ -175,6 +175,105 @@
        (distinct)
        (vec)))
 
+(defn- normalize-capability-ids
+  [capability-ids]
+  (->> (or capability-ids [])
+       (keep (fn [capability-id]
+               (cond
+                 (keyword? capability-id) capability-id
+                 (string? capability-id) capability-id
+                 :else nil)))
+       (distinct)
+       (vec)))
+
+(defn- append-capability-history
+  [state events]
+  (if (seq events)
+    (update state :capability-history (fnil into []) events)
+    state))
+
+(defn- capability-history-events-for-record
+  [record]
+  (let [provenance        (:provenance record)
+        capability-ids    (normalize-capability-ids (:capabilityIds provenance))
+        source            (or (:source provenance)
+                              (:source-type provenance)
+                              :unknown)
+        graph-fingerprint (:graphFingerprint provenance)]
+    (mapv (fn [capability-id]
+            {:event-id (str (random-uuid))
+             :event-type :memory-linked
+             :timestamp (:timestamp record)
+             :capability-id capability-id
+             :record-id (:record-id record)
+             :content-type (:content-type record)
+             :source source
+             :graph-fingerprint graph-fingerprint})
+          capability-ids)))
+
+(defn- capability-history-events-for-baseline-snapshot
+  [snapshot]
+  (mapv (fn [capability-id]
+          {:event-id (str (random-uuid))
+           :event-type :graph-capability-baseline
+           :timestamp (:timestamp snapshot)
+           :capability-id capability-id
+           :graph-fingerprint (:fingerprint snapshot)})
+        (normalize-capability-ids (:capability-ids snapshot))))
+
+(defn- capability-history-events-for-delta
+  [delta]
+  (let [timestamp        (:timestamp delta)
+        from-fingerprint (:from-fingerprint delta)
+        to-fingerprint   (:to-fingerprint delta)
+        added-events     (mapv (fn [capability-id]
+                                 {:event-id (str (random-uuid))
+                                  :event-type :graph-capability-added
+                                  :timestamp timestamp
+                                  :capability-id capability-id
+                                  :from-fingerprint from-fingerprint
+                                  :to-fingerprint to-fingerprint})
+                               (normalize-capability-ids (:added-capability-ids delta)))
+        removed-events   (mapv (fn [capability-id]
+                                 {:event-id (str (random-uuid))
+                                  :event-type :graph-capability-removed
+                                  :timestamp timestamp
+                                  :capability-id capability-id
+                                  :from-fingerprint from-fingerprint
+                                  :to-fingerprint to-fingerprint})
+                               (normalize-capability-ids (:removed-capability-ids delta)))]
+    (into [] (concat added-events removed-events))))
+
+(defn- capability-history-events-for-recovery
+  [recovery]
+  (let [timestamp      (:timestamp recovery)
+        recovery-id    (:recovery-id recovery)
+        query-text     (get-in recovery [:filters :query-text])
+        requested-ids  (normalize-capability-ids (get-in recovery [:filters :capability-ids]))
+        requested-set  (set requested-ids)]
+    (into []
+          (mapcat (fn [record]
+                    (let [provenance        (:provenance record)
+                          record-ids        (normalize-capability-ids (:capabilityIds provenance))
+                          hit-capability-ids (if (seq requested-set)
+                                               (filterv requested-set record-ids)
+                                               record-ids)
+                          source            (or (:source provenance)
+                                                (:source-type provenance)
+                                                :unknown)]
+                      (mapv (fn [capability-id]
+                              {:event-id (str (random-uuid))
+                               :event-type :recovery-hit
+                               :timestamp timestamp
+                               :capability-id capability-id
+                               :recovery-id recovery-id
+                               :record-id (:record-id record)
+                               :query-text query-text
+                               :source source
+                               :recovery-score (:recovery/score record)})
+                            hit-capability-ids)))
+                  (:results recovery)))))
+
 (defn- enrich-provenance-with-graph
   [provenance capability-graph]
   (let [graph-fingerprint (or (:fingerprint capability-graph)
@@ -233,21 +332,23 @@
   (if-let [error (remember-validation-error ctx remember-input)]
     {:ok? false
      :error error}
-    (let [content-type       (resolve-content-type remember-input)
-          normalized-tags    (normalize-tags tags)
-          record-timestamp   (resolve-timestamp remember-input)
-          full-provenance    (enrich-provenance-with-graph provenance capability-graph)
-          memory-record      {:record-id (str (random-uuid))
-                              :content-type content-type
-                              :content content
-                              :tags normalized-tags
-                              :timestamp record-timestamp
-                              :provenance full-provenance}]
+    (let [content-type               (resolve-content-type remember-input)
+          normalized-tags            (normalize-tags tags)
+          record-timestamp           (resolve-timestamp remember-input)
+          full-provenance            (enrich-provenance-with-graph provenance capability-graph)
+          memory-record              {:record-id (str (random-uuid))
+                                      :content-type content-type
+                                      :content content
+                                      :tags normalized-tags
+                                      :timestamp record-timestamp
+                                      :provenance full-provenance}
+          capability-history-events  (capability-history-events-for-record memory-record)]
       (swap-state-in! ctx
                       (fn [state]
                         (-> state
                             (update :records (fnil conj []) memory-record)
-                            (update :index-stats update-index-stats memory-record))))
+                            (update :index-stats update-index-stats memory-record)
+                            (append-capability-history capability-history-events))))
       {:ok? true
        :record memory-record
        :entry-count (get-in (get-state-in ctx) [:index-stats :entry-count])})))
@@ -424,12 +525,15 @@
                                    :limit enforced-limit
                                    :result-count (count results)
                                    :resultsTruncated truncated?
-                                   :results results}]
+                                   :results results}
+                capability-history-events
+                (capability-history-events-for-recovery recovery)]
             (swap-state-in! ctx
                             (fn [s]
                               (-> s
                                   (assoc :search-results results)
-                                  (update :recoveries (fnil conj []) recovery))))
+                                  (update :recoveries (fnil conj []) recovery)
+                                  (append-capability-history capability-history-events))))
             {:ok? true
              :sources requested-sources
              :weights weights
@@ -470,21 +574,25 @@
           :snapshot-count (count (:graph-snapshots state))
           :delta-count (count (:graph-deltas state))}
          (let [delta (when latest-snapshot
-                       (graph-history/make-delta latest-snapshot snapshot timestamp))]
+                       (graph-history/make-delta latest-snapshot snapshot timestamp))
+               capability-history-events (if delta
+                                           (capability-history-events-for-delta delta)
+                                           (capability-history-events-for-baseline-snapshot snapshot))]
            (swap-state-in! ctx
                            (fn [s]
                              (let [with-snapshot (update s :graph-snapshots
                                                          (fn [entries]
                                                            (graph-history/trim-window
                                                             (conj (vec (or entries [])) snapshot)
-                                                            graph-history/snapshot-retention-limit)))]
-                               (if delta
-                                 (update with-snapshot :graph-deltas
-                                         (fn [entries]
-                                           (graph-history/trim-window
-                                            (conj (vec (or entries [])) delta)
-                                            graph-history/delta-retention-limit)))
-                                 with-snapshot))))
+                                                            graph-history/snapshot-retention-limit)))
+                                   with-delta    (if delta
+                                                   (update with-snapshot :graph-deltas
+                                                           (fn [entries]
+                                                             (graph-history/trim-window
+                                                              (conj (vec (or entries [])) delta)
+                                                              graph-history/delta-retention-limit)))
+                                                   with-snapshot)]
+                               (append-capability-history with-delta capability-history-events))))
            (let [updated (get-state-in ctx)]
              {:ok? true
               :changed? true
