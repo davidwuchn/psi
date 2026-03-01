@@ -142,6 +142,13 @@ Caught by `jline-terminal-keymap-test` smoke test.
 | `tui.allium`               | `tui`                   | partial — session loop not yet working|
 | `ui-extension-points.allium` | `tui/extension_ui`    | ✓ implemented                         |
 | `oauth-auth.allium`        | `agent-session/oauth`   | ✓ implemented (Anthropic provider)    |
+| `graph-emergence.allium`   | `query` + `introspection` | ◇ Step 7 spec authored (attribute links implicit; mutation side-effects deferred) |
+
+## Step 7 Decisions (Spec)
+
+- Source: `spec/graph-emergence.allium`
+- Attribute links stay implicit on `:psi.graph/edges` (edge metadata), not first-class graph nodes
+- Mutation side-effects are deferred in Step 7 (`sideEffects = nil`) — capability graph is IO-link based for now
 
 ## Open Questions
 
@@ -152,6 +159,7 @@ Caught by `jline-terminal-keymap-test` smoke test.
 - Extension UI: should render fns receive a theme map for consistent styling?
 - Extension UI: editor text injection (set-editor-text, paste-to-editor)
 - Extension UI: working message override during streaming ("Analyzing..." vs "thinking…")
+- Graph emergence: when should mutation side-effects move from IO-only links to structured effect entities?
 
 ## nREPL
 

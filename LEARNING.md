@@ -1435,3 +1435,34 @@ to silence it:
       {bg :future session :session} (stream-response-in ctx ...)]
   @bg ...)
 ```
+
+---
+
+## 2026-02-28 - Step 7 Graph Emergence Spec Decisions
+
+### λ Resolve One Open Question Now, Defer One Explicitly
+
+For cross-component work (like Step 7 graph emergence), letting major shape
+choices "resolve themselves later" causes drift between spec, code, and UI.
+A better pattern:
+
+1. Resolve one structural decision now (needed for current step)
+2. Defer one deeper modeling decision intentionally (with explicit placeholder)
+
+Applied to Step 7:
+- **Resolved now**: attribute links are implicit edge metadata, not first-class
+  attribute nodes
+- **Deferred**: mutation side-effects stay IO-only for now (`sideEffects = null`)
+
+This keeps implementation moving without committing too early to a heavier
+entity model.
+
+### λ Mirror Spec Decisions Into PLAN.md and STATE.md
+
+When a spec decision affects roadmap shape, record it in:
+- `PLAN.md` (what Step N now means)
+- `STATE.md` (what is currently true)
+
+This prevents "spec-only truth" where decisions are discoverable only by
+reading `.allium` files, and keeps future ψ aligned during execution.
+

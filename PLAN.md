@@ -69,7 +69,12 @@ Ordered steps toward AI COMPLETE.
 ## Next
 
 ### Step 7 — Graph emergence
-Register domain resolvers, surface capability graph via EQL
+- Spec: `spec/graph-emergence.allium`
+- Register domain resolvers/mutations (`ai`, `history`, `agent-session`, `introspection`) into one query graph
+- Surface capability graph via EQL (`:psi.graph/nodes`, `:psi.graph/edges`, `:psi.graph/capabilities`, `:psi.graph/domain-coverage`)
+- Step 7 decisions:
+  - Attribute links remain implicit on edges (`CapabilityEdge.attribute`), not first-class attribute nodes
+  - Mutation side-effects are deferred (`DomainOperation.sideEffects = nil`), IO links only for now
 
 8. Step 8 — HTTP API
    openapi spec + martian client, surface via Pathom mutations

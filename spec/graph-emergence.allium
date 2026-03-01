@@ -1,0 +1,297 @@
+-- graph-emergence.allium
+--
+-- Scope: Step 7 — Graph emergence from registered domain resolvers/mutations.
+--
+-- Includes:
+--   - Domain resolver/mutation registration expectations at startup
+--   - Operation index extraction from query graph symbols
+--   - Capability graph derivation (nodes, edges, capabilities)
+--   - Readiness transition for graph_ready
+--   - EQL surface requirements for graph introspection
+--
+-- Excludes:
+--   - HTTP transport and OpenAPI wiring (Step 8)
+--   - RPC protocol and editor frontends (Step 9)
+--   - Memory/history/knowledge fusion semantics (Step 10)
+--   - Feed-forward recursion hooks (Step 11)
+
+------------------------------------------------------------
+-- External Entities
+------------------------------------------------------------
+
+external entity QueryGraphSummary {
+    -- Snapshot from the query/introspection layer.
+    resolverSymbols: Set<String>
+    mutationSymbols: Set<String>
+    resolverCount: Integer
+    mutationCount: Integer
+    envBuilt: Boolean
+}
+
+external entity SystemState {
+    -- System readiness map (owned by engine/introspection).
+    query_ready: Boolean
+    graph_ready: Boolean
+    evolution_stage: bootstrap | developing | integrating | complete
+}
+
+external entity GraphEqlSurface {
+    -- Attributes currently available via EQL.
+    attrs: Set<String>
+}
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value DomainOperation {
+    symbol: String
+    kind: resolver | mutation
+    domain: String                 -- ai | history | agent-session | introspection | other
+    inputAttrs: Set<String>
+    outputAttrs: Set<String>
+    sideEffects: List<String>?     -- deferred in Step 7; null means IO-only modeling
+}
+
+value DomainCoverage {
+    domain: String
+    resolverCount: Integer
+    mutationCount: Integer
+    hasCoverage: Boolean
+}
+
+value CapabilityGraphSummary {
+    resolverCount: Integer
+    mutationCount: Integer
+    nodeCount: Integer
+    edgeCount: Integer
+    capabilityCount: Integer
+    domainCoverage: List<DomainCoverage>
+}
+
+------------------------------------------------------------
+-- Capability Graph Entities
+------------------------------------------------------------
+
+entity CapabilityGraph {
+    status: emerging | stable | expanding | error
+    generatedAt: Timestamp?
+
+    operations: List<DomainOperation>
+    nodes: List<CapabilityNode>
+    edges: List<CapabilityEdge>
+    capabilities: List<DomainCapability>
+
+    summary: CapabilityGraphSummary
+
+    -- Derived
+    isConnected: edges.count > 0
+    hasRequiredDomains: summary.domainCoverage.each(c => c.domain in config.required_domains)
+}
+
+entity CapabilityNode {
+    id: String
+    nodeType: resolver | mutation | capability
+    domain: String
+    metadata: Map<String, Any>
+}
+
+entity CapabilityEdge {
+    fromNodeId: String
+    toNodeId: String
+    relationship: provides | consumes | enables | requires
+    attribute: String?             -- implicit attribute link (no attribute nodes in Step 7)
+}
+
+entity DomainCapability {
+    name: String
+    domain: String
+    requiredNodeIds: Set<String>
+
+    -- Derived
+    isAvailable: requiredNodeIds.count > 0
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    -- Domain coverage required for Step 7.
+    required_domains: Set<String> = {
+        "ai", "history", "agent-session", "introspection"
+    }
+
+    -- Prefix hints used to classify resolver/mutation symbols into domains.
+    domain_prefixes: Map<String, String> = {
+        "ai": "psi.ai.",
+        "history": "psi.history.",
+        "agent-session": "psi.agent-session.",
+        "introspection": "psi.introspection."
+    }
+
+    -- Minimum EQL graph surface expected after Step 7 wiring.
+    required_graph_eql_attrs: Set<String> = {
+        ":psi.graph/resolver-count",
+        ":psi.graph/mutation-count",
+        ":psi.graph/resolver-syms",
+        ":psi.graph/mutation-syms",
+        ":psi.graph/env-built",
+        ":psi.graph/nodes",
+        ":psi.graph/edges",
+        ":psi.graph/capabilities",
+        ":psi.graph/domain-coverage"
+    }
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+rule StartupDomainResolversRegistered {
+    -- Startup wiring must include all major domain components.
+    when: Step7StartupRequested(summary, state)
+
+    ensures: summary.envBuilt = true
+
+    ensures: summary.resolverSymbols.any(s => s.startsWith(config.domain_prefixes["ai"]))
+    ensures: summary.resolverSymbols.any(s => s.startsWith(config.domain_prefixes["history"]))
+    ensures: summary.resolverSymbols.any(s => s.startsWith(config.domain_prefixes["agent-session"]))
+    ensures: summary.resolverSymbols.any(s => s.startsWith(config.domain_prefixes["introspection"]))
+
+    -- Mutations are currently concentrated in agent-session.
+    ensures: summary.mutationSymbols.any(s => s.startsWith(config.domain_prefixes["agent-session"]))
+
+    ensures: state.query_ready = true
+}
+
+rule DomainOperationIndexBuilt {
+    -- Convert registry symbols + indexes into operation records.
+    when: CapabilityGraphRefreshRequested(summary, graph)
+
+    requires: summary.envBuilt = true
+
+    ensures: graph.operations = DomainOperationsFromQueryGraph(summary, config.domain_prefixes)
+    ensures: graph.operations.count = summary.resolverCount + summary.mutationCount
+
+    ensures: graph.summary.resolverCount = summary.resolverCount
+    ensures: graph.summary.mutationCount = summary.mutationCount
+}
+
+rule GraphStructureDerivedFromOperationIO {
+    -- Build graph structure from operation input/output attributes.
+    when: CapabilityGraphRefreshRequested(summary, graph)
+
+    requires: summary.envBuilt = true
+    requires: graph.operations.count > 0
+
+    ensures: graph.nodes = NodesFromOperations(graph.operations)
+    ensures: graph.edges = EdgesFromOperationInputsAndOutputs(graph.operations)
+
+    ensures: graph.summary.nodeCount = graph.nodes.count
+    ensures: graph.summary.edgeCount = graph.edges.count
+}
+
+rule AttributeLinksRemainImplicit {
+    -- Decision (resolved): Step 7 keeps attribute links on edges,
+    -- not as first-class graph nodes.
+    when: CapabilityGraphRefreshRequested(summary, graph)
+
+    requires: summary.envBuilt = true
+
+    ensures: graph.nodes.each(n => n.nodeType in [resolver, mutation, capability])
+    ensures: graph.edges.any(e => e.attribute != null)
+}
+
+rule DomainCapabilitiesDerived {
+    -- Capabilities emerge from connected domain subgraphs.
+    when: CapabilityGraphRefreshRequested(summary, graph)
+
+    requires: summary.envBuilt = true
+
+    ensures: graph.capabilities = CapabilitiesFromGraph(graph.nodes, graph.edges, config.required_domains)
+    ensures: graph.summary.capabilityCount = graph.capabilities.count
+
+    ensures: graph.summary.domainCoverage = DomainCoverageFromOperations(
+        graph.operations,
+        config.required_domains
+    )
+}
+
+rule MutationSideEffectsDeferredForStep7 {
+    -- Decision (deferred): mutations are modeled by IO links only for now.
+    -- Rich side-effect modeling can be added in a later step.
+    when: CapabilityGraphRefreshRequested(summary, graph)
+
+    requires: summary.envBuilt = true
+
+    let mutations = graph.operations with kind = mutation
+
+    ensures: mutations.each(m => m.sideEffects = null)
+}
+
+rule GraphReadyTransition {
+    when: CapabilityGraphComputed(graph, state)
+
+    requires: graph.summary.nodeCount > 0 and graph.summary.edgeCount > 0
+
+    ensures: graph.status = stable
+    ensures: graph.generatedAt = now
+
+    ensures: state.graph_ready = true
+    ensures: state.evolution_stage = integrating
+}
+
+rule GraphNotReadyTransition {
+    when: CapabilityGraphComputed(graph, state)
+
+    requires: graph.summary.nodeCount = 0 or graph.summary.edgeCount = 0
+
+    ensures: graph.status = emerging
+    ensures: state.graph_ready = false
+}
+
+rule GraphInvalidatedOnRegistryChange {
+    -- New resolver/mutation registration invalidates previously computed graph.
+    when: QueryRegistryChanged(graph, changedOperation)
+
+    ensures: graph.status = expanding
+    ensures: CapabilityGraphRefreshQueued(changedOperation)
+}
+
+rule CapabilityGraphSurfacedViaEql {
+    -- Graph is queryable through a stable EQL contract.
+    when: GraphEqlResolversRegistered(surface, graph)
+
+    requires: graph.status in [emerging, stable, expanding]
+
+    ensures: config.required_graph_eql_attrs.each(a => surface.attrs contains a)
+}
+
+------------------------------------------------------------
+-- Surface
+------------------------------------------------------------
+
+actor CapabilityConsumer { identified_by: id = "capability-client" }
+
+surface CapabilityGraphApi {
+    for client: CapabilityConsumer
+
+    context graph: CapabilityGraph with graph.status in [emerging, stable, expanding]
+
+    exposes:
+        graph.status
+        graph.summary
+        graph.capabilities
+
+    provides:
+        QueryCapabilityGraph(client)
+            when graph.summary.resolverCount > 0
+
+        QueryDomainCoverage(client, domain)
+            when domain in config.required_domains
+}
+
+-- Resolved for Step 7: attribute links remain implicit on edges
+-- (see CapabilityEdge.attribute and AttributeLinksRemainImplicit).
+open_question "When should mutation side-effects evolve from IO-only/null to structured effect entities for memory and API planning?"
