@@ -276,6 +276,14 @@
       (let [result (session/query-in ctx [:psi.agent-session/model])]
         (is (= model (:psi.agent-session/model result))))))
 
+  (testing "query-in resolves graph capabilities via agent-session bridge"
+    (let [ctx    (session/create-context)
+          result (session/query-in ctx [:psi.graph/capabilities])]
+      (is (vector? (:psi.graph/capabilities result)))
+      (is (seq (:psi.graph/capabilities result)))
+      (is (some #(= :agent-session (:domain %))
+                (:psi.graph/capabilities result)))))
+
   (testing "query-in resolves developer prompt"
     (let [ctx (session/create-context {:initial-session {:developer-prompt "dev layer"
                                                          :developer-prompt-source :explicit}})
