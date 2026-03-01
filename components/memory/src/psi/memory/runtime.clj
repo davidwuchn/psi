@@ -79,7 +79,7 @@
     qctx))
 
 (defn ^{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]
-         :export true}
+        :export true}
   sync-memory-layer!
   "Run memory lifecycle sync against current runtime graph.
 
@@ -142,7 +142,7 @@
     :session-message))
 
 (defn ^{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]
-         :export true}
+        :export true}
   remember-session-message!
   "Remember a runtime session message into memory.
 
@@ -174,7 +174,7 @@
                         :capability-graph  capability-graph}))))
 
 (defn ^{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]
-         :export true}
+        :export true}
   recover-for-query!
   "Run memory recovery for user query text and store search/recovery attrs.
 
