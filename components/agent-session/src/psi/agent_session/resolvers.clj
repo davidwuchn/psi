@@ -206,6 +206,7 @@
    [com.wsscode.pathom3.connect.operation :as pco]
    [com.wsscode.pathom3.connect.indexes :as pci]
    [com.wsscode.pathom3.interface.eql :as p.eql]
+   [psi.introspection.graph :as graph]
    [psi.query.registry :as registry]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.session :as session]
@@ -1287,93 +1288,14 @@
 
 (declare all-resolvers)
 
-(defn- classify-domain
-  [op-sym]
-  (let [n (namespace op-sym)]
-    (cond
-      (str/starts-with? n "psi.ai") :ai
-      (str/starts-with? n "psi.history") :history
-      (str/starts-with? n "psi.introspection") :introspection
-      (or (str/starts-with? n "psi.agent-session")
-          (str/starts-with? n "psi.extension")) :agent-session
-      :else :unknown)))
-
-(defn- operation->metadata
-  [op-type operation]
-  (let [cfg (pco/operation-config operation)]
-    {:op-type op-type
-     :symbol  (::pco/op-name cfg)
-     :input   (vec (or (::pco/input cfg) []))
-     :output  (vec (or (::pco/output cfg) []))
-     :params  (vec (or (::pco/params cfg) []))}))
-
-(defn- operation-node-id
-  [{:keys [op-type symbol]}]
-  (str (name op-type) ":" symbol))
-
-(defn- capability-node-id
-  [domain]
-  (str "capability:" (name domain)))
-
-(defn- domain-operation
-  [{:keys [op-type symbol input output params] :as op}]
-  (let [domain       (classify-domain symbol)
-        io-attrs     (vec (distinct (concat input output params)))
-        operation-id (operation-node-id op)]
-    {:id          operation-id
-     :symbol      symbol
-     :domain      domain
-     :type        op-type
-     :attributes  io-attrs
-     :sideEffects (when (= op-type :mutation) nil)}))
-
-(defn- derive-capability-graph
-  [resolver-ops mutation-ops]
-  (let [domain-ops (->> (concat resolver-ops mutation-ops)
-                        (map domain-operation)
-                        (sort-by (comp str :symbol))
-                        vec)
-        capabilities (->> domain-ops
-                          (group-by :domain)
-                          (map (fn [[domain ops]]
-                                 {:id                (capability-node-id domain)
-                                  :domain            domain
-                                  :operation-count   (count ops)
-                                  :resolver-count    (count (filter #(= :resolver (:type %)) ops))
-                                  :mutation-count    (count (filter #(= :mutation (:type %)) ops))
-                                  :operation-symbols (vec (map :symbol ops))
-                                  :attributes        (vec (distinct (mapcat :attributes ops)))}))
-                          (sort-by (comp str :domain))
-                          vec)
-        nodes (vec (concat
-                    (map (fn [{:keys [id symbol domain type sideEffects]}]
-                           (cond-> {:id id :type type :symbol symbol :domain domain}
-                             (= type :mutation) (assoc :sideEffects sideEffects)))
-                         domain-ops)
-                    (map (fn [{:keys [id domain operation-count]}]
-                           {:id id :type :capability :domain domain :operation-count operation-count})
-                         capabilities)))
-        edges (->> domain-ops
-                   (mapcat (fn [{:keys [id domain attributes]}]
-                             (let [cap-id (capability-node-id domain)
-                                   attrs  (seq attributes)]
-                               (if attrs
-                                 (map (fn [attr] {:from id :to cap-id :attribute attr}) attrs)
-                                 [{:from id :to cap-id :attribute nil}]))))
-                   vec)
-        domain-coverage (->> domain-ops
-                             (group-by :domain)
-                             (map (fn [[domain ops]]
-                                    {:domain          domain
-                                     :resolver-count  (count (filter #(= :resolver (:type %)) ops))
-                                     :mutation-count  (count (filter #(= :mutation (:type %)) ops))
-                                     :operation-count (count ops)}))
-                             (sort-by (comp str :domain))
-                             vec)]
-    {:nodes nodes
-     :edges edges
-     :capabilities capabilities
-     :domain-coverage domain-coverage}))
+(defn- operation-metadata
+  []
+  (let [registered-resolvers (registry/all-resolvers)
+        resolver-source      (if (seq registered-resolvers)
+                               registered-resolvers
+                               all-resolvers)]
+    {:resolver-ops (mapv #(graph/operation->metadata :resolver %) resolver-source)
+     :mutation-ops (mapv #(graph/operation->metadata :mutation %) (registry/all-mutations))}))
 
 (pco/defresolver query-graph-bridge
   "Resolve :psi.graph/* attrs from :psi/agent-session-ctx so eql_query can access
@@ -1384,10 +1306,8 @@
                  :psi.graph/edges
                  :psi.graph/capabilities
                  :psi.graph/domain-coverage]}
-  (let [_            agent-session-ctx
-        resolver-ops (mapv #(operation->metadata :resolver %) all-resolvers)
-        mutation-ops (mapv #(operation->metadata :mutation %) (registry/all-mutations))
-        cgraph       (derive-capability-graph resolver-ops mutation-ops)]
+  (let [_      agent-session-ctx
+        cgraph (graph/derive-capability-graph (operation-metadata))]
     {:psi.graph/nodes           (:nodes cgraph)
      :psi.graph/edges           (:edges cgraph)
      :psi.graph/capabilities    (:capabilities cgraph)
