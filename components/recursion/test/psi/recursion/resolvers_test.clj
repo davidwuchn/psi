@@ -26,10 +26,7 @@
 
 (defn- manual-trigger
   []
-  {:type :manual
-   :reason "test-trigger"
-   :payload {}
-   :timestamp (java.time.Instant/now)})
+  (core/manual-trigger-signal "test-trigger" {:source :test}))
 
 ;;; --- Resolver tests ---
 
@@ -194,7 +191,7 @@
 ;;; --- Mutation tests ---
 
 (deftest trigger-mutation-creates-cycle
-  ;; Trigger mutation should create a new cycle
+  ;; Trigger mutation should create a new cycle via orchestration and stop at awaiting approval
   (testing "trigger mutation creates a cycle"
     (let [rctx (core/create-context)
           _ (core/register-hooks-in! rctx)
@@ -204,12 +201,23 @@
                                  [{(list 'psi.recursion/trigger!
                                          {:psi/recursion-ctx rctx
                                           :reason "mutation-test"
-                                          :system-state (all-readiness-true)})
-                                   [:psi.recursion/trigger-result]}])]
-      (is (= :accepted
-             (get-in result ['psi.recursion/trigger!
-                             :psi.recursion/trigger-result
-                             :result]))))))
+                                          :system-state (all-readiness-true)
+                                          :graph-state {:node-count 5 :capability-count 3 :status :stable}
+                                          :memory-state {:entry-count 2 :status :ready :recovery-count 0}})
+                                   [:psi.recursion/trigger-result
+                                    :psi.recursion/orchestration-result]}])
+          trigger-result (get-in result ['psi.recursion/trigger!
+                                         :psi.recursion/trigger-result])
+          orchestration (get-in result ['psi.recursion/trigger!
+                                        :psi.recursion/orchestration-result])
+          cycle-id (:cycle-id trigger-result)
+          state (core/get-state-in rctx)
+          cycle (first (filter #(= cycle-id (:cycle-id %)) (:cycles state)))]
+      (is (= :accepted (:result trigger-result)))
+      (is (= :awaiting-approval (:phase orchestration)))
+      (is (= core/feed-forward-manual-trigger-prompt-name
+             (get-in cycle [:trigger :payload :prompt-name])))
+      (is (= :eql-mutation (get-in cycle [:trigger :payload :source]))))))
 
 (deftest pause-resume-mutations-toggle-state
   ;; Pause and resume mutations should toggle controller state
@@ -232,8 +240,10 @@
                                             {:psi/recursion-ctx rctx}
                                             [:psi.recursion/status
                                              :psi.recursion/paused?])
+          raw-state-after-pause (core/get-state-in rctx)
           _ (is (= :paused (:psi.recursion/status state-after-pause)))
           _ (is (true? (:psi.recursion/paused? state-after-pause)))
+          _ (is (= :idle (get-in raw-state-after-pause [:paused-checkpoint :status])))
 
           ;; Resume
           resume-result (query/query-in qctx
@@ -248,9 +258,11 @@
           state-after-resume (query/query-in qctx
                                              {:psi/recursion-ctx rctx}
                                              [:psi.recursion/status
-                                              :psi.recursion/paused?])]
+                                              :psi.recursion/paused?])
+          raw-state-after-resume (core/get-state-in rctx)]
       (is (= :idle (:psi.recursion/status state-after-resume)))
-      (is (false? (:psi.recursion/paused? state-after-resume))))))
+      (is (false? (:psi.recursion/paused? state-after-resume)))
+      (is (nil? (:paused-checkpoint raw-state-after-resume))))))
 
 (deftest resume-from-non-paused-returns-false
   ;; Resume when not paused should return false
@@ -263,7 +275,27 @@
                                          {:psi/recursion-ctx rctx})
                                    [:psi.recursion/resumed?]}])]
       (is (false? (get-in result ['psi.recursion/resume!
-                                  :psi.recursion/resumed?]))))))
+                                  :psi.recursion/resumed?])))))
+
+  (testing "resume from paused state restores checkpoint status"
+    (let [rctx (core/create-context)
+          qctx (recursion-query-ctx)
+          _ (core/swap-state-in! rctx assoc
+                                 :status :paused
+                                 :paused-reason "checkpoint-test"
+                                 :paused-checkpoint {:status :planning
+                                                     :at (java.time.Instant/now)})
+          result (query/query-in qctx
+                                 {:psi/recursion-ctx rctx}
+                                 [{(list 'psi.recursion/resume!
+                                         {:psi/recursion-ctx rctx})
+                                   [:psi.recursion/resumed?]}])
+          state (core/get-state-in rctx)]
+      (is (true? (get-in result ['psi.recursion/resume!
+                                 :psi.recursion/resumed?])))
+      (is (= :planning (:status state)))
+      (is (nil? (:paused-reason state)))
+      (is (nil? (:paused-checkpoint state))))))
 
 (deftest current-future-state-after-planning
   ;; After planning, current-future-state should be non-nil

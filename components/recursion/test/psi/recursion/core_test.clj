@@ -38,8 +38,9 @@
         (is (= [] (:hooks state)))
         (is (= [] (:cycles state))))
 
-      (testing "no paused reason or error"
+      (testing "no paused reason/checkpoint or error"
         (is (nil? (:paused-reason state)))
+        (is (nil? (:paused-checkpoint state)))
         (is (nil? (:last-error state)))))))
 
 (deftest create-context-with-overrides
@@ -186,10 +187,12 @@
   ([ttype]
    (make-trigger ttype "test trigger"))
   ([ttype reason]
-   {:type      ttype
-    :reason    reason
-    :payload   {}
-    :timestamp (java.time.Instant/now)}))
+   (if (= :manual ttype)
+     (core/manual-trigger-signal reason {:source :test})
+     {:type      ttype
+      :reason    reason
+      :payload   {}
+      :timestamp (java.time.Instant/now)})))
 
 (deftest register-hooks-in-test
   (testing "register-hooks-in! populates hooks from config"
@@ -309,6 +312,81 @@
           result (core/handle-trigger-in! ctx (make-trigger :manual) all-ready)]
       (is (= :rejected (:result result)))
       (is (= :controller-busy (:reason result))))))
+
+(deftest orchestrate-manual-trigger-awaits-explicit-approval-test
+  (testing "orchestration stops at awaiting-approval without explicit decision"
+    (let [ctx (core/create-context)
+          _ (core/register-hooks-in! ctx)
+          trigger (core/manual-trigger-signal "manual run" {:source :test})
+          result (core/orchestrate-manual-trigger-in!
+                  ctx
+                  trigger
+                  {:system-state all-ready
+                   :graph-state {:node-count 5 :capability-count 3 :status :stable}
+                   :memory-state {:entry-count 2 :status :ready :recovery-count 0}})
+          state (core/get-state-in ctx)
+          cycle (some->> (:cycles state) last)]
+      (is (true? (:ok? result)))
+      (is (= :awaiting-approval (:phase result)))
+      (is (= :accepted (get-in result [:trigger-result :result])))
+      (is (= :awaiting-approval (:status state)))
+      (is (= :awaiting-approval (:status cycle)))
+      (is (= :manual (get-in result [:gate-result :gate]))))))
+
+(deftest orchestrate-manual-trigger-approve-completes-test
+  (testing "orchestration with explicit :approve runs full cycle to finalize"
+    (let [ctx (core/create-context)
+          _ (core/register-hooks-in! ctx)
+          mem-ctx (memory/create-context
+                   {:state-overrides {:status :ready}
+                    :require-provenance-on-write? false})
+          trigger (core/manual-trigger-signal "manual approve" {:source :test})
+          result (core/orchestrate-manual-trigger-in!
+                  ctx
+                  trigger
+                  {:system-state all-ready
+                   :graph-state {:node-count 5 :capability-count 3 :status :stable}
+                   :memory-state {:entry-count 2 :status :ready :recovery-count 0}
+                   :memory-ctx mem-ctx
+                   :approval-decision :approve
+                   :approver "reviewer"
+                   :approval-notes "ship it"})
+          state (core/get-state-in ctx)
+          cycle (first (filter #(= (:cycle-id result) (:cycle-id %)) (:cycles state)))]
+      (is (true? (:ok? result)))
+      (is (= :completed (:phase result)))
+      (is (= :idle (:status state)))
+      (is (= :completed (:status cycle)))
+      (is (= true (get-in cycle [:proposal :approved])))
+      (is (= :success (get-in cycle [:outcome :status]))))))
+
+(deftest orchestrate-manual-trigger-reject-completes-with-aborted-outcome-test
+  (testing "orchestration with explicit :reject skips execution and finalizes failed"
+    (let [ctx (core/create-context)
+          _ (core/register-hooks-in! ctx)
+          mem-ctx (memory/create-context
+                   {:state-overrides {:status :ready}
+                    :require-provenance-on-write? false})
+          trigger (core/manual-trigger-signal "manual reject" {:source :test})
+          result (core/orchestrate-manual-trigger-in!
+                  ctx
+                  trigger
+                  {:system-state all-ready
+                   :graph-state {:node-count 5 :capability-count 3 :status :stable}
+                   :memory-state {:entry-count 2 :status :ready :recovery-count 0}
+                   :memory-ctx mem-ctx
+                   :approval-decision :reject
+                   :approver "reviewer"
+                   :approval-notes "not safe"})
+          state (core/get-state-in ctx)
+          cycle (first (filter #(= (:cycle-id result) (:cycle-id %)) (:cycles state)))]
+      (is (true? (:ok? result)))
+      (is (= :completed (:phase result)))
+      (is (= :idle (:status state)))
+      (is (= :failed (:status cycle)))
+      (is (= false (get-in cycle [:proposal :approved])))
+      (is (= :aborted (get-in cycle [:outcome :status])))
+      (is (empty? (:execution-attempts cycle))))))
 
 ;;; --- Observation tests ---
 
@@ -751,6 +829,32 @@
       (is (true? (get-in cycle [:proposal :approved])))
       (is (false? (get-in cycle [:proposal :requires-approval]))))))
 
+(deftest apply-approval-gate-rejects-invalid-state-test
+  ;; Verification hardening for transition guard behavior around approval gate.
+  (testing "apply-approval-gate rejects unknown cycle-id"
+    (let [ctx (core/create-context)
+          result (core/apply-approval-gate-in! ctx "nonexistent")]
+      (is (false? (:ok? result)))
+      (is (= :cycle-not-found (:error result)))))
+
+  (testing "apply-approval-gate rejects wrong cycle status"
+    (let [ctx (core/create-context)
+          cycle-id (trigger-and-get-cycle-id ctx)
+          ;; cycle is still :observing
+          result (core/apply-approval-gate-in! ctx cycle-id)]
+      (is (false? (:ok? result)))
+      (is (= :wrong-cycle-status (:error result)))
+      (is (= :observing (:status result)))))
+
+  (testing "apply-approval-gate rejects planning cycle missing proposal"
+    (let [ctx (core/create-context)
+          cycle-id (trigger-and-get-cycle-id ctx)
+          _ (core/observe-in! ctx cycle-id all-ready sample-graph-state sample-memory-state)
+          ;; cycle now in :planning, but no proposal attached
+          result (core/apply-approval-gate-in! ctx cycle-id)]
+      (is (false? (:ok? result)))
+      (is (= :no-proposal (:error result))))))
+
 (deftest approve-proposal-in-test
   ;; Approve transitions to executing
   (testing "approve transitions to executing"
@@ -786,7 +890,18 @@
       (is (= :learning (:status cycle)))
       (is (false? (get-in cycle [:proposal :approved])))
       (is (= "user@test" (get-in cycle [:proposal :approval-by])))
-      (is (= "too risky" (get-in cycle [:proposal :approval-notes])))))
+      (is (= "too risky" (get-in cycle [:proposal :approval-notes])))
+      (is (= :aborted (get-in cycle [:outcome :status])))
+      (is (= "proposal_rejected" (get-in cycle [:outcome :summary])))
+      (is (= #{"too risky"} (get-in cycle [:outcome :evidence])))))
+
+  (testing "reject sets default rejection evidence when notes are blank"
+    (let [[ctx cycle-id] (setup-planned-cycle)
+          _ (core/apply-approval-gate-in! ctx cycle-id)
+          _ (core/reject-proposal-in! ctx cycle-id "user@test" "")
+          state (core/get-state-in ctx)
+          cycle (first (filter #(= cycle-id (:cycle-id %)) (:cycles state)))]
+      (is (= #{"proposal_rejected"} (get-in cycle [:outcome :evidence])))))
 
   (testing "reject rejects wrong cycle status"
     (let [[ctx cycle-id] (setup-planned-cycle)
@@ -1161,6 +1276,22 @@
               prov (:provenance record)]
           (is (= :failed (:outcome-status prov))))))))
 
+(deftest learn-in-preserves-aborted-outcome-test
+  (testing "learn preserves rejected/aborted outcome"
+    (let [[ctx cycle-id] (setup-planned-cycle)
+          memory-ctx (memory/create-context
+                      {:state-overrides {:status :ready}
+                       :require-provenance-on-write? false})
+          _ (core/apply-approval-gate-in! ctx cycle-id)
+          _ (core/reject-proposal-in! ctx cycle-id "reviewer" "too risky")
+          result (core/learn-in! ctx cycle-id memory-ctx)
+          state (core/get-state-in ctx)
+          cycle (first (filter #(= cycle-id (:cycle-id %)) (:cycles state)))
+          record (first (:records (memory/get-state-in memory-ctx)))]
+      (is (true? (:ok? result)))
+      (is (= :aborted (get-in cycle [:outcome :status])))
+      (is (= :aborted (get-in record [:provenance :outcome-status]))))))
+
 (deftest learn-in-rejects-wrong-status-test
   (testing "learn rejects wrong cycle status"
     (let [[ctx cycle-id] (setup-planned-cycle)
@@ -1259,8 +1390,9 @@
       (testing "controller returns to idle"
         (is (= :idle (:status state))))
 
-      (testing "paused-reason is cleared"
-        (is (nil? (:paused-reason state)))))))
+      (testing "paused pause metadata is cleared"
+        (is (nil? (:paused-reason state)))
+        (is (nil? (:paused-checkpoint state)))))))
 
 (deftest finalize-cycle-failed-test
   ;; AC #13: Failed cycle finalization
@@ -1284,16 +1416,20 @@
         (is (inst? (:ended-at cycle)))))))
 
 (deftest finalize-clears-paused-reason-test
-  ;; AC #13: Finalize clears paused-reason
-  (testing "finalize clears paused-reason even if it was set"
+  ;; AC #13: Finalize clears pause metadata
+  (testing "finalize clears paused-reason and paused-checkpoint"
     (let [[ctx cycle-id memory-ctx] (setup-verified-cycle)
           _ (core/learn-in! ctx cycle-id memory-ctx)
           _ (core/update-future-state-from-outcome-in! ctx cycle-id)
-          ;; Manually set a paused-reason
-          _ (core/swap-state-in! ctx assoc :paused-reason "some-reason")
+          ;; Manually set pause metadata
+          _ (core/swap-state-in! ctx assoc
+                                 :paused-reason "some-reason"
+                                 :paused-checkpoint {:status :planning
+                                                     :at (java.time.Instant/now)})
           _ (core/finalize-cycle-in! ctx cycle-id)
           state (core/get-state-in ctx)]
-      (is (nil? (:paused-reason state))))))
+      (is (nil? (:paused-reason state)))
+      (is (nil? (:paused-checkpoint state))))))
 
 (deftest finalize-rejects-no-outcome-test
   (testing "finalize rejects when no outcome"

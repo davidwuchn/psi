@@ -21,7 +21,8 @@
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.prompt-templates :as pt]
    [psi.agent-session.oauth.core :as oauth]
-   [psi.agent-core.core :as agent]))
+   [psi.agent-core.core :as agent]
+   [psi.recursion.core :as recursion]))
 
 ;; ============================================================
 ;; Formatting helpers (pure — return strings, no side effects)
@@ -84,6 +85,7 @@
          "  /resume  — resume a previous session\n"
          "  /login [provider] — login with an OAuth provider\n"
          "  /logout  — logout from an OAuth provider\n"
+         "  /feed-forward [reason] — trigger a manual feed-forward cycle\n"
          "  /help    — show this help\n"
          "  /skill:name — invoke a skill (loads full content)"
          (when (seq templates)
@@ -153,6 +155,73 @@
   {:anthropic "ANTHROPIC_API_KEY"
    :openai    "OPENAI_API_KEY"
    :google    "GOOGLE_API_KEY"})
+
+(def ^:private default-feed-forward-readiness
+  {:query-ready true
+   :graph-ready true
+   :introspection-ready true
+   :memory-ready true})
+
+(defn- runtime-feed-forward-inputs
+  "Derive live runtime readiness + observe snapshots from session query state.
+   Falls back to safe defaults when attrs are unavailable."
+  [ctx]
+  (let [snapshot (session/query-in ctx
+                                   [:psi.graph/nodes
+                                    :psi.graph/edges
+                                    :psi.memory/status
+                                    :psi.memory/entry-count])
+        node-count (count (:psi.graph/nodes snapshot))
+        edge-count (count (:psi.graph/edges snapshot))
+        memory-status (:psi.memory/status snapshot)
+        memory-entry-count (or (:psi.memory/entry-count snapshot) 0)
+        memory-ready? (= :ready memory-status)
+        graph-ready? (and (pos? node-count)
+                          (pos? edge-count))
+        readiness (merge default-feed-forward-readiness
+                         {:graph-ready graph-ready?
+                          :memory-ready memory-ready?})
+        graph-state {:node-count node-count
+                     :capability-count edge-count
+                     :status (if graph-ready? :stable :emerging)}
+        memory-state {:entry-count memory-entry-count
+                      :status (if memory-ready? :ready :initializing)
+                      :recovery-count 0}]
+    {:readiness readiness
+     :graph-state graph-state
+     :memory-state memory-state}))
+
+(defn- feed-forward-trigger-signal
+  [reason]
+  (recursion/manual-trigger-signal reason {:source :runtime-command}))
+
+(defn- format-feed-forward-trigger-result
+  [trigger-result orchestration]
+  (let [phase (:phase orchestration)]
+    (case (:result trigger-result)
+      :accepted
+      (str "✓ Feed-forward trigger accepted"
+           "\n  cycle-id: " (:cycle-id trigger-result)
+           "\n  prompt: " recursion/feed-forward-manual-trigger-prompt-name
+           (case phase
+             :awaiting-approval "\n  status: awaiting approval"
+             :completed "\n  status: cycle completed"
+             :trigger "\n  status: trigger accepted"
+             (str "\n  phase: " (name phase))))
+
+      :blocked
+      (str "‖ Feed-forward trigger blocked"
+           "\n  cycle-id: " (:cycle-id trigger-result)
+           "\n  reason: recursion_prerequisites_not_ready")
+
+      :ignored
+      "… Feed-forward trigger ignored (manual hook disabled)."
+
+      :rejected
+      (str "✗ Feed-forward trigger rejected"
+           "\n  reason: " (name (:reason trigger-result)))
+
+      (str trigger-result))))
 
 ;; ============================================================
 ;; Login provider selection (pure — returns data)
@@ -237,6 +306,29 @@
       ;; Skills
       (= trimmed "/skills")
       {:type :text :message (format-skills ctx)}
+
+      ;; Feed-forward manual trigger
+      (or (= trimmed "/feed-forward")
+          (str/starts-with? trimmed "/feed-forward "))
+      (if-let [recursion-ctx (:recursion-ctx ctx)]
+        (let [reason (-> (str/replace trimmed #"^/feed-forward\s*" "")
+                         (str/trim)
+                         (not-empty))
+              {:keys [readiness graph-state memory-state]}
+              (runtime-feed-forward-inputs ctx)
+              orchestration
+              (recursion/orchestrate-manual-trigger-in!
+               recursion-ctx
+               (feed-forward-trigger-signal reason)
+               {:system-state readiness
+                :graph-state graph-state
+                :memory-state memory-state
+                :memory-ctx (:memory-ctx ctx)})
+              trigger-result (:trigger-result orchestration)]
+          {:type :text
+           :message (format-feed-forward-trigger-result trigger-result orchestration)})
+        {:type :text
+         :message "✗ Feed-forward recursion context not configured."})
 
       ;; Login
       (or (= trimmed "/login")
