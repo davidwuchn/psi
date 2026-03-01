@@ -1,107 +1,30 @@
 -- emacs-frontend.allium
 --
--- Scope: Emacs process-buffer front end for psi as an alternative to the TUI.
---        Communication uses EDN-line messages over stdio.
+-- Scope: Emacs process-buffer frontend behavior with TUI-parity goals.
 --
 -- Includes:
---   Process lifecycle in Emacs (start/stop/reconnect)
---   EDN request/response/event protocol over stdin/stdout
---   Handshake and request correlation by id
---   Canonical EDN envelopes per frame kind with required keys
---   Streaming assistant + tool lifecycle events
---   Concrete event payload catalog with required wire keys
---   Normative compatibility guarantees (MUST/SHOULD)
---   Versioning policy for additive vs breaking protocol evolution
+--   Emacs-specific parity goals versus TUI experience
+--   Session, streaming, tool, and footer parity expectations
 --   Extension UI parity (dialogs/widgets/status/notifications)
---   Session/footer parity with the TUI experience
+--   Session resume/rehydration parity
+--
+-- Delegates to:
+--   EDN RPC transport protocol (rpc-edn.allium)
 --
 -- Excludes:
+--   Canonical EDN frame envelopes and version negotiation (see rpc-edn.allium)
 --   Emacs Lisp implementation details (major mode, keymaps, overlays)
 --   Terminal rendering internals (charm.clj, ANSI diffing)
---   Agent loop internals (see agent.allium)
---   Session internals (see coding-agent.allium)
+--   Agent/session internals beyond surface contracts
 
 use "./coding-agent.allium" as coding
 use "./ui-extension-points.allium" as ui
 use "./default-footer.allium" as footer
+use "./rpc-edn.allium" as rpc
 
 ------------------------------------------------------------
 -- Value Types
 ------------------------------------------------------------
-
-value EdnFrame {
-    id: String?
-    kind: request | response | event | error
-
-    -- request/response fields
-    op: String?
-    params: Map<String, Any>?
-    ok: Boolean?
-
-    -- event fields
-    event: String?
-    data: Map<String, Any>?
-    seq: Integer?
-    ts: Timestamp?
-
-    -- error fields
-    errorCode: String?
-    errorMessage: String?
-    retryable: Boolean?
-}
-
-value RequestFrame {
-    -- Canonical request envelope (stdin).
-    id: String
-    kind: request
-    op: String
-    params: Map<String, Any>?
-}
-
-value ResponseFrame {
-    -- Canonical response envelope (stdout).
-    id: String
-    kind: response
-    op: String
-    ok: Boolean
-    data: Map<String, Any>?
-}
-
-value EventFrame {
-    -- Canonical event envelope (stdout).
-    kind: event
-    event: String
-    data: Map<String, Any>
-    id: String?
-    seq: Integer?
-    ts: Timestamp?
-}
-
-value ErrorFrame {
-    -- Canonical error envelope (stdout).
-    kind: error
-    id: String?
-    op: String?
-    errorCode: String
-    errorMessage: String
-    retryable: Boolean?
-    data: Map<String, Any>?
-}
-
-value EmacsClientInfo {
-    name: String
-    version: String
-    protocolVersion: String
-    features: Set<String>
-}
-
-value PsiServerInfo {
-    protocolVersion: String
-    features: Set<String>
-    sessionId: String?
-    modelId: String?
-    thinkingLevel: String?
-}
 
 value FrontendFeatureParity {
     prompting: Boolean
@@ -116,513 +39,24 @@ value FrontendFeatureParity {
     commandDiscovery: Boolean
 }
 
-value ProtocolChange {
-    -- Used by the normative versioning policy below.
-    changeType: add-topic | add-optional-key | add-optional-envelope-key |
-                remove-topic | remove-required-key | rename-key |
-                change-key-type | change-semantics
-    topic: String?
-    key: String?
-}
-
--- Event payload catalog (canonical :event → :data shape)
-
-value SessionUpdatedPayload {
-    sessionId: String
-    phase: String
-    isStreaming: Boolean
-    isCompacting: Boolean
-    pendingMessageCount: Integer
-    retryAttempt: Integer
-}
-
-value SessionResumedPayload {
-    sessionId: String
-    sessionFile: String?
-    messageCount: Integer
-}
-
-value SessionRehydratedPayload {
-    messages: List<Map<String, Any>>
-    toolCalls: Map<String, Any>
-    toolOrder: List<String>
-}
-
-value AssistantDeltaPayload {
-    text: String
-}
-
-value AssistantMessagePayload {
-    role: String
-    content: List<Map<String, Any>>
-    stopReason: String?
-    errorMessage: String?
-    usage: Map<String, Any>?
-}
-
-value ToolStartPayload {
-    toolId: String
-    toolName: String
-}
-
-value ToolDeltaPayload {
-    toolId: String
-    arguments: String
-}
-
-value ToolExecutingPayload {
-    toolId: String
-    toolName: String
-    parsedArgs: Map<String, Any>?
-}
-
-value ToolUpdatePayload {
-    toolId: String
-    toolName: String
-    content: List<Map<String, Any>>
-    resultText: String
-    details: Map<String, Any>?
-    isError: Boolean
-}
-
-value ToolResultPayload {
-    toolId: String
-    toolName: String
-    content: List<Map<String, Any>>
-    resultText: String
-    details: Map<String, Any>?
-    isError: Boolean
-}
-
-value UiDialogRequestedPayload {
-    dialogId: String
-    kind: confirm | select | input
-    title: String
-    message: String?
-    options: List<ui/DialogOption>?
-    placeholder: String?
-}
-
-value UiWidgetsUpdatedPayload {
-    widgets: List<Map<String, Any>>
-}
-
-value UiStatusUpdatedPayload {
-    statuses: List<Map<String, Any>>
-}
-
-value UiNotificationPayload {
-    id: String
-    extensionId: String?
-    message: String
-    level: info | warning | error
-}
-
-value FooterUpdatedPayload {
-    pathLine: String
-    statsLine: String
-    statusLine: String?
-}
-
-value ErrorEventPayload {
-    errorCode: String
-    errorMessage: String
-    id: String?
-    op: String?
-}
-
 ------------------------------------------------------------
 -- Entity
 ------------------------------------------------------------
 
 entity EmacsFrontend {
     session: coding/AgentSession
-
-    processState: starting | running | stopping | stopped | crashed
-    transportState: disconnected | handshaking | ready
-
-    protocolVersion: String
-    pendingRequests: Map<String, String>
-    subscribedTopics: Set<String>
+    rpc: rpc/RpcEndpoint
 
     parity: FrontendFeatureParity
 
-    -- Non-nil when running with UI parity (not headless fallback).
+    -- Non-nil when running with full UI parity (not headless fallback).
     uiState: ui/ExtensionUIState?
 
     -- Last footer snapshot mirrored to Emacs UI.
     footerView: footer/FooterView?
 
     -- Derived
-    is_ready: processState = running and transportState = ready
-    has_pending_requests: pendingRequests.count > 0
-}
-
-------------------------------------------------------------
--- Config
-------------------------------------------------------------
-
-config {
-    wire_encoding: String = "edn-lines"
-    wire_key_style: String = "kebab-case-keywords"
-    protocol_version: String = "1.0"
-    supported_major_versions: Set<Integer> = {1}
-    unknown_event_policy: ignore | error = ignore
-    unknown_payload_key_policy: ignore | error = ignore
-    max_pending_requests: Integer = 256
-}
-
-------------------------------------------------------------
--- Transport Rules
-------------------------------------------------------------
-
-rule WireFramesAreEdnLines {
-    -- One top-level EDN map per newline-delimited frame.
-    when: WireFrameWritten(frontend, frame: EdnFrame, stream)
-
-    requires: stream in [stdin, stdout]
-
-    ensures: WireEncoding(stream) = config.wire_encoding
-    ensures: FrameHasOneTopLevelMap(frame)
-}
-
-rule WireKeysUseKebabCaseKeywords {
-    when: WireFrameWritten(frontend, frame: EdnFrame, stream)
-
-    requires: stream in [stdin, stdout]
-
-    ensures: WireKeyStyle(frame) = config.wire_key_style
-}
-
-rule RequestEnvelopeIsCanonical {
-    -- Canonical wire keys: :id :kind :op [:params]
-    when: RequestReceived(frontend, frame: EdnFrame)
-
-    requires: frame.kind = request
-
-    ensures: FrameRequiredKeys(frame) = ["id", "kind", "op"]
-    ensures: FrameAllowedKeys(frame) = ["id", "kind", "op", "params"]
-    ensures: frame.id != null
-    ensures: frame.op != null
-}
-
-rule ResponseEnvelopeIsCanonical {
-    -- Canonical wire keys: :id :kind :op :ok [:data]
-    when: ResponseSent(frontend, frame: EdnFrame)
-
-    requires: frame.kind = response
-
-    ensures: FrameRequiredKeys(frame) = ["id", "kind", "op", "ok"]
-    ensures: FrameAllowedKeys(frame) = ["id", "kind", "op", "ok", "data"]
-    ensures: frame.id != null
-    ensures: frame.op != null
-    ensures: frame.ok != null
-}
-
-rule EventEnvelopeIsCanonical {
-    -- Canonical wire keys: :kind :event :data [:id :seq :ts]
-    when: EventSent(frontend, frame: EdnFrame)
-
-    requires: frame.kind = event
-
-    ensures: FrameRequiredKeys(frame) = ["kind", "event", "data"]
-    ensures: FrameAllowedKeys(frame) = ["kind", "event", "data", "id", "seq", "ts"]
-    ensures: frame.event != null
-    ensures: frame.data != null
-}
-
-rule ErrorEnvelopeIsCanonical {
-    -- Canonical wire keys: :kind :error-code :error-message [:id :op :retryable :data]
-    when: ErrorSent(frontend, frame: EdnFrame)
-
-    requires: frame.kind = error
-
-    ensures: FrameRequiredKeys(frame) = ["kind", "error-code", "error-message"]
-    ensures: FrameAllowedKeys(frame) = ["kind", "id", "op", "error-code", "error-message", "retryable", "data"]
-    ensures: frame.errorCode != null
-    ensures: frame.errorMessage != null
-}
-
-rule ErrorFieldNamesMapToWireKeys {
-    when: ErrorSent(frontend, frame: EdnFrame)
-
-    requires: frame.kind = error
-
-    ensures: WireValue(frame, "error-code") = frame.errorCode
-    ensures: WireValue(frame, "error-message") = frame.errorMessage
-}
-
-rule StdoutReservedForProtocolFrames {
-    -- stdout must remain machine-readable; diagnostics go to stderr.
-    when: FrontendTransportReady(frontend)
-
-    ensures:
-        for frame in StdoutFrames(frontend):
-            frame.kind in [response, event, error]
-    ensures: DiagnosticsStream(frontend) = stderr
-}
-
-rule HandshakeRequiredBeforeNormalRequests {
-    when: RequestReceived(frontend, frame: EdnFrame)
-
-    requires: frame.kind = request
-    requires: frame.op != "handshake"
-    requires: frontend.transportState != ready
-
-    ensures: ErrorFrameSent(frame.id, "transport/not-ready")
-}
-
-rule UnsupportedProtocolMajorRejected {
-    -- MUST reject incompatible major protocol versions.
-    when: HandshakeRequested(frontend, client: EmacsClientInfo)
-
-    requires: MajorOf(client.protocolVersion) not in config.supported_major_versions
-
-    ensures: frontend.transportState = disconnected
-    ensures: HandshakeRejected(frontend, "protocol/unsupported-version")
-    ensures: ErrorFrameSent(null, "protocol/unsupported-version")
-}
-
-rule HandshakeNegotiatesCapabilities {
-    -- MUST negotiate only within supported major versions.
-    when: HandshakeRequested(frontend, client: EmacsClientInfo)
-
-    requires: frontend.transportState in [disconnected, handshaking]
-    requires: MajorOf(client.protocolVersion) in config.supported_major_versions
-
-    let server = PsiServerInfo{
-        protocolVersion: NegotiatedProtocolVersion(client.protocolVersion, config.protocol_version),
-        features: SupportedFrontendFeatures(frontend),
-        sessionId: frontend.session.sessionId,
-        modelId: frontend.session.model.id,
-        thinkingLevel: frontend.session.thinkingLevel
-    }
-
-    ensures: frontend.transportState = ready
-    ensures: frontend.protocolVersion = server.protocolVersion
-    ensures: HandshakeSucceeded(frontend, server)
-}
-
-rule RequestIdTrackedUntilTerminalFrame {
-    when: RequestAccepted(frontend, frame: EdnFrame)
-
-    requires: frame.id != null
-    requires: frame.kind = request
-    requires: frontend.pendingRequests.count < config.max_pending_requests
-
-    ensures: frontend.pendingRequests[frame.id] = frame.op
-}
-
-rule TerminalResponseClearsPendingRequest {
-    when: TerminalFrameSent(frontend, frame: EdnFrame)
-
-    requires: frame.id != null
-    requires: frame.kind in [response, error]
-
-    ensures: frontend.pendingRequests[frame.id] = null
-}
-
-rule AsyncEventsMayInterleaveResponses {
-    -- Emacs must handle asynchronous events and direct responses in one stream.
-    when: frontend: EmacsFrontend.session.isStreaming
-
-    ensures: EventStreamIncludes(frontend, "assistant/delta")
-    ensures: EventStreamIncludes(frontend, "tool/start")
-    ensures: EventStreamIncludes(frontend, "tool/update")
-    ensures: EventStreamIncludes(frontend, "tool/result")
-    ensures: ResponseAndEventInterleaving(frontend) = true
-}
-
-rule EventTopicMustBeFromCatalog {
-    when: EventSent(frontend, frame: EdnFrame)
-
-    requires: frame.kind = event
-
-    ensures: frame.event in [
-        "session/updated",
-        "session/resumed",
-        "session/rehydrated",
-        "assistant/delta",
-        "assistant/message",
-        "tool/start",
-        "tool/delta",
-        "tool/executing",
-        "tool/update",
-        "tool/result",
-        "ui/dialog-requested",
-        "ui/widgets-updated",
-        "ui/status-updated",
-        "ui/notification",
-        "footer/updated",
-        "error"
-    ]
-}
-
-rule EventPayloadMatchesCatalog {
-    when: EventSent(frontend, frame: EdnFrame)
-
-    requires: frame.kind = event
-
-    ensures:
-        if frame.event = "session/updated":
-            EventPayloadType(frame.data) = SessionUpdatedPayload
-        if frame.event = "session/resumed":
-            EventPayloadType(frame.data) = SessionResumedPayload
-        if frame.event = "session/rehydrated":
-            EventPayloadType(frame.data) = SessionRehydratedPayload
-        if frame.event = "assistant/delta":
-            EventPayloadType(frame.data) = AssistantDeltaPayload
-        if frame.event = "assistant/message":
-            EventPayloadType(frame.data) = AssistantMessagePayload
-        if frame.event = "tool/start":
-            EventPayloadType(frame.data) = ToolStartPayload
-        if frame.event = "tool/delta":
-            EventPayloadType(frame.data) = ToolDeltaPayload
-        if frame.event = "tool/executing":
-            EventPayloadType(frame.data) = ToolExecutingPayload
-        if frame.event = "tool/update":
-            EventPayloadType(frame.data) = ToolUpdatePayload
-        if frame.event = "tool/result":
-            EventPayloadType(frame.data) = ToolResultPayload
-        if frame.event = "ui/dialog-requested":
-            EventPayloadType(frame.data) = UiDialogRequestedPayload
-        if frame.event = "ui/widgets-updated":
-            EventPayloadType(frame.data) = UiWidgetsUpdatedPayload
-        if frame.event = "ui/status-updated":
-            EventPayloadType(frame.data) = UiStatusUpdatedPayload
-        if frame.event = "ui/notification":
-            EventPayloadType(frame.data) = UiNotificationPayload
-        if frame.event = "footer/updated":
-            EventPayloadType(frame.data) = FooterUpdatedPayload
-        if frame.event = "error":
-            EventPayloadType(frame.data) = ErrorEventPayload
-}
-
-rule EventPayloadKeysUseKebabCase {
-    when: EventSent(frontend, frame: EdnFrame)
-
-    requires: frame.kind = event
-
-    ensures: EventPayloadWireKeyStyle(frame) = config.wire_key_style
-}
-
-rule EventPayloadRequiredKeysByTopic {
-    when: EventSent(frontend, frame: EdnFrame)
-
-    requires: frame.kind = event
-
-    ensures:
-        if frame.event = "session/updated":
-            EventPayloadRequiredKeys(frame) = ["session-id", "phase", "is-streaming", "is-compacting", "pending-message-count", "retry-attempt"]
-        if frame.event = "session/resumed":
-            EventPayloadRequiredKeys(frame) = ["session-id", "session-file", "message-count"]
-        if frame.event = "session/rehydrated":
-            EventPayloadRequiredKeys(frame) = ["messages", "tool-calls", "tool-order"]
-        if frame.event = "assistant/delta":
-            EventPayloadRequiredKeys(frame) = ["text"]
-        if frame.event = "assistant/message":
-            EventPayloadRequiredKeys(frame) = ["role", "content"]
-        if frame.event = "tool/start":
-            EventPayloadRequiredKeys(frame) = ["tool-id", "tool-name"]
-        if frame.event = "tool/delta":
-            EventPayloadRequiredKeys(frame) = ["tool-id", "arguments"]
-        if frame.event = "tool/executing":
-            EventPayloadRequiredKeys(frame) = ["tool-id", "tool-name"]
-        if frame.event = "tool/update":
-            EventPayloadRequiredKeys(frame) = ["tool-id", "tool-name", "content", "result-text", "is-error"]
-        if frame.event = "tool/result":
-            EventPayloadRequiredKeys(frame) = ["tool-id", "tool-name", "content", "result-text", "is-error"]
-        if frame.event = "ui/dialog-requested":
-            EventPayloadRequiredKeys(frame) = ["dialog-id", "kind", "title"]
-        if frame.event = "ui/widgets-updated":
-            EventPayloadRequiredKeys(frame) = ["widgets"]
-        if frame.event = "ui/status-updated":
-            EventPayloadRequiredKeys(frame) = ["statuses"]
-        if frame.event = "ui/notification":
-            EventPayloadRequiredKeys(frame) = ["id", "message", "level"]
-        if frame.event = "footer/updated":
-            EventPayloadRequiredKeys(frame) = ["path-line", "stats-line"]
-        if frame.event = "error":
-            EventPayloadRequiredKeys(frame) = ["error-code", "error-message"]
-}
-
-rule EventSequenceIsMonotonicWhenProvided {
-    when: EventSent(frontend, frame: EdnFrame)
-
-    requires: frame.kind = event
-    requires: frame.seq != null
-
-    ensures: frame.seq > LastEventSequence(frontend)
-}
-
-------------------------------------------------------------
--- Compatibility + Versioning Policy (Normative)
-------------------------------------------------------------
-
-rule UnknownEventTopicsAreForwardCompatible {
-    -- Clients SHOULD ignore unknown event topics (forward compatibility).
-    when: EventReceivedByClient(frame: EventFrame)
-
-    requires: frame.event not in KnownEventTopics()
-
-    ensures: UnknownEventHandlingPolicy() = config.unknown_event_policy
-    ensures:
-        if config.unknown_event_policy = ignore:
-            EventIgnored(frame)
-}
-
-rule UnknownPayloadKeysAreForwardCompatible {
-    -- Clients SHOULD ignore unknown payload keys on known topics.
-    when: EventReceivedByClient(frame: EventFrame)
-
-    requires: frame.event in KnownEventTopics()
-    requires: UnknownKeys(frame.data, EventPayloadRequiredKeys(frame)).count > 0
-
-    ensures: UnknownPayloadKeyHandlingPolicy() = config.unknown_payload_key_policy
-    ensures:
-        if config.unknown_payload_key_policy = ignore:
-            EventHandledUsingKnownKeys(frame)
-}
-
-rule SameMajorVersionsAreNonBreaking {
-    -- MUST: changes in the same major version are additive-only.
-    when: ProtocolVersionPublished(previousVersion, newVersion, changes: List<ProtocolChange>)
-
-    requires: MajorOf(newVersion) = MajorOf(previousVersion)
-
-    ensures:
-        for ch in changes:
-            ch.changeType in [add-topic, add-optional-key, add-optional-envelope-key]
-}
-
-rule AdditiveChangesBumpMinorVersion {
-    -- MUST: additive protocol changes bump minor (major unchanged).
-    when: ProtocolVersionPublished(previousVersion, newVersion, changes: List<ProtocolChange>)
-
-    requires: exists ch in changes where
-              ch.changeType in [add-topic, add-optional-key, add-optional-envelope-key]
-    requires: MajorOf(newVersion) = MajorOf(previousVersion)
-
-    ensures: MinorOf(newVersion) > MinorOf(previousVersion)
-}
-
-rule BreakingChangesRequireMajorBump {
-    -- MUST: breaking changes require a major version increase.
-    when: ProtocolVersionPublished(previousVersion, newVersion, changes: List<ProtocolChange>)
-
-    requires: exists ch in changes where
-              ch.changeType in [remove-topic, remove-required-key, rename-key, change-key-type, change-semantics]
-
-    ensures: MajorOf(newVersion) > MajorOf(previousVersion)
-}
-
-rule EventTopicRemovalRequiresDeprecationWindow {
-    -- SHOULD: topic removals are announced in at least one prior minor.
-    when: ProtocolVersionPublished(previousVersion, newVersion, changes: List<ProtocolChange>)
-
-    requires: exists ch in changes where ch.changeType = remove-topic
-
-    ensures: DeprecationAnnouncedBeforeRemoval(changes, previousVersion)
+    is_ready: rpc.is_ready
 }
 
 ------------------------------------------------------------
@@ -644,9 +78,17 @@ rule EmacsFrontendTargetsTuiParity {
     ensures: frontend.parity.commandDiscovery = true
 }
 
+rule EmacsUsesCanonicalRpcProtocol {
+    when: EmacsFrontendStarted(frontend)
+
+    ensures: frontend.rpc.transportState in [handshaking, ready]
+    ensures: frontend.rpc.protocolVersion != null
+}
+
 rule StreamingPromptBehaviorMatchesSessionContract {
     when: PromptWhileStreamingRequested(frontend, text, behavior)
 
+    requires: frontend.rpc.transportState = ready
     requires: frontend.session.isStreaming
 
     ensures: PromptForwardedWhileStreaming(frontend.session, text, behavior)
@@ -656,18 +98,30 @@ rule ToolLifecycleParityWithInteractiveDisplay {
     -- Tool rows in Emacs track the same lifecycle as interactive mode.
     when: ToolLifecycleParityRequested(frontend)
 
-    ensures: EventStreamIncludes(frontend, "tool/start")
-    ensures: EventStreamIncludes(frontend, "tool/update")
-    ensures: EventStreamIncludes(frontend, "tool/result")
+    requires: frontend.rpc.transportState = ready
+
+    ensures: EventStreamIncludes(frontend.rpc, "tool/start")
+    ensures: EventStreamIncludes(frontend.rpc, "tool/delta")
+    ensures: EventStreamIncludes(frontend.rpc, "tool/executing")
+    ensures: EventStreamIncludes(frontend.rpc, "tool/update")
+    ensures: EventStreamIncludes(frontend.rpc, "tool/result")
+}
+
+rule ExtensionUiParityRequiresInteractiveUiState {
+    when: FrontendParityAuditRequested(frontend)
+
+    requires: frontend.parity.extensionUI = true
+
+    ensures: frontend.uiState != null
 }
 
 rule ExtensionDialogsRoundTripOverProtocol {
     when: ui/DialogRequested(frontend.session, dialog)
 
     requires: frontend.uiState != null
-    requires: frontend.transportState = ready
+    requires: frontend.rpc.transportState = ready
 
-    ensures: EventStreamIncludes(frontend, "ui/dialog-requested")
+    ensures: EventStreamIncludes(frontend.rpc, "ui/dialog-requested")
     ensures: DialogRemainsPending(dialog)
     ensures: ResolveDialogRequired(frontend, dialog.id)
 }
@@ -675,80 +129,34 @@ rule ExtensionDialogsRoundTripOverProtocol {
 rule FooterParityWithDefaultFooterView {
     when: FooterSnapshotRequested(frontend)
 
+    requires: frontend.rpc.transportState = ready
+
     ensures: frontend.footerView != null
-    ensures: EventStreamIncludes(frontend, "footer/updated")
+    ensures: EventStreamIncludes(frontend.rpc, "footer/updated")
 }
 
 rule ResumeRestoresMessagesAndToolRows {
     when: EmacsSessionResumed(frontend, sessionPath)
 
     ensures: ResumeForwarded(frontend.session, sessionPath)
-    ensures: EventStreamIncludes(frontend, "session/resumed")
-    ensures: EventStreamIncludes(frontend, "session/rehydrated")
-}
-
-------------------------------------------------------------
--- Actor Declarations
-------------------------------------------------------------
-
-actor EmacsClient {
-    identified_by: ExternalProcess
+    ensures: EventStreamIncludes(frontend.rpc, "session/resumed")
+    ensures: EventStreamIncludes(frontend.rpc, "session/rehydrated")
 }
 
 ------------------------------------------------------------
 -- Surfaces
 ------------------------------------------------------------
 
-surface EmacsTransportApi {
-    -- Low-level process and wire protocol contract.
-    for client: EmacsClient
-
-    context frontend: EmacsFrontend
-
-    exposes:
-        frontend.processState
-        frontend.transportState
-        frontend.protocolVersion
-        frontend.has_pending_requests
-
-    provides:
-        start(cwd?, model?, sessionPath?)
-        stop()
-        handshake(clientInfo: EmacsClientInfo)
-        send(id, op, params?)
-        subscribe(topics?)
-        unsubscribe(topics?)
-        ping()
-
-    guidance:
-        -- stdin/stdout framing uses EDN maps, one frame per line.
-        -- Producers MUST emit canonical envelopes for request/response/event/error.
-        -- Consumers SHOULD ignore unknown keys for forward compatibility.
-        -- Canonical wire keys are EDN keywords:
-        --   request  → :id :kind :op [:params]
-        --   response → :id :kind :op :ok [:data]
-        --   event    → :kind :event :data [:id :seq :ts]
-        --   error    → :kind :error-code :error-message [:id :op :retryable :data]
-        -- Example request frame:
-        --   {:id "42" :kind :request :op "prompt" :params {:message "Summarize this ns"}}
-        -- Example response frame:
-        --   {:id "42" :kind :response :op "prompt" :ok true :data {:message-id "msg_9"}}
-        -- Example event frame:
-        --   {:kind :event :event "tool/start" :seq 18 :data {:tool-id "tc_1" :tool-name "read"}}
-        -- Example error frame:
-        --   {:kind :error :id "42" :op "prompt" :error-code "transport/not-ready"
-        --    :error-message "handshake required" :retryable true}
-        -- Keep stdout protocol-only; write logs/diagnostics to stderr.
-}
-
 surface EmacsSessionApi {
-    -- Session-facing capabilities exposed to Emacs.
-    -- Must provide functional parity with the TUI user experience.
-    for client: EmacsClient
+    -- Session-facing capabilities exposed by Emacs frontend.
+    -- Uses RpcTransportApi/RpcEventStream for wire transport.
+    for client: rpc/RpcClient
 
     context frontend: EmacsFrontend
 
     exposes:
+        frontend.rpc.transportState
+        frontend.rpc.protocolVersion
         frontend.session.sessionId
         frontend.session.sessionFile
         frontend.session.sessionName
@@ -817,6 +225,8 @@ surface EmacsSessionApi {
 
     related:
         coding/AgentSessionApi(frontend.session)
+        rpc/RpcTransportApi(frontend.rpc)
+        rpc/RpcEventStream(frontend.rpc)
         ui/ExtensionUI(frontend.session)
         ui/ExtensionUIQuery(frontend.session)
 
@@ -826,43 +236,8 @@ surface EmacsSessionApi {
         -- behavior values for prompt_while_streaming: queue | steer | follow_up | reject.
         -- Emacs mode is not headless fallback: extension UI operations are active.
         -- /resume parity requires list_sessions + resume_session with rehydrated tool rows.
-}
-
-surface EmacsEventStream {
-    -- Async events delivered to Emacs over the same EDN stdout channel.
-    for client: EmacsClient
-
-    context frontend: EmacsFrontend
-
-    exposes:
-        EdnFrame
-
-    provides:
-        subscribe(topics?)
-        unsubscribe(topics?)
-
-    guidance:
-        -- Clients SHOULD ignore unknown topics unless configured for strict mode.
-        -- Minor protocol versions add topics/optional keys; major versions may break.
-        -- Canonical event topics include:
-        --   session/updated       → SessionUpdatedPayload
-        --   session/resumed       → SessionResumedPayload
-        --   session/rehydrated    → SessionRehydratedPayload
-        --   assistant/delta       → AssistantDeltaPayload
-        --   assistant/message     → AssistantMessagePayload
-        --   tool/start            → ToolStartPayload
-        --   tool/delta            → ToolDeltaPayload
-        --   tool/executing        → ToolExecutingPayload
-        --   tool/update           → ToolUpdatePayload
-        --   tool/result           → ToolResultPayload
-        --   ui/dialog-requested   → UiDialogRequestedPayload
-        --   ui/widgets-updated    → UiWidgetsUpdatedPayload
-        --   ui/status-updated     → UiStatusUpdatedPayload
-        --   ui/notification       → UiNotificationPayload
-        --   footer/updated        → FooterUpdatedPayload
-        --   error                 → ErrorEventPayload
-        -- Event payload keys on the wire are kebab-case EDN keywords.
-        -- Events may interleave with direct responses; clients correlate responses by :id.
+        -- Wire protocol details (canonical envelopes, event payloads, versioning policy)
+        -- are defined in rpc-edn.allium.
 }
 
 ------------------------------------------------------------
@@ -876,8 +251,6 @@ deferred EmacsProcessSupervisor.restart       -- auto-restart/backoff policy
 ------------------------------------------------------------
 -- Open Questions
 ------------------------------------------------------------
-
--- Frame envelope decision: compact EDN keyword keys (:id :kind :op :params ...).
 
 open_question "Images in process buffers: inline image display first, or file-link fallback as MVP?"
 open_question "Extension screen takeover parity: should Emacs support full custom component injection, or only dialogs/widgets/status/notifications initially?"
