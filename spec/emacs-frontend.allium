@@ -11,11 +11,13 @@
 --   Header-line status behavior
 --   Manual reconnect supervision policy
 --   Phase progression from MVP to parity capabilities
+--   Parity compose autocomplete delegation (/, @ file references)
 --
 -- Delegates to:
 --   EDN RPC transport protocol (rpc-edn.allium)
 --   Shared tool display lifecycle (tool-output-display.allium)
 --   Shared tool renderer contract (tool-output-rendering.allium)
+--   Shared prompt autocomplete semantics (prompt-input-autocomplete.allium)
 --
 -- Excludes:
 --   Canonical EDN frame envelopes and version negotiation (see rpc-edn.allium)
@@ -28,6 +30,7 @@ use "./ui-extension-points.allium" as ui
 use "./rpc-edn.allium" as rpc
 use "./tool-output-display.allium" as tool_display
 use "./tool-output-rendering.allium" as tool_render
+use "./prompt-input-autocomplete.allium" as prompt_autocomplete
 
 ------------------------------------------------------------
 -- Value Types
@@ -228,6 +231,15 @@ rule ParityPhaseEnablesDeferredCapabilities {
     ensures: frontend.parity.extensionUI = true
     ensures: frontend.parity.footer = true
     ensures: frontend.parity.commandDiscovery = true
+}
+
+rule ParityComposeAutocompleteUsesSharedContract {
+    when: FrontendPhaseChanged(frontend, phase)
+
+    requires: phase = parity
+
+    ensures: prompt_autocomplete/PromptAutocompleteContract governs compose input autocomplete
+    ensures: SlashAndAtCompletionParity(frontend)
 }
 
 ------------------------------------------------------------
@@ -770,6 +782,7 @@ surface EmacsSessionApi {
         ui/ExtensionUIQuery(frontend.session)
         tool_display/ToolOutputDisplayApi
         tool_render/ToolOutputRenderer
+        prompt_autocomplete/PromptAutocompleteContract
 
     guidance:
         -- MVP defaults:
@@ -791,6 +804,10 @@ surface EmacsSessionApi {
         -- Compose-source model:
         --   active region -> send region text
         --   no region     -> send tail draft block (end-of-buffer)
+        --
+        -- Parity compose autocomplete:
+        --   slash command completion and @ file-reference expansion follow
+        --   prompt-input-autocomplete.allium.
         --
         -- Transcript content is editable; edits are local UX affordances and
         -- do not imply session rehydration semantics in MVP.
