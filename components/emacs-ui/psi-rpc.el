@@ -8,6 +8,10 @@
 (require 'cl-lib)
 (require 'subr-x)
 
+(defconst psi-rpc--parseedn-available
+  (not (null (require 'parseedn nil t)))
+  "Non-nil when parseedn is available for EDN parsing/printing.")
+
 (defconst psi-rpc-protocol-version "1.0"
   "Supported rpc-edn protocol version for Emacs MVP transport.")
 
@@ -109,12 +113,37 @@
    ((symbolp k) (symbol-name k))
    (t (psi-rpc--edn-encode k))))
 
+(defun psi-rpc--edn-encode-string (s)
+  "Encode string S as an EDN string literal.
+
+Escapes control characters so each RPC frame remains single-line."
+  (concat
+   "\""
+   (mapconcat
+    (lambda (ch)
+      (pcase ch
+        (?\" "\\\"")
+        (?\\ "\\\\")
+        (?\n "\\n")
+        (?\r "\\r")
+        (?\t "\\t")
+        (?\b "\\b")
+        (?\f "\\f")
+        (_ (if (or (< ch 32) (= ch 127))
+               (format "\\u%04X" ch)
+             (char-to-string ch)))))
+    (string-to-list s)
+    "")
+   "\""))
+
 (defun psi-rpc--edn-encode (x)
-  "Encode X as EDN text for rpc-edn wire frames."
+  "Encode X as EDN text for rpc-edn wire frames.
+
+Used as fallback when parseedn is unavailable."
   (cond
    ((null x) "nil")
    ((eq x t) "true")
-   ((stringp x) (prin1-to-string x))
+   ((stringp x) (psi-rpc--edn-encode-string x))
    ((numberp x) (number-to-string x))
    ((vectorp x)
     (format "[%s]"
@@ -134,6 +163,14 @@
    (t
     (prin1-to-string x))))
 
+(defun psi-rpc--serialize-frame (frame)
+  "Serialize FRAME to one EDN text line (without trailing newline)."
+  (if psi-rpc--parseedn-available
+      (with-temp-buffer
+        (parseedn-print frame)
+        (buffer-string))
+    (psi-rpc--edn-encode frame)))
+
 (defun psi-rpc--send-frame! (client frame)
   "Serialize and send FRAME for CLIENT.
 
@@ -141,7 +178,7 @@ FRAME is represented as an alist with keyword keys.
 Always writes one EDN map per line."
   (let* ((process (psi-rpc-client-process client))
          (sender (or (psi-rpc-client-send-function client) #'psi-rpc--default-send))
-         (payload (concat (psi-rpc--edn-encode frame) "\n")))
+         (payload (concat (psi-rpc--serialize-frame frame) "\n")))
     (when (process-live-p process)
       (funcall sender process payload))))
 
@@ -179,6 +216,12 @@ Maps become (psi-map ...), vectors become (psi-vec ...)."
           (pcase ch
             (?\" (setq in-string t)
                  (push "\"" chunks))
+            (?# (if (and (< (1+ i) len)
+                         (eq (aref line (1+ i)) ?{))
+                    (progn
+                      (push "(psi-set " chunks)
+                      (setq i (1+ i)))
+                  (push "#" chunks)))
             (?{ (push "(psi-map " chunks))
             (?} (push ")" chunks))
             (?\[ (push "(psi-vec " chunks))
@@ -215,12 +258,63 @@ Booleans map as true=>t and false=>nil."
                             out)
                   xs (cdr rest)))))
       (nreverse out)))
+   ((and (listp v) (eq (car v) 'psi-set))
+    (mapcar #'psi-rpc--from-edn-value (cdr v)))
    ((listp v)
     (mapcar #'psi-rpc--from-edn-value v))
    (t v)))
 
-(defun psi-rpc--parse-line (line)
-  "Parse LINE as one EDN frame map. Return plist with :ok or :error."
+(defun psi-rpc--parseedn-read-forms (line)
+  "Parse LINE into top-level EDN forms via parseedn.
+
+Returns a list of parsed forms."
+  (with-temp-buffer
+    (insert line)
+    (goto-char (point-min))
+    (parseedn-read)))
+
+(defun psi-rpc--from-parseedn-value (v)
+  "Convert parseedn value V to rpc client internal shape.
+
+Maps become alists, vectors remain vectors, sets become lists."
+  (cond
+   ((hash-table-p v)
+    (let (out)
+      (maphash (lambda (k val)
+                 (push (cons (psi-rpc--from-parseedn-value k)
+                             (psi-rpc--from-parseedn-value val))
+                       out))
+               v)
+      (nreverse out)))
+   ((vectorp v)
+    (vconcat (mapcar #'psi-rpc--from-parseedn-value (append v nil))))
+   ((and (consp v) (eq (car v) 'edn-set))
+    (let ((items (if (and (consp (cdr v))
+                          (null (cddr v))
+                          (listp (cadr v)))
+                     (cadr v)
+                   (cdr v))))
+      (mapcar #'psi-rpc--from-parseedn-value items)))
+   ((listp v)
+    (mapcar #'psi-rpc--from-parseedn-value v))
+   (t v)))
+
+(defun psi-rpc--parse-line-with-parseedn (line)
+  "Parse LINE as one EDN frame map via parseedn."
+  (condition-case _
+      (let* ((forms (psi-rpc--parseedn-read-forms line)))
+        (cond
+         ((/= (length forms) 1)
+          (list :error "trailing data after EDN frame"))
+         (t
+          (let ((frame (psi-rpc--from-parseedn-value (car forms))))
+            (if (psi-rpc--alist-map-p frame)
+                (list :ok frame)
+              (list :error "frame must be EDN map"))))))
+    (error (list :error "unable to parse EDN frame"))))
+
+(defun psi-rpc--parse-line-fallback (line)
+  "Parse LINE as one EDN frame map using fallback parser."
   (condition-case _
       (let* ((carrier (psi-rpc--edn->sexp-string line))
              (result (read-from-string carrier))
@@ -238,6 +332,12 @@ Booleans map as true=>t and false=>nil."
          (t
           (list :ok frame))))
     (error (list :error "unable to parse EDN frame"))))
+
+(defun psi-rpc--parse-line (line)
+  "Parse LINE as one EDN frame map. Return plist with :ok or :error."
+  (if psi-rpc--parseedn-available
+      (psi-rpc--parse-line-with-parseedn line)
+    (psi-rpc--parse-line-fallback line)))
 
 (defun psi-rpc--dispatch-response-or-error (client frame)
   "Dispatch FRAME callback for CLIENT by request id."
@@ -286,6 +386,13 @@ Booleans map as true=>t and false=>nil."
             (`(:error ,message)
              (psi-rpc--signal-error client "transport/invalid-frame" message nil))))))))
 
+(defun psi-rpc--cleanup-process-stderr-buffer (process)
+  "Kill PROCESS-owned stderr buffer (if any)."
+  (when-let ((stderr-buffer (and process (process-get process 'psi-rpc-stderr-buffer))))
+    (when (buffer-live-p stderr-buffer)
+      (kill-buffer stderr-buffer))
+    (process-put process 'psi-rpc-stderr-buffer nil)))
+
 (defun psi-rpc-process-sentinel (process event)
   "Process sentinel for rpc-edn PROCESS with EVENT text."
   (ignore event)
@@ -294,6 +401,7 @@ Booleans map as true=>t and false=>nil."
     (if (process-live-p process)
         (psi-rpc--set-state client 'running (psi-rpc-client-transport-state client))
       (let ((status (process-status process)))
+        (psi-rpc--cleanup-process-stderr-buffer process)
         (psi-rpc--set-state client
                             (if (eq status 'exit) 'stopped 'crashed)
                             'disconnected)))))
@@ -357,7 +465,8 @@ SPAWN-PROCESS-FN receives COMMAND and returns an Emacs process object."
   "Stop CLIENT process if live and clear transport state."
   (let ((process (psi-rpc-client-process client)))
     (when (process-live-p process)
-      (delete-process process)))
+      (delete-process process))
+    (psi-rpc--cleanup-process-stderr-buffer process))
   (clrhash (psi-rpc-client-pending-callbacks client))
   (psi-rpc--set-state client 'stopped 'disconnected))
 

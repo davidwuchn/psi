@@ -15,6 +15,7 @@ Current truth about the Psi system.
 | `history`       | ✓      | Git log resolvers, nullable git context                    |
 | `introspection` | ✓      | Bridges engine + query, self-describing graph              |
 | `tui`           | ✓      | charm.clj Elm Architecture, JLine3, extension UI state     |
+| `emacs-ui       | ✓      | emacs mode for psi                                         |
 | `agent-session` | ✓      | Session ✓, extensions ✓, extension UI ✓, main REPL ✓, TUI ✓, OAuth ✓ |
 
 ## Architecture Progress
@@ -34,12 +35,14 @@ Current truth about the Psi system.
 - ✓ Extension system (Clojure extensions, loader, API, tool wrapping, EQL introspection)
 - ✓ Extension UI (dialogs, widgets, status, notifications, render registry, EQL introspection)
 - ✓ OAuth module (PKCE, callback server, credential store, provider registry, Anthropic)
+- ✓ Session introspection hardening (Step 7a): messages-count, tool-call-count, start-time, current-time
+- ✓ Graph emergence (Step 7): all 9 :psi.graph/* attrs queryable via eql_query from agent-session-ctx
 - ✗ OAuth wired into main.clj (replace env-var-only auth)
 - ✗ /login and /logout commands
 - ✗ Session resolvers wired into global query graph
 - ✗ Graph emergence from domain resolvers
-- ✗ RPC / HTTP API surface
 - ✗ AI COMPLETE
+- ✗ RPC / HTTP API surface
 
 ## Runnable
 
@@ -73,6 +76,29 @@ eql_query(query: "[:psi.agent-session/messages-count :psi.agent-session/tool-cal
 ```
 
 Live verification (2026-03-01): all 5 queries above return successfully with no resolver error; counts return integers and both time attrs return `java.time.Instant`.
+
+## Canonical Graph Attrs (Step 7)
+
+All 9 required Step 7 graph attrs are queryable via `eql_query` (seeded from `:psi/agent-session-ctx`):
+
+```clojure
+[:psi.graph/resolver-count]    ;; integer — resolvers in global registry
+[:psi.graph/mutation-count]    ;; integer — mutations in global registry
+[:psi.graph/resolver-syms]     ;; set of qualified symbols
+[:psi.graph/mutation-syms]     ;; set of qualified symbols
+[:psi.graph/env-built]         ;; boolean — Pathom env compiled
+[:psi.graph/nodes]             ;; vector of CapabilityNode maps
+[:psi.graph/edges]             ;; vector of CapabilityEdge maps (with :attribute)
+[:psi.graph/capabilities]      ;; vector of DomainCapability maps
+[:psi.graph/domain-coverage]   ;; vector of DomainCoverage maps (ai/history/agent-session/introspection)
+```
+
+Combined query (all 9):
+```clojure
+[:psi.graph/resolver-count :psi.graph/mutation-count
+ :psi.graph/resolver-syms :psi.graph/mutation-syms :psi.graph/env-built
+ :psi.graph/nodes :psi.graph/edges :psi.graph/capabilities :psi.graph/domain-coverage]
+```
 
 nREPL introspection (from connected REPL):
 ```clojure
@@ -137,7 +163,7 @@ Caught by `jline-terminal-keymap-test` smoke test.
 
 ## Test Status
 
-382 tests, 1593 assertions, 0 failures. 0 clj-kondo errors.
+629 tests, 2924 assertions, 0 failures. 0 clj-kondo errors.
 
 ## Specs
 
@@ -177,8 +203,25 @@ Caught by `jline-terminal-keymap-test` smoke test.
 - Active hooks are runtime-configured via `config.enabled_trigger_hooks`
 - Manual approval remains default; low-risk proposals can auto-approve only in opt-in trusted local mode (`trusted_local_mode_enabled` + `auto_approve_low_risk_in_trusted_local_mode`)
 
-## Open Questions
+## Canonical Telemetry Attrs (Step 7a)
 
+Top-level EQL attrs for session telemetry — all reliably queryable in-session:
+
+```clojure
+[:psi.agent-session/messages-count]    ;; integer — total messages in agent-core
+[:psi.agent-session/tool-call-count]   ;; integer — total tool calls made
+[:psi.agent-session/start-time]        ;; java.time.Instant — session context creation
+[:psi.agent-session/current-time]      ;; java.time.Instant — wall clock now
+```
+
+Combined query (mirrors the failing pattern, now fixed):
+```clojure
+[:psi.agent-session/phase :psi.agent-session/model :psi.agent-session/session-id
+ :psi.agent-session/messages-count :psi.agent-session/tool-call-count
+ :psi.agent-session/start-time :psi.agent-session/current-time]
+```
+
+## Open Questions
 - TUI: per-token streaming (currently shows spinner until agent done)
 - TUI: tool execution status display during agent loop
 - Extension UI: should dialogs support auto-dismiss timeout?

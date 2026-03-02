@@ -204,6 +204,52 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
+(ert-deftest psi-assistant-message-content-blocks-finalizes-text ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (progn
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/message")
+             (:data . ((:role . "assistant")
+                       (:content . [((:type . :text) (:text . "Hello from content"))])))))
+          (should-not (psi-emacs-state-assistant-in-progress psi-emacs--state))
+          (should (equal "Assistant: Hello from content\n" (buffer-string))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
+(ert-deftest psi-assistant-message-empty-does-not-clobber-streaming-text ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (progn
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/delta") (:data . ((:text . "partial")))))
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/message") (:data . ((:role . "assistant") (:content . [])))))
+          (should-not (psi-emacs-state-assistant-in-progress psi-emacs--state))
+          (should (equal "Assistant: partial\n" (buffer-string))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
+(ert-deftest psi-assistant-finalize-moves-point-to-end ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (progn
+          (insert "draft\n")
+          (goto-char (point-min))
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/message")
+             (:data . ((:role . "assistant")
+                       (:content . [((:type . :text) (:text . "move me"))])))))
+          (should (equal (point-max) (point))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
 (ert-deftest psi-tool-lifecycle-updates-single-inline-row-by-tool-id ()
   (with-temp-buffer
     (psi-emacs-mode)
@@ -211,16 +257,19 @@
     (unwind-protect
         (progn
           (psi-emacs--handle-rpc-event
-           '((:event . "tool/start") (:data . ((:toolCallId . "t-1") (:text . "start")))))
+           '((:event . "tool/start") (:data . ((:tool-id . "t-1") (:text . "start")))))
           (psi-emacs--handle-rpc-event
-           '((:event . "tool/delta") (:data . ((:toolCallId . "t-1") (:text . "working")))))
+           '((:event . "tool/delta") (:data . ((:tool-id . "t-1") (:text . "working")))))
           (psi-emacs--handle-rpc-event
-           '((:event . "tool/result") (:data . ((:toolCallId . "t-1") (:text . "done")))))
-          (should (equal "Tool[t-1] result: done\n" (buffer-string)))
+           '((:event . "tool/result") (:data . ((:tool-id . "t-1") (:result-text . "done")))))
+          ;; Default mode is collapsed: buffer shows header-only
+          (should (equal "Tool[t-1] result\n" (buffer-string)))
           (let ((row (gethash "t-1" (psi-emacs-state-tool-rows psi-emacs--state))))
             (should row)
             (should (equal "result" (plist-get row :stage)))
-            (should (equal "done" (plist-get row :text)))))
+            (should (equal "done" (plist-get row :text)))
+            ;; Accumulated text contains all deltas
+            (should (string-match-p "done" (plist-get row :accumulated-text)))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
@@ -228,6 +277,8 @@
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    ;; Use expanded mode so the body text (with ANSI) is rendered in the buffer
+    (setf (psi-emacs-state-tool-output-view-mode psi-emacs--state) 'expanded)
     (unwind-protect
         (progn
           (psi-emacs--handle-rpc-event
@@ -248,10 +299,10 @@
     (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
     (let ((client (psi-rpc-make-client :process-state 'running :transport-state 'handshaking)))
       (psi-emacs--on-rpc-state-change (current-buffer) client)
-      (should (string= "psi [handshaking/running]" header-line-format))
+      (should (string= "psi [handshaking/running] tools:collapsed" header-line-format))
       (setf (psi-rpc-client-transport-state client) 'ready)
       (psi-emacs--on-rpc-state-change (current-buffer) client)
-      (should (string= "psi [ready/running]" header-line-format)))))
+      (should (string= "psi [ready/running] tools:collapsed" header-line-format)))))
 
 (ert-deftest psi-rpc-error-event-goes-to-minibuffer-not-transcript ()
   (with-temp-buffer
@@ -348,7 +399,7 @@
           (psi-emacs--on-rpc-state-change (current-buffer) client)
           (setf (psi-rpc-client-transport-state client) 'ready)
           (psi-emacs--on-rpc-state-change (current-buffer) client)
-          (should (string= "psi [ready/running]" header-line-format)))
+          (should (string= "psi [ready/running] tools:collapsed" header-line-format)))
 
         (insert "hello from smoke")
         (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker (point-min) nil))
@@ -361,7 +412,8 @@
         (psi-emacs--handle-rpc-event
          '((:event . "tool/result") (:data . ((:toolCallId . "t-smoke") (:text . "done")))))
         (should (string-match-p "Assistant: Hi" (buffer-string)))
-        (should (string-match-p "Tool\\[t-smoke\\] result: done" (buffer-string)))
+        ;; Default mode is collapsed: header-only (no body text)
+        (should (string-match-p "Tool\\[t-smoke\\] result" (buffer-string)))
 
         (psi-emacs-abort)
         (should-not (psi-emacs-state-assistant-in-progress psi-emacs--state))
@@ -377,6 +429,156 @@
         (should (= 1 stop-count))
         (should (= 1 restart-count))
         (should (string= "" (buffer-string)))))))
+
+;;; Tool-output-mode acceptance criteria tests (10 tests)
+
+(ert-deftest psi-emacs-test-default-mode-is-collapsed ()
+  "AC1: Default tool-output-view-mode is collapsed after state initialization."
+  (let ((state (psi-emacs--initialize-state nil)))
+    (should (eq 'collapsed (psi-emacs-state-tool-output-view-mode state)))))
+
+(ert-deftest psi-emacs-test-toggle-command-flips-mode ()
+  "AC2: Toggle command flips mode collapsed->expanded->collapsed."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    ;; starts collapsed
+    (should (eq 'collapsed (psi-emacs-state-tool-output-view-mode psi-emacs--state)))
+    ;; toggle to expanded
+    (psi-emacs-toggle-tool-output-view)
+    (should (eq 'expanded (psi-emacs-state-tool-output-view-mode psi-emacs--state)))
+    ;; toggle back to collapsed
+    (psi-emacs-toggle-tool-output-view)
+    (should (eq 'collapsed (psi-emacs-state-tool-output-view-mode psi-emacs--state)))))
+
+(ert-deftest psi-emacs-test-toggle-with-no-rows-changes-future-mode ()
+  "AC3: Toggle with no rows changes mode; future tool rows render in new mode."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    ;; No rows, toggle to expanded
+    (psi-emacs-toggle-tool-output-view)
+    (should (eq 'expanded (psi-emacs-state-tool-output-view-mode psi-emacs--state)))
+    ;; Inject a new tool row - should render in expanded mode (with body)
+    (psi-emacs--handle-rpc-event
+     '((:event . "tool/result") (:data . ((:tool-id . "t-future") (:result-text . "output text")))))
+    ;; Expanded mode shows body text
+    (should (string-match-p "output text" (buffer-string)))))
+
+(ert-deftest psi-emacs-test-collapsed-rows-render-header-only ()
+  "AC4: Collapsed mode renders header-only rows (no body text)."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    ;; Default is collapsed
+    (psi-emacs--handle-rpc-event
+     '((:event . "tool/start") (:data . ((:tool-id . "t-hdr") (:text . "body content here")))))
+    ;; Header should be present
+    (should (string-match-p "Tool\\[t-hdr\\] start" (buffer-string)))
+    ;; Body text should NOT be present in collapsed mode
+    (should-not (string-match-p "body content here" (buffer-string)))))
+
+(ert-deftest psi-emacs-test-collapsed-rows-show-live-status-updates ()
+  "AC5: Collapsed mode updates header stage on lifecycle events."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (psi-emacs--handle-rpc-event
+     '((:event . "tool/start") (:data . ((:tool-id . "t-live") (:text . "")))))
+    (should (string-match-p "Tool\\[t-live\\] start" (buffer-string)))
+    ;; Advance to executing stage
+    (psi-emacs--handle-rpc-event
+     '((:event . "tool/executing") (:data . ((:tool-id . "t-live") (:text . "")))))
+    (should (string-match-p "Tool\\[t-live\\] executing" (buffer-string)))
+    ;; Previous stage header should be replaced
+    (should-not (string-match-p "Tool\\[t-live\\] start" (buffer-string)))))
+
+(ert-deftest psi-emacs-test-accumulated-output-visible-after-expand ()
+  "AC6: Collapsed rows accumulate output; toggle to expanded reveals full text."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    ;; Inject deltas in collapsed mode
+    (psi-emacs--handle-rpc-event
+     '((:event . "tool/start") (:data . ((:tool-id . "t-acc") (:text . "first")))))
+    (psi-emacs--handle-rpc-event
+     '((:event . "tool/delta") (:data . ((:tool-id . "t-acc") (:text . "second")))))
+    (psi-emacs--handle-rpc-event
+     '((:event . "tool/result") (:data . ((:tool-id . "t-acc") (:result-text . "final")))))
+    ;; Collapsed: body text not visible
+    (should-not (string-match-p "first" (buffer-string)))
+    ;; Toggle to expanded
+    (psi-emacs-toggle-tool-output-view)
+    ;; Expanded: accumulated text visible
+    (let ((buf (buffer-string)))
+      (should (string-match-p "final" buf)))))
+
+(ert-deftest psi-emacs-test-error-row-stays-collapsed-in-collapsed-mode ()
+  "AC7: Error tool results do not auto-expand in collapsed mode."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    ;; Inject an error result
+    (psi-emacs--handle-rpc-event
+     '((:event . "tool/result")
+       (:data . ((:tool-id . "t-err")
+                 (:result-text . "ERROR: something went wrong")
+                 (:is-error . t)))))
+    ;; Collapsed: header visible
+    (should (string-match-p "Tool\\[t-err\\] result" (buffer-string)))
+    ;; Collapsed: error body text NOT visible
+    (should-not (string-match-p "ERROR: something went wrong" (buffer-string)))))
+
+(ert-deftest psi-emacs-test-header-line-includes-tool-mode ()
+  "AC8: Header line displays tool-output mode (collapsed or expanded)."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (psi-emacs--refresh-header-line)
+    ;; Default: header shows tools:collapsed
+    (should (string-match-p "tools:collapsed" header-line-format))
+    ;; After toggle: header shows tools:expanded
+    (psi-emacs-toggle-tool-output-view)
+    (should (string-match-p "tools:expanded" header-line-format))
+    ;; Toggle back: header shows tools:collapsed again
+    (psi-emacs-toggle-tool-output-view)
+    (should (string-match-p "tools:collapsed" header-line-format))))
+
+(ert-deftest psi-emacs-test-reconnect-resets-mode-to-collapsed ()
+  "AC9: Reconnect (reset-transcript-state) restores tool-output mode to collapsed."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    ;; Set mode to expanded
+    (psi-emacs-toggle-tool-output-view)
+    (should (eq 'expanded (psi-emacs-state-tool-output-view-mode psi-emacs--state)))
+    ;; Simulate reconnect reset
+    (psi-emacs--reset-transcript-state)
+    ;; Mode must be back to collapsed
+    (should (eq 'collapsed (psi-emacs-state-tool-output-view-mode psi-emacs--state)))
+    ;; Header line must reflect collapsed
+    (should (string-match-p "tools:collapsed" header-line-format))))
+
+(ert-deftest psi-emacs-test-non-reconnect-session-preserves-mode ()
+  "AC10: Non-reconnect session operations preserve the current tool-output mode."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker (point-min) nil))
+    ;; Set mode to expanded
+    (psi-emacs-toggle-tool-output-view)
+    (should (eq 'expanded (psi-emacs-state-tool-output-view-mode psi-emacs--state)))
+    ;; Simulate a new message send (non-reconnect session operation)
+    (let ((calls nil))
+      (cl-letf (((symbol-value 'psi-emacs--send-request-function)
+                 (lambda (_state op params &optional _callback)
+                   (push (list op params) calls))))
+        (insert "new message")
+        (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker (point-min) nil))
+        (setf (psi-emacs-state-assistant-in-progress psi-emacs--state) nil)
+        (psi-emacs-send-from-buffer nil)))
+    ;; Mode must still be expanded
+    (should (eq 'expanded (psi-emacs-state-tool-output-view-mode psi-emacs--state)))))
 
 (provide 'psi-test)
 

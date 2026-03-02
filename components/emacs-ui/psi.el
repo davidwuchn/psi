@@ -34,7 +34,8 @@
   assistant-range
   tool-rows
   draft-anchor
-  rpc-client)
+  rpc-client
+  tool-output-view-mode)
 
 (defvar psi-emacs--spawn-process-function #'psi-emacs--default-spawn-process
   "Function used to spawn a psi subprocess.
@@ -78,13 +79,15 @@ Prefers `markdown-mode' when available, otherwise `text-mode'."
    :assistant-range nil
    :tool-rows (make-hash-table :test #'equal)
    :draft-anchor nil
-   :rpc-client nil))
+   :rpc-client nil
+   :tool-output-view-mode 'collapsed))
 
 (defun psi-emacs--status-string (state)
   "Return minimal status string for STATE."
-  (format "psi [%s/%s]"
+  (format "psi [%s/%s] tools:%s"
           (or (psi-emacs-state-transport-state state) 'unknown)
-          (or (psi-emacs-state-process-state state) 'unknown)))
+          (or (psi-emacs-state-process-state state) 'unknown)
+          (or (psi-emacs-state-tool-output-view-mode state) 'collapsed)))
 
 (defun psi-emacs--refresh-header-line ()
   "Refresh minimal header-line status for current psi buffer."
@@ -151,12 +154,16 @@ Prefers `markdown-mode' when available, otherwise `text-mode'."
   "Spawn psi subprocess from COMMAND.
 
 COMMAND is a list suitable for `make-process'."
-  (make-process
-   :name "psi-rpc-edn"
-   :command command
-   :buffer nil
-   :noquery t
-   :connection-type 'pipe))
+  (let* ((stderr-buffer (generate-new-buffer " *psi-rpc-stderr*"))
+         (process (make-process
+                   :name "psi-rpc-edn"
+                   :command command
+                   :buffer nil
+                   :stderr stderr-buffer
+                   :noquery t
+                   :connection-type 'pipe)))
+    (process-put process 'psi-rpc-stderr-buffer stderr-buffer)
+    process))
 
 (defun psi-emacs--default-send-request (state op params &optional callback)
   "Send OP with PARAMS using STATE rpc client, if available."
@@ -322,8 +329,10 @@ When idle, sends as normal prompt."
 (defun psi-emacs--assistant-finalize (text)
   "Finalize assistant block with TEXT and clear in-progress state."
   (when psi-emacs--state
-    (let ((final (or text (psi-emacs-state-assistant-in-progress psi-emacs--state) "")))
+    (let* ((text* (if (and (stringp text) (string-empty-p text)) nil text))
+           (final (or text* (psi-emacs-state-assistant-in-progress psi-emacs--state) "")))
       (psi-emacs--set-assistant-line final)
+      (goto-char (point-max))
       (setf (psi-emacs-state-assistant-in-progress psi-emacs--state) nil)
       (setf (psi-emacs-state-assistant-range psi-emacs--state) nil))))
 
@@ -338,6 +347,33 @@ DATA is expected to be an alist map."
           (throw 'hit v))))
     nil))
 
+(defun psi-emacs--assistant-content->text (content)
+  "Extract assistant display text from CONTENT blocks."
+  (let ((blocks (cond
+                 ((vectorp content) (append content nil))
+                 ((listp content) content)
+                 (t nil))))
+    (string-join
+     (delq nil
+           (mapcar (lambda (block)
+                     (when (listp block)
+                       (let ((type (psi-emacs--event-data-get block '(:type type))))
+                         (cond
+                          ((or (eq type :text) (equal type "text"))
+                           (psi-emacs--event-data-get block '(:text text :message message)))
+                          ((or (eq type :error) (equal type "error"))
+                           (when-let ((err (psi-emacs--event-data-get block
+                                                                      '(:text text :message message :error-message error-message))))
+                             (format "[error] %s" err)))))))
+                   blocks))
+     "")))
+
+(defun psi-emacs--tool-row-header-string (tool-id stage)
+  "Build collapsed header string for TOOL-ID at STAGE.
+
+Returns a single-line string: \"Tool[<id>] <stage>\\n\"."
+  (format "Tool[%s] %s\n" tool-id stage))
+
 (defun psi-emacs--tool-row-string (tool-id stage text)
   "Build tool row string for TOOL-ID at STAGE with TEXT.
 
@@ -346,14 +382,31 @@ ANSI sequences in TEXT are converted to Emacs faces."
         (body (psi-emacs--ansi-to-face text)))
     (concat prefix body "\n")))
 
+(defun psi-emacs--render-tool-row (tool-id stage accumulated-text view-mode)
+  "Render tool row for TOOL-ID at STAGE with ACCUMULATED-TEXT using VIEW-MODE.
+
+VIEW-MODE is `collapsed' (header-only) or `expanded' (full body).
+ANSI sequences in ACCUMULATED-TEXT are converted to Emacs faces."
+  (if (eq view-mode 'collapsed)
+      (psi-emacs--tool-row-header-string tool-id stage)
+    (psi-emacs--tool-row-string tool-id stage (or accumulated-text ""))))
+
 (defun psi-emacs--upsert-tool-row (tool-id stage text)
-  "Create or update TOOL-ID row for lifecycle STAGE with TEXT."
+  "Create or update TOOL-ID row for lifecycle STAGE with TEXT.
+
+Always accumulates TEXT into :accumulated-text in the row state.
+Renders according to the current global tool-output-view-mode."
   (when (and psi-emacs--state tool-id)
     (let* ((rows (psi-emacs-state-tool-rows psi-emacs--state))
+           (view-mode (psi-emacs-state-tool-output-view-mode psi-emacs--state))
            (row (gethash tool-id rows))
            (start (plist-get row :start))
            (end (plist-get row :end))
-           (rendered (psi-emacs--tool-row-string tool-id stage (or text ""))))
+           (prev-accumulated (or (plist-get row :accumulated-text) ""))
+           (new-text (or text ""))
+           ;; Accumulate: append new text to existing accumulated text
+           (accumulated (concat prev-accumulated new-text))
+           (rendered (psi-emacs--render-tool-row tool-id stage accumulated view-mode)))
       (if (and (markerp start)
                (markerp end)
                (marker-buffer start)
@@ -366,6 +419,7 @@ ANSI sequences in TEXT are converted to Emacs faces."
             (puthash tool-id (list :id tool-id
                                    :stage stage
                                    :text text
+                                   :accumulated-text accumulated
                                    :start start
                                    :end end)
                      rows))
@@ -378,6 +432,7 @@ ANSI sequences in TEXT are converted to Emacs faces."
             (puthash tool-id (list :id tool-id
                                    :stage stage
                                    :text text
+                                   :accumulated-text accumulated
                                    :start new-start
                                    :end new-end)
                      rows)))))))
@@ -392,12 +447,14 @@ ANSI sequences in TEXT are converted to Emacs faces."
         (or (psi-emacs--event-data-get data '(:text text :delta delta)) "")))
       ("assistant/message"
        (psi-emacs--assistant-finalize
-        (or (psi-emacs--event-data-get data '(:text text :message message)) "")))
+        (or (psi-emacs--event-data-get data '(:text text :message message))
+            (psi-emacs--assistant-content->text
+             (psi-emacs--event-data-get data '(:content content))))))
       ((or "tool/start" "tool/delta" "tool/executing" "tool/update" "tool/result")
        (let ((tool-id (psi-emacs--event-data-get data
-                                                 '(:toolCallId toolCallId :tool-call-id tool-call-id :id id)))
+                                                 '(:tool-id tool-id :toolCallId toolCallId :tool-call-id tool-call-id :id id)))
              (text (or (psi-emacs--event-data-get data
-                                                  '(:text text :output output :delta delta :message message))
+                                                  '(:text text :output output :delta delta :message message :result-text result-text))
                        ""))
              (stage (replace-regexp-in-string "^tool/" "" event)))
          (psi-emacs--upsert-tool-row tool-id stage text)))
@@ -413,7 +470,10 @@ ANSI sequences in TEXT are converted to Emacs faces."
       (yes-or-no-p "Buffer has unsaved edits. Reconnect and clear buffer? ")))
 
 (defun psi-emacs--reset-transcript-state ()
-  "Clear transcript buffer and reset in-buffer rendering state."  
+  "Clear transcript buffer and reset in-buffer rendering state.
+
+Resets tool-output-view-mode to default `collapsed' so that after a
+reconnect the user starts with the default collapsed view."
   (let ((inhibit-read-only t))
     (erase-buffer))
   (when psi-emacs--state
@@ -421,8 +481,43 @@ ANSI sequences in TEXT are converted to Emacs faces."
     (setf (psi-emacs-state-assistant-range psi-emacs--state) nil)
     (clrhash (psi-emacs-state-tool-rows psi-emacs--state))
     (setf (psi-emacs-state-draft-anchor psi-emacs--state)
-          (copy-marker (point-max) nil)))
+          (copy-marker (point-max) nil))
+    (setf (psi-emacs-state-tool-output-view-mode psi-emacs--state) 'collapsed)
+    (psi-emacs--refresh-header-line))
   (set-buffer-modified-p nil))
+
+(defun psi-emacs-toggle-tool-output-view ()
+  "Toggle global tool-output view mode between collapsed and expanded.
+
+In collapsed mode only the header line of each tool row is shown.
+In expanded mode the full body output of each tool row is shown.
+The toggle applies to all existing tool rows and future tool rows.
+This command is valid even when no tool rows exist."
+  (interactive)
+  (when psi-emacs--state
+    (let* ((current (psi-emacs-state-tool-output-view-mode psi-emacs--state))
+           (new-mode (if (eq current 'collapsed) 'expanded 'collapsed))
+           (rows (psi-emacs-state-tool-rows psi-emacs--state)))
+      (setf (psi-emacs-state-tool-output-view-mode psi-emacs--state) new-mode)
+      ;; Re-render all existing tool rows with the new mode
+      (maphash (lambda (tool-id row)
+                 (let ((stage (plist-get row :stage))
+                       (accumulated (plist-get row :accumulated-text))
+                       (start (plist-get row :start))
+                       (end (plist-get row :end)))
+                   (when (and (markerp start)
+                              (markerp end)
+                              (marker-buffer start)
+                              (marker-buffer end))
+                     (let ((rendered (psi-emacs--render-tool-row
+                                      tool-id stage accumulated new-mode)))
+                       (save-excursion
+                         (goto-char start)
+                         (delete-region start end)
+                         (insert rendered)
+                         (set-marker end (point)))))))
+               rows)
+      (psi-emacs--refresh-header-line))))
 
 (defun psi-emacs-reconnect ()
   "Manually reconnect by clearing transcript and starting a fresh rpc session."
@@ -452,7 +547,8 @@ The transcript remains editable in MVP."
   (define-key map (kbd "C-c RET") #'psi-emacs-send-from-buffer)
   (define-key map (kbd "C-c C-q") #'psi-emacs-queue-from-buffer)
   (define-key map (kbd "C-c C-k") #'psi-emacs-abort)
-  (define-key map (kbd "C-c C-r") #'psi-emacs-reconnect))
+  (define-key map (kbd "C-c C-r") #'psi-emacs-reconnect)
+  (define-key map (kbd "C-c C-t") #'psi-emacs-toggle-tool-output-view))
 
 (defun psi-emacs-open-buffer (&optional buffer-name)
   "Open and initialize dedicated psi chat buffer BUFFER-NAME.

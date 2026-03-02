@@ -1,6 +1,6 @@
 # Plan
 
-Ordered steps toward AI COMPLETE.
+Ordered steps toward PSI COMPLETE.
 
 ---
 
@@ -68,41 +68,52 @@ Ordered steps toward AI COMPLETE.
 
 ## Next
 
-### Step 7 — Graph emergence
+### Step 7 — Graph emergence  ✓
 - Spec: `spec/graph-emergence.allium`
-- Register domain resolvers/mutations (`ai`, `history`, `agent-session`, `introspection`) into one query graph
-- Surface capability graph via EQL (`:psi.graph/nodes`, `:psi.graph/edges`, `:psi.graph/capabilities`, `:psi.graph/domain-coverage`)
-- Step 7 decisions:
-  - Attribute links remain implicit on edges (`CapabilityEdge.attribute`), not first-class attribute nodes
-  - Mutation side-effects are deferred (`DomainOperation.sideEffects = nil`), IO links only for now
+- All 4 required domains registered: `ai`, `history`, `agent-session`, `introspection`
+- `query-graph-bridge` resolver extended to expose all 9 required Step 7 EQL attrs:
+  - `:psi.graph/resolver-count`, `:psi.graph/mutation-count`
+  - `:psi.graph/resolver-syms`, `:psi.graph/mutation-syms`, `:psi.graph/env-built`
+  - `:psi.graph/nodes`, `:psi.graph/edges`, `:psi.graph/capabilities`, `:psi.graph/domain-coverage`
+- `resolvers_test.clj`: 10 new graph bridge tests (16 total, 41 assertions)
+- 629 tests, 2924 assertions, 0 failures
 
-### Step 7a — Session introspection hardening
-- Add/repair canonical `:psi.agent-session/*` telemetry resolvers so direct EQL queries are reliable in-session
-- Target attrs: `:psi.agent-session/messages-count`, `:psi.agent-session/tool-call-count`, `:psi.agent-session/start-time`, `:psi.agent-session/current-time`
-- Define one obvious query path (top-level attrs and/or a stable stats map with aliases), document it in `STATE.md`
-- Add resolver tests that assert direct query success for each canonical attr
-- Verify via live `eql_query` in an interactive session
+### Step 7a — Session introspection hardening  ✓
+- Added `:psi.agent-session/messages-count`, `:psi.agent-session/tool-call-count`, `:psi.agent-session/start-time`, `:psi.agent-session/current-time` as top-level resolvers
+- `:started-at` captured at `create-context` time (Instant)
+- `resolvers_test.clj`: 6 tests, 17 assertions — direct EQL query success for each attr
+- Documented canonical query path in STATE.md
 
-8. Step 8 — HTTP API
-   openapi spec + martian client, surface via Pathom mutations
+8. Step 8 — RPC surface
+   - Spec: `spec/rpc.allium` (TBD)
+   - EDN stdio protocol for headless / programmatic control (including Emacs frontend parity)
+   - Partial impl: `agent-session/rpc.clj` (821 lines), `rpc_test.clj` (12 tests)
+   - Complete: handshake, ping, query_eql, prompt, steer, follow_up, abort, new_session, switch_session, fork
 
-9. Step 9 — RPC surface
-   EDN stdio protocol for headless / programmatic control (including Emacs frontend parity)
+9. Step 9 — Memory layer
+   - Spec: `spec/memory-layer.allium`
+   - Partial impl: `memory/` component (1021 lines src, 29 tests)
+   - Complete: remember/recover lifecycle, graph snapshots + deltas, provenance, EQL surface
 
-10. Step 10 — Memory layer
-    - Spec: `spec/memory-layer.allium`
-    - Combine query + history + knowledge into queryable memory
-    - Capture memory provenance (session/git/graph/op symbols), graph snapshots + deltas
-    - Surface memory via EQL (`:psi.memory/*`) with recovery over session + history + graph
-
-11. Step 11 — Feed-forward recursion
+10. Step 10 — Feed-forward recursion
     - Spec: `spec/feed-forward-recursion.allium`
-    - AI tooling hooks + FUTURE_STATE
-    - Recursion loop: observe → plan → approve → execute → verify → learn
-    - Guardrails: approval gate, atomic actions, required verification, rollback on verify failure
-    - Decisions: no periodic cadence in Step 11; enabled hooks are config-driven; manual approval default with opt-in low-risk auto-approve in trusted local mode
+    - Partial impl: `recursion/` component (1682 lines src, 73 tests)
+    - Complete: FUTURE_STATE synthesis, plan proposal, approval gate, execution, verification, learning cycle
 
-12. AI COMPLETE
+11. AI COMPLETE
+
+12 step 12 - Emacs UI
+    - Spec: `spec/emacs-frontend.allium`
+    - partial impl: emacs-ui components
+
+13 step 13 - Terminal UI
+    - Spec: `spec/tui.allium`
+    - partial impl: tui components
+
+14. Step 14 — HTTP API
+    - openapi spec + martian client, surface via Pathom mutations
+    - Deferred from Step 8 — depends on RPC, memory, and feed-forward being stable
+
 
 ### Deferred (agent-session)
 - `TreeNavigated` branch tree navigation
