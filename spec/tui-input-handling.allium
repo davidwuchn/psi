@@ -4,10 +4,12 @@
 --
 -- Modules:
 --   - prompt-input-autocomplete.allium (shared)
+--   - prompt-slash-commands.allium (shared)
 --   - tui-input-history.allium
 --   - tui-input-interrupts.allium
 
 use "./prompt-input-autocomplete.allium" as autocomplete
+use "./prompt-slash-commands.allium" as slash
 use "./tui-input-history.allium" as history
 use "./tui-input-interrupts.allium" as interrupts
 
@@ -16,12 +18,14 @@ surface TuiPromptInputContract {
 
     exposes:
         autocomplete/PromptAutocompleteContract
+        slash/PromptSlashCommandContract
         history/PromptHistoryContract
         interrupts/PromptInterruptContract
 
     guidance:
         -- Prompt input handling is split by concern:
         --   1) completion suggestions and acceptance
-        --   2) history recording and recall navigation
-        --   3) interrupt/clear/exit control actions
+        --   2) slash command dispatch/execution (/resume, /quit, etc.)
+        --   3) history recording and recall navigation
+        --   4) interrupt/clear/exit control actions
 }

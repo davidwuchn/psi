@@ -12,12 +12,14 @@
 --   Manual reconnect supervision policy
 --   Phase progression from MVP to parity capabilities
 --   Parity compose autocomplete delegation (/, @ file references)
+--   Parity slash-command execution delegation (/resume, /quit, etc.)
 --
 -- Delegates to:
 --   EDN RPC transport protocol (rpc-edn.allium)
 --   Shared tool display lifecycle (tool-output-display.allium)
 --   Shared tool renderer contract (tool-output-rendering.allium)
 --   Shared prompt autocomplete semantics (prompt-input-autocomplete.allium)
+--   Shared slash-command execution semantics (prompt-slash-commands.allium)
 --
 -- Excludes:
 --   Canonical EDN frame envelopes and version negotiation (see rpc-edn.allium)
@@ -31,6 +33,7 @@ use "./rpc-edn.allium" as rpc
 use "./tool-output-display.allium" as tool_display
 use "./tool-output-rendering.allium" as tool_render
 use "./prompt-input-autocomplete.allium" as prompt_autocomplete
+use "./prompt-slash-commands.allium" as slash_commands
 
 ------------------------------------------------------------
 -- Value Types
@@ -240,6 +243,15 @@ rule ParityComposeAutocompleteUsesSharedContract {
 
     ensures: prompt_autocomplete/PromptAutocompleteContract governs compose input autocomplete
     ensures: SlashAndAtCompletionParity(frontend)
+}
+
+rule ParitySlashCommandExecutionUsesSharedContract {
+    when: FrontendPhaseChanged(frontend, phase)
+
+    requires: phase = parity
+
+    ensures: slash_commands/PromptSlashCommandContract governs slash command execution
+    ensures: BuiltInSlashCommandParity(frontend, commands: ["/resume", "/quit", "/exit", "/new", "/status", "/help"])
 }
 
 ------------------------------------------------------------
@@ -783,6 +795,7 @@ surface EmacsSessionApi {
         tool_display/ToolOutputDisplayApi
         tool_render/ToolOutputRenderer
         prompt_autocomplete/PromptAutocompleteContract
+        slash_commands/PromptSlashCommandContract
 
     guidance:
         -- MVP defaults:
@@ -808,6 +821,10 @@ surface EmacsSessionApi {
         -- Parity compose autocomplete:
         --   slash command completion and @ file-reference expansion follow
         --   prompt-input-autocomplete.allium.
+        --
+        -- Parity slash command execution:
+        --   /resume, /quit, /exit, /new, /status, /help, and related slash
+        --   command dispatch semantics follow prompt-slash-commands.allium.
         --
         -- Transcript content is editable; edits are local UX affordances and
         -- do not imply session rehydration semantics in MVP.

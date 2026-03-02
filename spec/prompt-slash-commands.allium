@@ -1,0 +1,234 @@
+-- prompt-slash-commands.allium
+--
+-- Scope: Reusable slash-command execution contract for interactive prompts.
+--
+-- Source distillation:
+--   - components/agent-session/src/psi/agent_session/commands.clj
+--   - components/tui/src/psi/tui/app.clj
+--
+-- Includes:
+--   - Built-in slash command dispatch (/quit, /resume, /new, /status, ...)
+--   - Dispatch-result handling in interactive runtimes
+--   - Slash submission fallback to normal agent prompting when not intercepted
+--
+-- Excludes:
+--   - Prompt template and skill expansion internals (coding-agent/skills/prompt-templates)
+--   - Session-selector rendering internals
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    built_in_slash_commands: Set<String> = {
+        "/quit", "/exit", "/resume", "/new", "/status", "/history",
+        "/help", "/?", "/prompts", "/skills", "/feed-forward",
+        "/login", "/logout"
+    }
+}
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value SlashCommandDispatchResult {
+    type: quit | resume | new_session | text | login_start | login_error | logout | extension_cmd | not_command
+
+    message: String?
+
+    -- extension command payload
+    commandName: String?
+    commandArgs: String?
+
+    -- login payload
+    providerName: String?
+    loginUrl: String?
+    usesCallbackServer: Boolean?
+}
+
+------------------------------------------------------------
+-- Entities
+------------------------------------------------------------
+
+entity PromptRuntime {
+    phase: idle | streaming | selecting_session | exiting
+
+    -- Some frontends (e.g. TUI) support a dedicated session selector for /resume.
+    supportsResumeSelector: Boolean = true
+
+    transcriptEditable: Boolean
+}
+
+entity PromptInput {
+    text: String
+
+    trimmed_text: Trim(text)
+    starts_with_slash: StartsWith(trimmed_text, "/")
+}
+
+------------------------------------------------------------
+-- Slash Dispatch Rules
+------------------------------------------------------------
+
+rule SlashSubmissionDispatchesBeforeAgentPrompt {
+    when: PromptSubmitted(runtime, input: PromptInput)
+
+    requires: runtime.phase = idle
+    requires: input.starts_with_slash
+
+    ensures: SlashCommandDispatchRequested(input.trimmed_text)
+    ensures: AgentPromptNotYetDispatched(input.trimmed_text)
+}
+
+rule QuitAndExitCommandsRequestTermination {
+    when: SlashCommandDispatchRequested(text)
+    requires: text in ["/quit", "/exit"]
+
+    ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{type: quit})
+}
+
+rule ResumeCommandRequestsResumeFlow {
+    when: SlashCommandDispatchRequested(text)
+    requires: text = "/resume"
+
+    ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{type: resume})
+}
+
+rule NewSessionCommandCreatesFreshSession {
+    when: SlashCommandDispatchRequested(text)
+    requires: text = "/new"
+
+    ensures: NewSessionRequested()
+    ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{type: new_session})
+}
+
+rule InspectionCommandsReturnText {
+    when: SlashCommandDispatchRequested(text)
+    requires: text in ["/status", "/history", "/help", "/?", "/prompts", "/skills"]
+
+    ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{type: text, message: FormattedCommandText(text)})
+}
+
+rule FeedForwardCommandSupportsOptionalReason {
+    when: SlashCommandDispatchRequested(text)
+    requires: text = "/feed-forward" or StartsWith(text, "/feed-forward ")
+
+    ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{type: text, message: FeedForwardResultText(text)})
+}
+
+rule LoginAndLogoutCommandsReturnTypedResults {
+    when: SlashCommandDispatchRequested(text)
+    requires: text in ["/login", "/logout"] or StartsWith(text, "/login ")
+
+    ensures: SlashCommandDispatchResultProduced(text, LoginLogoutResult(text))
+}
+
+rule ExtensionSlashCommandReturnsExtensionResult {
+    when: SlashCommandDispatchRequested(text)
+    requires: StartsWith(text, "/")
+    requires: ExtensionCommandRegistered(CommandName(text))
+
+    ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{
+        type: extension_cmd,
+        commandName: CommandName(text),
+        commandArgs: CommandArgs(text)
+    })
+}
+
+rule NonInterceptedSlashInputFallsThrough {
+    when: SlashCommandDispatchRequested(text)
+    requires: not BuiltInOrExtensionCommand(text)
+
+    ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{type: not_command})
+}
+
+------------------------------------------------------------
+-- Dispatch Result Application Rules
+------------------------------------------------------------
+
+rule QuitResultTransitionsRuntimeToExiting {
+    when: SlashCommandResultApplied(runtime, result: SlashCommandDispatchResult)
+    requires: result.type = quit
+
+    ensures: runtime.phase = exiting
+    ensures: FrontendExitRequested(runtime)
+}
+
+rule ResumeResultOpensSelectorWhenSupported {
+    when: SlashCommandResultApplied(runtime, result: SlashCommandDispatchResult)
+    requires: result.type = resume
+    requires: runtime.supportsResumeSelector
+
+    ensures: runtime.phase = selecting_session
+    ensures: SessionSelectorOpened(runtime)
+}
+
+rule ResumeResultFallsBackWhenSelectorUnsupported {
+    when: SlashCommandResultApplied(runtime, result: SlashCommandDispatchResult)
+    requires: result.type = resume
+    requires: not runtime.supportsResumeSelector
+
+    ensures: AssistantMessageAppended(runtime, "Resume selector unavailable in this frontend.")
+}
+
+rule TextLikeResultsAppendAssistantMessage {
+    when: SlashCommandResultApplied(runtime, result: SlashCommandDispatchResult)
+    requires: result.type in [text, login_error, logout, new_session]
+
+    ensures: AssistantMessageAppended(runtime, result.message)
+}
+
+rule LoginStartResultShowsProviderUrl {
+    when: SlashCommandResultApplied(runtime, result: SlashCommandDispatchResult)
+    requires: result.type = login_start
+
+    ensures: AssistantMessageAppended(runtime, LoginPromptText(result.providerName, result.loginUrl, result.usesCallbackServer))
+}
+
+rule ExtensionCommandResultExecutesHandlerAndAppendsOutput {
+    when: SlashCommandResultApplied(runtime, result: SlashCommandDispatchResult)
+    requires: result.type = extension_cmd
+
+    ensures: ExtensionCommandHandlerInvoked(result.commandName, result.commandArgs)
+    ensures: AssistantMessageAppended(runtime, CapturedExtensionCommandOutput(result.commandName, result.commandArgs))
+}
+
+rule NotCommandFallsThroughToAgentPrompt {
+    when: SlashCommandResultApplied(runtime, result: SlashCommandDispatchResult)
+    requires: result.type = not_command
+
+    ensures: AgentPromptDispatchedFromLatestSubmission(runtime)
+    ensures: runtime.phase = streaming
+}
+
+------------------------------------------------------------
+-- Surface
+------------------------------------------------------------
+
+surface PromptSlashCommandContract {
+    for caller: InteractivePromptRuntime
+
+    context runtime: PromptRuntime
+
+    provides:
+        PromptSubmitted(runtime, input)
+        SlashCommandDispatchRequested(text)
+        SlashCommandResultApplied(runtime, result)
+
+    exposes:
+        runtime.phase
+
+    guidance:
+        -- This contract is shared across interactive UIs.
+        -- Slash command dispatch runs before normal prompt submission.
+        -- /quit and /exit are equivalent.
+        -- /resume is a runtime capability: selector UIs open selection; others provide fallback messaging.
+        -- Non-intercepted slash input falls through to normal agent prompting, enabling downstream
+        -- template/skill expansion paths.
+}
+
+------------------------------------------------------------
+-- Open Questions
+------------------------------------------------------------
+
+open_question "Should unknown slash commands return immediate user-facing errors, or always fall through for downstream handling?"
