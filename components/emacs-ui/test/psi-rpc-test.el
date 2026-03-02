@@ -66,6 +66,7 @@
               (_ (ert-fail "expected successful parse")))))
       (when (process-live-p process)
         (delete-process process)))))
+
 (ert-deftest psi-rpc-process-filter-split-chunk-frame-dispatches-once ()
   (let* ((events nil)
          (errors nil)
