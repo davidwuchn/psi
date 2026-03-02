@@ -67,7 +67,17 @@
         (is (contains? r-syms 'psi.agent-session.resolvers/agent-session-phase)
             "phase resolver should appear in graph summary")
         (is (contains? m-syms 'psi.extension/add-prompt-template)
-            "startup prompt mutation should appear in graph summary"))))
+            "startup prompt mutation should appear in graph summary")
+        (is (contains? m-syms 'psi.extension.tool/read)
+            "tool read mutation should appear in graph summary")
+        (is (contains? m-syms 'psi.extension.tool/bash)
+            "tool bash mutation should appear in graph summary")
+        (is (contains? m-syms 'psi.extension.tool/write)
+            "tool write mutation should appear in graph summary")
+        (is (contains? m-syms 'psi.extension.tool/update)
+            "tool update mutation should appear in graph summary")
+        (is (contains? m-syms 'psi.extension.tool/chain)
+            "tool chain mutation should appear in graph summary"))))
 
   (testing "register-resolvers-in! skips agent-session resolvers when no session ctx"
     (let [ctx (introspection/create-context)]

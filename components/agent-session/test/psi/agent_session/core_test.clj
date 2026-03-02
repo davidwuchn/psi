@@ -683,6 +683,142 @@
                  :psi.extension.workflow/result 99}]
                (:psi.extension/workflows q)))))))
 
+(deftest tool-plan-mutation-test
+  (testing "run-tool-plan chains step outputs into later step args"
+    (let [ctx    (session/create-context)
+          qctx   (query/create-query-context)
+          mutate (fn [op params]
+                   (get (query/query-in qctx
+                                        {:psi/agent-session-ctx ctx}
+                                        [(list op (assoc params :psi/agent-session-ctx ctx))])
+                        op))]
+      (session/register-resolvers-in! qctx false)
+      (session/register-mutations-in! qctx true)
+      (agent-core/set-tools-in!
+       (:agent-ctx ctx)
+       [{:name "prefix-a"
+         :execute (fn [args _opts]
+                    {:content  (str "A:" (get args "text" ""))
+                     :is-error false})}
+        {:name "prefix-b"
+         :execute (fn [args _opts]
+                    {:content  (str "B:" (get args "text" ""))
+                     :is-error false})}])
+      (let [result (mutate 'psi.extension/run-tool-plan
+                           {:steps [{:id :s1 :tool "prefix-a" :args {:text "hello"}}
+                                    {:id :s2 :tool "prefix-b" :args {:text [:from :s1 :content]}}]})]
+        (is (true? (:psi.extension.tool-plan/succeeded? result)))
+        (is (= 2 (:psi.extension.tool-plan/step-count result)))
+        (is (= 2 (:psi.extension.tool-plan/completed-count result)))
+        (is (nil? (:psi.extension.tool-plan/failed-step-id result)))
+        (is (= "A:hello"
+               (get-in result [:psi.extension.tool-plan/result-by-id :s1 :content])))
+        (is (= "B:A:hello"
+               (get-in result [:psi.extension.tool-plan/result-by-id :s2 :content])))
+        (is (= {"text" "A:hello"}
+               (get-in result [:psi.extension.tool-plan/results 1 :args]))))))
+
+  (testing "run-tool-plan stops on first failing step by default"
+    (let [ctx      (session/create-context)
+          qctx     (query/create-query-context)
+          ran-last (atom false)
+          mutate   (fn [op params]
+                     (get (query/query-in qctx
+                                          {:psi/agent-session-ctx ctx}
+                                          [(list op (assoc params :psi/agent-session-ctx ctx))])
+                          op))]
+      (session/register-resolvers-in! qctx false)
+      (session/register-mutations-in! qctx true)
+      (agent-core/set-tools-in!
+       (:agent-ctx ctx)
+       [{:name "ok"
+         :execute (fn [_args _opts]
+                    {:content "ok"
+                     :is-error false})}
+        {:name "fail"
+         :execute (fn [_args _opts]
+                    {:content "boom"
+                     :is-error true})}
+        {:name "should-not-run"
+         :execute (fn [_args _opts]
+                    (reset! ran-last true)
+                    {:content "ran"
+                     :is-error false})}])
+      (let [result (mutate 'psi.extension/run-tool-plan
+                           {:steps [{:id :s1 :tool "ok"}
+                                    {:id :s2 :tool "fail"}
+                                    {:id :s3 :tool "should-not-run"}]})]
+        (is (false? (:psi.extension.tool-plan/succeeded? result)))
+        (is (= :s2 (:psi.extension.tool-plan/failed-step-id result)))
+        (is (= 2 (:psi.extension.tool-plan/completed-count result)))
+        (is (false? @ran-last))
+        (is (string? (:psi.extension.tool-plan/error result)))))))
+
+(deftest tool-mutations-test
+  (testing "built-in tool mutations execute read/write/update/bash"
+    (let [ctx    (session/create-context)
+          qctx   (query/create-query-context)
+          mutate (fn [op params]
+                   (get (query/query-in qctx
+                                        {:psi/agent-session-ctx ctx}
+                                        [(list op (assoc params :psi/agent-session-ctx ctx))])
+                        op))
+          f      (File/createTempFile "psi-tool-mutation" ".txt")
+          path   (.getAbsolutePath f)]
+      (.deleteOnExit f)
+      (session/register-resolvers-in! qctx false)
+      (session/register-mutations-in! qctx true)
+
+      (let [w  (mutate 'psi.extension.tool/write {:path path :content "alpha"})
+            r1 (mutate 'psi.extension.tool/read {:path path})
+            u  (mutate 'psi.extension.tool/update {:path path
+                                                   :oldText "alpha"
+                                                   :newText "beta"})
+            r2 (mutate 'psi.extension.tool/read {:path path})
+            b  (mutate 'psi.extension.tool/bash {:command "printf 'ok'"})]
+        (is (= "write" (:psi.extension.tool/name w)))
+        (is (false? (:psi.extension.tool/is-error w)))
+
+        (is (= "read" (:psi.extension.tool/name r1)))
+        (is (false? (:psi.extension.tool/is-error r1)))
+        (is (= "alpha" (:psi.extension.tool/content r1)))
+
+        ;; update is backed by the built-in edit tool
+        (is (= "edit" (:psi.extension.tool/name u)))
+        (is (false? (:psi.extension.tool/is-error u)))
+
+        (is (= "beta" (:psi.extension.tool/content r2)))
+
+        (is (= "bash" (:psi.extension.tool/name b)))
+        (is (false? (:psi.extension.tool/is-error b))))))
+
+  (testing "chain mutation is an alias to run-tool-plan"
+    (let [ctx    (session/create-context)
+          qctx   (query/create-query-context)
+          mutate (fn [op params]
+                   (get (query/query-in qctx
+                                        {:psi/agent-session-ctx ctx}
+                                        [(list op (assoc params :psi/agent-session-ctx ctx))])
+                        op))]
+      (session/register-resolvers-in! qctx false)
+      (session/register-mutations-in! qctx true)
+      (agent-core/set-tools-in!
+       (:agent-ctx ctx)
+       [{:name "prefix-a"
+         :execute (fn [args _opts]
+                    {:content  (str "A:" (get args "text" ""))
+                     :is-error false})}
+        {:name "prefix-b"
+         :execute (fn [args _opts]
+                    {:content  (str "B:" (get args "text" ""))
+                     :is-error false})}])
+      (let [result (mutate 'psi.extension.tool/chain
+                           {:steps [{:id :s1 :tool "prefix-a" :args {:text "hello"}}
+                                    {:id :s2 :tool "prefix-b" :args {:text [:from :s1 :content]}}]})]
+        (is (true? (:psi.extension.tool-plan/succeeded? result)))
+        (is (= "B:A:hello"
+               (get-in result [:psi.extension.tool-plan/result-by-id :s2 :content])))))))
+
 (deftest startup-resources-via-mutations-test
   (testing "load-startup-resources-via-mutations-in! adds prompts/skills/tools"
     (let [ctx      (session/create-context)

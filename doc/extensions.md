@@ -135,6 +135,54 @@ Example (no explicit `:ext-path` required):
          :handler (fn [_] (println "hi"))}})
 ```
 
+#### Programmatic tool plans (`psi.extension/run-tool-plan`)
+
+Use `psi.extension/run-tool-plan` when an extension needs deterministic,
+programmatic tool orchestration (instead of asking the LLM to decide tool
+calls).
+
+Canonical helper:
+
+```clojure
+(defn run-tool-plan!
+  [api steps]
+  ((:mutate api) 'psi.extension/run-tool-plan
+   {:steps          steps
+    :stop-on-error? true}))
+```
+
+Example chain (step 2 uses step 1 output):
+
+```clojure
+(let [result (run-tool-plan!
+              api
+              [{:id :s1
+                :tool "hello_upper"
+                :args {:text "hello from plan"}}
+               {:id :s2
+                :tool "hello_wrap"
+                :args {:text   [:from :s1 :content]
+                       :prefix "["
+                       :suffix "]"}}])]
+  (when-not (:psi.extension.tool-plan/succeeded? result)
+    (throw (ex-info "tool plan failed"
+                    {:error (:psi.extension.tool-plan/error result)})))
+  (get-in result [:psi.extension.tool-plan/result-by-id :s2 :content]))
+;; => "[HELLO FROM PLAN]"
+```
+
+`[:from <step-id> <path...>]` references resolve against the prior step's tool
+result map (typically `:content`, `:is-error`, and optional `:details`).
+
+Built-in tool execution mutations are also available for direct programmatic
+use:
+
+- `psi.extension.tool/read`   (`:path`, optional `:offset`, `:limit`)
+- `psi.extension.tool/bash`   (`:command`, optional `:timeout`)
+- `psi.extension.tool/write`  (`:path`, `:content`)
+- `psi.extension.tool/update` (`:path`, `:oldText`, `:newText`) — backed by `edit`
+- `psi.extension.tool/chain`  (alias of `psi.extension/run-tool-plan`)
+
 ### Session Actions
 
 | Key                  | Signature                                 | Description                          |
