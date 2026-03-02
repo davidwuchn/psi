@@ -168,6 +168,8 @@ Caught by `jline-terminal-keymap-test` smoke test.
 
 ## Open Questions
 
+- Session introspection: some `:psi.agent-session/*` attrs are discoverable but not consistently resolvable via direct EQL queries (observed: `messages-count`, `tool-call-count`, `start-time`, `current-time` query errors in-session)
+- Session introspection: should canonical telemetry be exposed only as top-level attrs, or via a single stable stats map plus top-level aliases?
 - TUI: per-token streaming (currently shows spinner until agent done)
 - TUI: tool execution status display during agent loop
 - Extension UI: should dialogs support auto-dismiss timeout?
