@@ -48,6 +48,12 @@ an Emacs process object.")
 
 Called as (STATE OP PARAMS CALLBACK).")
 
+(defvar psi-emacs--idle-slash-command-handler-function #'psi-emacs--default-handle-idle-slash-command
+  "Function used to handle idle slash command input.
+
+Called as (STATE MESSAGE). Return non-nil when MESSAGE was handled and should
+not fall through to normal prompt dispatch.")
+
 (defvar psi-emacs--state-by-buffer (make-hash-table :test #'eq)
   "Map dedicated buffers to their `psi-emacs-state'.")
 
@@ -227,12 +233,126 @@ COMMAND is a list suitable for `make-process'."
   (when psi-emacs--state
     (funcall psi-emacs--send-request-function psi-emacs--state op params callback)))
 
+(defun psi-emacs--request-frontend-exit ()
+  "Request frontend exit for current psi buffer."
+  (when (buffer-live-p (current-buffer))
+    (kill-buffer (current-buffer))))
+
+(defun psi-emacs--append-assistant-message (text)
+  "Append assistant TEXT as a finalized transcript line."
+  (psi-emacs--assistant-finalize text))
+
+(defun psi-emacs--idle-slash-help-text ()
+  "Return deterministic help text for supported idle slash commands."
+  (string-join
+   '("Supported slash commands:"
+     "/quit, /exit  Exit this psi buffer"
+     "/resume       Resume selector unavailable in Emacs MVP"
+     "/new          Start a fresh backend session"
+     "/status       Show frontend diagnostics"
+     "/help, /?     Show this help")
+   "\n"))
+
+(defun psi-emacs--reset-transcript-for-new-session ()
+  "Clear transcript rendering state for a successful /new command."
+  (let ((inhibit-read-only t))
+    (erase-buffer))
+  (when psi-emacs--state
+    (setf (psi-emacs-state-assistant-in-progress psi-emacs--state) nil)
+    (setf (psi-emacs-state-assistant-range psi-emacs--state) nil)
+    (clrhash (psi-emacs-state-tool-rows psi-emacs--state))
+    (setf (psi-emacs-state-draft-anchor psi-emacs--state)
+          (copy-marker (point-max) nil))
+    (psi-emacs--refresh-header-line))
+  (set-buffer-modified-p nil))
+
+(defun psi-emacs--new-session-error-message (frame)
+  "Return deterministic /new error text derived from FRAME."
+  (let* ((data (alist-get :data frame nil nil #'equal))
+         (details (or (alist-get :error-message frame nil nil #'equal)
+                      (and (listp data)
+                           (or (alist-get :error-message data nil nil #'equal)
+                               (alist-get :message data nil nil #'equal))))))
+    (if (and (stringp details) (not (string-empty-p details)))
+        (format "Unable to start a fresh backend session: %s" details)
+      "Unable to start a fresh backend session.")))
+
+(defun psi-emacs--handle-new-session-response (frame)
+  "Apply /new callback FRAME effects to the current frontend buffer."
+  (if (and (eq (alist-get :kind frame) :response)
+           (eq (alist-get :ok frame) t))
+      (progn
+        (psi-emacs--reset-transcript-for-new-session)
+        (psi-emacs--append-assistant-message "Started a fresh backend session."))
+    (psi-emacs--append-assistant-message
+     (psi-emacs--new-session-error-message frame))))
+
+(defun psi-emacs--request-new-session ()
+  "Request a fresh backend session for /new and render deterministic feedback."
+  (let ((buffer (current-buffer)))
+    (psi-emacs--dispatch-request
+     "new_session"
+     nil
+     (lambda (frame)
+       (when (buffer-live-p buffer)
+         (with-current-buffer buffer
+           (psi-emacs--handle-new-session-response frame)))))))
+
+(defun psi-emacs--default-handle-idle-slash-command (state message)
+  "Default idle slash handler.
+
+Return non-nil when MESSAGE is handled and should not fall through to
+normal prompt dispatch."
+  (let* ((trimmed (string-trim (or message "")))
+         (command (car (split-string trimmed "[ \t\n\r]+" t))))
+    (pcase command
+      ((or "/quit" "/exit")
+       (psi-emacs--request-frontend-exit)
+       t)
+      ("/resume"
+       (psi-emacs--append-assistant-message
+        "Resume selector unavailable in this frontend.")
+       t)
+      ("/new"
+       (psi-emacs--request-new-session)
+       t)
+      ("/status"
+       (psi-emacs--append-assistant-message
+        (psi-emacs--status-string state))
+       t)
+      ((or "/help" "/?")
+       (psi-emacs--append-assistant-message
+        (psi-emacs--idle-slash-help-text))
+       t)
+      (_ nil))))
+
+(defun psi-emacs--slash-command-candidate-p (message)
+  "Return non-nil when MESSAGE is a slash command candidate."
+  (let ((trimmed (string-trim (or message ""))))
+    (and (not (string-empty-p trimmed))
+         (string-prefix-p "/" trimmed))))
+
+(defun psi-emacs--dispatch-idle-compose-message (message)
+  "Dispatch idle compose MESSAGE through slash interception and fallback.
+
+When MESSAGE is a slash command candidate, run
+`psi-emacs--idle-slash-command-handler-function'. If not handled, fall through
+to normal prompt dispatch."
+  (let ((handled (and psi-emacs--state
+                      (psi-emacs--slash-command-candidate-p message)
+                      (funcall psi-emacs--idle-slash-command-handler-function
+                               psi-emacs--state
+                               message))))
+    (unless handled
+      (psi-emacs--dispatch-request "prompt" `((:message . ,message))))
+    handled))
+
 (defun psi-emacs-send-from-buffer (prefix)
   "Send composed text using canonical send semantics.
 
 With PREFIX while streaming, queue override is used.
 Without PREFIX while streaming, steer is used.
-When idle, sends as normal prompt."
+When idle, routes through slash interception then normal prompt fallback."
   (interactive "P")
   (let ((message (psi-emacs--composed-text)))
     (if (psi-emacs--streaming-p)
@@ -240,10 +360,10 @@ When idle, sends as normal prompt."
          "prompt_while_streaming"
          `((:message . ,message)
            (:behavior . ,(if prefix "queue" "steer"))))
-      (psi-emacs--dispatch-request "prompt" `((:message . ,message))))))
+      (psi-emacs--dispatch-idle-compose-message message))))
 
 (defun psi-emacs-queue-from-buffer ()
-  "Queue composed text while streaming; fallback to normal send when idle."
+  "Queue composed text while streaming; use idle slash dispatch when idle."
   (interactive)
   (let ((message (psi-emacs--composed-text)))
     (if (psi-emacs--streaming-p)
@@ -251,7 +371,7 @@ When idle, sends as normal prompt."
          "prompt_while_streaming"
          `((:message . ,message)
            (:behavior . "queue")))
-      (psi-emacs--dispatch-request "prompt" `((:message . ,message))))))
+      (psi-emacs--dispatch-idle-compose-message message))))
 
 (defun psi-emacs-abort ()
   "Abort active streaming request via RPC and transition to non-streaming UI state."
