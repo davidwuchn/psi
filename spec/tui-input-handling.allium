@@ -3,11 +3,11 @@
 -- Composition contract for interactive prompt input handling.
 --
 -- Modules:
---   - tui-input-autocomplete.allium
+--   - prompt-input-autocomplete.allium (shared)
 --   - tui-input-history.allium
 --   - tui-input-interrupts.allium
 
-use "./tui-input-autocomplete.allium" as autocomplete
+use "./prompt-input-autocomplete.allium" as autocomplete
 use "./tui-input-history.allium" as history
 use "./tui-input-interrupts.allium" as interrupts
 
