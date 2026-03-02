@@ -228,6 +228,34 @@ COMMAND is a list suitable for `make-process'."
       (buffer-substring-no-properties (region-beginning) (region-end))
     (psi-emacs--tail-draft-text)))
 
+(defun psi-emacs--draft-anchor-valid-p ()
+  "Return non-nil when the current draft anchor marker is valid."
+  (and psi-emacs--state
+       (markerp (psi-emacs-state-draft-anchor psi-emacs--state))
+       (marker-buffer (psi-emacs-state-draft-anchor psi-emacs--state))))
+
+(defun psi-emacs--draft-anchor-at-end-p ()
+  "Return non-nil when draft anchor is currently at end-of-buffer."
+  (and (psi-emacs--draft-anchor-valid-p)
+       (= (marker-position (psi-emacs-state-draft-anchor psi-emacs--state))
+          (point-max))))
+
+(defun psi-emacs--set-draft-anchor-to-end ()
+  "Move/create draft anchor at end-of-buffer."
+  (when psi-emacs--state
+    (let ((anchor (psi-emacs-state-draft-anchor psi-emacs--state)))
+      (if (and (markerp anchor) (marker-buffer anchor))
+          (set-marker anchor (point-max))
+        (setf (psi-emacs-state-draft-anchor psi-emacs--state)
+              (copy-marker (point-max) nil))))))
+
+(defun psi-emacs--consume-tail-draft (used-region-p)
+  "Advance draft anchor when tail draft was consumed.
+
+USED-REGION-P non-nil means compose came from region and anchor is untouched."
+  (unless used-region-p
+    (psi-emacs--set-draft-anchor-to-end)))
+
 (defun psi-emacs--dispatch-request (op params &optional callback)
   "Dispatch OP PARAMS CALLBACK through configured request function."
   (when psi-emacs--state
@@ -354,24 +382,28 @@ With PREFIX while streaming, queue override is used.
 Without PREFIX while streaming, steer is used.
 When idle, routes through slash interception then normal prompt fallback."
   (interactive "P")
-  (let ((message (psi-emacs--composed-text)))
+  (let* ((used-region-p (use-region-p))
+         (message (psi-emacs--composed-text)))
     (if (psi-emacs--streaming-p)
         (psi-emacs--dispatch-request
          "prompt_while_streaming"
          `((:message . ,message)
            (:behavior . ,(if prefix "queue" "steer"))))
-      (psi-emacs--dispatch-idle-compose-message message))))
+      (psi-emacs--dispatch-idle-compose-message message))
+    (psi-emacs--consume-tail-draft used-region-p)))
 
 (defun psi-emacs-queue-from-buffer ()
   "Queue composed text while streaming; use idle slash dispatch when idle."
   (interactive)
-  (let ((message (psi-emacs--composed-text)))
+  (let* ((used-region-p (use-region-p))
+         (message (psi-emacs--composed-text)))
     (if (psi-emacs--streaming-p)
         (psi-emacs--dispatch-request
          "prompt_while_streaming"
          `((:message . ,message)
            (:behavior . "queue")))
-      (psi-emacs--dispatch-idle-compose-message message))))
+      (psi-emacs--dispatch-idle-compose-message message))
+    (psi-emacs--consume-tail-draft used-region-p)))
 
 (defun psi-emacs-abort ()
   "Abort active streaming request via RPC and transition to non-streaming UI state."
@@ -416,7 +448,8 @@ When idle, routes through slash interception then normal prompt fallback."
 (defun psi-emacs--set-assistant-line (text)
   "Create or update the single in-progress assistant line with TEXT."
   (when psi-emacs--state
-    (let ((range (psi-emacs-state-assistant-range psi-emacs--state)))
+    (let ((follow-anchor (psi-emacs--draft-anchor-at-end-p))
+          (range (psi-emacs-state-assistant-range psi-emacs--state)))
       (if (and (consp range)
                (markerp (car range))
                (markerp (cdr range))
@@ -436,7 +469,9 @@ When idle, routes through slash interception then normal prompt fallback."
             (insert (psi-emacs--render-assistant-line text))
             (set-marker end (point))
             (setf (psi-emacs-state-assistant-range psi-emacs--state)
-                  (cons start end))))))))
+                  (cons start end)))))
+      (when follow-anchor
+        (psi-emacs--set-draft-anchor-to-end)))))
 
 (defun psi-emacs--assistant-delta (text)
   "Apply assistant delta TEXT to the in-progress assistant block."
@@ -517,7 +552,8 @@ ANSI sequences in ACCUMULATED-TEXT are converted to Emacs faces."
 Always accumulates TEXT into :accumulated-text in the row state.
 Renders according to the current global tool-output-view-mode."
   (when (and psi-emacs--state tool-id)
-    (let* ((rows (psi-emacs-state-tool-rows psi-emacs--state))
+    (let* ((follow-anchor (psi-emacs--draft-anchor-at-end-p))
+           (rows (psi-emacs-state-tool-rows psi-emacs--state))
            (view-mode (psi-emacs-state-tool-output-view-mode psi-emacs--state))
            (row (gethash tool-id rows))
            (start (plist-get row :start))
@@ -555,7 +591,9 @@ Renders according to the current global tool-output-view-mode."
                                    :accumulated-text accumulated
                                    :start new-start
                                    :end new-end)
-                     rows)))))))
+                     rows))))
+      (when follow-anchor
+        (psi-emacs--set-draft-anchor-to-end)))))
 
 (defun psi-emacs--handle-rpc-event (frame)
   "Handle inbound rpc-edn event FRAME for transcript rendering."
