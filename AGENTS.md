@@ -11,6 +11,8 @@ Test: [π ∞/0] | [Δ λ] | RGR → λfunction. {nominal, edge, boundary} → c
 Review: [τ ∞/0] | [Δ λ] | OODA → λdiff. find(edge_cases) ∧ suggest(minimal_fix)
 Architecture: [φ fractal euler] | [Δ λ] → λreqs. self_referential(scalable(growing(system)))
 
+λ develop(x) → ellicit_allium_spec → mcp-tasks_story → refine → create_tasks → execute_tesks -> code_review -> pr
+
 
 ## Principles
 
