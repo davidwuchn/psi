@@ -5,6 +5,9 @@
 -- is being generated. This spec adds streaming progress events so the user
 -- sees tool calls as they happen — names, arguments, and results.
 
+use "../spec/tool-output-display.allium" as display
+use "../spec/tool-output-rendering.allium" as render
+
 -- ────────────────────────────────────────────────────────────
 -- Entities
 -- ────────────────────────────────────────────────────────────
@@ -152,7 +155,7 @@ rule HandleToolResult {
 }
 
 -- ────────────────────────────────────────────────────────────
--- Rules: TUI rendering
+-- Rules: TUI rendering (tool display delegated to shared UI specs)
 -- ────────────────────────────────────────────────────────────
 
 rule RenderStreamingText {
@@ -163,24 +166,30 @@ rule RenderStreamingText {
 }
 
 rule RenderToolCall {
-    -- Each tool call is rendered with its name and formatted args
+    -- Delegate call-header rendering to shared UI contract.
+    -- This keeps argument display consistent across TUI/Emacs/future UIs.
     when: tc: ToolExecution in current_turn.tool_calls
 
-    -- Format depends on tool name:
-    -- read  → "read <path>"
-    -- bash  → "$ <command>"
-    -- edit  → "edit <path>"
-    -- write → "write <path>"
-    ensures: view shows tool header with tool name and key arg
-    ensures: view shows status indicator (spinner for pending/running, ✓ for success, ✗ for error)
+    ensures: render/ToolOutputRenderRequested(ToolViewFor(tc), registration: null)
+    ensures: ToolViewFor(tc).args = tc.arguments
+    ensures: ToolViewFor(tc).status = tc.status
 }
 
 rule RenderToolResult {
-    -- Show truncated result after tool completes
+    -- Delegate result preview/truncation rendering to shared UI contract.
     when: tc: ToolExecution with status in [success, error]
     requires: tc.result_text is not empty
-    ensures: view shows first 5 lines of result (truncated)
-    ensures: error results shown in error style
+
+    ensures: render/ToolOutputRenderRequested(ToolViewFor(tc), registration: null)
+    ensures: ToolViewFor(tc).output.text = tc.result_text
+    ensures: ToolViewFor(tc).output.isError = tc.is_error
+}
+
+rule RenderLifecycleUsesSharedDisplayState {
+    when: TuiState receives :agent-event with event-kind in [tool_start, tool_delta, tool_executing, tool_result]
+
+    ensures: display/ToolOutputDisplayApi correlates rows by each tool id in current_turn.tool_calls
+    ensures: display/ToolOutputDisplayApi propagates latest args to renderer views
 }
 
 -- ────────────────────────────────────────────────────────────
@@ -210,7 +219,6 @@ surface TuiProgressView {
 -- ────────────────────────────────────────────────────────────
 
 config {
-    tool_result_preview_lines: Integer = 5
     text_delta_throttle_ms: Integer = 100           -- don't re-render on every token
 }
 
@@ -218,6 +226,7 @@ config {
 -- Open questions
 -- ────────────────────────────────────────────────────────────
 
+deferred ToolViewFor.compute    -- map ToolExecution -> render/ToolOutputView
+
 open_question "Should text deltas be throttled to reduce render frequency?"
-open_question "Should tool args be shown while streaming or only when complete?"
-open_question "Should completed tool results be expandable/collapsible?"
+open_question "After delegating to shared tool-output specs, do we still need any TUI-only tool display behavior?"

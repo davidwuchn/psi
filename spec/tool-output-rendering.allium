@@ -10,6 +10,7 @@
 --
 -- Includes:
 --   - Built-in renderer behavior for read/bash/edit/write/ls/find/grep
+--   - Shared tool-call header formatting from streamed arguments (path/command)
 --   - Collapsed vs expanded output presentation
 --   - Truncation warning display contract
 --   - Custom renderer override/fallback behavior
@@ -78,6 +79,8 @@ entity ToolOutputView {
     showImages: Boolean
 
     -- Input
+    args: String?                -- raw JSON tool args (may stream incrementally)
+    parsedArgs: Map?             -- parsed args when available
     output: ToolOutputPayload?
     capabilities: RenderCapabilities?
 
@@ -98,6 +101,7 @@ entity ToolOutputView {
 
 config {
     expand_tools_keybinding: String = "ctrl+o"
+    missing_primary_arg_placeholder: String = "…"
 
     read_preview_lines: Integer = 10
     write_preview_lines: Integer = 10
@@ -138,6 +142,42 @@ rule CustomRendererFailureFallsBackSafely {
 
     ensures: FallbackRendererUsed(view)
     ensures: view.visibleTextLines != [] or view.header != ""
+}
+
+------------------------------------------------------------
+-- Tool-Call Header Formatting (Shared Across UIs)
+------------------------------------------------------------
+
+rule ReadEditWriteHeadersIncludePathArgument {
+    when: ToolOutputRenderRequested(view, _)
+    requires: view.toolName in ["read", "edit", "write"]
+    requires: PrimaryPathArg(view) != null
+
+    ensures: view.header includes PrimaryPathArg(view)
+}
+
+rule BashHeadersIncludeCommandArgument {
+    when: ToolOutputRenderRequested(view, _)
+    requires: view.toolName = "bash"
+    requires: PrimaryCommandArg(view) != null
+
+    ensures: view.header includes PrimaryCommandArg(view)
+}
+
+rule MissingPrimaryArgumentUsesPlaceholder {
+    when: ToolOutputRenderRequested(view, _)
+    requires: view.toolName in ["read", "bash", "edit", "write"]
+    requires: PrimaryArgumentValue(view) = null
+
+    ensures: view.header includes config.missing_primary_arg_placeholder
+}
+
+rule InvalidArgumentTypeShowsMarker {
+    when: ToolOutputRenderRequested(view, _)
+    requires: view.args != null
+    requires: not ArgumentsParseToObject(view)
+
+    ensures: view.header includes "[invalid arg]"
 }
 
 ------------------------------------------------------------
@@ -267,13 +307,6 @@ rule HomeDirectoryPathsShownWithTilde {
     ensures: HeaderUsesTildePath(view)
 }
 
-rule InvalidArgumentTypeShowsMarker {
-    when: ToolOutputRenderRequested(view, _)
-    requires: HasInvalidArgumentType(view)
-
-    ensures: view.header includes "[invalid arg]"
-}
-
 rule BashHeaderShowsTimeoutWhenProvided {
     when: ToolOutputRenderRequested(view, _)
     requires: view.toolName = "bash"
@@ -365,6 +398,7 @@ surface ToolOutputRenderer {
         ToolOutputView
 
     guidance:
+        -- This renderer contract is shared by all interactive UIs.
         -- Expansion is a view concern only; it never changes the underlying
         -- tool result payload.
         -- Built-in renderers should remain compact by default and disclose

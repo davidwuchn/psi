@@ -1,6 +1,7 @@
 -- tool-output-display.allium
 --
 -- Scope: Interactive-mode orchestration for displaying tool output.
+--        Shared display lifecycle for any UI (TUI, Emacs, future frontends).
 --
 -- Source distillation:
 --   - ~/src/pi-mono/packages/coding-agent/src/modes/interactive/interactive-mode.ts
@@ -10,6 +11,7 @@
 -- Includes:
 --   - Tool-call component lifecycle during assistant streaming and execution
 --   - Matching tool results to tool-call rows by toolCallId
+--   - Shared argument propagation into renderer headers
 --   - Global collapse/expand state for tool output rows
 --   - Extension UI control for get/set tool-output expansion
 --   - Image-visibility setting propagation to rendered tool rows
@@ -98,6 +100,7 @@ rule AssistantFrameAddsToolRows {
             status: pending,
             expanded: display.toolsExpanded,
             showImages: display.showImages,
+            args: call.arguments,
             output: null
         )
 
@@ -120,6 +123,7 @@ rule AssistantFrameUpdatesKnownToolArgs {
         requires: binding != null
 
         ensures: binding.args = call.arguments
+        ensures: binding.view.args = call.arguments
 }
 
 rule AssistantMessageEndWithFailureMarksPendingRowsError {
@@ -159,6 +163,7 @@ rule ToolExecutionStartBackfillsMissingToolRow {
         status: running,
         expanded: display.toolsExpanded,
         showImages: display.showImages,
+        args: event.args,
         output: null
     )
 
@@ -178,6 +183,8 @@ rule ToolExecutionStartPromotesPendingRowToRunning {
     let binding = ToolOutputBinding{toolCallId: event.toolCallId}
     requires: binding != null
 
+    ensures: binding.args = event.args
+    ensures: binding.view.args = event.args
     ensures: binding.view.status = running
 }
 
@@ -223,6 +230,7 @@ rule RehydrateToolRowsFromAssistantHistory {
             status: pending,
             expanded: display.toolsExpanded,
             showImages: display.showImages,
+            args: call.arguments,
             output: null
         )
 
@@ -326,6 +334,7 @@ surface ToolOutputDisplayApi {
         SetShowImages(display, showImages)
 
     guidance:
+        -- This lifecycle is shared across UIs (TUI, Emacs, future frontends).
         -- Expansion state is global within a chat view.
         -- New tool rows inherit current expansion and image-visibility state.
         -- Tool rows are correlated strictly by toolCallId.

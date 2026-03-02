@@ -14,6 +14,8 @@
 --
 -- Delegates to:
 --   EDN RPC transport protocol (rpc-edn.allium)
+--   Shared tool display lifecycle (tool-output-display.allium)
+--   Shared tool renderer contract (tool-output-rendering.allium)
 --
 -- Excludes:
 --   Canonical EDN frame envelopes and version negotiation (see rpc-edn.allium)
@@ -24,6 +26,8 @@
 use "./coding-agent.allium" as coding
 use "./ui-extension-points.allium" as ui
 use "./rpc-edn.allium" as rpc
+use "./tool-output-display.allium" as tool_display
+use "./tool-output-rendering.allium" as tool_render
 
 ------------------------------------------------------------
 -- Value Types
@@ -481,6 +485,15 @@ rule ToolResultFinalizesRow {
     ensures: ToolRowOutput(frontend, payload.toolCallId) = FinalToolOutput(payload)
 }
 
+rule ToolLifecycleRenderingUsesSharedUiContracts {
+    when: RpcEventReceived(frontend.rpc, eventName, payload)
+
+    requires: eventName in ["tool/start", "tool/delta", "tool/executing", "tool/update", "tool/result"]
+
+    ensures: tool_display/ToolOutputDisplayApi correlates rows by payload.toolCallId
+    ensures: tool_render/ToolOutputRenderer governs header args + preview behavior
+}
+
 rule MvpToolRowsUseGlobalViewMode {
     when: ToolRowRenderRequested(frontend, toolCallId)
 
@@ -755,6 +768,8 @@ surface EmacsSessionApi {
         rpc/RpcEventStream(frontend.rpc)
         ui/ExtensionUI(frontend.session)
         ui/ExtensionUIQuery(frontend.session)
+        tool_display/ToolOutputDisplayApi
+        tool_render/ToolOutputRenderer
 
     guidance:
         -- MVP defaults:
@@ -787,6 +802,8 @@ surface EmacsSessionApi {
         -- Tool rendering:
         --   tool/start|delta|executing|update|result are rendered inline,
         --   with ANSI->face rendering enabled in MVP.
+        --   Header argument summaries + preview/truncation policy come from
+        --   shared tool-output-display/rendering contracts.
         --   Global tool output view defaults to collapsed in MVP:
         --     - collapsed: single-line tool header (name/id/status), body hidden
         --     - expanded: full tool body visible
