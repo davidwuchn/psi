@@ -20,6 +20,7 @@
 --   Shared tool renderer contract (tool-output-rendering.allium)
 --   Shared prompt autocomplete semantics (prompt-input-autocomplete.allium)
 --   Shared slash-command execution semantics (prompt-slash-commands.allium)
+--   TUI /resume selector behavior reference (tui-resume-selector.allium)
 --
 -- Excludes:
 --   Canonical EDN frame envelopes and version negotiation (see rpc-edn.allium)
@@ -34,6 +35,7 @@ use "./tool-output-display.allium" as tool_display
 use "./tool-output-rendering.allium" as tool_render
 use "./prompt-input-autocomplete.allium" as prompt_autocomplete
 use "./prompt-slash-commands.allium" as slash_commands
+use "./tui-resume-selector.allium" as tui_resume
 
 ------------------------------------------------------------
 -- Value Types
@@ -126,6 +128,9 @@ entity EmacsFrontend {
 
     toolOutputView: collapsed | expanded
 
+    runState: idle | streaming | reconnecting | error
+    lastError: String?
+
     autoConnect: Boolean
     singleSubprocess: Boolean
     reconnectPolicy: manual | auto
@@ -160,6 +165,8 @@ config {
     toggle_tool_output_key: String = "C-c C-t"
     queue_prefix: String = "C-u"
 
+    stream_timeout_seconds: Number = 45
+
     default_tool_output_view: collapsed | expanded = collapsed
 
     mvp_topics: Set<String> = {
@@ -192,6 +199,9 @@ rule MvpProfileIsDefault {
     ensures: frontend.buffer.transcriptEditable = true
     ensures: frontend.buffer.draftAnchor = end_of_buffer
     ensures: frontend.toolOutputView = config.default_tool_output_view
+
+    ensures: frontend.runState = idle
+    ensures: frontend.lastError = null
 
     ensures: frontend.reportRpcErrorsInMinibufferOnly = true
 
@@ -424,6 +434,19 @@ rule SendKeyUsesNormalPromptWhenIdle {
     ensures: PromptForwarded(frontend.session, ComposedText(frontend))
 }
 
+rule PromptDispatchSetsRunStateStreaming {
+    when: BufferSendRequested(frontend, sourceKey, prefix?)
+
+    requires: sourceKey in [config.send_key, config.queue_key]
+    requires: frontend.rpc.transportState = ready
+    requires: PromptForwarded(frontend.session, ComposedText(frontend))
+        or PromptForwardedWhileStreaming(frontend.session, ComposedText(frontend), behavior: steer)
+        or PromptForwardedWhileStreaming(frontend.session, ComposedText(frontend), behavior: queue)
+
+    ensures: frontend.runState = streaming
+    ensures: StreamingWatchdogReset(frontend, timeoutSeconds: config.stream_timeout_seconds)
+}
+
 rule MvpIdleSlashSubmissionUsesSharedContract {
     when: BufferSendRequested(frontend, sourceKey, prefix?)
 
@@ -448,6 +471,35 @@ rule MvpIdleBuiltInSlashCommandsBypassPromptRpc {
 
     ensures: PromptNotForwarded(frontend.session, ComposedText(frontend))
     ensures: LocalSlashCommandResultRendered(frontend)
+}
+
+rule MvpResumeSlashRendersSelectorUnavailableFallback {
+    when: BufferSendRequested(frontend, sourceKey, prefix?)
+
+    requires: frontend.phase = mvp
+    requires: sourceKey in [config.send_key, config.queue_key]
+    requires: frontend.rpc.transportState = ready
+    requires: not frontend.session.isStreaming
+    requires: SlashCommandWord(Trim(ComposedText(frontend))) = "/resume"
+
+    ensures: LocalSlashCommandResultRendered(frontend)
+    ensures: SlashResultIncludes(frontend.buffer, "Resume selector unavailable in this frontend.")
+    ensures: PromptNotForwarded(frontend.session, ComposedText(frontend))
+    ensures: ResumeSelectorUiUnavailable(frontend)
+}
+
+rule StatusSlashIncludesLastErrorSummaryWhenPresent {
+    when: BufferSendRequested(frontend, sourceKey, prefix?)
+
+    requires: frontend.phase = mvp
+    requires: sourceKey in [config.send_key, config.queue_key]
+    requires: frontend.rpc.transportState = ready
+    requires: not frontend.session.isStreaming
+    requires: Trim(ComposedText(frontend)) = "/status"
+    requires: frontend.lastError != null
+
+    ensures: LocalSlashCommandResultRendered(frontend)
+    ensures: SlashResultIncludes(frontend.buffer, "last-error")
 }
 
 rule MvpIdleNonInterceptedSlashFallsThroughToPromptRpc {
@@ -621,6 +673,33 @@ rule ErrorRowsStayCollapsedWhileGlobalViewIsCollapsed {
     ensures: ToolRowBodyHidden(frontend, payload.toolCallId)
 }
 
+rule StreamingProgressResetsWatchdog {
+    when: RpcEventReceived(frontend.rpc, eventName, payload)
+
+    requires: eventName in ["assistant/delta", "tool/start", "tool/delta", "tool/executing", "tool/update", "tool/result"]
+    requires: frontend.runState = streaming
+
+    ensures: StreamingWatchdogReset(frontend, timeoutSeconds: config.stream_timeout_seconds)
+}
+
+rule AssistantMessageFinalizationDisarmsWatchdog {
+    when: RpcEventReceived(frontend.rpc, "assistant/message", payload)
+
+    ensures: StreamingWatchdogDisarmed(frontend)
+    ensures: frontend.runState = idle
+}
+
+rule StreamingWatchdogTimeoutAbortsAndTransitionsToError {
+    when: StreamingWatchdogTimedOut(frontend)
+
+    requires: frontend.runState = streaming
+
+    ensures: AbortForwarded(frontend.session)
+    ensures: frontend.runState = error
+    ensures: frontend.lastError != null
+    ensures: PersistentErrorLineUpserted(frontend.buffer, frontend.lastError)
+}
+
 ------------------------------------------------------------
 -- Header Line and Error Reporting
 ------------------------------------------------------------
@@ -635,20 +714,20 @@ rule MvpHeaderLineShowsMinimalStatus {
         else if frontend.rpc.transportState = handshaking then connecting
         else disconnected
 
-    ensures: frontend.headerLine.runState =
-        if frontend.session.isStreaming then streaming
-        else idle
+    ensures: frontend.headerLine.runState = frontend.runState
 
     ensures: frontend.headerLine.toolOutputView = frontend.toolOutputView
 }
 
-rule RpcErrorsAreShownInMinibufferOnly {
+rule RpcErrorsAreShownInMinibufferAndPersistedInline {
     when: RpcErrorReceived(frontend, err)
 
     requires: frontend.reportRpcErrorsInMinibufferOnly
 
     ensures: MinibufferMessageShown(frontend, err.errorMessage)
-    ensures: NotInsertedInline(frontend.buffer, err.errorMessage)
+    ensures: frontend.runState = error
+    ensures: frontend.lastError != null
+    ensures: PersistentErrorLineUpserted(frontend.buffer, err.errorMessage)
 }
 
 ------------------------------------------------------------
@@ -697,9 +776,22 @@ rule ReconnectStartsFreshSessionAndClearsBuffer {
     ensures: frontend.assistant.completedBlocks = []
     ensures: frontend.toolRows = []
     ensures: frontend.toolOutputView = config.default_tool_output_view
+    ensures: frontend.lastError = null
+    ensures: PersistentErrorLineCleared(frontend.buffer)
+    ensures: StreamingWatchdogDisarmed(frontend)
+    ensures: frontend.runState = reconnecting
 
     ensures: frontend.rpc.processState in [starting, running]
     ensures: frontend.rpc.transportState in [handshaking, ready]
+}
+
+rule ReconnectTransportReadyReturnsToIdleRunState {
+    when: RpcTransportStateChanged(frontend.rpc, nextState)
+
+    requires: frontend.runState = reconnecting
+    requires: nextState = ready
+
+    ensures: frontend.runState = idle
 }
 
 rule ReconnectDoesNotAutoResume {
@@ -847,6 +939,7 @@ surface EmacsSessionApi {
         tool_render/ToolOutputRenderer
         prompt_autocomplete/PromptAutocompleteContract
         slash_commands/PromptSlashCommandContract
+        tui_resume/TuiResumeSelectorContract
 
     guidance:
         -- MVP defaults:
@@ -878,7 +971,10 @@ surface EmacsSessionApi {
         --   locally intercepted built-ins (/resume, /quit, /exit, /new, /status,
         --   /help, /?) bypass prompt RPC; non-intercepted slash input falls through
         --   to prompt RPC for server-side dispatch.
-        --   parity retains the same shared slash-command contract.
+        --   /resume in MVP renders local fallback text:
+        --     "Resume selector unavailable in this frontend."
+        --   parity retains the same shared slash-command contract and uses
+        --   tui-resume-selector.allium for selector-level behavior.
         --
         -- Transcript content is editable; edits are local UX affordances and
         -- do not imply session rehydration semantics in MVP.
@@ -899,7 +995,9 @@ surface EmacsSessionApi {
         --   both existing rows and future rows.
         --
         -- Error UX:
-        --   RPC errors are surfaced in minibuffer only during MVP.
+        --   RPC errors are surfaced in minibuffer and persisted in a single
+        --   inline transcript error row (updated in place, not appended).
+        --   `/status` diagnostics include `last-error` when present.
         --
         -- Wire protocol details (canonical envelopes, event payloads, versioning)
         -- are defined in rpc-edn.allium.

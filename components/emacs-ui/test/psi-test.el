@@ -60,6 +60,97 @@
       (when (buffer-live-p buffer)
         (kill-buffer buffer)))))
 
+(ert-deftest psi-initialize-state-sets-idle-run-state ()
+  (let ((state (psi-emacs--initialize-state nil)))
+    (should (eq 'idle (psi-emacs-state-run-state state)))))
+
+(ert-deftest psi-status-string-includes-run-state ()
+  (let* ((state (psi-emacs--initialize-state nil))
+         (status (psi-emacs--status-string state)))
+    (should (string-match-p "psi \\[disconnected/starting/idle\\]" status))))
+
+(ert-deftest psi-status-string-reflects-current-run-state ()
+  (let ((state (psi-emacs--initialize-state nil)))
+    (setf (psi-emacs-state-run-state state) 'streaming)
+    (should (string-match-p "psi \\[disconnected/starting/streaming\\]"
+                            (psi-emacs--status-string state)))))
+
+(ert-deftest psi-status-diagnostics-includes-last-error-when-present ()
+  (let ((state (psi-emacs--initialize-state nil)))
+    (setf (psi-emacs-state-last-error state) "runtime/fail: boom")
+    (let ((status (psi-emacs--status-diagnostics-string state)))
+      (should (string-match-p "psi \\[disconnected/starting/idle\\]" status))
+      (should (string-match-p "last-error: runtime/fail: boom" status)))))
+
+(ert-deftest psi-watchdog-arms-when-entering-streaming ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-run-state psi-emacs--state) 'streaming)
+    (unwind-protect
+        (progn
+          (psi-emacs--arm-stream-watchdog psi-emacs--state)
+          (should (timerp (psi-emacs-state-stream-watchdog-timer psi-emacs--state)))
+          (should (numberp (psi-emacs-state-last-stream-progress-at psi-emacs--state))))
+      (psi-emacs--disarm-stream-watchdog psi-emacs--state))))
+
+(ert-deftest psi-watchdog-disarms-on-finalize ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-run-state psi-emacs--state) 'streaming)
+    (psi-emacs--arm-stream-watchdog psi-emacs--state)
+    (should (timerp (psi-emacs-state-stream-watchdog-timer psi-emacs--state)))
+    (psi-emacs--assistant-finalize "done")
+    (should-not (psi-emacs-state-stream-watchdog-timer psi-emacs--state))))
+
+(ert-deftest psi-watchdog-resets-on-assistant-delta ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-run-state psi-emacs--state) 'streaming)
+    (psi-emacs--arm-stream-watchdog psi-emacs--state)
+    (let ((first-timer (psi-emacs-state-stream-watchdog-timer psi-emacs--state))
+          (first-ts (psi-emacs-state-last-stream-progress-at psi-emacs--state)))
+      (psi-emacs--handle-rpc-event
+       '((:event . "assistant/delta") (:data . ((:text . "tick")))))
+      (should (timerp (psi-emacs-state-stream-watchdog-timer psi-emacs--state)))
+      (should-not (eq first-timer (psi-emacs-state-stream-watchdog-timer psi-emacs--state)))
+      (should (>= (psi-emacs-state-last-stream-progress-at psi-emacs--state) first-ts))
+      (psi-emacs--disarm-stream-watchdog psi-emacs--state))))
+
+(ert-deftest psi-watchdog-timeout-aborts-once-and-sets-error ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (let ((calls nil))
+      (cl-letf (((symbol-value 'psi-emacs--send-request-function)
+                 (lambda (_state op params &optional _callback)
+                   (push (list op params) calls))))
+        (setf (psi-emacs-state-run-state psi-emacs--state) 'streaming)
+        (psi-emacs--arm-stream-watchdog psi-emacs--state)
+        (psi-emacs--on-stream-watchdog-timeout (current-buffer) psi-emacs--state)
+        (psi-emacs--on-stream-watchdog-timeout (current-buffer) psi-emacs--state))
+      (setq calls (nreverse calls))
+      (should (equal '(("abort" nil)) calls))
+      (should (eq 'error (psi-emacs-state-run-state psi-emacs--state)))
+      (should-not (psi-emacs-state-stream-watchdog-timer psi-emacs--state))
+      (should (string-match-p "Error: Streaming stalled after" (buffer-string))))))
+
+(ert-deftest psi-watchdog-noop-when-not-streaming ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (let ((calls nil))
+      (cl-letf (((symbol-value 'psi-emacs--send-request-function)
+                 (lambda (_state op params &optional _callback)
+                   (push (list op params) calls))))
+        (setf (psi-emacs-state-run-state psi-emacs--state) 'idle)
+        (psi-emacs--on-stream-watchdog-timeout (current-buffer) psi-emacs--state))
+      (should (equal '() calls))
+      (should (eq 'idle (psi-emacs-state-run-state psi-emacs--state)))
+      (should (string= "" (buffer-string))))))
+
 (ert-deftest psi-killing-dedicated-buffer-terminates-only-owned-subprocess ()
   (let ((psi-emacs-command '("cat"))
         (psi-emacs--spawn-process-function #'psi-test--spawn-long-lived-process)
@@ -125,6 +216,17 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
+(ert-deftest psi-streaming-p-uses-explicit-run-state ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-assistant-in-progress psi-emacs--state) "legacy")
+    (setf (psi-emacs-state-run-state psi-emacs--state) 'idle)
+    (should-not (psi-emacs--streaming-p))
+    (setf (psi-emacs-state-assistant-in-progress psi-emacs--state) nil)
+    (setf (psi-emacs-state-run-state psi-emacs--state) 'streaming)
+    (should (psi-emacs--streaming-p))))
+
 (ert-deftest psi-send-routing-idle-and-streaming-steer-queue ()
   (with-temp-buffer
     (psi-emacs-mode)
@@ -135,11 +237,11 @@
           (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker 1 nil))
           (let ((calls (psi-test--capture-request-sends
                         (lambda ()
-                          (setf (psi-emacs-state-assistant-in-progress psi-emacs--state) nil)
+                          (setf (psi-emacs-state-run-state psi-emacs--state) 'idle)
                           (psi-emacs-send-from-buffer nil)
-                          (setf (psi-emacs-state-assistant-in-progress psi-emacs--state) "streaming")
                           (psi-emacs-send-from-buffer nil)
                           (psi-emacs-send-from-buffer '(4))))))
+            (should (eq 'streaming (psi-emacs-state-run-state psi-emacs--state)))
             (should (equal "prompt" (caar calls)))
             (should (equal '((:message . "hello")) (cadar calls)))
             (should (equal "prompt_while_streaming" (caadr calls)))
@@ -160,9 +262,9 @@
           (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker 1 nil))
           (let ((calls (psi-test--capture-request-sends
                         (lambda ()
-                          (setf (psi-emacs-state-assistant-in-progress psi-emacs--state) "streaming")
+                          (setf (psi-emacs-state-run-state psi-emacs--state) 'streaming)
                           (psi-emacs-queue-from-buffer)
-                          (setf (psi-emacs-state-assistant-in-progress psi-emacs--state) nil)
+                          (setf (psi-emacs-state-run-state psi-emacs--state) 'idle)
                           (psi-emacs-queue-from-buffer)))))
             (should (equal "prompt_while_streaming" (caar calls)))
             (should (equal '((:message . "queued") (:behavior . "queue")) (cadar calls)))
@@ -214,6 +316,7 @@
                      (lambda (_state op params &optional _callback)
                        (push (list op params) rpc-calls))))
             (psi-emacs-send-from-buffer nil)
+            (setf (psi-emacs-state-run-state psi-emacs--state) 'idle)
             (erase-buffer)
             (insert "/foo")
             (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker 1 nil))
@@ -286,6 +389,237 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
+(ert-deftest psi-idle-resume-parity-no-arg-routes-to-no-arg-handler-and-bypasses-prompt ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (let ((rpc-calls nil)
+              (no-arg-calls nil)
+              (path-calls nil))
+          (insert "/resume")
+          (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker 1 nil))
+          (let ((psi-emacs-enable-resume-parity t))
+            (cl-letf (((symbol-function 'psi-emacs--handle-idle-resume-parity-no-arg)
+                       (lambda (state)
+                         (push state no-arg-calls)
+                         (psi-emacs--append-assistant-message "parity-no-arg")))
+                      ((symbol-function 'psi-emacs--handle-idle-resume-parity-explicit-path)
+                       (lambda (_state session-path)
+                         (push session-path path-calls)))
+                      ((symbol-value 'psi-emacs--send-request-function)
+                       (lambda (_state op params &optional _callback)
+                         (push (list op params) rpc-calls))))
+              (psi-emacs-send-from-buffer nil)))
+          (should (= 1 (length no-arg-calls)))
+          (should (equal '() path-calls))
+          (should (string-match-p "Assistant: parity-no-arg" (buffer-string)))
+          (should (equal '() rpc-calls)))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
+(ert-deftest psi-idle-resume-parity-no-arg-queries-sessions-and-dispatches-switch-session ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (let ((rpc-calls nil)
+              (labels-seen nil))
+          (insert "/resume")
+          (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker 1 nil))
+          (let ((psi-emacs-enable-resume-parity t))
+            (cl-letf (((symbol-function 'completing-read)
+                       (lambda (_prompt collection &rest _args)
+                         (setq labels-seen (if (vectorp collection)
+                                               (append collection nil)
+                                             collection))
+                         (car labels-seen)))
+                      ((symbol-value 'psi-emacs--send-request-function)
+                       (lambda (_state op params &optional callback)
+                         (push (list op params) rpc-calls)
+                         (when (and callback (equal op "query_eql"))
+                           (funcall callback
+                                    `((:kind . :response)
+                                      (:ok . t)
+                                      (:op . "query_eql")
+                                      (:data . ((:result .
+                                                ((:psi.session/list .
+                                                  [((:psi.session-info/path . "/tmp/sessions/a.ndedn")
+                                                    (:psi.session-info/name . "Alpha")
+                                                    (:psi.session-info/first-message . "hello"))
+                                                   ((:psi.session-info/path . "/tmp/sessions/b.ndedn")
+                                                    (:psi.session-info/name . "")
+                                                    (:psi.session-info/first-message . "Beta first"))])))))))))))
+              (psi-emacs-send-from-buffer nil)))
+          (setq rpc-calls (nreverse rpc-calls))
+          (should (equal '("query_eql" "switch_session") (mapcar #'car rpc-calls)))
+          (should (equal '((:query . "[{:psi.session/list [:psi.session-info/path\n                        :psi.session-info/name\n                        :psi.session-info/first-message\n                        :psi.session-info/modified]}]"))
+                         (cadr (car rpc-calls))))
+          (should (equal '((:session-path . "/tmp/sessions/a.ndedn"))
+                         (cadr (cadr rpc-calls))))
+          (should-not (member "prompt" (mapcar #'car rpc-calls)))
+          (should (= 2 (length labels-seen)))
+          (should (string-match-p "^Alpha — /tmp/sessions/a\\.ndedn$" (car labels-seen))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
+(ert-deftest psi-idle-resume-parity-no-arg-selector-cancel-is-noop ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (let ((rpc-calls nil)
+              (selected-paths nil)
+              (before nil))
+          (insert "/resume")
+          (setq before (buffer-string))
+          (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker 1 nil))
+          (let ((psi-emacs-enable-resume-parity t))
+            (cl-letf (((symbol-function 'completing-read)
+                       (lambda (&rest _args)
+                         (signal 'quit nil)))
+                      ((symbol-function 'psi-emacs--handle-idle-resume-parity-explicit-path)
+                       (lambda (_state session-path)
+                         (push session-path selected-paths)))
+                      ((symbol-value 'psi-emacs--send-request-function)
+                       (lambda (_state op params &optional callback)
+                         (push (list op params) rpc-calls)
+                         (when (and callback (equal op "query_eql"))
+                           (funcall callback
+                                    '((:kind . :response)
+                                      (:ok . t)
+                                      (:op . "query_eql")
+                                      (:data . ((:result .
+                                                ((:psi.session/list .
+                                                  [((:psi.session-info/path . "/tmp/sessions/a.ndedn")
+                                                    (:psi.session-info/name . "Alpha")
+                                                    (:psi.session-info/first-message . "hello"))])))))))))))
+              (psi-emacs-send-from-buffer nil)))
+          (setq rpc-calls (nreverse rpc-calls))
+          (should (equal '("query_eql") (mapcar #'car rpc-calls)))
+          (should (equal '() selected-paths))
+          (should (string= before (buffer-string)))
+          (should-not (string-match-p "Assistant:" (buffer-string))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
+(ert-deftest psi-idle-resume-parity-explicit-path-dispatches-switch-session-and-bypasses-prompt ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (let ((rpc-calls nil)
+              (no-arg-calls nil))
+          (insert "  /resume  sessions/foo/bar  ")
+          (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker 1 nil))
+          (let ((psi-emacs-enable-resume-parity t))
+            (cl-letf (((symbol-function 'psi-emacs--handle-idle-resume-parity-no-arg)
+                       (lambda (_state)
+                         (push t no-arg-calls)))
+                      ((symbol-value 'psi-emacs--send-request-function)
+                       (lambda (_state op params &optional _callback)
+                         (push (list op params) rpc-calls))))
+              (psi-emacs-send-from-buffer nil)))
+          (setq rpc-calls (nreverse rpc-calls))
+          (should (equal '() no-arg-calls))
+          (should (equal '("switch_session") (mapcar #'car rpc-calls)))
+          (should (equal '((:session-path . "sessions/foo/bar"))
+                         (cadr (car rpc-calls))))
+          (should-not (member "prompt" (mapcar #'car rpc-calls))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
+(ert-deftest psi-resume-switch-success-resets-before-get-messages-and-replays-order ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (let ((rpc-calls nil)
+              (cleared-before-replay nil))
+          (insert "old transcript\n/resume sessions/new.ndedn")
+          (setf (psi-emacs-state-draft-anchor psi-emacs--state)
+                (copy-marker (+ (length "old transcript\n") 1) nil))
+          (psi-emacs--set-last-error psi-emacs--state "runtime/fail: old")
+          (puthash "stale-tool" (list :id "stale-tool" :stage "result" :text "stale")
+                   (psi-emacs-state-tool-rows psi-emacs--state))
+          (let ((psi-emacs-enable-resume-parity t))
+            (cl-letf (((symbol-value 'psi-emacs--send-request-function)
+                       (lambda (_state op params &optional callback)
+                         (push (list op params) rpc-calls)
+                         (cond
+                          ((and callback (equal op "switch_session"))
+                           (funcall callback
+                                    '((:kind . :response)
+                                      (:ok . t)
+                                      (:data . ((:session-id . "s-new"))))))
+                          ((and callback (equal op "get_messages"))
+                           (setq cleared-before-replay
+                                 (and (not (string-match-p "old transcript" (buffer-string)))
+                                      (null (psi-emacs-state-last-error psi-emacs--state))
+                                      (zerop (hash-table-count (psi-emacs-state-tool-rows psi-emacs--state)))))
+                           (funcall callback
+                                    '((:kind . :response)
+                                      (:ok . t)
+                                      (:data . ((:messages .
+                                                [((:role . :user) (:text . "First"))
+                                                 ((:role . :assistant) (:text . "Second"))]))))))))))
+              (psi-emacs-send-from-buffer nil)))
+          (setq rpc-calls (nreverse rpc-calls))
+          (should (equal '("switch_session" "get_messages") (mapcar #'car rpc-calls)))
+          (should cleared-before-replay)
+          (should (equal "User: First\nAssistant: Second\n" (buffer-string)))
+          (should (eq 'idle (psi-emacs-state-run-state psi-emacs--state))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
+(ert-deftest psi-switch-session-failure-does-not-trigger-success-rehydrate-side-effects ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (let ((rpc-calls nil))
+          (insert "keep me")
+          (puthash "keep-tool" (list :id "keep-tool" :stage "result" :text "keep")
+                   (psi-emacs-state-tool-rows psi-emacs--state))
+          (cl-letf (((symbol-value 'psi-emacs--send-request-function)
+                     (lambda (_state op params &optional _callback)
+                       (push (list op params) rpc-calls))))
+            (psi-emacs--handle-switch-session-response
+             psi-emacs--state
+             "sessions/missing.ndedn"
+             '((:kind . :error)
+               (:error-code . "request/not-found")
+               (:error-message . "session file not found"))))
+          (should (equal '() rpc-calls))
+          (should (string-prefix-p
+                   "keep me\nAssistant: Unable to switch session: session file not found\n"
+                   (buffer-string)))
+          (should (string-match-p
+                   "Error: Unable to switch session: session file not found"
+                   (buffer-string)))
+          (should (= 1 (hash-table-count (psi-emacs-state-tool-rows psi-emacs--state)))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
+(ert-deftest psi-switch-session-failure-sets-last-error-from-deterministic-message ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (progn
+          (psi-emacs--handle-switch-session-response
+           psi-emacs--state
+           "sessions/missing.ndedn"
+           '((:kind . :error)
+             (:error-code . "request/not-found")
+             (:error-message . "session file not found")))
+          (should (equal "Unable to switch session: session file not found"
+                         (psi-emacs-state-last-error psi-emacs--state)))
+          (should (string-match-p "Error: Unable to switch session: session file not found"
+                                  (buffer-string))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
 (ert-deftest psi-idle-new-slash-requests-new-session-and-resets-transcript ()
   (with-temp-buffer
     (psi-emacs-mode)
@@ -343,13 +677,16 @@
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
     (unwind-protect
         (let ((rpc-calls nil))
+          (psi-emacs--set-last-error psi-emacs--state "runtime/fail: boom")
+          (erase-buffer)
           (insert "/status")
           (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker 1 nil))
           (cl-letf (((symbol-value 'psi-emacs--send-request-function)
                      (lambda (_state op params &optional _callback)
                        (push (list op params) rpc-calls))))
             (psi-emacs-send-from-buffer nil))
-          (should (string-match-p "Assistant: psi \\[" (buffer-string)))
+          (should (string-match-p "Assistant: psi \\[disconnected/.*/idle\\]" (buffer-string)))
+          (should (string-match-p "last-error: runtime/fail: boom" (buffer-string)))
           (should (equal '() rpc-calls)))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
@@ -426,7 +763,7 @@
               (rpc-calls nil))
           (insert "/stream")
           (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker 1 nil))
-          (setf (psi-emacs-state-assistant-in-progress psi-emacs--state) "streaming")
+          (setf (psi-emacs-state-run-state psi-emacs--state) 'streaming)
           (cl-letf (((symbol-value 'psi-emacs--idle-slash-command-handler-function)
                      (lambda (_state message)
                        (push message slash-calls)
@@ -451,9 +788,11 @@
         (let ((calls (psi-test--capture-request-sends
                       (lambda ()
                         (setf (psi-emacs-state-assistant-in-progress psi-emacs--state) "streaming")
+                        (setf (psi-emacs-state-run-state psi-emacs--state) 'streaming)
                         (psi-emacs-abort)))))
           (should (equal '(("abort" nil)) calls))
-          (should-not (psi-emacs-state-assistant-in-progress psi-emacs--state)))
+          (should-not (psi-emacs-state-assistant-in-progress psi-emacs--state))
+          (should (eq 'idle (psi-emacs-state-run-state psi-emacs--state))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
@@ -465,6 +804,7 @@
         (progn
           (psi-emacs--handle-rpc-event
            '((:event . "assistant/delta") (:data . ((:text . "Hel")))))
+          (should (eq 'streaming (psi-emacs-state-run-state psi-emacs--state)))
           (psi-emacs--handle-rpc-event
            '((:event . "assistant/delta") (:data . ((:text . "lo")))))
           (should (equal "Hello" (psi-emacs-state-assistant-in-progress psi-emacs--state)))
@@ -472,6 +812,7 @@
           (psi-emacs--handle-rpc-event
            '((:event . "assistant/message") (:data . ((:text . "Hello world")))))
           (should-not (psi-emacs-state-assistant-in-progress psi-emacs--state))
+          (should (eq 'idle (psi-emacs-state-run-state psi-emacs--state)))
           (should (equal "Assistant: Hello world\n" (buffer-string))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
@@ -571,12 +912,42 @@
     (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
     (let ((client (psi-rpc-make-client :process-state 'running :transport-state 'handshaking)))
       (psi-emacs--on-rpc-state-change (current-buffer) client)
-      (should (string= "psi [handshaking/running] tools:collapsed" header-line-format))
+      (should (string= "psi [handshaking/running/idle] tools:collapsed" header-line-format))
       (setf (psi-rpc-client-transport-state client) 'ready)
       (psi-emacs--on-rpc-state-change (current-buffer) client)
-      (should (string= "psi [ready/running] tools:collapsed" header-line-format)))))
+      (should (string= "psi [ready/running/idle] tools:collapsed" header-line-format)))))
 
-(ert-deftest psi-rpc-error-event-goes-to-minibuffer-not-transcript ()
+(ert-deftest psi-reconnecting-run-state-transitions-to-idle-when-ready ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-run-state psi-emacs--state) 'reconnecting)
+    (let ((client (psi-rpc-make-client :process-state 'running :transport-state 'ready)))
+      (psi-emacs--on-rpc-state-change (current-buffer) client)
+      (should (eq 'idle (psi-emacs-state-run-state psi-emacs--state)))
+      (should (string= "psi [ready/running/idle] tools:collapsed" header-line-format)))))
+
+(ert-deftest psi-header-line-reflects-run-state-transitions ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (psi-emacs--set-run-state psi-emacs--state 'streaming)
+    (should (string= "psi [disconnected/starting/streaming] tools:collapsed" header-line-format))
+    (psi-emacs--set-run-state psi-emacs--state 'error)
+    (should (string= "psi [disconnected/starting/error] tools:collapsed" header-line-format))))
+
+(ert-deftest psi-error-line-upsert-replaces-previous ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (psi-emacs--set-last-error psi-emacs--state "first error")
+    (psi-emacs--set-last-error psi-emacs--state "second error")
+    (let ((buf (buffer-string)))
+      (should (string-match-p "Error: second error" buf))
+      (should-not (string-match-p "Error: first error" buf))
+      (should (= 1 (how-many "^Error:" (point-min) (point-max)))))))
+
+(ert-deftest psi-rpc-error-persists-in-transcript-and-sets-last-error ()
   (with-temp-buffer
     (psi-emacs-mode)
     (insert "existing\n")
@@ -588,8 +959,11 @@
         (psi-emacs--on-rpc-event
          (current-buffer)
          '((:event . "error") (:data . ((:code . "runtime/fail") (:message . "boom"))))))
-      (should (equal "existing\n" (buffer-string)))
+      (should (string-match-p "existing" (buffer-string)))
+      (should (string-match-p "Error: runtime/fail: boom" (buffer-string)))
       (should (= 1 (length messages)))
+      (should (equal "runtime/fail: boom" (psi-emacs-state-last-error psi-emacs--state)))
+      (should (eq 'error (psi-emacs-state-run-state psi-emacs--state)))
       (should (string-match-p "runtime/fail" (car messages))))))
 
 (ert-deftest psi-reconnect-cancels-when-user-declines-confirmation ()
@@ -618,6 +992,7 @@
           (cons (copy-marker (point-min) nil) (copy-marker (point-max) t)))
     (puthash "t1" (list :id "t1" :stage "result" :text "done")
              (psi-emacs-state-tool-rows psi-emacs--state))
+    (psi-emacs--set-last-error psi-emacs--state "old error")
     (let ((started nil)
           (stop-called nil))
       (setf (psi-emacs-state-rpc-client psi-emacs--state) (psi-rpc-make-client))
@@ -629,9 +1004,12 @@
         (psi-emacs-reconnect))
       (should stop-called)
       (should started)
+      (should (eq 'reconnecting (psi-emacs-state-run-state psi-emacs--state)))
       (should (string= "" (buffer-string)))
       (should-not (buffer-modified-p))
       (should-not (psi-emacs-state-assistant-in-progress psi-emacs--state))
+      (should-not (psi-emacs-state-last-error psi-emacs--state))
+      (should-not (psi-emacs-state-error-line-range psi-emacs--state))
       (should (zerop (hash-table-count (psi-emacs-state-tool-rows psi-emacs--state)))))))
 
 (ert-deftest psi-reconnect-does-not-auto-resume ()
@@ -671,7 +1049,7 @@
           (psi-emacs--on-rpc-state-change (current-buffer) client)
           (setf (psi-rpc-client-transport-state client) 'ready)
           (psi-emacs--on-rpc-state-change (current-buffer) client)
-          (should (string= "psi [ready/running] tools:collapsed" header-line-format)))
+          (should (string= "psi [ready/running/idle] tools:collapsed" header-line-format)))
 
         (insert "hello from smoke")
         (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker (point-min) nil))
