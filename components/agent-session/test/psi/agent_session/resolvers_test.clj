@@ -91,6 +91,30 @@
       (is (instance? java.time.Instant (:psi.agent-session/start-time result)))
       (is (instance? java.time.Instant (:psi.agent-session/current-time result))))))
 
+;; ── Git history bridge (cwd -> :git/context) ─────────────
+
+(deftest git-history-status-query-test
+  (testing "git.repo/status is queryable from session root via bridge resolver"
+    (let [result (q [:git.repo/status
+                     :git.repo/current-commit
+                     :git.repo/has-changes])]
+      (is (contains? #{:clean :modified :staged :error}
+                     (:git.repo/status result)))
+      (is (or (nil? (:git.repo/current-commit result))
+              (string? (:git.repo/current-commit result))))
+      (is (boolean? (:git.repo/has-changes result))))))
+
+(deftest git-history-commits-query-test
+  (testing "git.repo/commits returns commit entities via in-session eql"
+    (let [result  (q [:git.repo/commits
+                      :git.repo/has-history])
+          commits (:git.repo/commits result)]
+      (is (vector? commits))
+      (is (boolean? (:git.repo/has-history result)))
+      (when (seq commits)
+        (is (string? (:git.commit/sha (first commits))))
+        (is (string? (:git.commit/subject (first commits))))))))
+
 ;; ── Step 7 graph bridge — :psi.graph/* ───────────────────
 
 (deftest graph-bridge-resolver-count-test

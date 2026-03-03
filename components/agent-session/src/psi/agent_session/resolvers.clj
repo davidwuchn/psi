@@ -211,6 +211,8 @@
    [com.wsscode.pathom3.connect.indexes :as pci]
    [com.wsscode.pathom3.interface.eql :as p.eql]
    [psi.introspection.graph :as graph]
+   [psi.history.git :as git]
+   [psi.history.resolvers :as history-resolvers]
    [psi.memory.core :as memory]
    [psi.memory.resolvers :as memory-resolvers]
    [psi.query.registry :as registry]
@@ -1239,6 +1241,16 @@
    ::pco/output [:psi.agent-session/git-branch]}
   {:psi.agent-session/git-branch (git-branch-from-cwd cwd)})
 
+(pco/defresolver agent-session-git-context
+  "Bridge resolver: derive :git/context from :psi.agent-session/cwd so
+   history resolvers can be queried from in-session eql_query roots."
+  [{:keys [psi.agent-session/cwd]}]
+  {::pco/input  [:psi.agent-session/cwd]
+   ::pco/output [:git/context]}
+  (if (seq cwd)
+    {:git/context (git/create-context cwd)}
+    {}))
+
 (pco/defresolver agent-session-usage-input
   "Resolve cumulative input tokens across assistant messages in the session journal."
   [{:keys [psi/agent-session-ctx]}]
@@ -1393,6 +1405,7 @@
    ;; Session-derived usage/git attrs
    agent-session-cwd
    agent-session-git-branch
+   agent-session-git-context
    agent-session-usage-input
    agent-session-usage-output
    agent-session-usage-cache-read
@@ -1442,6 +1455,7 @@
    :psi.recursion/* attrs are queryable via agent-session/query-in."
   []
   (->> (concat all-resolvers
+               history-resolvers/all-resolvers
                memory-resolvers/all-resolvers
                recursion-resolvers/all-resolvers)
        vec
