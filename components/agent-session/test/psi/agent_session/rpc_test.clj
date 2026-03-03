@@ -6,6 +6,7 @@
    [psi.agent-session.commands :as commands]
    [psi.agent-session.core :as session]
    [psi.agent-session.rpc :as rpc]
+   [psi.agent-session.runtime :as runtime]
    [psi.tui.extension-ui :as ext-ui]))
 
 (defn- run-loop
@@ -488,6 +489,55 @@
         (run-loop input handler state 250)
         (is (true? @loop-called?)
             "run-agent-loop-fn must be called when dispatch returns nil")))))
+
+(deftest rpc-prompt-expands-skill-input-before-agent-loop-test
+  (testing "non-command /skill prompt is expanded through shared runtime path"
+    (let [skill-file   (java.io.File/createTempFile "psi-rpc-skill-" ".md")
+          _           (.deleteOnExit skill-file)
+          _           (spit skill-file "# Skill Body\nUse this carefully.")
+          skill       {:name "demo"
+                       :description "Demo skill"
+                       :file-path (.getAbsolutePath skill-file)
+                       :base-dir (.getParent skill-file)
+                       :source :path
+                       :disable-model-invocation false}
+          ctx         (session/create-context {:initial-session {:skills [skill]}})
+          captured    (atom nil)
+          state       (atom {:ready? true
+                             :pending {}
+                             :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
+                             :run-agent-loop-fn (fn [_ai-ctx _ctx _agent-ctx _ai-model new-messages _opts]
+                                                  (reset! captured (-> new-messages first :content first :text))
+                                                  {:role "assistant"
+                                                   :content [{:type :text :text "ok"}]})})
+          handler     (rpc/make-session-request-handler ctx)
+          input       (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                           "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/skill:demo apply this\"}}\n")]
+      (run-loop input handler state 250)
+      (is (string? @captured))
+      (is (str/includes? @captured "<skill name=\"demo\""))
+      (is (str/includes? @captured "# Skill Body"))
+      (is (str/includes? @captured "apply this"))
+      (is (not= "/skill:demo apply this" @captured)))))
+
+(deftest rpc-prompt-passes-resolved-api-key-to-agent-loop-test
+  (testing "non-command prompt forwards runtime-resolved api-key to run-loop opts"
+    (let [ctx        (session/create-context)
+          captured   (atom nil)
+          state      (atom {:ready? true
+                            :pending {}
+                            :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
+                            :run-agent-loop-fn (fn [_ai-ctx _ctx _agent-ctx _ai-model _new-messages opts]
+                                                 (reset! captured opts)
+                                                 {:role "assistant"
+                                                  :content [{:type :text :text "ok"}]})})
+          handler    (rpc/make-session-request-handler ctx)
+          input      (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                          "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"plain text\"}}\n")]
+      (with-redefs [runtime/resolve-api-key-in (fn [_ctx _model] "test-api-key")
+                    commands/dispatch (fn [_ctx _text _opts] nil)]
+        (run-loop input handler state 250)
+        (is (= "test-api-key" (:api-key @captured)))))))
 
 (deftest rpc-prompt-handle-command-result-types-test
   (testing "text-command-emits-assistant-message with session/updated and footer/updated"

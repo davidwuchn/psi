@@ -14,7 +14,7 @@
    [psi.agent-session.commands :as commands]
    [psi.agent-session.core :as session]
    [psi.agent-session.executor :as executor]
-   [psi.agent-session.persistence :as persist]
+   [psi.agent-session.runtime :as runtime]
    [psi.ai.models :as ai-models]
    [psi.tui.extension-ui :as ext-ui]))
 
@@ -295,7 +295,7 @@
     (or params {})))
 
 (defn- req-arg!
-  [request params k pred desc]
+  [_request params k pred desc]
   (let [v (get params k)]
     (when-not (pred v)
       (throw (ex-info (str "invalid request parameter " k ": " desc)
@@ -658,27 +658,25 @@
                                                 (throw (ex-info "session model is not configured"
                                                                 {:error-code "request/invalid-params"})))
                                    oauth-ctx  (:oauth-ctx ctx)
-                                   user-msg   {:role      "user"
-                                               :content   (cond-> [{:type :text :text message}]
-                                                            (seq images) (into images))
-                                               :timestamp (java.time.Instant/now)}
-                                   ;; Journal the user message before dispatch so slash commands
-                                   ;; leave a trace in session history regardless of command match.
-                                   _          (session/journal-append-in! ctx (persist/message-entry user-msg))
                                    cmd-result (commands/dispatch ctx message {:oauth-ctx oauth-ctx
                                                                               :ai-model  ai-model})]
                                (if (some? cmd-result)
-                                 ;; Slash command matched — handle result, skip agent loop
+                                 ;; Slash command matched — journal raw input and skip agent loop.
                                  (do
+                                   (runtime/journal-user-message-in! ctx message images)
                                    (handle-command-result! cmd-result emit!)
                                    (emit! "session/updated" (session-updated-payload ctx))
                                    (emit! "footer/updated" (footer-updated-payload ctx)))
-                                 ;; Not a command — run normal agent loop
+                                 ;; Not a command — run normal agent loop via shared runtime path.
                                  (let [_        (emit! "session/updated" (session-updated-payload ctx))
                                        _        (emit! "footer/updated" (footer-updated-payload ctx))
-                                       result   (run-loop-fn nil ctx (:agent-ctx ctx) ai-model [user-msg]
-                                                             {:turn-ctx-atom  (:turn-ctx-atom ctx)
-                                                              :progress-queue progress-q})]
+                                       {:keys [user-message]} (runtime/prepare-user-message-in! ctx message images)
+                                       api-key  (runtime/resolve-api-key-in ctx ai-model)
+                                       result   (runtime/run-agent-loop-in!
+                                                 ctx nil ai-model [user-message]
+                                                 {:run-loop-fn   run-loop-fn
+                                                  :api-key       api-key
+                                                  :progress-queue progress-q})]
                                    (emit-progress-queue! progress-q emit!)
                                    (emit! "assistant/message"
                                           (cond-> {:role    (:role result)

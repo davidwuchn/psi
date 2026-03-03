@@ -42,12 +42,11 @@
    [taoensso.timbre :as timbre]
    [psi.agent-session.commands :as commands]
    [psi.agent-session.core :as session]
-   [psi.agent-session.executor :as executor]
-   [psi.agent-session.persistence :as persist]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.prompt-templates :as pt]
    [psi.agent-session.rpc :as rpc]
+   [psi.agent-session.runtime :as runtime]
    [psi.agent-session.skills :as skills]
    [psi.agent-session.system-prompt :as sys-prompt]
    [psi.agent-session.tools :as tools]
@@ -307,97 +306,83 @@
 ;; select-login-provider moved to psi.agent-session.commands
 
 ;; ============================================================
-;; Prompt template expansion
-;; ============================================================
-
-(defn- expand-input
-  "Expand user input through skills (/skill:name) or prompt templates (/name).
-   Returns the (possibly expanded) text to send to the agent.
-   Extension commands are excluded — they are handled by the command dispatch."
-  [ctx text]
-  (let [sd            (session/get-session-data-in ctx)
-        loaded-skills (:skills sd)
-        templates     (:prompt-templates sd)
-        commands      (ext/command-names-in (:extension-registry ctx))]
-    ;; Try skill expansion first (/skill:name)
-    (if-let [skill-result (skills/invoke-skill loaded-skills text)]
-      (do
-        (println (str "[Skill: " (:skill-name skill-result) "]\n"))
-        (:content skill-result))
-      ;; Then try prompt template expansion (/name)
-      (if-let [tpl-result (pt/invoke-template templates commands text)]
-        (do
-          (println (str "[Template: " (:source-template tpl-result) "]\n"))
-          (:content tpl-result))
-        text))))
-
-;; ============================================================
 ;; Core: one prompt → response cycle
 ;; ============================================================
 
-(defn- resolve-api-key
-  "Resolve the API key for the current model's provider via OAuth context.
-   Returns the key string, or nil (provider falls back to env var)."
-  [oauth-ctx ai-model]
-  (when oauth-ctx
-    (oauth/get-api-key oauth-ctx (:provider ai-model))))
+(defn- print-expansion-banner!
+  [expansion]
+  (when expansion
+    (case (:kind expansion)
+      :skill
+      (println (str "[Skill: " (:name expansion) "]\n"))
 
-(defn- usage->context-tokens
-  "Best-effort context token count from an assistant usage map.
-   Returns nil when usage is missing or unknown."
-  [usage]
-  (when (map? usage)
-    (let [input  (or (:input-tokens usage) 0)
-          output (or (:output-tokens usage) 0)
-          read   (or (:cache-read-tokens usage) 0)
-          write  (or (:cache-write-tokens usage) 0)
-          total  (or (:total-tokens usage)
-                     (+ input output read write))]
-      (when (and (number? total) (pos? total))
-        total))))
+      :template
+      (println (str "[Template: " (:name expansion) "]\n"))
 
-(defn- update-context-usage-from-result!
-  "Update session context usage from a completed assistant result when usage is available.
-   Keeps context tokens nil when providers do not return reliable usage."
-  [ctx ai-model result]
-  (let [tokens (usage->context-tokens (:usage result))
-        window (:context-window ai-model)]
-    (when (and (some? tokens) (number? window) (pos? window))
-      (session/update-context-usage-in! ctx tokens window))))
-
-(defn- safe-recover-memory!
-  [query-text]
-  (try
-    (memory-runtime/recover-for-query! query-text)
-    (catch Exception _
-      nil)))
-
-(defn- safe-remember-session-message!
-  [ctx msg]
-  (try
-    (memory-runtime/remember-session-message!
-     msg
-     {:session-id (:session-id (session/get-session-data-in ctx))})
-    (catch Exception _
       nil)))
 
 (defn- run-prompt!
   "Send `text` to the agent and block until done, printing the response.
-   Expands prompt templates before sending."
-  [ctx ai-ctx ai-model oauth-ctx text]
-  (let [expanded (expand-input ctx text)
-        _        (safe-recover-memory! expanded)
-        user-msg {:role      "user"
-                  :content   [{:type :text :text expanded}]
-                  :timestamp (java.time.Instant/now)}
-        _        (session/journal-append-in! ctx (persist/message-entry user-msg))
-        _        (safe-remember-session-message! ctx user-msg)
-        api-key  (resolve-api-key oauth-ctx ai-model)
-        result   (executor/run-agent-loop! ai-ctx ctx (:agent-ctx ctx) ai-model [user-msg]
-                                           {:turn-ctx-atom (:turn-ctx-atom ctx)
-                                            :api-key       api-key})]
-    (update-context-usage-from-result! ctx ai-model result)
+   Uses shared runtime prompt preparation for parity with RPC/TUI."
+  [ctx ai-ctx ai-model text]
+  (let [{:keys [user-message expansion]} (runtime/prepare-user-message-in! ctx text)
+        _       (print-expansion-banner! expansion)
+        api-key (runtime/resolve-api-key-in ctx ai-model)
+        result  (runtime/run-agent-loop-in! ctx ai-ctx ai-model [user-message]
+                                            {:api-key api-key})]
     (print-assistant-message result)))
+
+(defn- bootstrap-runtime-session!
+  "Create and bootstrap a live session context shared by CLI/TUI/RPC modes.
+
+   Options:
+   - :event-queue optional TUI/RPC event queue"
+  [ai-model {:keys [event-queue]}]
+  (let [oauth-ctx  (oauth/create-context)
+        templates  (pt/discover-templates)
+        {:keys [skills diagnostics]} (skills/discover-skills)
+        _          (doseq [d diagnostics]
+                     (timbre/warn "Skill" (:type d) ":" (:message d) (:path d)))
+        cwd        (System/getProperty "user.dir")
+        ctx-files  (sys-prompt/discover-context-files cwd)
+        system-prompt (sys-prompt/build-system-prompt
+                       {:cwd           cwd
+                        :context-files ctx-files
+                        :skills        skills})
+        developer-prompt (developer-prompt-from-env)
+        recursion-ctx (recursion/create-context)
+        _          (recursion/register-hooks-in! recursion-ctx)
+        ctx        (session/create-context
+                    {:initial-session {:model {:provider  (name (:provider ai-model))
+                                               :id        (:id ai-model)
+                                               :reasoning (:supports-reasoning ai-model)}
+                                       :system-prompt   system-prompt}
+                     :event-queue event-queue
+                     :oauth-ctx oauth-ctx
+                     :recursion-ctx recursion-ctx})
+        ext-paths  (ext/discover-extension-paths [] cwd)
+        eql-tool   (tools/make-eql-query-tool (fn [q] (session/query-in ctx q)))
+        summary    (session/bootstrap-session-in!
+                    ctx {:register-global-query? false
+                         :base-tools             (conj (vec tools/all-tools) eql-tool)
+                         :system-prompt          system-prompt
+                         :developer-prompt       developer-prompt
+                         :developer-prompt-source (if developer-prompt :env :fallback)
+                         :templates              templates
+                         :skills                 skills
+                         :extension-paths        ext-paths})
+        _          (introspection/register-resolvers!)
+        _          (memory-runtime/sync-memory-layer! {:cwd cwd})]
+    (doseq [{:keys [path error]} (:extension-errors summary)]
+      (timbre/warn "Extension error:" path error))
+    (when (pos? (:extension-loaded-count summary))
+      (timbre/debug "Extensions loaded:" (:extension-loaded-count summary)))
+    {:ctx       ctx
+     :oauth-ctx oauth-ctx
+     :templates templates
+     :skills    skills
+     :summary   summary
+     :cwd       cwd}))
 
 ;; ============================================================
 ;; Main prompt loop
@@ -410,52 +395,7 @@
   (let [ai-model  (resolve-model model-key)
         ;; ai context: nil signals the executor to use the public ai/stream-response API
         ai-ctx    nil
-        ;; OAuth credential store (file-backed, auto-refresh)
-        oauth-ctx (oauth/create-context)
-        ;; Discover prompt templates from global + project dirs
-        templates (pt/discover-templates)
-        ;; Discover skills from global + project dirs
-        {:keys [skills diagnostics]} (skills/discover-skills)
-        _         (doseq [d diagnostics]
-                    (timbre/warn "Skill" (:type d) ":" (:message d) (:path d)))
-        ;; Build system prompt with context files and skills
-        cwd       (System/getProperty "user.dir")
-        ctx-files (sys-prompt/discover-context-files cwd)
-        system-prompt (sys-prompt/build-system-prompt
-                       {:cwd           cwd
-                        :context-files ctx-files
-                        :skills        skills})
-        developer-prompt (developer-prompt-from-env)
-        ;; session context — agent-core + statechart + extension registry
-        recursion-ctx (recursion/create-context)
-        _         (recursion/register-hooks-in! recursion-ctx)
-        ctx      (session/create-context
-                  {:initial-session {:model {:provider (name (:provider ai-model))
-                                             :id       (:id ai-model)
-                                             :reasoning (:supports-reasoning ai-model)}
-                                     :system-prompt   system-prompt}
-                   :oauth-ctx oauth-ctx
-                   :recursion-ctx recursion-ctx})
-        ext-paths (ext/discover-extension-paths [] cwd)]
-    ;; Reusable bootstrap: session file, query graph, base tools, system prompt,
-    ;; mutation-driven startup loading, extension tool merge.
-    ;; eql_query tool closes over ctx for live session introspection.
-    (let [eql-tool (tools/make-eql-query-tool (fn [q] (session/query-in ctx q)))
-          summary  (session/bootstrap-session-in!
-                    ctx {:register-global-query? false
-                         :base-tools             (conj (vec tools/all-tools) eql-tool)
-                         :system-prompt          system-prompt
-                         :developer-prompt       developer-prompt
-                         :developer-prompt-source (if developer-prompt :env :fallback)
-                         :templates              templates
-                         :skills                 skills
-                         :extension-paths        ext-paths})
-          _       (introspection/register-resolvers!)
-          _       (memory-runtime/sync-memory-layer! {:cwd cwd})]
-      (doseq [{:keys [path error]} (:extension-errors summary)]
-        (timbre/warn "Extension error:" path error))
-      (when (pos? (:extension-loaded-count summary))
-        (timbre/debug "Extensions loaded:" (:extension-loaded-count summary))))
+        {:keys [ctx oauth-ctx templates skills]} (bootstrap-runtime-session! ai-model {})]
     ;; Expose state for nREPL introspection
     (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model
                            :oauth-ctx oauth-ctx})
@@ -468,12 +408,15 @@
           (let [trimmed (str/trim line)
                 result  (when-not (str/blank? trimmed)
                           (commands/dispatch ctx trimmed cmd-opts))]
+            (when result
+              ;; Keep command inputs in the session journal for parity with RPC transport.
+              (runtime/journal-user-message-in! ctx trimmed))
             (cond
               (nil? result)
               (if (str/blank? trimmed)
                 (recur)
                 (do (try
-                      (run-prompt! ctx ai-ctx ai-model oauth-ctx trimmed)
+                      (run-prompt! ctx ai-ctx ai-model trimmed)
                       (catch Exception e
                         (println (str "\n[Error: " (ex-message e) "]\n"))))
                     (recur)))
@@ -538,49 +481,10 @@
   [model-key]
   (let [ai-model  (resolve-model model-key)
         ai-ctx    nil
-        oauth-ctx (oauth/create-context)
         event-queue (java.util.concurrent.LinkedBlockingQueue.)
-        templates (pt/discover-templates)
-        {:keys [skills diagnostics]} (skills/discover-skills)
-        _         (doseq [d diagnostics]
-                    (timbre/warn "Skill" (:type d) ":" (:message d) (:path d)))
-        cwd       (System/getProperty "user.dir")
-        ctx-files (sys-prompt/discover-context-files cwd)
-        system-prompt (sys-prompt/build-system-prompt
-                       {:cwd           cwd
-                        :context-files ctx-files
-                        :skills        skills})
-        developer-prompt (developer-prompt-from-env)
-        recursion-ctx (recursion/create-context)
-        _         (recursion/register-hooks-in! recursion-ctx)
-        ctx       (session/create-context
-                   {:initial-session {:model {:provider (name (:provider ai-model))
-                                              :id       (:id ai-model)
-                                              :reasoning (:supports-reasoning ai-model)}
-                                      :system-prompt   system-prompt}
-                    :event-queue event-queue
-                    :oauth-ctx oauth-ctx
-                    :recursion-ctx recursion-ctx})
-        ext-paths (ext/discover-extension-paths [] cwd)
-        ;; Reusable bootstrap: session file, query graph, base tools, system prompt,
-        ;; mutation-driven startup loading, extension tool merge.
-        ;; eql_query tool closes over ctx for live session introspection.
-        eql-tool  (tools/make-eql-query-tool (fn [q] (session/query-in ctx q)))
-        summary   (session/bootstrap-session-in!
-                   ctx {:register-global-query? false
-                        :base-tools             (conj (vec tools/all-tools) eql-tool)
-                        :system-prompt          system-prompt
-                        :developer-prompt       developer-prompt
-                        :developer-prompt-source (if developer-prompt :env :fallback)
-                        :templates              templates
-                        :skills                 skills
-                        :extension-paths        ext-paths})
-        _         (introspection/register-resolvers!)
-        _         (memory-runtime/sync-memory-layer! {:cwd cwd})
-        _         (doseq [{:keys [path error]} (:extension-errors summary)]
-                    (timbre/warn "Extension error:" path error))
-        _         (when (pos? (:extension-loaded-count summary))
-                    (timbre/debug "Extensions loaded:" (:extension-loaded-count summary)))
+        {:keys [ctx oauth-ctx cwd]} (bootstrap-runtime-session!
+                                     ai-model
+                                     {:event-queue event-queue})
 
         ;; Expose state for nREPL introspection
         _         (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model
@@ -616,6 +520,9 @@
                       (if (:pending-login @session-state)
                         nil  ;; fall through to run-agent-fn! for login code
                         (let [result (commands/dispatch ctx text cmd-opts)]
+                          (when result
+                            ;; Keep command inputs in the session journal for parity with RPC/CLI.
+                            (runtime/journal-user-message-in! ctx text))
                           (when (= :login-start (:type result))
                             (if (:uses-callback-server result)
                               ;; Callback-server: start async completion in background.
@@ -660,22 +567,12 @@
                             :else
                             (future
                               (try
-                                (let [expanded (expand-input ctx text)
-                                      _        (safe-recover-memory! expanded)
-                                      user-msg {:role      "user"
-                                                :content   [{:type :text :text expanded}]
-                                                :timestamp (java.time.Instant/now)}
-                                      _        (session/journal-append-in!
-                                                ctx (persist/message-entry user-msg))
-                                      _        (safe-remember-session-message! ctx user-msg)
-                                      api-key  (resolve-api-key oauth-ctx ai-model)
-                                      result   (executor/run-agent-loop!
-                                                ai-ctx ctx (:agent-ctx ctx)
-                                                ai-model [user-msg]
-                                                {:turn-ctx-atom  (:turn-ctx-atom ctx)
-                                                 :api-key        api-key
+                                (let [{:keys [user-message]} (runtime/prepare-user-message-in! ctx text)
+                                      api-key  (runtime/resolve-api-key-in ctx ai-model)
+                                      result   (runtime/run-agent-loop-in!
+                                                ctx ai-ctx ai-model [user-message]
+                                                {:api-key api-key
                                                  :progress-queue queue})]
-                                  (update-context-usage-from-result! ctx ai-model result)
                                   (.put queue {:kind :done :result result}))
                                 (catch Exception e
                                   (.put queue {:kind :error :message (ex-message e)})))))))]
@@ -713,47 +610,7 @@
   [model-key]
   (let [ai-model  (resolve-model model-key)
         boot      (binding [*out* *err*]
-                    (let [oauth-ctx (oauth/create-context)
-                          templates (pt/discover-templates)
-                          {:keys [skills diagnostics]} (skills/discover-skills)
-                          _         (doseq [d diagnostics]
-                                      (timbre/warn "Skill" (:type d) ":" (:message d) (:path d)))
-                          cwd       (System/getProperty "user.dir")
-                          ctx-files (sys-prompt/discover-context-files cwd)
-                          system-prompt (sys-prompt/build-system-prompt
-                                         {:cwd           cwd
-                                          :context-files ctx-files
-                                          :skills        skills})
-                          developer-prompt (developer-prompt-from-env)
-                          recursion-ctx (recursion/create-context)
-                          _         (recursion/register-hooks-in! recursion-ctx)
-                          ctx       (session/create-context
-                                     {:initial-session {:model {:provider (name (:provider ai-model))
-                                                                :id       (:id ai-model)
-                                                                :reasoning (:supports-reasoning ai-model)}
-                                                        :system-prompt   system-prompt}
-                                      :oauth-ctx oauth-ctx
-                                      :recursion-ctx recursion-ctx})
-                          ext-paths (ext/discover-extension-paths [] cwd)
-                          eql-tool  (tools/make-eql-query-tool (fn [q] (session/query-in ctx q)))
-                          summary   (session/bootstrap-session-in!
-                                     ctx {:register-global-query? false
-                                          :base-tools             (conj (vec tools/all-tools) eql-tool)
-                                          :system-prompt          system-prompt
-                                          :developer-prompt       developer-prompt
-                                          :developer-prompt-source (if developer-prompt :env :fallback)
-                                          :templates              templates
-                                          :skills                 skills
-                                          :extension-paths        ext-paths})
-                          _         (introspection/register-resolvers!)
-                          _         (memory-runtime/sync-memory-layer! {:cwd cwd})]
-                      (doseq [{:keys [path error]} (:extension-errors summary)]
-                        (timbre/warn "Extension error:" path error))
-                      (when (pos? (:extension-loaded-count summary))
-                        (timbre/debug "Extensions loaded:" (:extension-loaded-count summary)))
-                      {:ctx ctx
-                       :oauth-ctx oauth-ctx
-                       :cwd cwd}))
+                    (bootstrap-runtime-session! ai-model {}))
         ctx       (:ctx boot)
         oauth-ctx (:oauth-ctx boot)
         state     (atom {:handshake-server-info-fn (fn [] (rpc/session->handshake-server-info ctx))
