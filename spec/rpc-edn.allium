@@ -199,6 +199,13 @@ value UiNotificationPayload {
 }
 
 value FooterUpdatedPayload {
+    -- Canonical cross-frontend footer view payload.
+    -- Ownership: rpc-edn defines the transport shape; frontend specs consume it:
+    --   default-footer.allium -> footer/FooterView pathLine|statsLine|statusLine?
+    --   emacs-footer.allium   -> deterministic single-line projection flattening
+    --
+    -- Assumption (story D2): this 3-line shape is canonical for footer/updated.
+    -- Trade-off (story D5): protocol contract clarity now, runtime behavior changes deferred.
     pathLine: String
     statsLine: String
     statusLine: String?
@@ -209,6 +216,31 @@ value ErrorEventPayload {
     errorMessage: String
     id: String?
     op: String?
+}
+
+rule FooterUpdatedPayloadCanonicalAcrossFrontends {
+    -- Canonical relationship for footer parity specs.
+    when: EventSent(endpoint, frame: EdnFrame)
+
+    requires: frame.kind = event
+    requires: frame.event = "footer/updated"
+
+    ensures: EventPayloadType(frame.data) = FooterUpdatedPayload
+    ensures: CanonicalFooterPayloadConsumer("default-footer") = FooterUpdatedPayload
+    ensures: CanonicalFooterPayloadConsumer("emacs-footer") = FooterUpdatedPayload
+}
+
+rule FooterPayloadSpecConsistencyGuard {
+    -- Lightweight cross-spec guard so canonical footer payload fields stay aligned.
+    when: FooterSpecConsistencyCheckRequested()
+
+    ensures: FooterPayloadCanonicalFields() = ["pathLine", "statsLine", "statusLine?"]
+    ensures: EventTopicPayload("footer/updated") = FooterUpdatedPayload
+    ensures: EventPayloadRequiredKeysFor("footer/updated") = ["path-line", "stats-line"]
+
+    ensures: ContractFieldSet("default-footer", "FooterView") = FooterPayloadCanonicalFields()
+    ensures: ContractFieldSet("emacs-footer", "EmacsFooterProjection.canonical") = FooterPayloadCanonicalFields()
+    ensures: ContractUsesPayload("emacs-frontend", "footer/updated", FooterUpdatedPayload)
 }
 
 ------------------------------------------------------------
