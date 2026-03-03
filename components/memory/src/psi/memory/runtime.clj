@@ -68,6 +68,108 @@
                            (vec))
      :domain-coverage (:domain-coverage cgraph)}))
 
+(defn- record-source
+  [record]
+  (or (get-in record [:provenance :source])
+      (get-in record [:provenance :source-type])))
+
+(defn- history-record?
+  [record]
+  (contains? #{:history :git} (record-source record)))
+
+(defn- existing-history-shas
+  [memory-ctx]
+  (->> (memory/get-state-in memory-ctx)
+       :records
+       (keep (fn [record]
+               (when (history-record? record)
+                 (or (get-in record [:provenance :commitSha])
+                     (get-in record [:provenance :sha])))))
+       set))
+
+(defn- parse-commit-date
+  [v]
+  (try
+    (some-> v java.time.Instant/parse)
+    (catch Exception _
+      nil)))
+
+(defn- commit->tags
+  [commit]
+  (let [symbols (set (or (:git.commit/symbols commit) #{}))]
+    (cond-> [:history :git :commit]
+      (contains? symbols "λ") (conj :learning)
+      (contains? symbols "Δ") (conj :delta))))
+
+(defn- commit->content
+  [{:git.commit/keys [sha date author email subject symbols]}]
+  (let [symbols-text (->> symbols sort (str/join " "))]
+    (str (or subject "")
+         "\nsha: " (or sha "")
+         "\ndate: " (or date "")
+         "\nauthor: " (str/trim (str (or author "") " <" (or email "") ">"))
+         (when-not (str/blank? symbols-text)
+           (str "\nsymbols: " symbols-text)))))
+
+(defn ingest-git-history-in!
+  "Ingest recent git commits from `git-ctx` into isolated `memory-ctx`.
+
+   Records are stored as :git-commit entries with :source :history and
+   deduplicated by commit SHA in provenance (:commitSha).
+
+   Options:
+   - :n — max commits to ingest from git log (default 200)
+
+   Returns a summary map with import/skip counts."
+  ([memory-ctx git-ctx]
+   (ingest-git-history-in! memory-ctx git-ctx {}))
+  ([memory-ctx git-ctx {:keys [n] :or {n 200}}]
+   (try
+     (let [commits (vec (git/log git-ctx {:n n}))
+           now     (java.time.Instant/now)
+           result  (reduce (fn [{:keys [seen] :as acc} commit]
+                             (let [sha (:git.commit/sha commit)]
+                               (cond
+                                 (str/blank? sha)
+                                 (update acc :skipped-count inc)
+
+                                 (contains? seen sha)
+                                 (update acc :skipped-count inc)
+
+                                 :else
+                                 (let [remember-result
+                                       (memory/remember-in! memory-ctx
+                                                           {:content-type :git-commit
+                                                            :content      (commit->content commit)
+                                                            :tags         (commit->tags commit)
+                                                            :timestamp    (or (parse-commit-date (:git.commit/date commit))
+                                                                              now)
+                                                            :provenance   {:source :history
+                                                                           :source-type :git
+                                                                           :commitSha sha
+                                                                           :author (:git.commit/author commit)
+                                                                           :email (:git.commit/email commit)}})]
+                                   (if (:ok? remember-result)
+                                     (-> acc
+                                         (update :seen conj sha)
+                                         (update :imported-count inc))
+                                     (update acc :error-count inc))))))
+                           {:seen (existing-history-shas memory-ctx)
+                            :imported-count 0
+                            :skipped-count 0
+                            :error-count 0}
+                           commits)]
+       (-> result
+           (dissoc :seen)
+           (assoc :ok? true
+                  :seen-count (count commits)
+                  :memory-entry-count (get-in (memory/get-state-in memory-ctx)
+                                              [:index-stats :entry-count]))))
+     (catch Exception e
+       {:ok? false
+        :error :git-history-ingest-failed
+        :message (ex-message e)}))))
+
 (defn- build-global-query-context
   []
   (let [qctx (query/create-query-context)]
@@ -85,17 +187,21 @@
 
    - activates memory layer with global query registry snapshot
    - captures capability graph snapshot/delta when graph is stable
+   - ingests git history commit summaries into memory records
 
    Options:
    - :cwd — repository root used for git-history activation gate
+   - :history-commit-limit — max git commits imported into memory (default 200)
 
-   Returns {:activation ... :capture ... :capability-graph ...}."
+   Returns {:activation ... :capture ... :history-sync ... :capability-graph ...}."
   ([]
    (sync-memory-layer! {}))
-  ([{:keys [cwd]}]
+  ([{:keys [cwd history-commit-limit]
+     :or   {history-commit-limit 200}}]
    (let [capability-graph (current-capability-graph)
          query-ctx        (build-global-query-context)
          git-ctx          (git/create-context (or cwd (System/getProperty "user.dir")))
+         memory-ctx       (memory/global-context)
          activation       (memory/activate! {:query-ctx query-ctx
                                              :git-ctx git-ctx
                                              :capability-graph-status (:status capability-graph)})
@@ -104,9 +210,15 @@
                             {:ok? false
                              :changed? false
                              :error :graph-not-ready
-                             :graph-status (:status capability-graph)})]
+                             :graph-status (:status capability-graph)})
+         history-sync     (if (:ready? activation)
+                            (ingest-git-history-in! memory-ctx git-ctx {:n history-commit-limit})
+                            {:ok? false
+                             :skipped? true
+                             :reason :memory-not-ready})]
      {:activation activation
       :capture capture
+      :history-sync history-sync
       :capability-graph capability-graph})))
 
 (defn- block->text
