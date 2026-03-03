@@ -1,7 +1,14 @@
 (ns psi.agent-session.oauth.core-test
   (:require [clojure.test :refer [deftest is testing]]
             [psi.agent-session.oauth.core :as oauth]
-            [psi.agent-session.oauth.store :as store]))
+            [psi.agent-session.oauth.store :as store])
+  (:import [java.nio.file Files]
+           [java.nio.file.attribute FileAttribute]))
+
+(defn- temp-auth-path []
+  (let [dir (str (Files/createTempDirectory "psi-oauth-core-test-"
+                                            (make-array FileAttribute 0)))]
+    (str dir "/auth.json")))
 
 (deftest login-test
   ;; Login stores credentials via the stub provider
@@ -57,7 +64,19 @@
 
   (testing "returns nil when no auth configured"
     (let [ctx (oauth/create-null-context)]
-      (is (nil? (oauth/get-api-key ctx :nonexistent))))))
+      (is (nil? (oauth/get-api-key ctx :nonexistent)))))
+
+  (testing "reloads file-backed store so cross-process updates are visible"
+    (let [auth-path (temp-auth-path)
+          writer-store (store/create-store {:path auth-path})
+          reader-store (store/create-store {:path auth-path})
+          reader-ctx   {:store reader-store}]
+      (store/set-credential! writer-store :anthropic {:type :api-key :key "k-1"})
+      (is (= "k-1" (oauth/get-api-key reader-ctx :anthropic)))
+
+      (store/set-credential! writer-store :anthropic {:type :api-key :key "k-2"})
+      (is (= "k-2" (oauth/get-api-key reader-ctx :anthropic)))
+      (is (= "k-2" (:key (store/get-credential reader-store :anthropic)))))))
 
 (deftest refresh-token-test
   (testing "refresh updates expired credential"

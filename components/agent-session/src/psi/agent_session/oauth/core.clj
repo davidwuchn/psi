@@ -158,9 +158,14 @@
 
 (defn get-api-key
   "Resolve API key for a provider. Auto-refreshes expired OAuth tokens.
-   Returns the API key string or nil."
+   Returns the API key string or nil.
+
+   Reloads backing storage first so multiple psi processes (CLI/TUI/RPC)
+   observe credential updates written by each other."
   [ctx provider-id]
   (let [s (:store ctx)]
+    ;; Reload first so cross-process logins/refreshes are visible immediately.
+    (store/reload! s)
     ;; Check if OAuth token needs refresh
     (when (store/oauth-expired? s provider-id)
       (try

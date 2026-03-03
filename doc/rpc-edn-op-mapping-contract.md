@@ -92,6 +92,8 @@ The transport op router MUST remain a thin translation boundary over existing `p
 | `steer` | `{:message s :images ?}` | `session/steer-in!` | `{:accepted true}` | `transport/not-ready`, `request/invalid-params`, `runtime/failed` |
 | `follow_up` | `{:message s :images ?}` | `session/follow-up-in!` | `{:accepted true}` | `transport/not-ready`, `request/invalid-params`, `runtime/failed` |
 | `abort` | `{}` | `session/abort-in!` | `{:accepted true}` | `transport/not-ready`, `runtime/failed` |
+| `login_begin` | `{:provider s?}` | `oauth/begin-login!` + `commands/select-login-provider` | `{:provider {:id s :name s} :url s :uses-callback-server boolean :pending-login true}` | `transport/not-ready`, `request/invalid-params`, `runtime/failed` |
+| `login_complete` | `{:input s?}` | `oauth/complete-login!` using transport pending-login state | `{:provider {:id s :name s} :logged-in true}` | `transport/not-ready`, `request/no-pending-login`, `request/invalid-params`, `runtime/failed` |
 | `new_session` | `{:parent-session ?}` | `session/new-session-in!` | `{:session-id s :session-file s?}` | `transport/not-ready`, `request/invalid-params`, `runtime/failed` |
 | `switch_session` | `{:session-path s}` | `session/resume-session-in!` | `{:session-id s :session-file s?}` | `transport/not-ready`, `request/invalid-params`, `request/not-found`, `runtime/failed` |
 | `fork` | `{:entry-id s}` | `session/fork-session-in!` | `{:session-id s :session-file s?}` | `transport/not-ready`, `request/invalid-params`, `runtime/failed` |

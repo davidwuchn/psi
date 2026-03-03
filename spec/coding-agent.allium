@@ -601,6 +601,8 @@ surface RpcApi {
         steer(message, images?)
         follow_up(message, images?)
         abort()
+        login_begin(provider?)
+        login_complete(input?)
         new_session(parentSession?)
 
         -- State

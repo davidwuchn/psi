@@ -5,6 +5,7 @@
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.commands :as commands]
    [psi.agent-session.core :as session]
+   [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.rpc :as rpc]
    [psi.agent-session.runtime :as runtime]
    [psi.tui.extension-ui :as ext-ui]))
@@ -225,6 +226,92 @@
       (is (= :response (:kind f2)))
       (is (= ["assistant/delta"] (get-in f2 [:data :subscribed])))
       (is (= #{"assistant/delta"} (:subscribed-topics state))))))
+
+(deftest rpc-login-ops-test
+  (testing "login_begin/login_complete use shared oauth context and persist credentials"
+    (let [oauth-ctx (oauth/create-null-context)
+          ctx      (session/create-context {:oauth-ctx oauth-ctx})
+          state    (atom {:ready? true
+                          :pending {}
+                          :rpc-ai-model {:provider :anthropic :id "stub" :supports-reasoning true}})
+          handler  (rpc/make-session-request-handler ctx)
+          {:keys [out-lines]}
+          (run-loop (str "{:id \"b1\" :kind :request :op \"login_begin\"}\n"
+                         "{:id \"c1\" :kind :request :op \"login_complete\" :params {:input \"auth-code-123\"}}\n")
+                    handler
+                    state)
+          [begin-frame complete-frame] (parse-frames out-lines)]
+      (is (= :response (:kind begin-frame)))
+      (is (= "login_begin" (:op begin-frame)))
+      (is (= true (:ok begin-frame)))
+      (is (= "anthropic" (get-in begin-frame [:data :provider :id])))
+      (is (string? (get-in begin-frame [:data :url])))
+      (is (= true (get-in begin-frame [:data :pending-login])))
+
+      (is (= :response (:kind complete-frame)))
+      (is (= "login_complete" (:op complete-frame)))
+      (is (= true (:ok complete-frame)))
+      (is (= "anthropic" (get-in complete-frame [:data :provider :id])))
+      (is (= true (get-in complete-frame [:data :logged-in])))
+      (is (oauth/has-auth? oauth-ctx :anthropic))
+      (is (nil? (:pending-login @state)))))
+
+  (testing "login_begin supports explicit provider override"
+    (let [ctx     (session/create-context {:oauth-ctx (oauth/create-null-context)})
+          state   (atom {:ready? true
+                         :pending {}
+                         :rpc-ai-model {:provider :anthropic :id "stub" :supports-reasoning true}})
+          handler (rpc/make-session-request-handler ctx)
+          {:keys [out-lines]}
+          (run-loop "{:id \"b2\" :kind :request :op \"login_begin\" :params {:provider \"openai\"}}\n"
+                    handler
+                    state)
+          frame   (-> out-lines first edn/read-string)]
+      (is (= :response (:kind frame)))
+      (is (= "login_begin" (:op frame)))
+      (is (= "openai" (get-in frame [:data :provider :id])))
+      (is (= :openai (get-in @state [:pending-login :provider-id])))))
+
+  (testing "login_complete without pending login returns deterministic error"
+    (let [ctx     (session/create-context {:oauth-ctx (oauth/create-null-context)})
+          state   (atom {:ready? true :pending {}})
+          handler (rpc/make-session-request-handler ctx)
+          {:keys [out-lines]}
+          (run-loop "{:id \"c2\" :kind :request :op \"login_complete\" :params {:input \"x\"}}\n"
+                    handler
+                    state)
+          frame   (-> out-lines first edn/read-string)]
+      (is (= :error (:kind frame)))
+      (is (= "login_complete" (:op frame)))
+      (is (= "request/no-pending-login" (:error-code frame)))))
+
+  (testing "login_begin validates provider param type"
+    (let [ctx     (session/create-context {:oauth-ctx (oauth/create-null-context)})
+          state   (atom {:ready? true
+                         :pending {}
+                         :rpc-ai-model {:provider :anthropic :id "stub" :supports-reasoning true}})
+          handler (rpc/make-session-request-handler ctx)
+          {:keys [out-lines]}
+          (run-loop "{:id \"b3\" :kind :request :op \"login_begin\" :params {:provider 42}}\n"
+                    handler
+                    state)
+          frame   (-> out-lines first edn/read-string)]
+      (is (= :error (:kind frame)))
+      (is (= "login_begin" (:op frame)))
+      (is (= "request/invalid-params" (:error-code frame)))))
+
+  (testing "login_begin requires provider when no session/rpc model is configured"
+    (let [ctx     (session/create-context {:oauth-ctx (oauth/create-null-context)})
+          state   (atom {:ready? true :pending {}})
+          handler (rpc/make-session-request-handler ctx)
+          {:keys [out-lines]}
+          (run-loop "{:id \"b4\" :kind :request :op \"login_begin\"}\n"
+                    handler
+                    state)
+          frame   (-> out-lines first edn/read-string)]
+      (is (= :error (:kind frame)))
+      (is (= "login_begin" (:op frame)))
+      (is (= "request/invalid-params" (:error-code frame))))))
 
 (deftest rpc-handshake-server-info-test
   (testing "handshake emits server-info with protocol/session metadata"
@@ -655,6 +742,97 @@
           (is (some #(str/includes? (get % :text "") "https://example.com/auth")
                     (get-in msg-evt [:data :content]))
               "URL must appear in assistant/message content")))))
+
+  (testing "login-start manual flow uses pending-code path and shared oauth completion"
+    (let [ctx          (session/create-context {:oauth-ctx {:mode :test}})
+          loop-called? (atom false)
+          dispatches   (atom [])
+          completions  (atom [])
+          state        (atom {:ready? true
+                              :pending {}
+                              :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
+                              :run-agent-loop-fn (fn [& _]
+                                                   (reset! loop-called? true)
+                                                   {:role "assistant" :content []})})
+          handler      (rpc/make-session-request-handler ctx)]
+      (with-redefs [commands/dispatch
+                    (fn [_ctx text _opts]
+                      (swap! dispatches conj text)
+                      (when (= text "/login")
+                        {:type                 :login-start
+                         :provider             {:id :anthropic :name "Anthropic"}
+                         :url                  "https://example.com/auth"
+                         :login-state          {:verifier "v1"}
+                         :uses-callback-server false}))
+                    oauth/complete-login!
+                    (fn [_oauth-ctx provider-id input login-state]
+                      (swap! completions conj {:provider-id provider-id
+                                               :input input
+                                               :login-state login-state})
+                      {:type :oauth :access "tok" :refresh "ref" :expires (+ (System/currentTimeMillis) 60000)})]
+        (run-loop "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/login\"}}\n"
+                  handler state 250)
+        (is (some? (:pending-login @state))
+            "manual login-start should set pending-login state")
+
+        (run-loop "{:id \"p2\" :kind :request :op \"prompt\" :params {:message \"auth-code-123\"}}\n"
+                  handler state 250)
+
+        (is (= [{:provider-id :anthropic
+                 :input "auth-code-123"
+                 :login-state {:verifier "v1"}}]
+               @completions)
+            "pending auth code prompt should complete login via oauth/complete-login!")
+        (is (nil? (:pending-login @state))
+            "pending-login should clear after completion attempt")
+        (is (= ["/login"] @dispatches)
+            "second prompt must bypass commands/dispatch while login is pending")
+        (is (false? @loop-called?)
+            "agent loop must not run during manual login completion"))))
+
+  (testing "login-start callback flow auto-completes with nil input"
+    (let [ctx          (session/create-context {:oauth-ctx {:mode :test}})
+          loop-called? (atom false)
+          completions  (atom [])
+          state        (atom {:ready? true
+                              :pending {}
+                              :rpc-ai-model {:provider "openai" :id "stub" :supports-reasoning true}
+                              :run-agent-loop-fn (fn [& _]
+                                                   (reset! loop-called? true)
+                                                   {:role "assistant" :content []})})
+          handler      (rpc/make-session-request-handler ctx)]
+      (with-redefs [commands/dispatch
+                    (fn [_ctx text _opts]
+                      (when (= text "/login")
+                        {:type                 :login-start
+                         :provider             {:id :openai :name "OpenAI"}
+                         :url                  "https://example.com/openai"
+                         :login-state          {:state "s1"}
+                         :uses-callback-server true}))
+                    oauth/complete-login!
+                    (fn [_oauth-ctx provider-id input login-state]
+                      (swap! completions conj {:provider-id provider-id
+                                               :input input
+                                               :login-state login-state})
+                      {:type :oauth :access "tok" :refresh "ref" :expires (+ (System/currentTimeMillis) 60000)})]
+        (let [{:keys [out-lines]} (run-loop "{:id \"p3\" :kind :request :op \"prompt\" :params {:message \"/login\"}}\n"
+                                            handler state 800)
+              events (->> out-lines parse-frames (filter #(= :event (:kind %)))
+                          (filter #(= "assistant/message" (:event %))))
+              texts  (mapcat #(map :text (get-in % [:data :content])) events)]
+          (is (= [{:provider-id :openai
+                   :input nil
+                   :login-state {:state "s1"}}]
+                 @completions)
+              "callback login-start should complete with nil input and wait for callback server")
+          (is (nil? (:pending-login @state))
+              "callback flow should not leave pending-login state")
+          (is (false? @loop-called?)
+              "agent loop must not run during callback login completion")
+          (is (some #(str/includes? % "Waiting for browser callback") texts)
+              "callback flow should emit waiting status text")
+          (is (some #(str/includes? % "Logged in to OpenAI") texts)
+              "callback flow should emit completion text")))))
 
   (testing "quit-emits-fallback-text"
     (let [ctx    (session/create-context)
