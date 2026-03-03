@@ -3,6 +3,7 @@
    [clojure.edn :as edn]
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
+   [psi.agent-session.commands :as commands]
    [psi.agent-session.core :as session]
    [psi.agent-session.rpc :as rpc]
    [psi.tui.extension-ui :as ext-ui]))
@@ -343,3 +344,258 @@
       (is (seq event-indexes))
       (is (some #(< prompt-response-index %) event-indexes))
       (is (some #(= "assistant/delta" (:event %)) (filter #(= :event (:kind %)) frames))))))
+
+(deftest rpc-prompt-slash-dispatch-gate-test
+  (testing "when commands/dispatch returns non-nil, run-agent-loop-fn is NOT called"
+    (let [ctx          (session/create-context)
+          loop-called? (atom false)
+          state        (atom {:ready? true
+                              :pending {}
+                              :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
+                              :run-agent-loop-fn (fn [& _]
+                                                   (reset! loop-called? true)
+                                                   {:role "assistant" :content []})})
+          handler      (rpc/make-session-request-handler ctx)
+          input        (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                            "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\" \"session/updated\" \"footer/updated\"]}}\n"
+                            "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/history\"}}\n")]
+      (with-redefs [commands/dispatch (fn [_ctx _text _opts]
+                                        {:type :text :message "history output"})]
+        (let [{:keys [out-lines]} (run-loop input handler state 250)
+              frames  (->> out-lines
+                           (keep (fn [line]
+                                   (try (edn/read-string line)
+                                        (catch Throwable _ nil))))
+                           vec)
+              events  (filter #(= :event (:kind %)) frames)
+              msg-evt (some #(when (= "assistant/message" (:event %)) %) events)]
+          (is (false? @loop-called?)
+              "run-agent-loop-fn must NOT be called when dispatch returns a command result")
+          (is (some? msg-evt)
+              "assistant/message event must be emitted for the command result")
+          (is (= "assistant"
+                 (get-in msg-evt [:data :role]))
+              "assistant/message role must be \"assistant\"")
+          (is (some #(str/includes? (get % :text "") "history output")
+                    (get-in msg-evt [:data :content]))
+              "assistant/message content must include command output text")))))
+
+  (testing "when commands/dispatch returns nil, run-agent-loop-fn IS called"
+    (let [ctx          (session/create-context)
+          loop-called? (atom false)
+          state        (atom {:ready? true
+                              :pending {}
+                              :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
+                              :run-agent-loop-fn (fn [& _]
+                                                   (reset! loop-called? true)
+                                                   {:role "assistant" :content [{:type :text :text "ok"}]})})
+          handler      (rpc/make-session-request-handler ctx)
+          input        (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                            "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"plain text\"}}\n")]
+      (with-redefs [commands/dispatch (fn [_ctx _text _opts] nil)]
+        (run-loop input handler state 250)
+        (is (true? @loop-called?)
+            "run-agent-loop-fn must be called when dispatch returns nil")))))
+
+(deftest rpc-prompt-handle-command-result-types-test
+  (testing "text-command-emits-assistant-message with session/updated and footer/updated"
+    (let [ctx    (session/create-context)
+          state  (atom {:ready? true
+                        :pending {}
+                        :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
+                        :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
+          handler (rpc/make-session-request-handler ctx)
+          input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                       "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\" \"session/updated\" \"footer/updated\"]}}\n"
+                       "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/history\"}}\n")]
+      (with-redefs [commands/dispatch (fn [_ctx _text _opts]
+                                        {:type :text :message "<history output>"})]
+        (let [{:keys [out-lines]} (run-loop input handler state 250)
+              frames  (->> out-lines
+                           (keep (fn [line] (try (edn/read-string line) (catch Throwable _ nil))))
+                           vec)
+              events  (filter #(= :event (:kind %)) frames)
+              topics  (set (map :event events))
+              msg-evt (some #(when (= "assistant/message" (:event %)) %) events)]
+          (is (some? msg-evt) "assistant/message must be emitted")
+          (is (some #(str/includes? (get % :text "") "<history output>")
+                    (get-in msg-evt [:data :content]))
+              "assistant/message must contain command output")
+          (is (contains? topics "session/updated") "session/updated must be emitted")
+          (is (contains? topics "footer/updated") "footer/updated must be emitted")))))
+
+  (testing "extension-cmd-executes-handler and captures stdout"
+    (let [ctx    (session/create-context)
+          loop-called? (atom false)
+          state  (atom {:ready? true
+                        :pending {}
+                        :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
+                        :run-agent-loop-fn (fn [& _]
+                                             (reset! loop-called? true)
+                                             {:role "assistant" :content []})})
+          handler (rpc/make-session-request-handler ctx)
+          input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                       "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
+                       "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/ext-cmd\"}}\n")]
+      (with-redefs [commands/dispatch (fn [_ctx _text _opts]
+                                        {:type    :extension-cmd
+                                         :name    "test-cmd"
+                                         :args    ""
+                                         :handler (fn [_] (println "ext output"))})]
+        (let [{:keys [out-lines]} (run-loop input handler state 250)
+              frames  (->> out-lines
+                           (keep (fn [line] (try (edn/read-string line) (catch Throwable _ nil))))
+                           vec)
+              events  (filter #(= :event (:kind %)) frames)
+              msg-evt (some #(when (= "assistant/message" (:event %)) %) events)]
+          (is (false? @loop-called?) "agent loop must NOT be called for extension-cmd")
+          (is (some? msg-evt) "assistant/message must be emitted")
+          (is (some #(str/includes? (get % :text "") "ext output")
+                    (get-in msg-evt [:data :content]))
+              "stdout from extension handler must appear in assistant/message")))))
+
+  (testing "extension-cmd-handler-error-surfaced deterministically"
+    (let [ctx    (session/create-context)
+          loop-called? (atom false)
+          state  (atom {:ready? true
+                        :pending {}
+                        :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
+                        :run-agent-loop-fn (fn [& _]
+                                             (reset! loop-called? true)
+                                             {:role "assistant" :content []})})
+          handler (rpc/make-session-request-handler ctx)
+          input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                       "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
+                       "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/ext-err\"}}\n")]
+      (with-redefs [commands/dispatch (fn [_ctx _text _opts]
+                                        {:type    :extension-cmd
+                                         :name    "err-cmd"
+                                         :args    ""
+                                         :handler (fn [_] (throw (ex-info "boom" {})))})]
+        (let [{:keys [out-lines]} (run-loop input handler state 250)
+              frames  (->> out-lines
+                           (keep (fn [line] (try (edn/read-string line) (catch Throwable _ nil))))
+                           vec)
+              events  (filter #(= :event (:kind %)) frames)
+              msg-evt (some #(when (= "assistant/message" (:event %)) %) events)]
+          (is (false? @loop-called?) "agent loop must NOT be called on handler error")
+          (is (some? msg-evt) "assistant/message must be emitted on error")
+          (is (some #(str/includes? (get % :text "") "[extension command error:")
+                    (get-in msg-evt [:data :content]))
+              "error message must be surfaced in assistant/message")))))
+
+  (testing "login-start-emits-url-text"
+    (let [ctx    (session/create-context)
+          state  (atom {:ready? true
+                        :pending {}
+                        :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
+                        :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
+          handler (rpc/make-session-request-handler ctx)
+          input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                       "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
+                       "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/login\"}}\n")]
+      (with-redefs [commands/dispatch (fn [_ctx _text _opts]
+                                        {:type     :login-start
+                                         :provider {:name "Anthropic"}
+                                         :url      "https://example.com/auth"})]
+        (let [{:keys [out-lines]} (run-loop input handler state 250)
+              frames  (->> out-lines
+                           (keep (fn [line] (try (edn/read-string line) (catch Throwable _ nil))))
+                           vec)
+              events  (filter #(= :event (:kind %)) frames)
+              msg-evt (some #(when (= "assistant/message" (:event %)) %) events)]
+          (is (some? msg-evt) "assistant/message must be emitted for login-start")
+          (is (some #(str/includes? (get % :text "") "https://example.com/auth")
+                    (get-in msg-evt [:data :content]))
+              "URL must appear in assistant/message content")))))
+
+  (testing "quit-emits-fallback-text"
+    (let [ctx    (session/create-context)
+          state  (atom {:ready? true
+                        :pending {}
+                        :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
+                        :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
+          handler (rpc/make-session-request-handler ctx)
+          input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                       "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
+                       "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/quit\"}}\n")]
+      (with-redefs [commands/dispatch (fn [_ctx _text _opts]
+                                        {:type :quit})]
+        (let [{:keys [out-lines]} (run-loop input handler state 250)
+              frames  (->> out-lines
+                           (keep (fn [line] (try (edn/read-string line) (catch Throwable _ nil))))
+                           vec)
+              events  (filter #(= :event (:kind %)) frames)
+              msg-evt (some #(when (= "assistant/message" (:event %)) %) events)]
+          (is (some? msg-evt) "assistant/message must be emitted for quit")
+          (is (some #(str/includes? (get % :text "") "not supported over RPC prompt")
+                    (get-in msg-evt [:data :content]))
+              "fallback text must appear in assistant/message content"))))
+
+  (testing "resume-emits-fallback-text"
+    (let [ctx    (session/create-context)
+          state  (atom {:ready? true
+                        :pending {}
+                        :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
+                        :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
+          handler (rpc/make-session-request-handler ctx)
+          input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                       "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
+                       "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/resume\"}}\n")]
+      (with-redefs [commands/dispatch (fn [_ctx _text _opts]
+                                        {:type :resume})]
+        (let [{:keys [out-lines]} (run-loop input handler state 250)
+              frames  (->> out-lines
+                           (keep (fn [line] (try (edn/read-string line) (catch Throwable _ nil))))
+                           vec)
+              events  (filter #(= :event (:kind %)) frames)
+              msg-evt (some #(when (= "assistant/message" (:event %)) %) events)]
+          (is (some? msg-evt) "assistant/message must be emitted for resume")
+          (is (some #(str/includes? (get % :text "") "not supported over RPC prompt")
+                    (get-in msg-evt [:data :content]))
+              "fallback text must appear in assistant/message content")))))))
+
+(deftest rpc-prompt-slash-command-journaled-test
+  (testing "slash command user message is journaled even when dispatch matches (not only on agent-loop path)"
+    (let [ctx    (session/create-context)
+          state  (atom {:ready? true
+                        :pending {}
+                        :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
+                        :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
+          handler (rpc/make-session-request-handler ctx)
+          input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                       "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/history\"}}\n")]
+      (with-redefs [commands/dispatch (fn [_ctx _text _opts]
+                                        {:type :text :message "history output"})]
+        (run-loop input handler state 250)
+        (let [journal-entries @(:journal-atom ctx)
+              msg-entries     (filterv #(= :message (:kind %)) journal-entries)
+              user-msg        (some #(when (= "user" (get-in % [:data :message :role])) %) msg-entries)]
+          (is (seq msg-entries)
+              "journal must contain at least one :message entry after slash command")
+          (is (some? user-msg)
+              "journal must contain the user message for the slash command submission")
+          (is (= "/history"
+                 (get-in user-msg [:data :message :content 0 :text]))
+              "journaled user message must contain the slash command text"))))))
+
+(deftest rpc-prompt-plain-text-journaled-test
+  (testing "plain text prompt user message is journaled on agent-loop path"
+    (let [ctx    (session/create-context)
+          state  (atom {:ready? true
+                        :pending {}
+                        :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
+                        :run-agent-loop-fn (fn [& _] {:role "assistant" :content [{:type :text :text "ok"}]})})
+          handler (rpc/make-session-request-handler ctx)
+          input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                       "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"tell me a joke\"}}\n")]
+      (with-redefs [commands/dispatch (fn [_ctx _text _opts] nil)]
+        (run-loop input handler state 250)
+        (let [journal-entries @(:journal-atom ctx)
+              msg-entries     (filterv #(= :message (:kind %)) journal-entries)
+              user-msg        (some #(when (= "user" (get-in % [:data :message :role])) %) msg-entries)]
+          (is (some? user-msg)
+              "journal must contain the user message for plain text prompt")
+          (is (= "tell me a joke"
+                 (get-in user-msg [:data :message :content 0 :text]))
+              "journaled user message must contain the prompt text"))))))
