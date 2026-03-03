@@ -31,16 +31,26 @@
 (defn format-status
   "Return a status string for the current session."
   [ctx]
-  (let [d (session/query-in ctx
-                            [:psi.agent-session/phase
-                             :psi.agent-session/session-id
-                             :psi.agent-session/model
-                             :psi.agent-session/thinking-level
-                             :psi.agent-session/extension-summary
-                             :psi.agent-session/session-entry-count
-                             :psi.agent-session/context-tokens
-                             :psi.agent-session/context-window
-                             :psi.agent-session/context-fraction])]
+  (let [base-query [:psi.agent-session/phase
+                    :psi.agent-session/session-id
+                    :psi.agent-session/model
+                    :psi.agent-session/thinking-level
+                    :psi.agent-session/extension-summary
+                    :psi.agent-session/session-entry-count
+                    :psi.agent-session/context-tokens
+                    :psi.agent-session/context-window
+                    :psi.agent-session/context-fraction]
+        recursion-query [:psi.recursion/status
+                         :psi.recursion/paused?
+                         :psi.recursion/current-cycle]
+        d (session/query-in ctx
+                            (if (:recursion-ctx ctx)
+                              (into base-query recursion-query)
+                              base-query))
+        recursion-status (:psi.recursion/status d)
+        current-cycle (:psi.recursion/current-cycle d)
+        proposal (:proposal current-cycle)
+        actions (or (:actions proposal) [])]
     (str "── Session status ─────────────────────\n"
          "  Phase   : " (:psi.agent-session/phase d) "\n"
          "  ID      : " (:psi.agent-session/session-id d) "\n"
@@ -48,6 +58,20 @@
          "  Entries : " (:psi.agent-session/session-entry-count d)
          (when-let [frac (:psi.agent-session/context-fraction d)]
            (str "\n  Context : " (int (* 100 frac)) "%"))
+         (when recursion-status
+           (str "\n  Recurs. : " (name recursion-status)
+                (when (:psi.recursion/paused? d) " (paused)")))
+         (when (and (= :awaiting-approval recursion-status)
+                    current-cycle)
+           (str "\n  FF Cycle : " (:cycle-id current-cycle)
+                "\n  Approve : pending"
+                (when-let [risk (:risk proposal)]
+                  (str " (risk=" (name risk) ")"))
+                "\n  Actions : " (count actions)
+                (when-let [first-title (:title (first actions))]
+                  (str "\n    - " first-title))
+                (when (> (count actions) 1)
+                  (str "\n    + " (dec (count actions)) " more"))))
          "\n───────────────────────────────────────")))
 
 (defn format-history
