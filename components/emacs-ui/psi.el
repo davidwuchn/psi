@@ -33,12 +33,25 @@ Used to detect stalled streaming runs and transition to deterministic recovery."
   :type 'number
   :group 'psi-emacs)
 
-(defcustom psi-emacs-enable-resume-parity nil
+(defcustom psi-emacs-enable-resume-parity t
   "Enable parity-mode `/resume` routing in Emacs frontend.
 
-When nil (default), `/resume` always uses the MVP fallback message.
-When non-nil, `/resume` routes to parity entry points (implemented incrementally)."
+When non-nil (default), `/resume` routes to parity entry points.
+When nil, `/resume` uses the MVP fallback message."
   :type 'boolean
+  :group 'psi-emacs)
+
+(defcustom psi-emacs-enable-extension-ui-parity nil
+  "Enable extension UI parity topic subscription in Emacs frontend.
+
+When nil (default), subscribe to `psi-rpc-mvp-topics` only.
+When non-nil, subscribe to `psi-rpc-parity-topics`."
+  :type 'boolean
+  :group 'psi-emacs)
+
+(defcustom psi-emacs-notification-timeout-seconds 5
+  "Seconds before a projected extension notification auto-dismisses."
+  :type 'number
   :group 'psi-emacs)
 
 (cl-defstruct psi-emacs-state
@@ -53,6 +66,13 @@ When non-nil, `/resume` routes to parity entry points (implemented incrementally
   assistant-in-progress
   assistant-range
   tool-rows
+  projection-widgets
+  projection-statuses
+  projection-footer
+  projection-notifications
+  projection-notification-seq
+  projection-notification-timers
+  projection-range
   draft-anchor
   rpc-client
   tool-output-view-mode)
@@ -109,6 +129,13 @@ Prefers `markdown-mode' when available, otherwise `text-mode'."
    :assistant-in-progress nil
    :assistant-range nil
    :tool-rows (make-hash-table :test #'equal)
+   :projection-widgets nil
+   :projection-statuses nil
+   :projection-footer nil
+   :projection-notifications nil
+   :projection-notification-seq 0
+   :projection-notification-timers (make-hash-table :test #'equal)
+   :projection-range nil
    :draft-anchor nil
    :rpc-client nil
    :tool-output-view-mode 'collapsed))
@@ -316,7 +343,12 @@ and transition to `error'."
                      :on-rpc-error (lambda (code message-text frame)
                                      (psi-emacs--on-rpc-error buffer code message-text frame)))))
         (setf (psi-emacs-state-rpc-client psi-emacs--state) client)
-        (psi-rpc-start! client psi-emacs--spawn-process-function psi-emacs-command)
+        (psi-rpc-start! client
+                        psi-emacs--spawn-process-function
+                        psi-emacs-command
+                        (if psi-emacs-enable-extension-ui-parity
+                            psi-rpc-parity-topics
+                          psi-rpc-mvp-topics))
         (setf (psi-emacs-state-process psi-emacs--state) (psi-rpc-client-process client))
         (setq psi-emacs--owned-process (psi-rpc-client-process client))
         (psi-emacs--refresh-header-line)))))
@@ -357,6 +389,11 @@ COMMAND is a list suitable for `make-process'."
              (consp (psi-emacs-state-assistant-range psi-emacs--state)))
     (set-marker (car (psi-emacs-state-assistant-range psi-emacs--state)) nil)
     (set-marker (cdr (psi-emacs-state-assistant-range psi-emacs--state)) nil))
+  (when (and psi-emacs--state
+             (consp (psi-emacs-state-projection-range psi-emacs--state)))
+    (set-marker (car (psi-emacs-state-projection-range psi-emacs--state)) nil)
+    (set-marker (cdr (psi-emacs-state-projection-range psi-emacs--state)) nil))
+  (psi-emacs--clear-notification-lifecycle psi-emacs--state)
   (when psi-emacs--state
     (maphash (lambda (_ row)
                (when (markerp (plist-get row :start))
@@ -438,12 +475,14 @@ USED-REGION-P non-nil means compose came from region and anchor is untouched."
 (defun psi-emacs--idle-slash-help-text ()
   "Return deterministic help text for supported idle slash commands."
   (string-join
-   '("Supported slash commands:"
-     "/quit, /exit  Exit this psi buffer"
-     "/resume       Resume selector unavailable in Emacs MVP"
-     "/new          Start a fresh backend session"
-     "/status       Show frontend diagnostics"
-     "/help, /?     Show this help")
+   (list "Supported slash commands:"
+         "/quit, /exit  Exit this psi buffer"
+         (if psi-emacs-enable-resume-parity
+             "/resume [path] Resume a prior session (selector when path omitted)"
+           "/resume       Resume selector unavailable in this frontend")
+         "/new          Start a fresh backend session"
+         "/status       Show frontend diagnostics"
+         "/help, /?     Show this help")
    "\n"))
 
 (defun psi-emacs--reset-transcript-for-new-session ()
@@ -456,6 +495,14 @@ USED-REGION-P non-nil means compose came from region and anchor is untouched."
     (setf (psi-emacs-state-assistant-in-progress psi-emacs--state) nil)
     (setf (psi-emacs-state-assistant-range psi-emacs--state) nil)
     (clrhash (psi-emacs-state-tool-rows psi-emacs--state))
+    (setf (psi-emacs-state-projection-widgets psi-emacs--state) nil)
+    (setf (psi-emacs-state-projection-statuses psi-emacs--state) nil)
+    (setf (psi-emacs-state-projection-footer psi-emacs--state) nil)
+    (psi-emacs--clear-notification-lifecycle psi-emacs--state)
+    (when (consp (psi-emacs-state-projection-range psi-emacs--state))
+      (set-marker (car (psi-emacs-state-projection-range psi-emacs--state)) nil)
+      (set-marker (cdr (psi-emacs-state-projection-range psi-emacs--state)) nil))
+    (setf (psi-emacs-state-projection-range psi-emacs--state) nil)
     (setf (psi-emacs-state-draft-anchor psi-emacs--state)
           (copy-marker (point-max) nil))
     (psi-emacs--set-run-state psi-emacs--state 'idle)
@@ -537,14 +584,42 @@ Return nil for no argument. Otherwise return trimmed argument string."
      ((not (string-empty-p path)) (file-name-nondirectory path))
      (t "(unnamed session)"))))
 
+(defun psi-emacs--resume-session-modified-seconds (session)
+  "Return SESSION modified timestamp as seconds since epoch.
+
+Unreadable/missing timestamps normalize to 0."
+  (let ((modified (alist-get :psi.session-info/modified session nil nil #'equal)))
+    (cond
+     ((numberp modified) (float modified))
+     ((stringp modified)
+      (or (ignore-errors (float-time (date-to-time modified))) 0.0))
+     (t
+      (or (ignore-errors (float-time modified)) 0.0)))))
+
+(defun psi-emacs--resume-session-path (session)
+  "Return trimmed canonical session path for SESSION, or empty string."
+  (string-trim (or (alist-get :psi.session-info/path session nil nil #'equal) "")))
+
+(defun psi-emacs--sort-resume-sessions (sessions)
+  "Sort SESSIONS by modified desc (newest first), then path asc."
+  (sort (copy-sequence sessions)
+        (lambda (a b)
+          (let ((am (psi-emacs--resume-session-modified-seconds a))
+                (bm (psi-emacs--resume-session-modified-seconds b))
+                (ap (psi-emacs--resume-session-path a))
+                (bp (psi-emacs--resume-session-path b)))
+            (if (/= am bm)
+                (> am bm)
+              (string< ap bp))))))
+
 (defun psi-emacs--resume-session-candidates (sessions)
   "Build deterministic selector candidates from SESSIONS.
 
 Returns list of cons cells (DISPLAY . CANONICAL-PATH)."
   (let ((seen (make-hash-table :test #'equal))
         (candidates nil))
-    (dolist (session sessions)
-      (let* ((path (string-trim (or (alist-get :psi.session-info/path session nil nil #'equal) ""))))
+    (dolist (session (psi-emacs--sort-resume-sessions sessions))
+      (let ((path (psi-emacs--resume-session-path session)))
         (when (not (string-empty-p path))
           (let* ((description (psi-emacs--resume-session-description session))
                  (base (format "%s — %s" description path))
@@ -1003,6 +1078,301 @@ Renders according to the current global tool-output-view-mode."
       (when follow-anchor
         (psi-emacs--set-draft-anchor-to-end)))))
 
+(defun psi-emacs--projection-seq (value)
+  "Normalize VALUE into a proper list sequence."
+  (cond
+   ((vectorp value) (append value nil))
+   ((listp value) value)
+   (t nil)))
+
+(defun psi-emacs--projection-item-key (item keys)
+  "Return deterministic sort/display key from ITEM over KEYS."
+  (let ((value (and (listp item)
+                    (psi-emacs--event-data-get item keys))))
+    (if (stringp value)
+        value
+      (format "%s" (or value "")))))
+
+(defun psi-emacs--projection-item-text (item)
+  "Return display text for projection ITEM."
+  (let ((value (and (listp item)
+                    (psi-emacs--event-data-get item
+                                               '(:text text :message message :value value :content content)))))
+    (cond
+     ((stringp value) value)
+     ((null value) "")
+     (t (format "%s" value)))))
+
+(defun psi-emacs--projection-sort-widgets (widgets)
+  "Return WIDGETS sorted by [placement, extension-id, widget-id]."
+  (sort (copy-sequence widgets)
+        (lambda (a b)
+          (let ((ap (psi-emacs--projection-item-key a '(:placement placement)))
+                (bp (psi-emacs--projection-item-key b '(:placement placement)))
+                (ae (psi-emacs--projection-item-key a '(:extension-id extension-id :extensionId extensionId)))
+                (be (psi-emacs--projection-item-key b '(:extension-id extension-id :extensionId extensionId)))
+                (aw (psi-emacs--projection-item-key a '(:widget-id widget-id :widgetId widgetId)))
+                (bw (psi-emacs--projection-item-key b '(:widget-id widget-id :widgetId widgetId))))
+            (cond
+             ((string< ap bp) t)
+             ((string< bp ap) nil)
+             ((string< ae be) t)
+             ((string< be ae) nil)
+             (t (string< aw bw)))))))
+
+(defun psi-emacs--projection-sort-statuses (statuses)
+  "Return STATUSES sorted by extension-id."
+  (sort (copy-sequence statuses)
+        (lambda (a b)
+          (string< (psi-emacs--projection-item-key a '(:extension-id extension-id :extensionId extensionId))
+                   (psi-emacs--projection-item-key b '(:extension-id extension-id :extensionId extensionId))))))
+
+(defun psi-emacs--projection-footer-text (data)
+  "Extract deterministic footer projection text from event DATA."
+  (let* ((path-line (psi-emacs--event-data-get data '(:path-line path-line :pathLine pathLine)))
+         (stats-line (psi-emacs--event-data-get data '(:stats-line stats-line :statsLine statsLine)))
+         (status-line (psi-emacs--event-data-get data '(:status-line status-line :statusLine statusLine)))
+         (canonical-lines (delq nil
+                                (mapcar (lambda (line)
+                                          (when (and (stringp line)
+                                                     (not (string-empty-p line)))
+                                            line))
+                                        (list path-line stats-line status-line)))))
+    (if canonical-lines
+        (string-join canonical-lines " | ")
+      (let ((value (psi-emacs--event-data-get data
+                                              '(:text text :message message :footer footer :content content))))
+        (cond
+         ((stringp value) value)
+         ((null value) nil)
+         (t (format "%s" value)))))))
+
+(defun psi-emacs--cancel-notification-timer (state notification-id)
+  "Cancel notification timer for NOTIFICATION-ID in STATE, if present."
+  (when (and state notification-id)
+    (let* ((timers (psi-emacs-state-projection-notification-timers state))
+           (timer (and (hash-table-p timers)
+                       (gethash notification-id timers))))
+      (when (timerp timer)
+        (cancel-timer timer))
+      (when (hash-table-p timers)
+        (remhash notification-id timers)))))
+
+(defun psi-emacs--clear-notification-lifecycle (state)
+  "Clear projected notification state and cancel all lifecycle timers in STATE."
+  (when state
+    (let ((timers (psi-emacs-state-projection-notification-timers state)))
+      (when (hash-table-p timers)
+        (maphash (lambda (_id timer)
+                   (when (timerp timer)
+                     (cancel-timer timer)))
+                 timers)
+        (clrhash timers)))
+    (setf (psi-emacs-state-projection-notifications state) nil)
+    (setf (psi-emacs-state-projection-notification-seq state) 0)))
+
+(defun psi-emacs--projection-notification-line (notification)
+  "Render deterministic line for projected NOTIFICATION item."
+  (format "- [%s] %s"
+          (or (plist-get notification :extension-id) "")
+          (or (plist-get notification :text) "")))
+
+(defun psi-emacs--notification-remove-by-id (state notification-id)
+  "Remove projected notification by NOTIFICATION-ID from STATE and re-render."
+  (when (and state notification-id)
+    (let* ((notifications (or (psi-emacs-state-projection-notifications state) '()))
+           (next (cl-remove-if (lambda (item)
+                                 (equal (plist-get item :id) notification-id))
+                               notifications)))
+      (psi-emacs--cancel-notification-timer state notification-id)
+      (setf (psi-emacs-state-projection-notifications state) next)
+      (when (eq state psi-emacs--state)
+        (psi-emacs--upsert-projection-block)))))
+
+(defun psi-emacs--schedule-notification-dismiss (state notification-id)
+  "Schedule auto-dismiss timer for NOTIFICATION-ID in STATE."
+  (when (and state notification-id)
+    (psi-emacs--cancel-notification-timer state notification-id)
+    (let ((timer (run-at-time psi-emacs-notification-timeout-seconds nil
+                              (lambda (buffer st id)
+                                (when (and (buffer-live-p buffer) st)
+                                  (with-current-buffer buffer
+                                    (psi-emacs--notification-remove-by-id st id))))
+                              (current-buffer)
+                              state
+                              notification-id)))
+      (puthash notification-id timer
+               (psi-emacs-state-projection-notification-timers state)))))
+
+(defun psi-emacs--handle-notification-event (data)
+  "Apply `ui/notification` DATA to local projection lifecycle state."
+  (when psi-emacs--state
+    (let* ((seq (1+ (or (psi-emacs-state-projection-notification-seq psi-emacs--state) 0)))
+           (extension-id (psi-emacs--projection-item-key data '(:extension-id extension-id :extensionId extensionId)))
+           (text (psi-emacs--projection-item-text data))
+           (notification-id (format "n-%s" seq))
+           (entry (list :id notification-id :seq seq :extension-id extension-id :text text))
+           (existing (or (psi-emacs-state-projection-notifications psi-emacs--state) '()))
+           (next (append existing (list entry))))
+      (setf (psi-emacs-state-projection-notification-seq psi-emacs--state) seq)
+      ;; enforce max visible 3, keeping oldest->newest order
+      (while (> (length next) 3)
+        (let ((drop (car next)))
+          (setq next (cdr next))
+          (psi-emacs--cancel-notification-timer psi-emacs--state (plist-get drop :id))))
+      (setf (psi-emacs-state-projection-notifications psi-emacs--state) next)
+      (psi-emacs--schedule-notification-dismiss psi-emacs--state notification-id)
+      (psi-emacs--upsert-projection-block))))
+
+(defun psi-emacs--projection-render-block (state)
+  "Render deterministic projection block from STATE."
+  (let ((widgets (or (psi-emacs-state-projection-widgets state) '()))
+        (statuses (or (psi-emacs-state-projection-statuses state) '()))
+        (notifications (or (psi-emacs-state-projection-notifications state) '()))
+        (footer (psi-emacs-state-projection-footer state))
+        (lines nil))
+    (when widgets
+      (push "Extension Widgets:" lines)
+      (dolist (widget widgets)
+        (push (format "- [%s/%s/%s] %s"
+                      (psi-emacs--projection-item-key widget '(:placement placement))
+                      (psi-emacs--projection-item-key widget '(:extension-id extension-id :extensionId extensionId))
+                      (psi-emacs--projection-item-key widget '(:widget-id widget-id :widgetId widgetId))
+                      (psi-emacs--projection-item-text widget))
+              lines)))
+    (when statuses
+      (push "Extension Statuses:" lines)
+      (dolist (status statuses)
+        (push (format "- [%s] %s"
+                      (psi-emacs--projection-item-key status '(:extension-id extension-id :extensionId extensionId))
+                      (psi-emacs--projection-item-text status))
+              lines)))
+    (when notifications
+      (push "Extension Notifications:" lines)
+      (dolist (notification notifications)
+        (push (psi-emacs--projection-notification-line notification) lines)))
+    (when (and (stringp footer)
+               (not (string-empty-p footer)))
+      (push (format "Footer: %s" footer) lines))
+    (if lines
+        (concat (string-join (nreverse lines) "\n") "\n")
+      "")))
+
+(defun psi-emacs--upsert-projection-block ()
+  "Upsert deterministic projection block from current state."
+  (when psi-emacs--state
+    (let* ((follow-anchor (psi-emacs--draft-anchor-at-end-p))
+           (range (psi-emacs-state-projection-range psi-emacs--state))
+           (start (and (consp range) (car range)))
+           (end (and (consp range) (cdr range)))
+           (rendered (psi-emacs--projection-render-block psi-emacs--state)))
+      (if (and (markerp start)
+               (markerp end)
+               (marker-buffer start)
+               (marker-buffer end))
+          (save-excursion
+            (goto-char start)
+            (delete-region start end)
+            (if (string-empty-p rendered)
+                (progn
+                  (set-marker start nil)
+                  (set-marker end nil)
+                  (setf (psi-emacs-state-projection-range psi-emacs--state) nil))
+              (insert rendered)
+              (set-marker end (point))))
+        (unless (string-empty-p rendered)
+          (save-excursion
+            (psi-emacs--ensure-newline-before-append)
+            (let ((new-start (copy-marker (point) nil))
+                  (new-end (copy-marker (point) t)))
+              (insert rendered)
+              (set-marker new-end (point))
+              (setf (psi-emacs-state-projection-range psi-emacs--state)
+                    (cons new-start new-end))))))
+      (when follow-anchor
+        (psi-emacs--set-draft-anchor-to-end)))))
+
+(defun psi-emacs--dialog-result-normalize (value)
+  "Normalize dialog VALUE to the shared RPC result domain."
+  (cond
+   ((or (null value) (booleanp value) (stringp value)) value)
+   (t (format "%s" value))))
+
+(defun psi-emacs--dialog-send-resolve (dialog-id result)
+  "Send `resolve_dialog` for DIALOG-ID with RESULT."
+  (psi-emacs--dispatch-request
+   "resolve_dialog"
+   `((:dialog-id . ,dialog-id)
+     (:result . ,(psi-emacs--dialog-result-normalize result)))))
+
+(defun psi-emacs--dialog-send-cancel (dialog-id)
+  "Send `cancel_dialog` for DIALOG-ID."
+  (psi-emacs--dispatch-request
+   "cancel_dialog"
+   `((:dialog-id . ,dialog-id))))
+
+(defun psi-emacs--dialog-prompt-text (data fallback)
+  "Return deterministic prompt text from DATA, else FALLBACK."
+  (let ((value (psi-emacs--event-data-get data
+                                          '(:prompt prompt :message message :text text :title title))))
+    (if (and (stringp value)
+             (not (string-empty-p value)))
+        value
+      fallback)))
+
+(defun psi-emacs--dialog-option-candidates (options)
+  "Convert OPTIONS into selector candidates of (LABEL . VALUE)."
+  (let ((candidates nil))
+    (dolist (item (psi-emacs--projection-seq options))
+      (when (listp item)
+        (let ((label (psi-emacs--event-data-get item '(:label label :name name :text text)))
+              (value (psi-emacs--event-data-get item '(:value value :id id))))
+          (when (and (stringp label)
+                     (not (string-empty-p label)))
+            (push (cons label (psi-emacs--dialog-result-normalize value))
+                  candidates)))))
+    (nreverse candidates)))
+
+(defun psi-emacs--handle-dialog-requested (data)
+  "Handle `ui/dialog-requested` DATA with one deterministic response op."
+  (let* ((dialog-id (psi-emacs--event-data-get data '(:dialog-id dialog-id :dialogId dialogId)))
+         (kind* (psi-emacs--event-data-get data '(:kind kind)))
+         (kind (if (symbolp kind*) (symbol-name kind*) kind*)))
+    (if (not (and (stringp dialog-id) (not (string-empty-p dialog-id))))
+        (psi-emacs--append-assistant-message
+         "Ignored malformed ui/dialog-requested event: missing dialog-id.")
+      (condition-case _
+          (pcase kind
+            ("confirm"
+             (let ((answer (y-or-n-p
+                            (format "%s "
+                                    (psi-emacs--dialog-prompt-text data "Confirm?")))))
+               (psi-emacs--dialog-send-resolve dialog-id answer)))
+            ("select"
+             (let* ((candidates (psi-emacs--dialog-option-candidates
+                                 (or (psi-emacs--event-data-get data '(:options options))
+                                     (psi-emacs--event-data-get data '(:items items)))))
+                    (labels (mapcar #'car candidates)))
+               (if (null candidates)
+                   (psi-emacs--dialog-send-cancel dialog-id)
+                 (let* ((choice (completing-read
+                                 (format "%s "
+                                         (psi-emacs--dialog-prompt-text data "Select an option:"))
+                                 labels nil t))
+                        (selected (assoc choice candidates)))
+                   (if selected
+                       (psi-emacs--dialog-send-resolve dialog-id (cdr selected))
+                     (psi-emacs--dialog-send-cancel dialog-id))))))
+            ("input"
+             (let ((answer (read-string
+                            (format "%s "
+                                    (psi-emacs--dialog-prompt-text data "Input:")))))
+               (psi-emacs--dialog-send-resolve dialog-id answer)))
+            (_
+             (psi-emacs--dialog-send-cancel dialog-id)))
+        (quit
+         (psi-emacs--dialog-send-cancel dialog-id))))))
+
 (defun psi-emacs--handle-rpc-event (frame)
   "Handle inbound rpc-edn event FRAME for transcript rendering."
   (let* ((event (alist-get :event frame nil nil #'equal))
@@ -1025,6 +1395,31 @@ Renders according to the current global tool-output-view-mode."
              (stage (replace-regexp-in-string "^tool/" "" event)))
          (psi-emacs--reset-stream-watchdog psi-emacs--state)
          (psi-emacs--upsert-tool-row tool-id stage text)))
+      ("ui/dialog-requested"
+       (psi-emacs--handle-dialog-requested data))
+      ("ui/widgets-updated"
+       (when psi-emacs--state
+         (setf (psi-emacs-state-projection-widgets psi-emacs--state)
+               (psi-emacs--projection-sort-widgets
+                (psi-emacs--projection-seq
+                 (or (psi-emacs--event-data-get data '(:widgets widgets))
+                     (psi-emacs--event-data-get data '(:items items))))))
+         (psi-emacs--upsert-projection-block)))
+      ("ui/status-updated"
+       (when psi-emacs--state
+         (setf (psi-emacs-state-projection-statuses psi-emacs--state)
+               (psi-emacs--projection-sort-statuses
+                (psi-emacs--projection-seq
+                 (or (psi-emacs--event-data-get data '(:statuses statuses))
+                     (psi-emacs--event-data-get data '(:items items))))))
+         (psi-emacs--upsert-projection-block)))
+      ("ui/notification"
+       (psi-emacs--handle-notification-event data))
+      ("footer/updated"
+       (when psi-emacs--state
+         (setf (psi-emacs-state-projection-footer psi-emacs--state)
+               (psi-emacs--projection-footer-text data))
+         (psi-emacs--upsert-projection-block)))
       (_ nil))))
 
 (defun psi-emacs--buffer-modified-p ()
@@ -1049,6 +1444,14 @@ reconnect the user starts with the default collapsed view."
     (setf (psi-emacs-state-assistant-in-progress psi-emacs--state) nil)
     (setf (psi-emacs-state-assistant-range psi-emacs--state) nil)
     (clrhash (psi-emacs-state-tool-rows psi-emacs--state))
+    (setf (psi-emacs-state-projection-widgets psi-emacs--state) nil)
+    (setf (psi-emacs-state-projection-statuses psi-emacs--state) nil)
+    (setf (psi-emacs-state-projection-footer psi-emacs--state) nil)
+    (psi-emacs--clear-notification-lifecycle psi-emacs--state)
+    (when (consp (psi-emacs-state-projection-range psi-emacs--state))
+      (set-marker (car (psi-emacs-state-projection-range psi-emacs--state)) nil)
+      (set-marker (cdr (psi-emacs-state-projection-range psi-emacs--state)) nil))
+    (setf (psi-emacs-state-projection-range psi-emacs--state) nil)
     (setf (psi-emacs-state-draft-anchor psi-emacs--state)
           (copy-marker (point-max) nil))
     (setf (psi-emacs-state-tool-output-view-mode psi-emacs--state) 'collapsed)

@@ -1,13 +1,31 @@
-# psi Emacs frontend (MVP)
+# psi Emacs frontend
 
 This frontend runs psi over `--rpc-edn` in a dedicated Emacs buffer.
+
+## Extension UI parity gate
+
+Extension UI parity is controlled by `psi-emacs-enable-extension-ui-parity` (default `nil`).
+
+- `nil` (default): subscribe to `psi-rpc-mvp-topics` only (MVP behavior)
+- non-`nil`: subscribe to `psi-rpc-parity-topics` (MVP + extension UI/footer topics)
+
+Exact parity extension topics:
+
+- `ui/dialog-requested`
+- `ui/widgets-updated`
+- `ui/status-updated`
+- `ui/notification`
+- `footer/updated`
+
+When parity is disabled, UI/footer topic handling is not subscribed.
 
 ## Idle slash commands
 
 When the frontend is **idle** (not streaming), these built-in slash commands are intercepted locally and do **not** fall through to `prompt` RPC:
 
 - `/quit`, `/exit` — close the frontend buffer/process
-- `/resume` — explicit MVP fallback message (`resume selector unavailable in Emacs MVP`)
+- `/resume` — resume prior session (`/resume <path>`), or open selector when no path is provided
+  - set `psi-emacs-enable-resume-parity` to `nil` to force MVP fallback message
 - `/new` — request `new_session`, reset transcript/session rendering state, and continue in the new session
 - `/status` — append deterministic frontend/session diagnostics text
 - `/help`, `/?` — render slash command help
@@ -44,6 +62,28 @@ Streaming send/queue behavior:
 - watchdog timeout sends `abort`, upserts a deterministic transcript error line, and sets run-state to `error`
 
 Idle slash interception applies only to idle compose send/queue paths.
+
+## Extension dialog response flow (parity)
+
+On `ui/dialog-requested`, Emacs maps dialog kinds to prompts and sends exactly one response op:
+
+- confirm => yes/no prompt -> `resolve_dialog`
+- select => completion over option labels (returns selected option `value`) -> `resolve_dialog`
+- input => text prompt -> `resolve_dialog`
+- user quit/cancel (`C-g`) -> `cancel_dialog`
+
+RPC request shapes:
+
+- `resolve_dialog`: `{:dialog-id <string> :result <boolean|string|null>}`
+- `cancel_dialog`: `{:dialog-id <string>}`
+
+`dialog-id` is always echoed from the inbound event; Emacs never invents IDs.
+
+## Renderer boundary (explicit)
+
+Emacs does **not** execute extension-provided renderer functions from extension UI state.
+For parity mode, tool/message payload text is treated as display-ready text.
+Renderer registration/query metadata remains read-only via `query_eql`.
 
 ## Error surface
 

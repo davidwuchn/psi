@@ -16,6 +16,7 @@
 --
 -- Delegates to:
 --   EDN RPC transport protocol (rpc-edn.allium)
+--   Shared extension UI contract (ui-extension-points.allium)
 --   Shared tool display lifecycle (tool-output-display.allium)
 --   Shared tool renderer contract (tool-output-rendering.allium)
 --   Shared prompt autocomplete semantics (prompt-input-autocomplete.allium)
@@ -834,6 +835,16 @@ rule ParityPhaseEnablesExtensionUiAndFooter {
     ensures: EventStreamIncludes(frontend.rpc, "ui/status-updated")
     ensures: EventStreamIncludes(frontend.rpc, "ui/notification")
     ensures: EventStreamIncludes(frontend.rpc, "footer/updated")
+}
+
+rule ParityExtensionUiUsesSharedContract {
+    when: FrontendPhaseChanged(frontend, phase)
+
+    requires: phase = parity
+    requires: frontend.extensionUiEnabled
+
+    ensures: ui/ExtensionUI(frontend.session) governs extension UI methods
+    ensures: ui/ExtensionUIQuery(frontend.session) governs extension UI state introspection
 }
 
 rule ParityPhaseEnablesSessionAndModelControls {
