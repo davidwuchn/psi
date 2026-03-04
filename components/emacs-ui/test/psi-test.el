@@ -893,7 +893,7 @@
           (psi-emacs--handle-rpc-event
            '((:event . "tool/result") (:data . ((:tool-id . "t-1") (:result-text . "done")))))
           ;; Default mode is collapsed: buffer shows header-only
-          (should (equal "Tool[t-1] success\n" (buffer-string)))
+          (should (equal "t-1 success\n" (buffer-string)))
           (let ((row (gethash "t-1" (psi-emacs-state-tool-rows psi-emacs--state))))
             (should row)
             (should (equal "result" (plist-get row :stage)))
@@ -915,7 +915,7 @@
            '((:event . "tool/result")
              (:data . ((:toolCallId . "t-ansi") (:text . "\u001b[31mERR\u001b[0m")))))
           (let ((text (buffer-substring-no-properties (point-min) (point-max))))
-            (should (equal "Tool[t-ansi] success: ERR\n" text)))
+            (should (equal "t-ansi success: ERR\n" text)))
           (goto-char (point-min))
           (search-forward "ERR")
           (let ((face (get-text-property (1- (point)) 'face)))
@@ -944,12 +944,28 @@
                        (:result-text . "ok")
                        (:is-error . nil)))))
           (let ((buf (buffer-string)))
-            (should (equal "Tool[bash echo hi] success\n" buf))
+            (should (equal "$ echo hi success\n" buf))
             (should-not (string-match-p
                          (regexp-quote "call_W5XOPzQT1u0FPRzsJpCfWUQD|fc_063b06d34d4e6ce20169a83b21a4c481928a7f6a9bd4572dc6")
                          buf))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
+(ert-deftest psi-tool-summary-uses-project-relative-paths-for-file-tools ()
+  (let* ((project-root (make-temp-file "psi-emacs-proj-" t))
+         (default-directory (file-name-as-directory project-root))
+         (read-path (expand-file-name "src/read.clj" project-root))
+         (edit-path (expand-file-name "src/edit.clj" project-root))
+         (write-path (expand-file-name "src/write.clj" project-root)))
+    (unwind-protect
+        (progn
+          (should (equal "read src/read.clj"
+                         (psi-emacs--tool-summary "read" `((:path . ,read-path)) nil "t-read")))
+          (should (equal "edit src/edit.clj"
+                         (psi-emacs--tool-summary "edit" `((:path . ,edit-path)) nil "t-edit")))
+          (should (equal "write src/write.clj"
+                         (psi-emacs--tool-summary "write" `((:path . ,write-path)) nil "t-write"))))
+      (ignore-errors (delete-directory project-root t)))))
 
 (ert-deftest psi-header-line-updates-from-rpc-state-transitions ()
   (with-temp-buffer
@@ -1108,7 +1124,7 @@
          '((:event . "tool/result") (:data . ((:toolCallId . "t-smoke") (:text . "done")))))
         (should (string-match-p "ψ: Hi" (buffer-string)))
         ;; Default mode is collapsed: header-only (no body text)
-        (should (string-match-p "Tool\\[t-smoke\\] success" (buffer-string)))
+        (should (string-match-p "t-smoke success" (buffer-string)))
 
         (psi-emacs-abort)
         (should-not (psi-emacs-state-assistant-in-progress psi-emacs--state))
@@ -1169,7 +1185,7 @@
     (psi-emacs--handle-rpc-event
      '((:event . "tool/start") (:data . ((:tool-id . "t-hdr") (:text . "body content here")))))
     ;; Header should be present
-    (should (string-match-p "Tool\\[t-hdr\\] pending" (buffer-string)))
+    (should (string-match-p "t-hdr pending" (buffer-string)))
     ;; Body text should NOT be present in collapsed mode
     (should-not (string-match-p "body content here" (buffer-string)))))
 
@@ -1180,13 +1196,13 @@
     (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
     (psi-emacs--handle-rpc-event
      '((:event . "tool/start") (:data . ((:tool-id . "t-live") (:text . "")))))
-    (should (string-match-p "Tool\\[t-live\\] pending" (buffer-string)))
+    (should (string-match-p "t-live pending" (buffer-string)))
     ;; Advance to executing stage
     (psi-emacs--handle-rpc-event
      '((:event . "tool/executing") (:data . ((:tool-id . "t-live") (:text . "")))))
-    (should (string-match-p "Tool\\[t-live\\] running" (buffer-string)))
+    (should (string-match-p "t-live running" (buffer-string)))
     ;; Previous stage header should be replaced
-    (should-not (string-match-p "Tool\\[t-live\\] pending" (buffer-string)))))
+    (should-not (string-match-p "t-live pending" (buffer-string)))))
 
 (ert-deftest psi-emacs-test-accumulated-output-visible-after-expand ()
   "AC6: Collapsed rows accumulate output; toggle to expanded reveals full text."
@@ -1220,7 +1236,7 @@
                  (:result-text . "ERROR: something went wrong")
                  (:is-error . t)))))
     ;; Collapsed: header visible
-    (should (string-match-p "Tool\\[t-err\\] error" (buffer-string)))
+    (should (string-match-p "t-err error" (buffer-string)))
     ;; Collapsed: error body text NOT visible
     (should-not (string-match-p "ERROR: something went wrong" (buffer-string)))))
 
@@ -1523,7 +1539,7 @@
      '((:event . "tool/start")
        (:data . ((:tool-id . "t-footer") (:text . "start")))))
     (let* ((buf (buffer-string))
-           (tool-pos (string-match-p "Tool\\[t-footer\\] pending" buf))
+           (tool-pos (string-match-p "t-footer pending" buf))
            (path-pos (string-match-p "~/psi-main" buf)))
       (should tool-pos)
       (should path-pos)
@@ -1536,7 +1552,7 @@
        (:data . ((:path-line . "~/psi-main")
                  (:stats-line . "stats2")))))
     (let* ((buf (buffer-string))
-           (tool-pos (string-match-p "Tool\\[t-footer\\] success" buf))
+           (tool-pos (string-match-p "t-footer success" buf))
            (path-pos (string-match-p "~/psi-main" buf)))
       (should tool-pos)
       (should path-pos)
@@ -1566,7 +1582,7 @@
     (psi-emacs-toggle-tool-output-view)
     (psi-emacs-toggle-tool-output-view)
     (let* ((buf (buffer-string))
-           (tool-pos (string-match-p "Tool\\[bash" buf))
+           (tool-pos (string-match-p "\\$ .*success" buf))
            (widget-pos (string-match-p "Widget line" buf))
            (path-pos (string-match-p "~/psi-main" buf))
            (range (psi-emacs-state-projection-range psi-emacs--state)))

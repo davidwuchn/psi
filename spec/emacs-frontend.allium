@@ -644,7 +644,7 @@ rule CollapsedToolRowsRenderHeaderOnly {
     requires: frontend.toolOutputView = collapsed
 
     ensures: ToolRowHeaderVisible(frontend, toolCallId)
-    ensures: ToolRowHeaderIncludes(frontend, toolCallId, fields: [tool_name, tool_call_id, status])
+    ensures: ToolRowHeaderIncludes(frontend, toolCallId, fields: [tool_summary, status])
     ensures: ToolRowBodyHidden(frontend, toolCallId)
 }
 
@@ -1028,7 +1028,8 @@ surface EmacsSessionApi {
         --   Header argument summaries + preview/truncation policy come from
         --   shared tool-output-display/rendering contracts.
         --   Global tool output view defaults to collapsed in MVP:
-        --     - collapsed: single-line tool header (name/id/status), body hidden
+        --     - collapsed: single-line tool summary + status (no Tool[...] wrapper), body hidden
+        --       bash headers use "$"; read/edit/write path args are project-relative when possible.
         --     - expanded: full tool body visible
         --   C-c C-t or M-x toggle_tool_output_view flips the global mode for
         --   both existing rows and future rows.

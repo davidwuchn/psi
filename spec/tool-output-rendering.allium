@@ -146,7 +146,17 @@ rule ReadEditWriteHeadersIncludePathArgument {
     requires: view.toolName in ["read", "edit", "write"]
     requires: PrimaryPathArg(view) != null
 
-    ensures: view.header includes PrimaryPathArg(view)
+    ensures: view.header includes DisplayPathArg(view)
+}
+
+rule ReadEditWriteHeadersPreferProjectRelativePath {
+    when: ToolOutputRenderRequested(view, _)
+    requires: view.toolName in ["read", "edit", "write"]
+    requires: PrimaryPathArg(view) != null
+    requires: ProjectRootKnown(view)
+    requires: PathWithinProject(PrimaryPathArg(view), ProjectRoot(view))
+
+    ensures: DisplayPathArg(view) = RelativePathFromProject(PrimaryPathArg(view), ProjectRoot(view))
 }
 
 rule BashHeadersIncludeCommandArgument {
@@ -189,11 +199,18 @@ rule BackgroundReflectsExecutionState {
             view.background = success
 }
 
-rule BuiltInHeaderShowsToolName {
+rule BuiltInHeaderShowsToolNameForPathTools {
     when: ToolOutputRenderRequested(view, _)
-    requires: view.toolName in ["read", "bash", "edit", "write"]
+    requires: view.toolName in ["read", "edit", "write"]
 
     ensures: view.header includes view.toolName
+}
+
+rule BashHeaderUsesPromptSigil {
+    when: ToolOutputRenderRequested(view, _)
+    requires: view.toolName = "bash"
+
+    ensures: BashHeaderPrefix(view) = "$"
 }
 
 rule ExpandedShowsCompleteText {

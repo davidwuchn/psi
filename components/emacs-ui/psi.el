@@ -1120,17 +1120,64 @@ For composite ids of shape `call|item`, keep the call id prefix."
         (concat (substring line 0 (max 0 (1- limit))) "…")
       line)))
 
+(defun psi-emacs--project-root-directory ()
+  "Return canonical project root directory for current buffer, or nil."
+  (let* ((base (and (stringp default-directory)
+                    (not (string-empty-p default-directory))
+                    (expand-file-name default-directory)))
+         (project-root
+          (when (and base (fboundp 'project-current))
+            (let ((proj (ignore-errors (project-current nil base))))
+              (cond
+               ((and proj (fboundp 'project-root))
+                (ignore-errors (project-root proj)))
+               ((and proj (fboundp 'project-roots))
+                (car (ignore-errors (project-roots proj))))
+               (t nil)))))
+         (root (or project-root base)))
+    (when (and (stringp root)
+               (not (string-empty-p root)))
+      (file-name-as-directory (expand-file-name root)))))
+
+(defun psi-emacs--display-path-relative-to-project (path-text)
+  "Return PATH-TEXT relative to current project root when possible."
+  (let ((path (string-trim (or path-text ""))))
+    (if (string-empty-p path)
+        path
+      (if (file-name-absolute-p path)
+          (let* ((absolute (expand-file-name path))
+                 (project-root (psi-emacs--project-root-directory)))
+            (if (and project-root
+                     (file-in-directory-p absolute project-root))
+                (file-relative-name absolute project-root)
+              (abbreviate-file-name absolute)))
+        path))))
+
+(defun psi-emacs--tool-display-name (name)
+  "Return display label for tool NAME."
+  (if (equal name "bash") "$" name))
+
+(defun psi-emacs--tool-primary-text (name primary-value)
+  "Return display text for tool NAME primary argument PRIMARY-VALUE."
+  (when (and primary-value
+             (not (string-empty-p (format "%s" primary-value))))
+    (let ((text (psi-emacs--single-line (format "%s" primary-value))))
+      (if (member name '("read" "edit" "write"))
+          (psi-emacs--display-path-relative-to-project text)
+        text))))
+
 (defun psi-emacs--tool-summary (tool-name parsed-args arguments tool-id)
   "Return display summary for a tool row.
 
 Prefers TOOL-NAME + key call argument (path/command) over internal TOOL-ID.
-TOOL-ID remains fallback-only when tool name is absent." 
+TOOL-ID remains fallback-only when tool name is absent."
   (let* ((name-raw (or tool-name
                        (psi-emacs--tool-display-id tool-id)
                        "tool"))
          (name (if (symbolp name-raw)
                    (symbol-name name-raw)
                  (format "%s" name-raw)))
+         (display-name (psi-emacs--tool-display-name name))
          (args-info (psi-emacs--tool-args-map parsed-args arguments))
          (args (plist-get args-info :args))
          (invalid-args? (plist-get args-info :invalid-args-type))
@@ -1141,18 +1188,16 @@ TOOL-ID remains fallback-only when tool name is absent."
                           ("bash"
                            (psi-emacs--tool-arg-get args '("command" :command command)))
                           (_ nil)))
-         (primary-text (when (and primary-value
-                                  (not (string-empty-p (format "%s" primary-value))))
-                         (psi-emacs--single-line (format "%s" primary-value))))
+         (primary-text (psi-emacs--tool-primary-text name primary-value))
          (summary (cond
                    (invalid-args?
-                    (format "%s [invalid arg]" name))
+                    (format "%s [invalid arg]" display-name))
                    ((and known-tool? primary-text)
-                    (format "%s %s" name primary-text))
+                    (format "%s %s" display-name primary-text))
                    (known-tool?
-                    (format "%s …" name))
+                    (format "%s …" display-name))
                    (t
-                    name))))
+                    display-name))))
     (psi-emacs--truncate-single-line summary psi-emacs--tool-header-max-chars)))
 
 (defun psi-emacs--tool-status-label (stage is-error)
@@ -1206,14 +1251,14 @@ with latest snapshot semantics."
      (t end-pos))))
 
 (defun psi-emacs--tool-row-header-string (tool-summary status)
-  "Build collapsed header string from TOOL-SUMMARY and STATUS." 
-  (format "Tool[%s] %s\n" tool-summary status))
+  "Build collapsed header string from TOOL-SUMMARY and STATUS."
+  (format "%s %s\n" tool-summary status))
 
 (defun psi-emacs--tool-row-string (tool-summary status text)
   "Build expanded tool row string from TOOL-SUMMARY STATUS and TEXT.
 
 ANSI sequences in TEXT are converted to Emacs faces."
-  (let ((prefix (format "Tool[%s] %s: " tool-summary status))
+  (let ((prefix (format "%s %s: " tool-summary status))
         (body (psi-emacs--ansi-to-face text)))
     (concat prefix body "\n")))
 
