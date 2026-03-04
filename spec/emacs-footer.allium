@@ -150,10 +150,25 @@ rule FooterTextOmittedWhenProjectionBlank {
 rule FooterProjectionUpsertPreservesTranscriptAndAnchor {
     -- Updating the projection block must not clobber transcript content,
     -- and the draft anchor stays at end-of-buffer when it was already there.
+    -- Footer/projection block is reinserted at end-of-buffer on each update
+    -- so it tracks transcript growth across new message pairs.
     when: FooterProjectionUpserted(state)
 
     ensures: TranscriptContentPreserved()
     ensures: DraftAnchorAtEndPreservedWhenFollowing()
+    ensures: ProjectionBlockEndsAtBufferEnd()
+}
+
+rule FooterProjectionHasVisualSeparator {
+    -- Footer/projection block is visually separated from transcript content
+    -- by one blank line followed by a horizontal separator line.
+    when: ProjectionBlockRenderRequested(state)
+
+    requires: state.projection.text != null
+    requires: Trim(state.projection.text) != ""
+
+    ensures: ProjectionBlockPrefixedByBlankLine()
+    ensures: ProjectionBlockPrefixedByHorizontalSeparator()
 }
 
 ------------------------------------------------------------
@@ -187,7 +202,8 @@ surface EmacsFooterProjectionContract {
         --   -> apply stats-line provider/model right-alignment heuristic
         --      when detectable and width allows
         --   -> join non-empty lines with "\n"
-        --   -> render as a deterministic multi-line footer text block.
+        --   -> render as a deterministic multi-line footer text block
+        --      prefixed by one blank line and a horizontal separator.
         --
         -- Legacy path remains accepted for compatibility when only
         -- text/message/footer/content is present.

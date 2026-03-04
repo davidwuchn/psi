@@ -1304,40 +1304,50 @@ path-line, stats-line, status-line (blank lines omitted)."
                (not (string-empty-p footer)))
       (push footer lines))
     (if lines
-        (concat (string-join (nreverse lines) "\n") "\n")
+        (let ((separator (make-string (psi-emacs--projection-window-width) ?─)))
+          ;; Blank line before separator keeps visual breathing room between
+          ;; transcript input area and projection/footer content.
+          (concat "\n"
+                  separator "\n"
+                  (string-join (nreverse lines) "\n")
+                  "\n"))
       "")))
 
 (defun psi-emacs--upsert-projection-block ()
-  "Upsert deterministic projection block from current state."
+  "Upsert deterministic projection block from current state.
+
+Projection is always reinserted at end-of-buffer so footer/projection content
+tracks transcript growth like a terminal footer." 
   (when psi-emacs--state
     (let* ((follow-anchor (psi-emacs--draft-anchor-at-end-p))
            (range (psi-emacs-state-projection-range psi-emacs--state))
            (start (and (consp range) (car range)))
            (end (and (consp range) (cdr range)))
            (rendered (psi-emacs--projection-render-block psi-emacs--state)))
-      (if (and (markerp start)
-               (markerp end)
-               (marker-buffer start)
-               (marker-buffer end))
-          (save-excursion
-            (goto-char start)
-            (delete-region start end)
-            (if (string-empty-p rendered)
-                (progn
-                  (set-marker start nil)
-                  (set-marker end nil)
-                  (setf (psi-emacs-state-projection-range psi-emacs--state) nil))
-              (insert rendered)
-              (set-marker end (point))))
-        (unless (string-empty-p rendered)
-          (save-excursion
-            (psi-emacs--ensure-newline-before-append)
-            (let ((new-start (copy-marker (point) nil))
-                  (new-end (copy-marker (point) t)))
-              (insert rendered)
-              (set-marker new-end (point))
-              (setf (psi-emacs-state-projection-range psi-emacs--state)
-                    (cons new-start new-end))))))
+      ;; Remove previous projection block first.
+      (when (and (markerp start)
+                 (markerp end)
+                 (marker-buffer start)
+                 (marker-buffer end))
+        (save-excursion
+          (delete-region start end))
+        (set-marker start nil)
+        (set-marker end nil)
+        (setf (psi-emacs-state-projection-range psi-emacs--state) nil))
+
+      ;; Reinsert at current end-of-buffer.
+      (unless (string-empty-p rendered)
+        (save-excursion
+          (psi-emacs--ensure-newline-before-append)
+          (let ((new-start (copy-marker (point) nil))
+                ;; Keep insertion-type nil so appended transcript text stays
+                ;; outside the projection range.
+                (new-end (copy-marker (point) nil)))
+            (insert rendered)
+            (set-marker new-end (point))
+            (setf (psi-emacs-state-projection-range psi-emacs--state)
+                  (cons new-start new-end)))))
+
       (when follow-anchor
         (psi-emacs--set-draft-anchor-to-end)))))
 

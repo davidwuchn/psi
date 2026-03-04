@@ -1351,6 +1351,25 @@
       (should (>= (marker-position (psi-emacs-state-draft-anchor psi-emacs--state))
                   before-anchor)))))
 
+(ert-deftest psi-extension-ui-footer-renders-blank-line-and-separator-before-block ()
+  (with-temp-buffer
+    (insert "Assistant: hello\n")
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker (point-max) nil))
+    (cl-letf (((symbol-function 'psi-emacs--projection-window-width)
+               (lambda () 20)))
+      (psi-emacs--handle-rpc-event
+       '((:event . "footer/updated")
+         (:data . ((:path-line . "~/psi-main")
+                   (:stats-line . "latency 12ms"))))))
+    (let* ((buf (buffer-string))
+           (lines (split-string buf "\n")))
+      (should (equal "Assistant: hello" (nth 0 lines)))
+      (should (equal "" (nth 1 lines)))
+      (should (= 20 (string-width (or (nth 2 lines) ""))))
+      (should (equal "~/psi-main" (nth 3 lines))))))
+
 (ert-deftest psi-extension-ui-footer-updated-right-aligns-provider-model-when-detectable ()
   (with-temp-buffer
     (psi-emacs-mode)
@@ -1363,8 +1382,10 @@
          (:data . ((:path-line . "~/psi-main")
                    (:stats-line . "↑4.6k ↓14 $0.008 1.7%/272k (openai) gpt-5.3-codex • thinking off"))))))
     (let* ((lines (split-string (buffer-string) "\n" t))
-           (stats-line (nth 1 lines)))
-      (should (string-match-p "↑4\\.6k" stats-line))
+           (stats-line (seq-find (lambda (line)
+                                   (string-match-p "↑4\\.6k" line))
+                                 lines)))
+      (should (stringp stats-line))
       (should (string-match-p "  (openai) gpt-5\\.3-codex • thinking off$" stats-line))
       (should (= 70 (string-width stats-line))))))
 
@@ -1377,6 +1398,27 @@
               ((symbol-function 'window-margins)
                (lambda (_win) '(2 . 1))))
       (should (= 117 (psi-emacs--projection-window-width))))))
+
+(ert-deftest psi-extension-ui-footer-refresh-preserves-assistant-transcript ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker (point-max) nil))
+    (psi-emacs--handle-rpc-event
+     '((:event . "footer/updated")
+       (:data . ((:path-line . "~/psi-main")
+                 (:stats-line . "stats1")))))
+    (psi-emacs--handle-rpc-event
+     '((:event . "assistant/message")
+       (:data . ((:text . "reply")))))
+    (should (string-match-p "Assistant: reply" (buffer-string)))
+    (psi-emacs--handle-rpc-event
+     '((:event . "footer/updated")
+       (:data . ((:path-line . "~/psi-main")
+                 (:stats-line . "stats2")))))
+    (let ((buf (buffer-string)))
+      (should (string-match-p "Assistant: reply" buf))
+      (should (string-match-p "stats2" buf)))))
 
 (ert-deftest psi-extension-ui-dialog-requested-confirm-sends-resolve-boolean ()
   (with-temp-buffer

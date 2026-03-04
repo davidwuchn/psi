@@ -1040,6 +1040,10 @@ surface EmacsSessionApi {
         --     <path>
         --     <stats>   (provider/model segment right-aligned when detectable)
         --     <status?>
+        --   Projection block is reinserted at end-of-buffer on each update,
+        --   so footer content tracks transcript growth/new message pairs.
+        --   A blank line + horizontal separator is rendered before the
+        --   projection block for visual separation from transcript input.
         --
         -- Error UX:
         --   RPC errors are surfaced in minibuffer and persisted in a single
