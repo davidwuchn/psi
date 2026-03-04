@@ -1281,22 +1281,40 @@
     (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
     (psi-emacs--handle-rpc-event
      '((:event . "ui/widgets-updated")
-       (:data . ((:widgets . [((:placement . "right") (:extension-id . "ext-b") (:widget-id . "w-2") (:text . "B"))
-                              ((:placement . "left") (:extension-id . "ext-b") (:widget-id . "w-1") (:text . "A"))
-                              ((:placement . "left") (:extension-id . "ext-a") (:widget-id . "w-3") (:text . "C"))])))))
+       (:data . ((:widgets . [((:placement . "right") (:extension-id . "ext-b") (:widget-id . "w-2") (:text . "Right-B"))
+                              ((:placement . "left") (:extension-id . "ext-b") (:widget-id . "w-1") (:text . "Left-B"))
+                              ((:placement . "left") (:extension-id . "ext-a") (:widget-id . "w-3") (:text . "Left-A"))])))))
     (let ((buf (buffer-string)))
-      (should (string-match-p "Extension Widgets:" buf))
-      (should (< (string-match-p "\\[left/ext-a/w-3\\]" buf)
-                 (string-match-p "\\[left/ext-b/w-1\\]" buf)))
-      (should (< (string-match-p "\\[left/ext-b/w-1\\]" buf)
-                 (string-match-p "\\[right/ext-b/w-2\\]" buf))))
+      (should-not (string-match-p "Extension Widgets:" buf))
+      (should (< (string-match-p "Left-A" buf)
+                 (string-match-p "Left-B" buf)))
+      (should (< (string-match-p "Left-B" buf)
+                 (string-match-p "Right-B" buf))))
     (psi-emacs--handle-rpc-event
      '((:event . "ui/widgets-updated")
        (:data . ((:widgets . [((:placement . "left") (:extension-id . "ext-c") (:widget-id . "w-1") (:text . "Only"))])))))
     (let ((buf (buffer-string)))
-      (should (string-match-p "\\[left/ext-c/w-1\\] Only" buf))
-      (should-not (string-match-p "\\[left/ext-a/w-3\\] C" buf))
-      (should-not (string-match-p "\\[right/ext-b/w-2\\] B" buf)))))
+      (should (string-match-p "Only" buf))
+      (should-not (string-match-p "Left-A" buf))
+      (should-not (string-match-p "Right-B" buf)))))
+
+(ert-deftest psi-extension-ui-widgets-updated-renders-content-lines-stacked ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (psi-emacs--handle-rpc-event
+     '((:event . "ui/widgets-updated")
+       (:data . ((:widgets . [((:placement . "left")
+                               (:extension-id . "ext-a")
+                               (:widget-id . "w-1")
+                               (:content . ["Head line"
+                                            "Detail line one"
+                                            "Detail line two"]))])))))
+    (let ((buf (buffer-string)))
+      (should (string-match-p "Head line" buf))
+      (should (string-match-p "Detail line one\nDetail line two" buf))
+      (should-not (string-match-p "\\[left/ext-a/w-1\\]" buf))
+      (should-not (string-match-p "\\[\"Head line\"" buf)))))
 
 (ert-deftest psi-extension-ui-status-updated-replaces-and-sorts-by-extension-id ()
   (with-temp-buffer
@@ -1316,6 +1334,27 @@
     (let ((buf (buffer-string)))
       (should (string-match-p "\\[ext-b\\] Only status" buf))
       (should-not (string-match-p "\\[ext-a\\] Alpha" buf)))))
+
+(ert-deftest psi-extension-ui-widgets-render-divider-before-footer-when-present ()
+  (with-temp-buffer
+    (insert "ψ: hello\n")
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker (point-max) nil))
+    (cl-letf (((symbol-function 'psi-emacs--projection-window-width)
+               (lambda () 20)))
+      (psi-emacs--handle-rpc-event
+       '((:event . "ui/widgets-updated")
+         (:data . ((:widgets . [((:placement . "before-edit")
+                                 (:extension-id . "ext-a")
+                                 (:widget-id . "w-1")
+                                 (:content . ["Widget line"]))])))))
+      (psi-emacs--handle-rpc-event
+       '((:event . "footer/updated")
+         (:data . ((:path-line . "~/psi-main")
+                   (:stats-line . "latency 12ms")))))
+      (let ((buf (buffer-string)))
+        (should (string-match-p "Widget line\n────────────────────\n~/psi-main" buf))))))
 
 (ert-deftest psi-extension-ui-footer-updated-updates-projection-and-preserves-transcript ()
   (with-temp-buffer

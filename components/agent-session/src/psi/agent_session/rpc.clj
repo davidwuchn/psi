@@ -800,6 +800,37 @@
             events
             new-notes)))
 
+(def ^:private extension-ui-topics
+  #{"ui/dialog-requested"
+    "ui/widgets-updated"
+    "ui/status-updated"
+    "ui/notification"})
+
+(defn- extension-ui-topic?
+  [topic]
+  (contains? extension-ui-topics topic))
+
+(defn- emit-ui-snapshot-events!
+  [emit-frame! state previous current]
+  (doseq [{:keys [event data]} (ui-snapshot->events (or previous {}) (or current {}))]
+    (emit-event! emit-frame! state {:event event :data data})))
+
+(defn- maybe-start-ui-watch-loop!
+  [ctx emit-frame! state]
+  (when (and (:ui-state-atom ctx)
+             (some extension-ui-topic? (:subscribed-topics @state))
+             (nil? (:ui-watch-loop @state)))
+    (let [ui-state-atom (:ui-state-atom ctx)
+          watch-loop    (future
+                          (binding [*out* (:err @state)
+                                    *err* (:err @state)]
+                            (loop [last-snap (or (ext-ui/snapshot ui-state-atom) {})]
+                              (let [current (or (ext-ui/snapshot ui-state-atom) {})]
+                                (emit-ui-snapshot-events! emit-frame! state last-snap current)
+                                (Thread/sleep 50)
+                                (recur current)))))]
+      (swap! state assoc :ui-watch-loop watch-loop))))
+
 (defn- emit-assistant-text!
   [emit! text]
   (emit! "assistant/message"
@@ -916,8 +947,6 @@
         request-id   (:id request)
         run-loop-fn  (or (:run-agent-loop-fn @state) executor/run-agent-loop!)
         progress-q   (java.util.concurrent.LinkedBlockingQueue.)
-        ui-state-atom (:ui-state-atom ctx)
-        stop?        (atom false)
         worker       (future
                        (binding [*out* (:err @state)
                                  *err* (:err @state)]
@@ -930,15 +959,7 @@
                                                    (when-let [evt (.poll progress-q 50 java.util.concurrent.TimeUnit/MILLISECONDS)]
                                                      (when-let [{:keys [event data]} (progress-event->rpc-event evt)]
                                                        (emit! event data)))
-                                                   (recur))))
-                               ui-loop (future
-                                         (loop [last-snap (or (ext-ui/snapshot ui-state-atom) {})]
-                                           (when-not @stop?
-                                             (let [current (or (ext-ui/snapshot ui-state-atom) {})]
-                                               (doseq [{:keys [event data]} (ui-snapshot->events last-snap current)]
-                                                 (emit! event data))
-                                               (Thread/sleep 50)
-                                               (recur current)))))]
+                                                   (recur))))]
                            (try
                              (let [ai-model      (current-ai-model ctx state)
                                    _             (when-not ai-model
@@ -1001,9 +1022,7 @@
                                (emit! "footer/updated" (footer-updated-payload ctx)))
                              (finally
                                (reset! progress-stop? true)
-                               (deref progress-loop 200 nil)
-                               (reset! stop? true)
-                               (future-cancel ui-loop))))))]
+                               (deref progress-loop 200 nil))))))]
     (swap! state update :inflight-futures (fnil conj []) worker)
     (response-frame (:id request) "prompt" true {:accepted true})))
 
@@ -1196,12 +1215,19 @@
           (response-frame (:id request) op true {:stats (session/diagnostics-in ctx)})
 
           "subscribe"
-          (let [topics  (or (:topics params) [])
-                _       (when-not (sequential? topics)
-                          (throw (ex-info "subscribe :topics must be sequential"
-                                          {:error-code "request/invalid-params"})))
-                topics* (->> topics (filter #(contains? event-topics %)) set)]
+          (let [topics   (or (:topics params) [])
+                _        (when-not (sequential? topics)
+                           (throw (ex-info "subscribe :topics must be sequential"
+                                           {:error-code "request/invalid-params"})))
+                topics*  (->> topics (filter #(contains? event-topics %)) set)
+                ui-topic-request? (some extension-ui-topic? topics*)]
             (swap! state update :subscribed-topics (fnil into #{}) topics*)
+            (when ui-topic-request?
+              (maybe-start-ui-watch-loop! ctx emit-frame! state)
+              (emit-ui-snapshot-events! emit-frame!
+                                        state
+                                        {}
+                                        (or (ext-ui/snapshot (:ui-state-atom ctx)) {})))
             (response-frame (:id request) op true {:subscribed (->> (:subscribed-topics @state) sort vec)}))
 
           "unsubscribe"

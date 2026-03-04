@@ -263,6 +263,72 @@
       (is (= ["assistant/delta"] (get-in f2 [:data :subscribed])))
       (is (= #{"assistant/delta"} (:subscribed-topics state))))))
 
+(deftest rpc-subscribe-ui-topics-emits-initial-widget-snapshot-test
+  (testing "subscribe ui/widgets-updated emits current widget projection immediately"
+    (let [ctx     (session/create-context)
+          ui      (:ui-state-atom ctx)
+          _       (ext-ui/set-widget! ui "ext.demo" "w-1" :above-editor ["hello widget"])
+          state   (atom {:ready? true :pending {} :subscribed-topics #{}})
+          handler (rpc/make-session-request-handler ctx)
+          {:keys [out-lines state]}
+          (run-loop (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                         "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"ui/widgets-updated\"]}}\n")
+                    handler
+                    state
+                    100)
+          frames      (parse-frames out-lines)
+          widget-evt  (some #(when (= "ui/widgets-updated" (:event %)) %) frames)]
+      (is (some? widget-evt))
+      (is (= "w-1" (get-in widget-evt [:data :widgets 0 :widget-id])))
+      (is (= ["hello widget"] (get-in widget-evt [:data :widgets 0 :content])))
+      (when-let [f (:ui-watch-loop state)]
+        (future-cancel f)))))
+
+(deftest rpc-ui-watch-loop-streams-widget-updates-without-prompt-test
+  (testing "after subscribe, ui widget updates stream without a prompt request"
+    (let [ctx         (session/create-context)
+          state       (atom {:ready? true :pending {} :subscribed-topics #{}})
+          handler     (rpc/make-session-request-handler ctx)
+          in-reader   (java.io.PipedReader.)
+          in-writer   (java.io.PipedWriter. in-reader)
+          out-writer  (java.io.StringWriter.)
+          err-writer  (java.io.StringWriter.)
+          write-line! (fn [line]
+                        (.write in-writer (str line "\n"))
+                        (.flush in-writer))
+          loop-future (future
+                        (rpc/run-stdio-loop! {:in              in-reader
+                                              :out             out-writer
+                                              :err             err-writer
+                                              :state           state
+                                              :request-handler handler}))]
+      (try
+        (write-line! "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}")
+        (write-line! "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"ui/widgets-updated\"]}}")
+        (Thread/sleep 100)
+
+        (ext-ui/set-widget! (:ui-state-atom ctx) "ext.demo" "w-2" :above-editor ["live update"])
+        (Thread/sleep 180)
+
+        (.close in-writer)
+        (deref loop-future 500 nil)
+
+        (let [frames        (parse-frames (->> (str/split-lines (str out-writer))
+                                               (remove str/blank?)
+                                               vec))
+              widget-events (filter #(= "ui/widgets-updated" (:event %)) frames)
+              latest        (last widget-events)]
+          (is (seq widget-events))
+          (is (= "w-2" (get-in latest [:data :widgets 0 :widget-id])))
+          (is (= ["live update"] (get-in latest [:data :widgets 0 :content]))))
+
+        (finally
+          (when-let [f (:ui-watch-loop @state)]
+            (future-cancel f))
+          (future-cancel loop-future)
+          (try (.close in-writer) (catch Exception _ nil))
+          (try (.close in-reader) (catch Exception _ nil)))))))
+
 (deftest session-request-handler-prompt-while-streaming-op-test
   (testing "behavior steer routes to session/steer-in!"
     (let [ctx      (session/create-context)

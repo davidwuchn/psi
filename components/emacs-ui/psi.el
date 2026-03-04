@@ -1121,6 +1121,31 @@ Renders according to the current global tool-output-view-mode."
      ((null value) "")
      (t (format "%s" value)))))
 
+(defun psi-emacs--projection-widget-content-lines (widget)
+  "Return display content lines for projected WIDGET."
+  (let* ((content (and (listp widget)
+                       (psi-emacs--event-data-get widget '(:content content))))
+         (content-seq (psi-emacs--projection-seq content)))
+    (if content-seq
+        (let ((lines (delq nil
+                           (mapcar (lambda (line)
+                                     (cond
+                                      ((stringp line)
+                                       (unless (string-empty-p line) line))
+                                      ((null line) nil)
+                                      (t (format "%s" line))))
+                                   content-seq))))
+          (or lines (list "")))
+      (list (psi-emacs--projection-item-text widget)))))
+
+(defun psi-emacs--projection-widget-lines (widget)
+  "Render projected WIDGET as one or more deterministic content lines.
+
+Widget metadata (placement/extension-id/widget-id) is intentionally omitted
+from transcript projection rendering."
+  (or (psi-emacs--projection-widget-content-lines widget)
+      (list "")))
+
 (defun psi-emacs--projection-sort-widgets (widgets)
   "Return WIDGETS sorted by [placement, extension-id, widget-id]."
   (sort (copy-sequence widgets)
@@ -1293,20 +1318,19 @@ path-line, stats-line, status-line (blank lines omitted)."
 
 (defun psi-emacs--projection-render-block (state)
   "Render deterministic projection block from STATE."
-  (let ((widgets (or (psi-emacs-state-projection-widgets state) '()))
-        (statuses (or (psi-emacs-state-projection-statuses state) '()))
-        (notifications (or (psi-emacs-state-projection-notifications state) '()))
-        (footer (psi-emacs-state-projection-footer state))
-        (lines nil))
+  (let* ((widgets (or (psi-emacs-state-projection-widgets state) '()))
+         (statuses (or (psi-emacs-state-projection-statuses state) '()))
+         (notifications (or (psi-emacs-state-projection-notifications state) '()))
+         (footer (psi-emacs-state-projection-footer state))
+         (separator (make-string (psi-emacs--projection-window-width) ?─))
+         (lines nil))
     (when widgets
-      (push "Extension Widgets:" lines)
       (dolist (widget widgets)
-        (push (format "- [%s/%s/%s] %s"
-                      (psi-emacs--projection-item-key widget '(:placement placement))
-                      (psi-emacs--projection-item-key widget '(:extension-id extension-id :extensionId extensionId))
-                      (psi-emacs--projection-item-key widget '(:widget-id widget-id :widgetId widgetId))
-                      (psi-emacs--projection-item-text widget))
-              lines)))
+        (dolist (widget-line (psi-emacs--projection-widget-lines widget))
+          (push widget-line lines)))
+      ;; Keep widget content visually isolated from statuses/footer.
+      ;; Only add this divider when there are projected widgets.
+      (push separator lines))
     (when statuses
       (push "Extension Statuses:" lines)
       (dolist (status statuses)
@@ -1322,13 +1346,12 @@ path-line, stats-line, status-line (blank lines omitted)."
                (not (string-empty-p footer)))
       (push footer lines))
     (if lines
-        (let ((separator (make-string (psi-emacs--projection-window-width) ?─)))
-          ;; Blank line before separator keeps visual breathing room between
-          ;; transcript input area and projection/footer content.
-          (concat "\n"
-                  separator "\n"
-                  (string-join (nreverse lines) "\n")
-                  "\n"))
+        ;; Blank line before separator keeps visual breathing room between
+        ;; transcript input area and projection/footer content.
+        (concat "\n"
+                separator "\n"
+                (string-join (nreverse lines) "\n")
+                "\n")
       "")))
 
 (defun psi-emacs--upsert-projection-block ()
