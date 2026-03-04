@@ -34,6 +34,7 @@
    "ping"
    "query_eql"
    "prompt"
+   "prompt_while_streaming"
    "steer"
    "follow_up"
    "abort"
@@ -1024,6 +1025,30 @@
           "prompt"
           (let [_message (req-arg! request params :message #(and (string? %) (not (str/blank? %))) "non-empty string")]
             (run-prompt-async! ctx request emit-frame! state))
+
+          "prompt_while_streaming"
+          (let [message   (req-arg! request params :message #(and (string? %) (not (str/blank? %))) "non-empty string")
+                behavior* (let [behavior (:behavior params)]
+                            (cond
+                              (nil? behavior)      "steer"
+                              (keyword? behavior)  (name behavior)
+                              (string? behavior)   behavior
+                              :else                nil))]
+            (case behavior*
+              "steer"
+              (do
+                (session/steer-in! ctx message)
+                (response-frame (:id request) op true {:accepted true
+                                                       :behavior "steer"}))
+
+              "queue"
+              (do
+                (session/follow-up-in! ctx message)
+                (response-frame (:id request) op true {:accepted true
+                                                       :behavior "queue"}))
+
+              (throw (ex-info "prompt_while_streaming :behavior must be \"steer\" or \"queue\""
+                              {:error-code "request/invalid-params"}))))
 
           "steer"
           (let [message (req-arg! request params :message #(and (string? %) (not (str/blank? %))) "non-empty string")]

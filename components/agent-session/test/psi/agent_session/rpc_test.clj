@@ -243,6 +243,7 @@
       (is (= :error (:kind frame)))
       (is (= "request/op-not-supported" (:error-code frame)))
       (is (vector? supported))
+      (is (some #(= "prompt_while_streaming" %) supported))
       (is (some #(= "resolve_dialog" %) supported))
       (is (some #(= "cancel_dialog" %) supported))))
 
@@ -261,6 +262,79 @@
       (is (= :response (:kind f2)))
       (is (= ["assistant/delta"] (get-in f2 [:data :subscribed])))
       (is (= #{"assistant/delta"} (:subscribed-topics state))))))
+
+(deftest session-request-handler-prompt-while-streaming-op-test
+  (testing "behavior steer routes to session/steer-in!"
+    (let [ctx      (session/create-context)
+          state    (atom {:ready? true :pending {}})
+          handler  (rpc/make-session-request-handler ctx)
+          steers   (atom [])
+          follows  (atom [])]
+      (with-redefs [session/steer-in! (fn [_ text] (swap! steers conj text))
+                    session/follow-up-in! (fn [_ text] (swap! follows conj text))]
+        (let [{:keys [out-lines]}
+              (run-loop "{:id \"ps1\" :kind :request :op \"prompt_while_streaming\" :params {:message \"hello\" :behavior \"steer\"}}\n"
+                        handler
+                        state)
+              frame (-> out-lines first edn/read-string)]
+          (is (= :response (:kind frame)))
+          (is (= "prompt_while_streaming" (:op frame)))
+          (is (= true (:ok frame)))
+          (is (= {:accepted true :behavior "steer"} (:data frame)))
+          (is (= ["hello"] @steers))
+          (is (empty? @follows))))))
+
+  (testing "behavior queue routes to session/follow-up-in!"
+    (let [ctx      (session/create-context)
+          state    (atom {:ready? true :pending {}})
+          handler  (rpc/make-session-request-handler ctx)
+          steers   (atom [])
+          follows  (atom [])]
+      (with-redefs [session/steer-in! (fn [_ text] (swap! steers conj text))
+                    session/follow-up-in! (fn [_ text] (swap! follows conj text))]
+        (let [{:keys [out-lines]}
+              (run-loop "{:id \"ps2\" :kind :request :op \"prompt_while_streaming\" :params {:message \"next\" :behavior \"queue\"}}\n"
+                        handler
+                        state)
+              frame (-> out-lines first edn/read-string)]
+          (is (= :response (:kind frame)))
+          (is (= "prompt_while_streaming" (:op frame)))
+          (is (= true (:ok frame)))
+          (is (= {:accepted true :behavior "queue"} (:data frame)))
+          (is (empty? @steers))
+          (is (= ["next"] @follows))))))
+
+  (testing "missing behavior defaults to steer"
+    (let [ctx      (session/create-context)
+          state    (atom {:ready? true :pending {}})
+          handler  (rpc/make-session-request-handler ctx)
+          steers   (atom [])
+          follows  (atom [])]
+      (with-redefs [session/steer-in! (fn [_ text] (swap! steers conj text))
+                    session/follow-up-in! (fn [_ text] (swap! follows conj text))]
+        (let [{:keys [out-lines]}
+              (run-loop "{:id \"ps3\" :kind :request :op \"prompt_while_streaming\" :params {:message \"default\"}}\n"
+                        handler
+                        state)
+              frame (-> out-lines first edn/read-string)]
+          (is (= :response (:kind frame)))
+          (is (= true (:ok frame)))
+          (is (= {:accepted true :behavior "steer"} (:data frame)))
+          (is (= ["default"] @steers))
+          (is (empty? @follows))))))
+
+  (testing "invalid behavior returns request/invalid-params"
+    (let [ctx     (session/create-context)
+          state   (atom {:ready? true :pending {}})
+          handler (rpc/make-session-request-handler ctx)
+          {:keys [out-lines]}
+          (run-loop "{:id \"ps4\" :kind :request :op \"prompt_while_streaming\" :params {:message \"x\" :behavior \"bad\"}}\n"
+                    handler
+                    state)
+          frame   (-> out-lines first edn/read-string)]
+      (is (= :error (:kind frame)))
+      (is (= "prompt_while_streaming" (:op frame)))
+      (is (= "request/invalid-params" (:error-code frame))))))
 
 (deftest rpc-login-ops-test
   (testing "login_begin/login_complete use shared oauth context and persist credentials"
