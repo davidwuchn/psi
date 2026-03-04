@@ -415,14 +415,28 @@ COMMAND is a list suitable for `make-process'."
   (and psi-emacs--state
        (eq (psi-emacs-state-run-state psi-emacs--state) 'streaming)))
 
+(defun psi-emacs--draft-end-position ()
+  "Return end position of editable draft region.
+
+When a projection/footer block is present, draft ends at projection start.
+Otherwise, draft ends at `point-max'."
+  (let* ((range (and psi-emacs--state
+                     (psi-emacs-state-projection-range psi-emacs--state)))
+         (projection-start (and (consp range) (car range))))
+    (if (and (markerp projection-start)
+             (marker-buffer projection-start))
+        (marker-position projection-start)
+      (point-max))))
+
 (defun psi-emacs--tail-draft-text ()
-  "Return compose text from draft anchor to end-of-buffer."
+  "Return compose text from draft anchor to draft end boundary."
   (let* ((anchor (and psi-emacs--state
                       (psi-emacs-state-draft-anchor psi-emacs--state)))
          (start (if (and (markerp anchor) (marker-buffer anchor))
                     (marker-position anchor)
-                  (point-max))))
-    (buffer-substring-no-properties (min start (point-max)) (point-max))))
+                  (psi-emacs--draft-end-position)))
+         (end   (psi-emacs--draft-end-position)))
+    (buffer-substring-no-properties (min start end) end)))
 
 (defun psi-emacs--composed-text ()
   "Return composed text using region-first, else tail draft."
@@ -437,19 +451,20 @@ COMMAND is a list suitable for `make-process'."
        (marker-buffer (psi-emacs-state-draft-anchor psi-emacs--state))))
 
 (defun psi-emacs--draft-anchor-at-end-p ()
-  "Return non-nil when draft anchor is currently at end-of-buffer."
+  "Return non-nil when draft anchor is currently at draft end boundary."
   (and (psi-emacs--draft-anchor-valid-p)
        (= (marker-position (psi-emacs-state-draft-anchor psi-emacs--state))
-          (point-max))))
+          (psi-emacs--draft-end-position))))
 
 (defun psi-emacs--set-draft-anchor-to-end ()
-  "Move/create draft anchor at end-of-buffer."
+  "Move/create draft anchor at draft end boundary."
   (when psi-emacs--state
-    (let ((anchor (psi-emacs-state-draft-anchor psi-emacs--state)))
+    (let ((anchor (psi-emacs-state-draft-anchor psi-emacs--state))
+          (end-pos (psi-emacs--draft-end-position)))
       (if (and (markerp anchor) (marker-buffer anchor))
-          (set-marker anchor (point-max))
+          (set-marker anchor end-pos)
         (setf (psi-emacs-state-draft-anchor psi-emacs--state)
-              (copy-marker (point-max) nil))))))
+              (copy-marker end-pos nil))))))
 
 (defun psi-emacs--consume-tail-draft (used-region-p)
   "Advance draft anchor when tail draft was consumed.
@@ -1340,10 +1355,13 @@ tracks transcript growth like a terminal footer."
         (save-excursion
           (psi-emacs--ensure-newline-before-append)
           (let ((new-start (copy-marker (point) nil))
-                ;; Keep insertion-type nil so appended transcript text stays
-                ;; outside the projection range.
+                ;; Keep insertion-type nil on end marker so appends at the
+                ;; projection tail stay outside the projection range.
                 (new-end (copy-marker (point) nil)))
             (insert rendered)
+            ;; After insertion, make start marker advance when user inserts at
+            ;; draft/projection boundary so draft text stays outside range.
+            (set-marker-insertion-type new-start t)
             (set-marker new-end (point))
             (setf (psi-emacs-state-projection-range psi-emacs--state)
                   (cons new-start new-end)))))

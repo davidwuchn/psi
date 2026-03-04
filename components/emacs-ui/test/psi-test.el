@@ -1328,7 +1328,8 @@
        '((:event . "footer/updated") (:data . ((:text . "mode: parity")))))
       (should (string-match-p "ψ: hello" (buffer-string)))
       (should (string-match-p "mode: parity" (buffer-string)))
-      (should (= (point-max) (marker-position (psi-emacs-state-draft-anchor psi-emacs--state))))
+      (should (= (psi-emacs--draft-end-position)
+                 (marker-position (psi-emacs-state-draft-anchor psi-emacs--state))))
       (should (>= (marker-position (psi-emacs-state-draft-anchor psi-emacs--state))
                   before-anchor)))))
 
@@ -1347,7 +1348,8 @@
       (should (string-match-p "ψ: hello" (buffer-string)))
       (should (string-match-p "~/psi-main\nlatency 12ms\nconnected" (buffer-string)))
       (should-not (string-match-p "mode: parity" (buffer-string)))
-      (should (= (point-max) (marker-position (psi-emacs-state-draft-anchor psi-emacs--state))))
+      (should (= (psi-emacs--draft-end-position)
+                 (marker-position (psi-emacs-state-draft-anchor psi-emacs--state))))
       (should (>= (marker-position (psi-emacs-state-draft-anchor psi-emacs--state))
                   before-anchor)))))
 
@@ -1369,6 +1371,27 @@
       (should (equal "" (nth 1 lines)))
       (should (= 20 (string-width (or (nth 2 lines) ""))))
       (should (equal "~/psi-main" (nth 3 lines))))))
+
+(ert-deftest psi-extension-ui-footer-draft-before-projection-sends-non-empty-prompt ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-run-state psi-emacs--state) 'idle)
+    (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker (point-max) nil))
+    (psi-emacs--handle-rpc-event
+     '((:event . "footer/updated")
+       (:data . ((:path-line . "~/psi-main")
+                 (:stats-line . "latency 12ms")))))
+    ;; Point remains in draft area above projection/footer block.
+    (insert "second prompt")
+    (let ((rpc-calls nil))
+      (cl-letf (((symbol-value 'psi-emacs--send-request-function)
+                 (lambda (_state op params &optional _callback)
+                   (push (list op params) rpc-calls))))
+        (psi-emacs-send-from-buffer nil))
+      (setq rpc-calls (nreverse rpc-calls))
+      (should (equal '(("prompt" ((:message . "second prompt"))))
+                     rpc-calls)))))
 
 (ert-deftest psi-extension-ui-footer-updated-right-aligns-provider-model-when-detectable ()
   (with-temp-buffer
