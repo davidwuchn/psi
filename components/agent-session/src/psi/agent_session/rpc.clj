@@ -923,6 +923,14 @@
                                  *err* (:err @state)]
                          (let [emit! (fn [event payload]
                                        (emit-event! emit-frame! state {:event event :data payload :id request-id}))
+                               progress-stop? (atom false)
+                               progress-loop (future
+                                               (loop []
+                                                 (when-not @progress-stop?
+                                                   (when-let [evt (.poll progress-q 50 java.util.concurrent.TimeUnit/MILLISECONDS)]
+                                                     (when-let [{:keys [event data]} (progress-event->rpc-event evt)]
+                                                       (emit! event data)))
+                                                   (recur))))
                                ui-loop (future
                                          (loop [last-snap (or (ext-ui/snapshot ui-state-atom) {})]
                                            (when-not @stop?
@@ -971,6 +979,10 @@
                                                  {:run-loop-fn   run-loop-fn
                                                   :api-key       api-key
                                                   :progress-queue progress-q})]
+                                   ;; Stop background progress polling, flush any
+                                   ;; remaining events, then emit final message.
+                                   (reset! progress-stop? true)
+                                   (deref progress-loop 200 nil)
                                    (emit-progress-queue! progress-q emit!)
                                    (emit! "assistant/message"
                                           (cond-> {:role    (:role result)
@@ -988,6 +1000,8 @@
                                (emit! "session/updated" (session-updated-payload ctx))
                                (emit! "footer/updated" (footer-updated-payload ctx)))
                              (finally
+                               (reset! progress-stop? true)
+                               (deref progress-loop 200 nil)
                                (reset! stop? true)
                                (future-cancel ui-loop))))))]
     (swap! state update :inflight-futures (fnil conj []) worker)
