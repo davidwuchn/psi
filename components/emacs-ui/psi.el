@@ -1183,6 +1183,28 @@ with latest snapshot semantics."
       (concat previous next))
      (t previous))))
 
+(defun psi-emacs--projection-start-position ()
+  "Return projection block start position, or nil when absent."
+  (let* ((range (and psi-emacs--state
+                     (psi-emacs-state-projection-range psi-emacs--state)))
+         (start (and (consp range) (car range))))
+    (when (and (markerp start)
+               (marker-buffer start))
+      (marker-position start))))
+
+(defun psi-emacs--tool-row-safe-end-position (end-marker)
+  "Return safe end position for END-MARKER that never crosses projection start."
+  (let ((end-pos (and (markerp end-marker)
+                      (marker-buffer end-marker)
+                      (marker-position end-marker)))
+        (projection-start (psi-emacs--projection-start-position)))
+    (cond
+     ((null end-pos) nil)
+     ((and (numberp projection-start)
+           (> end-pos projection-start))
+      projection-start)
+     (t end-pos))))
+
 (defun psi-emacs--tool-row-header-string (tool-summary status)
   "Build collapsed header string from TOOL-SUMMARY and STATUS." 
   (format "Tool[%s] %s\n" tool-summary status))
@@ -1233,10 +1255,17 @@ Rows are rendered according to global tool-output-view-mode."
                (marker-buffer start)
                (marker-buffer end))
           (save-excursion
-            (goto-char start)
-            (delete-region start end)
-            (insert rendered)
-            (set-marker end (point))
+            (let* ((start-pos (marker-position start))
+                   (end-pos (psi-emacs--tool-row-safe-end-position end)))
+              (when (and (numberp start-pos)
+                         (numberp end-pos)
+                         (<= start-pos end-pos))
+                (goto-char start-pos)
+                (delete-region start-pos end-pos)
+                (insert rendered)
+                (set-marker end (point))
+                ;; Keep row boundary stable when projection is inserted at row end.
+                (set-marker-insertion-type end nil)))
             (puthash tool-id (list :id tool-id
                                    :tool-name tool-name*
                                    :arguments arguments*
@@ -1253,9 +1282,12 @@ Rows are rendered according to global tool-output-view-mode."
         (save-excursion
           (psi-emacs--ensure-newline-before-append)
           (let ((new-start (copy-marker (point) nil))
-                (new-end (copy-marker (point) t)))
+                ;; Keep insertion-type nil so projection/footer inserted at the
+                ;; row boundary stays outside this tool row range.
+                (new-end (copy-marker (point) nil)))
             (insert rendered)
             (set-marker new-end (point))
+            (set-marker-insertion-type new-end nil)
             (puthash tool-id (list :id tool-id
                                    :tool-name tool-name*
                                    :arguments arguments*
@@ -1784,10 +1816,17 @@ This command is valid even when no tool rows exist."
                      (let ((rendered (psi-emacs--render-tool-row
                                       tool-summary status accumulated new-mode)))
                        (save-excursion
-                         (goto-char start)
-                         (delete-region start end)
-                         (insert rendered)
-                         (set-marker end (point)))))))
+                         (let* ((start-pos (marker-position start))
+                                (end-pos (psi-emacs--tool-row-safe-end-position end)))
+                           (when (and (numberp start-pos)
+                                      (numberp end-pos)
+                                      (<= start-pos end-pos))
+                             (goto-char start-pos)
+                             (delete-region start-pos end-pos)
+                             (insert rendered)
+                             (set-marker end (point))
+                             ;; Keep row boundary stable with projection/footer.
+                             (set-marker-insertion-type end nil))))))))
                rows)
       (psi-emacs--refresh-header-line))))
 

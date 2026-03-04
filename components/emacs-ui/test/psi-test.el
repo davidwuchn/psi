@@ -1542,6 +1542,45 @@
       (should path-pos)
       (should (< tool-pos path-pos)))))
 
+(ert-deftest psi-toggle-tool-output-view-preserves-footer-and-widgets ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker (point-max) nil))
+    (psi-emacs--handle-rpc-event
+     '((:event . "ui/widgets-updated")
+       (:data . ((:widgets . [((:placement . "left")
+                               (:extension-id . "ext-a")
+                               (:widget-id . "w-1")
+                               (:text . "Widget line"))])))))
+    (psi-emacs--handle-rpc-event
+     '((:event . "footer/updated")
+       (:data . ((:path-line . "~/psi-main")
+                 (:stats-line . "stats")))))
+    (psi-emacs--handle-rpc-event
+     '((:event . "tool/result")
+       (:data . ((:tool-id . "t-toggle-preserve")
+                 (:tool-name . "bash")
+                 (:result-text . "ok")))))
+    ;; Toggle twice to exercise both collapsed->expanded and expanded->collapsed rerenders.
+    (psi-emacs-toggle-tool-output-view)
+    (psi-emacs-toggle-tool-output-view)
+    (let* ((buf (buffer-string))
+           (tool-pos (string-match-p "Tool\\[bash" buf))
+           (widget-pos (string-match-p "Widget line" buf))
+           (path-pos (string-match-p "~/psi-main" buf))
+           (range (psi-emacs-state-projection-range psi-emacs--state)))
+      (should tool-pos)
+      (should widget-pos)
+      (should path-pos)
+      (should (< tool-pos widget-pos))
+      (should (< widget-pos path-pos))
+      (should (consp range))
+      (should (markerp (car range)))
+      (should (markerp (cdr range)))
+      (should (marker-buffer (car range)))
+      (should (marker-buffer (cdr range))))))
+
 (ert-deftest psi-extension-ui-dialog-requested-confirm-sends-resolve-boolean ()
   (with-temp-buffer
     (psi-emacs-mode)
