@@ -38,6 +38,7 @@
    :psi.agent-session/context-window
    :psi.agent-session/context-fraction    — nil or 0.0–1.0
    :psi.agent-session/messages-count      — total message count in agent-core (user + assistant)
+   :psi.agent-session/ai-call-count       — total AI model calls (assistant messages with usage)
    :psi.agent-session/tool-call-count     — total tool calls made in this session
    :psi.agent-session/start-time          — Instant when session context was created
    :psi.agent-session/current-time        — current wall-clock Instant
@@ -623,6 +624,9 @@
      :session-file       (:session-file sd)
      :user-messages      (count (filter #(= "user" (:role %)) msgs))
      :assistant-messages (count (filter #(= "assistant" (:role %)) msgs))
+     :ai-calls           (count (filter #(and (= "assistant" (:role %))
+                                              (map? (:usage %)))
+                                        msgs))
      :tool-calls         (count (filter #(= "toolResult" (:role %)) msgs))
      :total-messages     (count msgs)
      :entry-count        (count journal)
@@ -645,11 +649,13 @@
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.agent-session/messages-count
+                 :psi.agent-session/ai-call-count
                  :psi.agent-session/tool-call-count
                  :psi.agent-session/start-time
                  :psi.agent-session/current-time]}
   (let [stats (stats-snapshot agent-session-ctx)]
     {:psi.agent-session/messages-count  (:total-messages stats)
+     :psi.agent-session/ai-call-count   (:ai-calls stats)
      :psi.agent-session/tool-call-count (:tool-calls stats)
      :psi.agent-session/start-time      (canonical-start-time agent-session-ctx)
      :psi.agent-session/current-time    (java.time.Instant/now)}))

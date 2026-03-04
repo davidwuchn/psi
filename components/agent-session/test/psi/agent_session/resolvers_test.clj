@@ -23,6 +23,15 @@
       (is (zero? (:psi.agent-session/messages-count result))
           "fresh session has no messages"))))
 
+;; ── :psi.agent-session/ai-call-count ────────────────────
+
+(deftest ai-call-count-resolver-test
+  (testing "ai-call-count is an integer for a fresh session"
+    (let [result (q [:psi.agent-session/ai-call-count])]
+      (is (integer? (:psi.agent-session/ai-call-count result)))
+      (is (zero? (:psi.agent-session/ai-call-count result))
+          "fresh session has no AI calls"))))
+
 ;; ── :psi.agent-session/tool-call-count ──────────────────
 
 (deftest tool-call-count-resolver-test
@@ -64,12 +73,14 @@
 ;; ── Combined query (mirrors the failing eql_query pattern) ──
 
 (deftest combined-telemetry-query-test
-  (testing "all four canonical telemetry attrs succeed in one query"
+  (testing "all canonical telemetry attrs succeed in one query"
     (let [result (q [:psi.agent-session/messages-count
+                     :psi.agent-session/ai-call-count
                      :psi.agent-session/tool-call-count
                      :psi.agent-session/start-time
                      :psi.agent-session/current-time])]
       (is (integer? (:psi.agent-session/messages-count result)))
+      (is (integer? (:psi.agent-session/ai-call-count result)))
       (is (integer? (:psi.agent-session/tool-call-count result)))
       (is (instance? java.time.Instant (:psi.agent-session/start-time result)))
       (is (instance? java.time.Instant (:psi.agent-session/current-time result))))))
@@ -82,11 +93,13 @@
                      :psi.agent-session/model
                      :psi.agent-session/session-id
                      :psi.agent-session/messages-count
+                     :psi.agent-session/ai-call-count
                      :psi.agent-session/tool-call-count
                      :psi.agent-session/start-time
                      :psi.agent-session/current-time])]
       (is (keyword? (:psi.agent-session/phase result)))
       (is (integer? (:psi.agent-session/messages-count result)))
+      (is (integer? (:psi.agent-session/ai-call-count result)))
       (is (integer? (:psi.agent-session/tool-call-count result)))
       (is (instance? java.time.Instant (:psi.agent-session/start-time result)))
       (is (instance? java.time.Instant (:psi.agent-session/current-time result))))))

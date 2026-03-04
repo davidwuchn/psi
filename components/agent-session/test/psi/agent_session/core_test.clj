@@ -319,6 +319,7 @@
   (testing "query-in resolves canonical telemetry attrs directly"
     (let [ctx (session/create-context)]
       (doseq [attr [:psi.agent-session/messages-count
+                    :psi.agent-session/ai-call-count
                     :psi.agent-session/tool-call-count
                     :psi.agent-session/start-time
                     :psi.agent-session/current-time]]
@@ -328,14 +329,17 @@
 
     (let [ctx    (session/create-context)
           result (session/query-in ctx [:psi.agent-session/messages-count
+                                        :psi.agent-session/ai-call-count
                                         :psi.agent-session/tool-call-count
                                         :psi.agent-session/start-time
                                         :psi.agent-session/current-time])]
       (is (int? (:psi.agent-session/messages-count result)))
+      (is (int? (:psi.agent-session/ai-call-count result)))
       (is (int? (:psi.agent-session/tool-call-count result)))
       (is (instance? java.time.Instant (:psi.agent-session/start-time result)))
       (is (instance? java.time.Instant (:psi.agent-session/current-time result)))
       (is (<= 0 (:psi.agent-session/messages-count result)))
+      (is (<= 0 (:psi.agent-session/ai-call-count result)))
       (is (<= 0 (:psi.agent-session/tool-call-count result)))))
 
   (testing "query-in resolves usage aggregates from journal assistant usage"
