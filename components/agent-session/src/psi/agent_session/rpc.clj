@@ -831,6 +831,43 @@
                                 (recur current)))))]
       (swap! state assoc :ui-watch-loop watch-loop))))
 
+(defn- external-message->assistant-payload
+  [message]
+  (let [content (or (:content message) [])]
+    (cond-> {:role    (or (:role message) "assistant")
+             :content content}
+      (contains? message :custom-type) (assoc :custom-type (:custom-type message))
+      (contains? message :stop-reason) (assoc :stop-reason (:stop-reason message))
+      (contains? message :error-message) (assoc :error-message (:error-message message))
+      (contains? message :usage) (assoc :usage (:usage message)))))
+
+(defn- maybe-start-external-event-loop!
+  [ctx emit-frame! state]
+  (when (and (:event-queue ctx)
+             (nil? (:external-event-loop @state)))
+    (let [event-queue (:event-queue ctx)
+          loop-fut   (future
+                       (binding [*out* (:err @state)
+                                 *err* (:err @state)]
+                         (loop []
+                           (when-let [evt (.poll ^java.util.concurrent.LinkedBlockingQueue
+                                                 event-queue
+                                                 100
+                                                 java.util.concurrent.TimeUnit/MILLISECONDS)]
+                             (when (= :external-message (:type evt))
+                               (let [message (:message evt)]
+                                 (emit-event! emit-frame! state
+                                              {:event "assistant/message"
+                                               :data  (external-message->assistant-payload message)})
+                                 (emit-event! emit-frame! state
+                                              {:event "session/updated"
+                                               :data  (session-updated-payload ctx)})
+                                 (emit-event! emit-frame! state
+                                              {:event "footer/updated"
+                                               :data  (footer-updated-payload ctx)}))))
+                           (recur))))]
+      (swap! state assoc :external-event-loop loop-fut))))
+
 (defn- emit-assistant-text!
   [emit! text]
   (emit! "assistant/message"
@@ -1215,13 +1252,16 @@
           (response-frame (:id request) op true {:stats (session/diagnostics-in ctx)})
 
           "subscribe"
-          (let [topics   (or (:topics params) [])
-                _        (when-not (sequential? topics)
-                           (throw (ex-info "subscribe :topics must be sequential"
-                                           {:error-code "request/invalid-params"})))
-                topics*  (->> topics (filter #(contains? event-topics %)) set)
-                ui-topic-request? (some extension-ui-topic? topics*)]
+          (let [topics             (or (:topics params) [])
+                _                  (when-not (sequential? topics)
+                                     (throw (ex-info "subscribe :topics must be sequential"
+                                                     {:error-code "request/invalid-params"})))
+                topics*            (->> topics (filter #(contains? event-topics %)) set)
+                ui-topic-request?  (some extension-ui-topic? topics*)]
             (swap! state update :subscribed-topics (fnil into #{}) topics*)
+            (when (or (empty? (:subscribed-topics @state))
+                      (contains? (:subscribed-topics @state) "assistant/message"))
+              (maybe-start-external-event-loop! ctx emit-frame! state))
             (when ui-topic-request?
               (maybe-start-ui-watch-loop! ctx emit-frame! state)
               (emit-ui-snapshot-events! emit-frame!

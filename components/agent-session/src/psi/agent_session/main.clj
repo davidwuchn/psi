@@ -608,14 +608,15 @@
    Uses the same session bootstrap path as console/TUI so RPC prompts have
    system prompt, tools, skills, templates, and extensions loaded." 
   [model-key]
-  (let [ai-model  (resolve-model model-key)
-        boot      (binding [*out* *err*]
-                    (bootstrap-runtime-session! ai-model {}))
-        ctx       (:ctx boot)
-        oauth-ctx (:oauth-ctx boot)
-        state     (atom {:handshake-server-info-fn (fn [] (rpc/session->handshake-server-info ctx))
-                         :subscribed-topics #{}
-                         :rpc-ai-model ai-model})
+  (let [ai-model    (resolve-model model-key)
+        event-queue (java.util.concurrent.LinkedBlockingQueue.)
+        boot        (binding [*out* *err*]
+                      (bootstrap-runtime-session! ai-model {:event-queue event-queue}))
+        ctx         (:ctx boot)
+        oauth-ctx   (:oauth-ctx boot)
+        state       (atom {:handshake-server-info-fn (fn [] (rpc/session->handshake-server-info ctx))
+                           :subscribed-topics #{}
+                           :rpc-ai-model ai-model})
         request-handler (rpc/make-session-request-handler ctx)]
     (reset! session-state {:ctx ctx :ai-model ai-model :oauth-ctx oauth-ctx})
     (rpc/run-stdio-loop! {:request-handler request-handler

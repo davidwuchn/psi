@@ -329,6 +329,63 @@
           (try (.close in-writer) (catch Exception _ nil))
           (try (.close in-reader) (catch Exception _ nil)))))))
 
+(deftest rpc-external-message-event-streams-without-prompt-test
+  (testing "after subscribe, external-message queue events emit assistant/message"
+    (let [event-queue (java.util.concurrent.LinkedBlockingQueue.)
+          ctx         (session/create-context {:event-queue event-queue})
+          state       (atom {:ready? true :pending {} :subscribed-topics #{}})
+          handler     (rpc/make-session-request-handler ctx)
+          in-reader   (java.io.PipedReader.)
+          in-writer   (java.io.PipedWriter. in-reader)
+          out-writer  (java.io.StringWriter.)
+          err-writer  (java.io.StringWriter.)
+          write-line! (fn [line]
+                        (.write in-writer (str line "\n"))
+                        (.flush in-writer))
+          loop-future (future
+                        (rpc/run-stdio-loop! {:in              in-reader
+                                              :out             out-writer
+                                              :err             err-writer
+                                              :state           state
+                                              :request-handler handler}))]
+      (try
+        (write-line! "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}")
+        (write-line! "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\" \"session/updated\" \"footer/updated\"]}}")
+        (Thread/sleep 100)
+
+        (.offer ^java.util.concurrent.LinkedBlockingQueue event-queue
+                {:type    :external-message
+                 :message {:role "assistant"
+                           :content [{:type :text :text "Subagent result ready"}]
+                           :custom-type "subagent-result"}})
+        (Thread/sleep 180)
+
+        (.close in-writer)
+        (deref loop-future 500 nil)
+
+        (let [frames        (parse-frames (->> (str/split-lines (str out-writer))
+                                               (remove str/blank?)
+                                               vec))
+              events        (filter #(= :event (:kind %)) frames)
+              topics        (set (map :event events))
+              assistant-evt (some #(when (= "assistant/message" (:event %)) %) events)]
+          (is (some? assistant-evt))
+          (is (= "assistant" (get-in assistant-evt [:data :role])))
+          (is (= "Subagent result ready"
+                 (get-in assistant-evt [:data :content 0 :text])))
+          (is (= "subagent-result" (get-in assistant-evt [:data :custom-type])))
+          (is (contains? topics "session/updated"))
+          (is (contains? topics "footer/updated")))
+
+        (finally
+          (when-let [f (:ui-watch-loop @state)]
+            (future-cancel f))
+          (when-let [f (:external-event-loop @state)]
+            (future-cancel f))
+          (future-cancel loop-future)
+          (try (.close in-writer) (catch Exception _ nil))
+          (try (.close in-reader) (catch Exception _ nil)))))))
+
 (deftest session-request-handler-prompt-while-streaming-op-test
   (testing "behavior steer routes to session/steer-in!"
     (let [ctx      (session/create-context)
