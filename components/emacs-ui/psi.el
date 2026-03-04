@@ -695,7 +695,7 @@ Returns a proper list in canonical order, or nil when missing/unreadable."
                    (psi-emacs--message-text-from-content content)
                    "")))
     (format "%s: %s\n"
-            (if (eq role :user) "User" "Assistant")
+            (if (eq role :user) "User" "ψ")
             text)))
 
 (defun psi-emacs--replay-session-messages (messages)
@@ -922,7 +922,7 @@ When idle, routes through slash interception then normal prompt fallback."
 
 (defun psi-emacs--render-assistant-line (text)
   "Render assistant TEXT in canonical MVP line format."
-  (concat "Assistant: " (or text "") "\n"))
+  (concat "ψ: " (or text "") "\n"))
 
 (defun psi-emacs--set-assistant-line (text)
   "Create or update the single in-progress assistant line with TEXT."

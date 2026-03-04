@@ -414,7 +414,7 @@
               (psi-emacs-send-from-buffer nil)))
           (should (= 1 (length no-arg-calls)))
           (should (equal '() path-calls))
-          (should (string-match-p "Assistant: parity-no-arg" (buffer-string)))
+          (should (string-match-p "ψ: parity-no-arg" (buffer-string)))
           (should (equal '() rpc-calls)))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
@@ -500,7 +500,7 @@
           (should (equal '("query_eql") (mapcar #'car rpc-calls)))
           (should (equal '() selected-paths))
           (should (string= before (buffer-string)))
-          (should-not (string-match-p "Assistant:" (buffer-string))))
+          (should-not (string-match-p "ψ:" (buffer-string))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
@@ -584,7 +584,7 @@
           (setq rpc-calls (nreverse rpc-calls))
           (should (equal '("switch_session" "get_messages") (mapcar #'car rpc-calls)))
           (should cleared-before-replay)
-          (should (equal "User: First\nAssistant: Second\n" (buffer-string)))
+          (should (equal "User: First\nψ: Second\n" (buffer-string)))
           (should (eq 'idle (psi-emacs-state-run-state psi-emacs--state))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
@@ -609,7 +609,7 @@
                (:error-message . "session file not found"))))
           (should (equal '() rpc-calls))
           (should (string-prefix-p
-                   "keep me\nAssistant: Unable to switch session: session file not found\n"
+                   "keep me\nψ: Unable to switch session: session file not found\n"
                    (buffer-string)))
           (should (string-match-p
                    "Error: Unable to switch session: session file not found"
@@ -659,7 +659,7 @@
           (setq rpc-calls (nreverse rpc-calls))
           (should (equal '("new_session") (mapcar #'car rpc-calls)))
           (should (equal '(nil) (mapcar #'cadr rpc-calls)))
-          (should (string= "Assistant: Started a fresh backend session.\n" (buffer-string)))
+          (should (string= "ψ: Started a fresh backend session.\n" (buffer-string)))
           (should (zerop (hash-table-count (psi-emacs-state-tool-rows psi-emacs--state)))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
@@ -702,7 +702,7 @@
                      (lambda (_state op params &optional _callback)
                        (push (list op params) rpc-calls))))
             (psi-emacs-send-from-buffer nil))
-          (should (string-match-p "Assistant: psi \\[disconnected/.*/idle\\]" (buffer-string)))
+          (should (string-match-p "ψ: psi \\[disconnected/.*/idle\\]" (buffer-string)))
           (should (string-match-p "last-error: runtime/fail: boom" (buffer-string)))
           (should (equal '() rpc-calls)))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
@@ -766,7 +766,7 @@
             (setq status (psi-emacs--status-string psi-emacs--state))
             (psi-emacs-send-from-buffer nil))
           (should (equal '() rpc-calls))
-          (should (string-suffix-p (concat "Assistant: " status "\n")
+          (should (string-suffix-p (concat "ψ: " status "\n")
                                    (buffer-string))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
@@ -825,12 +825,12 @@
           (psi-emacs--handle-rpc-event
            '((:event . "assistant/delta") (:data . ((:text . "lo")))))
           (should (equal "Hello" (psi-emacs-state-assistant-in-progress psi-emacs--state)))
-          (should (equal "Assistant: Hello\n" (buffer-string)))
+          (should (equal "ψ: Hello\n" (buffer-string)))
           (psi-emacs--handle-rpc-event
            '((:event . "assistant/message") (:data . ((:text . "Hello world")))))
           (should-not (psi-emacs-state-assistant-in-progress psi-emacs--state))
           (should (eq 'idle (psi-emacs-state-run-state psi-emacs--state)))
-          (should (equal "Assistant: Hello world\n" (buffer-string))))
+          (should (equal "ψ: Hello world\n" (buffer-string))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
@@ -845,7 +845,7 @@
              (:data . ((:role . "assistant")
                        (:content . [((:type . :text) (:text . "Hello from content"))])))))
           (should-not (psi-emacs-state-assistant-in-progress psi-emacs--state))
-          (should (equal "Assistant: Hello from content\n" (buffer-string))))
+          (should (equal "ψ: Hello from content\n" (buffer-string))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
@@ -860,7 +860,7 @@
           (psi-emacs--handle-rpc-event
            '((:event . "assistant/message") (:data . ((:role . "assistant") (:content . [])))))
           (should-not (psi-emacs-state-assistant-in-progress psi-emacs--state))
-          (should (equal "Assistant: partial\n" (buffer-string))))
+          (should (equal "ψ: partial\n" (buffer-string))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
@@ -1078,7 +1078,7 @@
          '((:event . "tool/start") (:data . ((:toolCallId . "t-smoke") (:text . "start")))))
         (psi-emacs--handle-rpc-event
          '((:event . "tool/result") (:data . ((:toolCallId . "t-smoke") (:text . "done")))))
-        (should (string-match-p "Assistant: Hi" (buffer-string)))
+        (should (string-match-p "ψ: Hi" (buffer-string)))
         ;; Default mode is collapsed: header-only (no body text)
         (should (string-match-p "Tool\\[t-smoke\\] result" (buffer-string)))
 
@@ -1319,14 +1319,14 @@
 
 (ert-deftest psi-extension-ui-footer-updated-updates-projection-and-preserves-transcript ()
   (with-temp-buffer
-    (insert "Assistant: hello\n")
+    (insert "ψ: hello\n")
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
     (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker (point-max) nil))
     (let ((before-anchor (marker-position (psi-emacs-state-draft-anchor psi-emacs--state))))
       (psi-emacs--handle-rpc-event
        '((:event . "footer/updated") (:data . ((:text . "mode: parity")))))
-      (should (string-match-p "Assistant: hello" (buffer-string)))
+      (should (string-match-p "ψ: hello" (buffer-string)))
       (should (string-match-p "mode: parity" (buffer-string)))
       (should (= (point-max) (marker-position (psi-emacs-state-draft-anchor psi-emacs--state))))
       (should (>= (marker-position (psi-emacs-state-draft-anchor psi-emacs--state))
@@ -1334,7 +1334,7 @@
 
 (ert-deftest psi-extension-ui-footer-updated-uses-canonical-payload-shape ()
   (with-temp-buffer
-    (insert "Assistant: hello\n")
+    (insert "ψ: hello\n")
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
     (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker (point-max) nil))
@@ -1344,7 +1344,7 @@
          (:data . ((:path-line . "~/psi-main")
                    (:stats-line . "latency 12ms")
                    (:status-line . "connected")))))
-      (should (string-match-p "Assistant: hello" (buffer-string)))
+      (should (string-match-p "ψ: hello" (buffer-string)))
       (should (string-match-p "~/psi-main\nlatency 12ms\nconnected" (buffer-string)))
       (should-not (string-match-p "mode: parity" (buffer-string)))
       (should (= (point-max) (marker-position (psi-emacs-state-draft-anchor psi-emacs--state))))
@@ -1353,7 +1353,7 @@
 
 (ert-deftest psi-extension-ui-footer-renders-blank-line-and-separator-before-block ()
   (with-temp-buffer
-    (insert "Assistant: hello\n")
+    (insert "ψ: hello\n")
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
     (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker (point-max) nil))
@@ -1365,7 +1365,7 @@
                    (:stats-line . "latency 12ms"))))))
     (let* ((buf (buffer-string))
            (lines (split-string buf "\n")))
-      (should (equal "Assistant: hello" (nth 0 lines)))
+      (should (equal "ψ: hello" (nth 0 lines)))
       (should (equal "" (nth 1 lines)))
       (should (= 20 (string-width (or (nth 2 lines) ""))))
       (should (equal "~/psi-main" (nth 3 lines))))))
@@ -1411,13 +1411,13 @@
     (psi-emacs--handle-rpc-event
      '((:event . "assistant/message")
        (:data . ((:text . "reply")))))
-    (should (string-match-p "Assistant: reply" (buffer-string)))
+    (should (string-match-p "ψ: reply" (buffer-string)))
     (psi-emacs--handle-rpc-event
      '((:event . "footer/updated")
        (:data . ((:path-line . "~/psi-main")
                  (:stats-line . "stats2")))))
     (let ((buf (buffer-string)))
-      (should (string-match-p "Assistant: reply" buf))
+      (should (string-match-p "ψ: reply" buf))
       (should (string-match-p "stats2" buf)))))
 
 (ert-deftest psi-extension-ui-dialog-requested-confirm-sends-resolve-boolean ()
