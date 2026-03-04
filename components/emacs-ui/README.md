@@ -4,10 +4,10 @@ This frontend runs psi over `--rpc-edn` in a dedicated Emacs buffer.
 
 ## Extension UI parity gate
 
-Extension UI parity is controlled by `psi-emacs-enable-extension-ui-parity` (default `nil`).
+Extension UI parity is controlled by `psi-emacs-enable-extension-ui-parity` (default `t`).
 
-- `nil` (default): subscribe to `psi-rpc-mvp-topics` only (MVP behavior)
-- non-`nil`: subscribe to `psi-rpc-parity-topics` (MVP + extension UI/footer topics)
+- non-`nil` (default): subscribe to `psi-rpc-parity-topics` (MVP + extension UI/footer topics)
+- `nil`: subscribe to `psi-rpc-mvp-topics` only (MVP behavior)
 
 Exact parity extension topics:
 

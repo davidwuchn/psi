@@ -44,8 +44,7 @@ entity EmacsFooterState {
 ------------------------------------------------------------
 
 config {
-    projection_separator: String = " | "
-    projection_prefix: String = "Footer: "
+    projection_separator: String = "\n"
 }
 
 ------------------------------------------------------------
@@ -70,9 +69,12 @@ rule CanonicalFooterPayloadMapsToDefaultFooterView {
 
 rule CanonicalFooterProjectionTextFunction {
     -- Pure projection helper used by parity frontends.
+    -- Stats line may receive width-aware provider/model right-alignment.
     when: CanonicalFooterProjectionTextRequested(payload: rpc/FooterUpdatedPayload)
 
-    let lines = NonEmptyStrings([payload.pathLine, payload.statsLine, payload.statusLine])
+    let alignedStats = EmacsAlignedStatsLine(payload.statsLine,
+                                             ProjectionViewportTextWidth(excludesMargins: true))
+    let lines = NonEmptyStrings([payload.pathLine, alignedStats, payload.statusLine])
 
     ensures:
         if lines.count > 0:
@@ -81,9 +83,27 @@ rule CanonicalFooterProjectionTextFunction {
             CanonicalFooterProjectionText(payload) = null
 }
 
+rule EmacsStatsLineProviderModelAlignment {
+    -- Heuristic alignment for canonical stats line:
+    -- when a trailing `(provider) ...` segment is detectable and fits in the
+    -- viewport text area (excluding left/right margins), right-align that
+    -- segment with minimum two spaces from the left segment.
+    when: EmacsAlignedStatsLineRequested(statsLine, viewportWidth)
+
+    ensures:
+        if DetectProviderModelSegment(statsLine) and
+           FitsWithMinPadding(statsLine, viewportWidth, minPadding: 2):
+            EmacsAlignedStatsLine(statsLine, viewportWidth) =
+                RightAlignProviderSegment(statsLine, viewportWidth, minPadding: 2)
+        else:
+            EmacsAlignedStatsLine(statsLine, viewportWidth) = statsLine
+}
+
 rule CanonicalFooterProjectionTextAppliedToState {
-    -- Emacs flattens canonical footer lines into one deterministic line:
-    --   <path-line> | <stats-line> | <status-line?>
+    -- Emacs renders canonical footer lines as a deterministic multi-line block:
+    --   <path-line>
+    --   <stats-line>
+    --   <status-line?>
     -- with empty lines removed.
     when: FooterUpdatedReceived(state, payload: rpc/FooterUpdatedPayload)
 
@@ -110,21 +130,21 @@ rule LegacyFooterPayloadFallback {
             state.projection.text = CoerceStringOrNull(fallback)
 }
 
-rule FooterLineRenderedInProjectionBlock {
+rule FooterTextRenderedInProjectionBlock {
     when: ProjectionBlockRenderRequested(state)
 
     requires: state.projection.text != null
     requires: Trim(state.projection.text) != ""
 
-    ensures: ProjectionBlockContainsLine(config.projection_prefix + state.projection.text)
+    ensures: ProjectionBlockContainsFooterText(state.projection.text)
 }
 
-rule FooterLineOmittedWhenProjectionBlank {
+rule FooterTextOmittedWhenProjectionBlank {
     when: ProjectionBlockRenderRequested(state)
 
     requires: state.projection.text = null or Trim(state.projection.text) = ""
 
-    ensures: ProjectionBlockOmitsPrefix(config.projection_prefix)
+    ensures: ProjectionBlockOmitsFooterText()
 }
 
 rule FooterProjectionUpsertPreservesTranscriptAndAnchor {
@@ -164,9 +184,10 @@ surface EmacsFooterProjectionContract {
     guidance:
         -- Canonical parity path:
         --   footer/updated payload (path-line, stats-line, status-line?)
-        --   -> flatten non-empty lines with " | "
-        --   -> render as one deterministic projection line:
-        --        Footer: <flattened-text>
+        --   -> apply stats-line provider/model right-alignment heuristic
+        --      when detectable and width allows
+        --   -> join non-empty lines with "\n"
+        --   -> render as a deterministic multi-line footer text block.
         --
         -- Legacy path remains accepted for compatibility when only
         -- text/message/footer/content is present.
@@ -176,8 +197,6 @@ surface EmacsFooterProjectionContract {
 -- Notes
 ------------------------------------------------------------
 
--- Assumption/trade-off (story D4/D5):
--- Emacs parity keeps the single-line `Footer: ...` projection contract for
--- deterministic process-buffer rendering and compatibility with existing
--- transcript anchoring behavior. A dedicated multi-line footer area is
--- explicitly deferred to future runtime/frontend work.
+-- Emacs parity renders canonical footer payload lines directly (multi-line)
+-- in projection order path -> stats -> status?, preserving transcript anchor
+-- behavior while removing the legacy `Footer: ` prefix wrapper.

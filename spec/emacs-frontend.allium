@@ -1035,9 +1035,11 @@ surface EmacsSessionApi {
         --
         -- Footer parity rendering:
         --   footer/updated payloads are interpreted via emacs-footer.allium.
-        --   Canonical path/stats/status lines are flattened to a deterministic
-        --   single projection line:
-        --     Footer: <path> | <stats> | <status?>
+        --   Canonical path/stats/status lines are rendered as deterministic
+        --   multi-line projection text:
+        --     <path>
+        --     <stats>   (provider/model segment right-aligned when detectable)
+        --     <status?>
         --
         -- Error UX:
         --   RPC errors are surfaced in minibuffer and persisted in a single

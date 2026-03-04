@@ -41,11 +41,11 @@ When nil, `/resume` uses the MVP fallback message."
   :type 'boolean
   :group 'psi-emacs)
 
-(defcustom psi-emacs-enable-extension-ui-parity nil
+(defcustom psi-emacs-enable-extension-ui-parity t
   "Enable extension UI parity topic subscription in Emacs frontend.
 
-When nil (default), subscribe to `psi-rpc-mvp-topics` only.
-When non-nil, subscribe to `psi-rpc-parity-topics`."
+When non-nil (default), subscribe to `psi-rpc-parity-topics`.
+When nil, subscribe to `psi-rpc-mvp-topics` only."
   :type 'boolean
   :group 'psi-emacs)
 
@@ -1127,10 +1127,59 @@ Renders according to the current global tool-output-view-mode."
           (string< (psi-emacs--projection-item-key a '(:extension-id extension-id :extensionId extensionId))
                    (psi-emacs--projection-item-key b '(:extension-id extension-id :extensionId extensionId))))))
 
+(defun psi-emacs--projection-window-width ()
+  "Return render width for footer projection in current buffer.
+
+Uses the live window body width minus active left/right margins so alignment
+matches the visible text area. Falls back to 80 for non-visible buffers
+(e.g. tests/background)."
+  (if-let ((win (get-buffer-window (current-buffer) t)))
+      (let* ((body (window-body-width win))
+             (margins (window-margins win))
+             (left-margin (or (car margins) 0))
+             (right-margin (or (cdr margins) 0))
+             (text-width (- body left-margin right-margin)))
+        (max 1 text-width))
+    80))
+
+(defun psi-emacs--split-footer-stats-line (line)
+  "Split canonical footer stats LINE into [left right] when possible.
+
+RIGHT is recognized as the provider/model segment that starts with
+`(provider) ...`. Returns (list left right-or-nil)."
+  (let ((s (or line "")))
+    (if (string-match "\\`\\(.*\\) \\(([^)]*) .+\\)\\'" s)
+        (list (string-trim-right (match-string 1 s))
+              (match-string 2 s))
+      (list s nil))))
+
+(defun psi-emacs--align-footer-stats-line (line)
+  "Right-align provider/model segment in canonical footer stats LINE.
+
+When LINE contains a recognizable `(provider) ...` right segment, align it to
+buffer width with at least two spaces between left and right. Otherwise, return
+LINE unchanged."
+  (pcase-let* ((`(,left ,right) (psi-emacs--split-footer-stats-line line)))
+    (if (and (stringp right) (not (string-empty-p right)))
+        (let* ((width (psi-emacs--projection-window-width))
+               (left-w (string-width left))
+               (right-w (string-width right))
+               (min-pad 2)
+               (total (+ left-w min-pad right-w)))
+          (if (<= total width)
+              (concat left (make-string (- width left-w right-w) ?\s) right)
+            line))
+      line)))
+
 (defun psi-emacs--projection-footer-text (data)
-  "Extract deterministic footer projection text from event DATA."
+  "Extract deterministic footer projection text from event DATA.
+
+Canonical payload lines are rendered as multi-line text in this order:
+path-line, stats-line, status-line (blank lines omitted)."
   (let* ((path-line (psi-emacs--event-data-get data '(:path-line path-line :pathLine pathLine)))
-         (stats-line (psi-emacs--event-data-get data '(:stats-line stats-line :statsLine statsLine)))
+         (stats-line* (psi-emacs--event-data-get data '(:stats-line stats-line :statsLine statsLine)))
+         (stats-line (and (stringp stats-line*)
+                          (psi-emacs--align-footer-stats-line stats-line*)))
          (status-line (psi-emacs--event-data-get data '(:status-line status-line :statusLine statusLine)))
          (canonical-lines (delq nil
                                 (mapcar (lambda (line)
@@ -1139,7 +1188,7 @@ Renders according to the current global tool-output-view-mode."
                                             line))
                                         (list path-line stats-line status-line)))))
     (if canonical-lines
-        (string-join canonical-lines " | ")
+        (string-join canonical-lines "\n")
       (let ((value (psi-emacs--event-data-get data
                                               '(:text text :message message :footer footer :content content))))
         (cond
@@ -1253,7 +1302,7 @@ Renders according to the current global tool-output-view-mode."
         (push (psi-emacs--projection-notification-line notification) lines)))
     (when (and (stringp footer)
                (not (string-empty-p footer)))
-      (push (format "Footer: %s" footer) lines))
+      (push footer lines))
     (if lines
         (concat (string-join (nreverse lines) "\n") "\n")
       "")))

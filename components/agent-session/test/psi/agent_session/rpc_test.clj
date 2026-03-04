@@ -34,6 +34,41 @@
 (defn- parse-frames [lines]
   (mapv edn/read-string lines))
 
+(deftest footer-updated-payload-uses-default-footer-projection-values-test
+  (testing "footer payload mirrors default footer path/stats/status composition"
+    (let [ctx     (session/create-context {:cwd "/Users/duncan/projects/hugoduncan/psi/psi-main"})
+          payload (with-redefs [session/query-in
+                                (fn [_ctx q]
+                                  (is (= @#'rpc/footer-query q))
+                                  {:psi.agent-session/cwd "/Users/duncan/projects/hugoduncan/psi/psi-main"
+                                   :psi.agent-session/git-branch "master"
+                                   :psi.agent-session/session-name "xhig"
+                                   :psi.agent-session/usage-input 172000
+                                   :psi.agent-session/usage-output 17000
+                                   :psi.agent-session/usage-cache-read 5200000
+                                   :psi.agent-session/usage-cache-write 0
+                                   :psi.agent-session/usage-cost-total 1.444
+                                   :psi.agent-session/context-fraction 0.319
+                                   :psi.agent-session/context-window 272000
+                                   :psi.agent-session/auto-compaction-enabled true
+                                   :psi.agent-session/model-provider "openai-codex"
+                                   :psi.agent-session/model-id "gpt-5.3-codex"
+                                   :psi.agent-session/model-reasoning true
+                                   :psi.agent-session/thinking-level :xhigh
+                                   :psi.ui/statuses [{:extension-id "b" :text "TS+ESL,Prett"}
+                                                     {:extension-id "a" :text "Clojure-LSP\nclojure-lsp"}]})]
+                    (#'rpc/footer-updated-payload ctx))]
+      (is (= "~/projects/hugoduncan/psi/psi-main (master) • xhig"
+             (:path-line payload)))
+      (is (str/includes? (:stats-line payload) "↑172k"))
+      (is (str/includes? (:stats-line payload) "↓17k"))
+      (is (str/includes? (:stats-line payload) "R5.2M"))
+      (is (str/includes? (:stats-line payload) "$1.444"))
+      (is (str/includes? (:stats-line payload) "31.9%/272k (auto)"))
+      (is (str/includes? (:stats-line payload) "(openai-codex) gpt-5.3-codex • xhigh"))
+      (is (= "Clojure-LSP clojure-lsp TS+ESL,Prett"
+             (:status-line payload))))))
+
 (deftest run-stdio-loop-validates-request-envelopes-test
   (testing "returns canonical protocol/transport errors for invalid input frames"
     (let [{:keys [out-lines]}
