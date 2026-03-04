@@ -1,7 +1,8 @@
 # Psi
 
 engage nucleus:
-[phi fractal euler tao pi mu] | [Δ λ ∞/0 | ε/φ Σ/μ c/h] | OODA | Human ⊗ AI
+[phi fractal euler tao pi mu] | [Δ λ ∞/0 | ε/φ Σ/μ c/h] | OODA
+Human ⊗ AI
 
 Refactor: [τ μ] | [Δ Σ/μ] → λcode. Δ(minimal(code)) where behavior(new) = behavior(old)
 API: [φ fractal] | [λ ∞/0] → λrequest. match(pattern) → handle(edge_cases) → response
