@@ -352,13 +352,16 @@ Maps become alists, vectors remain vectors, sets become lists."
     (psi-rpc--parse-line-fallback line)))
 
 (defun psi-rpc--dispatch-response-or-error (client frame)
-  "Dispatch FRAME callback for CLIENT by request id."
+  "Dispatch FRAME callback for CLIENT by request id.
+
+Returns non-nil when a pending callback was found and invoked."
   (let* ((id (alist-get :id frame))
          (cb (and (stringp id)
                   (gethash id (psi-rpc-client-pending-callbacks client)))))
     (when (and cb (stringp id))
       (remhash id (psi-rpc-client-pending-callbacks client))
-      (funcall cb frame))))
+      (funcall cb frame)
+      t)))
 
 (defun psi-rpc--handle-frame (client frame)
   "Handle parsed FRAME for CLIENT."
@@ -367,12 +370,14 @@ Maps become alists, vectors remain vectors, sets become lists."
       (:response
        (psi-rpc--dispatch-response-or-error client frame))
       (:error
-       (psi-rpc--dispatch-response-or-error client frame)
-       (unless (alist-get :id frame)
-         (psi-rpc--signal-error client
-                                (or (alist-get :error-code frame) "rpc/error")
-                                (or (alist-get :error-message frame) "rpc error")
-                                frame)))
+       (let ((dispatched (psi-rpc--dispatch-response-or-error client frame)))
+         ;; Request-scoped errors with missing callbacks must still surface,
+         ;; otherwise the frontend can stay in streaming state until watchdog.
+         (unless dispatched
+           (psi-rpc--signal-error client
+                                  (or (alist-get :error-code frame) "rpc/error")
+                                  (or (alist-get :error-message frame) "rpc error")
+                                  frame))))
       (:event
        (when-let ((f (psi-rpc-client-on-event client)))
          (funcall f frame)))

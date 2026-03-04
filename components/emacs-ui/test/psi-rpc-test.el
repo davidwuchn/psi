@@ -145,6 +145,42 @@
       (when (process-live-p process)
         (delete-process process)))))
 
+(ert-deftest psi-rpc-id-error-without-callback-signals-rpc-error ()
+  (let* ((errors nil)
+         (client (psi-rpc-make-client
+                  :on-rpc-error (lambda (code message frame)
+                                  (push (list code message frame) errors)))))
+    (psi-rpc--handle-frame
+     client
+     '((:id . "req-404")
+       (:kind . :error)
+       (:op . "prompt")
+       (:error-code . "request/op-not-supported")
+       (:error-message . "unsupported op: prompt_while_streaming")))
+    (should (= 1 (length errors)))
+    (should (equal "request/op-not-supported" (caar errors)))
+    (should (equal "unsupported op: prompt_while_streaming" (cadar errors)))))
+
+(ert-deftest psi-rpc-id-error-with-callback-does-not-double-signal-rpc-error ()
+  (let* ((errors nil)
+         (callback-hits nil)
+         (client (psi-rpc-make-client
+                  :on-rpc-error (lambda (code message frame)
+                                  (push (list code message frame) errors)))))
+    (puthash "req-1"
+             (lambda (frame)
+               (push frame callback-hits))
+             (psi-rpc-client-pending-callbacks client))
+    (psi-rpc--handle-frame
+     client
+     '((:id . "req-1")
+       (:kind . :error)
+       (:op . "prompt")
+       (:error-code . "runtime/failed")
+       (:error-message . "boom")))
+    (should (= 1 (length callback-hits)))
+    (should (null errors))))
+
 (ert-deftest psi-rpc-startup-lifecycle-ready-path ()
   (let* ((states nil)
          (errors nil)
