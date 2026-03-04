@@ -136,6 +136,22 @@
       (agent/set-system-prompt-in! agent-ctx sp))
     agent-ctx))
 
+(defn- current-session-cwd [query-fn]
+  (when query-fn
+    (:psi.agent-session/cwd
+     (query-fn [:psi.agent-session/cwd]))))
+
+(defn- create-sub-session-ctx [agent-ctx query-fn]
+  {:agent-ctx agent-ctx
+   :cwd       (current-session-cwd query-fn)
+   :session-data-atom
+   (atom {:tool-output-overrides {}})
+   :tool-output-stats-atom
+   (atom {:calls []
+          :aggregates {:total-context-bytes 0
+                       :by-tool {}
+                       :limit-hits-by-tool {}}})})
+
 (defn- wf-phase [wf]
   (or (:psi.extension.workflow/phase wf)
       (cond
@@ -308,27 +324,30 @@
        (str/join "\n")))
 
 (defn- run-subagent-job
-  [{:keys [agent-ctx prompt query-fn get-api-key-fn]}]
+  [{:keys [agent-ctx session-ctx prompt query-fn get-api-key-fn]}]
   (let [started (now-ms)]
     (try
-      (let [model   (resolve-active-model query-fn)
-            _       (when-not model
-                      (throw (ex-info "No active model available" {})))
-            api-key (when (fn? get-api-key-fn)
-                      (get-api-key-fn (:provider model)))
-            user-msg {:role      "user"
-                      :content   [{:type :text :text (or prompt "")}]
-                      :timestamp (java.time.Instant/now)}
-            result  (executor/run-agent-loop!
-                     nil
-                     agent-ctx
-                     model
-                     [user-msg]
-                     (cond-> {}
-                       api-key (assoc :api-key api-key)))
-            text    (result->text result)
-            ok?     (not= :error (:stop-reason result))
-            elapsed (- (now-ms) started)]
+      (let [model        (resolve-active-model query-fn)
+            _            (when-not model
+                           (throw (ex-info "No active model available" {})))
+            api-key      (when (fn? get-api-key-fn)
+                           (get-api-key-fn (:provider model)))
+            session-ctx* (or session-ctx
+                             (create-sub-session-ctx agent-ctx query-fn))
+            user-msg     {:role      "user"
+                          :content   [{:type :text :text (or prompt "")}]
+                          :timestamp (java.time.Instant/now)}
+            result       (executor/run-agent-loop!
+                          nil
+                          session-ctx*
+                          agent-ctx
+                          model
+                          [user-msg]
+                          (cond-> {}
+                            api-key (assoc :api-key api-key)))
+            text         (result->text result)
+            ok?          (not= :error (:stop-reason result))
+            elapsed      (- (now-ms) started)]
         {:ok?           ok?
          :text          text
          :elapsed-ms    elapsed
@@ -435,6 +454,7 @@
                    :type   :future
                    :params (fn [_ data]
                              {:agent-ctx       (:subagent/agent-ctx data)
+                              :session-ctx     (:subagent/session-ctx data)
                               :prompt          (:subagent/current-prompt data)
                               :query-fn        (:subagent/query-fn data)
                               :get-api-key-fn  (:subagent/get-api-key-fn data)})
@@ -474,15 +494,17 @@
                               :chart           subagent-chart
                               :start-event     :subagent/start
                               :initial-data-fn (fn [_input]
-                                                 {:subagent/agent-ctx      (create-sub-agent-ctx qf)
-                                                  :subagent/query-fn       qf
-                                                  :subagent/get-api-key-fn get-api-key
-                                                  :subagent/on-start       on-start
-                                                  :subagent/on-finished    on-finished
-                                                  :subagent/turn-count     0
-                                                  :subagent/current-prompt nil
-                                                  :subagent/last-text      ""
-                                                  :subagent/elapsed-ms     0})
+                                                 (let [agent-ctx (create-sub-agent-ctx qf)]
+                                                   {:subagent/agent-ctx      agent-ctx
+                                                    :subagent/session-ctx    (create-sub-session-ctx agent-ctx qf)
+                                                    :subagent/query-fn       qf
+                                                    :subagent/get-api-key-fn get-api-key
+                                                    :subagent/on-start       on-start
+                                                    :subagent/on-finished    on-finished
+                                                    :subagent/turn-count     0
+                                                    :subagent/current-prompt nil
+                                                    :subagent/last-text      ""
+                                                    :subagent/elapsed-ms     0}))
                               :public-data-fn  (fn [data]
                                                  (select-keys data
                                                               [:subagent/turn-count
