@@ -16,21 +16,9 @@
   (testing "eql_query appears in all-tool-schemas"
     (is (some #(= "eql_query" (:name %)) tools/all-tool-schemas))))
 
-(deftest search-tools-in-all-schemas-test
-  (testing "ls/find/grep appear in all-tool-schemas"
-    (is (some #(= "ls" (:name %)) tools/all-tool-schemas))
-    (is (some #(= "find" (:name %)) tools/all-tool-schemas))
-    (is (some #(= "grep" (:name %)) tools/all-tool-schemas))))
-
 (deftest eql-query-tool-not-in-all-tools-test
   (testing "eql_query is excluded from all-tools (requires context)"
     (is (not (some #(= "eql_query" (:name %)) tools/all-tools)))))
-
-(deftest search-tools-in-all-tools-test
-  (testing "ls/find/grep are included in all-tools"
-    (is (some #(= "ls" (:name %)) tools/all-tools))
-    (is (some #(= "find" (:name %)) tools/all-tools))
-    (is (some #(= "grep" (:name %)) tools/all-tools))))
 
 (deftest make-eql-query-tool-valid-query-test
   (testing "valid EQL query returns EDN result"
@@ -95,26 +83,33 @@
       (is (true? (:is-error result))))))
 
 (deftest execute-tool-dispatch-test
-  (testing "built-in dispatch handles ls/find/grep"
+  (testing "built-in dispatch handles read/bash/edit/write"
     (let [tmp (java.io.File/createTempFile "psi-dispatch-test" "")]
       (.delete tmp)
       (.mkdirs tmp)
       (try
         (spit (io/file tmp "a.txt") "alpha")
-        (spit (io/file tmp "b.clj") "(ns b)")
-        (let [dir         (.getAbsolutePath tmp)
-              ls-result   (tools/execute-tool "ls" {"path" dir})
-              find-result (tools/execute-tool "find" {"path" dir "pattern" "*.txt"})
-              grep-result (tools/execute-tool "grep" {"path" dir "pattern" "alpha"})]
-          (is (false? (:is-error ls-result)))
-          (is (str/includes? (:content ls-result) "a.txt"))
-          (is (false? (:is-error find-result)))
-          (is (str/includes? (:content find-result) "a.txt"))
-          (is (false? (:is-error grep-result)))
-          (is (str/includes? (:content grep-result) "alpha")))
+        (let [dir          (.getAbsolutePath tmp)
+              read-result  (tools/execute-tool "read" {"path" "a.txt"} {:cwd dir})
+              bash-result  (tools/execute-tool "bash" {"command" "cat a.txt"} {:cwd dir})
+              edit-result  (tools/execute-tool "edit" {"path" "a.txt" "oldText" "alpha" "newText" "beta"} {:cwd dir})
+              write-result (tools/execute-tool "write" {"path" "b.txt" "content" "gamma"} {:cwd dir})]
+          (is (false? (:is-error read-result)))
+          (is (= "alpha" (:content read-result)))
+          (is (false? (:is-error bash-result)))
+          (is (str/includes? (:content bash-result) "alpha"))
+          (is (false? (:is-error edit-result)))
+          (is (= "beta" (slurp (io/file dir "a.txt"))))
+          (is (false? (:is-error write-result)))
+          (is (= "gamma" (slurp (io/file dir "b.txt")))))
         (finally
           (doseq [file (reverse (file-seq tmp))]
             (.delete file))))))
+
+  (testing "built-in dispatch rejects removed search tools"
+    (doseq [tool-name ["ls" "find" "grep"]]
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unknown tool"
+                            (tools/execute-tool tool-name {})))))
 
   (testing "built-in dispatch does not handle eql_query"
     (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unknown tool"
@@ -300,80 +295,17 @@
             (is (false? (:is-error r)))
             (is (= "edited" (slurp (io/file dir "new.txt"))))))))))
 
-(deftest execute-ls-find-grep-test
-  (testing "ls lists sorted entries with directory suffix and empty-directory message"
-    (with-temp-dir
-      (fn [dir]
-        (let [empty-res (tools/execute-ls {"path" dir})]
-          (is (= "(empty directory)" (:content empty-res))))
-        (spit (io/file dir "b.txt") "b")
-        (spit (io/file dir "A.txt") "a")
-        (.mkdirs (io/file dir "zdir"))
-        (let [res (tools/execute-ls {"path" dir})]
-          (is (false? (:is-error res)))
-          (is (str/includes? (:content res) "A.txt"))
-          (is (str/includes? (:content res) "b.txt"))
-          (is (str/includes? (:content res) "zdir/"))))))
-
-  (testing "ls applies semantic entry limit before byte truncation"
-    (with-temp-dir
-      (fn [dir]
-        (doseq [i (range 10)]
-          (spit (io/file dir (str "f" i ".txt")) "x"))
-        (let [limit-res (tools/execute-ls {"path" dir "limit" 3})
-              bytes-res (tools/execute-ls {"path" dir "limit" 10}
-                                          {:overrides {"ls" {:max-bytes 8}}})]
-          (is (= 3 (get-in limit-res [:details :entry-limit-reached])))
-          (is (str/includes? (:content limit-res) "limit reached"))
-          (is (true? (get-in bytes-res [:details :truncation :truncated])))))))
-
-  (testing "find supports glob pattern, no-results, and result limit metadata"
-    (with-temp-dir
-      (fn [dir]
-        (spit (io/file dir "a.clj") "(ns a)")
-        (spit (io/file dir "b.txt") "hello")
-        (spit (io/file dir "c.clj") "(ns c)")
-        (let [res       (tools/execute-find {"path" dir "pattern" "*.clj"})
-              none-res  (tools/execute-find {"path" dir "pattern" "*.md"})
-              limit-res (tools/execute-find {"path" dir "pattern" "*" "limit" 1})]
-          (is (false? (:is-error res)))
-          (is (str/includes? (:content res) ".clj"))
-          (is (= "No files found matching pattern" (:content none-res)))
-          (is (= 1 (get-in limit-res [:details :result-limit-reached])))
-          (is (str/includes? (:content limit-res) "limit reached"))))))
-
-  (testing "grep supports literal/ignore-case/context, no-match, and truncation metadata"
-    (with-temp-dir
-      (fn [dir]
-        (spit (io/file dir "g.txt") "Alpha\nBeta\nalpha\n")
-        (let [res      (tools/execute-grep {"path" dir "pattern" "alpha" "ignoreCase" true})
-              lit-res  (tools/execute-grep {"path" dir "pattern" "Alpha" "literal" true})
-              none-res (tools/execute-grep {"path" dir "pattern" "zzz"})
-              line-res (tools/execute-grep {"path" dir "pattern" "A"}
-                                           {:overrides {"grep" {:max-bytes 30}}})]
-          (is (false? (:is-error res)))
-          (is (str/includes? (:content res) "alpha"))
-          (is (false? (:is-error lit-res)))
-          (is (= "No matches found" (:content none-res)))
-          (is (true? (get-in line-res [:details :truncation :truncated]))))))))
-
 (deftest make-read-only-tools-with-cwd-test
-  (testing "returns read-only/search tools in canonical order"
+  (testing "returns read-only tools in canonical order"
     (with-temp-dir
       (fn [dir]
         (let [tools-vec (tools/make-read-only-tools-with-cwd dir)]
-          (is (= ["read" "grep" "find" "ls"] (mapv :name tools-vec)))))))
+          (is (= ["read"] (mapv :name tools-vec)))))))
 
-  (testing "read-only/search tools execute in scoped cwd"
+  (testing "read-only tools execute in scoped cwd"
     (with-temp-dir
       (fn [dir]
         (spit (io/file dir "notes.txt") "hello alpha")
-        (let [tools-vec  (tools/make-read-only-tools-with-cwd dir)
-              read-tool  (first (filter #(= "read" (:name %)) tools-vec))
-              grep-tool  (first (filter #(= "grep" (:name %)) tools-vec))
-              find-tool  (first (filter #(= "find" (:name %)) tools-vec))
-              ls-tool    (first (filter #(= "ls" (:name %)) tools-vec))]
-          (is (str/includes? (:content ((:execute read-tool) {"path" "notes.txt"})) "hello alpha"))
-          (is (str/includes? (:content ((:execute grep-tool) {"path" "." "pattern" "alpha"})) "alpha"))
-          (is (str/includes? (:content ((:execute find-tool) {"path" "." "pattern" "*.txt"})) "notes.txt"))
-          (is (str/includes? (:content ((:execute ls-tool) {"path" "."})) "notes.txt")))))))
+        (let [tools-vec (tools/make-read-only-tools-with-cwd dir)
+              read-tool (first (filter #(= "read" (:name %)) tools-vec))]
+          (is (str/includes? (:content ((:execute read-tool) {"path" "notes.txt"})) "hello alpha")))))))

@@ -9,9 +9,6 @@
 --   - tools/bash.allium             (tail truncation + temp artifacts + timeout/abort)
 --   - tools/edit.allium             (exact/fuzzy matching + line-ending/BOM preservation + diff metadata)
 --   - tools/write.allium            (overwrite write + bytes-written response)
---   - tools/ls.allium               (listing + entry/byte truncation)
---   - tools/find.allium             (glob search + result/byte truncation)
---   - tools/grep.allium             (pattern search + line/match/byte truncation)
 --   - tools/eql-query.allium        (safe EQL query tool + truncation + full-output artifact)
 --
 -- Notes:
@@ -24,9 +21,6 @@ use "./tools/read.allium" as read
 use "./tools/bash.allium" as bash
 use "./tools/edit.allium" as edit
 use "./tools/write.allium" as write
-use "./tools/ls.allium" as ls
-use "./tools/find.allium" as find
-use "./tools/grep.allium" as grep
 use "./tools/eql-query.allium" as eql
 
 surface ToolSuiteIndex {
@@ -39,8 +33,5 @@ surface ToolSuiteIndex {
         bash/BashToolApi
         edit/EditToolApi
         write/WriteToolApi
-        ls/LsToolApi
-        find/FindToolApi
-        grep/GrepToolApi
         eql/EqlQueryToolApi
 }

@@ -58,39 +58,6 @@
                                       :content {:type "string" :description "Content to write"}}
                          :required   ["path" "content"]})})
 
-(def ls-tool
-  {:name        "ls"
-   :label       "List"
-   :description "List directory contents with optional entry limit."
-   :parameters  (pr-str {:type       "object"
-                         :properties {:path  {:type "string" :description "Directory path to list (defaults to .)"}
-                                      :limit {:type "integer" :description "Maximum number of entries to return (default 500)"}}
-                         :required   []})})
-
-(def find-tool
-  {:name        "find"
-   :label       "Find"
-   :description "Find files by glob pattern."
-   :parameters  (pr-str {:type       "object"
-                         :properties {:pattern {:type "string" :description "Glob pattern, e.g. *.clj"}
-                                      :path    {:type "string" :description "Search root path (defaults to .)"}
-                                      :limit   {:type "integer" :description "Maximum results (default 1000)"}}
-                         :required   ["pattern"]})})
-
-(def grep-tool
-  {:name        "grep"
-   :label       "Grep"
-   :description "Search file contents for matches."
-   :parameters  (pr-str {:type       "object"
-                         :properties {:pattern    {:type "string" :description "Search pattern"}
-                                      :path       {:type "string" :description "Search root path (defaults to .)"}
-                                      :glob       {:type "string" :description "Optional glob filter"}
-                                      :ignoreCase {:type "boolean" :description "Case-insensitive search"}
-                                      :literal    {:type "boolean" :description "Treat pattern as literal text"}
-                                      :context    {:type "integer" :description "Context lines around matches"}
-                                      :limit      {:type "integer" :description "Maximum matches (default 100)"}}
-                         :required   ["pattern"]})})
-
 (def eql-query-tool
   {:name        "eql_query"
    :label       "EQL Query"
@@ -100,7 +67,7 @@
                          :required   ["query"]})})
 
 (def all-tool-schemas
-  [read-tool bash-tool edit-tool write-tool ls-tool find-tool grep-tool eql-query-tool])
+  [read-tool bash-tool edit-tool write-tool eql-query-tool])
 
 ;; ============================================================
 ;; Tool implementations
@@ -585,124 +552,6 @@
      {:content  (str "Successfully wrote " bytes " bytes to " fpath)
       :is-error false})))
 
-(def ^:private max-safe-lines 9007199254740991)
-
-(defn- append-limit-notice
-  [content notices]
-  (if (seq notices)
-    (str content "\n\n[limit reached: " (str/join "; " notices) "]")
-    content))
-
-(defn execute-ls
-  "List directory contents with semantic entry limit then byte truncation."
-  ([args] (execute-ls args nil))
-  ([{:strs [path limit]} {:keys [cwd overrides]}]
-   (let [dir       (resolve-path cwd (or path "."))
-         dir-path  (.getPath dir)]
-     (when-not (.exists dir)
-       (throw (ex-info (str "Path not found: " dir-path) {:path dir-path})))
-     (when-not (.isDirectory dir)
-       (throw (ex-info (str "Not a directory: " dir-path) {:path dir-path})))
-     (let [entries        (->> (or (.listFiles dir) (into-array File []))
-                               (map (fn [^File f]
-                                      (let [n (.getName f)]
-                                        (if (.isDirectory f) (str n "/") n))))
-                               (sort-by str/lower-case)
-                               vec)
-           entry-limit    (max 1 (or limit 500))
-           primary        (vec (take entry-limit entries))
-           joined         (if (seq primary) (str/join "\n" primary) "")
-           base-policy    (tool-output/effective-policy (or overrides {}) "ls")
-           truncation     (tool-output/head-truncate joined (assoc base-policy :max-lines max-safe-lines))
-           entry-hit?     (> (count entries) entry-limit)
-           notices        (cond-> []
-                            entry-hit? (conj (str "entry limit " entry-limit))
-                            (:truncated truncation) (conj (str "byte limit " (:max-bytes truncation))))
-           base-content   (if (zero? (count entries)) "(empty directory)" (:content truncation))]
-       {:content  (append-limit-notice base-content notices)
-        :is-error false
-        :details  (cond-> {}
-                    (:truncated truncation) (assoc :truncation truncation)
-                    entry-hit? (assoc :entry-limit-reached entry-limit))}))))
-
-(defn execute-find
-  "Find files by glob pattern with semantic result limit then byte truncation."
-  ([args] (execute-find args nil))
-  ([{:strs [pattern path limit]} {:keys [cwd overrides]}]
-   (let [search-root (resolve-path cwd (or path "."))
-         root-path   (.getPath search-root)]
-     (when-not (.exists search-root)
-       (throw (ex-info (str "Path not found: " root-path) {:path root-path})))
-     (let [result-limit (max 1 (or limit 1000))
-           root-nio     (.toPath search-root)
-           matcher      (.getPathMatcher (java.nio.file.FileSystems/getDefault)
-                                         (str "glob:" (or pattern "*")))
-           matched      (->> (file-seq search-root)
-                             (filter #(.isFile ^File %))
-                             (map (fn [^File f]
-                                    (.normalize (.relativize root-nio (.toPath f)))))
-                             (filter #(.matches matcher %))
-                             (map str)
-                             sort
-                             vec)
-           primary      (vec (take result-limit matched))
-           joined       (if (seq primary) (str/join "\n" primary) "")
-           base-policy  (tool-output/effective-policy (or overrides {}) "find")
-           truncation   (tool-output/head-truncate joined (assoc base-policy :max-lines max-safe-lines))
-           result-hit?  (> (count matched) result-limit)
-           notices      (cond-> []
-                          result-hit? (conj (str "result limit " result-limit))
-                          (:truncated truncation) (conj (str "byte limit " (:max-bytes truncation))))
-           base-content (if (empty? matched) "No files found matching pattern" (:content truncation))]
-       {:content  (append-limit-notice base-content notices)
-        :is-error false
-        :details  (cond-> {}
-                    (:truncated truncation) (assoc :truncation truncation)
-                    result-hit? (assoc :result-limit-reached result-limit))}))))
-
-(defn execute-grep
-  "Search file contents with semantic match limit then byte truncation."
-  ([args] (execute-grep args nil))
-  ([{:strs [pattern path glob ignoreCase literal context limit]} {:keys [cwd overrides]}]
-   (let [search-root  (resolve-path cwd (or path "."))
-         root-path    (.getPath search-root)
-         match-limit  (max 1 (or limit 100))
-         context-n    (max 0 (or context 0))
-         args         (cond-> ["rg" "--line-number" "--no-heading" "-m" (str match-limit)]
-                        literal (conj "--fixed-strings")
-                        ignoreCase (conj "--ignore-case")
-                        (some? glob) (conj "--glob" glob)
-                        (pos? context-n) (conj "-C" (str context-n))
-                        :always (conj pattern root-path))
-         proc-result  (apply proc/shell (cond-> {:out :string :err :string :continue true :in (java.io.File. "/dev/null")}
-                                          cwd (assoc :dir cwd)) args)
-         raw-lines    (->> (str/split-lines (str (:out proc-result)))
-                           (remove str/blank?)
-                           vec)
-         [rendered lines-truncated?]
-         (reduce (fn [[acc hit?] line]
-                   (if (> (count line) 500)
-                     [(conj acc (str (subs line 0 500) "... [truncated]")) true]
-                     [(conj acc line) hit?]))
-                 [[] false]
-                 raw-lines)
-         joined       (str/join "\n" rendered)
-         base-policy  (tool-output/effective-policy (or overrides {}) "grep")
-         truncation   (tool-output/head-truncate joined (assoc base-policy :max-lines max-safe-lines))
-         found-count  (count raw-lines)
-         match-hit?   (and (pos? found-count) (>= found-count match-limit))
-         notices      (cond-> []
-                        match-hit? (conj (str "match limit " match-limit))
-                        lines-truncated? (conj "long lines truncated")
-                        (:truncated truncation) (conj (str "byte limit " (:max-bytes truncation))))
-         base-content (if (zero? found-count) "No matches found" (:content truncation))]
-     {:content  (append-limit-notice base-content notices)
-      :is-error false
-      :details  (cond-> {}
-                  (:truncated truncation) (assoc :truncation truncation)
-                  match-hit? (assoc :match-limit-reached match-limit)
-                  lines-truncated? (assoc :lines-truncated true))})))
-
 (defn make-eql-query-tool
   "Create an eql_query tool with an :execute fn that closes over `query-fn`.
    `query-fn` should be (fn [eql-query-vec] -> result-map), typically
@@ -772,22 +621,7 @@
     :label       (:label write-tool)
     :description (:description write-tool)
     :parameters  (:parameters write-tool)
-    :execute     execute-write}
-   {:name        (:name ls-tool)
-    :label       (:label ls-tool)
-    :description (:description ls-tool)
-    :parameters  (:parameters ls-tool)
-    :execute     execute-ls}
-   {:name        (:name find-tool)
-    :label       (:label find-tool)
-    :description (:description find-tool)
-    :parameters  (:parameters find-tool)
-    :execute     execute-find}
-   {:name        (:name grep-tool)
-    :label       (:label grep-tool)
-    :description (:description grep-tool)
-    :parameters  (:parameters grep-tool)
-    :execute     execute-grep}])
+    :execute     execute-write}])
 
 ;; ============================================================
 ;; CWD-scoped tools
@@ -823,37 +657,22 @@
       :execute     (fn [args] (execute-write args opts))}]))
 
 (defn make-read-only-tools-with-cwd
-  "Return read-only/search tools scoped to cwd in canonical order:
-   [read, grep, find, ls]."
+  "Return read-only tools scoped to cwd.
+   Backward-compatible helper for callers that only need file reads."
   [cwd]
   (let [opts {:cwd cwd}]
     [{:name        (:name read-tool)
       :label       (:label read-tool)
       :description (:description read-tool)
       :parameters  (:parameters read-tool)
-      :execute     (fn [args] (execute-read args opts))}
-     {:name        (:name grep-tool)
-      :label       (:label grep-tool)
-      :description (:description grep-tool)
-      :parameters  (:parameters grep-tool)
-      :execute     (fn [args] (execute-grep args opts))}
-     {:name        (:name find-tool)
-      :label       (:label find-tool)
-      :description (:description find-tool)
-      :parameters  (:parameters find-tool)
-      :execute     (fn [args] (execute-find args opts))}
-     {:name        (:name ls-tool)
-      :label       (:label ls-tool)
-      :description (:description ls-tool)
-      :parameters  (:parameters ls-tool)
-      :execute     (fn [args] (execute-ls args opts))}]))
+      :execute     (fn [args] (execute-read args opts))}]))
 
 ;; ============================================================
 ;; Dispatch
 ;; ============================================================
 
 (def built-in-dispatch-tools
-  #{"read" "bash" "edit" "write" "ls" "find" "grep"})
+  #{"read" "bash" "edit" "write"})
 
 (defn execute-tool
   "Dispatch a tool call by name. Returns {:content string|blocks :is-error boolean}.
@@ -868,7 +687,4 @@
      "bash"  (execute-bash args-map opts)
      "edit"  (execute-edit args-map opts)
      "write" (execute-write args-map opts)
-     "ls"    (execute-ls args-map opts)
-     "find"  (execute-find args-map opts)
-     "grep"  (execute-grep args-map opts)
      (throw (ex-info (str "Unknown tool: " tool-name) {:tool tool-name})))))

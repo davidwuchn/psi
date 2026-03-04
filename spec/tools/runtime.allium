@@ -3,7 +3,7 @@
 -- Scope: Built-in tools runtime contracts.
 --
 -- Includes:
---   - Tool schema/runtime registration for read/bash/edit/write/ls/find/grep/eql_query
+--   - Tool schema/runtime registration for read/bash/edit/write/eql_query
 --   - Built-in dispatcher behavior
 --   - CWD-scoped tool wrappers
 --   - Shared output-limit policy resolution (defaults + per-tool overrides)
@@ -12,15 +12,12 @@
 --   - EQL introspection surface for limit hits and context-byte accretion
 --
 -- Excludes:
---   - Per-tool execution internals (see read/bash/edit/write/ls/find/grep/eql-query)
+--   - Per-tool execution internals (see read/bash/edit/write/eql-query)
 
 use "./read.allium" as read
 use "./bash.allium" as bash
 use "./edit.allium" as edit
 use "./write.allium" as write
-use "./ls.allium" as ls
-use "./find.allium" as find
-use "./grep.allium" as grep
 use "./eql-query.allium" as eql
 
 ------------------------------------------------------------
@@ -72,11 +69,6 @@ value ToolOutputTruncation {
 value ToolResultDetailEnvelope {
     truncation: ToolOutputTruncation?
     fullOutputPath: String?
-
-    entryLimitReached: Integer?
-    resultLimitReached: Integer?
-    matchLimitReached: Integer?
-    linesTruncated: Boolean?
     binaryFileDetected: Boolean?
 }
 
@@ -109,7 +101,7 @@ value ProcessTempStore {
 
 value ToolOperations {
     -- Abstract operation bundle for remote execution adapters.
-    -- Concrete shape is tool-specific (read/bash/find/etc).
+    -- Concrete shape is tool-specific (read/bash/edit/write/eql_query/etc).
     kind: local | remote | custom
     adapterName: String?
 }
@@ -120,7 +112,7 @@ value ToolOperations {
 
 config {
     built_in_dispatch_tools: Set<String> = {
-        "read", "bash", "edit", "write", "ls", "find", "grep"
+        "read", "bash", "edit", "write"
     }
 
     -- Defaults for context growth protection.
@@ -148,9 +140,6 @@ rule AllToolSchemasIncludeAllBuiltIns {
     ensures: all-tool-schemas contains ToolSchema{name: "bash"}
     ensures: all-tool-schemas contains ToolSchema{name: "edit"}
     ensures: all-tool-schemas contains ToolSchema{name: "write"}
-    ensures: all-tool-schemas contains ToolSchema{name: "ls"}
-    ensures: all-tool-schemas contains ToolSchema{name: "find"}
-    ensures: all-tool-schemas contains ToolSchema{name: "grep"}
     ensures: all-tool-schemas contains ToolSchema{name: "eql_query"}
 }
 
@@ -162,9 +151,6 @@ rule AllToolsExcludeEqlQueryFactoryOnly {
     ensures: all-tools contains ToolDefinition{name: "bash"}
     ensures: all-tools contains ToolDefinition{name: "edit"}
     ensures: all-tools contains ToolDefinition{name: "write"}
-    ensures: all-tools contains ToolDefinition{name: "ls"}
-    ensures: all-tools contains ToolDefinition{name: "find"}
-    ensures: all-tools contains ToolDefinition{name: "grep"}
     ensures: all-tools does not contain ToolDefinition{name: "eql_query"}
 }
 
@@ -177,9 +163,6 @@ rule ExecuteToolDispatchesBuiltIns {
         if toolName = "bash":  result = bash/ExecuteBash(args)
         if toolName = "edit":  result = edit/ExecuteEdit(args)
         if toolName = "write": result = write/ExecuteWrite(args)
-        if toolName = "ls":    result = ls/ExecuteLs(args)
-        if toolName = "find":  result = find/ExecuteFind(args)
-        if toolName = "grep":  result = grep/ExecuteGrep(args)
 }
 
 rule ExecuteToolRejectsUnknownTool {
@@ -199,10 +182,10 @@ rule MakeToolsWithCwdReturnsCodingSet {
             t.execute(args) = ExecuteWithOptions(t.name, args, {cwd: cwd})
 }
 
-rule MakeReadOnlyToolsWithCwdReturnsSearchSet {
+rule MakeReadOnlyToolsWithCwdReturnsReadSet {
     when: ReadOnlyToolsWithCwdRequested(cwd)
 
-    ensures: result.names = ["read", "grep", "find", "ls"]
+    ensures: result.names = ["read"]
     ensures:
         for t in result:
             t.execute(args) = ExecuteWithOptions(t.name, args, {cwd: cwd})

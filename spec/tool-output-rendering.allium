@@ -9,7 +9,7 @@
 --   - ~/src/pi-mono/packages/coding-agent/src/core/keybindings.ts
 --
 -- Includes:
---   - Built-in renderer behavior for read/bash/edit/write/ls/find/grep
+--   - Built-in renderer behavior for read/bash/edit/write
 --   - Shared tool-call header formatting from streamed arguments (path/command)
 --   - Collapsed vs expanded output presentation
 --   - Truncation warning display contract
@@ -46,10 +46,6 @@ value ToolOutputDisplayDetails {
     -- Tool-specific optional details used by rendering.
     diff: String?
     firstChangedLine: Integer?
-    entryLimitReached: Integer?
-    resultLimitReached: Integer?
-    matchLimitReached: Integer?
-    linesTruncated: Boolean?
 }
 
 value ToolOutputPayload {
@@ -105,9 +101,6 @@ config {
 
     read_preview_lines: Integer = 10
     write_preview_lines: Integer = 10
-    ls_preview_lines: Integer = 20
-    find_preview_lines: Integer = 20
-    grep_preview_lines: Integer = 15
 
     -- Bash collapsed mode is visual-line based (wrapping-aware), tail-first.
     bash_preview_visual_lines: Integer = 5
@@ -120,7 +113,7 @@ config {
 rule BuiltInRendererUsedByDefault {
     when: ToolOutputRenderRequested(view, registration)
 
-    requires: view.toolName in ["read", "bash", "edit", "write", "ls", "find", "grep"]
+    requires: view.toolName in ["read", "bash", "edit", "write"]
     requires: registration = null
            or (registration.hasRenderCall = false and registration.hasRenderResult = false)
 
@@ -198,7 +191,7 @@ rule BackgroundReflectsExecutionState {
 
 rule BuiltInHeaderShowsToolName {
     when: ToolOutputRenderRequested(view, _)
-    requires: view.toolName in ["read", "bash", "edit", "write", "ls", "find", "grep"]
+    requires: view.toolName in ["read", "bash", "edit", "write"]
 
     ensures: view.header includes view.toolName
 }
@@ -235,33 +228,6 @@ rule WriteCollapsedPreview {
         if LineCount(view.output.text) > config.write_preview_lines:
             view.warningLines includes
                 "... (more lines, " + config.expand_tools_keybinding + " to expand)"
-}
-
-rule LsCollapsedPreview {
-    when: ToolOutputRenderRequested(view, _)
-    requires: view.toolName = "ls"
-    requires: view.output != null
-    requires: view.expanded = false
-
-    ensures: view.visibleTextLines = FirstLines(view.output.text, config.ls_preview_lines)
-}
-
-rule FindCollapsedPreview {
-    when: ToolOutputRenderRequested(view, _)
-    requires: view.toolName = "find"
-    requires: view.output != null
-    requires: view.expanded = false
-
-    ensures: view.visibleTextLines = FirstLines(view.output.text, config.find_preview_lines)
-}
-
-rule GrepCollapsedPreview {
-    when: ToolOutputRenderRequested(view, _)
-    requires: view.toolName = "grep"
-    requires: view.output != null
-    requires: view.expanded = false
-
-    ensures: view.visibleTextLines = FirstLines(view.output.text, config.grep_preview_lines)
 }
 
 rule BashCollapsedPreviewUsesVisualTail {
