@@ -58,6 +58,10 @@ Streaming send/queue behavior:
 
 - send while streaming => `prompt_while_streaming` with steer behavior
 - queue while streaming => `prompt_while_streaming` with queue behavior
+- assistant stream rendering keeps a single in-progress block:
+  - streamed text is shown verbatim while chunking
+  - chunk payloads may be cumulative snapshots or true deltas; frontend merge avoids per-chunk line duplication
+  - markdown processing is deferred until `assistant/message` finalization
 - streaming progress events reset a watchdog timer
 - watchdog timeout sends `abort`, upserts a deterministic transcript error line, and sets run-state to `error`
 

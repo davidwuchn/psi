@@ -7,7 +7,8 @@
 --   MVP process-buffer UX (single subprocess, single dedicated chat buffer)
 --   Auto-connect lifecycle (start -> handshake -> subscribe)
 --   Keybinding-driven prompting/queueing/abort/reconnect/tool-view-toggle behavior
---   Assistant and tool streaming rendering behavior (global collapsed/expanded tool view)
+--   Assistant and tool streaming rendering behavior (global collapsed/expanded tool view,
+--     with verbatim-first assistant streaming and finalize-time markdown processing)
 --   Header-line status behavior
 --   Manual reconnect supervision policy
 --   Phase progression from MVP to parity capabilities
@@ -79,7 +80,11 @@ value HeaderLineView {
 
 entity AssistantStreamState {
     -- Exactly one in-progress assistant block during streaming.
+    -- Streaming text is rendered verbatim (no markdown post-processing).
     inProgressText: String?
+
+    -- Finalized assistant blocks rendered into transcript.
+    -- In markdown buffers, markdown processing applies only after completion.
     completedBlocks: List<String>
 
     has_in_progress: inProgressText != null and inProgressText != ""
@@ -567,8 +572,16 @@ rule NewSessionKeepsCurrentToolOutputView {
 rule AssistantDeltaUpdatesSingleInProgressBlock {
     when: RpcEventReceived(frontend.rpc, "assistant/delta", payload)
 
-    ensures: frontend.assistant.inProgressText = AppendDelta(frontend.assistant.inProgressText, payload.delta)
+    ensures: frontend.assistant.inProgressText =
+        MergeAssistantStreamPayload(frontend.assistant.inProgressText, payload.text)
     ensures: SingleInProgressAssistantBlock(frontend)
+}
+
+rule AssistantDeltaRendersVerbatimUntilCompletion {
+    when: RpcEventReceived(frontend.rpc, "assistant/delta", payload)
+
+    ensures: InProgressAssistantBlockRenderedVerbatim(frontend, frontend.assistant.inProgressText)
+    ensures: MarkdownProcessingDeferred(frontend, target: in_progress_assistant_block)
 }
 
 rule AssistantMessageFinalizesInProgressBlock {
@@ -577,6 +590,28 @@ rule AssistantMessageFinalizesInProgressBlock {
     ensures: frontend.assistant.completedBlocks =
         frontend.assistant.completedBlocks + [FinalizeAssistantBlock(frontend.assistant.inProgressText, payload)]
     ensures: frontend.assistant.inProgressText = null
+}
+
+rule AssistantMessageAppliesMarkdownAfterCompletionWhenAvailable {
+    when: RpcEventReceived(frontend.rpc, "assistant/message", payload)
+
+    requires: frontend.buffer.majorMode = markdown
+
+    ensures: FinalizedAssistantBlockRenderedAsMarkdown(
+        frontend,
+        FinalizeAssistantBlock(frontend.assistant.inProgressText, payload)
+    )
+}
+
+rule AssistantMessageFallsBackToVerbatimWhenMarkdownUnavailable {
+    when: RpcEventReceived(frontend.rpc, "assistant/message", payload)
+
+    requires: frontend.buffer.majorMode = text
+
+    ensures: FinalizedAssistantBlockRenderedVerbatim(
+        frontend,
+        FinalizeAssistantBlock(frontend.assistant.inProgressText, payload)
+    )
 }
 
 rule ToolStartCreatesDisplayRow {
@@ -1020,7 +1055,13 @@ surface EmacsSessionApi {
         --
         -- Assistant stream rendering:
         --   one in-progress assistant block updated by assistant/delta,
-        --   finalized by assistant/message.
+        --   rendered verbatim while streaming (no markdown processing),
+        --   then finalized by assistant/message.
+        --   assistant/delta payloads may be cumulative snapshots or true deltas;
+        --   frontend merge logic must keep a single in-progress block in sync
+        --   (no per-chunk line duplication).
+        --   markdown processing is applied only to finalized assistant blocks
+        --   (with text-mode fallback when markdown is unavailable).
         --
         -- Tool rendering:
         --   tool/start|delta|executing|update|result are rendered inline,

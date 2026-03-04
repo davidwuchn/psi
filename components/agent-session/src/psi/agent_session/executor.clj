@@ -132,6 +132,47 @@
     (.offer ^java.util.concurrent.LinkedBlockingQueue progress-queue
             (assoc event :type :agent-event))))
 
+(defn- common-prefix-length
+  "Return length of common prefix shared by strings `a` and `b`."
+  [a b]
+  (let [a*    (or a "")
+        b*    (or b "")
+        limit (min (count a*) (count b*))]
+    (loop [idx 0]
+      (if (and (< idx limit)
+               (= (.charAt ^String a* idx)
+                  (.charAt ^String b* idx)))
+        (recur (inc idx))
+        idx))))
+
+(defn- merge-stream-text
+  "Merge current streamed assistant text with incoming provider chunk.
+
+Supports both provider styles:
+- incremental deltas (append)
+- cumulative snapshots (replace when incoming extends current)
+
+Also tolerates cumulative snapshots that differ near previous tail
+(e.g. trailing newline churn while total text grows)."
+  [current incoming]
+  (let [current*  (or current "")
+        incoming* (or incoming "")]
+    (cond
+      (empty? incoming*) current*
+      (empty? current*) incoming*
+      (str/starts-with? incoming* current*)
+      incoming*
+
+      :else
+      (let [cur-len    (count current*)
+            in-len     (count incoming*)
+            cp         (common-prefix-length current* incoming*)
+            tail-close (and (> in-len cur-len)
+                            (>= cp (max 1 (dec cur-len))))]
+        (if tail-close
+          incoming*
+          (str current* incoming*))))))
+
 (defn- make-turn-actions
   "Create the actions-fn for the per-turn statechart.
    Handles both data accumulation (in turn-data atom) and agent-core
@@ -148,7 +189,7 @@
                                  :timestamp (java.time.Instant/now)})
 
         :on-text-delta
-        (do (swap! td update :text-buffer str (:delta data))
+        (do (swap! td update :text-buffer merge-stream-text (:delta data))
             (emit-progress! progress-queue
                             {:event-kind :text-delta
                              :text       (:text-buffer @td)})

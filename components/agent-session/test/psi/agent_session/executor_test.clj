@@ -130,6 +130,42 @@
                (some #(when (= :text (:type %)) (:text %))
                      (:content result))))))))
 
+(deftest cumulative-snapshot-text-deltas-replace-instead-of-repeating-test
+  (let [agent-ctx   (setup-agent-ctx!)
+        session-ctx (setup-session-ctx! agent-ctx)
+        user-msg    {:role "user" :content [{:type :text :text "hi"}]}
+        stream-fn   (fn [_ai-ctx _conv _model _opts consume-fn]
+                      (consume-fn {:type :start})
+                      ;; Snapshot-style chunks that differ near tail (newline churn)
+                      ;; should converge to the latest snapshot, not repeat cumulatively.
+                      (consume-fn {:type :text-delta :delta "H\n"})
+                      (consume-fn {:type :text-delta :delta "He\n"})
+                      (consume-fn {:type :text-delta :delta "Hel\n"})
+                      (consume-fn {:type :done :reason :stop}))]
+    (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
+      (let [result (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg])]
+        (is (= "Hel\n"
+               (some #(when (= :text (:type %)) (:text %))
+                     (:content result))))))))
+
+(deftest incremental-short-prefix-delta-does-not-shrink-streamed-text-test
+  (let [agent-ctx   (setup-agent-ctx!)
+        session-ctx (setup-session-ctx! agent-ctx)
+        user-msg    {:role "user" :content [{:type :text :text "hi"}]}
+        stream-fn   (fn [_ai-ctx _conv _model _opts consume-fn]
+                      (consume-fn {:type :start})
+                      ;; Reproduces the real regression where a short incremental delta
+                      ;; ("`") replaced the whole in-progress text.
+                      (consume-fn {:type :text-delta :delta "`deps.edn"})
+                      (consume-fn {:type :text-delta :delta "`"})
+                      (consume-fn {:type :text-delta :delta " contents:"})
+                      (consume-fn {:type :done :reason :stop}))]
+    (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
+      (let [result (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg])]
+        (is (= "`deps.edn` contents:"
+               (some #(when (= :text (:type %)) (:text %))
+                     (:content result))))))))
+
 (deftest tool-output-accounting-test
   (testing "captures per-call stats and aggregates, including limit-hit"
     (let [agent-ctx   (setup-agent-ctx!)

@@ -834,6 +834,60 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
+(ert-deftest psi-assistant-streaming-cumulative-snapshots-replace-in-place ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (progn
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/delta") (:data . ((:text . "H")))))
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/delta") (:data . ((:text . "He")))))
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/delta") (:data . ((:text . "Hel")))))
+          (should (equal "Hel" (psi-emacs-state-assistant-in-progress psi-emacs--state)))
+          (should (equal "ψ: Hel\n" (buffer-string))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
+(ert-deftest psi-assistant-streaming-cumulative-snapshots-with-tail-newline-churn-do-not-duplicate ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (progn
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/delta") (:data . ((:text . "H\n")))))
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/delta") (:data . ((:text . "He\n")))))
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/delta") (:data . ((:text . "Hel\n")))))
+          (should (equal "Hel\n" (psi-emacs-state-assistant-in-progress psi-emacs--state)))
+          (should (equal "ψ: Hel\n\n" (buffer-string))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
+(ert-deftest psi-assistant-streaming-incremental-short-prefix-delta-does-not-shrink-buffer ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (progn
+          ;; Reproduces the real regression where a short incremental delta
+          ;; ("`") previously replaced the whole in-progress string.
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/delta") (:data . ((:text . "`deps.edn")))))
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/delta") (:data . ((:text . "`")))))
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/delta") (:data . ((:text . " contents:")))))
+          (should (equal "`deps.edn` contents:"
+                         (psi-emacs-state-assistant-in-progress psi-emacs--state)))
+          (should (equal "ψ: `deps.edn` contents:\n" (buffer-string))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
 (ert-deftest psi-assistant-message-content-blocks-finalizes-text ()
   (with-temp-buffer
     (psi-emacs-mode)
@@ -861,6 +915,45 @@
            '((:event . "assistant/message") (:data . ((:role . "assistant") (:content . [])))))
           (should-not (psi-emacs-state-assistant-in-progress psi-emacs--state))
           (should (equal "ψ: partial\n" (buffer-string))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
+(ert-deftest psi-assistant-streaming-uses-verbatim-properties-until-finalize ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (progn
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/delta") (:data . ((:text . "**bold**")))))
+          (goto-char (point-min))
+          (re-search-forward "\\*\\*bold\\*\\*")
+          (let ((start (match-beginning 0)))
+            (should (eq t (get-text-property start 'psi-emacs-stream-verbatim))))
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/message") (:data . ((:text . "**bold** done")))))
+          (goto-char (point-min))
+          (re-search-forward "\\*\\*bold\\*\\* done")
+          (let ((start (match-beginning 0)))
+            (should-not (get-text-property start 'psi-emacs-stream-verbatim))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
+(ert-deftest psi-assistant-markdown-processing-runs-only-at-finalize ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (let ((calls nil))
+          (cl-letf (((symbol-function 'psi-emacs--apply-finalized-assistant-markdown)
+                     (lambda (start end)
+                       (push (buffer-substring-no-properties start end) calls))))
+            (psi-emacs--handle-rpc-event
+             '((:event . "assistant/delta") (:data . ((:text . "partial")))))
+            (should (equal nil calls))
+            (psi-emacs--handle-rpc-event
+             '((:event . "assistant/message") (:data . ((:text . "final **md**")))))
+            (should (equal '("final **md**") calls))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
