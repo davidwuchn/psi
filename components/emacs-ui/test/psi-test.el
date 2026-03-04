@@ -1443,6 +1443,38 @@
       (should (string-match-p "ψ: reply" buf))
       (should (string-match-p "stats2" buf)))))
 
+(ert-deftest psi-extension-ui-tool-rows-render-before-footer-projection ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker (point-max) nil))
+    (psi-emacs--handle-rpc-event
+     '((:event . "footer/updated")
+       (:data . ((:path-line . "~/psi-main")
+                 (:stats-line . "stats1")))))
+    (psi-emacs--handle-rpc-event
+     '((:event . "tool/start")
+       (:data . ((:tool-id . "t-footer") (:text . "start")))))
+    (let* ((buf (buffer-string))
+           (tool-pos (string-match-p "Tool\\[t-footer\\] start" buf))
+           (path-pos (string-match-p "~/psi-main" buf)))
+      (should tool-pos)
+      (should path-pos)
+      (should (< tool-pos path-pos)))
+    (psi-emacs--handle-rpc-event
+     '((:event . "tool/result")
+       (:data . ((:tool-id . "t-footer") (:result-text . "done")))))
+    (psi-emacs--handle-rpc-event
+     '((:event . "footer/updated")
+       (:data . ((:path-line . "~/psi-main")
+                 (:stats-line . "stats2")))))
+    (let* ((buf (buffer-string))
+           (tool-pos (string-match-p "Tool\\[t-footer\\] result" buf))
+           (path-pos (string-match-p "~/psi-main" buf)))
+      (should tool-pos)
+      (should path-pos)
+      (should (< tool-pos path-pos)))))
+
 (ert-deftest psi-extension-ui-dialog-requested-confirm-sends-resolve-boolean ()
   (with-temp-buffer
     (psi-emacs-mode)

@@ -908,8 +908,11 @@ When idle, routes through slash interception then normal prompt fallback."
     (psi-emacs--set-run-state psi-emacs--state 'idle)))
 
 (defun psi-emacs--ensure-newline-before-append ()
-  "Ensure appending at end starts on a new line if buffer has content."
-  (goto-char (point-max))
+  "Ensure transcript append boundary starts on a fresh line.
+
+When a projection/footer block exists, append before that block so transcript
+content (assistant/tool/error rows) never renders below the footer."
+  (goto-char (psi-emacs--draft-end-position))
   (unless (or (bobp)
               (eq (char-before) ?\n))
     (insert "\n")))
