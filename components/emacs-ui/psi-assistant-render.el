@@ -18,6 +18,18 @@
   "Render assistant TEXT in canonical line format."
   (concat psi-emacs--assistant-line-prefix (or text "") "\n"))
 
+(defun psi-emacs--apply-prefix-overlay (line-start prefix face)
+  "Apply high-priority FACE overlay for PREFIX at LINE-START."
+  (let ((line-end (line-end-position))
+        (prefix-end (+ line-start (length prefix))))
+    (when (<= prefix-end line-end)
+      (remove-overlays line-start prefix-end 'category 'psi-emacs-prefix)
+      (let ((ov (make-overlay line-start prefix-end nil nil t)))
+        (overlay-put ov 'category 'psi-emacs-prefix)
+        (overlay-put ov 'face face)
+        (overlay-put ov 'priority 1000)
+        (overlay-put ov 'evaporate t)))))
+
 (defun psi-emacs--assistant-range-live-p (range)
   "Return non-nil when assistant RANGE markers are live in a buffer."
   (and (consp range)
@@ -113,6 +125,13 @@ while streaming; markdown processing is deferred until finalization."
             (setf (psi-emacs-state-assistant-range psi-emacs--state)
                   (cons start end)))))
       (let ((updated-range (psi-emacs-state-assistant-range psi-emacs--state)))
+        (when (psi-emacs--assistant-range-live-p updated-range)
+          (save-excursion
+            (goto-char (marker-position (car updated-range)))
+            (psi-emacs--apply-prefix-overlay
+             (line-beginning-position)
+             psi-emacs--assistant-line-prefix
+             'psi-emacs-assistant-reply-face)))
         (if stream-verbatim
             (psi-emacs--set-assistant-stream-verbatim updated-range)
           (psi-emacs--clear-assistant-stream-verbatim updated-range)))

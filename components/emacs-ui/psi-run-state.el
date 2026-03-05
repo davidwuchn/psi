@@ -68,7 +68,8 @@
 
 (defun psi-emacs--error-line-text (message)
   "Render deterministic persistent error line for MESSAGE."
-  (format "Error: %s\n" (or message "unknown")))
+  (let ((label (propertize "Error:" 'face 'psi-emacs-error-line-face)))
+    (format "%s %s\n" label (or message "unknown"))))
 
 (defun psi-emacs--clear-error-line (state)
   "Remove persistent error line from current buffer for STATE."

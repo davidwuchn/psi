@@ -257,16 +257,41 @@ with latest snapshot semantics."
       projection-start)
      (t end-pos))))
 
+(defun psi-emacs--tool-status-face (status)
+  "Return display face symbol for tool STATUS label."
+  (pcase status
+    ("pending" 'psi-emacs-tool-pending-face)
+    ("running" 'psi-emacs-tool-running-face)
+    ("success" 'psi-emacs-tool-success-face)
+    ("error" 'psi-emacs-tool-error-face)
+    (_ 'shadow)))
+
 (defun psi-emacs--tool-row-header-string (tool-summary status)
   "Build collapsed header string from TOOL-SUMMARY and STATUS."
-  (format "%s %s\n" tool-summary status))
+  (concat (propertize (or tool-summary "")
+                      'face 'psi-emacs-tool-call-face
+                      'font-lock-face 'psi-emacs-tool-call-face)
+          " "
+          (let ((status-face (psi-emacs--tool-status-face status)))
+            (propertize (or status "")
+                        'face status-face
+                        'font-lock-face status-face))
+          "\n"))
 
 (defun psi-emacs--tool-row-string (tool-summary status text)
   "Build expanded tool row string from TOOL-SUMMARY STATUS and TEXT.
 
 ANSI sequences in TEXT are converted to Emacs faces."
-  (let ((prefix (format "%s %s: " tool-summary status))
-        (body (psi-emacs--ansi-to-face text)))
+  (let* ((status-face (psi-emacs--tool-status-face status))
+         (prefix (concat (propertize (or tool-summary "")
+                                     'face 'psi-emacs-tool-call-face
+                                     'font-lock-face 'psi-emacs-tool-call-face)
+                         " "
+                         (propertize (or status "")
+                                     'face status-face
+                                     'font-lock-face status-face)
+                         ": "))
+         (body (psi-emacs--ansi-to-face text)))
     (concat prefix body "\n")))
 
 (defun psi-emacs--render-tool-row (tool-summary status accumulated-text mode)

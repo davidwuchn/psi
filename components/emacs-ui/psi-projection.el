@@ -134,25 +134,37 @@ LINE unchanged."
 
 Canonical payload lines are rendered as multi-line text in this order:
 path-line, stats-line, status-line (blank lines omitted)."
-  (let* ((path-line (psi-emacs--event-data-get data '(:path-line path-line :pathLine pathLine)))
+  (let* ((path-line* (psi-emacs--event-data-get data '(:path-line path-line :pathLine pathLine)))
          (stats-line* (psi-emacs--event-data-get data '(:stats-line stats-line :statsLine statsLine)))
+         (status-line* (psi-emacs--event-data-get data '(:status-line status-line :statusLine statusLine)))
+         (path-line (and (stringp path-line*)
+                         (not (string-empty-p path-line*))
+                         (propertize path-line*
+                                     'face 'psi-emacs-projection-footer-path-face
+                                     'font-lock-face 'psi-emacs-projection-footer-path-face)))
          (stats-line (and (stringp stats-line*)
-                          (psi-emacs--align-footer-stats-line stats-line*)))
-         (status-line (psi-emacs--event-data-get data '(:status-line status-line :statusLine statusLine)))
-         (canonical-lines (delq nil
-                                (mapcar (lambda (line)
-                                          (when (and (stringp line)
-                                                     (not (string-empty-p line)))
-                                            line))
-                                        (list path-line stats-line status-line)))))
+                          (not (string-empty-p stats-line*))
+                          (propertize (psi-emacs--align-footer-stats-line stats-line*)
+                                      'face 'psi-emacs-projection-footer-stats-face
+                                      'font-lock-face 'psi-emacs-projection-footer-stats-face)))
+         (status-line (and (stringp status-line*)
+                           (not (string-empty-p status-line*))
+                           (propertize status-line*
+                                       'face 'psi-emacs-projection-footer-status-face
+                                       'font-lock-face 'psi-emacs-projection-footer-status-face)))
+         (canonical-lines (delq nil (list path-line stats-line status-line))))
     (if canonical-lines
         (string-join canonical-lines "\n")
       (let ((value (psi-emacs--event-data-get data
                                               '(:text text :message message :footer footer :content content))))
         (cond
-         ((stringp value) value)
+         ((stringp value) (propertize value
+                                      'face 'psi-emacs-projection-footer-face
+                                      'font-lock-face 'psi-emacs-projection-footer-face))
          ((null value) nil)
-         (t (format "%s" value)))))))
+         (t (propertize (format "%s" value)
+                        'face 'psi-emacs-projection-footer-face
+                        'font-lock-face 'psi-emacs-projection-footer-face)))))))
 
 (defun psi-emacs--cancel-notification-timer (state notification-id)
   "Cancel notification timer for NOTIFICATION-ID in STATE, if present."
@@ -237,29 +249,55 @@ path-line, stats-line, status-line (blank lines omitted)."
          (statuses (or (psi-emacs-state-projection-statuses state) '()))
          (notifications (or (psi-emacs-state-projection-notifications state) '()))
          (footer (psi-emacs-state-projection-footer state))
-         (separator (make-string (psi-emacs--projection-window-width) ?─))
+         (separator-raw (make-string (psi-emacs--projection-window-width) ?─))
+         (separator (propertize separator-raw
+                                'face 'psi-emacs-projection-separator-face
+                                'font-lock-face 'psi-emacs-projection-separator-face))
          (lines nil))
     (when widgets
       (dolist (widget widgets)
         (dolist (widget-line (psi-emacs--projection-widget-lines widget))
-          (push widget-line lines)))
+          (push (propertize widget-line
+                            'face 'psi-emacs-projection-widget-face
+                            'font-lock-face 'psi-emacs-projection-widget-face)
+                lines)))
       ;; Keep widget content visually isolated from statuses/footer.
       ;; Only add this divider when there are projected widgets.
       (push separator lines))
     (when statuses
-      (push "Extension Statuses:" lines)
+      (push (propertize "Extension Statuses:"
+                        'face 'psi-emacs-projection-heading-face
+                        'font-lock-face 'psi-emacs-projection-heading-face)
+            lines)
       (dolist (status statuses)
-        (push (format "- [%s] %s"
-                      (psi-emacs--projection-item-key status '(:extension-id extension-id :extensionId extensionId))
-                      (psi-emacs--projection-item-text status))
-              lines)))
+        (let ((extension-id (psi-emacs--projection-item-key status '(:extension-id extension-id :extensionId extensionId)))
+              (text (psi-emacs--projection-item-text status)))
+          (push (concat "- ["
+                        (propertize extension-id
+                                    'face 'psi-emacs-projection-extension-id-face
+                                    'font-lock-face 'psi-emacs-projection-extension-id-face)
+                        "] "
+                        text)
+                lines))))
     (when notifications
-      (push "Extension Notifications:" lines)
+      (push (propertize "Extension Notifications:"
+                        'face 'psi-emacs-projection-heading-face
+                        'font-lock-face 'psi-emacs-projection-heading-face)
+            lines)
       (dolist (notification notifications)
-        (push (psi-emacs--projection-notification-line notification) lines)))
+        (let ((extension-id (or (plist-get notification :extension-id) ""))
+              (text (or (plist-get notification :text) "")))
+          (push (concat "- ["
+                        (propertize extension-id 'face 'psi-emacs-projection-extension-id-face)
+                        "] "
+                        text)
+                lines))))
     (when (and (stringp footer)
                (not (string-empty-p footer)))
-      (push footer lines))
+      (push (propertize footer
+                        'face 'psi-emacs-projection-footer-face
+                        'font-lock-face 'psi-emacs-projection-footer-face)
+            lines))
     (if lines
         ;; Blank line before separator keeps visual breathing room between
         ;; transcript input area and projection/footer content.
