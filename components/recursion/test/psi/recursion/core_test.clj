@@ -34,8 +34,9 @@
                    :memory-updated :verification-failed}
                  (:accepted-trigger-types c)))))
 
-      (testing "hooks and cycles start empty"
-        (is (= [] (:hooks state)))
+      (testing "hooks are activated from default config; cycles start empty"
+        (is (= 5 (count (:hooks state))))
+        (is (every? :enabled (:hooks state)))
         (is (= [] (:cycles state))))
 
       (testing "no paused reason/checkpoint or error"

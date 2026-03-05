@@ -25,6 +25,18 @@
    :paused-checkpoint nil
    :last-error nil})
 
+(defn- hooks-from-config
+  "Derive hook list from recursion config accepted/enabled trigger sets."
+  [config]
+  (let [accepted (:accepted-trigger-types config)
+        enabled  (:enabled-trigger-hooks config)]
+    (mapv (fn [t]
+            {:id           (str "hook-" (name t))
+             :trigger-type t
+             :enabled      (contains? enabled t)
+             :timeout-ms   nil})
+          (sort-by name accepted))))
+
 (defn create-context
   "Create an isolated RecursionContext.
 
@@ -36,11 +48,12 @@
   ([{:keys [state-overrides config-overrides]
      :or   {state-overrides {}
             config-overrides {}}}]
-   (let [base-state  (initial-state)
+   (let [base-state    (initial-state)
          merged-config (merge (policy/default-config) config-overrides)
-         state (merge base-state
-                      {:config merged-config}
-                      state-overrides)]
+         state         (merge base-state
+                              {:config merged-config
+                               :hooks  (hooks-from-config merged-config)}
+                              state-overrides)]
      (->RecursionContext
       (atom state)
       merged-config))))
@@ -87,19 +100,9 @@
 ;;; --- Hooks ---
 
 (defn register-hooks-in!
-  "Initialize the hooks list from config's accepted trigger types.
-   Each hook derives its `:enabled` flag from the config's `enabled-trigger-hooks`."
+  "Initialize (or refresh) hooks from config accepted/enabled trigger sets."
   [ctx]
-  (let [state  (get-state-in ctx)
-        config (:config state)
-        accepted (:accepted-trigger-types config)
-        enabled  (:enabled-trigger-hooks config)
-        hooks  (mapv (fn [t]
-                       {:id           (str "hook-" (name t))
-                        :trigger-type t
-                        :enabled      (contains? enabled t)
-                        :timeout-ms   nil})
-                     (sort-by name accepted))]
+  (let [hooks (hooks-from-config (:config (get-state-in ctx)))]
     (swap-state-in! ctx assoc :hooks hooks)
     hooks))
 

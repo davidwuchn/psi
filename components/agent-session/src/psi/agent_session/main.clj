@@ -351,7 +351,6 @@
                         :skills        skills})
         developer-prompt (developer-prompt-from-env)
         recursion-ctx (recursion/create-context)
-        _          (recursion/register-hooks-in! recursion-ctx)
         ctx        (session/create-context
                     {:initial-session {:model {:provider  (name (:provider ai-model))
                                                :id        (:id ai-model)
@@ -606,7 +605,7 @@
   "Run RPC EDN transport bound to a live AgentSession context.
 
    Uses the same session bootstrap path as console/TUI so RPC prompts have
-   system prompt, tools, skills, templates, and extensions loaded." 
+   system prompt, tools, skills, templates, and extensions loaded."
   [model-key]
   (let [ai-model    (resolve-model model-key)
         event-queue (java.util.concurrent.LinkedBlockingQueue.)

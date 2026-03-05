@@ -65,14 +65,16 @@
       (is (true? (get-in result [:psi.recursion/policy :rollback-on-verification-failure]))))))
 
 (deftest query-hooks-on-fresh-context
-  ;; Fresh context has no hooks registered yet
-  (testing "hooks is empty list on fresh context"
+  ;; Fresh context auto-activates hooks from default config
+  (testing "hooks is populated on fresh context"
     (let [rctx (core/create-context)
           qctx (recursion-query-ctx)
           result (query/query-in qctx
                                  {:psi/recursion-ctx rctx}
-                                 [:psi.recursion/hooks])]
-      (is (= [] (:psi.recursion/hooks result))))))
+                                 [:psi.recursion/hooks])
+          hooks (:psi.recursion/hooks result)]
+      (is (= 5 (count hooks)))
+      (is (every? :enabled hooks)))))
 
 (deftest query-current-cycle-after-trigger
   ;; After triggering, current-cycle should be non-nil
