@@ -4,6 +4,27 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-05 - Memory Durability Telemetry Surface (Step 9.5 completion)
+
+### λ Provider failure telemetry must be registry-level, not provider-specific
+
+Tracking write/read/failure counters and last-error in the store registry
+(all providers, same shape) keeps introspection uniform and avoids coupling
+operator diagnostics to one provider implementation.
+
+### λ Fallback is only half the story; operators need causal breadcrumbs
+
+`:psi.memory.store/selection` tells *what* was selected, but not *why* a
+provider failed. Surfacing `:psi.memory.store/last-failure` + per-provider
+`:telemetry` (failure count + last error payload) closes that gap for runtime
+triage.
+
+### λ Retention/migration docs reduce ambiguity during runtime upgrades
+
+Operational docs should pair config knobs (`--memory-retention-*`,
+`PSI_MEMORY_*`) with migration-hook wiring examples so version upgrades are
+observable and repeatable.
+
 ## 2026-03-03 - Memory Runtime Hardening (Step 9.5 initial)
 
 ### λ Boolean config parsing must not use plain `or`

@@ -48,7 +48,12 @@
     (is (= store/+fallback-provider-id+ (:fallback-provider-id summary)))
     (is (= store/+default-provider-id+ (:id provider)))
     (is (= :ready (:status provider)))
-    (is (= :healthy (get-in summary [:health :status])))))
+    (is (= :healthy (get-in summary [:health :status])))
+    (is (= 0 (get-in provider [:telemetry :write-count])))
+    (is (= 0 (get-in provider [:telemetry :read-count])))
+    (is (= 0 (get-in provider [:telemetry :failure-count])))
+    (is (= (:telemetry provider)
+           (:active-provider-telemetry summary)))))
 
 (deftest register-provider-adds-provider-and-select-provider-makes-it-active
   (let [registry   (store/bootstrap-registry)
@@ -63,6 +68,61 @@
       (is (= "datalevin" (:active-provider-id summary)))
       (is (= "datalevin" (get-in summary [:selection :selected-provider-id])))
       (is (false? (true? (get-in summary [:selection :used-fallback])))))))
+
+(deftest record-provider-operation-updates-telemetry-and-last-failure
+  (let [registry (-> (store/bootstrap-registry)
+                     (store/register-provider (test-provider "datalevin")))
+        updated  (-> registry
+                     (store/record-provider-operation "datalevin" :write {:ok? true})
+                     (store/record-provider-operation "datalevin" :load-state {:ok? false
+                                                                                 :error :provider-load-state-failed
+                                                                                 :message "boom"}))
+        summary  (store/registry-summary updated)
+        provider (some #(when (= "datalevin" (:id %)) %)
+                       (:providers summary))]
+    (is (= 1 (get-in provider [:telemetry :write-count])))
+    (is (= 1 (get-in provider [:telemetry :read-count])))
+    (is (= 1 (get-in provider [:telemetry :failure-count])))
+    (is (= :provider-load-state-failed
+           (get-in provider [:telemetry :last-error :error])))
+    (is (= :load-state
+           (get-in summary [:last-failure :operation])))))
+
+(deftest register-provider-records-open-failure-telemetry
+  (let [status-atom (atom :registering)
+        provider    (reify store/StoreProvider
+                      (provider-id [_] "broken-store")
+                      (provider-capabilities [_]
+                        {:durability :persistent
+                         :supports-restart-recovery? true
+                         :supports-retention-compaction? true
+                         :supports-capability-history-query? true
+                         :query-mode :indexed})
+                      (open-provider! [this _opts]
+                        (reset! status-atom :error)
+                        this)
+                      (close-provider! [this]
+                        (reset! status-atom :closed)
+                        this)
+                      (provider-status [_]
+                        @status-atom)
+                      (provider-health [_]
+                        {:status :unavailable
+                         :checked-at (java.time.Instant/now)
+                         :details "cannot open"})
+                      (provider-write! [_ _ _] {:ok? true})
+                      (provider-query! [_ _] {:ok? true :results []})
+                      (provider-load-state [_] {:ok? true}))
+        summary     (-> (store/bootstrap-registry)
+                        (store/register-provider provider)
+                        store/registry-summary)
+        broken      (some #(when (= "broken-store" (:id %)) %)
+                          (:providers summary))]
+    (is (= 1 (get-in broken [:telemetry :failure-count])))
+    (is (= :provider-open-unavailable
+           (get-in broken [:telemetry :last-error :error])))
+    (is (= "cannot open"
+           (get-in summary [:last-failure :message])))))
 
 (deftest select-provider-falls-back-to-in-memory-when-requested-provider-unavailable
   (let [registry   (-> (store/bootstrap-registry)

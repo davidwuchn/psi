@@ -167,10 +167,18 @@
                                             :content "still in memory"
                                             :tags [:fallback]
                                             :provenance {:source :session}})
-          summary (memory/store-summary-in ctx)]
+          summary (memory/store-summary-in ctx)
+          failing-provider (some #(when (= "failing-store" (:id %)) %)
+                                 (:providers summary))]
       (is (true? (:ok? result)))
       (is (= "in-memory" (:active-provider-id summary)))
-      (is (true? (get-in result [:store :fallback-selected?]))))))
+      (is (true? (get-in result [:store :fallback-selected?])))
+      (is (= 1 (get-in failing-provider [:telemetry :write-count])))
+      (is (= 1 (get-in failing-provider [:telemetry :failure-count])))
+      (is (= :boom
+             (get-in failing-provider [:telemetry :last-error :error])))
+      (is (= "failing-store"
+             (get-in summary [:last-failure :provider-id]))))))
 
 (deftest activation-hydrates-state-from-datalevin-provider
   (let [db-dir   (temp-dir-path)
@@ -200,11 +208,15 @@
                                             {:query-ctx query-ctx
                                              :git-ctx git-ctx
                                              :capability-graph-status :stable})
-            hydrated-records (:records (memory/get-state-in reader-ctx))]
+            hydrated-records (:records (memory/get-state-in reader-ctx))
+            summary (memory/store-summary-in reader-ctx)
+            datalevin-provider (some #(when (= "datalevin" (:id %)) %)
+                                     (:providers summary))]
         (is (true? (:ready? activation)))
         (is (true? (get-in activation [:store-hydration :hydrated?])))
         (is (= 1 (count hydrated-records)))
         (is (= "durable memory" (:content (first hydrated-records))))
+        (is (= 1 (get-in datalevin-provider [:telemetry :read-count])))
         (store/close-provider! provider-b))
       (finally
         (delete-recursively! db-dir)))))

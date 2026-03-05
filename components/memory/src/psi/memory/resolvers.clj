@@ -37,14 +37,18 @@
                  :psi.memory.store/default-provider-id
                  :psi.memory.store/fallback-provider-id
                  :psi.memory.store/selection
-                 :psi.memory.store/health]}
+                 :psi.memory.store/health
+                 :psi.memory.store/active-provider-telemetry
+                 :psi.memory.store/last-failure]}
   (let [summary (store-summary-for-ctx (:psi/memory-ctx input))]
-    {:psi.memory.store/providers            (:providers summary)
-     :psi.memory.store/active-provider-id   (:active-provider-id summary)
-     :psi.memory.store/default-provider-id  (:default-provider-id summary)
-     :psi.memory.store/fallback-provider-id (:fallback-provider-id summary)
-     :psi.memory.store/selection            (:selection summary)
-     :psi.memory.store/health               (:health summary)}))
+    {:psi.memory.store/providers                 (:providers summary)
+     :psi.memory.store/active-provider-id        (:active-provider-id summary)
+     :psi.memory.store/default-provider-id       (:default-provider-id summary)
+     :psi.memory.store/fallback-provider-id      (:fallback-provider-id summary)
+     :psi.memory.store/selection                 (:selection summary)
+     :psi.memory.store/health                    (:health summary)
+     :psi.memory.store/active-provider-telemetry (:active-provider-telemetry summary)
+     :psi.memory.store/last-failure              (:last-failure summary)}))
 
 (pco/defresolver memory-state
   "Resolve scaffolded Step 10 memory attrs from :psi.memory/state."

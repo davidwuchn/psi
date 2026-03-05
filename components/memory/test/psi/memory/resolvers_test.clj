@@ -34,7 +34,9 @@
                                     :psi.memory.store/default-provider-id
                                     :psi.memory.store/fallback-provider-id
                                     :psi.memory.store/selection
-                                    :psi.memory.store/health])]
+                                    :psi.memory.store/health
+                                    :psi.memory.store/active-provider-telemetry
+                                    :psi.memory.store/last-failure])]
     (testing "status and counters are present"
       (is (= :initializing (:psi.memory/status result)))
       (is (= 0 (:psi.memory/entry-count result)))
@@ -56,4 +58,6 @@
       (is (= "in-memory" (:psi.memory.store/default-provider-id result)))
       (is (= "in-memory" (:psi.memory.store/fallback-provider-id result)))
       (is (map? (:psi.memory.store/selection result)))
-      (is (map? (:psi.memory.store/health result))))))
+      (is (map? (:psi.memory.store/health result)))
+      (is (map? (:psi.memory.store/active-provider-telemetry result)))
+      (is (nil? (:psi.memory.store/last-failure result))))))

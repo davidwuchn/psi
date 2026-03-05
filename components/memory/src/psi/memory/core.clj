@@ -226,6 +226,16 @@
           store/active-provider-entry
           :instance))
 
+(defn- record-provider-operation-in!
+  [ctx provider operation result]
+  (when (and provider (:store-registry-atom ctx))
+    (swap! (:store-registry-atom ctx)
+           (fn [registry]
+             (store/record-provider-operation registry
+                                             (store/provider-id provider)
+                                             operation
+                                             result)))))
+
 (defn- fallback-on-store-failure-in!
   [ctx]
   (let [{:keys [active-provider-id fallback-provider-id]} (store-summary-in ctx)
@@ -241,6 +251,10 @@
   (if-let [provider (active-store-provider-in ctx)]
     (try
       (let [result (store/provider-write! provider entity-type payload)]
+        (record-provider-operation-in! ctx
+                                       provider
+                                       :write
+                                       (assoc result :entity-type entity-type))
         (if (:ok? result)
           {:ok? true
            :provider-id (store/provider-id provider)
@@ -251,11 +265,16 @@
            :message (:message result)
            :fallback-selected? (boolean (fallback-on-store-failure-in! ctx))}))
       (catch Exception e
-        {:ok? false
-         :provider-id (store/provider-id provider)
-         :error :store-write-exception
-         :message (ex-message e)
-         :fallback-selected? (boolean (fallback-on-store-failure-in! ctx))}))
+        (let [result {:ok? false
+                      :error :store-write-exception
+                      :message (ex-message e)
+                      :entity-type entity-type}]
+          (record-provider-operation-in! ctx provider :write result)
+          {:ok? false
+           :provider-id (store/provider-id provider)
+           :error :store-write-exception
+           :message (ex-message e)
+           :fallback-selected? (boolean (fallback-on-store-failure-in! ctx))})))
     {:ok? false
      :error :no-active-store-provider}))
 
@@ -288,6 +307,7 @@
          :reason :ephemeral-provider}
         (try
           (let [loaded (store/provider-load-state provider)]
+            (record-provider-operation-in! ctx provider :load-state loaded)
             (if-not (:ok? loaded)
               {:ok? false
                :hydrated? false
@@ -344,10 +364,14 @@
                  :graph-deltas-loaded (count (:graph-deltas loaded))
                  :recoveries-loaded (count (:recoveries loaded))})))
           (catch Exception e
-            {:ok? false
-             :hydrated? false
-             :error :store-load-exception
-             :message (ex-message e)}))))
+            (let [result {:ok? false
+                          :error :store-load-exception
+                          :message (ex-message e)}]
+              (record-provider-operation-in! ctx provider :load-state result)
+              {:ok? false
+               :hydrated? false
+               :error :store-load-exception
+               :message (ex-message e)})))))
     {:ok? false
      :hydrated? false
      :error :no-active-store-provider}))

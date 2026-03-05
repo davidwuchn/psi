@@ -38,10 +38,44 @@
 (defn- now []
   (Instant/now))
 
+(defn- empty-telemetry
+  []
+  {:write-count 0
+   :read-count 0
+   :failure-count 0
+   :last-operation nil
+   :last-operation-at nil
+   :last-success-at nil
+   :last-failure-at nil
+   :last-error nil})
+
 (defn ready-status?
   "True when provider status can serve reads."
   [status]
   (contains? #{:ready :degraded} status))
+
+(defn- write-operation?
+  [operation]
+  (contains? #{:write} operation))
+
+(defn- read-operation?
+  [operation]
+  (contains? #{:query :load-state} operation))
+
+(defn- operation-failed?
+  [result]
+  (if (contains? result :ok?)
+    (false? (:ok? result))
+    (some? (:error result))))
+
+(defn- failure-details
+  [provider-id operation timestamp {:keys [error message] :as result}]
+  (when (operation-failed? result)
+    (cond-> {:provider-id provider-id
+             :operation operation
+             :timestamp timestamp}
+      error (assoc :error error)
+      message (assoc :message message))))
 
 (defn- status->health
   [status]
@@ -116,7 +150,8 @@
      :instance provider
      :status (provider-status provider)
      :capabilities (provider-capabilities provider)
-     :health (provider-health provider)}))
+     :health (provider-health provider)
+     :telemetry (empty-telemetry)}))
 
 (defn- refresh-provider-entry
   [entry]
@@ -124,7 +159,9 @@
     (assoc entry
            :status (provider-status provider)
            :capabilities (provider-capabilities provider)
-           :health (provider-health provider))
+           :health (provider-health provider)
+           :telemetry (merge (empty-telemetry)
+                             (:telemetry entry)))
     entry))
 
 (defn refresh-registry
@@ -136,6 +173,44 @@
                   (map (fn [[provider-id entry]]
                          [provider-id (refresh-provider-entry entry)]))
                   (or providers {})))))
+
+(defn record-provider-operation
+  "Record provider operation telemetry in a registry map.
+
+   `operation` should be one of:
+   - :write
+   - :query
+   - :load-state
+   - :open
+   - :close
+
+   `result` should include `:ok?` when available. On failures, `:error`
+   and `:message` are captured into provider telemetry and mirrored in
+   registry `:last-failure` for runtime/operator introspection."
+  [registry provider-id operation result]
+  (let [registry*      (refresh-registry registry)
+        entry          (get-in registry* [:providers provider-id])
+        timestamp      (or (:timestamp result) (now))
+        operation*     (keyword operation)
+        failure?       (operation-failed? result)
+        failure        (failure-details provider-id operation* timestamp result)]
+    (if-not entry
+      registry*
+      (cond-> (update-in registry*
+                         [:providers provider-id :telemetry]
+                         (fn [telemetry]
+                           (let [base (merge (empty-telemetry) telemetry)]
+                             (cond-> (assoc base
+                                            :last-operation operation*
+                                            :last-operation-at timestamp)
+                               (write-operation? operation*) (update :write-count inc)
+                               (read-operation? operation*) (update :read-count inc)
+                               failure? (->
+                                         (update :failure-count inc)
+                                         (assoc :last-failure-at timestamp
+                                                :last-error failure))
+                               (not failure?) (assoc :last-success-at timestamp)))))
+        failure (assoc :last-failure failure)))))
 
 (defn bootstrap-registry
   "Create provider registry with built-in in-memory provider selected active.
@@ -175,10 +250,24 @@
      (if (contains? (or (:providers registry) {}) provider-id)
        (refresh-registry registry)
        (let [_ (when open?
-                 (open-provider! provider {:reason :register}))]
-         (-> registry
-             (update :providers (fnil assoc {}) provider-id (provider-entry provider))
-             refresh-registry))))))
+                 (open-provider! provider {:reason :register}))
+             registry* (-> registry
+                           (update :providers (fnil assoc {}) provider-id (provider-entry provider))
+                           refresh-registry)]
+         (if-not open?
+           registry*
+           (let [status (provider-status provider)
+                 health (provider-health provider)]
+             (record-provider-operation
+              registry*
+              provider-id
+              :open
+              (if (ready-status? status)
+                {:ok? true}
+                {:ok? false
+                 :error :provider-open-unavailable
+                 :status status
+                 :message (:details health)})))))))))
 
 (defn active-provider-entry
   "Return active provider entry (with runtime :instance) from registry."
@@ -258,10 +347,13 @@
                                providers)
         active-instance  (active-provider-instance registry*)
         active-health    (or (some-> active-instance provider-health)
-                             (:health active))]
+                             (:health active))
+        active-telemetry (:telemetry active)]
     {:providers providers
      :active-provider-id active-id
      :default-provider-id (:default-provider-id registry*)
      :fallback-provider-id (:fallback-provider-id registry*)
      :selection (:selection registry*)
-     :health active-health}))
+     :health active-health
+     :active-provider-telemetry active-telemetry
+     :last-failure (:last-failure registry*)}))

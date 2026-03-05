@@ -90,23 +90,17 @@ Ordered steps toward PSI COMPLETE.
    - Implemented: `agent-session/rpc.clj`, `rpc_test.clj`
    - Complete ops: handshake, ping, query_eql, prompt, steer, follow_up, abort, new_session, switch_session, fork
 
-9. Step 9 — Memory layer
+9. Step 9 — Memory layer ✓
    - Spec: `spec/memory-layer.allium`
    - Backing-store specs: `spec/memory-backing-stores.allium`, `spec/memory-datalevin-store.allium`
-   - Partial impl: `memory/` component (1021 lines src, 29 tests)
    - Implemented (backing-store extension point, phase 1/2):
      1) ✓ store registry + provider contract with in-memory default (`psi.memory.store`)
      2) ✓ store introspection attrs on EQL surface (`:psi.memory.store/*`)
      3) ✓ Datalevin provider (`psi.memory.datalevin`) with open/write/query/load/close
      4) ✓ remember/recover/graph artifacts write-through via active provider + activation-time hydration
-   - Next:
-     5) ✓ add runtime config/CLI surface and durability/fallback hardening (default provider selection, migration hooks, compaction/retention paths)
-        - CLI flags + env vars for store selection, fallback policy, history limit, retention limits
-        - explicit unknown-provider handling + deterministic fallback signaling
-        - Datalevin schema-version migration hook path on open
-        - retention window now configurable and enforced from memory state
-     6) finish durability hardening pass (provider failure telemetry surfacing + retention/migration operator docs)
-   - Complete: remember/recover lifecycle, graph snapshots + deltas, provenance, EQL surface
+     5) ✓ runtime config/CLI surface + fallback hardening (provider selection, retention overrides, migration hooks)
+     6) ✓ provider failure telemetry surfaced in store summaries/EQL + retention/migration operator docs in README
+   - Complete: remember/recover lifecycle, graph snapshots + deltas, provenance, EQL surface, provider telemetry
 
 10. Step 10 — Feed-forward recursion
     - Spec: `spec/feed-forward-recursion.allium`

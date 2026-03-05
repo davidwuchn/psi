@@ -39,7 +39,7 @@ Current truth about the Psi system.
 - ✓ Graph emergence (Step 7): all 9 :psi.graph/* attrs queryable via eql_query from agent-session-ctx
 - ✓ Memory backing-store extension point (Step 9a phase 1): provider protocol + registry (`psi.memory.store`) with in-memory default and `:psi.memory.store/*` EQL attrs
 - ✓ Datalevin persistent memory provider (Step 9a phase 2): `psi.memory.datalevin` + write-through remember/recover/graph artifacts + activation-time hydration
-- ✓ Memory runtime hardening (Step 9.5 initial): CLI/env config surface, explicit provider selection/fallback reporting, retention overrides, Datalevin schema migration hooks
+- ✓ Memory runtime hardening (Step 9.5): CLI/env config surface, provider failure telemetry surfacing, explicit provider selection/fallback reporting, retention overrides, Datalevin schema migration hooks, operator docs
 - ✗ OAuth wired into main.clj (replace env-var-only auth)
 - ✗ /login and /logout commands
 - ✗ Session resolvers wired into global query graph
@@ -178,7 +178,7 @@ Caught by `jline-terminal-keymap-test` smoke test.
 
 ## Test Status
 
-669 tests, 3172 assertions, 0 failures. 0 clj-kondo errors.
+671 tests, 3191 assertions, 0 failures. 0 clj-kondo errors.
 
 ## Specs
 
@@ -197,7 +197,7 @@ Caught by `jline-terminal-keymap-test` smoke test.
 | `graph-emergence.allium`   | `query` + `introspection` | ◇ Step 7 spec authored (attribute links implicit; mutation side-effects deferred) |
 | `memory-layer.allium`      | `query` + `history` + `introspection` | ◇ Step 10 spec authored (provenance, graph snapshots/deltas, recovery over session+history+graph) |
 | `memory-backing-stores.allium` | `memory` | ✓ phase 1 implemented (provider contract + selection/fallback + `:psi.memory.store/*` EQL surface) |
-| `memory-datalevin-store.allium` | `memory` | ◇ phase 2 partial (Datalevin provider + write-through/hydration; migration/retention hardening next) |
+| `memory-datalevin-store.allium` | `memory` | ✓ phase 2 implemented (Datalevin provider + write-through/hydration + runtime retention/migration hardening + provider failure telemetry surface) |
 | `feed-forward-recursion.allium` | `memory` + `introspection` + `engine` | ◇ Step 11 spec authored (FUTURE_STATE loop, hooks, guardrails, memory writeback) |
 
 ## Step 7 Decisions (Spec)
@@ -223,6 +223,8 @@ Caught by `jline-terminal-keymap-test` smoke test.
 - Fallback policy defaults to automatic in-memory fallback when persistent provider is unavailable
 - Runtime memory config is now available via CLI/env (store selection, fallback mode, history limit, retention limits)
 - Datalevin open now enforces schema-version checks and optional migration hooks
+- Provider operation telemetry is surfaced in store summaries/EQL (`write-count`, `read-count`, `failure-count`, `last-error`, `:psi.memory.store/last-failure`)
+- Operator docs now cover fallback triage, retention windows, and migration-hook wiring (`README.md`)
 
 ## Step 11 Decisions (Spec)
 
@@ -247,6 +249,29 @@ Combined query (mirrors the failing pattern, now fixed):
 [:psi.agent-session/phase :psi.agent-session/model :psi.agent-session/session-id
  :psi.agent-session/messages-count :psi.agent-session/tool-call-count
  :psi.agent-session/start-time :psi.agent-session/current-time]
+```
+
+## Memory Store Telemetry Attrs (Step 9.5)
+
+Top-level EQL attrs for store durability/failure introspection:
+
+```clojure
+[:psi.memory.store/active-provider-id]          ;; string
+[:psi.memory.store/selection]                   ;; fallback + reason
+[:psi.memory.store/health]                      ;; active provider health map
+[:psi.memory.store/active-provider-telemetry]   ;; write/read/failure counters + last-error
+[:psi.memory.store/last-failure]                ;; most recent failure map across providers
+[:psi.memory.store/providers]                   ;; provider entries incl. :telemetry
+```
+
+Combined query:
+```clojure
+[:psi.memory.store/active-provider-id
+ :psi.memory.store/selection
+ :psi.memory.store/health
+ :psi.memory.store/active-provider-telemetry
+ :psi.memory.store/last-failure
+ :psi.memory.store/providers]
 ```
 
 ## Open Questions
