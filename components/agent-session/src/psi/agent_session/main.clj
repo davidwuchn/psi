@@ -748,25 +748,32 @@
   ([model-key]
    (run-rpc-edn-session! model-key {}))
   ([model-key memory-runtime-opts]
-   (let [protocol-out *out*]
-     (binding [*out* *err*]
-       (let [ai-model    (resolve-model model-key)
-             event-queue (java.util.concurrent.LinkedBlockingQueue.)
-             boot        (bootstrap-runtime-session! ai-model
-                                                     {:event-queue event-queue
-                                                      :memory-runtime-opts memory-runtime-opts})
-             ctx         (:ctx boot)
-             oauth-ctx   (:oauth-ctx boot)
-             state       (atom {:handshake-server-info-fn (fn [] (rpc/session->handshake-server-info ctx))
-                                :subscribed-topics #{}
-                                :rpc-ai-model ai-model
-                                :on-new-session! (fn []
-                                                   (start-new-session-with-startup! ctx nil ai-model))})
-             request-handler (rpc/make-session-request-handler ctx)]
-         (reset! session-state {:ctx ctx :ai-model ai-model :oauth-ctx oauth-ctx})
-         (rpc/run-stdio-loop! {:request-handler request-handler
-                               :state state
-                               :out protocol-out}))))))
+   (let [protocol-out       *out*
+         original-systemout System/out]
+     (try
+       ;; In rpc-edn mode, stdout is protocol-only. Force any direct System/out
+       ;; writes (including background threads and library logging) onto stderr.
+       (System/setOut (java.io.PrintStream. System/err true))
+       (binding [*out* *err*]
+         (let [ai-model    (resolve-model model-key)
+               event-queue (java.util.concurrent.LinkedBlockingQueue.)
+               boot        (bootstrap-runtime-session! ai-model
+                                                       {:event-queue event-queue
+                                                        :memory-runtime-opts memory-runtime-opts})
+               ctx         (:ctx boot)
+               oauth-ctx   (:oauth-ctx boot)
+               state       (atom {:handshake-server-info-fn (fn [] (rpc/session->handshake-server-info ctx))
+                                  :subscribed-topics #{}
+                                  :rpc-ai-model ai-model
+                                  :on-new-session! (fn []
+                                                     (start-new-session-with-startup! ctx nil ai-model))})
+               request-handler (rpc/make-session-request-handler ctx)]
+           (reset! session-state {:ctx ctx :ai-model ai-model :oauth-ctx oauth-ctx})
+           (rpc/run-stdio-loop! {:request-handler request-handler
+                                 :state state
+                                 :out protocol-out})))
+       (finally
+         (System/setOut original-systemout))))))
 
 (defn -main
   "Entry point.
