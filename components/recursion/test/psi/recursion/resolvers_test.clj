@@ -190,6 +190,31 @@
       (is (= 1 (count (:psi.recursion/recent-cycles result))))
       (is (= c1 (get-in result [:psi.recursion/recent-cycles 0 :cycle-id]))))))
 
+(deftest hook-trigger-telemetry-is-queryable
+  (testing "recent/last trigger telemetry includes hook source details"
+    (let [rctx (core/create-context)
+          _ (core/register-hooks-in! rctx)
+          hook-trigger {:type :graph-changed
+                        :reason "git-head-changed"
+                        :payload {:source :git-head-change-hook
+                                  :head "sha-2"
+                                  :previous-head "sha-1"}
+                        :timestamp (java.time.Instant/now)}
+          _ (core/handle-trigger-in! rctx hook-trigger (all-readiness-true))
+          qctx (recursion-query-ctx)
+          result (query/query-in qctx
+                                 {:psi/recursion-ctx rctx}
+                                 [:psi.recursion/recent-trigger-events
+                                  :psi.recursion/last-trigger-event
+                                  :psi.recursion/hook-fire-count])]
+      (is (= 1 (:psi.recursion/hook-fire-count result)))
+      (is (= 1 (count (:psi.recursion/recent-trigger-events result))))
+      (is (= :graph-changed (get-in result [:psi.recursion/last-trigger-event :trigger-type])))
+      (is (= :git-head-change-hook
+             (get-in result [:psi.recursion/last-trigger-event :trigger-source])))
+      (is (= "sha-2"
+             (get-in result [:psi.recursion/last-trigger-event :trigger-payload :head]))))))
+
 ;;; --- Mutation tests ---
 
 (deftest trigger-mutation-creates-cycle

@@ -389,7 +389,8 @@
         _       (print-expansion-banner! expansion)
         api-key (runtime/resolve-api-key-in ctx ai-model)
         result  (runtime/run-agent-loop-in! ctx ai-ctx ai-model [user-message]
-                                            {:api-key api-key})]
+                                            {:api-key api-key
+                                             :sync-on-git-head-change? true})]
     (print-assistant-message result)))
 
 (defn- bootstrap-runtime-session!
@@ -639,7 +640,8 @@
                                        result   (runtime/run-agent-loop-in!
                                                  ctx ai-ctx ai-model [user-message]
                                                  {:api-key api-key
-                                                  :progress-queue queue})]
+                                                  :progress-queue queue
+                                                  :sync-on-git-head-change? true})]
                                    (.put queue {:kind :done :result result}))
                                  (catch Exception e
                                    (.put queue {:kind :error :message (ex-message e)})))))))]

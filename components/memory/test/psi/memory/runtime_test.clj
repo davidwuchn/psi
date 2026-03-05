@@ -7,6 +7,7 @@
 
 (deftest runtime-public-api-vars-exist
   (is (var? #'runtime/sync-memory-layer!))
+  (is (var? #'runtime/maybe-sync-on-git-head-change!))
   (is (var? #'runtime/ingest-git-history-in!))
   (is (var? #'runtime/remember-session-message!))
   (is (var? #'runtime/recover-for-query!)))
@@ -89,3 +90,50 @@
                (get-in result [:store-registration :error])))
         (is (= "in-memory"
                (get-in result [:store-registration :store-summary :active-provider-id])))))))
+
+(deftest maybe-sync-on-git-head-change-baseline-and-change
+  (let [cwd        (str "/tmp/psi-runtime-test-" (random-uuid))
+        git-ctx    {:repo-dir cwd}
+        heads      (atom ["sha-1" "sha-1" "sha-2"])
+        sync-calls (atom [])]
+    (with-redefs [git/create-context (fn
+                                       ([] git-ctx)
+                                       ([_] git-ctx))
+                  git/current-commit (fn [_]
+                                       (let [head (first @heads)]
+                                         (swap! heads subvec 1)
+                                         head))
+                  runtime/sync-memory-layer! (fn [opts]
+                                               (swap! sync-calls conj opts)
+                                               {:ok? true
+                                                :git-head "sha-2"})]
+      (let [first-result  (runtime/maybe-sync-on-git-head-change! {:cwd cwd})
+            second-result (runtime/maybe-sync-on-git-head-change! {:cwd cwd})
+            third-result  (runtime/maybe-sync-on-git-head-change! {:cwd cwd})]
+        (is (= :head-baseline-established (:reason first-result)))
+        (is (false? (:changed? first-result)))
+
+        (is (= :head-unchanged (:reason second-result)))
+        (is (false? (:changed? second-result)))
+
+        (is (= :head-changed (:reason third-result)))
+        (is (true? (:changed? third-result)))
+        (is (= "sha-1" (:previous-head third-result)))
+        (is (= "sha-2" (:head third-result)))
+        (is (= 1 (count @sync-calls)))
+        (is (= cwd (:cwd (first @sync-calls))))))))
+
+(deftest maybe-sync-on-git-head-change-reports-head-unavailable
+  (let [cwd (str "/tmp/psi-runtime-test-no-head-" (random-uuid))
+        git-ctx {:repo-dir cwd}]
+    (with-redefs [git/create-context (fn
+                                       ([] git-ctx)
+                                       ([_] git-ctx))
+                  git/current-commit (fn [_]
+                                       (throw (ex-info "no git" {})))
+                  runtime/sync-memory-layer! (fn [_]
+                                               (throw (ex-info "should-not-sync" {})))]
+      (let [result (runtime/maybe-sync-on-git-head-change! {:cwd cwd})]
+        (is (false? (:ok? result)))
+        (is (false? (:changed? result)))
+        (is (= :git-head-unavailable (:reason result)))))))

@@ -15,7 +15,8 @@
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.prompt-templates :as pt]
    [psi.agent-session.skills :as skills]
-   [psi.memory.runtime :as memory-runtime]))
+   [psi.memory.runtime :as memory-runtime]
+   [psi.recursion.core :as recursion]))
 
 (defn make-user-message
   "Create a canonical user message map from text and optional image blocks."
@@ -119,6 +120,83 @@
     (when (and (some? tokens) (number? window) (pos? window))
       (session/update-context-usage-in! ctx tokens window))))
 
+(defn- sync->recursion-trigger-type
+  [sync]
+  (if (true? (get-in sync [:capture :changed?]))
+    :graph-changed
+    :memory-updated))
+
+(defn- sync->recursion-system-state
+  [sync]
+  (let [activation    (:activation sync)
+        graph-status  (get-in sync [:capability-graph :status])
+        query-ready?  (true? (:query-env-built? activation))
+        graph-ready?  (contains? #{:stable :expanding} graph-status)
+        memory-ready? (= :ready (:memory-status activation))]
+    {:query-ready query-ready?
+     :graph-ready graph-ready?
+     :introspection-ready query-ready?
+     :memory-ready memory-ready?}))
+
+(defn- sync->recursion-graph-state
+  [sync]
+  (let [cg (:capability-graph sync)]
+    {:node-count (or (:node-count cg) 0)
+     :capability-count (count (or (:capability-ids cg) []))
+     :status (or (:status cg) :emerging)}))
+
+(defn- sync->recursion-memory-state
+  [sync]
+  (let [activation (:activation sync)
+        history-sync (:history-sync sync)]
+    {:entry-count (or (:memory-entry-count history-sync) 0)
+     :status (if (= :ready (:memory-status activation)) :ready :initializing)
+     :recovery-count 0}))
+
+(defn- maybe-trigger-recursion-from-git-sync!
+  [ctx git-sync]
+  (let [recursion-ctx (:recursion-ctx ctx)
+        sync          (:sync git-sync)]
+    (when (and recursion-ctx (:changed? git-sync) (map? sync))
+      (let [trigger-type  (sync->recursion-trigger-type sync)
+            trigger-signal {:type trigger-type
+                            :reason "git-head-changed"
+                            :payload {:source :git-head-change-hook
+                                      :head (:head git-sync)
+                                      :previous-head (:previous-head git-sync)
+                                      :graph-changed? (true? (get-in sync [:capture :changed?]))
+                                      :history-imported-count (or (get-in sync [:history-sync :imported-count]) 0)}
+                            :timestamp (java.time.Instant/now)}]
+        (recursion/orchestrate-manual-trigger-in!
+         recursion-ctx
+         trigger-signal
+         {:system-state (sync->recursion-system-state sync)
+          :graph-state (sync->recursion-graph-state sync)
+          :memory-state (sync->recursion-memory-state sync)
+          :memory-ctx (:memory-ctx ctx)
+          :approval-decision :approve
+          :approver "git-head-change-hook"
+          :approval-notes "auto-approved from git head change hook"})))))
+
+(defn- invoke-git-head-sync!
+  [opts]
+  (let [sync-fn (requiring-resolve 'psi.memory.runtime/maybe-sync-on-git-head-change!)]
+    (sync-fn opts)))
+
+(defn- safe-maybe-sync-on-git-head-change!
+  [ctx]
+  (try
+    (let [git-sync (invoke-git-head-sync!
+                    {:cwd (:cwd ctx)
+                     :memory-ctx (:memory-ctx ctx)})]
+      (try
+        (maybe-trigger-recursion-from-git-sync! ctx git-sync)
+        (catch Exception _
+          nil))
+      git-sync)
+    (catch Exception _
+      nil)))
+
 (defn run-agent-loop-in!
   "Run executor loop with shared option shaping and usage updates.
 
@@ -126,10 +204,11 @@
    - :run-loop-fn   custom runner (default executor/run-agent-loop!)
    - :turn-ctx-atom optional turn context atom
    - :api-key       optional provider API key
-   - :progress-queue optional LinkedBlockingQueue"
+   - :progress-queue optional LinkedBlockingQueue
+   - :sync-on-git-head-change? trigger maybe-sync memory hook after loop (default false)"
   ([ctx ai-ctx ai-model user-messages]
    (run-agent-loop-in! ctx ai-ctx ai-model user-messages nil))
-  ([ctx ai-ctx ai-model user-messages {:keys [run-loop-fn turn-ctx-atom api-key progress-queue]}]
+  ([ctx ai-ctx ai-model user-messages {:keys [run-loop-fn turn-ctx-atom api-key progress-queue sync-on-git-head-change?]}]
    (let [runner (or run-loop-fn executor/run-agent-loop!)
          opts   (cond-> {}
                   (or turn-ctx-atom (:turn-ctx-atom ctx))
@@ -142,4 +221,6 @@
                   (assoc :progress-queue progress-queue))
          result (runner ai-ctx ctx (:agent-ctx ctx) ai-model user-messages opts)]
      (update-context-usage-from-result-in! ctx ai-model result)
+     (when sync-on-git-head-change?
+       (safe-maybe-sync-on-git-head-change! ctx))
      result)))

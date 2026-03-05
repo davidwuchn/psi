@@ -16,6 +16,11 @@
      :psi.recursion/last-outcome        — most recent cycle's CycleOutcome, or nil
      :psi.recursion/hooks               — list of ToolingHook maps
 
+   Hook/trigger telemetry
+     :psi.recursion/recent-trigger-events — last 20 trigger events, newest first
+     :psi.recursion/last-trigger-event    — most recent trigger event, or nil
+     :psi.recursion/hook-fire-count       — count of non-manual trigger events
+
    Control mutations
      psi.recursion/trigger!  — fire a manual trigger
      psi.recursion/pause!    — pause the controller
@@ -42,6 +47,18 @@
   (let [terminal? #{:completed :failed :aborted :blocked}]
     (first (filter #(not (terminal? (:status %))) (reverse cycles)))))
 
+(defn- cycle->trigger-event
+  "Project cycle trigger details into a compact telemetry event map."
+  [cycle]
+  (let [trigger (:trigger cycle)]
+    {:cycle-id (:cycle-id cycle)
+     :cycle-status (:status cycle)
+     :trigger-type (:type trigger)
+     :trigger-reason (:reason trigger)
+     :trigger-timestamp (:timestamp trigger)
+     :trigger-source (get-in trigger [:payload :source])
+     :trigger-payload (:payload trigger)}))
+
 (pco/defresolver recursion-state
   "Resolve all required :psi.recursion/* attrs from :psi.recursion/state."
   [input]
@@ -53,20 +70,35 @@
                  :psi.recursion/policy
                  :psi.recursion/recent-cycles
                  :psi.recursion/last-outcome
-                 :psi.recursion/hooks]}
+                 :psi.recursion/hooks
+                 :psi.recursion/recent-trigger-events
+                 :psi.recursion/last-trigger-event
+                 :psi.recursion/hook-fire-count]}
   (let [state (:psi.recursion/state input)
         cycles (:cycles state)
         recent (vec (take 10 (reverse cycles)))
+        trigger-events (->> cycles
+                            (map cycle->trigger-event)
+                            reverse
+                            (take 20)
+                            vec)
         last-cycle (first (reverse cycles))
-        last-outcome (when last-cycle (:outcome last-cycle))]
-    {:psi.recursion/status              (:status state)
-     :psi.recursion/paused?             (= :paused (:status state))
-     :psi.recursion/current-cycle       (active-cycle cycles)
-     :psi.recursion/current-future-state (:current-future-state state)
-     :psi.recursion/policy              (:policy state)
-     :psi.recursion/recent-cycles       recent
-     :psi.recursion/last-outcome        last-outcome
-     :psi.recursion/hooks               (:hooks state)}))
+        last-outcome (when last-cycle (:outcome last-cycle))
+        hook-fire-count (->> cycles
+                             (map :trigger)
+                             (remove #(= :manual (:type %)))
+                             count)]
+    {:psi.recursion/status                (:status state)
+     :psi.recursion/paused?               (= :paused (:status state))
+     :psi.recursion/current-cycle         (active-cycle cycles)
+     :psi.recursion/current-future-state  (:current-future-state state)
+     :psi.recursion/policy                (:policy state)
+     :psi.recursion/recent-cycles         recent
+     :psi.recursion/last-outcome          last-outcome
+     :psi.recursion/hooks                 (:hooks state)
+     :psi.recursion/recent-trigger-events trigger-events
+     :psi.recursion/last-trigger-event    (first trigger-events)
+     :psi.recursion/hook-fire-count       hook-fire-count}))
 
 ;;; --- Mutations ---
 

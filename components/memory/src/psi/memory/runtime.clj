@@ -70,6 +70,37 @@
                            (vec))
      :domain-coverage (:domain-coverage cgraph)}))
 
+(defonce ^:private git-head-cache
+  (atom {}))
+
+(defn- cached-head-for-cwd
+  [cwd]
+  (get @git-head-cache cwd))
+
+(defn- cache-head-for-cwd!
+  [cwd head]
+  (when (and (string? cwd)
+             (not (str/blank? cwd))
+             (string? head)
+             (not (str/blank? head)))
+    (swap! git-head-cache assoc cwd head)
+    head))
+
+(defn- current-head
+  [git-ctx]
+  (try
+    (let [sha (some-> (git/current-commit git-ctx) str/trim)]
+      (when-not (str/blank? sha)
+        sha))
+    (catch Exception _
+      nil)))
+
+(defn- normalize-cwd
+  [{:keys [cwd git-ctx]}]
+  (or (some-> cwd str str/trim not-empty)
+      (some-> (:repo-dir git-ctx) str str/trim not-empty)
+      (System/getProperty "user.dir")))
+
 (defn- record-source
   [record]
   (or (get-in record [:provenance :source])
@@ -344,6 +375,11 @@
    - :retention-deltas — delta retention limit override
    - :store-migration-hooks — optional datalevin migration hook map
 
+   Advanced/embedding overrides (primarily for tests/hooks):
+   - :memory-ctx — explicit memory context (default memory/global-context)
+   - :git-ctx — explicit git context (default git/create-context cwd)
+   - :query-ctx — explicit query context (default build-global-query-context)
+
    Env vars:
    - PSI_MEMORY_STORE
    - PSI_MEMORY_STORE_ROOT
@@ -358,41 +394,110 @@
   ([]
    (sync-memory-layer! {}))
   ([opts]
-   (let [runtime-config    (resolve-runtime-config opts)
-         cwd*              (or (:cwd runtime-config) (System/getProperty "user.dir"))
-         runtime-config*   (assoc runtime-config :cwd cwd*)
-         capability-graph  (current-capability-graph)
-         query-ctx         (build-global-query-context)
-         git-ctx           (git/create-context cwd*)
-         memory-ctx        (memory/global-context)
-         _                 (when (or (some? (:retention-snapshots runtime-config*))
-                                     (some? (:retention-deltas runtime-config*)))
-                             (memory/set-retention-in! memory-ctx
-                                                       {:snapshots (:retention-snapshots runtime-config*)
-                                                        :deltas (:retention-deltas runtime-config*)}))
+   (let [cwd*             (normalize-cwd opts)
+         runtime-config   (resolve-runtime-config (assoc opts :cwd cwd*))
+         runtime-config*  (assoc runtime-config :cwd cwd*)
+         capability-graph (current-capability-graph)
+         query-ctx        (or (:query-ctx opts) (build-global-query-context))
+         git-ctx          (or (:git-ctx opts) (git/create-context cwd*))
+         memory-ctx       (or (:memory-ctx opts) (memory/global-context))
+         git-head         (current-head git-ctx)
+         _                (cache-head-for-cwd! cwd* git-head)
+         _                (when (or (some? (:retention-snapshots runtime-config*))
+                                    (some? (:retention-deltas runtime-config*)))
+                            (memory/set-retention-in! memory-ctx
+                                                      {:snapshots (:retention-snapshots runtime-config*)
+                                                       :deltas (:retention-deltas runtime-config*)}))
          store-registration (maybe-register-store-provider! memory-ctx runtime-config*)
-         activation        (memory/activate-in! memory-ctx
-                                                {:query-ctx query-ctx
-                                                 :git-ctx git-ctx
-                                                 :capability-graph-status (:status capability-graph)})
-         capture           (if (contains? #{:stable :expanding} (:status capability-graph))
-                             (memory/capture-graph-change-in! memory-ctx capability-graph)
-                             {:ok? false
-                              :changed? false
-                              :error :graph-not-ready
-                              :graph-status (:status capability-graph)})
-         history-sync      (if (:ready? activation)
-                             (ingest-git-history-in! memory-ctx git-ctx
-                                                     {:n (:history-commit-limit runtime-config*)})
-                             {:ok? false
-                              :skipped? true
-                              :reason :memory-not-ready})]
+         activation       (memory/activate-in! memory-ctx
+                                               {:query-ctx query-ctx
+                                                :git-ctx git-ctx
+                                                :capability-graph-status (:status capability-graph)})
+         capture          (if (contains? #{:stable :expanding} (:status capability-graph))
+                            (memory/capture-graph-change-in! memory-ctx capability-graph)
+                            {:ok? false
+                             :changed? false
+                             :error :graph-not-ready
+                             :graph-status (:status capability-graph)})
+         history-sync     (if (:ready? activation)
+                            (ingest-git-history-in! memory-ctx git-ctx
+                                                    {:n (:history-commit-limit runtime-config*)})
+                            {:ok? false
+                             :skipped? true
+                             :reason :memory-not-ready})]
      {:runtime-config (dissoc runtime-config* :store-migration-hooks)
       :store-registration store-registration
       :activation activation
       :capture capture
       :history-sync history-sync
-      :capability-graph capability-graph})))
+      :capability-graph capability-graph
+      :git-head git-head})))
+
+(defn ^{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]
+        :export true}
+  maybe-sync-on-git-head-change!
+  "Maybe run memory sync when HEAD changed since last observed value for cwd.
+
+   Behavior:
+   - first observed HEAD for cwd initializes baseline only (no sync)
+   - unchanged HEAD => no-op
+   - changed HEAD => runs `sync-memory-layer!` and returns sync payload
+
+   Options mirror `sync-memory-layer!`; additionally accepts:
+   - :cwd
+   - :git-ctx
+   - :memory-ctx
+
+   Returns:
+   {:ok? bool :changed? bool :reason keyword
+    :head string? :previous-head string? :sync map?}"
+  ([]
+   (maybe-sync-on-git-head-change! {}))
+  ([{:keys [git-ctx memory-ctx] :as opts}]
+   (let [cwd*      (normalize-cwd opts)
+         git-ctx*  (or git-ctx (git/create-context cwd*))
+         memory-ctx* (or memory-ctx (memory/global-context))
+         head      (current-head git-ctx*)]
+     (cond
+       (str/blank? head)
+       {:ok? false
+        :changed? false
+        :reason :git-head-unavailable
+        :cwd cwd*}
+
+       :else
+       (let [previous-head (cached-head-for-cwd cwd*)]
+         (cond
+           (nil? previous-head)
+           (do
+             (cache-head-for-cwd! cwd* head)
+             {:ok? true
+              :changed? false
+              :reason :head-baseline-established
+              :head head
+              :previous-head nil})
+
+           (= previous-head head)
+           {:ok? true
+            :changed? false
+            :reason :head-unchanged
+            :head head
+            :previous-head previous-head}
+
+           :else
+           (let [sync-result (sync-memory-layer! (-> opts
+                                                    (assoc :cwd cwd*)
+                                                    (assoc :git-ctx git-ctx*)
+                                                    (assoc :memory-ctx memory-ctx*)))
+                 synced-head (or (:git-head sync-result) head)]
+             ;; keep cache forward-progress even if sync omitted git-head in future edits
+             (cache-head-for-cwd! cwd* synced-head)
+             {:ok? true
+              :changed? true
+              :reason :head-changed
+              :head synced-head
+              :previous-head previous-head
+              :sync sync-result})))))))
 
 (defn- block->text
   [block]

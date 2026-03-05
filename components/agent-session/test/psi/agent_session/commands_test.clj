@@ -139,6 +139,48 @@
     (is (str/includes? (:message result) "trigger blocked"))
     (is (str/includes? (:message result) "recursion_prerequisites_not_ready"))))
 
+(deftest dispatch-feed-forward-approve-current-cycle-test
+  (let [ctx     (-> (make-test-ctx)
+                    with-recursion-ctx
+                    with-ready-memory-ctx)
+        _       (commands/dispatch ctx "/feed-forward ship step" cmd-opts)
+        result  (commands/dispatch ctx "/feed-forward approve looks good" cmd-opts)
+        rctx    (:recursion-ctx ctx)
+        state   (recursion/get-state-in rctx)
+        cycle   (last (:cycles state))]
+    (is (= :text (:type result)))
+    (is (str/includes? (:message result) "cycle approved"))
+    (is (str/includes? (:message result) "cycle-status: completed"))
+    (is (str/includes? (:message result) "outcome: success"))
+    (is (= :idle (:status state)))
+    (is (= :completed (:status cycle)))
+    (is (= :success (get-in cycle [:outcome :status])))))
+
+(deftest dispatch-feed-forward-reject-current-cycle-test
+  (let [ctx     (-> (make-test-ctx)
+                    with-recursion-ctx
+                    with-ready-memory-ctx)
+        _       (commands/dispatch ctx "/feed-forward evaluate risk" cmd-opts)
+        result  (commands/dispatch ctx "/feed-forward reject not now" cmd-opts)
+        rctx    (:recursion-ctx ctx)
+        state   (recursion/get-state-in rctx)
+        cycle   (last (:cycles state))]
+    (is (= :text (:type result)))
+    (is (str/includes? (:message result) "cycle rejected"))
+    (is (str/includes? (:message result) "cycle-status: failed"))
+    (is (str/includes? (:message result) "outcome: aborted"))
+    (is (= :idle (:status state)))
+    (is (= :failed (:status cycle)))
+    (is (= :aborted (get-in cycle [:outcome :status])))))
+
+(deftest dispatch-feed-forward-continue-without-active-cycle-test
+  (let [ctx    (-> (make-test-ctx)
+                   with-recursion-ctx
+                   with-ready-memory-ctx)
+        result (commands/dispatch ctx "/feed-forward continue" cmd-opts)]
+    (is (= :text (:type result)))
+    (is (str/includes? (:message result) "No active feed-forward cycle"))))
+
 (deftest dispatch-not-a-command-test
   (testing "plain text returns nil"
     (let [ctx (make-test-ctx)]
@@ -203,7 +245,8 @@
   (let [ctx (make-test-ctx)
         s   (commands/format-help ctx)]
     (doseq [cmd ["/quit" "/status" "/history" "/new" "/resume"
-                 "/login" "/logout" "/feed-forward" "/help" "/prompts" "/skills"]]
+                 "/login" "/logout" "/feed-forward" "/help" "/prompts" "/skills"
+                 "/feed-forward approve" "/feed-forward reject" "/feed-forward continue"]]
       (is (str/includes? s cmd) (str "help should mention " cmd)))))
 
 (deftest format-prompts-none-test

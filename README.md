@@ -50,10 +50,22 @@ clojure -M:run --tui --nrepl 8888
 ### In-session commands
 
 `/status` `/history` `/new` `/help` `/quit` `/skills` `/prompts` `/feed-forward [reason]`
-`/skill:<name>` plus any extension commands
+`/feed-forward approve [cycle-id] [notes]` `/feed-forward reject [cycle-id] [notes]`
+`/feed-forward continue [cycle-id]` `/skill:<name>` plus any extension commands
 
 `/feed-forward` triggers a manual recursion cycle from the runtime command surface.
+If a proposal is awaiting approval, use `/feed-forward approve ...` or
+`/feed-forward reject ...` to finalize it (cycle id is optional when a single
+active cycle exists).
 It is bound to the internal spec prompt name `feed-forward-manual-trigger`.
+
+Recursion hook telemetry is queryable via EQL:
+
+```clojure
+[:psi.recursion/recent-trigger-events
+ :psi.recursion/last-trigger-event
+ :psi.recursion/hook-fire-count]
+```
 
 ### Memory runtime config (CLI + env)
 

@@ -71,7 +71,9 @@
                 (when-let [first-title (:title (first actions))]
                   (str "\n    - " first-title))
                 (when (> (count actions) 1)
-                  (str "\n    + " (dec (count actions)) " more"))))
+                  (str "\n    + " (dec (count actions)) " more"))
+                "\n  Next    : /feed-forward approve " (:cycle-id current-cycle) " [notes]"
+                "\n            /feed-forward reject " (:cycle-id current-cycle) " [notes]"))
          "\n───────────────────────────────────────")))
 
 (defn format-history
@@ -110,6 +112,9 @@
          "  /login [provider] — login with an OAuth provider\n"
          "  /logout  — logout from an OAuth provider\n"
          "  /feed-forward [reason] — trigger a manual feed-forward cycle\n"
+         "  /feed-forward approve [cycle-id] [notes] — approve pending cycle\n"
+         "  /feed-forward reject [cycle-id] [notes] — reject pending cycle\n"
+         "  /feed-forward continue [cycle-id] — continue an approved cycle\n"
          "  /help    — show this help\n"
          "  /skill:name — invoke a skill (loads full content)"
          (when (seq templates)
@@ -247,6 +252,85 @@
 
       (str trigger-result))))
 
+(def ^:private feed-forward-cycle-id-pattern
+  #"^cycle-[0-9a-fA-F-]+$")
+
+(def ^:private feed-forward-action-labels
+  {:approve {:past "approved" :present "approve"}
+   :reject {:past "rejected" :present "reject"}
+   :continue {:past "continued" :present "continue"}})
+
+(defn- cycle-id-token?
+  [s]
+  (boolean (and (string? s)
+                (re-matches feed-forward-cycle-id-pattern s))))
+
+(defn- parse-feed-forward-op-args
+  [arg-text]
+  (let [trimmed (str/trim (or arg-text ""))
+        tokens (if (str/blank? trimmed) [] (str/split trimmed #"\s+"))
+        first-token (first tokens)]
+    (if (cycle-id-token? first-token)
+      {:cycle-id first-token
+       :notes (some->> (rest tokens) (str/join " ") str/trim not-empty)}
+      {:cycle-id nil
+       :notes (not-empty trimmed)})))
+
+(defn- parse-feed-forward-command
+  [trimmed]
+  (let [args (-> (str/replace trimmed #"^/feed-forward\s*" "")
+                 str/trim)]
+    (if (str/blank? args)
+      {:op :trigger :reason nil}
+      (let [[_ first-token rest-text] (re-matches #"^(\S+)(?:\s+(.*))?$" args)
+            op (some-> first-token str/lower-case)]
+        (case op
+          "approve" (assoc (parse-feed-forward-op-args rest-text) :op :approve)
+          "reject" (assoc (parse-feed-forward-op-args rest-text) :op :reject)
+          "continue" (assoc (parse-feed-forward-op-args rest-text) :op :continue)
+          {:op :trigger :reason args})))))
+
+(defn- active-cycle-id
+  [ctx]
+  (get-in (session/query-in ctx [:psi.recursion/current-cycle])
+          [:psi.recursion/current-cycle :cycle-id]))
+
+(defn- cycle-by-id
+  [recursion-ctx cycle-id]
+  (some #(when (= cycle-id (:cycle-id %)) %)
+        (:cycles (recursion/get-state-in recursion-ctx))))
+
+(defn- format-feed-forward-cycle-step-result
+  [action cycle-id step-result recursion-ctx]
+  (let [{:keys [past present]} (get feed-forward-action-labels action)]
+    (if (:ok? step-result)
+      (let [cycle (cycle-by-id recursion-ctx cycle-id)
+            cycle-status (:status cycle)
+            outcome-status (get-in cycle [:outcome :status])]
+        (str "✓ Feed-forward cycle " past
+             "\n  cycle-id: " cycle-id
+             (when-let [phase (:phase step-result)]
+               (str "\n  phase: " (name phase)))
+             (when cycle-status
+               (str "\n  cycle-status: " (name cycle-status)))
+             (when outcome-status
+               (str "\n  outcome: " (name outcome-status)))))
+      (str "✗ Feed-forward cycle " present " failed"
+           "\n  cycle-id: " cycle-id
+           (when-let [phase (:phase step-result)]
+             (str "\n  phase: " (name phase)))
+           (when-let [reason (:error step-result)]
+             (str "\n  reason: " (name reason)))))))
+
+(defn- no-active-feed-forward-cycle-message
+  []
+  "✗ No active feed-forward cycle. Use /feed-forward [reason] first.")
+
+(defn- continue-feed-forward-cycle-in!
+  [recursion-ctx cycle-id opts]
+  (let [continue-fn (requiring-resolve 'psi.recursion.core/continue-cycle-in!)]
+    (continue-fn recursion-ctx cycle-id opts)))
+
 ;; ============================================================
 ;; Login provider selection (pure — returns data)
 ;; ============================================================
@@ -331,26 +415,92 @@
       (= trimmed "/skills")
       {:type :text :message (format-skills ctx)}
 
-      ;; Feed-forward manual trigger
+      ;; Feed-forward trigger + approval lifecycle
       (or (= trimmed "/feed-forward")
           (str/starts-with? trimmed "/feed-forward "))
       (if-let [recursion-ctx (:recursion-ctx ctx)]
-        (let [reason (-> (str/replace trimmed #"^/feed-forward\s*" "")
-                         (str/trim)
-                         (not-empty))
-              {:keys [readiness graph-state memory-state]}
-              (runtime-feed-forward-inputs ctx)
-              orchestration
-              (recursion/orchestrate-manual-trigger-in!
-               recursion-ctx
-               (feed-forward-trigger-signal reason)
-               {:system-state readiness
-                :graph-state graph-state
-                :memory-state memory-state
-                :memory-ctx (:memory-ctx ctx)})
-              trigger-result (:trigger-result orchestration)]
-          {:type :text
-           :message (format-feed-forward-trigger-result trigger-result orchestration)})
+        (let [{:keys [op reason cycle-id notes]} (parse-feed-forward-command trimmed)]
+          (case op
+            :trigger
+            (let [{:keys [readiness graph-state memory-state]}
+                  (runtime-feed-forward-inputs ctx)
+                  orchestration
+                  (recursion/orchestrate-manual-trigger-in!
+                   recursion-ctx
+                   (feed-forward-trigger-signal reason)
+                   {:system-state readiness
+                    :graph-state graph-state
+                    :memory-state memory-state
+                    :memory-ctx (:memory-ctx ctx)})
+                  trigger-result (:trigger-result orchestration)]
+              {:type :text
+               :message (format-feed-forward-trigger-result trigger-result orchestration)})
+
+            :approve
+            (let [resolved-cycle-id (or cycle-id (active-cycle-id ctx))]
+              (if-not resolved-cycle-id
+                {:type :text
+                 :message (no-active-feed-forward-cycle-message)}
+                (let [approval-result (recursion/approve-proposal-in!
+                                       recursion-ctx
+                                       resolved-cycle-id
+                                       "operator"
+                                       (or notes ""))
+                      continue-result (when (:ok? approval-result)
+                                        (continue-feed-forward-cycle-in!
+                                         recursion-ctx
+                                         resolved-cycle-id
+                                         {:memory-ctx (:memory-ctx ctx)}))
+                      step-result (if (:ok? approval-result)
+                                    (or continue-result {:ok? true})
+                                    approval-result)]
+                  {:type :text
+                   :message (format-feed-forward-cycle-step-result
+                             :approve
+                             resolved-cycle-id
+                             step-result
+                             recursion-ctx)})))
+
+            :reject
+            (let [resolved-cycle-id (or cycle-id (active-cycle-id ctx))]
+              (if-not resolved-cycle-id
+                {:type :text
+                 :message (no-active-feed-forward-cycle-message)}
+                (let [reject-result (recursion/reject-proposal-in!
+                                     recursion-ctx
+                                     resolved-cycle-id
+                                     "operator"
+                                     (or notes ""))
+                      continue-result (when (:ok? reject-result)
+                                        (continue-feed-forward-cycle-in!
+                                         recursion-ctx
+                                         resolved-cycle-id
+                                         {:memory-ctx (:memory-ctx ctx)}))
+                      step-result (if (:ok? reject-result)
+                                    (or continue-result {:ok? true})
+                                    reject-result)]
+                  {:type :text
+                   :message (format-feed-forward-cycle-step-result
+                             :reject
+                             resolved-cycle-id
+                             step-result
+                             recursion-ctx)})))
+
+            :continue
+            (let [resolved-cycle-id (or cycle-id (active-cycle-id ctx))]
+              (if-not resolved-cycle-id
+                {:type :text
+                 :message (no-active-feed-forward-cycle-message)}
+                (let [continue-result (continue-feed-forward-cycle-in!
+                                       recursion-ctx
+                                       resolved-cycle-id
+                                       {:memory-ctx (:memory-ctx ctx)})]
+                  {:type :text
+                   :message (format-feed-forward-cycle-step-result
+                             :continue
+                             resolved-cycle-id
+                             continue-result
+                             recursion-ctx)})))))
         {:type :text
          :message "✗ Feed-forward recursion context not configured."})
 

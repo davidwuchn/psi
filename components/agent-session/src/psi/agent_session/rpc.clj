@@ -1044,7 +1044,8 @@
                                                  ctx nil ai-model [user-message]
                                                  {:run-loop-fn   run-loop-fn
                                                   :api-key       api-key
-                                                  :progress-queue progress-q})]
+                                                  :progress-queue progress-q
+                                                  :sync-on-git-head-change? true})]
                                    ;; Stop background progress polling, flush any
                                    ;; remaining events, then emit final message.
                                    (reset! progress-stop? true)
