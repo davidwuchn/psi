@@ -6,6 +6,7 @@
 ;;; Code:
 
 (require 'subr-x)
+(require 'psi-globals)
 
 (defun psi-emacs--dialog-result-normalize (value)
   "Normalize dialog VALUE to the shared RPC result domain."

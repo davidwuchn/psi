@@ -5,6 +5,8 @@
 
 ;;; Code:
 
+(require 'psi-globals)
+
 (defun psi-emacs--streaming-p ()
   "Return non-nil when the frontend is in streaming mode."
   (and psi-emacs--state
@@ -68,10 +70,34 @@ USED-REGION-P non-nil means compose came from region and anchor is untouched."
   (unless used-region-p
     (psi-emacs--set-draft-anchor-to-end)))
 
+(defun psi-emacs--transport-ready-for-request-p (state)
+  "Return non-nil when STATE can dispatch a frontend RPC request.
+
+When no rpc client is attached yet (e.g. isolated tests), dispatch is allowed.
+When a client is present, transport must be `ready'."
+  (or (null (psi-emacs-state-rpc-client state))
+      (eq (psi-emacs-state-transport-state state) 'ready)))
+
+(defun psi-emacs--transport-not-ready-message (state op)
+  "Return deterministic request rejection message for STATE and OP."
+  (format "Cannot run `%s`: transport is %s. Reconnect with C-c C-r."
+          op
+          (or (psi-emacs-state-transport-state state) 'unknown)))
+
 (defun psi-emacs--dispatch-request (op params &optional callback)
-  "Dispatch OP PARAMS CALLBACK through configured request function."
+  "Dispatch OP PARAMS CALLBACK through configured request function.
+
+Returns non-nil when the request was dispatched."
   (when psi-emacs--state
-    (funcall psi-emacs--send-request-function psi-emacs--state op params callback)))
+    (if (psi-emacs--transport-ready-for-request-p psi-emacs--state)
+        (progn
+          (funcall psi-emacs--send-request-function psi-emacs--state op params callback)
+          t)
+      (let ((message (psi-emacs--transport-not-ready-message psi-emacs--state op)))
+        (psi-emacs--set-last-error psi-emacs--state message)
+        (psi-emacs--set-run-state psi-emacs--state 'error)
+        (message "psi: %s" message)
+        nil))))
 
 (defun psi-emacs--request-frontend-exit ()
   "Request frontend exit for current psi buffer."
@@ -90,33 +116,41 @@ Without PREFIX while streaming, steer is used.
 When idle, routes through slash interception then normal prompt fallback."
   (interactive "P")
   (let* ((used-region-p (use-region-p))
-         (message (psi-emacs--composed-text)))
-    (if (psi-emacs--streaming-p)
-        (progn
-          (psi-emacs--set-run-state psi-emacs--state 'streaming)
-          (psi-emacs--reset-stream-watchdog psi-emacs--state)
-          (psi-emacs--dispatch-request
-           "prompt_while_streaming"
-           `((:message . ,message)
-             (:behavior . ,(if prefix "queue" "steer")))))
-      (psi-emacs--dispatch-idle-compose-message message))
-    (psi-emacs--consume-tail-draft used-region-p)))
+         (message (psi-emacs--composed-text))
+         (dispatched?
+          (if (psi-emacs--streaming-p)
+              (let ((sent?
+                     (psi-emacs--dispatch-request
+                      "prompt_while_streaming"
+                      `((:message . ,message)
+                        (:behavior . ,(if prefix "queue" "steer"))))))
+                (when sent?
+                  (psi-emacs--set-run-state psi-emacs--state 'streaming)
+                  (psi-emacs--reset-stream-watchdog psi-emacs--state))
+                sent?)
+            (psi-emacs--dispatch-idle-compose-message message))))
+    (when dispatched?
+      (psi-emacs--consume-tail-draft used-region-p))))
 
 (defun psi-emacs-queue-from-buffer ()
   "Queue composed text while streaming; use idle slash dispatch when idle."
   (interactive)
   (let* ((used-region-p (use-region-p))
-         (message (psi-emacs--composed-text)))
-    (if (psi-emacs--streaming-p)
-        (progn
-          (psi-emacs--set-run-state psi-emacs--state 'streaming)
-          (psi-emacs--reset-stream-watchdog psi-emacs--state)
-          (psi-emacs--dispatch-request
-           "prompt_while_streaming"
-           `((:message . ,message)
-             (:behavior . "queue"))))
-      (psi-emacs--dispatch-idle-compose-message message))
-    (psi-emacs--consume-tail-draft used-region-p)))
+         (message (psi-emacs--composed-text))
+         (dispatched?
+          (if (psi-emacs--streaming-p)
+              (let ((sent?
+                     (psi-emacs--dispatch-request
+                      "prompt_while_streaming"
+                      `((:message . ,message)
+                        (:behavior . "queue")))))
+                (when sent?
+                  (psi-emacs--set-run-state psi-emacs--state 'streaming)
+                  (psi-emacs--reset-stream-watchdog psi-emacs--state))
+                sent?)
+            (psi-emacs--dispatch-idle-compose-message message))))
+    (when dispatched?
+      (psi-emacs--consume-tail-draft used-region-p))))
 
 (defun psi-emacs-abort ()
   "Abort active streaming request via RPC and transition to non-streaming UI state."

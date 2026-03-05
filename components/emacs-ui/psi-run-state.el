@@ -6,6 +6,9 @@
 ;;; Code:
 
 (require 'subr-x)
+(require 'psi-globals)
+
+(defvar psi-emacs-stream-timeout-seconds)
 
 (defun psi-emacs--status-string (state)
   "Return minimal status string for STATE."

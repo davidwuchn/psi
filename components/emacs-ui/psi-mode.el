@@ -5,6 +5,10 @@
 
 ;;; Code:
 
+(require 'psi-globals)
+
+(declare-function markdown-mode "markdown-mode")
+
 (defun psi-emacs--markdown-mode-available-p ()
   "Return non-nil when `markdown-mode' is available."
   (fboundp 'markdown-mode))

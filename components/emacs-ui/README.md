@@ -67,6 +67,16 @@ Streaming send/queue behavior:
 
 Idle slash interception applies only to idle compose send/queue paths.
 
+## Transport readiness guard
+
+When a rpc client exists but transport is not `ready`, compose send/queue
+requests are rejected immediately:
+
+- request is not dispatched
+- run-state transitions to `error`
+- `last-error` and the persistent `Error: ...` transcript line are updated
+- draft text is preserved (not consumed)
+
 ## Extension dialog response flow (parity)
 
 On `ui/dialog-requested`, Emacs maps dialog kinds to prompts and sends exactly one response op:

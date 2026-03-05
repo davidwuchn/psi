@@ -6,6 +6,7 @@
 ;;; Code:
 
 (require 'subr-x)
+(require 'psi-globals)
 
 (defconst psi-emacs--assistant-line-prefix "ψ: "
   "Prefix rendered for assistant transcript lines.")

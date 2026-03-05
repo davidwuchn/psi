@@ -9,6 +9,7 @@
 (require 'subr-x)
 (require 'ansi-color)
 (require 'json)
+(require 'psi-globals)
 
 (defun psi-emacs--string-has-face-p (text)
   "Return non-nil if TEXT has any `face' property."
@@ -268,9 +269,9 @@ ANSI sequences in TEXT are converted to Emacs faces."
         (body (psi-emacs--ansi-to-face text)))
     (concat prefix body "\n")))
 
-(defun psi-emacs--render-tool-row (tool-summary status accumulated-text view-mode)
-  "Render tool row using TOOL-SUMMARY STATUS ACCUMULATED-TEXT and VIEW-MODE."
-  (if (eq view-mode 'collapsed)
+(defun psi-emacs--render-tool-row (tool-summary status accumulated-text mode)
+  "Render tool row using TOOL-SUMMARY STATUS ACCUMULATED-TEXT and MODE."
+  (if (eq mode 'collapsed)
       (psi-emacs--tool-row-header-string tool-summary status)
     (psi-emacs--tool-row-string tool-summary status (or accumulated-text ""))))
 

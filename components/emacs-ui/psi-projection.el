@@ -7,6 +7,9 @@
 
 (require 'cl-lib)
 (require 'subr-x)
+(require 'psi-globals)
+
+(defvar psi-emacs-notification-timeout-seconds)
 
 (defun psi-emacs--projection-seq (value)
   "Normalize VALUE into a proper list sequence."

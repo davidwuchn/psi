@@ -145,39 +145,57 @@ Compose source rules:
 - Normal editing keeps the anchor at the start of the current draft tail, so transcript text above the anchor is not resent unless you explicitly select it as a region.
 - Reconnect clear (`C-c C-r` after confirmation) resets the buffer and repositions the draft anchor at the new buffer end; after reconnect, sends come only from text typed after that reset point.
 
-### MVP rendering and status
+### Rendering, status, and errors
 
 - Assistant streaming uses a single in-progress block updated by
   `assistant/delta` and finalized by `assistant/message`.
 - Tool lifecycle rows render inline for
   `tool/start|delta|executing|update|result`.
 - ANSI tool output is rendered with faces (no raw escape noise).
-- Header line shows minimal transport + process state and current tool-output mode (`tools:collapsed` or `tools:expanded`).
-- RPC errors are surfaced in minibuffer only.
+- Header line shows minimal transport + process state + run-state and tool mode:
+  `psi [transport/process/run-state] tools:<mode>`.
+- RPC errors are surfaced in minibuffer **and** mirrored as one persistent
+  in-buffer `Error: ...` line.
+
+When a rpc client exists but transport is not `ready`, send/queue requests are
+rejected immediately with deterministic error text and draft text is preserved.
 
 ### Tool output view mode
 
 Tool rows have two rendering modes:
 
-- **collapsed** (default): each tool row shows a single header line `Tool[<id>] <stage>` with live status updates as the tool progresses. Full output is accumulated in state but hidden.
-- **expanded**: each tool row shows the full body output.
+- **collapsed** (default): one summary line per row (`<tool summary> <status>`),
+  with live status updates and hidden body output.
+- **expanded**: full tool body output is visible.
 
-Toggle between modes with `C-c C-t` (or `M-x psi-emacs-toggle-tool-output-view`). The toggle applies immediately to all existing rows and to future rows. Reconnect (`C-c C-r`) always resets the mode to the default collapsed. Starting a new session without reconnecting preserves the current mode.
+Header summaries are normalized for readability:
 
-### Reconnect semantics (MVP)
+- `bash` uses `$` in headers.
+- `read`/`edit`/`write` path arguments are shown relative to project root when possible.
+
+Toggle between modes with `C-c C-t` (or `M-x psi-emacs-toggle-tool-output-view`).
+The toggle applies immediately to all existing rows and to future rows.
+Reconnect (`C-c C-r`) resets mode to collapsed; `/new` preserves current mode.
+
+### Extension UI/footer parity gate
+
+Extension UI parity is controlled by `psi-emacs-enable-extension-ui-parity`
+(default `t`):
+
+- non-nil (default): subscribe to MVP + parity topics (`ui/*`, `footer/updated`)
+- nil: subscribe to MVP topics only
+
+### Reconnect semantics
 
 - Reconnect is manual only (`C-c C-r`), no auto-restart.
 - Confirmed reconnect clears buffer and starts a fresh session.
-- No automatic resume/rehydrate occurs in MVP.
+- No automatic resume/rehydrate occurs during reconnect.
 
-### Explicitly deferred (parity phase)
+### Still deferred in Emacs frontend
 
-MVP intentionally does **not** include:
-
-- `ui/*` extension UI topic subscription/rendering
-- `footer/updated` parity rendering
-- model/session controls UI (set/cycle model, thinking)
-- multi-session resume/fork/tree controls
+- model/thinking controls keybindings/commands (`set_model`, `set_thinking_level`)
+- compaction/auto-compact/auto-retry controls in-buffer UX
+- richer multi-session/fork/tree command discoverability UI
 - reconnect-time resume picker / auto-resume
 
 ## References

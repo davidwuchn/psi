@@ -5,6 +5,10 @@
 
 ;;; Code:
 
+(require 'psi-globals)
+
+(defvar psi-emacs-buffer-name)
+
 (defun psi-emacs-open-buffer (&optional buffer-name)
   "Open and initialize dedicated psi chat buffer BUFFER-NAME.
 

@@ -273,6 +273,47 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
+(ert-deftest psi-send-blocked-when-rpc-client-transport-not-ready ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-rpc-client psi-emacs--state)
+          (psi-rpc-make-client :transport-state 'disconnected))
+    (setf (psi-emacs-state-transport-state psi-emacs--state) 'disconnected)
+    (insert "hello")
+    (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker 1 nil))
+    (let ((calls nil))
+      (cl-letf (((symbol-value 'psi-emacs--send-request-function)
+                 (lambda (_state op params &optional _callback)
+                   (push (list op params) calls))))
+        (psi-emacs-send-from-buffer nil))
+      (should (equal '() calls))
+      (should (eq 'error (psi-emacs-state-run-state psi-emacs--state)))
+      (should (equal "Cannot run `prompt`: transport is disconnected. Reconnect with C-c C-r."
+                     (psi-emacs-state-last-error psi-emacs--state)))
+      (should (string-match-p "Error: Cannot run `prompt`" (buffer-string))))))
+
+(ert-deftest psi-streaming-send-blocked-when-rpc-client-transport-not-ready ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-rpc-client psi-emacs--state)
+          (psi-rpc-make-client :transport-state 'disconnected))
+    (setf (psi-emacs-state-transport-state psi-emacs--state) 'disconnected)
+    (setf (psi-emacs-state-run-state psi-emacs--state) 'streaming)
+    (insert "queued")
+    (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker 1 nil))
+    (let ((calls nil))
+      (cl-letf (((symbol-value 'psi-emacs--send-request-function)
+                 (lambda (_state op params &optional _callback)
+                   (push (list op params) calls))))
+        (psi-emacs-queue-from-buffer))
+      (should (equal '() calls))
+      (should (eq 'error (psi-emacs-state-run-state psi-emacs--state)))
+      (should (equal "Cannot run `prompt_while_streaming`: transport is disconnected. Reconnect with C-c C-r."
+                     (psi-emacs-state-last-error psi-emacs--state)))
+      (should (string-match-p "Error: Cannot run `prompt_while_streaming`" (buffer-string))))))
+
 (ert-deftest psi-idle-send-and-queue-share-slash-handler-path ()
   (with-temp-buffer
     (psi-emacs-mode)

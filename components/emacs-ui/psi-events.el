@@ -6,6 +6,7 @@
 ;;; Code:
 
 (require 'subr-x)
+(require 'psi-globals)
 
 (defun psi-emacs--event-data-get (data keys)
   "Return first non-nil value from DATA for KEYS.

@@ -6,6 +6,12 @@
 ;;; Code:
 
 (require 'psi-rpc)
+(require 'psi-globals)
+
+(defvar psi-emacs-command)
+(defvar psi-emacs-enable-extension-ui-parity)
+
+(declare-function make-psi-emacs-state "psi" (&rest args))
 
 (defun psi-emacs--initialize-state (process)
   "Create initial frontend state for PROCESS ownership."

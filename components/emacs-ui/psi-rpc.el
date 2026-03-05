@@ -8,6 +8,11 @@
 (require 'cl-lib)
 (require 'subr-x)
 
+(declare-function parseedn-print "parseedn")
+(declare-function parseedn-read "parseedn")
+
+(defvar read-eval)
+
 (defconst psi-rpc--parseedn-available
   (not (null (require 'parseedn nil t)))
   "Non-nil when parseedn is available for EDN parsing/printing.")
@@ -326,10 +331,13 @@ Maps become alists, vectors remain vectors, sets become lists."
     (error (list :error "unable to parse EDN frame"))))
 
 (defun psi-rpc--parse-line-fallback (line)
-  "Parse LINE as one EDN frame map using fallback parser."
+  "Parse LINE as one EDN frame map using fallback parser.
+
+Hardens `read-from-string` by binding `read-eval` to nil."
   (condition-case _
       (let* ((carrier (psi-rpc--edn->sexp-string line))
-             (result (read-from-string carrier))
+             (result (let ((read-eval nil))
+                       (read-from-string carrier)))
              (parsed (car result))
              (idx (cdr result))
              (rest (string-trim (substring carrier idx)))
