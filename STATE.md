@@ -15,7 +15,7 @@ Current truth about the Psi system.
 | `history`       | ✓      | Git log resolvers, nullable git context                    |
 | `introspection` | ✓      | Bridges engine + query, self-describing graph              |
 | `tui`           | ✓      | charm.clj Elm Architecture, JLine3, extension UI state     |
-| `emacs-ui       | ✓      | emacs mode for psi                                         |
+| `emacs-ui`      | ✓      | emacs mode for psi                                         |
 | `agent-session` | ✓      | Session ✓, extensions ✓, extension UI ✓, main REPL ✓, TUI ✓, OAuth ✓ |
 
 ## Architecture Progress
@@ -40,10 +40,9 @@ Current truth about the Psi system.
 - ✓ Memory backing-store extension point (Step 9a phase 1): provider protocol + registry (`psi.memory.store`) with in-memory default and `:psi.memory.store/*` EQL attrs
 - ✓ Datalevin persistent memory provider (Step 9a phase 2): `psi.memory.datalevin` + write-through remember/recover/graph artifacts + activation-time hydration
 - ✓ Memory runtime hardening (Step 9.5): CLI/env config surface, provider failure telemetry surfacing, explicit provider selection/fallback reporting, retention overrides, Datalevin schema migration hooks, operator docs
-- ✗ OAuth wired into main.clj (replace env-var-only auth)
-- ✗ /login and /logout commands
-- ✗ Session resolvers wired into global query graph
-- ✗ Graph emergence from domain resolvers
+- ✓ OAuth wired into runtime command flow (`/login`, `/logout`)
+- ✓ Session resolvers wired into global query graph
+- ✓ Graph emergence from domain resolvers (`ai`, `history`, `agent-session`, `introspection`)
 - ✗ AI COMPLETE
 - ✓ RPC EDN surface (`--rpc-edn`)
 - ✗ HTTP API surface
@@ -191,7 +190,7 @@ Caught by `jline-terminal-keymap-test` smoke test.
 | `tools.allium`             | `agent-session/tools`   | ◇ target contracts (runtime policy + read/bash/edit/write/ls/find/grep/eql_query + path resolution + introspection) |
 | `tool-output-handling.allium` | `agent-session/tools` | ◇ compatibility index (superseded by tools/*.allium) |
 | `skills.allium`            | `agent-session/skills`  | ✓ implemented                         |
-| `tui.allium`               | `tui`                   | partial — session loop not yet working|
+| `tui.allium`               | `tui`                   | ◇ partial — core session loop working; streaming/tool-status UX still open |
 | `ui-extension-points.allium` | `tui/extension_ui`    | ✓ implemented                         |
 | `oauth-auth.allium`        | `agent-session/oauth`   | ✓ implemented (Anthropic provider)    |
 | `graph-emergence.allium`   | `query` + `introspection` | ◇ Step 7 spec authored (attribute links implicit; mutation side-effects deferred) |

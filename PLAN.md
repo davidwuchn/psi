@@ -68,66 +68,53 @@ Ordered steps toward PSI COMPLETE.
 
 ## Next
 
-### Step 7 — Graph emergence  ✓
-- Spec: `spec/graph-emergence.allium`
-- All 4 required domains registered: `ai`, `history`, `agent-session`, `introspection`
-- `query-graph-bridge` resolver extended to expose all 9 required Step 7 EQL attrs:
-  - `:psi.graph/resolver-count`, `:psi.graph/mutation-count`
-  - `:psi.graph/resolver-syms`, `:psi.graph/mutation-syms`, `:psi.graph/env-built`
-  - `:psi.graph/nodes`, `:psi.graph/edges`, `:psi.graph/capabilities`, `:psi.graph/domain-coverage`
-- `resolvers_test.clj`: 10 new graph bridge tests (16 total, 41 assertions)
-- 629 tests, 2924 assertions, 0 failures
+### Step 10 — Feed-forward recursion ◇ in progress
+- Spec: `spec/feed-forward-recursion.allium`
+- Current: `recursion/` component implemented (FUTURE_STATE synthesis, proposal, approval gate, execution, verification, learning cycle)
+- Focus now: runtime hardening + command-surface parity + end-to-end confidence
+- Definition of done:
+  - `/feed-forward` and approve/reject/continue flows are stable across REPL, RPC, and Emacs
+  - Trigger hooks execute deterministically and expose complete EQL telemetry
+  - Recursion cycle artifacts are persisted/recoverable via active memory provider
+  - End-to-end tests cover proposal → approval → execution → verification → learning
 
-### Step 7a — Session introspection hardening  ✓
-- Added `:psi.agent-session/messages-count`, `:psi.agent-session/tool-call-count`, `:psi.agent-session/start-time`, `:psi.agent-session/current-time` as top-level resolvers
-- `:started-at` captured at `create-context` time (Instant)
-- `resolvers_test.clj`: 6 tests, 17 assertions — direct EQL query success for each attr
-- Documented canonical query path in STATE.md
+### Step 11 — Session startup prompts (global + project) ◇ in progress
+- Spec: `spec/session-startup-prompts.allium`
+- Add configurable startup prompts loaded from `~/.psi/agent/startup-prompts.edn` and `.psi/startup-prompts.edn`
+- Deterministic merge/order with precedence `global < project`
+- Execute prompts at new session start as visible transcript turns (startup-tagged user msgs + agent responses)
+- No session override source; no token budget guard
+- Expose startup telemetry attrs on EQL and ensure discoverability via `:psi.graph/*` introspection attrs
+- Definition of done:
+  - Global/project prompt sets merge deterministically with tested ordering and enable rules
+  - Startup prompts execute exactly once on new session start and remain visible in transcript/UI
+  - Startup prompt telemetry attrs are top-level, queryable, and appear in graph introspection surfaces
+  - Fork/new-session behavior is explicit and covered by tests
 
-8. Step 8 — RPC surface ✓
-   - Spec: `spec/rpc-edn.allium`
-   - EDN stdio protocol for headless / programmatic control (including Emacs frontend parity)
-   - Implemented: `agent-session/rpc.clj`, `rpc_test.clj`
-   - Complete ops: handshake, ping, query_eql, prompt, steer, follow_up, abort, new_session, switch_session, fork
+### Step 12 — Emacs UI ◇ in progress
+- Spec: `spec/emacs-frontend.allium`
+- Current: rpc-edn frontend and core interaction model implemented
+- Definition of done:
+  - Startup hydration + `/new` + reconnect flows are stable and tested
+  - Tool output rendering modes and theme-aware faces are stable
+  - Interactive command parity with RPC loop is documented and verified
+  - `bb emacs:test` and `bb emacs:byte-compile` remain green
 
-9. Step 9 — Memory layer ✓
-   - Spec: `spec/memory-layer.allium`
-   - Backing-store specs: `spec/memory-backing-stores.allium`, `spec/memory-datalevin-store.allium`
-   - Implemented (backing-store extension point, phase 1/2):
-     1) ✓ store registry + provider contract with in-memory default (`psi.memory.store`)
-     2) ✓ store introspection attrs on EQL surface (`:psi.memory.store/*`)
-     3) ✓ Datalevin provider (`psi.memory.datalevin`) with open/write/query/load/close
-     4) ✓ remember/recover/graph artifacts write-through via active provider + activation-time hydration
-     5) ✓ runtime config/CLI surface + fallback hardening (provider selection, retention overrides, migration hooks)
-     6) ✓ provider failure telemetry surfaced in store summaries/EQL + retention/migration operator docs in README
-   - Complete: remember/recover lifecycle, graph snapshots + deltas, provenance, EQL surface, provider telemetry
+### Step 13 — Terminal UI (TUI) ◇ in progress
+- Spec: `spec/tui.allium`
+- Current: charm.clj/JLine3 session loop is operational
+- Definition of done:
+  - Per-token streaming render is available (not spinner-only)
+  - Tool execution status is visible during active turns
+  - Extension UI ordering/theming decisions are finalized and documented
+  - TUI regressions are covered by tests/smoke checks
 
-10. Step 10 — Feed-forward recursion
-    - Spec: `spec/feed-forward-recursion.allium`
-    - Partial impl: `recursion/` component (1682 lines src, 73 tests)
-    - Complete: FUTURE_STATE synthesis, plan proposal, approval gate, execution, verification, learning cycle
+### Step 14 — HTTP API ‖ deferred
+- openapi spec + martian client, surface via Pathom mutations
+- Deferred until memory + recursion stabilization is complete
 
-11. Step 11 — Session startup prompts (global + project)
-    - Spec: `spec/session-startup-prompts.allium`
-    - Add configurable startup prompts loaded from `~/.psi/agent/startup-prompts.edn` and `.psi/startup-prompts.edn`
-    - Deterministic merge/order with precedence `global < project`
-    - Execute prompts at new session start as visible transcript turns (startup-tagged user msgs + agent responses)
-    - No session override source; no token budget guard
-    - Expose startup telemetry attrs on EQL and ensure discoverability via `:psi.graph/*` introspection attrs
-
-12. AI COMPLETE
-
-12 step 12 - Emacs UI
-    - Spec: `spec/emacs-frontend.allium`
-    - partial impl: emacs-ui components
-
-13 step 13 - Terminal UI
-    - Spec: `spec/tui.allium`
-    - partial impl: tui components
-
-14. Step 14 — HTTP API
-    - openapi spec + martian client, surface via Pathom mutations
-    - Deferred — depends on memory and feed-forward being stable
+### AI COMPLETE
+- System-level milestone reached after Steps 10–14 are complete and stable
 
 
 ### Deferred (agent-session)
