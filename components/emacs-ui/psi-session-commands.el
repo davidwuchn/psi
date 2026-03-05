@@ -19,36 +19,6 @@
          "/help, /?     Show this help")
    "\n"))
 
-(defun psi-emacs--reset-transcript-for-new-session ()
-  "Clear transcript rendering state for a successful /new command."
-  (let ((inhibit-read-only t))
-    (erase-buffer))
-  (when psi-emacs--state
-    (psi-emacs--disarm-stream-watchdog psi-emacs--state)
-    (psi-emacs--clear-last-error psi-emacs--state)
-    (setf (psi-emacs-state-assistant-in-progress psi-emacs--state) nil)
-    (setf (psi-emacs-state-assistant-range psi-emacs--state) nil)
-    (clrhash (psi-emacs-state-tool-rows psi-emacs--state))
-    (setf (psi-emacs-state-projection-widgets psi-emacs--state) nil)
-    (setf (psi-emacs-state-projection-statuses psi-emacs--state) nil)
-    (setf (psi-emacs-state-projection-footer psi-emacs--state) nil)
-    (psi-emacs--clear-notification-lifecycle psi-emacs--state)
-    (when (consp (psi-emacs-state-projection-range psi-emacs--state))
-      (set-marker (car (psi-emacs-state-projection-range psi-emacs--state)) nil)
-      (set-marker (cdr (psi-emacs-state-projection-range psi-emacs--state)) nil))
-    (setf (psi-emacs-state-projection-range psi-emacs--state) nil)
-    (setf (psi-emacs-state-draft-anchor psi-emacs--state)
-          (copy-marker (point-max) nil))
-    (setf (psi-emacs-state-session-id psi-emacs--state) nil)
-    (setf (psi-emacs-state-session-phase psi-emacs--state) nil)
-    (setf (psi-emacs-state-session-is-streaming psi-emacs--state) nil)
-    (setf (psi-emacs-state-session-is-compacting psi-emacs--state) nil)
-    (setf (psi-emacs-state-session-pending-message-count psi-emacs--state) 0)
-    (setf (psi-emacs-state-session-retry-attempt psi-emacs--state) 0)
-    (psi-emacs--set-run-state psi-emacs--state 'idle)
-    (psi-emacs--refresh-header-line))
-  (set-buffer-modified-p nil))
-
 (defun psi-emacs--new-session-error-message (frame)
   "Return deterministic /new error text derived from FRAME."
   (let* ((data (alist-get :data frame nil nil #'equal))
@@ -65,7 +35,8 @@
   (if (and (eq (alist-get :kind frame) :response)
            (eq (alist-get :ok frame) t))
       (progn
-        (psi-emacs--reset-transcript-for-new-session)
+        ;; /new is a non-reconnect session operation, so keep current tool view.
+        (psi-emacs--reset-transcript-state t)
         (psi-emacs--append-assistant-message "Started a fresh backend session."))
     (psi-emacs--append-assistant-message
      (psi-emacs--new-session-error-message frame))))

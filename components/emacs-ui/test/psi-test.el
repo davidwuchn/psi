@@ -682,6 +682,31 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
+(ert-deftest psi-idle-new-slash-preserves-tool-output-view-mode ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (let ((rpc-calls nil))
+          (psi-emacs-toggle-tool-output-view)
+          (should (eq 'expanded (psi-emacs-state-tool-output-view-mode psi-emacs--state)))
+          (insert "/new")
+          (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker 1 nil))
+          (cl-letf (((symbol-value 'psi-emacs--send-request-function)
+                     (lambda (_state op params &optional callback)
+                       (push (list op params) rpc-calls)
+                       (when callback
+                         (funcall callback '((:kind . :response)
+                                             (:ok . t)
+                                             (:data . ((:session-id . "s-2")))))))))
+            (psi-emacs-send-from-buffer nil))
+          (setq rpc-calls (nreverse rpc-calls))
+          (should (equal '("new_session") (mapcar #'car rpc-calls)))
+          (should (eq 'expanded (psi-emacs-state-tool-output-view-mode psi-emacs--state)))
+          (should (string-match-p "tools:expanded" header-line-format)))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
 (ert-deftest psi-idle-new-slash-appends-deterministic-error-on-failure ()
   (with-temp-buffer
     (psi-emacs-mode)

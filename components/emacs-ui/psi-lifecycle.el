@@ -181,11 +181,12 @@ COMMAND is a list suitable for `make-process'."
   (or (not (psi-emacs--buffer-modified-p))
       (yes-or-no-p "Buffer has unsaved edits. Reconnect and clear buffer? ")))
 
-(defun psi-emacs--reset-transcript-state ()
+(defun psi-emacs--reset-transcript-state (&optional preserve-tool-output-view-mode)
   "Clear transcript buffer and reset in-buffer rendering state.
 
-Resets tool-output-view-mode to default `collapsed' so that after a
-reconnect the user starts with the default collapsed view."
+When PRESERVE-TOOL-OUTPUT-VIEW-MODE is non-nil, keep the current
+`tool-output-view-mode' (used by /new). Otherwise reset to default
+`collapsed' (used by reconnect)."
   (let ((inhibit-read-only t))
     (erase-buffer))
   (when psi-emacs--state
@@ -204,7 +205,8 @@ reconnect the user starts with the default collapsed view."
     (setf (psi-emacs-state-projection-range psi-emacs--state) nil)
     (setf (psi-emacs-state-draft-anchor psi-emacs--state)
           (copy-marker (point-max) nil))
-    (setf (psi-emacs-state-tool-output-view-mode psi-emacs--state) 'collapsed)
+    (unless preserve-tool-output-view-mode
+      (setf (psi-emacs-state-tool-output-view-mode psi-emacs--state) 'collapsed))
     (setf (psi-emacs-state-session-id psi-emacs--state) nil)
     (setf (psi-emacs-state-session-phase psi-emacs--state) nil)
     (setf (psi-emacs-state-session-is-streaming psi-emacs--state) nil)
