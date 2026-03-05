@@ -42,7 +42,8 @@ Current truth about the Psi system.
 - ✗ Session resolvers wired into global query graph
 - ✗ Graph emergence from domain resolvers
 - ✗ AI COMPLETE
-- ✗ RPC / HTTP API surface
+- ✓ RPC EDN surface (`--rpc-edn`)
+- ✗ HTTP API surface
 
 ## Runnable
 
@@ -50,10 +51,17 @@ Current truth about the Psi system.
 ANTHROPIC_API_KEY=sk-... clojure -M:run
 clojure -M:run --model claude-3-5-sonnet
 clojure -M:run --model gpt-4o --tui
+clojure -M:run --rpc-edn                 # EDN-lines RPC mode (headless/programmatic)
 clojure -M:run --nrepl                   # random port, printed at startup
 clojure -M:run --nrepl 7888              # specific port
 clojure -M:run --tui --nrepl             # TUI + nREPL for live introspection
 ```
+
+## RPC EDN (Step 8)
+
+Status: ✓ complete
+
+Implemented operations: `handshake`, `ping`, `query_eql`, `prompt`, `steer`, `follow_up`, `abort`, `new_session`, `switch_session`, `fork`.
 
 In-session commands: `/status`, `/history`, `/new`, `/help`, `/quit`, `/exit`, `/skills`, `/prompts`, `/skill:<name>`, plus extension commands
 

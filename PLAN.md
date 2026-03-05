@@ -84,11 +84,11 @@ Ordered steps toward PSI COMPLETE.
 - `resolvers_test.clj`: 6 tests, 17 assertions — direct EQL query success for each attr
 - Documented canonical query path in STATE.md
 
-8. Step 8 — RPC surface
-   - Spec: `spec/rpc.allium` (TBD)
+8. Step 8 — RPC surface ✓
+   - Spec: `spec/rpc-edn.allium`
    - EDN stdio protocol for headless / programmatic control (including Emacs frontend parity)
-   - Partial impl: `agent-session/rpc.clj` (821 lines), `rpc_test.clj` (12 tests)
-   - Complete: handshake, ping, query_eql, prompt, steer, follow_up, abort, new_session, switch_session, fork
+   - Implemented: `agent-session/rpc.clj`, `rpc_test.clj`
+   - Complete ops: handshake, ping, query_eql, prompt, steer, follow_up, abort, new_session, switch_session, fork
 
 9. Step 9 — Memory layer
    - Spec: `spec/memory-layer.allium`
@@ -112,7 +112,7 @@ Ordered steps toward PSI COMPLETE.
 
 14. Step 14 — HTTP API
     - openapi spec + martian client, surface via Pathom mutations
-    - Deferred from Step 8 — depends on RPC, memory, and feed-forward being stable
+    - Deferred — depends on memory and feed-forward being stable
 
 
 ### Deferred (agent-session)
