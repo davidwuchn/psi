@@ -32,19 +32,22 @@
         (format "Unable to start a fresh backend session: %s" details)
       "Unable to start a fresh backend session.")))
 
-(defun psi-emacs--handle-new-session-response (frame)
+(defun psi-emacs--handle-new-session-response (state frame)
   "Apply /new callback FRAME effects to the current frontend buffer."
   (if (and (eq (alist-get :kind frame) :response)
            (eq (alist-get :ok frame) t))
-      (progn
+      (when (and state (eq state psi-emacs--state))
         ;; /new is a non-reconnect session operation, so keep current tool view.
+        ;; Clear stale transcript state, then fetch canonical messages so startup
+        ;; prompts are replayed in the frontend transcript.
         (psi-emacs--reset-transcript-state t)
-        (psi-emacs--append-assistant-message "Started a fresh backend session."))
+        (psi-emacs--set-run-state state 'streaming)
+        (psi-emacs--request-get-messages-for-switch state))
     (psi-emacs--append-assistant-message
      (psi-emacs--new-session-error-message frame))))
 
-(defun psi-emacs--request-new-session ()
-  "Request a fresh backend session for /new and render deterministic feedback."
+(defun psi-emacs--request-new-session (state)
+  "Request a fresh backend session for /new and rehydrate transcript for STATE."
   (let ((buffer (current-buffer)))
     (psi-emacs--dispatch-request
      "new_session"
@@ -52,7 +55,7 @@
      (lambda (frame)
        (when (buffer-live-p buffer)
          (with-current-buffer buffer
-           (psi-emacs--handle-new-session-response frame)))))))
+           (psi-emacs--handle-new-session-response state frame)))))))
 
 (defun psi-emacs--session-model-default-provider ()
   "Return current session model provider for interactive defaults."
@@ -435,7 +438,7 @@ normal prompt dispatch."
        (psi-emacs--handle-idle-resume-command state message)
        t)
       ("/new"
-       (psi-emacs--request-new-session)
+       (psi-emacs--request-new-session state)
        t)
       ("/status"
        (psi-emacs--append-assistant-message
