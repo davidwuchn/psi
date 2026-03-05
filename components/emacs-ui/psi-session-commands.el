@@ -16,6 +16,8 @@
          "/resume [path] Resume a prior session (selector when path omitted)"
          "/new          Start a fresh backend session"
          "/status       Show frontend diagnostics"
+         "/model [provider model-id]    Open model selector or set directly"
+         "/thinking [level]             Open thinking selector or set directly"
          "/help, /?     Show this help")
    "\n"))
 
@@ -129,6 +131,46 @@
   (interactive)
   (when (psi-emacs--dispatch-request "cycle_thinking_level" nil)
     (message "psi: requested thinking level cycle")))
+
+(defun psi-emacs--slash-command-args (message)
+  "Return MESSAGE slash command tail as token list."
+  (cdr (split-string (string-trim (or message "")) "[ \t\n\r]+" t)))
+
+(defun psi-emacs--handle-idle-model-command (_state message)
+  "Handle idle `/model` MESSAGE."
+  (let* ((args (psi-emacs--slash-command-args message))
+         (argc (length args)))
+    (cond
+     ((= argc 0)
+      (call-interactively #'psi-emacs-set-model))
+     ((= argc 2)
+      (let ((provider (nth 0 args))
+            (model-id (nth 1 args)))
+        (when (psi-emacs--dispatch-request
+               "set_model"
+               `((:provider . ,provider)
+                 (:model-id . ,model-id)))
+          (message "psi: requested model (%s) %s" provider model-id))))
+     (t
+      (psi-emacs--append-assistant-message
+       "Usage: /model OR /model <provider> <model-id>")))))
+
+(defun psi-emacs--handle-idle-thinking-command (_state message)
+  "Handle idle `/thinking` MESSAGE."
+  (let* ((args (psi-emacs--slash-command-args message))
+         (argc (length args)))
+    (cond
+     ((= argc 0)
+      (call-interactively #'psi-emacs-set-thinking-level))
+     ((= argc 1)
+      (let ((level (car args)))
+        (when (psi-emacs--dispatch-request
+               "set_thinking_level"
+               `((:level . ,level)))
+          (message "psi: requested thinking level %s" level))))
+     (t
+      (psi-emacs--append-assistant-message
+       "Usage: /thinking OR /thinking <level>")))))
 
 (defun psi-emacs--resume-args-from-message (message)
   "Extract `/resume` argument tail from MESSAGE.
@@ -398,6 +440,12 @@ normal prompt dispatch."
       ("/status"
        (psi-emacs--append-assistant-message
         (psi-emacs--status-diagnostics-string state))
+       t)
+      ("/model"
+       (psi-emacs--handle-idle-model-command state message)
+       t)
+      ("/thinking"
+       (psi-emacs--handle-idle-thinking-command state message)
        t)
       ((or "/help" "/?")
        (psi-emacs--append-assistant-message

@@ -22,6 +22,7 @@
    [psi.agent-session.prompt-templates :as pt]
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-core.core :as agent]
+   [psi.ai.models :as ai-models]
    [psi.recursion.core :as recursion]))
 
 ;; ============================================================
@@ -111,6 +112,8 @@
          "  /resume  — resume a previous session\n"
          "  /login [provider] — login with an OAuth provider\n"
          "  /logout  — logout from an OAuth provider\n"
+         "  /model [provider model-id] — show current model or set model\n"
+         "  /thinking [level] — show current thinking level or set level\n"
          "  /feed-forward [reason] — trigger a manual feed-forward cycle\n"
          "  /feed-forward approve [cycle-id] [notes] — approve pending cycle\n"
          "  /feed-forward reject [cycle-id] [notes] — reject pending cycle\n"
@@ -331,6 +334,32 @@
   (let [continue-fn (requiring-resolve 'psi.recursion.core/continue-cycle-in!)]
     (continue-fn recursion-ctx cycle-id opts)))
 
+(def ^:private canonical-thinking-levels
+  [:off :minimal :low :medium :high :xhigh])
+
+(defn- known-thinking-level?
+  [level]
+  (contains? (set canonical-thinking-levels) level))
+
+(defn- normalize-thinking-level
+  [s]
+  (some-> s str/trim str/lower-case keyword))
+
+(defn- unknown-thinking-level-message
+  [input]
+  (str "Unknown thinking level: " input
+       ". Allowed: "
+       (str/join ", " (map name canonical-thinking-levels))))
+
+(defn- resolve-runtime-model
+  [provider model-id]
+  (let [provider* (some-> provider keyword)]
+    (some (fn [[_ model]]
+            (when (and (= provider* (:provider model))
+                       (= model-id (:id model)))
+              model))
+          ai-models/all-models)))
+
 ;; ============================================================
 ;; Login provider selection (pure — returns data)
 ;; ============================================================
@@ -503,6 +532,59 @@
                              recursion-ctx)})))))
         {:type :text
          :message "✗ Feed-forward recursion context not configured."})
+
+      ;; Model
+      (or (= trimmed "/model")
+          (str/starts-with? trimmed "/model "))
+      (let [args (-> (str/replace trimmed #"^/model\s*" "")
+                     str/trim)]
+        (if (str/blank? args)
+          (let [m (:model (session/get-session-data-in ctx))]
+            {:type :text
+             :message (if m
+                        (str "Current model: " (:provider m) " " (:id m))
+                        "No model selected.")})
+          (let [tokens (str/split args #"\s+")]
+            (if (not= 2 (count tokens))
+              {:type :text
+               :message "Usage: /model OR /model <provider> <model-id>"}
+              (let [[provider model-id] tokens
+                    resolved (resolve-runtime-model provider model-id)]
+                (if-not resolved
+                  {:type :text
+                   :message (str "Unknown model: " provider " " model-id)}
+                  (let [provider-str (name (:provider resolved))
+                        model {:provider provider-str
+                               :id (:id resolved)
+                               :reasoning (:supports-reasoning resolved)}
+                        sd (session/set-model-in! ctx model)]
+                    {:type :text
+                     :message (str "✓ Model set to "
+                                   (get-in sd [:model :provider]) " "
+                                   (get-in sd [:model :id]))})))))))
+
+      ;; Thinking level
+      (or (= trimmed "/thinking")
+          (str/starts-with? trimmed "/thinking "))
+      (let [args (-> (str/replace trimmed #"^/thinking\s*" "")
+                     str/trim)]
+        (if (str/blank? args)
+          (let [level (:thinking-level (session/get-session-data-in ctx))]
+            {:type :text
+             :message (str "Current thinking level: " (name (or level :off)))})
+          (let [tokens (str/split args #"\s+")]
+            (if (not= 1 (count tokens))
+              {:type :text
+               :message "Usage: /thinking OR /thinking <level>"}
+              (let [level-input (first tokens)
+                    level (normalize-thinking-level level-input)]
+                (if-not (known-thinking-level? level)
+                  {:type :text
+                   :message (unknown-thinking-level-message level-input)}
+                  (let [sd (session/set-thinking-level-in! ctx level)]
+                    {:type :text
+                     :message (str "✓ Thinking level set to "
+                                   (name (:thinking-level sd)))})))))))
 
       ;; Login
       (or (= trimmed "/login")

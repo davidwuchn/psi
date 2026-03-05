@@ -103,6 +103,59 @@
     (is (= :text (:type result)))
     (is (str/includes? (:message result) "Skills"))))
 
+(deftest dispatch-model-no-arg-test
+  (let [ctx    (make-test-ctx)
+        result (commands/dispatch ctx "/model" cmd-opts)]
+    (is (= :text (:type result)))
+    (is (str/includes? (:message result) "Current model:"))))
+
+(deftest dispatch-model-set-test
+  (let [ctx    (make-test-ctx)
+        result (commands/dispatch ctx "/model openai gpt-5.3-codex" cmd-opts)]
+    (is (= :text (:type result)))
+    (is (str/includes? (:message result) "✓ Model set to"))
+    (is (= "openai" (get-in (session/get-session-data-in ctx) [:model :provider])))
+    (is (= "gpt-5.3-codex" (get-in (session/get-session-data-in ctx) [:model :id])))))
+
+(deftest dispatch-model-invalid-arity-test
+  (let [ctx    (make-test-ctx)
+        result (commands/dispatch ctx "/model openai" cmd-opts)]
+    (is (= :text (:type result)))
+    (is (= "Usage: /model OR /model <provider> <model-id>" (:message result)))))
+
+(deftest dispatch-model-unknown-test
+  (let [ctx    (make-test-ctx)
+        result (commands/dispatch ctx "/model openai no-such-model" cmd-opts)]
+    (is (= :text (:type result)))
+    (is (str/includes? (:message result) "Unknown model:"))))
+
+(deftest dispatch-thinking-no-arg-test
+  (let [ctx    (make-test-ctx)
+        result (commands/dispatch ctx "/thinking" cmd-opts)]
+    (is (= :text (:type result)))
+    (is (str/includes? (:message result) "Current thinking level:"))))
+
+(deftest dispatch-thinking-set-test
+  (let [ctx    (make-test-ctx)
+        result (commands/dispatch ctx "/thinking high" cmd-opts)]
+    (is (= :text (:type result)))
+    ;; test model in fixture has reasoning false, so level clamps to :off
+    (is (str/includes? (:message result) "✓ Thinking level set to off"))
+    (is (= :off (:thinking-level (session/get-session-data-in ctx))))))
+
+(deftest dispatch-thinking-unknown-level-test
+  (let [ctx    (make-test-ctx)
+        result (commands/dispatch ctx "/thinking turbo" cmd-opts)]
+    (is (= :text (:type result)))
+    (is (str/includes? (:message result) "Unknown thinking level: turbo"))
+    (is (str/includes? (:message result) "Allowed:"))))
+
+(deftest dispatch-thinking-invalid-arity-test
+  (let [ctx    (make-test-ctx)
+        result (commands/dispatch ctx "/thinking high extra" cmd-opts)]
+    (is (= :text (:type result)))
+    (is (= "Usage: /thinking OR /thinking <level>" (:message result)))))
+
 (deftest dispatch-feed-forward-without-recursion-ctx-test
   (let [ctx    (make-test-ctx)
         result (commands/dispatch ctx "/feed-forward" cmd-opts)]

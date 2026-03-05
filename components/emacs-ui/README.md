@@ -39,6 +39,8 @@ When the frontend is **idle** (not streaming), these built-in slash commands are
 - `/resume` — resume prior session (`/resume <path>`), or open selector when no path is provided
 - `/new` — request `new_session`, reset transcript/session rendering state, and continue in the new session
 - `/status` — append deterministic frontend/session diagnostics text
+- `/model` — no-arg form opens model selector prompt; `/model <provider> <model-id>` dispatches `set_model`
+- `/thinking` — no-arg form opens thinking-level selector prompt; `/thinking <level>` dispatches `set_thinking_level`
 - `/help`, `/?` — render slash command help
 
 Unknown slash commands (for example `/foo`) are not handled locally and are sent through the normal `prompt` RPC path.
