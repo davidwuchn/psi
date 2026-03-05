@@ -1232,6 +1232,12 @@
                                              :data {:messages (or (:messages rehydrate) [])
                                                     :tool-calls (or (:tool-calls rehydrate) {})
                                                     :tool-order (or (:tool-order rehydrate) [])}})
+             (emit-event! emit-frame! state {:event "session/updated"
+                                             :id (:id request)
+                                             :data (session-updated-payload ctx)})
+             (emit-event! emit-frame! state {:event "footer/updated"
+                                             :id (:id request)
+                                             :data (footer-updated-payload ctx)})
              (response-frame (:id request) op true {:session-id (:session-id sd)
                                                     :session-file (:session-file sd)}))
 
@@ -1252,6 +1258,12 @@
                                                :data {:messages msgs
                                                       :tool-calls {}
                                                       :tool-order []}})
+               (emit-event! emit-frame! state {:event "session/updated"
+                                               :id (:id request)
+                                               :data (session-updated-payload ctx)})
+               (emit-event! emit-frame! state {:event "footer/updated"
+                                               :id (:id request)
+                                               :data (footer-updated-payload ctx)})
                (response-frame (:id request) op true {:session-id (:session-id sd)
                                                       :session-file (:session-file sd)})))
 
@@ -1346,6 +1358,14 @@
                                          state
                                          {}
                                          (or (ext-ui/snapshot (:ui-state-atom ctx)) {})))
+             ;; Emit current session/footer snapshot immediately on subscription
+             ;; so frontends render baseline status without waiting for prompt activity.
+             (emit-event! emit-frame! state {:event "session/updated"
+                                             :id (:id request)
+                                             :data (session-updated-payload ctx)})
+             (emit-event! emit-frame! state {:event "footer/updated"
+                                             :id (:id request)
+                                             :data (footer-updated-payload ctx)})
              (response-frame (:id request) op true {:subscribed (->> (:subscribed-topics @state) sort vec)}))
 
            "unsubscribe"
