@@ -1415,6 +1415,36 @@
                          (psi-emacs--tool-summary "write" `((:path . ,write-path)) nil "t-write"))))
       (ignore-errors (delete-directory project-root t)))))
 
+(ert-deftest psi-tool-summary-read-includes-offset-limit-line-range ()
+  (should (equal "read src/core.clj:10:20"
+                 (psi-emacs--tool-summary "read"
+                                          '((:path . "src/core.clj")
+                                            (:offset . 10)
+                                            (:limit . 11))
+                                          nil
+                                          "t-read")))
+  (should (equal "read src/core.clj:42"
+                 (psi-emacs--tool-summary "read"
+                                          '((:path . "src/core.clj")
+                                            (:offset . 42))
+                                          nil
+                                          "t-read"))))
+
+(ert-deftest psi-tool-summary-edit-includes-first-changed-line-range ()
+  (should (equal "edit src/core.clj:7:9"
+                 (psi-emacs--tool-summary "edit"
+                                          '((:path . "src/core.clj")
+                                            (:oldText . "a\nb\nc"))
+                                          nil
+                                          "t-edit"
+                                          '((:firstChangedLine . 7)))))
+  (should (equal "edit src/core.clj:7"
+                 (psi-emacs--tool-summary "edit"
+                                          '((:path . "src/core.clj"))
+                                          nil
+                                          "t-edit"
+                                          '((:firstChangedLine . 7))))))
+
 (ert-deftest psi-header-line-updates-from-rpc-state-transitions ()
   (with-temp-buffer
     (psi-emacs-mode)

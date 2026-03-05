@@ -173,10 +173,56 @@ For composite ids of shape `call|item`, keep the call id prefix."
           (psi-emacs--display-path-relative-to-project text)
         text))))
 
-(defun psi-emacs--tool-summary (tool-name parsed-args arguments tool-id)
+(defun psi-emacs--tool-int (value)
+  "Return VALUE as integer when possible, otherwise nil."
+  (cond
+   ((integerp value) value)
+   ((numberp value) (truncate value))
+   ((stringp value)
+    (when (string-match-p "\\`[0-9]+\\'" value)
+      (string-to-number value)))
+   (t nil)))
+
+(defun psi-emacs--tool-line-range-suffix (tool-name args details)
+  "Return optional :line or :start:end suffix for TOOL-NAME.
+
+For read, derive from offset/limit args.
+For edit, derive from details.firstChangedLine and oldText span when available."
+  (pcase tool-name
+    ("read"
+     (let* ((offset* (psi-emacs--tool-int
+                      (psi-emacs--tool-arg-get args '("offset" :offset offset))))
+            (limit* (psi-emacs--tool-int
+                     (psi-emacs--tool-arg-get args '("limit" :limit limit))))
+            (offset (or offset* (and limit* 1))))
+       (cond
+        ((and offset limit* (> limit* 0))
+         (format ":%d:%d" offset (+ offset (1- limit*))))
+        (offset
+         (format ":%d" offset))
+        (t ""))))
+    ("edit"
+     (let* ((first-changed* (or (alist-get :firstChangedLine details nil nil #'equal)
+                                (alist-get :first-changed-line details nil nil #'equal)
+                                (alist-get "firstChangedLine" details nil nil #'equal)
+                                (alist-get "first-changed-line" details nil nil #'equal)))
+            (first-changed (psi-emacs--tool-int first-changed*))
+            (old-text (psi-emacs--tool-arg-get args '("oldText" :oldText oldText)))
+            (span (and (stringp old-text)
+                       (max 1 (length (split-string old-text "\n" nil))))))
+       (cond
+        ((and first-changed span (> span 1))
+         (format ":%d:%d" first-changed (+ first-changed (1- span))))
+        (first-changed
+         (format ":%d" first-changed))
+        (t ""))))
+    (_ "")))
+
+(defun psi-emacs--tool-summary (tool-name parsed-args arguments tool-id &optional details)
   "Return display summary for a tool row.
 
 Prefers TOOL-NAME + key call argument (path/command) over internal TOOL-ID.
+For read/edit, appends optional line-number suffix when derivable.
 TOOL-ID remains fallback-only when tool name is absent."
   (let* ((name-raw (or tool-name
                        (psi-emacs--tool-display-id tool-id)
@@ -196,11 +242,14 @@ TOOL-ID remains fallback-only when tool name is absent."
                            (psi-emacs--tool-arg-get args '("command" :command command)))
                           (_ nil)))
          (primary-text (psi-emacs--tool-primary-text name primary-value))
+         (line-range-suffix (if (member name '("read" "edit"))
+                                (psi-emacs--tool-line-range-suffix name args details)
+                              ""))
          (summary (cond
                    (invalid-args?
                     (format "%s [invalid arg]" display-name))
                    ((and known-tool? primary-text)
-                    (format "%s %s" display-name primary-text))
+                    (format "%s %s%s" display-name primary-text line-range-suffix))
                    (known-tool?
                     (format "%s …" display-name))
                    (t
@@ -300,11 +349,11 @@ ANSI sequences in TEXT are converted to Emacs faces."
       (psi-emacs--tool-row-header-string tool-summary status)
     (psi-emacs--tool-row-string tool-summary status (or accumulated-text ""))))
 
-(defun psi-emacs--upsert-tool-row (tool-id stage text &optional tool-name arguments parsed-args is-error)
+(defun psi-emacs--upsert-tool-row (tool-id stage text &optional tool-name arguments parsed-args is-error details)
   "Create or update TOOL-ID row for lifecycle STAGE.
 
 TEXT represents tool execution output snapshots.
-TOOL-NAME/ARGUMENTS/PARSED-ARGS update display metadata for call summaries.
+TOOL-NAME/ARGUMENTS/PARSED-ARGS/DETAILS update display metadata for call summaries.
 Rows are rendered according to global tool-output-view-mode."
   (when (and psi-emacs--state tool-id)
     (let* ((follow-anchor (psi-emacs--draft-anchor-at-end-p))
@@ -323,9 +372,12 @@ Rows are rendered according to global tool-output-view-mode."
            (is-error* (if (null is-error)
                           (plist-get row :is-error)
                         is-error))
+           (details* (if (null details)
+                         (plist-get row :details)
+                       details))
            (status (psi-emacs--tool-status-label stage is-error*))
            (accumulated (psi-emacs--tool-next-accumulated-text row stage text arguments))
-           (tool-summary (psi-emacs--tool-summary tool-name* parsed-args* arguments* tool-id))
+           (tool-summary (psi-emacs--tool-summary tool-name* parsed-args* arguments* tool-id details*))
            (rendered (psi-emacs--render-tool-row tool-summary status accumulated view-mode)))
       (if (and (markerp start)
                (markerp end)
@@ -347,6 +399,7 @@ Rows are rendered according to global tool-output-view-mode."
                                    :tool-name tool-name*
                                    :arguments arguments*
                                    :parsed-args parsed-args*
+                                   :details details*
                                    :is-error is-error*
                                    :stage stage
                                    :status status
@@ -369,6 +422,7 @@ Rows are rendered according to global tool-output-view-mode."
                                    :tool-name tool-name*
                                    :arguments arguments*
                                    :parsed-args parsed-args*
+                                   :details details*
                                    :is-error is-error*
                                    :stage stage
                                    :status status
@@ -404,7 +458,8 @@ This command is valid even when no tool rows exist."
                                            (plist-get row :tool-name)
                                            (plist-get row :parsed-args)
                                            (plist-get row :arguments)
-                                           tool-id)))
+                                           tool-id
+                                           (plist-get row :details))))
                         (status (or (plist-get row :status)
                                     (psi-emacs--tool-status-label
                                      (plist-get row :stage)

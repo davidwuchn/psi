@@ -107,6 +107,7 @@ DATA is expected to be an alist map."
               (arguments (psi-emacs--event-data-get data '(:arguments arguments)))
               (parsed-args (psi-emacs--event-data-get data '(:parsed-args parsed-args :parsedArgs parsedArgs)))
               (is-error (psi-emacs--event-data-get data '(:is-error is-error :isError isError)))
+              (details (psi-emacs--event-data-get data '(:details details)))
               (stage (replace-regexp-in-string "^tool/" "" event))
               (raw-text (or (psi-emacs--event-data-get data
                                                        '(:result-text result-text :text text :output output :delta delta :message message))
@@ -118,7 +119,7 @@ DATA is expected to be an alist map."
                              ""
                            raw-text)))
          (psi-emacs--reset-stream-watchdog psi-emacs--state)
-         (psi-emacs--upsert-tool-row tool-id stage body-text tool-name arguments parsed-args is-error)))
+         (psi-emacs--upsert-tool-row tool-id stage body-text tool-name arguments parsed-args is-error details)))
       ("ui/dialog-requested"
        (psi-emacs--handle-dialog-requested data))
       ("ui/widgets-updated"
