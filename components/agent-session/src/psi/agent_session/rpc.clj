@@ -107,6 +107,42 @@
                   :error-message "unsupported outbound frame kind"
                   :data          {:kind (:kind frame)}})))
 
+(defn- edn-wire-safe
+  "Recursively coerce values to EDN-safe transport shapes.
+
+   Notably converts java.time values to strings because `pr-str` renders
+   java.time.Instant as `#object[...]`, which is not EDN-readable."
+  [x]
+  (cond
+    (or (nil? x)
+        (string? x)
+        (number? x)
+        (keyword? x)
+        (symbol? x)
+        (boolean? x)
+        (char? x))
+    x
+
+    (instance? java.time.temporal.TemporalAccessor x)
+    (str x)
+
+    (map? x)
+    (into (empty x)
+          (map (fn [[k v]] [k (edn-wire-safe v)]))
+          x)
+
+    (vector? x)
+    (mapv edn-wire-safe x)
+
+    (set? x)
+    (set (map edn-wire-safe x))
+
+    (sequential? x)
+    (mapv edn-wire-safe x)
+
+    :else
+    (str x)))
+
 (defn make-frame-writer
   "Return a serialized frame emitter writing one EDN map per line to `out-writer`."
   [^java.io.Writer out-writer]
@@ -114,7 +150,7 @@
         writer (java.io.BufferedWriter. out-writer)]
     (fn emit-frame! [frame]
       (locking lock
-        (.write writer (str (pr-str (canonicalize-outbound-frame frame)) "\n"))
+        (.write writer (str (pr-str (edn-wire-safe (canonicalize-outbound-frame frame))) "\n"))
         (.flush writer)))))
 
 (defn- invalid-envelope [frame-id frame-op message]
