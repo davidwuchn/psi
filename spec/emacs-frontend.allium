@@ -9,6 +9,7 @@
 --   Assistant and tool streaming rendering behavior
 --   Global tool-output collapsed/expanded view behavior
 --   Header-line status behavior
+--   Model/thinking control dispatch + projection behavior
 --   Manual reconnect supervision policy
 --   Extension UI + footer projection behavior
 --
@@ -507,6 +508,77 @@ rule NewSessionKeepsCurrentToolOutputView {
 }
 
 ------------------------------------------------------------
+-- Model and Thinking Controls
+------------------------------------------------------------
+
+rule ModelThinkingControlRequestsRequireReadyTransport {
+    when: FrontendControlRequested(frontend, control, args, source)
+
+    requires: control in ["set_model", "cycle_model", "set_thinking_level", "cycle_thinking_level"]
+    requires: frontend.rpc.transportState != ready
+
+    ensures: RpcRequestNotSent(frontend.rpc, control, args)
+    ensures: frontend.runState = error
+    ensures: frontend.lastError != null
+    ensures: PersistentErrorLineUpserted(frontend.buffer, frontend.lastError)
+}
+
+rule SetModelControlDispatchesCanonicalRpcOp {
+    when: FrontendControlRequested(frontend, control: "set_model", args: {provider, modelId}, source)
+
+    requires: frontend.rpc.transportState = ready
+    requires: frontend.modelControlsEnabled
+
+    ensures: RpcRequestSent(frontend.rpc, op: "set_model", provider: provider, modelId: modelId)
+}
+
+rule CycleModelControlDispatchesCanonicalRpcOp {
+    when: FrontendControlRequested(frontend, control: "cycle_model", args: {direction?}, source)
+
+    requires: frontend.rpc.transportState = ready
+    requires: frontend.modelControlsEnabled
+    requires: direction? in [null, "next", "prev"]
+
+    ensures: RpcRequestSent(frontend.rpc, op: "cycle_model", direction: direction?)
+}
+
+rule SetThinkingLevelControlDispatchesCanonicalRpcOp {
+    when: FrontendControlRequested(frontend, control: "set_thinking_level", args: {level}, source)
+
+    requires: frontend.rpc.transportState = ready
+    requires: frontend.modelControlsEnabled
+
+    ensures: RpcRequestSent(frontend.rpc, op: "set_thinking_level", level: level)
+}
+
+rule CycleThinkingLevelControlDispatchesCanonicalRpcOp {
+    when: FrontendControlRequested(frontend, control: "cycle_thinking_level", args: {}, source)
+
+    requires: frontend.rpc.transportState = ready
+    requires: frontend.modelControlsEnabled
+
+    ensures: RpcRequestSent(frontend.rpc, op: "cycle_thinking_level")
+}
+
+rule SessionUpdatedProjectsModelAndThinkingMetadata {
+    when: RpcEventReceived(frontend.rpc, "session/updated", payload: rpc/SessionUpdatedPayload)
+
+    ensures: frontend.session.model.provider = payload.modelProvider
+    ensures: frontend.session.model.id = payload.modelId
+    ensures: frontend.session.thinkingLevel = payload.thinkingLevel
+    ensures: frontend.headerLine.modelLabel = ModelLabel(payload.modelProvider, payload.modelId)
+}
+
+rule ModelThinkingControlSuccessDefersToSessionUpdatedProjection {
+    when: RpcResponseReceived(frontend.rpc, op, ok, data)
+
+    requires: op in ["set_model", "cycle_model", "set_thinking_level", "cycle_thinking_level"]
+    requires: ok = true
+
+    ensures: CanonicalFrontendModelThinkingProjectionSource(frontend) = "session/updated"
+}
+
+------------------------------------------------------------
 -- Streaming Rendering Rules
 ------------------------------------------------------------
 
@@ -847,6 +919,13 @@ surface EmacsSessionApi {
         --   RPC errors are surfaced in minibuffer and persisted in a single
         --   inline transcript error row (updated in place, not appended).
         --
+        -- Model/thinking controls:
+        --   set_model, cycle_model, set_thinking_level, cycle_thinking_level
+        --   are frontend command/API operations (keybinding choices are
+        --   frontend-configurable).
+        --   Canonical frontend model/thinking state is projected from
+        --   session/updated events.
+        --
         -- Transport guard:
         --   if transport is not ready, compose dispatch is rejected immediately
         --   with deterministic in-buffer error text and draft preservation.
@@ -857,4 +936,5 @@ surface EmacsSessionApi {
 ------------------------------------------------------------
 
 open_question "Should reconnect optionally offer resume/session-picker before clearing buffer?"
+open_question "Should Emacs assign dedicated default keybindings for model/thinking controls, or keep command-only invocation?"
 open_question "Image UX in markdown buffers: inline image display first, or file-link fallback?"

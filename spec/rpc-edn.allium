@@ -114,6 +114,12 @@ value SessionUpdatedPayload {
     isCompacting: Boolean
     pendingMessageCount: Integer
     retryAttempt: Integer
+
+    -- Optional model metadata used by parity frontends (header/status projection).
+    modelProvider: String?
+    modelId: String?
+    modelReasoning: Boolean?
+    thinkingLevel: Any?
 }
 
 value SessionResumedPayload {
@@ -241,6 +247,18 @@ rule FooterPayloadSpecConsistencyGuard {
     ensures: ContractFieldSet("default-footer", "FooterView") = FooterPayloadCanonicalFields()
     ensures: ContractFieldSet("emacs-footer", "EmacsFooterProjection.canonical") = FooterPayloadCanonicalFields()
     ensures: ContractUsesPayload("emacs-frontend", "footer/updated", FooterUpdatedPayload)
+}
+
+rule SessionUpdatedPayloadSpecConsistencyGuard {
+    -- Keep model/thinking projection fields aligned across rpc + frontend specs.
+    when: SessionUpdatedSpecConsistencyCheckRequested()
+
+    ensures: EventTopicPayload("session/updated") = SessionUpdatedPayload
+    ensures: EventPayloadRequiredKeysFor("session/updated") =
+        ["session-id", "phase", "is-streaming", "is-compacting", "pending-message-count", "retry-attempt"]
+    ensures: EventPayloadOptionalKeysFor("session/updated") =
+        ["model-provider", "model-id", "model-reasoning", "thinking-level"]
+    ensures: ContractUsesPayload("emacs-frontend", "session/updated", SessionUpdatedPayload)
 }
 
 ------------------------------------------------------------
