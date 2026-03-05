@@ -461,7 +461,7 @@ rule IdleBuiltInSlashCommandsBypassPromptRpc {
     requires: sourceKey in [config.send_key, config.queue_key]
     requires: frontend.rpc.transportState = ready
     requires: not frontend.session.isStreaming
-    requires: BuiltInIdleSlashCommand(Trim(ComposedText(frontend)), commands: ["/resume", "/quit", "/exit", "/new", "/status", "/help", "/?"])
+    requires: BuiltInIdleSlashCommand(Trim(ComposedText(frontend)), commands: ["/resume", "/quit", "/exit", "/new", "/status", "/help", "/?", "/model", "/thinking"])
 
     ensures: PromptNotForwarded(frontend.session, ComposedText(frontend))
     ensures: LocalSlashCommandResultRendered(frontend)
@@ -500,7 +500,7 @@ rule IdleNonInterceptedSlashFallsThroughToPromptRpc {
     requires: frontend.rpc.transportState = ready
     requires: not frontend.session.isStreaming
     requires: StartsWith(Trim(ComposedText(frontend)), "/")
-    requires: not BuiltInIdleSlashCommand(Trim(ComposedText(frontend)), commands: ["/resume", "/quit", "/exit", "/new", "/status", "/help", "/?"])
+    requires: not BuiltInIdleSlashCommand(Trim(ComposedText(frontend)), commands: ["/resume", "/quit", "/exit", "/new", "/status", "/help", "/?", "/model", "/thinking"])
 
     ensures: PromptForwarded(frontend.session, ComposedText(frontend))
     ensures: ServerSideSlashDispatchMayRunViaPrompt(frontend, ComposedText(frontend))
@@ -927,7 +927,7 @@ surface EmacsSessionApi {
         --   no region     -> send tail draft block (end-of-buffer)
         --
         -- Idle slash command handling:
-        --   built-ins (/resume, /quit, /exit, /new, /status, /help, /?)
+        --   built-ins (/resume, /quit, /exit, /new, /status, /help, /?, /model, /thinking)
         --   are intercepted locally; non-intercepted slash input falls
         --   through to prompt RPC for server-side dispatch.
         --

@@ -8,12 +8,15 @@
 --
 -- Includes:
 --   - Built-in slash command dispatch (/quit, /resume, /new, /status, ...)
+--   - Shared /model and /thinking command grammar and result typing
+--   - Selector-capable vs non-selector-capable runtime behavior
 --   - Dispatch-result handling in interactive runtimes
 --   - Slash submission fallback to normal agent prompting when not intercepted
 --
 -- Excludes:
 --   - Prompt template and skill expansion internals (coding-agent/skills/prompt-templates)
 --   - Session-selector rendering internals (see tui-resume-selector.allium)
+--   - Frontend layout/styling details for model/thinking selectors
 
 ------------------------------------------------------------
 -- Config
@@ -23,8 +26,10 @@ config {
     built_in_slash_commands: Set<String> = {
         "/quit", "/exit", "/resume", "/new", "/status", "/history",
         "/help", "/?", "/prompts", "/skills", "/feed-forward",
-        "/login", "/logout"
+        "/login", "/logout", "/model", "/thinking"
     }
+
+    canonical_thinking_levels: List<String> = ["off", "minimal", "low", "medium", "high", "xhigh"]
 }
 
 ------------------------------------------------------------
@@ -32,7 +37,8 @@ config {
 ------------------------------------------------------------
 
 value SlashCommandDispatchResult {
-    type: quit | resume | new_session | text | login_start | login_error | logout | extension_cmd | not_command
+    type: quit | resume | new_session | text | login_start | login_error | logout |
+          extension_cmd | model_selector | model_set | thinking_selector | thinking_set | not_command
 
     message: String?
 
@@ -44,6 +50,17 @@ value SlashCommandDispatchResult {
     providerName: String?
     loginUrl: String?
     usesCallbackServer: Boolean?
+
+    -- model/thinking payload
+    modelProvider: String?
+    modelId: String?
+    thinkingLevel: String?
+}
+
+value ModelCandidate {
+    provider: String
+    modelId: String
+    reasoning: Boolean
 }
 
 ------------------------------------------------------------
@@ -51,12 +68,23 @@ value SlashCommandDispatchResult {
 ------------------------------------------------------------
 
 entity PromptRuntime {
-    phase: idle | streaming | selecting_session | exiting
+    phase: idle | streaming | selecting_session | selecting_model | selecting_thinking | exiting
 
-    -- Some frontends (e.g. TUI) support a dedicated session selector for /resume.
+    -- Some frontends (e.g. TUI) support dedicated selectors.
     supportsResumeSelector: Boolean = true
+    supportsModelSelector: Boolean = true
+    supportsThinkingSelector: Boolean = true
 
     transcriptEditable: Boolean
+
+    -- Session model/thinking projection used by selector and direct command validation.
+    currentModelProvider: String?
+    currentModelId: String?
+    currentModelReasoning: Boolean
+
+    -- Candidate pools for model selection.
+    scopedModels: List<ModelCandidate>
+    runtimeModels: List<ModelCandidate>
 }
 
 entity PromptInput {
@@ -123,6 +151,86 @@ rule LoginAndLogoutCommandsReturnTypedResults {
     ensures: SlashCommandDispatchResultProduced(text, LoginLogoutResult(text))
 }
 
+rule ModelNoArgRequestsSelector {
+    when: SlashCommandDispatchRequested(text)
+    requires: text = "/model"
+
+    ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{type: model_selector})
+}
+
+rule ModelWithProviderAndIdRequestsDirectSet {
+    when: SlashCommandDispatchRequested(text)
+
+    requires: StartsWith(text, "/model ")
+    requires: MatchesModelDirectSetSyntax(text)
+
+    ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{
+        type: model_set,
+        modelProvider: ModelProviderArg(text),
+        modelId: ModelIdArg(text)
+    })
+}
+
+rule ModelInvalidArityReturnsDeterministicUsage {
+    when: SlashCommandDispatchRequested(text)
+
+    requires: StartsWith(text, "/model")
+    requires: not (text = "/model")
+    requires: not MatchesModelDirectSetSyntax(text)
+
+    ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{
+        type: text,
+        message: "Usage: /model OR /model <provider> <model-id>"
+    })
+}
+
+rule ThinkingNoArgRequestsSelector {
+    when: SlashCommandDispatchRequested(text)
+    requires: text = "/thinking"
+
+    ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{type: thinking_selector})
+}
+
+rule ThinkingWithKnownLevelRequestsDirectSet {
+    when: SlashCommandDispatchRequested(text)
+
+    requires: StartsWith(text, "/thinking ")
+    requires: MatchesThinkingDirectSetSyntax(text)
+    requires: IsKnownThinkingLevel(ThinkingLevelArg(text), config.canonical_thinking_levels)
+
+    ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{
+        type: thinking_set,
+        thinkingLevel: NormalizeThinkingLevel(ThinkingLevelArg(text))
+    })
+}
+
+rule ThinkingWithUnknownLevelReturnsDeterministicError {
+    when: SlashCommandDispatchRequested(text)
+
+    requires: StartsWith(text, "/thinking ")
+    requires: MatchesThinkingDirectSetSyntax(text)
+    requires: not IsKnownThinkingLevel(ThinkingLevelArg(text), config.canonical_thinking_levels)
+
+    ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{
+        type: text,
+        message: UnknownThinkingLevelText(ThinkingLevelArg(text), config.canonical_thinking_levels)
+    })
+    ensures: ThinkingLevelErrorIncludesAllowedLevels(text, config.canonical_thinking_levels)
+}
+
+rule ThinkingInvalidArityReturnsDeterministicUsage {
+    when: SlashCommandDispatchRequested(text)
+
+    requires: StartsWith(text, "/thinking")
+    requires: not (text = "/thinking")
+    requires: not MatchesThinkingDirectSetSyntax(text)
+
+    ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{
+        type: text,
+        message: "Usage: /thinking OR /thinking <level>"
+    })
+}
+
 rule ExtensionSlashCommandReturnsExtensionResult {
     when: SlashCommandDispatchRequested(text)
     requires: StartsWith(text, "/")
@@ -140,6 +248,42 @@ rule NonInterceptedSlashInputFallsThrough {
     requires: not BuiltInOrExtensionCommand(text)
 
     ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{type: not_command})
+}
+
+------------------------------------------------------------
+-- Selector Candidate Rules
+------------------------------------------------------------
+
+rule ModelSelectorCandidatesPreferScopedModels {
+    when: ModelSelectorOpened(runtime)
+
+    requires: runtime.scopedModels.count > 0
+
+    ensures: ActiveModelSelectorCandidates(runtime) = runtime.scopedModels
+}
+
+rule ModelSelectorCandidatesFallBackToRuntimeModels {
+    when: ModelSelectorOpened(runtime)
+
+    requires: runtime.scopedModels.count = 0
+
+    ensures: ActiveModelSelectorCandidates(runtime) = runtime.runtimeModels
+}
+
+rule ThinkingSelectorCandidatesUseCanonicalLevelsWhenReasoningSupported {
+    when: ThinkingSelectorOpened(runtime)
+
+    requires: runtime.currentModelReasoning
+
+    ensures: ActiveThinkingSelectorCandidates(runtime) = config.canonical_thinking_levels
+}
+
+rule ThinkingSelectorCandidatesOnlyOffWhenReasoningUnsupported {
+    when: ThinkingSelectorOpened(runtime)
+
+    requires: not runtime.currentModelReasoning
+
+    ensures: ActiveThinkingSelectorCandidates(runtime) = ["off"]
 }
 
 ------------------------------------------------------------
@@ -169,6 +313,73 @@ rule ResumeResultFallsBackWhenSelectorUnsupported {
     requires: not runtime.supportsResumeSelector
 
     ensures: AssistantMessageAppended(runtime, "Resume selector unavailable in this frontend.")
+}
+
+rule ModelSelectorResultOpensSelectorWhenSupported {
+    when: SlashCommandResultApplied(runtime, result: SlashCommandDispatchResult)
+    requires: result.type = model_selector
+    requires: runtime.supportsModelSelector
+
+    ensures: runtime.phase = selecting_model
+    ensures: ModelSelectorOpened(runtime)
+}
+
+rule ModelSelectorResultFallsBackWhenSelectorUnsupported {
+    when: SlashCommandResultApplied(runtime, result: SlashCommandDispatchResult)
+    requires: result.type = model_selector
+    requires: not runtime.supportsModelSelector
+
+    ensures: AssistantMessageAppended(runtime, "Model selector unavailable in this frontend. Use /model <provider> <model-id>.")
+}
+
+rule ThinkingSelectorResultOpensSelectorWhenSupported {
+    when: SlashCommandResultApplied(runtime, result: SlashCommandDispatchResult)
+    requires: result.type = thinking_selector
+    requires: runtime.supportsThinkingSelector
+
+    ensures: runtime.phase = selecting_thinking
+    ensures: ThinkingSelectorOpened(runtime)
+}
+
+rule ThinkingSelectorResultFallsBackWhenSelectorUnsupported {
+    when: SlashCommandResultApplied(runtime, result: SlashCommandDispatchResult)
+    requires: result.type = thinking_selector
+    requires: not runtime.supportsThinkingSelector
+
+    ensures: AssistantMessageAppended(runtime, "Thinking selector unavailable in this frontend. Use /thinking <level>.")
+}
+
+rule ModelSetResultAllowsAnyKnownRuntimeModel {
+    when: SlashCommandResultApplied(runtime, result: SlashCommandDispatchResult)
+    requires: result.type = model_set
+    requires: KnownRuntimeModel(runtime.runtimeModels, result.modelProvider, result.modelId)
+
+    ensures: ModelSetRequested(runtime, provider: result.modelProvider, modelId: result.modelId, source: slash_direct)
+}
+
+rule ModelSetResultUnknownModelReturnsDeterministicError {
+    when: SlashCommandResultApplied(runtime, result: SlashCommandDispatchResult)
+    requires: result.type = model_set
+    requires: not KnownRuntimeModel(runtime.runtimeModels, result.modelProvider, result.modelId)
+
+    ensures: ModelSetNotRequested(runtime)
+    ensures: AssistantMessageAppended(runtime, UnknownModelText(result.modelProvider, result.modelId))
+}
+
+rule ThinkingSetResultUsesRequestedLevelWhenReasoningSupported {
+    when: SlashCommandResultApplied(runtime, result: SlashCommandDispatchResult)
+    requires: result.type = thinking_set
+    requires: runtime.currentModelReasoning
+
+    ensures: ThinkingLevelSetRequested(runtime, level: result.thinkingLevel, source: slash_direct)
+}
+
+rule ThinkingSetResultClampsToOffWhenReasoningUnsupported {
+    when: SlashCommandResultApplied(runtime, result: SlashCommandDispatchResult)
+    requires: result.type = thinking_set
+    requires: not runtime.currentModelReasoning
+
+    ensures: ThinkingLevelSetRequested(runtime, level: "off", source: slash_direct)
 }
 
 rule TextLikeResultsAppendAssistantMessage {
@@ -223,6 +434,7 @@ surface PromptSlashCommandContract {
         -- Slash command dispatch runs before normal prompt submission.
         -- /quit and /exit are equivalent.
         -- /resume is a runtime capability: selector UIs open selection; others provide fallback messaging.
+        -- /model and /thinking support both selector mode (no args) and direct mode (with args).
         -- Selector-level /resume behavior for TUI is specified in tui-resume-selector.allium.
         -- Non-intercepted slash input falls through to normal agent prompting, enabling downstream
         -- template/skill expansion paths.
@@ -233,3 +445,4 @@ surface PromptSlashCommandContract {
 ------------------------------------------------------------
 
 open_question "Should unknown slash commands return immediate user-facing errors, or always fall through for downstream handling?"
+open_question "Should /model selector support free-text filtering by provider, model id, and display name in all runtimes?"
