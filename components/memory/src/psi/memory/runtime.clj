@@ -265,7 +265,8 @@
            retention-deltas
            store-migration-hooks]}]
   (let [store-provider*      (or (parse-store-provider store-provider)
-                                 (parse-store-provider (getenv "PSI_MEMORY_STORE")))
+                                 (parse-store-provider (getenv "PSI_MEMORY_STORE"))
+                                 :datalevin)
         store-root*          (or (non-blank-str store-root)
                                  (non-blank-str (getenv "PSI_MEMORY_STORE_ROOT")))
         store-db-dir*        (or (non-blank-str store-db-dir)
