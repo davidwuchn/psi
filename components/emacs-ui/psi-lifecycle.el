@@ -9,7 +9,6 @@
 (require 'psi-globals)
 
 (defvar psi-emacs-command)
-(defvar psi-emacs-enable-extension-ui-parity)
 
 (declare-function make-psi-emacs-state "psi" (&rest args))
 
@@ -100,9 +99,7 @@
         (psi-rpc-start! client
                         psi-emacs--spawn-process-function
                         psi-emacs-command
-                        (if psi-emacs-enable-extension-ui-parity
-                            psi-rpc-parity-topics
-                          psi-rpc-mvp-topics))
+                        psi-rpc-default-topics)
         (setf (psi-emacs-state-process psi-emacs--state) (psi-rpc-client-process client))
         (setq psi-emacs--owned-process (psi-rpc-client-process client))
         (psi-emacs--refresh-header-line)))))

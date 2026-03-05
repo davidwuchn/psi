@@ -17,8 +17,6 @@
 (defvar psi-emacs-command)
 (defvar psi-emacs-buffer-name)
 (defvar psi-emacs-stream-timeout-seconds)
-(defvar psi-emacs-enable-resume-parity)
-(defvar psi-emacs-enable-extension-ui-parity)
 (defvar psi-emacs-notification-timeout-seconds)
 
 (declare-function make-psi-emacs-state "psi" (&rest args))

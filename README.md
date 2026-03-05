@@ -109,9 +109,9 @@ receives an API map with:
 
 ---
 
-## Emacs MVP frontend (rpc-edn)
+## Emacs frontend (rpc-edn)
 
-The repository includes an Emacs MVP frontend at `components/emacs-ui/` that runs
+The repository includes an Emacs frontend at `components/emacs-ui/` that runs
 psi in a dedicated process buffer over rpc-edn.
 
 ### Start
@@ -177,13 +177,12 @@ Toggle between modes with `C-c C-t` (or `M-x psi-emacs-toggle-tool-output-view`)
 The toggle applies immediately to all existing rows and to future rows.
 Reconnect (`C-c C-r`) resets mode to collapsed; `/new` preserves current mode.
 
-### Extension UI/footer parity gate
+### Topic subscription
 
-Extension UI parity is controlled by `psi-emacs-enable-extension-ui-parity`
-(default `t`):
+Emacs subscribes to the full default topic set (core + extension/footer topics):
 
-- non-nil (default): subscribe to MVP + parity topics (`ui/*`, `footer/updated`)
-- nil: subscribe to MVP topics only
+- core: `assistant/*`, `tool/*`, `session/updated`, `error`
+- extension/footer: `ui/*`, `footer/updated`
 
 ### Reconnect semantics
 

@@ -13,7 +13,7 @@
   "Open and initialize dedicated psi chat buffer BUFFER-NAME.
 
 Creates/uses one dedicated buffer with one owned subprocess and initializes
-MVP frontend state boundaries."
+frontend state boundaries."
   (let ((buffer (get-buffer-create (or buffer-name psi-emacs-buffer-name))))
     (with-current-buffer buffer
       (let ((mode (psi-emacs--preferred-major-mode)))

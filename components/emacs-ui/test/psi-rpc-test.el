@@ -20,7 +20,7 @@
       "tool/result"
       "session/updated"
       "error")
-    psi-rpc-mvp-topics))
+    psi-rpc-core-topics))
   (should
    (equal
     '("ui/dialog-requested"
@@ -28,9 +28,9 @@
       "ui/status-updated"
       "ui/notification"
       "footer/updated")
-    psi-rpc-parity-extension-ui-topics))
-  (should (equal (append psi-rpc-mvp-topics psi-rpc-parity-extension-ui-topics)
-                 psi-rpc-parity-topics)))
+    psi-rpc-extension-topics))
+  (should (equal (append psi-rpc-core-topics psi-rpc-extension-topics)
+                 psi-rpc-default-topics)))
 
 (defun psi-rpc-test--spawn-cat (_command)
   "Spawn a long-lived process used in rpc transport tests."
@@ -218,9 +218,7 @@
                          (list (psi-rpc-client-process-state client)
                                (psi-rpc-client-transport-state client))))
           (should (equal "1.0" (psi-rpc-client-protocol-version client)))
-          (should (equal psi-rpc-mvp-topics (psi-rpc-client-subscribed-topics client)))
-          (dolist (topic psi-rpc-parity-extension-ui-topics)
-            (should-not (member topic (psi-rpc-client-subscribed-topics client))))
+          (should (equal psi-rpc-default-topics (psi-rpc-client-subscribed-topics client)))
           (should (null errors))
           (should (member '(running handshaking) states))
           (should (member '(running ready) states)))
@@ -258,7 +256,7 @@
       (when (and process (process-live-p process))
         (delete-process process)))))
 
-(ert-deftest psi-rpc-startup-lifecycle-ready-path-with-parity-topics ()
+(ert-deftest psi-rpc-startup-lifecycle-ready-path-with-explicit-topics ()
   (let* ((states nil)
          (errors nil)
          (subscribed-topics nil)
@@ -290,14 +288,14 @@
                       (:data . ((:subscribed . []))))))))))))
     (unwind-protect
         (progn
-          (psi-rpc-start! client #'psi-rpc-test--spawn-cat '("cat") psi-rpc-parity-topics)
+          (psi-rpc-start! client #'psi-rpc-test--spawn-cat '("cat") psi-rpc-default-topics)
           (setq process (psi-rpc-client-process client))
           (sleep-for 0.02)
           (should (equal '(running ready)
                          (list (psi-rpc-client-process-state client)
                                (psi-rpc-client-transport-state client))))
-          (should (equal psi-rpc-parity-topics (psi-rpc-client-subscribed-topics client)))
-          (should (equal psi-rpc-parity-topics subscribed-topics))
+          (should (equal psi-rpc-default-topics (psi-rpc-client-subscribed-topics client)))
+          (should (equal psi-rpc-default-topics subscribed-topics))
           (should (null errors))
           (should (member '(running handshaking) states))
           (should (member '(running ready) states)))

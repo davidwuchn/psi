@@ -1,19 +1,16 @@
 -- emacs-frontend.allium
 --
--- Scope: Emacs process-buffer frontend behavior over EDN RPC,
---        with an MVP-first rollout and explicit path to full TUI parity.
+-- Scope: Emacs process-buffer frontend behavior over EDN RPC.
 --
 -- Includes:
---   MVP process-buffer UX (single subprocess, single dedicated chat buffer)
+--   Dedicated process-buffer UX (single subprocess, single dedicated chat buffer)
 --   Auto-connect lifecycle (start -> handshake -> subscribe)
 --   Keybinding-driven prompting/queueing/abort/reconnect/tool-view-toggle behavior
---   Assistant and tool streaming rendering behavior (global collapsed/expanded tool view,
---     with verbatim-first assistant streaming and finalize-time markdown processing)
+--   Assistant and tool streaming rendering behavior
+--   Global tool-output collapsed/expanded view behavior
 --   Header-line status behavior
 --   Manual reconnect supervision policy
---   Phase progression from MVP to parity capabilities
---   Parity compose autocomplete delegation (/, @ file references)
---   MVP slash-command execution delegation with prompt fallback (/resume, /quit, /history, ...)
+--   Extension UI + footer projection behavior
 --
 -- Delegates to:
 --   EDN RPC transport protocol (rpc-edn.allium)
@@ -23,7 +20,7 @@
 --   Shared prompt autocomplete semantics (prompt-input-autocomplete.allium)
 --   Shared slash-command execution semantics (prompt-slash-commands.allium)
 --   TUI /resume selector behavior reference (tui-resume-selector.allium)
---   Emacs footer parity projection contract (emacs-footer.allium)
+--   Emacs footer projection contract (emacs-footer.allium)
 --
 -- Excludes:
 --   Canonical EDN frame envelopes and version negotiation (see rpc-edn.allium)
@@ -45,7 +42,7 @@ use "./emacs-footer.allium" as emacs_footer
 -- Value Types
 ------------------------------------------------------------
 
-value FrontendFeatureParity {
+value FrontendCapabilities {
     prompting: Boolean
     streamingText: Boolean
     toolLifecycle: Boolean
@@ -98,7 +95,7 @@ entity ToolRow {
     streamedOutput: String
     ansiFacesApplied: Boolean
 
-    -- Per-row collapsibility is disabled; MVP uses one global view toggle.
+    -- Per-row collapsibility is disabled; one global view toggle applies.
     collapsible: Boolean
 }
 
@@ -125,9 +122,6 @@ entity EmacsFrontend {
     session: coding/AgentSession
     rpc: rpc/RpcEndpoint
 
-    -- Rollout stage
-    phase: mvp | parity
-
     buffer: EmacsProcessBuffer
     assistant: AssistantStreamState
     toolRows: List<ToolRow>
@@ -136,7 +130,7 @@ entity EmacsFrontend {
 
     toolOutputView: collapsed | expanded
 
-    -- Flattened footer projection text rendered in parity mode.
+    -- Flattened footer projection text rendered in transcript tail.
     footerProjection: String?
 
     runState: idle | streaming | reconnecting | error
@@ -151,10 +145,10 @@ entity EmacsFrontend {
 
     subscribedTopics: Set<String>
 
-    parity: FrontendFeatureParity
+    capabilities: FrontendCapabilities
 
     extensionUiEnabled: Boolean
-    footerParityEnabled: Boolean
+    footerEnabled: Boolean
     multiSessionEnabled: Boolean
     modelControlsEnabled: Boolean
     commandDiscoveryEnabled: Boolean
@@ -167,8 +161,6 @@ entity EmacsFrontend {
 ------------------------------------------------------------
 
 config {
-    default_phase: mvp | parity = mvp
-
     send_key: String = "C-c RET"
     queue_key: String = "C-c C-q"
     abort_key: String = "C-c C-k"
@@ -180,7 +172,7 @@ config {
 
     default_tool_output_view: collapsed | expanded = collapsed
 
-    mvp_topics: Set<String> = {
+    default_topics: Set<String> = {
         "assistant/delta",
         "assistant/message",
         "tool/start",
@@ -189,18 +181,21 @@ config {
         "tool/update",
         "tool/result",
         "session/updated",
-        "error"
+        "error",
+        "ui/dialog-requested",
+        "ui/widgets-updated",
+        "ui/status-updated",
+        "ui/notification",
+        "footer/updated"
     }
 }
 
 ------------------------------------------------------------
--- Rollout Profile Rules
+-- Profile Rules
 ------------------------------------------------------------
 
-rule MvpProfileIsDefault {
+rule ParityProfileIsDefault {
     when: EmacsFrontendInitialized(frontend)
-
-    ensures: frontend.phase = config.default_phase
 
     ensures: frontend.autoConnect = true
     ensures: frontend.singleSubprocess = true
@@ -217,70 +212,33 @@ rule MvpProfileIsDefault {
 
     ensures: frontend.reportRpcErrorsInMinibufferOnly = true
 
-    ensures: frontend.extensionUiEnabled = false
-    ensures: frontend.footerParityEnabled = false
-    ensures: frontend.multiSessionEnabled = false
-    ensures: frontend.modelControlsEnabled = false
-    ensures: frontend.commandDiscoveryEnabled = false
-
-    ensures: frontend.parity.prompting = true
-    ensures: frontend.parity.streamingText = true
-    ensures: frontend.parity.toolLifecycle = true
-    ensures: frontend.parity.sessionLifecycle = false
-    ensures: frontend.parity.modelThinkingControls = false
-    ensures: frontend.parity.compactionControls = false
-    ensures: frontend.parity.oauth = false
-    ensures: frontend.parity.extensionUI = false
-    ensures: frontend.parity.footer = false
-    ensures: frontend.parity.commandDiscovery = false
-}
-
-rule ParityPhaseEnablesDeferredCapabilities {
-    when: FrontendPhaseChanged(frontend, phase)
-
-    requires: phase = parity
-
     ensures: frontend.extensionUiEnabled = true
-    ensures: frontend.footerParityEnabled = true
+    ensures: frontend.footerEnabled = true
     ensures: frontend.multiSessionEnabled = true
     ensures: frontend.modelControlsEnabled = true
     ensures: frontend.commandDiscoveryEnabled = true
 
-    ensures: frontend.parity.prompting = true
-    ensures: frontend.parity.streamingText = true
-    ensures: frontend.parity.toolLifecycle = true
-    ensures: frontend.parity.sessionLifecycle = true
-    ensures: frontend.parity.modelThinkingControls = true
-    ensures: frontend.parity.compactionControls = true
-    ensures: frontend.parity.oauth = true
-    ensures: frontend.parity.extensionUI = true
-    ensures: frontend.parity.footer = true
-    ensures: frontend.parity.commandDiscovery = true
+    ensures: frontend.capabilities.prompting = true
+    ensures: frontend.capabilities.streamingText = true
+    ensures: frontend.capabilities.toolLifecycle = true
+    ensures: frontend.capabilities.sessionLifecycle = true
+    ensures: frontend.capabilities.modelThinkingControls = true
+    ensures: frontend.capabilities.compactionControls = true
+    ensures: frontend.capabilities.oauth = true
+    ensures: frontend.capabilities.extensionUI = true
+    ensures: frontend.capabilities.footer = true
+    ensures: frontend.capabilities.commandDiscovery = true
 }
 
-rule ParityComposeAutocompleteUsesSharedContract {
-    when: FrontendPhaseChanged(frontend, phase)
-
-    requires: phase = parity
+rule ComposeAutocompleteUsesSharedContract {
+    when: EmacsFrontendInitialized(frontend)
 
     ensures: prompt_autocomplete/PromptAutocompleteContract governs compose input autocomplete
     ensures: SlashAndAtCompletionParity(frontend)
 }
 
-rule MvpSlashCommandExecutionUsesSharedContract {
-    when: FrontendPhaseChanged(frontend, phase)
-
-    requires: phase = mvp
-
-    ensures: slash_commands/PromptSlashCommandContract governs slash command execution
-    ensures: MvpIdleBuiltInSlashInterception(frontend, commands: ["/resume", "/quit", "/exit", "/new", "/status", "/help", "/?"])
-    ensures: MvpNonInterceptedSlashInputFallsThroughToPrompt(frontend)
-}
-
-rule ParitySlashCommandExecutionRetainsSharedContract {
-    when: FrontendPhaseChanged(frontend, phase)
-
-    requires: phase = parity
+rule SlashCommandExecutionUsesSharedContract {
+    when: EmacsFrontendInitialized(frontend)
 
     ensures: slash_commands/PromptSlashCommandContract governs slash command execution
 }
@@ -306,24 +264,11 @@ rule OneFrontendOwnsExactlyOneSubprocess {
     ensures: ProcessSwitchingWithinBufferDisabled(frontend)
 }
 
-rule MvpSubscribesOnlyToRequiredTopics {
+rule TransportReadySubscribesToDefaultTopics {
     when: TransportReady(frontend.rpc)
 
-    requires: frontend.phase = mvp
-
-    ensures: frontend.subscribedTopics = config.mvp_topics
-    ensures: frontend.rpc.subscribedTopics = config.mvp_topics
-}
-
-rule MvpDefersExtensionUiEventTopics {
-    when: TransportReady(frontend.rpc)
-
-    requires: frontend.phase = mvp
-
-    ensures: "ui/dialog-requested" not in frontend.rpc.subscribedTopics
-    ensures: "ui/widgets-updated" not in frontend.rpc.subscribedTopics
-    ensures: "ui/status-updated" not in frontend.rpc.subscribedTopics
-    ensures: "ui/notification" not in frontend.rpc.subscribedTopics
+    ensures: frontend.subscribedTopics = config.default_topics
+    ensures: frontend.rpc.subscribedTopics = config.default_topics
 }
 
 ------------------------------------------------------------
@@ -346,10 +291,8 @@ rule DedicatedBufferFallsBackToTextMode {
     ensures: frontend.buffer.majorMode = text
 }
 
-rule CanonicalMvpKeybindingsAreInstalled {
+rule CanonicalKeybindingsAreInstalled {
     when: EmacsMajorModeActivated(frontend)
-
-    requires: frontend.phase = mvp
 
     ensures: frontend.keymap.send = config.send_key
     ensures: frontend.keymap.queue = config.queue_key
@@ -390,6 +333,19 @@ rule TailDraftIsComposeSourceWhenNoRegion {
 
     ensures: ComposedText(frontend) = frontend.buffer.draftText
     ensures: ComposeSource(frontend) = tail_draft
+}
+
+rule TransportNotReadyRejectsComposeDispatch {
+    when: BufferSendRequested(frontend, sourceKey, prefix?)
+
+    requires: sourceKey in [config.send_key, config.queue_key]
+    requires: frontend.rpc.transportState != ready
+
+    ensures: PromptNotForwarded(frontend.session, ComposedText(frontend))
+    ensures: frontend.runState = error
+    ensures: frontend.lastError != null
+    ensures: PersistentErrorLineUpserted(frontend.buffer, frontend.lastError)
+    ensures: DraftAnchorUnchanged(frontend.buffer)
 }
 
 rule SendWhileStreamingDefaultsToSteer {
@@ -459,10 +415,9 @@ rule PromptDispatchSetsRunStateStreaming {
     ensures: StreamingWatchdogReset(frontend, timeoutSeconds: config.stream_timeout_seconds)
 }
 
-rule MvpIdleSlashSubmissionUsesSharedContract {
+rule IdleSlashSubmissionUsesSharedContract {
     when: BufferSendRequested(frontend, sourceKey, prefix?)
 
-    requires: frontend.phase = mvp
     requires: sourceKey in [config.send_key, config.queue_key]
     requires: frontend.rpc.transportState = ready
     requires: not frontend.session.isStreaming
@@ -472,38 +427,34 @@ rule MvpIdleSlashSubmissionUsesSharedContract {
     ensures: SlashDispatchEvaluatedBeforePromptForward(frontend, ComposedText(frontend))
 }
 
-rule MvpIdleBuiltInSlashCommandsBypassPromptRpc {
+rule IdleBuiltInSlashCommandsBypassPromptRpc {
     when: BufferSendRequested(frontend, sourceKey, prefix?)
 
-    requires: frontend.phase = mvp
     requires: sourceKey in [config.send_key, config.queue_key]
     requires: frontend.rpc.transportState = ready
     requires: not frontend.session.isStreaming
-    requires: BuiltInMvpIdleSlashCommand(Trim(ComposedText(frontend)), commands: ["/resume", "/quit", "/exit", "/new", "/status", "/help", "/?"])
+    requires: BuiltInIdleSlashCommand(Trim(ComposedText(frontend)), commands: ["/resume", "/quit", "/exit", "/new", "/status", "/help", "/?"])
 
     ensures: PromptNotForwarded(frontend.session, ComposedText(frontend))
     ensures: LocalSlashCommandResultRendered(frontend)
 }
 
-rule MvpResumeSlashRendersSelectorUnavailableFallback {
+rule IdleResumeSlashUsesSelectorOrExplicitPath {
     when: BufferSendRequested(frontend, sourceKey, prefix?)
 
-    requires: frontend.phase = mvp
     requires: sourceKey in [config.send_key, config.queue_key]
     requires: frontend.rpc.transportState = ready
     requires: not frontend.session.isStreaming
     requires: SlashCommandWord(Trim(ComposedText(frontend))) = "/resume"
 
-    ensures: LocalSlashCommandResultRendered(frontend)
-    ensures: SlashResultIncludes(frontend.buffer, "Resume selector unavailable in this frontend.")
+    ensures: SessionSwitchRequested(frontend)
+    ensures: SessionSwitchViaExplicitPathOrSelector(frontend)
     ensures: PromptNotForwarded(frontend.session, ComposedText(frontend))
-    ensures: ResumeSelectorUiUnavailable(frontend)
 }
 
-rule StatusSlashIncludesLastErrorSummaryWhenPresent {
+rule IdleStatusIncludesLastErrorSummaryWhenPresent {
     when: BufferSendRequested(frontend, sourceKey, prefix?)
 
-    requires: frontend.phase = mvp
     requires: sourceKey in [config.send_key, config.queue_key]
     requires: frontend.rpc.transportState = ready
     requires: not frontend.session.isStreaming
@@ -514,15 +465,14 @@ rule StatusSlashIncludesLastErrorSummaryWhenPresent {
     ensures: SlashResultIncludes(frontend.buffer, "last-error")
 }
 
-rule MvpIdleNonInterceptedSlashFallsThroughToPromptRpc {
+rule IdleNonInterceptedSlashFallsThroughToPromptRpc {
     when: BufferSendRequested(frontend, sourceKey, prefix?)
 
-    requires: frontend.phase = mvp
     requires: sourceKey in [config.send_key, config.queue_key]
     requires: frontend.rpc.transportState = ready
     requires: not frontend.session.isStreaming
     requires: StartsWith(Trim(ComposedText(frontend)), "/")
-    requires: not BuiltInMvpIdleSlashCommand(Trim(ComposedText(frontend)), commands: ["/resume", "/quit", "/exit", "/new", "/status", "/help", "/?"])
+    requires: not BuiltInIdleSlashCommand(Trim(ComposedText(frontend)), commands: ["/resume", "/quit", "/exit", "/new", "/status", "/help", "/?"])
 
     ensures: PromptForwarded(frontend.session, ComposedText(frontend))
     ensures: ServerSideSlashDispatchMayRunViaPrompt(frontend, ComposedText(frontend))
@@ -547,15 +497,6 @@ rule GlobalToolOutputToggleFlipsView {
         else collapsed
 
     ensures: ExistingToolRowsUseGlobalView(frontend, frontend.toolOutputView)
-    ensures: FutureToolRowsUseGlobalView(frontend, frontend.toolOutputView)
-}
-
-rule GlobalToolOutputToggleAppliesEvenWithoutRows {
-    when: ToolOutputToggleRequested(frontend, source)
-
-    requires: source in [config.toggle_tool_output_key, "toggle_tool_output_view"]
-    requires: frontend.toolRows = []
-
     ensures: FutureToolRowsUseGlobalView(frontend, frontend.toolOutputView)
 }
 
@@ -614,46 +555,6 @@ rule AssistantMessageFallsBackToVerbatimWhenMarkdownUnavailable {
     )
 }
 
-rule ToolStartCreatesDisplayRow {
-    when: RpcEventReceived(frontend.rpc, "tool/start", payload)
-
-    ensures: ToolRowVisible(frontend, payload.toolCallId)
-    ensures: ToolRowStatus(frontend, payload.toolCallId) in [pending, running]
-}
-
-rule ToolDeltaStreamsInlineOutput {
-    when: RpcEventReceived(frontend.rpc, "tool/delta", payload)
-
-    ensures: ToolRowStatus(frontend, payload.toolCallId) = running
-    ensures: ToolRowOutput(frontend, payload.toolCallId) =
-        AppendToolDelta(ToolRowOutput(frontend, payload.toolCallId), payload.delta)
-}
-
-rule ToolOutputUsesAnsiFaceRendering {
-    when: ToolRowRenderRequested(frontend, toolCallId)
-
-    ensures: ToolRowAnsiFacesApplied(frontend, toolCallId)
-}
-
-rule ToolExecutingMarksRowRunning {
-    when: RpcEventReceived(frontend.rpc, "tool/executing", payload)
-
-    ensures: ToolRowStatus(frontend, payload.toolCallId) = running
-}
-
-rule ToolUpdateRefreshesRowDisplay {
-    when: RpcEventReceived(frontend.rpc, "tool/update", payload)
-
-    ensures: ToolRowOutput(frontend, payload.toolCallId) = MergeToolUpdate(ToolRowOutput(frontend, payload.toolCallId), payload)
-}
-
-rule ToolResultFinalizesRow {
-    when: RpcEventReceived(frontend.rpc, "tool/result", payload)
-
-    ensures: ToolRowStatus(frontend, payload.toolCallId) = if payload.isError then error else success
-    ensures: ToolRowOutput(frontend, payload.toolCallId) = FinalToolOutput(payload)
-}
-
 rule ToolLifecycleRenderingUsesSharedUiContracts {
     when: RpcEventReceived(frontend.rpc, eventName, payload)
 
@@ -663,56 +564,11 @@ rule ToolLifecycleRenderingUsesSharedUiContracts {
     ensures: tool_render/ToolOutputRenderer governs header args + preview behavior
 }
 
-rule MvpToolRowsUseGlobalViewMode {
+rule ToolRowsUseGlobalViewMode {
     when: ToolRowRenderRequested(frontend, toolCallId)
-
-    requires: frontend.phase = mvp
 
     ensures: ToolRowCollapsible(frontend, toolCallId) = false
     ensures: ToolRowBodyVisibility(frontend, toolCallId) = frontend.toolOutputView
-}
-
-rule CollapsedToolRowsRenderHeaderOnly {
-    when: ToolRowRenderRequested(frontend, toolCallId)
-
-    requires: frontend.phase = mvp
-    requires: frontend.toolOutputView = collapsed
-
-    ensures: ToolRowHeaderVisible(frontend, toolCallId)
-    ensures: ToolRowHeaderIncludes(frontend, toolCallId, fields: [tool_summary, status])
-    ensures: ToolRowBodyHidden(frontend, toolCallId)
-}
-
-rule CollapsedToolRowsTrackLiveStatus {
-    when: RpcEventReceived(frontend.rpc, eventName, payload)
-
-    requires: frontend.phase = mvp
-    requires: frontend.toolOutputView = collapsed
-    requires: eventName in ["tool/start", "tool/executing", "tool/result"]
-
-    ensures: ToolRowHeaderStatus(frontend, payload.toolCallId) = ToolRowStatus(frontend, payload.toolCallId)
-}
-
-rule CollapsedToolRowsKeepAccumulatingOutput {
-    when: RpcEventReceived(frontend.rpc, "tool/delta", payload)
-
-    requires: frontend.phase = mvp
-    requires: frontend.toolOutputView = collapsed
-
-    ensures: ToolRowOutput(frontend, payload.toolCallId) =
-        AppendToolDelta(ToolRowOutput(frontend, payload.toolCallId), payload.delta)
-    ensures: ToolRowBodyHidden(frontend, payload.toolCallId)
-}
-
-rule ErrorRowsStayCollapsedWhileGlobalViewIsCollapsed {
-    when: RpcEventReceived(frontend.rpc, "tool/result", payload)
-
-    requires: frontend.phase = mvp
-    requires: frontend.toolOutputView = collapsed
-    requires: payload.isError
-
-    ensures: ToolRowStatus(frontend, payload.toolCallId) = error
-    ensures: ToolRowBodyHidden(frontend, payload.toolCallId)
 }
 
 rule StreamingProgressResetsWatchdog {
@@ -743,13 +599,11 @@ rule StreamingWatchdogTimeoutAbortsAndTransitionsToError {
 }
 
 ------------------------------------------------------------
--- Header Line and Error Reporting
+-- Header Line, Errors, Reconnect
 ------------------------------------------------------------
 
-rule MvpHeaderLineShowsMinimalStatus {
+rule HeaderLineShowsTransportRunStateAndToolMode {
     when: HeaderLineRefreshRequested(frontend)
-
-    requires: frontend.phase = mvp
 
     ensures: frontend.headerLine.transport =
         if frontend.rpc.transportState = ready then ready
@@ -757,7 +611,6 @@ rule MvpHeaderLineShowsMinimalStatus {
         else disconnected
 
     ensures: frontend.headerLine.runState = frontend.runState
-
     ensures: frontend.headerLine.toolOutputView = frontend.toolOutputView
 }
 
@@ -772,14 +625,8 @@ rule RpcErrorsAreShownInMinibufferAndPersistedInline {
     ensures: PersistentErrorLineUpserted(frontend.buffer, err.errorMessage)
 }
 
-------------------------------------------------------------
--- Process Supervision and Reconnect
-------------------------------------------------------------
-
 rule ProcessCrashRequiresManualReconnect {
     when: RpcProcessCrashed(frontend.rpc)
-
-    requires: frontend.phase = mvp
 
     ensures: frontend.rpc.transportState = disconnected
     ensures: ManualReconnectRequired(frontend, config.reconnect_key)
@@ -794,15 +641,6 @@ rule ReconnectPromptsBeforeClearingEditedBuffer {
 
     ensures: ReconnectConfirmationRequested(frontend)
     ensures: ReconnectBlockedUntilConfirmed(frontend)
-}
-
-rule ReconnectWithoutPendingEditsProceedsImmediately {
-    when: ReconnectRequested(frontend, sourceKey)
-
-    requires: sourceKey = config.reconnect_key
-    requires: not frontend.buffer.hasPendingEdits
-
-    ensures: ReconnectApproved(frontend)
 }
 
 rule ReconnectStartsFreshSessionAndClearsBuffer {
@@ -840,82 +678,45 @@ rule ReconnectTransportReadyReturnsToIdleRunState {
 rule ReconnectDoesNotAutoResume {
     when: ReconnectApproved(frontend)
 
-    requires: frontend.phase = mvp
-
     ensures: SessionResumeNotAttempted(frontend)
     ensures: SessionRehydrateNotAttempted(frontend)
 }
 
-rule KillingDedicatedBufferStopsOwnedSubprocess {
-    when: EmacsBufferKilled(frontend.buffer)
-
-    ensures: frontend.rpc.processState in [stopping, stopped]
-}
-
 ------------------------------------------------------------
--- Parity Progression Rules
+-- Extension UI and Footer Projection
 ------------------------------------------------------------
 
-rule MvpDefersAdvancedSessionAndModelControls {
+rule ExtensionUiUsesSharedContract {
     when: EmacsFrontendInitialized(frontend)
 
-    requires: frontend.phase = mvp
-
-    ensures: frontend.multiSessionEnabled = false
-    ensures: frontend.modelControlsEnabled = false
-}
-
-rule ParityPhaseEnablesExtensionUiAndFooter {
-    when: FrontendPhaseChanged(frontend, phase)
-
-    requires: phase = parity
-
-    ensures: frontend.extensionUiEnabled = true
-    ensures: frontend.footerParityEnabled = true
-    ensures: EventStreamIncludes(frontend.rpc, "ui/dialog-requested")
-    ensures: EventStreamIncludes(frontend.rpc, "ui/widgets-updated")
-    ensures: EventStreamIncludes(frontend.rpc, "ui/status-updated")
-    ensures: EventStreamIncludes(frontend.rpc, "ui/notification")
-    ensures: EventStreamIncludes(frontend.rpc, "footer/updated")
-}
-
-rule ParityExtensionUiUsesSharedContract {
-    when: FrontendPhaseChanged(frontend, phase)
-
-    requires: phase = parity
     requires: frontend.extensionUiEnabled
 
     ensures: ui/ExtensionUI(frontend.session) governs extension UI methods
     ensures: ui/ExtensionUIQuery(frontend.session) governs extension UI state introspection
 }
 
-rule ParityFooterUsesSharedProjectionContract {
-    when: FrontendPhaseChanged(frontend, phase)
+rule FooterUsesSharedProjectionContract {
+    when: EmacsFrontendInitialized(frontend)
 
-    requires: phase = parity
-    requires: frontend.footerParityEnabled
+    requires: frontend.footerEnabled
 
-    ensures: emacs_footer/EmacsFooterProjectionContract governs footer/updated projection behavior
+    ensures: emacs_footer/EmacsFooterProjectionContract governs footer projection behavior
 }
 
 rule FooterUpdatedEventsRefreshProjectionViaEmacsFooterContract {
     when: RpcEventReceived(frontend.rpc, "footer/updated", payload: rpc/FooterUpdatedPayload)
 
-    requires: frontend.phase = parity
-    requires: frontend.footerParityEnabled
+    requires: frontend.footerEnabled
 
     ensures: emacs_footer/EmacsFooterProjectionContract governs footer/updated payload interpretation
     ensures: frontend.footerProjection = emacs_footer/CanonicalFooterProjectionText(payload)
 }
 
-rule ParityPhaseEnablesSessionAndModelControls {
-    when: FrontendPhaseChanged(frontend, phase)
+rule DialogRequestedMapsToResolveOrCancel {
+    when: RpcEventReceived(frontend.rpc, "ui/dialog-requested", payload)
 
-    requires: phase = parity
-
-    ensures: frontend.multiSessionEnabled = true
-    ensures: frontend.modelControlsEnabled = true
-    ensures: frontend.commandDiscoveryEnabled = true
+    ensures: DialogResponseSent(frontend, op: ["resolve_dialog", "cancel_dialog"])
+    ensures: DialogResponseEchoesDialogId(frontend, payload.dialogId)
 }
 
 ------------------------------------------------------------
@@ -924,13 +725,11 @@ rule ParityPhaseEnablesSessionAndModelControls {
 
 surface EmacsSessionApi {
     -- Session-facing capabilities exposed by Emacs process-buffer frontend.
-    -- Uses RpcTransportApi/RpcEventStream for wire transport.
     for client: rpc/RpcClient
 
     context frontend: EmacsFrontend
 
     exposes:
-        frontend.phase
         frontend.rpc.transportState
         frontend.rpc.protocolVersion
         frontend.subscribedTopics
@@ -944,27 +743,30 @@ surface EmacsSessionApi {
         frontend.headerLine
         frontend.toolOutputView
         frontend.footerProjection
-        frontend.parity
+        frontend.capabilities
 
     provides:
         -- Frontend lifecycle
         start_frontend()
         stop_frontend()
 
-        -- Process-buffer interactions (MVP)
+        -- Process-buffer interactions
         send_from_buffer(prefix?)
         queue_from_buffer()
         abort_from_buffer()
         reconnect_frontend(confirm?)
         toggle_tool_output_view()
 
-        -- RPC transport/session operations available in MVP
+        -- RPC transport/session operations
         prompt(message, images?)
         prompt_while_streaming(message, behavior)
         steer(message, images?)
         follow_up(message, images?)
         abort()
         new_session(parentSession?)
+        switch_session(sessionPath)
+        fork(entryId)
+        set_session_name(name)
         query_eql(query)
         get_state()
         get_messages()
@@ -973,34 +775,20 @@ surface EmacsSessionApi {
         unsubscribe(topics?)
         ping()
 
-        -- Parity-phase operations
-        switch_session(sessionPath)
-            when frontend.phase = parity
-        fork(entryId)
-            when frontend.phase = parity
-        set_session_name(name)
-            when frontend.phase = parity
-
+        -- Model + thinking controls
         set_model(provider, modelId)
-            when frontend.phase = parity
         cycle_model(direction?)
-            when frontend.phase = parity
         set_thinking_level(level)
-            when frontend.phase = parity
         cycle_thinking_level()
-            when frontend.phase = parity
 
+        -- Compaction/retry controls
         compact(customInstructions?)
-            when frontend.phase = parity
         set_auto_compaction(enabled)
-            when frontend.phase = parity
         set_auto_retry(enabled)
-            when frontend.phase = parity
 
+        -- Extension dialogs
         resolve_dialog(dialogId, result)
-            when frontend.phase = parity and frontend.extensionUiEnabled
         cancel_dialog(dialogId)
-            when frontend.phase = parity and frontend.extensionUiEnabled
 
     related:
         coding/AgentSessionApi(frontend.session)
@@ -1016,14 +804,12 @@ surface EmacsSessionApi {
         emacs_footer/EmacsFooterProjectionContract
 
     guidance:
-        -- MVP defaults:
-        --   phase = mvp
-        --   one frontend buffer -> one psi subprocess
-        --   auto-connect on startup
-        --   no auto-restart on crash
-        --   no auto-resume on reconnect
+        -- One frontend buffer -> one psi subprocess.
+        -- Auto-connect on startup.
+        -- No auto-restart on crash.
+        -- No auto-resume on reconnect.
         --
-        -- Dedicated chat buffer keybindings (MVP):
+        -- Dedicated chat buffer keybindings:
         --   C-c RET      send (streaming default: steer)
         --   C-u C-c RET  queue override while streaming
         --   C-c C-q      queue while streaming; falls back to normal send when idle
@@ -1036,69 +822,39 @@ surface EmacsSessionApi {
         --   active region -> send region text
         --   no region     -> send tail draft block (end-of-buffer)
         --
-        -- Parity compose autocomplete:
-        --   slash command completion and @ file-reference expansion follow
-        --   prompt-input-autocomplete.allium.
-        --
-        -- MVP slash command execution:
-        --   idle slash input is evaluated against prompt-slash-commands.allium first.
-        --   locally intercepted built-ins (/resume, /quit, /exit, /new, /status,
-        --   /help, /?) bypass prompt RPC; non-intercepted slash input falls through
-        --   to prompt RPC for server-side dispatch.
-        --   /resume in MVP renders local fallback text:
-        --     "Resume selector unavailable in this frontend."
-        --   parity retains the same shared slash-command contract and uses
-        --   tui-resume-selector.allium for selector-level behavior.
-        --
-        -- Transcript content is editable; edits are local UX affordances and
-        -- do not imply session rehydration semantics in MVP.
+        -- Idle slash command handling:
+        --   built-ins (/resume, /quit, /exit, /new, /status, /help, /?)
+        --   are intercepted locally; non-intercepted slash input falls
+        --   through to prompt RPC for server-side dispatch.
         --
         -- Assistant stream rendering:
         --   one in-progress assistant block updated by assistant/delta,
         --   rendered verbatim while streaming (no markdown processing),
-        --   then finalized by assistant/message.
-        --   assistant/delta payloads may be cumulative snapshots or true deltas;
-        --   frontend merge logic must keep a single in-progress block in sync
-        --   (no per-chunk line duplication).
-        --   markdown processing is applied only to finalized assistant blocks
-        --   (with text-mode fallback when markdown is unavailable).
+        --   finalized by assistant/message.
         --
         -- Tool rendering:
         --   tool/start|delta|executing|update|result are rendered inline,
-        --   with ANSI->face rendering enabled in MVP.
-        --   Header argument summaries + preview/truncation policy come from
-        --   shared tool-output-display/rendering contracts.
-        --   Global tool output view defaults to collapsed in MVP:
-        --     - collapsed: single-line tool summary + status (no Tool[...] wrapper), body hidden
-        --       bash headers use "$"; read/edit/write path args are project-relative when possible.
+        --   with ANSI->face rendering enabled.
+        --   Global tool output view defaults to collapsed:
+        --     - collapsed: single-line tool summary + status, body hidden
         --     - expanded: full tool body visible
-        --   C-c C-t or M-x toggle_tool_output_view flips the global mode for
-        --   both existing rows and future rows.
         --
-        -- Footer parity rendering:
-        --   footer/updated payloads are interpreted via emacs-footer.allium.
-        --   Canonical path/stats/status lines are rendered as deterministic
-        --   multi-line projection text:
-        --     <path>
-        --     <stats>   (provider/model segment right-aligned when detectable)
-        --     <status?>
-        --   Projection block is reinserted at end-of-buffer on each update,
-        --   so footer content tracks transcript growth/new message pairs.
-        --   A blank line + horizontal separator is rendered before the
-        --   projection block for visual separation from transcript input.
+        -- Footer rendering:
+        --   footer/updated payloads are interpreted via emacs-footer.allium
+        --   and projected at transcript tail as deterministic lines.
         --
         -- Error UX:
         --   RPC errors are surfaced in minibuffer and persisted in a single
         --   inline transcript error row (updated in place, not appended).
-        --   `/status` diagnostics include `last-error` when present.
         --
-        -- Wire protocol details (canonical envelopes, event payloads, versioning)
-        -- are defined in rpc-edn.allium.
+        -- Transport guard:
+        --   if transport is not ready, compose dispatch is rejected immediately
+        --   with deterministic in-buffer error text and draft preservation.
 }
 
 ------------------------------------------------------------
--- Open Questions (Parity Phase)
+-- Open Questions
 ------------------------------------------------------------
 
-open_question "Parity phase: should reconnect optionally offer resume/session-picker before clearing buffer?"
+open_question "Should reconnect optionally offer resume/session-picker before clearing buffer?"
 open_question "Image UX in markdown buffers: inline image display first, or file-link fallback?"

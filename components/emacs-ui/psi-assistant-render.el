@@ -15,7 +15,7 @@
   "Text property used to mark in-progress assistant content as verbatim.")
 
 (defun psi-emacs--render-assistant-line (text)
-  "Render assistant TEXT in canonical MVP line format."
+  "Render assistant TEXT in canonical line format."
   (concat psi-emacs--assistant-line-prefix (or text "") "\n"))
 
 (defun psi-emacs--assistant-range-live-p (range)

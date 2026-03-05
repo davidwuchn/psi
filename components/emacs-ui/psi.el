@@ -1,9 +1,9 @@
-;;; psi.el --- Emacs process-buffer MVP scaffold  -*- lexical-binding: t; -*-
+;;; psi.el --- Emacs process-buffer frontend  -*- lexical-binding: t; -*-
 
 ;; Copyright (C)
 
 ;;; Commentary:
-;; MVP scaffold for a dedicated psi chat buffer with one owned subprocess.
+;; Dedicated psi chat buffer with one owned subprocess.
 
 ;;; Code:
 
@@ -32,22 +32,6 @@
 
 Used to detect stalled streaming runs and transition to deterministic recovery."
   :type 'number
-  :group 'psi-emacs)
-
-(defcustom psi-emacs-enable-resume-parity t
-  "Enable parity-mode `/resume` routing in Emacs frontend.
-
-When non-nil (default), `/resume` routes to parity entry points.
-When nil, `/resume` uses the MVP fallback message."
-  :type 'boolean
-  :group 'psi-emacs)
-
-(defcustom psi-emacs-enable-extension-ui-parity t
-  "Enable extension UI parity topic subscription in Emacs frontend.
-
-When non-nil (default), subscribe to `psi-rpc-parity-topics`.
-When nil, subscribe to `psi-rpc-mvp-topics` only."
-  :type 'boolean
   :group 'psi-emacs)
 
 (defcustom psi-emacs-notification-timeout-seconds 5

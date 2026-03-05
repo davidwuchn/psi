@@ -8,16 +8,12 @@
 (require 'subr-x)
 (require 'psi-globals)
 
-(defvar psi-emacs-enable-resume-parity)
-
 (defun psi-emacs--idle-slash-help-text ()
   "Return deterministic help text for supported idle slash commands."
   (string-join
    (list "Supported slash commands:"
          "/quit, /exit  Exit this psi buffer"
-         (if psi-emacs-enable-resume-parity
-             "/resume [path] Resume a prior session (selector when path omitted)"
-           "/resume       Resume selector unavailable in this frontend")
+         "/resume [path] Resume a prior session (selector when path omitted)"
          "/new          Start a fresh backend session"
          "/status       Show frontend diagnostics"
          "/help, /?     Show this help")
@@ -87,11 +83,6 @@ Return nil for no argument. Otherwise return trimmed argument string."
          (tail (string-trim (string-remove-prefix "/resume" trimmed))))
     (unless (string-empty-p tail)
       tail)))
-
-(defun psi-emacs--handle-idle-resume-default (_state _message)
-  "Handle `/resume` in default MVP mode."
-  (psi-emacs--append-assistant-message
-   "Resume selector unavailable in this frontend."))
 
 (defun psi-emacs--resume-session-list-query ()
   "Return canonical EQL query string for `/resume` session discovery."
@@ -307,8 +298,8 @@ Failure path appends deterministic assistant-visible feedback, sets
              (when (eq state psi-emacs--state)
                (psi-emacs--handle-switch-session-response state session-path frame)))))))))
 
-(defun psi-emacs--handle-idle-resume-parity-no-arg (state)
-  "Handle parity-mode `/resume` without explicit session path."
+(defun psi-emacs--handle-idle-resume-no-arg (state)
+  "Handle `/resume` without explicit session path."
   (let ((buffer (current-buffer)))
     (psi-emacs--request-resume-session-list
      (lambda (frame)
@@ -319,20 +310,18 @@ Failure path appends deterministic assistant-visible feedback, sets
                     (candidates (psi-emacs--resume-session-candidates sessions))
                     (selected-path (psi-emacs--resume-select-session-path candidates)))
                (when selected-path
-                 (psi-emacs--handle-idle-resume-parity-explicit-path state selected-path))))))))))
+                 (psi-emacs--handle-idle-resume-explicit-path state selected-path))))))))))
 
-(defun psi-emacs--handle-idle-resume-parity-explicit-path (state session-path)
-  "Handle parity-mode `/resume <session-path>`."
+(defun psi-emacs--handle-idle-resume-explicit-path (state session-path)
+  "Handle `/resume <session-path>`."
   (psi-emacs--request-switch-session state session-path))
 
 (defun psi-emacs--handle-idle-resume-command (state message)
-  "Handle `/resume` MESSAGE according to capability flags and args."
-  (if (not psi-emacs-enable-resume-parity)
-      (psi-emacs--handle-idle-resume-default state message)
-    (let ((session-path (psi-emacs--resume-args-from-message message)))
-      (if session-path
-          (psi-emacs--handle-idle-resume-parity-explicit-path state session-path)
-        (psi-emacs--handle-idle-resume-parity-no-arg state)))))
+  "Handle `/resume` MESSAGE by path (when provided) or interactive selector."
+  (let ((session-path (psi-emacs--resume-args-from-message message)))
+    (if session-path
+        (psi-emacs--handle-idle-resume-explicit-path state session-path)
+      (psi-emacs--handle-idle-resume-no-arg state))))
 
 (defun psi-emacs--default-handle-idle-slash-command (state message)
   "Default idle slash handler.
