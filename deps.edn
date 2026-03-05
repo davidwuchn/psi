@@ -34,4 +34,5 @@
                         "components/introspection/src" "components/memory/src" "components/recursion/src" "components/tui/src" "components/agent-core/src"
                         "components/agent-session/src"]
           :extra-deps  {lambdaisland/kaocha {:mvn/version "1.91.1392"}}
+          :jvm-opts    ["--enable-native-access=ALL-UNNAMED"]
           :main-opts   ["-m" "kaocha.runner"]}}}

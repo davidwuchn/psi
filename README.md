@@ -24,6 +24,9 @@ clojure -M:run --rpc-edn
 # OpenAI
 clojure -M:run --model gpt-4o --tui
 
+# Opt-in persistent memory store (Datalevin)
+PSI_MEMORY_STORE=datalevin clojure -M:run
+
 # With live nREPL introspection
 clojure -M:run --tui --nrepl 8888
 ```

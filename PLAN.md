@@ -92,7 +92,15 @@ Ordered steps toward PSI COMPLETE.
 
 9. Step 9 — Memory layer
    - Spec: `spec/memory-layer.allium`
+   - Backing-store specs: `spec/memory-backing-stores.allium`, `spec/memory-datalevin-store.allium`
    - Partial impl: `memory/` component (1021 lines src, 29 tests)
+   - Implemented (backing-store extension point, phase 1/2):
+     1) ✓ store registry + provider contract with in-memory default (`psi.memory.store`)
+     2) ✓ store introspection attrs on EQL surface (`:psi.memory.store/*`)
+     3) ✓ Datalevin provider (`psi.memory.datalevin`) with open/write/query/load/close
+     4) ✓ remember/recover/graph artifacts write-through via active provider + activation-time hydration
+   - Next:
+     5) add runtime config/CLI surface and durability/fallback hardening (default provider selection, migration hooks, compaction/retention paths)
    - Complete: remember/recover lifecycle, graph snapshots + deltas, provenance, EQL surface
 
 10. Step 10 — Feed-forward recursion

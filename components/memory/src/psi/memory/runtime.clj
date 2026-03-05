@@ -8,6 +8,7 @@
    [psi.history.git :as git]
    [psi.introspection.graph :as graph]
    [psi.memory.core :as memory]
+   [psi.memory.datalevin :as datalevin]
    [psi.query.core :as query]
    [psi.query.registry :as registry]))
 
@@ -180,11 +181,46 @@
     (query/rebuild-env-in! qctx)
     qctx))
 
+(defn- parse-store-provider
+  [store-provider]
+  (cond
+    (keyword? store-provider) store-provider
+    (string? store-provider) (keyword (str/lower-case (str/trim store-provider)))
+    :else nil))
+
+(defn- maybe-register-store-provider!
+  [memory-ctx {:keys [store-provider cwd store-root store-db-dir]}]
+  (let [provider (or (parse-store-provider store-provider)
+                     (parse-store-provider (System/getenv "PSI_MEMORY_STORE")))]
+    (case provider
+      :datalevin
+      (try
+        (datalevin/register-in-memory-context! memory-ctx
+                                               {:cwd cwd
+                                                :store-root store-root
+                                                :db-dir store-db-dir
+                                                :select? true
+                                                :open? true})
+        {:ok? true
+         :provider :datalevin
+         :store-summary (memory/store-summary-in memory-ctx)}
+        (catch Exception e
+          {:ok? false
+           :provider :datalevin
+           :error :store-provider-registration-failed
+           :message (ex-message e)
+           :store-summary (memory/store-summary-in memory-ctx)}))
+
+      {:ok? true
+       :provider :in-memory
+       :store-summary (memory/store-summary-in memory-ctx)})))
+
 (defn ^{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]
         :export true}
   sync-memory-layer!
   "Run memory lifecycle sync against current runtime graph.
 
+   - optionally registers/selects configured memory store provider
    - activates memory layer with global query registry snapshot
    - captures capability graph snapshot/delta when graph is stable
    - ingests git history commit summaries into memory records
@@ -192,31 +228,40 @@
    Options:
    - :cwd — repository root used for git-history activation gate
    - :history-commit-limit — max git commits imported into memory (default 200)
+   - :store-provider — :datalevin or :in-memory (optional)
+   - :store-root — provider-specific store root (datalevin)
+   - :store-db-dir — explicit provider db dir override (datalevin)
 
-   Returns {:activation ... :capture ... :history-sync ... :capability-graph ...}."
+   Returns {:store-registration ... :activation ... :capture ... :history-sync ... :capability-graph ...}."
   ([]
    (sync-memory-layer! {}))
-  ([{:keys [cwd history-commit-limit]
+  ([{:keys [cwd history-commit-limit store-provider store-root store-db-dir]
      :or   {history-commit-limit 200}}]
-   (let [capability-graph (current-capability-graph)
-         query-ctx        (build-global-query-context)
-         git-ctx          (git/create-context (or cwd (System/getProperty "user.dir")))
-         memory-ctx       (memory/global-context)
-         activation       (memory/activate! {:query-ctx query-ctx
-                                             :git-ctx git-ctx
-                                             :capability-graph-status (:status capability-graph)})
-         capture          (if (contains? #{:stable :expanding} (:status capability-graph))
-                            (memory/capture-graph-change! capability-graph)
-                            {:ok? false
-                             :changed? false
-                             :error :graph-not-ready
-                             :graph-status (:status capability-graph)})
-         history-sync     (if (:ready? activation)
-                            (ingest-git-history-in! memory-ctx git-ctx {:n history-commit-limit})
-                            {:ok? false
-                             :skipped? true
-                             :reason :memory-not-ready})]
-     {:activation activation
+   (let [capability-graph   (current-capability-graph)
+         query-ctx          (build-global-query-context)
+         git-ctx            (git/create-context (or cwd (System/getProperty "user.dir")))
+         memory-ctx         (memory/global-context)
+         store-registration (maybe-register-store-provider! memory-ctx
+                                                            {:store-provider store-provider
+                                                             :cwd cwd
+                                                             :store-root store-root
+                                                             :store-db-dir store-db-dir})
+         activation         (memory/activate! {:query-ctx query-ctx
+                                               :git-ctx git-ctx
+                                               :capability-graph-status (:status capability-graph)})
+         capture            (if (contains? #{:stable :expanding} (:status capability-graph))
+                              (memory/capture-graph-change! capability-graph)
+                              {:ok? false
+                               :changed? false
+                               :error :graph-not-ready
+                               :graph-status (:status capability-graph)})
+         history-sync       (if (:ready? activation)
+                              (ingest-git-history-in! memory-ctx git-ctx {:n history-commit-limit})
+                              {:ok? false
+                               :skipped? true
+                               :reason :memory-not-ready})]
+     {:store-registration store-registration
+      :activation activation
       :capture capture
       :history-sync history-sync
       :capability-graph capability-graph})))

@@ -28,7 +28,13 @@
                                     :psi.memory/graph-deltas
                                     :psi.memory/by-tag
                                     :psi.memory/capability-history
-                                    :psi.memory/index-stats])]
+                                    :psi.memory/index-stats
+                                    :psi.memory.store/providers
+                                    :psi.memory.store/active-provider-id
+                                    :psi.memory.store/default-provider-id
+                                    :psi.memory.store/fallback-provider-id
+                                    :psi.memory.store/selection
+                                    :psi.memory.store/health])]
     (testing "status and counters are present"
       (is (= :initializing (:psi.memory/status result)))
       (is (= 0 (:psi.memory/entry-count result)))
@@ -42,4 +48,12 @@
       (is (vector? (:psi.memory/graph-deltas result)))
       (is (vector? (:psi.memory/capability-history result)))
       (is (map? (:psi.memory/by-tag result)))
-      (is (map? (:psi.memory/index-stats result))))))
+      (is (map? (:psi.memory/index-stats result))))
+
+    (testing "store registry attrs are queryable"
+      (is (vector? (:psi.memory.store/providers result)))
+      (is (= "in-memory" (:psi.memory.store/active-provider-id result)))
+      (is (= "in-memory" (:psi.memory.store/default-provider-id result)))
+      (is (= "in-memory" (:psi.memory.store/fallback-provider-id result)))
+      (is (map? (:psi.memory.store/selection result)))
+      (is (map? (:psi.memory.store/health result))))))

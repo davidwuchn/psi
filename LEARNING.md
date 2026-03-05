@@ -4,6 +4,45 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-05 - Datalevin Store Integration (Step 9a Phase 2)
+
+### λ Write-through + hydration is a low-risk bridge to persistent memory
+
+Keeping remember/recover ranking logic in `psi.memory.core` while adding
+provider write-through (`remember`, `recover`, graph snapshot/delta) and
+activation-time hydration from provider state gives persistence without
+rewriting recovery semantics.
+
+### λ Feed-forward command tests should pin memory readiness explicitly
+
+`/feed-forward` command readiness uses live `:psi.memory/status` via EQL.
+Tests that rely on implicit global memory state can become order-dependent.
+Attach explicit per-test memory contexts (`with-ready-memory-ctx` /
+`with-unready-memory-ctx`) to keep command tests deterministic.
+
+## 2026-03-03 - Memory Store Extension Point (Step 9a Phase 1)
+
+### λ Backing-store contract can be introduced without changing remember/recover semantics
+
+`psi.memory.store` now defines the provider protocol + registry selection model,
+while `psi.memory.core` still owns current remember/recover behavior.
+This lets us add persistent providers incrementally (Datalevin next) without
+breaking current in-memory semantics.
+
+### λ Memory store introspection attrs are now first-class EQL surface
+
+These attrs are queryable from `:psi/memory-ctx`:
+
+- `:psi.memory.store/providers`
+- `:psi.memory.store/active-provider-id`
+- `:psi.memory.store/default-provider-id`
+- `:psi.memory.store/fallback-provider-id`
+- `:psi.memory.store/selection`
+- `:psi.memory.store/health`
+
+Practical effect: provider selection/fallback state is observable from
+agent-session/introspection flows before Datalevin write-path routing lands.
+
 ## 2026-02-28 - System Prompt Introspection
 
 ### λ System prompt is intentionally queryable verbatim via EQL

@@ -40,6 +40,11 @@
   (assoc ctx :memory-ctx
          (memory/create-context {:state-overrides {:status :ready}})))
 
+(defn- with-unready-memory-ctx
+  [ctx]
+  (assoc ctx :memory-ctx
+         (memory/create-context {:state-overrides {:status :initializing}})))
+
 ;; ── dispatch tests ──────────────────────────────────────────
 
 (deftest dispatch-quit-test
@@ -126,7 +131,9 @@
     (is (str/includes? (:message busy) "controller-busy"))))
 
 (deftest dispatch-feed-forward-blocked-when-live-readiness-fails-test
-  (let [ctx    (with-recursion-ctx (make-test-ctx))
+  (let [ctx    (-> (make-test-ctx)
+                   with-recursion-ctx
+                   with-unready-memory-ctx)
         result (commands/dispatch ctx "/feed-forward check live readiness" cmd-opts)]
     (is (= :text (:type result)))
     (is (str/includes? (:message result) "trigger blocked"))

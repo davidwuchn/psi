@@ -1,0 +1,498 @@
+-- memory-backing-stores.allium
+--
+-- Scope: Memory backing store extension point for Step 9/10 memory behavior.
+--        Defines how remember/recover/graph-history state is delegated to
+--        interchangeable store providers while preserving current memory API
+--        semantics.
+--
+-- Includes:
+--   - Memory store provider entity and registry
+--   - Provider lifecycle: register, select, open, health, close
+--   - Delegation contract for remember/recover/graph artifacts
+--   - Fallback policy from persistent providers to in-memory provider
+--   - Store introspection requirements via EQL attributes
+--
+-- Excludes:
+--   - Ranking algorithm details (see memory-layer.allium)
+--   - Git ingestion and capability graph derivation algorithms
+--   - Specific provider implementation details (see memory-datalevin-store.allium)
+--   - Physical storage schemas and index definitions
+--
+-- Scope decisions:
+--   Active provider count: one (single-writer contract keeps behavior deterministic)
+--   Default provider: in-memory (backward compatible with current runtime)
+--   Fallback: automatic to in-memory when enabled by config
+--   Store contract granularity: domain artifacts (records/snapshots/deltas/recoveries)
+
+use "./memory-layer.allium" as memory
+
+------------------------------------------------------------
+-- External Entities
+------------------------------------------------------------
+
+external entity SystemRuntime {
+    cwd: Path
+    shuttingDown: Boolean
+}
+
+external entity MemoryStoreEqlSurface {
+    attrs: Set<String>
+}
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value StoreCapabilities {
+    durability: ephemeral | persistent
+    supportsRestartRecovery: Boolean
+    supportsRetentionCompaction: Boolean
+    supportsCapabilityHistoryQuery: Boolean
+    queryMode: scan | indexed | queryEngine
+}
+
+value StoreSelection {
+    requestedProviderId: String?
+    selectedProviderId: String
+    usedFallback: Boolean
+    reason: String?
+    selectedAt: Timestamp
+}
+
+value StoreHealth {
+    status: healthy | degraded | unavailable
+    checkedAt: Timestamp
+    details: String?
+}
+
+value StoreWriteReceipt {
+    storeProviderId: String
+    entityType: memoryRecord | graphSnapshot | graphDelta | recoveryRun
+    entityId: String
+    persistedAt: Timestamp
+    idempotentReplay: Boolean
+}
+
+value StoreQuery {
+    tags: Set<String>?
+    capabilityIds: Set<String>?
+    contentTypes: Set<String>?
+    since: Timestamp?
+    queryText: String?
+    limit: Integer
+}
+
+------------------------------------------------------------
+-- Entities
+------------------------------------------------------------
+
+entity MemoryStoreProvider {
+    id: String
+    status: registering | opening | ready | degraded | unavailable | closing | closed
+    schemaVersion: Integer
+    capabilities: StoreCapabilities
+    health: StoreHealth?
+
+    lastError: String?
+    writeCount: Integer
+    readCount: Integer
+    failureCount: Integer
+
+    -- Derived
+    isPersistent: capabilities.durability = persistent
+    canServeReads: status in [ready, degraded]
+    canServeWrites: status = ready
+}
+
+entity MemoryStoreRegistry {
+    providers: List<MemoryStoreProvider>
+    activeProviderId: String
+    defaultProviderId: String
+    fallbackProviderId: String
+    selection: StoreSelection?
+
+    -- Derived
+    activeProvider: providers.where(id = activeProviderId).first
+    hasActiveProvider: activeProvider != null
+    activeProviderReady: hasActiveProvider and activeProvider.canServeReads
+}
+
+entity StoreBackedMemoryLayer {
+    memoryLayer: memory/MemoryLayer
+    storeRegistry: MemoryStoreRegistry
+    storeAcks: List<StoreWriteReceipt>
+
+    -- Derived
+    canDelegateWrites: memoryLayer.status = ready and storeRegistry.activeProvider.canServeWrites
+    canDelegateReads: memoryLayer.status = ready and storeRegistry.activeProvider.canServeReads
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    default_memory_store_provider_id: String = "in-memory"
+    fallback_memory_store_provider_id: String = "in-memory"
+
+    auto_fallback_to_in_memory_on_error: Boolean = true
+    require_idempotent_store_writes: Boolean = true
+
+    persist_recovery_runs: Boolean = true
+    default_recovery_limit: Integer = 50
+
+    required_store_entities: Set<String> = {
+        "memoryRecord",
+        "graphSnapshot",
+        "graphDelta",
+        "recoveryRun"
+    }
+
+    required_memory_store_eql_attrs: Set<String> = {
+        ":psi.memory.store/providers",
+        ":psi.memory.store/active-provider-id",
+        ":psi.memory.store/default-provider-id",
+        ":psi.memory.store/fallback-provider-id",
+        ":psi.memory.store/selection",
+        ":psi.memory.store/health"
+    }
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+rule MemoryStoreRegistryBootstrapped {
+    -- Ensure backward-compatible baseline provider.
+    when: MemoryStoreBootstrapRequested(registry)
+
+    ensures: registry.defaultProviderId = config.default_memory_store_provider_id
+    ensures: registry.fallbackProviderId = config.fallback_memory_store_provider_id
+
+    ensures: exists provider = MemoryStoreProvider.created(
+        id: "in-memory",
+        status: ready,
+        schemaVersion: 1,
+        capabilities: StoreCapabilities{
+            durability: ephemeral,
+            supportsRestartRecovery: false,
+            supportsRetentionCompaction: true,
+            supportsCapabilityHistoryQuery: true,
+            queryMode: scan
+        },
+        writeCount: 0,
+        readCount: 0,
+        failureCount: 0
+    )
+
+    ensures: registry.providers contains provider
+    ensures: registry.activeProviderId = "in-memory"
+}
+
+rule MemoryStoreProviderRegistered {
+    when: MemoryStoreProviderRegistered(registry, provider)
+
+    requires: not exists registry.providers.where(id = provider.id)
+
+    ensures: registry.providers = registry.providers + [provider]
+}
+
+rule MemoryStoreProviderSelected {
+    when: MemoryStoreSelectionRequested(registry, requestedProviderId?)
+
+    let requested = registry.providers.where(id = requestedProviderId).first
+
+    requires:
+        if requestedProviderId != null:
+            requested != null and requested.status in [ready, degraded]
+
+    ensures:
+        let selectedId = requestedProviderId ?? registry.defaultProviderId
+        registry.activeProviderId = selectedId
+
+    ensures: registry.selection = StoreSelection{
+        requestedProviderId: requestedProviderId,
+        selectedProviderId: registry.activeProviderId,
+        usedFallback: false,
+        reason: null,
+        selectedAt: now
+    }
+}
+
+rule MemoryStoreSelectionFallsBackToInMemory {
+    when: MemoryStoreSelectionRequested(registry, requestedProviderId)
+
+    let requested = registry.providers.where(id = requestedProviderId).first
+
+    requires: requestedProviderId != null
+    requires: requested = null or requested.status not in [ready, degraded]
+    requires: config.auto_fallback_to_in_memory_on_error = true
+
+    ensures: registry.activeProviderId = registry.fallbackProviderId
+
+    ensures: registry.selection = StoreSelection{
+        requestedProviderId: requestedProviderId,
+        selectedProviderId: registry.fallbackProviderId,
+        usedFallback: true,
+        reason: "requested-provider-unavailable",
+        selectedAt: now
+    }
+}
+
+rule MemoryStoreSelectionFailsWithoutFallback {
+    when: MemoryStoreSelectionRequested(registry, requestedProviderId)
+
+    let requested = registry.providers.where(id = requestedProviderId).first
+
+    requires: requestedProviderId != null
+    requires: requested = null or requested.status not in [ready, degraded]
+    requires: config.auto_fallback_to_in_memory_on_error = false
+
+    ensures: MemoryStoreSelectionFailed(registry, requestedProviderId)
+}
+
+rule RememberDelegatedToActiveStore {
+    when: memory/RememberRequested(memoryLayer, session, contentType, content, tags, provenance)
+
+    let layer = StoreBackedMemoryLayer{memoryLayer: memoryLayer}
+
+    requires: exists layer
+    requires: memoryLayer.status = ready
+    requires: memoryLayer.canRemember = true
+    requires: layer.storeRegistry.activeProviderReady = true
+
+    let active = layer.storeRegistry.activeProvider
+
+    ensures: StoreWriteRequested(active, memoryRecord, {
+        session: session,
+        contentType: contentType,
+        content: content,
+        tags: tags,
+        provenance: provenance,
+        timestamp: now
+    })
+
+    ensures: exists receipt = StoreWriteReceipt.created(
+        storeProviderId: active.id,
+        entityType: memoryRecord,
+        entityId: CreatedMemoryRecordId(),
+        persistedAt: now,
+        idempotentReplay: false
+    )
+
+    ensures: layer.storeAcks = layer.storeAcks + [receipt]
+}
+
+rule GraphSnapshotDelegatedToActiveStore {
+    when: memory/CapabilityGraphComputed(memoryLayer, capabilityGraph)
+
+    let layer = StoreBackedMemoryLayer{memoryLayer: memoryLayer}
+
+    requires: exists layer
+    requires: memoryLayer.status = ready
+    requires: layer.storeRegistry.activeProviderReady = true
+    requires: memoryLayer.graphSnapshots.count > 0
+
+    let active = layer.storeRegistry.activeProvider
+    let snapshot = memoryLayer.graphSnapshots.last
+
+    ensures: StoreWriteRequested(active, graphSnapshot, snapshot)
+}
+
+rule GraphDeltaDelegatedToActiveStore {
+    when: memory/CapabilityGraphComputed(memoryLayer, capabilityGraph)
+
+    let layer = StoreBackedMemoryLayer{memoryLayer: memoryLayer}
+
+    requires: exists layer
+    requires: memoryLayer.status = ready
+    requires: layer.storeRegistry.activeProviderReady = true
+    requires: memoryLayer.graphDeltas.count > 0
+
+    let active = layer.storeRegistry.activeProvider
+    let delta = memoryLayer.graphDeltas.last
+
+    ensures: StoreWriteRequested(active, graphDelta, delta)
+}
+
+rule RecoveryDelegatedToActiveStore {
+    when: memory/RecoverRequested(memoryLayer, session, searchQuery, filter, limit?)
+
+    let layer = StoreBackedMemoryLayer{memoryLayer: memoryLayer}
+
+    requires: exists layer
+    requires: memoryLayer.status = ready
+    requires: memoryLayer.canRecover = true
+    requires: layer.storeRegistry.activeProviderReady = true
+
+    let active = layer.storeRegistry.activeProvider
+
+    ensures: StoreQueryRequested(active, StoreQuery{
+        tags: filter.tags,
+        capabilityIds: filter.capabilityIds,
+        contentTypes: filter.contentTypes,
+        since: filter.since,
+        queryText: searchQuery,
+        limit: limit ?? config.default_recovery_limit
+    })
+
+    ensures:
+        if config.persist_recovery_runs:
+            StoreWriteRequested(active, recoveryRun, LatestRecovery(memoryLayer))
+}
+
+rule MemoryStateHydratedFromPersistentStoreOnStart {
+    -- A persistent provider can repopulate memory state after process restart.
+    when: memory/MemoryLayerInitializeRequested(memoryLayer, querySummary, repo, capabilityGraph, state)
+
+    let layer = StoreBackedMemoryLayer{memoryLayer: memoryLayer}
+
+    requires: exists layer
+    requires: layer.storeRegistry.activeProvider.isPersistent = true
+    requires: layer.storeRegistry.activeProvider.canServeReads = true
+
+    ensures: memoryLayer.memorySessions = StoreLoadMemorySessions(layer.storeRegistry.activeProvider)
+    ensures: memoryLayer.graphSnapshots = StoreLoadGraphSnapshots(layer.storeRegistry.activeProvider)
+    ensures: memoryLayer.graphDeltas = StoreLoadGraphDeltas(layer.storeRegistry.activeProvider)
+    ensures: memoryLayer.indexStats = StoreLoadIndexStats(layer.storeRegistry.activeProvider)
+}
+
+rule StoreHealthChecked {
+    when: MemoryStoreHealthCheckRequested(registry)
+
+    let active = registry.activeProvider
+
+    requires: active != null
+
+    ensures: active.health = StoreHealth{
+        status: HealthStatus(active),
+        checkedAt: now,
+        details: HealthMessage(active)
+    }
+}
+
+rule ActiveStoreFailureTriggersFallback {
+    when: StoreOperationFailed(registry, providerId, operation, error)
+
+    requires: providerId = registry.activeProviderId
+    requires: config.auto_fallback_to_in_memory_on_error = true
+
+    ensures: registry.providers.where(id = providerId).first.status = unavailable
+    ensures: registry.providers.where(id = providerId).first.failureCount =
+             registry.providers.where(id = providerId).first.failureCount + 1
+
+    ensures: MemoryStoreSelectionRequested(registry, registry.fallbackProviderId)
+}
+
+rule ActiveStoreClosedOnShutdown {
+    when: MemoryLayerShutdownRequested(layer, runtime)
+
+    requires: runtime.shuttingDown = true
+    requires: layer.storeRegistry.activeProvider != null
+
+    ensures: StoreCloseRequested(layer.storeRegistry.activeProvider)
+    ensures: layer.storeRegistry.activeProvider.status = closed
+}
+
+rule MemoryStoreSurfacedViaEql {
+    when: MemoryStoreResolversRegistered(surface, registry)
+
+    requires: registry.hasActiveProvider = true
+
+    ensures: config.required_memory_store_eql_attrs.each(a => surface.attrs contains a)
+}
+
+------------------------------------------------------------
+-- Actor Declarations
+------------------------------------------------------------
+
+actor MemoryRuntime {
+    identified_by: id = "memory-runtime"
+}
+
+actor MemoryStoreImplementor {
+    identified_by: MemoryStoreProvider
+}
+
+------------------------------------------------------------
+-- Surfaces
+------------------------------------------------------------
+
+surface MemoryStoreRegistryApi {
+    -- Internal runtime API used by memory layer lifecycle.
+    for runtime: MemoryRuntime
+
+    context registry: MemoryStoreRegistry
+
+    exposes:
+        registry.providers
+        registry.activeProviderId
+        registry.selection
+
+    provides:
+        MemoryStoreProviderRegistered(registry, provider)
+        MemoryStoreSelectionRequested(registry, requestedProviderId?)
+        MemoryStoreHealthCheckRequested(registry)
+
+    guidance:
+        -- Exactly one active provider at any time.
+        -- Selection must be deterministic and observable via registry.selection.
+        -- Registration order must not change selected provider unless explicitly requested.
+}
+
+surface MemoryStoreProviderContract {
+    -- Behavioral contract each backing store provider must satisfy.
+    for impl: MemoryStoreImplementor
+
+    context provider: MemoryStoreProvider
+
+    requires:
+        OpenStore(provider, runtime)
+        CloseStore(provider)
+
+        StoreWriteRequested(provider, memoryRecord, payload)
+        StoreWriteRequested(provider, graphSnapshot, payload)
+        StoreWriteRequested(provider, graphDelta, payload)
+        StoreWriteRequested(provider, recoveryRun, payload)
+
+        StoreQueryRequested(provider, StoreQuery)
+
+        StoreLoadMemorySessions(provider)
+        StoreLoadGraphSnapshots(provider)
+        StoreLoadGraphDeltas(provider)
+        StoreLoadIndexStats(provider)
+
+        HealthStatus(provider)
+        HealthMessage(provider)
+
+    provides:
+        StoreOperationFailed(provider, operation, error)
+
+    guidance:
+        -- Writes must be idempotent when entity IDs are replayed.
+        -- Provider must preserve MemoryRecord.provenance fields losslessly.
+        -- Provider may optimize query execution, but recovery ordering remains
+        --   controlled by memory-layer ranking semantics.
+}
+
+------------------------------------------------------------
+-- Deferred Specifications
+------------------------------------------------------------
+
+deferred StoreWriteRequested.serialization
+
+deferred StoreQueryRequested.execution-plan
+
+deferred StoreLoadMemorySessions.reconstruction
+
+deferred StoreOperationFailed.retry-policy
+
+------------------------------------------------------------
+-- Open Questions
+------------------------------------------------------------
+
+open_question "Should recovery runs be persisted by every provider, or only persistent providers?"
+
+open_question "Should fallback to in-memory emit a user-visible warning event in the main run surfaces (TUI/RPC/Emacs), or remain introspection-only?"
+
+open_question "Do we want read-through + write-through dual mode (persistent + in-memory cache), or keep one active provider only?"

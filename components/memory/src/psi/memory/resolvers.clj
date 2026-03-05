@@ -1,7 +1,8 @@
 (ns psi.memory.resolvers
   "Pathom resolvers exposing scaffolded memory state via EQL."
   (:require
-   [com.wsscode.pathom3.connect.operation :as pco]))
+   [com.wsscode.pathom3.connect.operation :as pco]
+   [psi.memory.store :as store]))
 
 (defn- by-tag-index
   [records]
@@ -20,6 +21,30 @@
    ::pco/output [:psi.memory/state]}
   (let [memory-ctx (:psi/memory-ctx input)]
     {:psi.memory/state @(:state-atom memory-ctx)}))
+
+(defn- store-summary-for-ctx
+  [memory-ctx]
+  (if-let [registry-atom (:store-registry-atom memory-ctx)]
+    (store/registry-summary @registry-atom)
+    (store/registry-summary (store/bootstrap-registry))))
+
+(pco/defresolver memory-store-state
+  "Resolve memory backing-store registry attrs from :psi/memory-ctx."
+  [input]
+  {::pco/input  [:psi/memory-ctx]
+   ::pco/output [:psi.memory.store/providers
+                 :psi.memory.store/active-provider-id
+                 :psi.memory.store/default-provider-id
+                 :psi.memory.store/fallback-provider-id
+                 :psi.memory.store/selection
+                 :psi.memory.store/health]}
+  (let [summary (store-summary-for-ctx (:psi/memory-ctx input))]
+    {:psi.memory.store/providers            (:providers summary)
+     :psi.memory.store/active-provider-id   (:active-provider-id summary)
+     :psi.memory.store/default-provider-id  (:default-provider-id summary)
+     :psi.memory.store/fallback-provider-id (:fallback-provider-id summary)
+     :psi.memory.store/selection            (:selection summary)
+     :psi.memory.store/health               (:health summary)}))
 
 (pco/defresolver memory-state
   "Resolve scaffolded Step 10 memory attrs from :psi.memory/state."
@@ -58,4 +83,5 @@
 
 (def all-resolvers
   [memory-context-state
+   memory-store-state
    memory-state])

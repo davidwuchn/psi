@@ -37,6 +37,8 @@ Current truth about the Psi system.
 - ✓ OAuth module (PKCE, callback server, credential store, provider registry, Anthropic)
 - ✓ Session introspection hardening (Step 7a): messages-count, tool-call-count, start-time, current-time
 - ✓ Graph emergence (Step 7): all 9 :psi.graph/* attrs queryable via eql_query from agent-session-ctx
+- ✓ Memory backing-store extension point (Step 9a phase 1): provider protocol + registry (`psi.memory.store`) with in-memory default and `:psi.memory.store/*` EQL attrs
+- ✓ Datalevin persistent memory provider (Step 9a phase 2): `psi.memory.datalevin` + write-through remember/recover/graph artifacts + activation-time hydration
 - ✗ OAuth wired into main.clj (replace env-var-only auth)
 - ✗ /login and /logout commands
 - ✗ Session resolvers wired into global query graph
@@ -51,6 +53,7 @@ Current truth about the Psi system.
 ANTHROPIC_API_KEY=sk-... clojure -M:run
 clojure -M:run --model claude-3-5-sonnet
 clojure -M:run --model gpt-4o --tui
+PSI_MEMORY_STORE=datalevin clojure -M:run  # opt-in persistent memory store
 clojure -M:run --rpc-edn                 # EDN-lines RPC mode (headless/programmatic)
 clojure -M:run --nrepl                   # random port, printed at startup
 clojure -M:run --nrepl 7888              # specific port
@@ -171,7 +174,7 @@ Caught by `jline-terminal-keymap-test` smoke test.
 
 ## Test Status
 
-629 tests, 2924 assertions, 0 failures. 0 clj-kondo errors.
+660 tests, 3145 assertions, 0 failures. 0 clj-kondo errors.
 
 ## Specs
 
@@ -189,6 +192,8 @@ Caught by `jline-terminal-keymap-test` smoke test.
 | `oauth-auth.allium`        | `agent-session/oauth`   | ✓ implemented (Anthropic provider)    |
 | `graph-emergence.allium`   | `query` + `introspection` | ◇ Step 7 spec authored (attribute links implicit; mutation side-effects deferred) |
 | `memory-layer.allium`      | `query` + `history` + `introspection` | ◇ Step 10 spec authored (provenance, graph snapshots/deltas, recovery over session+history+graph) |
+| `memory-backing-stores.allium` | `memory` | ✓ phase 1 implemented (provider contract + selection/fallback + `:psi.memory.store/*` EQL surface) |
+| `memory-datalevin-store.allium` | `memory` | ◇ phase 2 partial (Datalevin provider + write-through/hydration; migration/retention hardening next) |
 | `feed-forward-recursion.allium` | `memory` + `introspection` + `engine` | ◇ Step 11 spec authored (FUTURE_STATE loop, hooks, guardrails, memory writeback) |
 
 ## Step 7 Decisions (Spec)
@@ -203,6 +208,15 @@ Caught by `jline-terminal-keymap-test` smoke test.
 - Recovery ranking defaults: text relevance 50%, recency 25%, capability proximity 25%
 - Graph history retention: fixed-window compaction (keep latest 200 snapshots and 1000 deltas), trim oldest
 - No graph-history summary entities in Step 10 (defer richer compaction/summarization)
+
+## Step 9a Decisions (Spec)
+
+- Sources: `spec/memory-backing-stores.allium`, `spec/memory-datalevin-store.allium`
+- Default active memory store remains `in-memory` for backward compatibility
+- Persistent stores are selected via provider registry; one active provider at a time
+- Runtime can opt into Datalevin via `PSI_MEMORY_STORE=datalevin`
+- remember/recover/graph artifacts now write-through to active provider; activation hydrates persisted records/snapshots/deltas/recoveries back into memory state
+- Fallback policy defaults to automatic in-memory fallback when persistent provider is unavailable
 
 ## Step 11 Decisions (Spec)
 

@@ -4,9 +4,27 @@
    [psi.engine.core :as engine]
    [psi.history.git :as git]
    [psi.memory.core :as memory]
+   [psi.memory.datalevin :as datalevin]
    [psi.memory.graph-history :as graph-history]
    [psi.memory.ranking :as ranking]
+   [psi.memory.store :as store]
    [psi.query.core :as query]))
+
+(defn- temp-dir-path
+  []
+  (-> (java.nio.file.Files/createTempDirectory
+       "psi-memory-core-datalevin-"
+       (make-array java.nio.file.attribute.FileAttribute 0))
+      str))
+
+(defn- delete-recursively!
+  [root]
+  (let [root-path (java.nio.file.Path/of root (make-array String 0))]
+    (when (java.nio.file.Files/exists root-path (make-array java.nio.file.LinkOption 0))
+      (let [paths (with-open [stream (java.nio.file.Files/walk root-path (make-array java.nio.file.FileVisitOption 0))]
+                    (vec (iterator-seq (.iterator stream))))]
+        (run! #(java.nio.file.Files/deleteIfExists %)
+              (reverse paths))))))
 
 (deftest create-context-initializes-required-state-keys
   (let [ctx   (memory/create-context)
@@ -42,6 +60,147 @@
     (memory/swap-state-in! ctx-a assoc :status :ready)
     (is (= :ready (:status (memory/get-state-in ctx-a))))
     (is (= :initializing (:status (memory/get-state-in ctx-b))))))
+
+(deftest create-context-bootstraps-in-memory-store-registry
+  (let [ctx     (memory/create-context)
+        summary (memory/store-summary-in ctx)]
+    (is (= "in-memory" (:active-provider-id summary)))
+    (is (= "in-memory" (:default-provider-id summary)))
+    (is (= "in-memory" (:fallback-provider-id summary)))
+    (is (= #{"in-memory"}
+           (set (map :id (:providers summary)))))))
+
+(deftest register-and-select-store-provider-updates-active-provider
+  (let [ctx         (memory/create-context)
+        status-atom (atom :registering)
+        provider    (reify store/StoreProvider
+                      (provider-id [_] "test-store")
+                      (provider-capabilities [_]
+                        {:durability :persistent
+                         :supports-restart-recovery? true
+                         :supports-retention-compaction? true
+                         :supports-capability-history-query? true
+                         :query-mode :indexed})
+                      (open-provider! [this _]
+                        (reset! status-atom :ready)
+                        this)
+                      (close-provider! [this]
+                        (reset! status-atom :closed)
+                        this)
+                      (provider-status [_] @status-atom)
+                      (provider-health [_]
+                        {:status (if (= :ready @status-atom) :healthy :unavailable)
+                         :checked-at (java.time.Instant/now)
+                         :details nil})
+                      (provider-write! [_ _ _] {:ok? true})
+                      (provider-query! [_ _] {:ok? true :results []})
+                      (provider-load-state [_] {:ok? true}))
+        _           (memory/register-store-provider-in! ctx provider)
+        summary     (memory/select-store-provider-in! ctx "test-store")]
+    (is (= "test-store" (:active-provider-id summary)))
+    (is (= "test-store" (get-in summary [:selection :selected-provider-id])))
+    (is (= #{"in-memory" "test-store"}
+           (set (map :id (:providers summary)))))))
+
+(deftest select-store-provider-falls-back-when-requested-provider-unavailable
+  (let [ctx         (memory/create-context)
+        status-atom (atom :unavailable)
+        provider    (reify store/StoreProvider
+                      (provider-id [_] "down-store")
+                      (provider-capabilities [_]
+                        {:durability :persistent
+                         :supports-restart-recovery? true
+                         :supports-retention-compaction? true
+                         :supports-capability-history-query? true
+                         :query-mode :indexed})
+                      (open-provider! [this _] this)
+                      (close-provider! [this] this)
+                      (provider-status [_] @status-atom)
+                      (provider-health [_]
+                        {:status :unavailable
+                         :checked-at (java.time.Instant/now)
+                         :details "unavailable for test"})
+                      (provider-write! [_ _ _] {:ok? false})
+                      (provider-query! [_ _] {:ok? false :results []})
+                      (provider-load-state [_] {:ok? false}))
+        _           (memory/register-store-provider-in! ctx provider {:open? false})
+        summary     (memory/select-store-provider-in! ctx "down-store")]
+    (is (= "in-memory" (:active-provider-id summary)))
+    (is (true? (get-in summary [:selection :used-fallback])))
+    (is (= :requested-provider-unavailable
+           (get-in summary [:selection :reason])))))
+
+(deftest remember-failed-store-write-falls-back-to-in-memory
+  (let [ctx         (memory/create-context)
+        status-atom (atom :ready)
+        provider    (reify store/StoreProvider
+                      (provider-id [_] "failing-store")
+                      (provider-capabilities [_]
+                        {:durability :persistent
+                         :supports-restart-recovery? true
+                         :supports-retention-compaction? true
+                         :supports-capability-history-query? true
+                         :query-mode :indexed})
+                      (open-provider! [this _] this)
+                      (close-provider! [this] this)
+                      (provider-status [_] @status-atom)
+                      (provider-health [_]
+                        {:status :healthy
+                         :checked-at (java.time.Instant/now)
+                         :details nil})
+                      (provider-write! [_ _ _]
+                        {:ok? false
+                         :error :boom
+                         :message "write failed"})
+                      (provider-query! [_ _] {:ok? true :results []})
+                      (provider-load-state [_] {:ok? true}))]
+    (memory/register-store-provider-in! ctx provider)
+    (memory/select-store-provider-in! ctx "failing-store")
+    (let [result  (memory/remember-in! ctx {:content-type :note
+                                            :content "still in memory"
+                                            :tags [:fallback]
+                                            :provenance {:source :session}})
+          summary (memory/store-summary-in ctx)]
+      (is (true? (:ok? result)))
+      (is (= "in-memory" (:active-provider-id summary)))
+      (is (true? (get-in result [:store :fallback-selected?]))))))
+
+(deftest activation-hydrates-state-from-datalevin-provider
+  (let [db-dir   (temp-dir-path)
+        ts       (java.time.Instant/parse "2026-03-03T12:00:00Z")]
+    (try
+      (let [writer-ctx (memory/create-context)
+            provider-a (datalevin/create-provider {:db-dir db-dir})]
+        (memory/register-store-provider-in! writer-ctx provider-a)
+        (memory/select-store-provider-in! writer-ctx "datalevin")
+        (memory/remember-in! writer-ctx
+                             {:content-type :note
+                              :content "durable memory"
+                              :tags [:persist]
+                              :timestamp ts
+                              :provenance {:source :session}})
+        (is (= 1 (count (:records (memory/get-state-in writer-ctx)))))
+        (store/close-provider! provider-a))
+
+      (let [reader-ctx (memory/create-context)
+            provider-b (datalevin/create-provider {:db-dir db-dir})
+            query-ctx  (doto (query/create-query-context)
+                         (query/rebuild-env-in!))
+            git-ctx    (git/create-null-context)
+            _          (memory/register-store-provider-in! reader-ctx provider-b)
+            _          (memory/select-store-provider-in! reader-ctx "datalevin")
+            activation (memory/activate-in! reader-ctx
+                                            {:query-ctx query-ctx
+                                             :git-ctx git-ctx
+                                             :capability-graph-status :stable})
+            hydrated-records (:records (memory/get-state-in reader-ctx))]
+        (is (true? (:ready? activation)))
+        (is (true? (get-in activation [:store-hydration :hydrated?])))
+        (is (= 1 (count hydrated-records)))
+        (is (= "durable memory" (:content (first hydrated-records))))
+        (store/close-provider! provider-b))
+      (finally
+        (delete-recursively! db-dir)))))
 
 (deftest activation-success-sets-ready-status-and-readiness-flags
   (let [memory-ctx (memory/create-context)

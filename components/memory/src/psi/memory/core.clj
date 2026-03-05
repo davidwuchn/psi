@@ -15,9 +15,10 @@
    [psi.memory.graph-history :as graph-history]
    [psi.memory.ranking :as ranking]
    [psi.memory.resolvers :as resolvers]
+   [psi.memory.store :as store]
    [psi.query.core :as query]))
 
-(defrecord MemoryContext [state-atom config])
+(defrecord MemoryContext [state-atom config store-registry-atom])
 
 (defn- graph-status-ready?
   "Step 10 gate: capability graph status is acceptable when stable or expanding."
@@ -53,15 +54,27 @@
    Options:
    - :state-overrides                map merged over initial memory state
    - :require-provenance-on-write?   feature flag for follow-up tasks
+                                     (default true)
+   - :store-registry-overrides       map merged over bootstrapped registry
+   - :auto-store-fallback?           fallback to in-memory on provider selection failure
                                      (default true)"
   ([]
    (create-context {}))
-  ([{:keys [state-overrides require-provenance-on-write?]
+  ([{:keys [state-overrides
+            require-provenance-on-write?
+            store-registry-overrides
+            auto-store-fallback?]
      :or   {state-overrides {}
-            require-provenance-on-write? true}}]
-   (->MemoryContext
-    (atom (merge (initial-state) state-overrides))
-    {:require-provenance-on-write? require-provenance-on-write?})))
+            require-provenance-on-write? true
+            store-registry-overrides {}
+            auto-store-fallback? true}}]
+   (let [store-registry (merge (store/bootstrap-registry)
+                               store-registry-overrides)]
+     (->MemoryContext
+      (atom (merge (initial-state) state-overrides))
+      {:require-provenance-on-write? require-provenance-on-write?
+       :auto-store-fallback? auto-store-fallback?}
+      (atom store-registry)))))
 
 (defonce ^:private global-ctx (atom nil))
 
@@ -96,6 +109,202 @@
   "Global wrapper for `swap-state-in!`."
   [f & args]
   (apply swap-state-in! (global-context) f args))
+
+(defn get-store-registry-in
+  "Return provider registry map for isolated memory `ctx`."
+  [ctx]
+  (store/refresh-registry @(:store-registry-atom ctx)))
+
+(defn get-store-registry
+  "Global wrapper for `get-store-registry-in`."
+  []
+  (get-store-registry-in (global-context)))
+
+(defn store-summary-in
+  "Return EQL-friendly provider registry summary for `ctx`."
+  [ctx]
+  (store/registry-summary (get-store-registry-in ctx)))
+
+(defn store-summary
+  "Global wrapper for `store-summary-in`."
+  []
+  (store-summary-in (global-context)))
+
+(defn register-store-provider-in!
+  "Register a backing store provider in isolated `ctx`.
+
+   Provider must satisfy `psi.memory.store/StoreProvider`.
+   Returns EQL-friendly registry summary after registration."
+  ([ctx provider]
+   (register-store-provider-in! ctx provider {}))
+  ([ctx provider opts]
+   (swap! (:store-registry-atom ctx)
+          (fn [registry]
+            (store/register-provider registry provider opts)))
+   (store-summary-in ctx)))
+
+(defn register-store-provider!
+  "Global wrapper for `register-store-provider-in!`."
+  ([provider]
+   (register-store-provider! provider {}))
+  ([provider opts]
+   (register-store-provider-in! (global-context) provider opts)))
+
+(defn select-store-provider-in!
+  "Select active backing store provider for isolated `ctx`.
+
+   Falls back to in-memory provider when
+   `:auto-store-fallback?` is true in context config."
+  ([ctx requested-provider-id]
+   (select-store-provider-in! ctx requested-provider-id {}))
+  ([ctx requested-provider-id opts]
+   (let [auto-fallback? (get-in ctx [:config :auto-store-fallback?] true)]
+     (swap! (:store-registry-atom ctx)
+            (fn [registry]
+              (store/select-provider registry
+                                     requested-provider-id
+                                     (merge {:auto-fallback? auto-fallback?}
+                                            opts))))
+     (store-summary-in ctx))))
+
+(defn select-store-provider!
+  "Global wrapper for `select-store-provider-in!`."
+  ([requested-provider-id]
+   (select-store-provider! requested-provider-id {}))
+  ([requested-provider-id opts]
+   (select-store-provider-in! (global-context) requested-provider-id opts)))
+
+(defn- active-store-provider-in
+  [ctx]
+  (some-> (get-store-registry-in ctx)
+          store/active-provider-entry
+          :instance))
+
+(defn- fallback-on-store-failure-in!
+  [ctx]
+  (let [{:keys [active-provider-id fallback-provider-id]} (store-summary-in ctx)
+        auto-fallback? (get-in ctx [:config :auto-store-fallback?] true)]
+    (when (and auto-fallback?
+               (some? fallback-provider-id)
+               (not= active-provider-id fallback-provider-id))
+      (select-store-provider-in! ctx fallback-provider-id)
+      true)))
+
+(defn- persist-entity-in!
+  [ctx entity-type payload]
+  (if-let [provider (active-store-provider-in ctx)]
+    (try
+      (let [result (store/provider-write! provider entity-type payload)]
+        (if (:ok? result)
+          {:ok? true
+           :provider-id (store/provider-id provider)
+           :result result}
+          {:ok? false
+           :provider-id (store/provider-id provider)
+           :error (:error result)
+           :message (:message result)
+           :fallback-selected? (boolean (fallback-on-store-failure-in! ctx))}))
+      (catch Exception e
+        {:ok? false
+         :provider-id (store/provider-id provider)
+         :error :store-write-exception
+         :message (ex-message e)
+         :fallback-selected? (boolean (fallback-on-store-failure-in! ctx))}))
+    {:ok? false
+     :error :no-active-store-provider}))
+
+(defn- persist-capability-history-events-in!
+  [ctx events]
+  (when (seq events)
+    (mapv #(persist-entity-in! ctx :capability-history %) events)))
+
+(defn- merge-unique-by
+  [existing incoming id-fn]
+  (let [seen (atom (set (map id-fn existing)))]
+    (reduce (fn [acc item]
+              (let [k (id-fn item)]
+                (if (contains? @seen k)
+                  acc
+                  (do
+                    (swap! seen conj k)
+                    (conj acc item)))))
+            (vec existing)
+            (or incoming []))))
+
+(defn- hydrate-state-from-provider-in!
+  [ctx]
+  (if-let [provider (active-store-provider-in ctx)]
+    (let [caps (store/provider-capabilities provider)
+          persistent? (= :persistent (:durability caps))]
+      (if-not persistent?
+        {:ok? true
+         :hydrated? false
+         :reason :ephemeral-provider}
+        (try
+          (let [loaded (store/provider-load-state provider)]
+            (if-not (:ok? loaded)
+              {:ok? false
+               :hydrated? false
+               :error (:error loaded)
+               :message (:message loaded)}
+              (do
+                (swap-state-in! ctx
+                                (fn [state]
+                                  (let [merged-records (merge-unique-by (:records state)
+                                                                        (:records loaded)
+                                                                        (fn [record]
+                                                                          (or (:record-id record)
+                                                                              [(:content-type record)
+                                                                               (:content record)
+                                                                               (:timestamp record)])))
+                                        merged-snapshots (merge-unique-by (:graph-snapshots state)
+                                                                          (:graph-snapshots loaded)
+                                                                          (fn [snapshot]
+                                                                            (or (:snapshot-id snapshot)
+                                                                                (:fingerprint snapshot))))
+                                        merged-deltas (merge-unique-by (:graph-deltas state)
+                                                                       (:graph-deltas loaded)
+                                                                       (fn [delta]
+                                                                         (or (:delta-id delta)
+                                                                             [(:from-fingerprint delta)
+                                                                              (:to-fingerprint delta)
+                                                                              (:timestamp delta)])))
+                                        merged-recoveries (merge-unique-by (:recoveries state)
+                                                                           (:recoveries loaded)
+                                                                           (fn [recovery]
+                                                                             (or (:recovery-id recovery)
+                                                                                 (:timestamp recovery))))
+                                        merged-capability-history (merge-unique-by (:capability-history state)
+                                                                                   (:capability-history loaded)
+                                                                                   (fn [event]
+                                                                                     (or (:event-id event)
+                                                                                         [(:event-type event)
+                                                                                          (:timestamp event)
+                                                                                          (:record-id event)
+                                                                                          (:capability-id event)])))]
+                                    (-> state
+                                        (assoc :records merged-records)
+                                        (assoc :graph-snapshots merged-snapshots)
+                                        (assoc :graph-deltas merged-deltas)
+                                        (assoc :recoveries merged-recoveries)
+                                        (assoc :capability-history merged-capability-history)
+                                        (assoc :index-stats (or (:index-stats loaded)
+                                                                (:index-stats state)))))))
+                {:ok? true
+                 :hydrated? true
+                 :provider-id (store/provider-id provider)
+                 :records-loaded (count (:records loaded))
+                 :graph-snapshots-loaded (count (:graph-snapshots loaded))
+                 :graph-deltas-loaded (count (:graph-deltas loaded))
+                 :recoveries-loaded (count (:recoveries loaded))})))
+          (catch Exception e
+            {:ok? false
+             :hydrated? false
+             :error :store-load-exception
+             :message (ex-message e)}))))
+    {:ok? false
+     :hydrated? false
+     :error :no-active-store-provider}))
 
 (defn activation-gates-in
   "Compute Step 10 activation gates.
@@ -137,7 +346,9 @@
   (let [gates (activation-gates-in ctx {:query-ctx query-ctx
                                         :git-ctx git-ctx
                                         :capability-graph-status capability-graph-status})
-        ready? (:ready? gates)]
+        ready? (:ready? gates)
+        hydration (when ready?
+                    (hydrate-state-from-provider-in! ctx))]
     (swap-state-in! ctx assoc :status (if ready? :ready :error))
     (when engine-ctx
       (if ready?
@@ -148,6 +359,7 @@
         (engine/update-system-component-in! engine-ctx :memory-ready false)))
     (assoc gates
            :memory-status (:status (get-state-in ctx))
+           :store-hydration hydration
            :options (select-keys opts [:capability-graph-status]))))
 
 (defn activate!
@@ -349,9 +561,13 @@
                             (update :records (fnil conj []) memory-record)
                             (update :index-stats update-index-stats memory-record)
                             (append-capability-history capability-history-events))))
-      {:ok? true
-       :record memory-record
-       :entry-count (get-in (get-state-in ctx) [:index-stats :entry-count])})))
+      (let [store-write (persist-entity-in! ctx :memory-record memory-record)
+            history-store-writes (persist-capability-history-events-in! ctx capability-history-events)]
+        {:ok? true
+         :record memory-record
+         :entry-count (get-in (get-state-in ctx) [:index-stats :entry-count])
+         :store store-write
+         :capability-history-store history-store-writes}))))
 
 (defn remember!
   "Global wrapper for `remember-in!`."
@@ -534,13 +750,17 @@
                                   (assoc :search-results results)
                                   (update :recoveries (fnil conj []) recovery)
                                   (append-capability-history capability-history-events))))
-            {:ok? true
-             :sources requested-sources
-             :weights weights
-             :result-count (count results)
-             :resultsTruncated truncated?
-             :results results
-             :recovery recovery}))))))
+            (let [store-write (persist-entity-in! ctx :recovery-run recovery)
+                  history-store-writes (persist-capability-history-events-in! ctx capability-history-events)]
+              {:ok? true
+               :sources requested-sources
+               :weights weights
+               :result-count (count results)
+               :resultsTruncated truncated?
+               :results results
+               :recovery recovery
+               :store store-write
+               :capability-history-store history-store-writes})))))))
 
 (defn recover!
   "Global wrapper for `recover-in!`."
@@ -593,13 +813,20 @@
                                                               graph-history/delta-retention-limit)))
                                                    with-snapshot)]
                                (append-capability-history with-delta capability-history-events))))
-           (let [updated (get-state-in ctx)]
+           (let [snapshot-store-write (persist-entity-in! ctx :graph-snapshot snapshot)
+                 delta-store-write    (when delta
+                                        (persist-entity-in! ctx :graph-delta delta))
+                 history-store-writes (persist-capability-history-events-in! ctx capability-history-events)
+                 updated              (get-state-in ctx)]
              {:ok? true
               :changed? true
               :snapshot-added? true
               :delta-added? (some? delta)
               :snapshot snapshot
               :delta delta
+              :snapshot-store snapshot-store-write
+              :delta-store delta-store-write
+              :capability-history-store history-store-writes
               :snapshot-count (count (:graph-snapshots updated))
               :delta-count (count (:graph-deltas updated))}))))
      {:ok? false
