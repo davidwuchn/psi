@@ -71,7 +71,8 @@ Used to detect stalled streaming runs and transition to deterministic recovery."
   session-model-id
   session-model-reasoning
   session-thinking-level
-  header-model-label)
+  header-model-label
+  transcript-hydrated?)
 
 (defvar psi-emacs--spawn-process-function #'psi-emacs--default-spawn-process
   "Function used to spawn a psi subprocess.

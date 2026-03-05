@@ -46,7 +46,22 @@
    :session-model-id nil
    :session-model-reasoning nil
    :session-thinking-level nil
-   :header-model-label nil))
+   :header-model-label nil
+   :transcript-hydrated? nil))
+
+(defun psi-emacs--request-initial-transcript-hydration (buffer state)
+  "Request and replay initial transcript once transport is ready."
+  (unless (psi-emacs-state-transcript-hydrated? state)
+    (setf (psi-emacs-state-transcript-hydrated? state) t)
+    (psi-emacs--dispatch-request
+     "get_messages"
+     nil
+     (lambda (frame)
+       (when (buffer-live-p buffer)
+         (with-current-buffer buffer
+           (when (eq state psi-emacs--state)
+             (psi-emacs--replay-session-messages
+              (psi-emacs--frame-messages-list frame)))))))))
 
 (defun psi-emacs--on-rpc-state-change (buffer client)
   "Apply CLIENT state changes to BUFFER-local frontend state."
@@ -62,6 +77,8 @@
         (when (and (eq (psi-emacs-state-run-state psi-emacs--state) 'reconnecting)
                    (eq (psi-rpc-client-transport-state client) 'ready))
           (psi-emacs--set-run-state psi-emacs--state 'idle))
+        (when (eq (psi-rpc-client-transport-state client) 'ready)
+          (psi-emacs--request-initial-transcript-hydration buffer psi-emacs--state))
         (setq psi-emacs--owned-process (psi-rpc-client-process client))
         (psi-emacs--refresh-header-line)))))
 
@@ -218,6 +235,7 @@ When PRESERVE-TOOL-OUTPUT-VIEW-MODE is non-nil, keep the current
     (setf (psi-emacs-state-session-model-reasoning psi-emacs--state) nil)
     (setf (psi-emacs-state-session-thinking-level psi-emacs--state) nil)
     (setf (psi-emacs-state-header-model-label psi-emacs--state) nil)
+    (setf (psi-emacs-state-transcript-hydrated? psi-emacs--state) nil)
     (psi-emacs--set-run-state psi-emacs--state 'idle)
     (psi-emacs--refresh-header-line))
   (set-buffer-modified-p nil))
