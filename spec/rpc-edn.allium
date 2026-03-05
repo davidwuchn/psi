@@ -138,6 +138,10 @@ value AssistantDeltaPayload {
     text: String
 }
 
+value AssistantThinkingDeltaPayload {
+    text: String
+}
+
 value AssistantMessagePayload {
     role: String
     content: List<Map<String, Any>>
@@ -470,6 +474,7 @@ rule EventTopicMustBeFromCatalog {
         "session/resumed",
         "session/rehydrated",
         "assistant/delta",
+        "assistant/thinking-delta",
         "assistant/message",
         "tool/start",
         "tool/delta",
@@ -499,6 +504,8 @@ rule EventPayloadMatchesCatalog {
             EventPayloadType(frame.data) = SessionRehydratedPayload
         if frame.event = "assistant/delta":
             EventPayloadType(frame.data) = AssistantDeltaPayload
+        if frame.event = "assistant/thinking-delta":
+            EventPayloadType(frame.data) = AssistantThinkingDeltaPayload
         if frame.event = "assistant/message":
             EventPayloadType(frame.data) = AssistantMessagePayload
         if frame.event = "tool/start":
@@ -546,6 +553,8 @@ rule EventPayloadRequiredKeysByTopic {
         if frame.event = "session/rehydrated":
             EventPayloadRequiredKeys(frame) = ["messages", "tool-calls", "tool-order"]
         if frame.event = "assistant/delta":
+            EventPayloadRequiredKeys(frame) = ["text"]
+        if frame.event = "assistant/thinking-delta":
             EventPayloadRequiredKeys(frame) = ["text"]
         if frame.event = "assistant/message":
             EventPayloadRequiredKeys(frame) = ["role", "content"]
@@ -736,6 +745,7 @@ surface RpcEventStream {
         --   session/resumed       → SessionResumedPayload
         --   session/rehydrated    → SessionRehydratedPayload
         --   assistant/delta       → AssistantDeltaPayload
+        --   assistant/thinking-delta → AssistantThinkingDeltaPayload
         --   assistant/message     → AssistantMessagePayload
         --   tool/start            → ToolStartPayload
         --   tool/delta            → ToolDeltaPayload

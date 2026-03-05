@@ -88,11 +88,15 @@ entity AssistantStreamState {
     -- Streaming text is rendered verbatim (no markdown post-processing).
     inProgressText: String?
 
+    -- In-progress thinking block is shown only while streaming and is ephemeral.
+    inProgressThinkingText: String?
+
     -- Finalized assistant blocks rendered into transcript.
     -- In markdown buffers, markdown processing applies only after completion.
     completedBlocks: List<String>
 
     has_in_progress: inProgressText != null and inProgressText != ""
+    has_in_progress_thinking: inProgressThinkingText != null and inProgressThinkingText != ""
 }
 
 entity ToolRow {
@@ -189,6 +193,7 @@ config {
 
     default_topics: Set<String> = {
         "assistant/delta",
+        "assistant/thinking-delta",
         "assistant/message",
         "tool/start",
         "tool/delta",
@@ -630,6 +635,16 @@ rule AssistantMessageFinalizesInProgressBlock {
     ensures: frontend.assistant.completedBlocks =
         frontend.assistant.completedBlocks + [FinalizeAssistantBlock(frontend.assistant.inProgressText, payload)]
     ensures: frontend.assistant.inProgressText = null
+    ensures: frontend.assistant.inProgressThinkingText = null
+}
+
+rule AssistantThinkingDeltaUpdatesSingleInProgressThinkingBlock {
+    when: RpcEventReceived(frontend.rpc, "assistant/thinking-delta", payload)
+
+    ensures: frontend.assistant.inProgressThinkingText =
+        MergeAssistantStreamPayload(frontend.assistant.inProgressThinkingText, payload.text)
+    ensures: SingleInProgressThinkingBlock(frontend)
+    ensures: ThinkingBlockRenderedWithThemeFace(frontend)
 }
 
 rule AssistantMessageAppliesMarkdownAfterCompletionWhenAvailable {
@@ -673,7 +688,7 @@ rule ToolRowsUseGlobalViewMode {
 rule StreamingProgressResetsWatchdog {
     when: RpcEventReceived(frontend.rpc, eventName, payload)
 
-    requires: eventName in ["assistant/delta", "tool/start", "tool/delta", "tool/executing", "tool/update", "tool/result"]
+    requires: eventName in ["assistant/delta", "assistant/thinking-delta", "tool/start", "tool/delta", "tool/executing", "tool/update", "tool/result"]
     requires: frontend.runState = streaming
 
     ensures: StreamingWatchdogReset(frontend, timeoutSeconds: config.stream_timeout_seconds)

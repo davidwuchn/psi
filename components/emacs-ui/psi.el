@@ -59,6 +59,8 @@ Used to detect stalled streaming runs and transition to deterministic recovery."
   error-line-range
   assistant-in-progress
   assistant-range
+  thinking-in-progress
+  thinking-range
   tool-rows
   projection-widgets
   projection-statuses

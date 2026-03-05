@@ -1160,10 +1160,12 @@
         (let ((calls (psi-test--capture-request-sends
                       (lambda ()
                         (setf (psi-emacs-state-assistant-in-progress psi-emacs--state) "streaming")
+                        (setf (psi-emacs-state-thinking-in-progress psi-emacs--state) "thinking")
                         (setf (psi-emacs-state-run-state psi-emacs--state) 'streaming)
                         (psi-emacs-abort)))))
           (should (equal '(("abort" nil)) calls))
           (should-not (psi-emacs-state-assistant-in-progress psi-emacs--state))
+          (should-not (psi-emacs-state-thinking-in-progress psi-emacs--state))
           (should (eq 'idle (psi-emacs-state-run-state psi-emacs--state))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
@@ -1186,6 +1188,43 @@
           (should-not (psi-emacs-state-assistant-in-progress psi-emacs--state))
           (should (eq 'idle (psi-emacs-state-run-state psi-emacs--state)))
           (should (equal "ψ: Hello world\n" (buffer-string))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
+(ert-deftest psi-thinking-streaming-renders-ephemeral-line-and-clears-on-finalize ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (progn
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/thinking-delta") (:data . ((:text . "plan")))))
+          (should (eq 'streaming (psi-emacs-state-run-state psi-emacs--state)))
+          (should (equal "plan" (psi-emacs-state-thinking-in-progress psi-emacs--state)))
+          (should (string-match-p "ψ⋯ plan" (buffer-string)))
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/message") (:data . ((:text . "done")))))
+          (should-not (psi-emacs-state-thinking-in-progress psi-emacs--state))
+          (should-not (psi-emacs-state-thinking-range psi-emacs--state))
+          (should (equal "ψ: done\n" (buffer-string))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
+(ert-deftest psi-thinking-streaming-uses-thinking-face-on-prefix ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (progn
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/thinking-delta") (:data . ((:text . "x")))))
+          (goto-char (point-min))
+          (let ((ovs (overlays-at (point)))
+                (found nil))
+            (dolist (ov ovs)
+              (when (eq (overlay-get ov 'face) 'psi-emacs-assistant-thinking-face)
+                (setq found t)))
+            (should found)))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 

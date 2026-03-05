@@ -130,6 +130,26 @@
                (some #(when (= :text (:type %)) (:text %))
                      (:content result))))))))
 
+(deftest thinking-delta-emits-progress-event-test
+  (let [agent-ctx   (setup-agent-ctx!)
+        session-ctx (setup-session-ctx! agent-ctx)
+        user-msg    {:role "user" :content [{:type :text :text "hi"}]}
+        q           (LinkedBlockingQueue.)
+        stream-fn   (fn [_ai-ctx _conv _model _opts consume-fn]
+                      (consume-fn {:type :start})
+                      (consume-fn {:type :thinking-delta :delta "plan"})
+                      (consume-fn {:type :done :reason :stop}))]
+    (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
+      (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg]
+                                {:progress-queue q})
+      (let [events (loop [acc []]
+                     (if-let [e (.poll q 5 TimeUnit/MILLISECONDS)]
+                       (recur (conj acc e))
+                       acc))
+            thinking (some #(when (= :thinking-delta (:event-kind %)) %) events)]
+        (is (some? thinking))
+        (is (= "plan" (:text thinking)))))))
+
 (deftest cumulative-snapshot-text-deltas-replace-instead-of-repeating-test
   (let [agent-ctx   (setup-agent-ctx!)
         session-ctx (setup-session-ctx! agent-ctx)

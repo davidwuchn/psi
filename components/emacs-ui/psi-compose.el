@@ -159,6 +159,7 @@ When idle, routes through slash interception then normal prompt fallback."
   (when psi-emacs--state
     (setf (psi-emacs-state-assistant-in-progress psi-emacs--state) nil)
     (setf (psi-emacs-state-assistant-range psi-emacs--state) nil)
+    (psi-emacs--clear-thinking-line)
     (psi-emacs--disarm-stream-watchdog psi-emacs--state)
     (psi-emacs--set-run-state psi-emacs--state 'idle)))
 

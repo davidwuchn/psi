@@ -19,6 +19,11 @@
   "Face for `ψ:' transcript reply prefixes."
   :group 'psi-emacs)
 
+(defface psi-emacs-assistant-thinking-face
+  '((t :inherit shadow :slant italic))
+  "Face for incremental assistant thinking transcript lines."
+  :group 'psi-emacs)
+
 (defface psi-emacs-tool-call-face
   '((t :inherit font-lock-builtin-face))
   "Face for tool call summary text."

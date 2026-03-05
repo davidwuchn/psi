@@ -97,6 +97,9 @@ DATA is expected to be an alist map."
         (or (psi-emacs--event-data-get data '(:text text :message message))
             (psi-emacs--assistant-content->text
              (psi-emacs--event-data-get data '(:content content))))))
+      ("assistant/thinking-delta"
+       (psi-emacs--assistant-thinking-delta
+        (or (psi-emacs--event-data-get data '(:text text :delta delta)) "")))
       ("session/updated"
        (psi-emacs--handle-session-updated-event data))
       ((or "tool/start" "tool/delta" "tool/executing" "tool/update" "tool/result")

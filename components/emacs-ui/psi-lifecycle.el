@@ -25,6 +25,8 @@
    :error-line-range nil
    :assistant-in-progress nil
    :assistant-range nil
+   :thinking-in-progress nil
+   :thinking-range nil
    :tool-rows (make-hash-table :test #'equal)
    :projection-widgets nil
    :projection-statuses nil
@@ -169,6 +171,10 @@ COMMAND is a list suitable for `make-process'."
     (set-marker (car (psi-emacs-state-assistant-range psi-emacs--state)) nil)
     (set-marker (cdr (psi-emacs-state-assistant-range psi-emacs--state)) nil))
   (when (and psi-emacs--state
+             (consp (psi-emacs-state-thinking-range psi-emacs--state)))
+    (set-marker (car (psi-emacs-state-thinking-range psi-emacs--state)) nil)
+    (set-marker (cdr (psi-emacs-state-thinking-range psi-emacs--state)) nil))
+  (when (and psi-emacs--state
              (consp (psi-emacs-state-projection-range psi-emacs--state)))
     (set-marker (car (psi-emacs-state-projection-range psi-emacs--state)) nil)
     (set-marker (cdr (psi-emacs-state-projection-range psi-emacs--state)) nil))
@@ -211,6 +217,8 @@ When PRESERVE-TOOL-OUTPUT-VIEW-MODE is non-nil, keep the current
     (psi-emacs--clear-last-error psi-emacs--state)
     (setf (psi-emacs-state-assistant-in-progress psi-emacs--state) nil)
     (setf (psi-emacs-state-assistant-range psi-emacs--state) nil)
+    (setf (psi-emacs-state-thinking-in-progress psi-emacs--state) nil)
+    (setf (psi-emacs-state-thinking-range psi-emacs--state) nil)
     (clrhash (psi-emacs-state-tool-rows psi-emacs--state))
     (setf (psi-emacs-state-projection-widgets psi-emacs--state) nil)
     (setf (psi-emacs-state-projection-statuses psi-emacs--state) nil)

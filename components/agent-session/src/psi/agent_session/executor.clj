@@ -312,6 +312,11 @@ Also tolerates cumulative snapshots that differ near previous tail
                     (turn-sc/send-event! turn-ctx :turn/text-delta
                                          {:delta (:delta event)})
 
+                    :thinking-delta
+                    (emit-progress! progress-queue
+                                    {:event-kind :thinking-delta
+                                     :text       (:delta event)})
+
                     :toolcall-start
                     (turn-sc/send-event! turn-ctx :turn/toolcall-start
                                          {:content-index (:content-index event)

@@ -160,6 +160,7 @@ and transition to `error'."
           (psi-emacs--dispatch-request "abort" nil)
           (setf (psi-emacs-state-assistant-in-progress state) nil)
           (setf (psi-emacs-state-assistant-range state) nil)
+          (psi-emacs--clear-thinking-line)
           (psi-emacs--set-last-error state timeout-message)
           (psi-emacs--set-run-state state 'error))))))
 

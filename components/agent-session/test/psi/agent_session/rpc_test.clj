@@ -284,6 +284,12 @@
       (is (= ["assistant/delta"] (get-in f2 [:data :subscribed])))
       (is (= #{"assistant/delta"} (:subscribed-topics state))))))
 
+(deftest progress-event-thinking-delta-maps-to-rpc-thinking-topic-test
+  (let [{:keys [event data]}
+        (#'rpc/progress-event->rpc-event {:event-kind :thinking-delta :text "plan"})]
+    (is (= "assistant/thinking-delta" event))
+    (is (= "plan" (:text data)))))
+
 (deftest rpc-subscribe-ui-topics-emits-initial-widget-snapshot-test
   (testing "subscribe ui/widgets-updated emits current widget projection immediately"
     (let [ctx     (session/create-context)
@@ -683,6 +689,8 @@
                                             (.offer ^java.util.concurrent.LinkedBlockingQueue progress-queue
                                                     {:event-kind :text-delta :text "Hello" :type :agent-event})
                                             (.offer ^java.util.concurrent.LinkedBlockingQueue progress-queue
+                                                    {:event-kind :thinking-delta :text "thinking..." :type :agent-event})
+                                            (.offer ^java.util.concurrent.LinkedBlockingQueue progress-queue
                                                     {:event-kind :tool-start :tool-id "tc-1" :tool-name "read" :type :agent-event})
                                             (.offer ^java.util.concurrent.LinkedBlockingQueue progress-queue
                                                     {:event-kind :tool-result
@@ -699,7 +707,7 @@
                                              :usage {:total-tokens 3}})})
           handler (rpc/make-session-request-handler ctx)
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
-                       "{:id \"p1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/delta\" \"assistant/message\" \"tool/start\" \"tool/result\" \"session/updated\" \"footer/updated\"]}}\n"
+                       "{:id \"p1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/delta\" \"assistant/thinking-delta\" \"assistant/message\" \"tool/start\" \"tool/result\" \"session/updated\" \"footer/updated\"]}}\n"
                        "{:id \"r1\" :kind :request :op \"prompt\" :params {:message \"hi\"}}\n")
           {:keys [out-lines]} (run-loop input handler state 250)
           frames (->> out-lines
@@ -716,6 +724,7 @@
       (is (seq event-indexes))
       (is (some #(< response-index %) event-indexes))
       (is (contains? topics "assistant/delta"))
+      (is (contains? topics "assistant/thinking-delta"))
       (is (contains? topics "assistant/message"))
       (is (contains? topics "tool/start"))
       (is (contains? topics "tool/result"))

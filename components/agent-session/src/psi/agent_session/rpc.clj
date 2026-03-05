@@ -519,6 +519,7 @@
     "session/resumed"
     "session/rehydrated"
     "assistant/delta"
+    "assistant/thinking-delta"
     "assistant/message"
     "tool/start"
     "tool/delta"
@@ -537,6 +538,7 @@
    "session/resumed" #{:session-id :session-file :message-count}
    "session/rehydrated" #{:messages :tool-calls :tool-order}
    "assistant/delta" #{:text}
+   "assistant/thinking-delta" #{:text}
    "assistant/message" #{:role :content}
    "tool/start" #{:tool-id :tool-name}
    "tool/delta" #{:tool-id :arguments}
@@ -764,6 +766,10 @@
     (case k
       :text-delta
       {:event "assistant/delta"
+       :data  {:text (or (:text progress-event) "")}}
+
+      :thinking-delta
+      {:event "assistant/thinking-delta"
        :data  {:text (or (:text progress-event) "")}}
 
       :tool-start

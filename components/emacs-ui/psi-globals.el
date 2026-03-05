@@ -21,6 +21,7 @@
 (defvar psi-emacs-notification-timeout-seconds)
 
 (declare-function make-psi-emacs-state "psi" (&rest args))
+(declare-function psi-emacs--clear-thinking-line "psi-assistant-render")
 
 (declare-function markdown-mode "markdown-mode")
 (declare-function markdown-fontify-region "markdown-mode" (begin end))

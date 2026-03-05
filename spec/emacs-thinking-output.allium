@@ -1,0 +1,175 @@
+-- emacs-thinking-output.allium
+--
+-- Scope: Stream model thinking deltas through rpc-edn and render incrementally in Emacs.
+--
+-- Includes:
+--   AI provider thinking delta propagation through executor progress events
+--   RPC topic + payload contract for assistant/thinking-delta
+--   Emacs default topic subscription and incremental transcript rendering
+--   Thinking-face rendering contract for theme-appropriate display
+--
+-- Excludes:
+--   Persistence/journaling of thinking content
+--   TUI rendering changes
+--   Provider-specific reasoning semantics beyond emitted :thinking-delta chunks
+
+use "./rpc-edn.allium" as rpc
+use "./emacs-frontend.allium" as emacs
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value AssistantThinkingDeltaPayload {
+    text: String
+}
+
+value ThinkingRenderStyle {
+    face: String
+    inherits: String
+    italic: Boolean
+}
+
+------------------------------------------------------------
+-- Entities
+------------------------------------------------------------
+
+entity ThinkingStreamState {
+    inProgressText: String?
+    renderedLinePrefix: String
+    style: ThinkingRenderStyle
+
+    has_in_progress: inProgressText != null and inProgressText != ""
+}
+
+entity ThinkingStreamingFrontend {
+    frontend: emacs/EmacsFrontend
+    thinking: ThinkingStreamState
+
+    is_ready: frontend.rpc.is_ready
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    thinking_topic: String = "assistant/thinking-delta"
+    thinking_prefix: String = "ψ⋯ "
+    thinking_face_name: String = "psi-emacs-assistant-thinking-face"
+    thinking_face_inherit: String = "shadow"
+    thinking_face_italic: Boolean = true
+
+    -- Always display thinking when the runtime emits it.
+    display_when_emitted: Boolean = true
+}
+
+------------------------------------------------------------
+-- RPC Contract Extension Rules
+------------------------------------------------------------
+
+rule ThinkingDeltaTopicAddedToRpcCatalog {
+    when: RpcCatalogExtended(version, change)
+
+    requires: change.topic = config.thinking_topic
+
+    ensures: change.changeType = add-topic
+    ensures: ProtocolChangeIsAdditive(version, change)
+}
+
+rule ThinkingDeltaPayloadContract {
+    when: RpcEventProduced(eventName, payload)
+
+    requires: eventName = config.thinking_topic
+
+    ensures: EventPayloadType(payload) = AssistantThinkingDeltaPayload
+    ensures: EventPayloadRequiredKeys(payload) = ["text"]
+}
+
+rule ExecutorBridgesProviderThinkingDeltasToRpcTopic {
+    when: ProviderStreamEventObserved(eventType, eventData)
+
+    requires: eventType = thinking_delta
+
+    ensures: ExecutorProgressEventProduced(kind: "thinking-delta", text: eventData.delta)
+    ensures: RpcEventProduced(config.thinking_topic, {text: eventData.delta})
+}
+
+------------------------------------------------------------
+-- Emacs Subscription + Rendering Rules
+------------------------------------------------------------
+
+rule DefaultTopicSubscriptionIncludesThinkingDelta {
+    when: emacs/EmacsFrontendStarted(frontend)
+
+    ensures: frontend.subscribedTopics contains config.thinking_topic
+    ensures: frontend.rpc.subscribedTopics contains config.thinking_topic
+}
+
+rule ThinkingDeltaResetsStreamingWatchdog {
+    when: RpcEventReceived(frontend.rpc, config.thinking_topic, payload: AssistantThinkingDeltaPayload)
+
+    requires: frontend.runState = streaming
+
+    ensures: StreamingWatchdogReset(frontend, timeoutSeconds: emacs/config.stream_timeout_seconds)
+}
+
+rule ThinkingDeltaCreatesOrUpdatesSingleInProgressThinkingBlock {
+    when: RpcEventReceived(frontend.rpc, config.thinking_topic, payload: AssistantThinkingDeltaPayload)
+
+    ensures: frontend.thinking.inProgressText =
+        MergeAssistantStreamPayload(frontend.thinking.inProgressText, payload.text)
+    ensures: SingleInProgressThinkingBlock(frontend)
+    ensures: ThinkingBlockPrefix(frontend) = config.thinking_prefix
+}
+
+rule ThinkingDeltaUsesThemeAppropriateFace {
+    when: RpcEventReceived(frontend.rpc, config.thinking_topic, payload: AssistantThinkingDeltaPayload)
+
+    ensures: frontend.thinking.style.face = config.thinking_face_name
+    ensures: frontend.thinking.style.inherits = config.thinking_face_inherit
+    ensures: frontend.thinking.style.italic = config.thinking_face_italic
+    ensures: ThinkingBlockRenderedWithFace(frontend, config.thinking_face_name)
+}
+
+rule ThinkingDisplayFollowsEmission {
+    when: RpcEventReceived(frontend.rpc, config.thinking_topic, payload: AssistantThinkingDeltaPayload)
+
+    requires: config.display_when_emitted = true
+
+    ensures: ThinkingBlockVisible(frontend)
+}
+
+rule AssistantMessageFinalizationClearsThinkingInProgressState {
+    when: RpcEventReceived(frontend.rpc, "assistant/message", payload)
+
+    ensures: frontend.thinking.inProgressText = null
+    ensures: NoInProgressThinkingBlock(frontend)
+}
+
+------------------------------------------------------------
+-- Compatibility Rules
+------------------------------------------------------------
+
+rule UnknownThinkingTopicIsIgnoredByOlderClients {
+    when: RpcEventReceivedByClient(eventName, payload)
+
+    requires: eventName = config.thinking_topic
+    requires: ClientDoesNotRecognizeTopic(eventName)
+
+    ensures: EventIgnored(eventName, payload)
+}
+
+rule ThinkingBlocksAreEphemeral {
+    when: RpcEventReceived(frontend.rpc, "assistant/message", payload)
+
+    ensures: frontend.thinking.inProgressText = null
+    ensures: NoInProgressThinkingBlock(frontend)
+    ensures: ThinkingBlocksPersistedInTranscript(frontend) = false
+}
+
+rule ThinkingDisplayIncludesAnyEmittedChunks {
+    when: RpcEventReceived(frontend.rpc, config.thinking_topic, payload: AssistantThinkingDeltaPayload)
+
+    ensures: ThinkingBlockVisible(frontend)
+}

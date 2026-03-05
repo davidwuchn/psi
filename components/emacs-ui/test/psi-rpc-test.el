@@ -12,6 +12,7 @@
   (should
    (equal
     '("assistant/delta"
+      "assistant/thinking-delta"
       "assistant/message"
       "tool/start"
       "tool/delta"

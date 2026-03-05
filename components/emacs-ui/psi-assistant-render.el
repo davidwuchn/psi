@@ -11,12 +11,19 @@
 (defconst psi-emacs--assistant-line-prefix "ψ: "
   "Prefix rendered for assistant transcript lines.")
 
+(defconst psi-emacs--thinking-line-prefix "ψ⋯ "
+  "Prefix rendered for assistant thinking transcript lines.")
+
 (defconst psi-emacs--assistant-stream-verbatim-property 'psi-emacs-stream-verbatim
   "Text property used to mark in-progress assistant content as verbatim.")
 
 (defun psi-emacs--render-assistant-line (text)
   "Render assistant TEXT in canonical line format."
   (concat psi-emacs--assistant-line-prefix (or text "") "\n"))
+
+(defun psi-emacs--render-thinking-line (text)
+  "Render assistant thinking TEXT in canonical line format."
+  (concat psi-emacs--thinking-line-prefix (or text "") "\n"))
 
 (defun psi-emacs--apply-prefix-overlay (line-start prefix face)
   "Apply high-priority FACE overlay for PREFIX at LINE-START."
@@ -137,6 +144,52 @@ while streaming; markdown processing is deferred until finalization."
       (when follow-anchor
         (psi-emacs--set-draft-anchor-to-end)))))
 
+(defun psi-emacs--set-thinking-line (text)
+  "Create or update the single assistant thinking line with TEXT."
+  (when psi-emacs--state
+    (let ((follow-anchor (psi-emacs--draft-anchor-at-end-p))
+          (range (psi-emacs-state-thinking-range psi-emacs--state)))
+      (if (psi-emacs--assistant-range-live-p range)
+          (save-excursion
+            (let ((start (car range))
+                  (end (cdr range)))
+              (goto-char start)
+              (delete-region start end)
+              (insert (psi-emacs--render-thinking-line text))
+              (set-marker end (point))))
+        (save-excursion
+          (psi-emacs--ensure-newline-before-append)
+          (let ((start (copy-marker (point) nil))
+                (end (copy-marker (point) nil)))
+            (insert (psi-emacs--render-thinking-line text))
+            (set-marker end (point))
+            (setf (psi-emacs-state-thinking-range psi-emacs--state)
+                  (cons start end)))))
+      (let ((updated-range (psi-emacs-state-thinking-range psi-emacs--state)))
+        (when (psi-emacs--assistant-range-live-p updated-range)
+          (save-excursion
+            (goto-char (marker-position (car updated-range)))
+            (psi-emacs--apply-prefix-overlay
+             (line-beginning-position)
+             psi-emacs--thinking-line-prefix
+             'psi-emacs-assistant-thinking-face))))
+      (when follow-anchor
+        (psi-emacs--set-draft-anchor-to-end)))))
+
+(defun psi-emacs--clear-thinking-line ()
+  "Remove any in-progress assistant thinking line and clear thinking state."
+  (when psi-emacs--state
+    (let ((range (psi-emacs-state-thinking-range psi-emacs--state)))
+      (when (psi-emacs--assistant-range-live-p range)
+        (save-excursion
+          (delete-region (car range) (cdr range))))
+      (when (and (consp range) (markerp (car range)))
+        (set-marker (car range) nil))
+      (when (and (consp range) (markerp (cdr range)))
+        (set-marker (cdr range) nil))
+      (setf (psi-emacs-state-thinking-range psi-emacs--state) nil)
+      (setf (psi-emacs-state-thinking-in-progress psi-emacs--state) nil))))
+
 (defun psi-emacs--common-prefix-length (a b)
   "Return length of common prefix shared by strings A and B."
   (let* ((a* (or a ""))
@@ -185,6 +238,17 @@ Also tolerates snapshot updates that differ near the previous tail
       (setf (psi-emacs-state-assistant-in-progress psi-emacs--state) next)
       (psi-emacs--set-assistant-line next t))))
 
+(defun psi-emacs--assistant-thinking-delta (text)
+  "Apply assistant thinking delta TEXT to the in-progress thinking block."
+  (when psi-emacs--state
+    (psi-emacs--set-run-state psi-emacs--state 'streaming)
+    (psi-emacs--reset-stream-watchdog psi-emacs--state)
+    (let ((next (psi-emacs--merge-assistant-stream-text
+                 (psi-emacs-state-thinking-in-progress psi-emacs--state)
+                 text)))
+      (setf (psi-emacs-state-thinking-in-progress psi-emacs--state) next)
+      (psi-emacs--set-thinking-line next))))
+
 (defun psi-emacs--assistant-finalize (text)
   "Finalize assistant block with TEXT and clear in-progress state."
   (when psi-emacs--state
@@ -196,6 +260,7 @@ Also tolerates snapshot updates that differ near the previous tail
       (goto-char (point-max))
       (setf (psi-emacs-state-assistant-in-progress psi-emacs--state) nil)
       (setf (psi-emacs-state-assistant-range psi-emacs--state) nil)
+      (psi-emacs--clear-thinking-line)
       (psi-emacs--disarm-stream-watchdog psi-emacs--state)
       (psi-emacs--set-run-state psi-emacs--state 'idle))))
 
