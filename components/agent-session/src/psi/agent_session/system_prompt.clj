@@ -29,6 +29,18 @@
    "write"     "Create or overwrite files"
    "eql_query" "Execute an EQL query against the live session graph. Returns session state, tool info, extension status, and more."})
 
+(defn- format-graph-capabilities
+  "Format a terse capability list from :psi.graph/capabilities maps."
+  [capabilities]
+  (->> capabilities
+       (sort-by (comp str :domain))
+       (map (fn [{:keys [domain operation-count resolver-count mutation-count]}]
+              (str "- " (name (or domain :unknown))
+                   " (ops=" (or operation-count 0)
+                   ", resolvers=" (or resolver-count 0)
+                   ", mutations=" (or mutation-count 0) ")")))
+       (str/join "\n")))
+
 ;; ============================================================
 ;; Context file discovery
 ;; ============================================================
@@ -89,17 +101,20 @@
      :selected-tools     — tool name strings (default: read bash edit write eql_query)
      :context-files      — [{:path :content}] pre-loaded context files
      :skills             — [Skill] pre-loaded skills
+     :graph-capabilities — [{:domain :operation-count :resolver-count :mutation-count}]
+                           from :psi.graph/capabilities
 
    The assembled prompt is returned as a string."
   ([] (build-system-prompt {}))
   ([{:keys [cwd custom-prompt append-prompt selected-tools
-            context-files skills]}]
+            context-files skills graph-capabilities]}]
    (let [resolved-cwd   (or cwd (System/getProperty "user.dir"))
          tool-names     (or selected-tools ["read" "bash" "edit" "write" "eql_query"])
          has-read?      (some #(= "read" %) tool-names)
          has-eql-query? (some #(= "eql_query" %) tool-names)
          loaded-skills  (or skills [])
          loaded-ctx     (or context-files [])
+         loaded-caps    (or graph-capabilities [])
 
          ;; Date/time stamp
          now    (java.time.ZonedDateTime/now)
@@ -151,6 +166,11 @@
                 "- Token usage attrs: :psi.agent-session/usage-input :psi.agent-session/usage-output :psi.agent-session/usage-cache-read :psi.agent-session/usage-cache-write :psi.agent-session/context-tokens :psi.agent-session/context-window\n"
                 "- Example: eql_query(query: \"[:psi.graph/resolver-syms]\")"))
 
+         graph-capabilities-section
+         (when (and has-eql-query? (seq loaded-caps))
+           (str "\nCurrent capabilities (from :psi.graph/capabilities):\n"
+                (format-graph-capabilities loaded-caps)))
+
          ;; Append section
          append-section (when append-prompt (str "\n\n" append-prompt))
 
@@ -180,7 +200,8 @@
                 "In addition to the tools above, you may have access to other custom tools depending on the project.\n\n"
                 "Guidelines:\n"
                 guidelines-section
-                (or graph-discovery-section "")))]
+                (or graph-discovery-section "")
+                (or graph-capabilities-section "")))]
 
      (str base-prompt
           (or append-section "")

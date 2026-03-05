@@ -293,3 +293,26 @@
       (is (= 22 (:retention-snapshots @captured)))
       (is (= 44 (:retention-deltas @captured)))
       (is (string? (:cwd @captured))))))
+
+(deftest bootstrap-runtime-session-enriches-system-prompt-with-capabilities-test
+  (with-redefs [oauth/create-context (fn [] nil)
+                pt/discover-templates (fn [] [])
+                skills/discover-skills (fn [] {:skills [] :diagnostics []})
+                sys-prompt/discover-context-files (fn [_] [])
+                ext/discover-extension-paths (fn [& _] [])
+                introspection/register-resolvers! (fn [] nil)
+                memory-runtime/sync-memory-layer! (fn [_] {:ok? true})
+                session/bootstrap-session-in!
+                (fn [ctx _]
+                  (session/new-session-in! ctx)
+                  {:extension-errors [] :extension-loaded-count 0})]
+    (let [{:keys [ctx]} (#'main/bootstrap-runtime-session!
+                        {:provider :anthropic
+                         :id "test-model"
+                         :name "Test Model"
+                         :supports-reasoning false}
+                        {})
+          prompt (:psi.agent-session/system-prompt
+                  (session/query-in ctx [:psi.agent-session/system-prompt]))]
+      (is (str/includes? prompt "Current capabilities (from :psi.graph/capabilities):"))
+      (is (str/includes? prompt "- agent-session (ops=")))))

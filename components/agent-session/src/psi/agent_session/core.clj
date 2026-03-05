@@ -577,6 +577,17 @@
     (ext/dispatch-in (:extension-registry ctx) "model_select" {:model model :source :set})
     (get-session-data-in ctx)))
 
+(defn set-system-prompt-in!
+  "Set the active system prompt for this session.
+
+   Updates both session data (:system-prompt) and agent-core prompt state
+   so introspection and runtime behavior remain consistent."
+  [ctx prompt]
+  (let [p (or prompt "")]
+    (swap-session! ctx assoc :system-prompt p)
+    (agent/set-system-prompt-in! (:agent-ctx ctx) p)
+    (get-session-data-in ctx)))
+
 (defn cycle-model-in!
   "Cycle to the next available scoped model."
   [ctx direction]
@@ -1833,6 +1844,7 @@
 (defn abort!            []       (abort-in!               (global-context)))
 (defn new-session!      []       (new-session-in!         (global-context)))
 (defn set-model!        [m]      (set-model-in!           (global-context) m))
+(defn set-system-prompt! [p]     (set-system-prompt-in!   (global-context) p))
 (defn set-thinking!     [l]      (set-thinking-level-in!  (global-context) l))
 (defn cycle-thinking!   []       (cycle-thinking-level-in! (global-context)))
 (defn set-name!         [n]      (set-session-name-in!    (global-context) n))

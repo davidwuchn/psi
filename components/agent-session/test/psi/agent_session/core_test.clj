@@ -277,6 +277,14 @@
       (let [result (session/query-in ctx [:psi.agent-session/model])]
         (is (= model (:psi.agent-session/model result))))))
 
+  (testing "set-system-prompt-in! updates session + agent-core prompt state"
+    (let [ctx    (session/create-context)
+          prompt "graph-aware system prompt"
+          _      (session/set-system-prompt-in! ctx prompt)
+          result (session/query-in ctx [:psi.agent-session/system-prompt])]
+      (is (= prompt (:psi.agent-session/system-prompt result)))
+      (is (= prompt (:system-prompt (agent-core/get-data-in (:agent-ctx ctx)))))))
+
   (testing "query-in resolves graph capabilities via agent-session bridge"
     (let [ctx    (session/create-context)
           result (session/query-in ctx [:psi.graph/capabilities])]

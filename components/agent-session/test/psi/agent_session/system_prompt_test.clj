@@ -69,6 +69,20 @@
       (is (str/includes? prompt ":psi.agent-session/usage-input"))
       (is (str/includes? prompt "/test/dir"))))
 
+  (testing "includes current capabilities when graph-capabilities are provided"
+    (let [prompt (sys-prompt/build-system-prompt
+                  {:graph-capabilities [{:domain :agent-session
+                                         :operation-count 10
+                                         :resolver-count 8
+                                         :mutation-count 2}
+                                        {:domain :ai
+                                         :operation-count 4
+                                         :resolver-count 4
+                                         :mutation-count 0}]})]
+      (is (str/includes? prompt "Current capabilities (from :psi.graph/capabilities):"))
+      (is (str/includes? prompt "- agent-session (ops=10, resolvers=8, mutations=2)"))
+      (is (str/includes? prompt "- ai (ops=4, resolvers=4, mutations=0)"))))
+
   (testing "includes current date/time"
     (let [prompt (sys-prompt/build-system-prompt {})]
       (is (str/includes? prompt "Current date and time:"))))

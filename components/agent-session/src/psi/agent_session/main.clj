@@ -393,6 +393,16 @@
                                              :sync-on-git-head-change? true})]
     (print-assistant-message result)))
 
+(defn- graph-capabilities-in
+  "Best-effort read of current capability summaries from the live graph."
+  [ctx]
+  (try
+    (or (:psi.graph/capabilities (session/query-in ctx [:psi.graph/capabilities]))
+        [])
+    (catch Exception e
+      (timbre/warn e "Unable to query :psi.graph/capabilities for system prompt enrichment")
+      [])))
+
 (defn- bootstrap-runtime-session!
   "Create and bootstrap a live session context shared by CLI/TUI/RPC modes.
 
@@ -400,41 +410,50 @@
    - :event-queue optional TUI/RPC event queue
    - :memory-runtime-opts optional memory/runtime sync opts"
   [ai-model {:keys [event-queue memory-runtime-opts]}]
-  (let [oauth-ctx  (oauth/create-context)
-        templates  (pt/discover-templates)
+  (let [oauth-ctx      (oauth/create-context)
+        templates      (pt/discover-templates)
         {:keys [skills diagnostics]} (skills/discover-skills)
-        _          (doseq [d diagnostics]
-                     (timbre/warn "Skill" (:type d) ":" (:message d) (:path d)))
-        cwd        (System/getProperty "user.dir")
-        ctx-files  (sys-prompt/discover-context-files cwd)
-        system-prompt (sys-prompt/build-system-prompt
-                       {:cwd           cwd
-                        :context-files ctx-files
-                        :skills        skills})
+        _              (doseq [d diagnostics]
+                         (timbre/warn "Skill" (:type d) ":" (:message d) (:path d)))
+        cwd            (System/getProperty "user.dir")
+        ctx-files      (sys-prompt/discover-context-files cwd)
+        base-prompt    (sys-prompt/build-system-prompt
+                        {:cwd           cwd
+                         :context-files ctx-files
+                         :skills        skills})
         developer-prompt (developer-prompt-from-env)
-        recursion-ctx (recursion/create-context)
-        ctx        (session/create-context
-                    {:initial-session {:model {:provider  (name (:provider ai-model))
-                                               :id        (:id ai-model)
-                                               :reasoning (:supports-reasoning ai-model)}
-                                       :system-prompt   system-prompt}
-                     :event-queue event-queue
-                     :oauth-ctx oauth-ctx
-                     :recursion-ctx recursion-ctx})
-        ext-paths  (ext/discover-extension-paths [] cwd)
-        eql-tool   (tools/make-eql-query-tool (fn [q] (session/query-in ctx q)))
-        summary    (session/bootstrap-session-in!
-                    ctx {:register-global-query? false
-                         :base-tools             (conj (vec tools/all-tools) eql-tool)
-                         :system-prompt          system-prompt
-                         :developer-prompt       developer-prompt
-                         :developer-prompt-source (if developer-prompt :env :fallback)
-                         :templates              templates
-                         :skills                 skills
-                         :extension-paths        ext-paths})
-        _          (introspection/register-resolvers!)
-        _          (memory-runtime/sync-memory-layer! (merge {:cwd cwd}
-                                                             (or memory-runtime-opts {})))]
+        recursion-ctx  (recursion/create-context)
+        ctx            (session/create-context
+                        {:initial-session {:model {:provider  (name (:provider ai-model))
+                                                   :id        (:id ai-model)
+                                                   :reasoning (:supports-reasoning ai-model)}
+                                           :system-prompt   base-prompt}
+                         :event-queue event-queue
+                         :oauth-ctx oauth-ctx
+                         :recursion-ctx recursion-ctx})
+        ext-paths      (ext/discover-extension-paths [] cwd)
+        eql-tool       (tools/make-eql-query-tool (fn [q] (session/query-in ctx q)))
+        summary        (session/bootstrap-session-in!
+                        ctx {:register-global-query? false
+                             :base-tools             (conj (vec tools/all-tools) eql-tool)
+                             :system-prompt          base-prompt
+                             :developer-prompt       developer-prompt
+                             :developer-prompt-source (if developer-prompt :env :fallback)
+                             :templates              templates
+                             :skills                 skills
+                             :extension-paths        ext-paths})
+        _              (introspection/register-resolvers!)
+        graph-caps     (graph-capabilities-in ctx)
+        system-prompt  (sys-prompt/build-system-prompt
+                        {:cwd                cwd
+                         :context-files      ctx-files
+                         :skills             skills
+                         :graph-capabilities graph-caps})
+        _              (do
+                         (swap! (:session-data-atom ctx) assoc :system-prompt system-prompt)
+                         (agent/set-system-prompt-in! (:agent-ctx ctx) system-prompt))
+        _              (memory-runtime/sync-memory-layer! (merge {:cwd cwd}
+                                                                  (or memory-runtime-opts {})))]
     (doseq [{:keys [path error]} (:extension-errors summary)]
       (timbre/warn "Extension error:" path error))
     (when (pos? (:extension-loaded-count summary))
