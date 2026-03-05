@@ -107,7 +107,15 @@ Ordered steps toward PSI COMPLETE.
     - Partial impl: `recursion/` component (1682 lines src, 73 tests)
     - Complete: FUTURE_STATE synthesis, plan proposal, approval gate, execution, verification, learning cycle
 
-11. AI COMPLETE
+11. Step 11 — Session startup prompts (global + project)
+    - Spec: `spec/session-startup-prompts.allium`
+    - Add configurable startup prompts loaded from `~/.psi/agent/startup-prompts.edn` and `.psi/startup-prompts.edn`
+    - Deterministic merge/order with precedence `global < project`
+    - Execute prompts at new session start as visible transcript turns (startup-tagged user msgs + agent responses)
+    - No session override source; no token budget guard
+    - Expose startup telemetry attrs on EQL and ensure discoverability via `:psi.graph/*` introspection attrs
+
+12. AI COMPLETE
 
 12 step 12 - Emacs UI
     - Spec: `spec/emacs-frontend.allium`

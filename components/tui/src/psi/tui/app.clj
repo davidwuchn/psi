@@ -852,6 +852,9 @@
    `opts` map:
      :cwd                  — working directory string (for /resume)
      :current-session-file — current session file path (highlighted in selector)
+     :initial-messages     — optional initial transcript messages
+     :initial-tool-calls   — optional initial tool call map
+     :initial-tool-order   — optional initial tool row order
      :resume-fn!           — (fn [session-path]) called when user selects a session;
                               returns {:messages [...], :tool-calls {...}, :tool-order [...]}
      :dispatch-fn          — (fn [text]) → command result map or nil; central command dispatch
@@ -873,7 +876,7 @@
                                      :psi.agent-session/session-file
                                      :psi.extension/command-names]))]
        (let [queue (or (:event-queue opts) (LinkedBlockingQueue.))]
-         [{:messages              []
+         [{:messages              (vec (or (:initial-messages opts) []))
            :phase                 :idle
            :error                 nil
            :input                 (charm/text-input :prompt "刀: "
@@ -903,8 +906,8 @@
            :height                24
            ;; Live turn progress
            :stream-text           nil
-           :tool-calls            {}
-           :tool-order            []
+           :tool-calls            (or (:initial-tool-calls opts) {})
+           :tool-order            (vec (or (:initial-tool-order opts) []))
            :tools-expanded?       (ext-ui/get-tools-expanded ui-state-atom)}
           (poll-cmd queue)])))))
 
@@ -933,13 +936,19 @@
       (open-session-selector state)
 
       :new-session
-      [(-> state
-           (assoc :messages []
-                  :error    nil
-                  :force-clear? true)
-           (set-input-model (charm/text-input-reset (:input state)))
-           (update :messages conj {:role :assistant :text (:message result)}))
-       nil]
+      (let [rehydrate (:rehydrate result)
+            restored-msgs (when (map? rehydrate) (:messages rehydrate))
+            restored-tool-calls (when (map? rehydrate) (:tool-calls rehydrate))
+            restored-tool-order (when (map? rehydrate) (:tool-order rehydrate))]
+        [(-> state
+             (assoc :messages (vec (or restored-msgs []))
+                    :tool-calls (or restored-tool-calls {})
+                    :tool-order (vec (or restored-tool-order []))
+                    :error    nil
+                    :force-clear? true)
+             (set-input-model (charm/text-input-reset (:input state)))
+             (update :messages conj {:role :assistant :text (:message result)}))
+         nil])
 
       :text
       [(-> state

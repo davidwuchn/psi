@@ -274,7 +274,20 @@ Combined query:
  :psi.memory.store/providers]
 ```
 
+## Session startup prompts (Step 11 planned)
+
+- Spec added: `spec/session-startup-prompts.allium`
+- Repo config added: `.psi/startup-prompts.edn`
+- Repo startup prompt set currently includes one prompt (`engage-nucleus`)
+- Design decisions:
+  - no session override source
+  - no token budget guard
+  - startup prompts execute as visible transcript turns (UI can see prompts + responses)
+  - startup attrs must be top-level EQL attrs and discoverable via graph introspection (`:psi.graph/*`)
+
 ## Open Questions
+- Startup prompts: run as one concatenated turn or sequential turns per prompt?
+- Startup prompts: should forked sessions re-run startup prompts by default?
 - TUI: per-token streaming (currently shows spinner until agent done)
 - TUI: tool execution status display during agent loop
 - Extension UI: should dialogs support auto-dismiss timeout?

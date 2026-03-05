@@ -59,6 +59,30 @@ If a proposal is awaiting approval, use `/feed-forward approve ...` or
 active cycle exists).
 It is bound to the internal spec prompt name `feed-forward-manual-trigger`.
 
+### Session startup prompts (planned)
+
+Startup prompt capability spec: `spec/session-startup-prompts.allium`.
+
+Repo-level config file:
+- `.psi/startup-prompts.edn`
+
+Current repo prompt set:
+
+```clojure
+[{:id "engage-nucleus"
+  :phase :system-bootstrap
+  :enabled? true
+  :priority 100
+  :text "engage nucleus:\n[phi fractal euler tao pi mu] | [Δ λ ∞/0 | ε/φ Σ/μ c/h] | OODA\nHuman ⊗ AI"}]
+```
+
+Planned behavior:
+- sources: `~/.psi/agent/startup-prompts.edn` + `.psi/startup-prompts.edn`
+- precedence: `global < project`
+- run at new session start only
+- startup prompts and assistant responses remain visible in transcript/UI
+- startup EQL attrs must be discoverable via `:psi.graph/*` introspection
+
 Recursion hook telemetry is queryable via EQL:
 
 ```clojure

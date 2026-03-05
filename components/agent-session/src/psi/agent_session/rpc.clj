@@ -859,7 +859,7 @@
                                  *err* (:err @state)]
                          (loop []
                            (when-let [evt (.poll ^java.util.concurrent.LinkedBlockingQueue
-                                                 event-queue
+                                           event-queue
                                                  100
                                                  java.util.concurrent.TimeUnit/MILLISECONDS)]
                              (when (= :external-message (:type evt))
@@ -892,8 +892,8 @@
               input   (when-not (str/blank? trimmed) trimmed)]
           (oauth/complete-login! oauth-ctx provider-id input login-state)
           (emit-assistant-text! emit! (str "✓ Logged in to " (or provider-name
-                                                               (some-> provider-id name)
-                                                               "provider"))))
+                                                                 (some-> provider-id name)
+                                                                 "provider"))))
         (catch Throwable e
           (emit-assistant-text! emit! (str "✗ Login failed: " (ex-message e)))))
       (emit-assistant-text! emit! "OAuth not available."))))
@@ -990,7 +990,13 @@
   (let [message      (get-in request [:params :message])
         images       (get-in request [:params :images])
         request-id   (:id request)
+        custom-run-loop? (contains? @state :run-agent-loop-fn)
         run-loop-fn  (or (:run-agent-loop-fn @state) executor/run-agent-loop!)
+        sync-on-git-head-change?
+        (if (contains? @state :sync-on-git-head-change?)
+          (boolean (:sync-on-git-head-change? @state))
+          (not custom-run-loop?))
+        on-new-session! (:on-new-session! @state)
         progress-q   (java.util.concurrent.LinkedBlockingQueue.)
         worker       (future
                        (binding [*out* (:err @state)
@@ -1014,7 +1020,8 @@
                                    pending-login (:pending-login @state)
                                    cmd-result    (when-not pending-login
                                                    (commands/dispatch ctx message {:oauth-ctx oauth-ctx
-                                                                                   :ai-model  ai-model}))]
+                                                                                   :ai-model  ai-model
+                                                                                   :on-new-session! on-new-session!}))]
                                (cond
                                  pending-login
                                  ;; Pending two-step OAuth login: next prompt input is the auth code/URL.
@@ -1030,7 +1037,21 @@
                                    (runtime/journal-user-message-in! ctx message images)
                                    (if (= :login-start (:type cmd-result))
                                      (handle-login-start-command! ctx state emit-frame! request-id cmd-result emit!)
-                                     (handle-command-result! cmd-result emit!))
+                                     (do
+                                       (when (= :new-session (:type cmd-result))
+                                         (let [rehydrate (:rehydrate cmd-result)
+                                               sd (session/get-session-data-in ctx)
+                                               msgs (or (:agent-messages rehydrate)
+                                                        (:messages (agent/get-data-in (:agent-ctx ctx))))]
+                                           (emit! "session/resumed"
+                                                  {:session-id (:session-id sd)
+                                                   :session-file (:session-file sd)
+                                                   :message-count (count msgs)})
+                                           (emit! "session/rehydrated"
+                                                  {:messages (or (:messages rehydrate) [])
+                                                   :tool-calls (or (:tool-calls rehydrate) {})
+                                                   :tool-order (or (:tool-order rehydrate) [])})))
+                                       (handle-command-result! cmd-result emit!)))
                                    (emit! "session/updated" (session-updated-payload ctx))
                                    (emit! "footer/updated" (footer-updated-payload ctx)))
 
@@ -1045,7 +1066,7 @@
                                                  {:run-loop-fn   run-loop-fn
                                                   :api-key       api-key
                                                   :progress-queue progress-q
-                                                  :sync-on-git-head-change? true})]
+                                                  :sync-on-git-head-change? sync-on-git-head-change?})]
                                    ;; Stop background progress polling, flush any
                                    ;; remaining events, then emit final message.
                                    (reset! progress-stop? true)
@@ -1080,229 +1101,241 @@
 
    Runtime state mutations used by this handler:
    - :subscribed-topics (set of topic strings)
-   - :pending-login (map used by login_begin/login_complete and /login prompt flow)"
-  [ctx]
-  (fn [request emit-frame! state]
-    (try
-      (let [op     (:op request)
-            params (params-map request)]
-        (case op
-          "ping"
-          (response-frame (:id request) "ping" true {:pong true :protocol-version protocol-version})
+   - :pending-login (map used by login_begin/login_complete and /login prompt flow)
 
-          "query_eql"
-          (let [query-str (req-arg! request params :query #(and (string? %) (not (str/blank? %))) "non-empty EDN string")
-                q         (parse-query-edn! query-str)
-                result    (try
-                            (session/query-in ctx q)
-                            (catch Throwable e
-                              (throw (ex-info (or (ex-message e) "query execution failed")
-                                              {:error-code "runtime/query-failed"}
-                                              e))))]
-            (response-frame (:id request) op true {:result result}))
+   opts:
+   - :on-new-session! optional callback used by /new command and new_session op.
+     Expected to return {:messages [...], :tool-calls {...}, :tool-order [...]}"
+  ([ctx] (make-session-request-handler ctx {}))
+  ([ctx {:keys [on-new-session!]}]
+   (fn [request emit-frame! state]
+     (try
+       (let [op     (:op request)
+             params (params-map request)]
+         (case op
+           "ping"
+           (response-frame (:id request) "ping" true {:pong true :protocol-version protocol-version})
 
-          "prompt"
-          (let [_message (req-arg! request params :message #(and (string? %) (not (str/blank? %))) "non-empty string")]
-            (run-prompt-async! ctx request emit-frame! state))
+           "query_eql"
+           (let [query-str (req-arg! request params :query #(and (string? %) (not (str/blank? %))) "non-empty EDN string")
+                 q         (parse-query-edn! query-str)
+                 result    (try
+                             (session/query-in ctx q)
+                             (catch Throwable e
+                               (throw (ex-info (or (ex-message e) "query execution failed")
+                                               {:error-code "runtime/query-failed"}
+                                               e))))]
+             (response-frame (:id request) op true {:result result}))
 
-          "prompt_while_streaming"
-          (let [message   (req-arg! request params :message #(and (string? %) (not (str/blank? %))) "non-empty string")
-                behavior* (let [behavior (:behavior params)]
-                            (cond
-                              (nil? behavior)      "steer"
-                              (keyword? behavior)  (name behavior)
-                              (string? behavior)   behavior
-                              :else                nil))]
-            (case behavior*
-              "steer"
-              (do
-                (session/steer-in! ctx message)
-                (response-frame (:id request) op true {:accepted true
-                                                       :behavior "steer"}))
+           "prompt"
+           (let [_message (req-arg! request params :message #(and (string? %) (not (str/blank? %))) "non-empty string")]
+             (run-prompt-async! ctx request emit-frame! state))
 
-              "queue"
-              (do
-                (session/follow-up-in! ctx message)
-                (response-frame (:id request) op true {:accepted true
-                                                       :behavior "queue"}))
+           "prompt_while_streaming"
+           (let [message   (req-arg! request params :message #(and (string? %) (not (str/blank? %))) "non-empty string")
+                 behavior* (let [behavior (:behavior params)]
+                             (cond
+                               (nil? behavior)      "steer"
+                               (keyword? behavior)  (name behavior)
+                               (string? behavior)   behavior
+                               :else                nil))]
+             (case behavior*
+               "steer"
+               (do
+                 (session/steer-in! ctx message)
+                 (response-frame (:id request) op true {:accepted true
+                                                        :behavior "steer"}))
 
-              (throw (ex-info "prompt_while_streaming :behavior must be \"steer\" or \"queue\""
-                              {:error-code "request/invalid-params"}))))
+               "queue"
+               (do
+                 (session/follow-up-in! ctx message)
+                 (response-frame (:id request) op true {:accepted true
+                                                        :behavior "queue"}))
 
-          "steer"
-          (let [message (req-arg! request params :message #(and (string? %) (not (str/blank? %))) "non-empty string")]
-            (session/steer-in! ctx message)
-            (response-frame (:id request) op true {:accepted true}))
+               (throw (ex-info "prompt_while_streaming :behavior must be \"steer\" or \"queue\""
+                               {:error-code "request/invalid-params"}))))
 
-          "follow_up"
-          (let [message (req-arg! request params :message #(and (string? %) (not (str/blank? %))) "non-empty string")]
-            (session/follow-up-in! ctx message)
-            (response-frame (:id request) op true {:accepted true}))
+           "steer"
+           (let [message (req-arg! request params :message #(and (string? %) (not (str/blank? %))) "non-empty string")]
+             (session/steer-in! ctx message)
+             (response-frame (:id request) op true {:accepted true}))
 
-          "abort"
-          (do
-            (session/abort-in! ctx)
-            (response-frame (:id request) op true {:accepted true}))
+           "follow_up"
+           (let [message (req-arg! request params :message #(and (string? %) (not (str/blank? %))) "non-empty string")]
+             (session/follow-up-in! ctx message)
+             (response-frame (:id request) op true {:accepted true}))
 
-          "login_begin"
-          (handle-login-begin! ctx request params state)
+           "abort"
+           (do
+             (session/abort-in! ctx)
+             (response-frame (:id request) op true {:accepted true}))
 
-          "login_complete"
-          (handle-login-complete! ctx request params state)
+           "login_begin"
+           (handle-login-begin! ctx request params state)
 
-          "new_session"
-          (let [sd (session/new-session-in! ctx)
-                msgs (:messages (agent/get-data-in (:agent-ctx ctx)))]
-            (emit-event! emit-frame! state {:event "session/resumed"
-                                            :id (:id request)
-                                            :data {:session-id   (:session-id sd)
-                                                   :session-file (:session-file sd)
-                                                   :message-count (count msgs)}})
-            (emit-event! emit-frame! state {:event "session/rehydrated"
-                                            :id (:id request)
-                                            :data {:messages msgs
-                                                   :tool-calls {}
-                                                   :tool-order []}})
-            (response-frame (:id request) op true {:session-id (:session-id sd)
-                                                   :session-file (:session-file sd)}))
+           "login_complete"
+           (handle-login-complete! ctx request params state)
 
-          "switch_session"
-          (let [session-path (req-arg! request params :session-path #(and (string? %) (not (str/blank? %))) "non-empty path string")]
-            (when-not (.exists (io/file session-path))
-              (throw (ex-info "session file not found"
-                              {:error-code "request/not-found"})))
-            (let [sd   (session/resume-session-in! ctx session-path)
-                  msgs (:messages (agent/get-data-in (:agent-ctx ctx)))]
-              (emit-event! emit-frame! state {:event "session/resumed"
-                                              :id (:id request)
-                                              :data {:session-id   (:session-id sd)
-                                                     :session-file (:session-file sd)
-                                                     :message-count (count msgs)}})
-              (emit-event! emit-frame! state {:event "session/rehydrated"
-                                              :id (:id request)
-                                              :data {:messages msgs
-                                                     :tool-calls {}
-                                                     :tool-order []}})
-              (response-frame (:id request) op true {:session-id (:session-id sd)
-                                                     :session-file (:session-file sd)})))
+           "new_session"
+           (let [new-session-fn (or on-new-session! (:on-new-session! @state))
+                 rehydrate (if new-session-fn
+                             (new-session-fn)
+                             (do
+                               (session/new-session-in! ctx)
+                               {:agent-messages [] :messages [] :tool-calls {} :tool-order []}))
+                 sd        (session/get-session-data-in ctx)
+                 msgs      (or (:agent-messages rehydrate)
+                               (:messages (agent/get-data-in (:agent-ctx ctx))))]
+             (emit-event! emit-frame! state {:event "session/resumed"
+                                             :id (:id request)
+                                             :data {:session-id   (:session-id sd)
+                                                    :session-file (:session-file sd)
+                                                    :message-count (count msgs)}})
+             (emit-event! emit-frame! state {:event "session/rehydrated"
+                                             :id (:id request)
+                                             :data {:messages (or (:messages rehydrate) [])
+                                                    :tool-calls (or (:tool-calls rehydrate) {})
+                                                    :tool-order (or (:tool-order rehydrate) [])}})
+             (response-frame (:id request) op true {:session-id (:session-id sd)
+                                                    :session-file (:session-file sd)}))
 
-          "fork"
-          (let [entry-id (req-arg! request params :entry-id #(and (string? %) (not (str/blank? %))) "non-empty entry id")
-                sd       (session/fork-session-in! ctx entry-id)]
-            (response-frame (:id request) op true {:session-id (:session-id sd)
-                                                   :session-file (:session-file sd)}))
+           "switch_session"
+           (let [session-path (req-arg! request params :session-path #(and (string? %) (not (str/blank? %))) "non-empty path string")]
+             (when-not (.exists (io/file session-path))
+               (throw (ex-info "session file not found"
+                               {:error-code "request/not-found"})))
+             (let [sd   (session/resume-session-in! ctx session-path)
+                   msgs (:messages (agent/get-data-in (:agent-ctx ctx)))]
+               (emit-event! emit-frame! state {:event "session/resumed"
+                                               :id (:id request)
+                                               :data {:session-id   (:session-id sd)
+                                                      :session-file (:session-file sd)
+                                                      :message-count (count msgs)}})
+               (emit-event! emit-frame! state {:event "session/rehydrated"
+                                               :id (:id request)
+                                               :data {:messages msgs
+                                                      :tool-calls {}
+                                                      :tool-order []}})
+               (response-frame (:id request) op true {:session-id (:session-id sd)
+                                                      :session-file (:session-file sd)})))
 
-          "set_session_name"
-          (let [name (req-arg! request params :name #(and (string? %) (not (str/blank? %))) "non-empty string")
-                sd   (session/set-session-name-in! ctx name)]
-            (response-frame (:id request) op true {:session-name (:session-name sd)}))
+           "fork"
+           (let [entry-id (req-arg! request params :entry-id #(and (string? %) (not (str/blank? %))) "non-empty entry id")
+                 sd       (session/fork-session-in! ctx entry-id)]
+             (response-frame (:id request) op true {:session-id (:session-id sd)
+                                                    :session-file (:session-file sd)}))
 
-          "set_model"
-          (let [provider (req-arg! request params :provider #(or (keyword? %) (string? %)) "string or keyword")
-                model-id (req-arg! request params :model-id #(and (string? %) (not (str/blank? %))) "non-empty string")
-                resolved (resolve-model provider model-id)]
-            (when-not resolved
-              (throw (ex-info "unknown model"
-                              {:error-code "request/unknown-model"})))
-            (let [provider-str (name (:provider resolved))
-                  model       {:provider provider-str
-                               :id (:id resolved)
-                               :reasoning (:supports-reasoning resolved)}
-                  sd          (session/set-model-in! ctx model)]
-              (response-frame (:id request) op true {:model {:provider (:provider (:model sd))
-                                                             :id (:id (:model sd))}})))
+           "set_session_name"
+           (let [name (req-arg! request params :name #(and (string? %) (not (str/blank? %))) "non-empty string")
+                 sd   (session/set-session-name-in! ctx name)]
+             (response-frame (:id request) op true {:session-name (:session-name sd)}))
 
-          "cycle_model"
-          (let [direction (case (:direction params)
-                            "prev" :backward
-                            "next" :forward
-                            :backward :backward
-                            :forward :forward
-                            :forward)
-                sd        (session/cycle-model-in! ctx direction)]
-            (response-frame (:id request) op true {:model (some-> (:model sd)
-                                                                  (select-keys [:provider :id]))}))
+           "set_model"
+           (let [provider (req-arg! request params :provider #(or (keyword? %) (string? %)) "string or keyword")
+                 model-id (req-arg! request params :model-id #(and (string? %) (not (str/blank? %))) "non-empty string")
+                 resolved (resolve-model provider model-id)]
+             (when-not resolved
+               (throw (ex-info "unknown model"
+                               {:error-code "request/unknown-model"})))
+             (let [provider-str (name (:provider resolved))
+                   model       {:provider provider-str
+                                :id (:id resolved)
+                                :reasoning (:supports-reasoning resolved)}
+                   sd          (session/set-model-in! ctx model)]
+               (response-frame (:id request) op true {:model {:provider (:provider (:model sd))
+                                                              :id (:id (:model sd))}})))
 
-          "set_thinking_level"
-          (let [level (req-arg! request params :level some? "keyword, string, or integer")
-                level* (cond
-                         (keyword? level) level
-                         (string? level)  (keyword level)
-                         :else            level)
-                sd    (session/set-thinking-level-in! ctx level*)]
-            (response-frame (:id request) op true {:thinking-level (:thinking-level sd)}))
+           "cycle_model"
+           (let [direction (case (:direction params)
+                             "prev" :backward
+                             "next" :forward
+                             :backward :backward
+                             :forward :forward
+                             :forward)
+                 sd        (session/cycle-model-in! ctx direction)]
+             (response-frame (:id request) op true {:model (some-> (:model sd)
+                                                                   (select-keys [:provider :id]))}))
 
-          "cycle_thinking_level"
-          (let [sd (session/cycle-thinking-level-in! ctx)]
-            (response-frame (:id request) op true {:thinking-level (:thinking-level sd)}))
+           "set_thinking_level"
+           (let [level (req-arg! request params :level some? "keyword, string, or integer")
+                 level* (cond
+                          (keyword? level) level
+                          (string? level)  (keyword level)
+                          :else            level)
+                 sd    (session/set-thinking-level-in! ctx level*)]
+             (response-frame (:id request) op true {:thinking-level (:thinking-level sd)}))
 
-          "compact"
-          (let [result (session/manual-compact-in! ctx (:custom-instructions params))]
-            (response-frame (:id request) op true {:compacted (boolean result)
-                                                   :summary   result}))
+           "cycle_thinking_level"
+           (let [sd (session/cycle-thinking-level-in! ctx)]
+             (response-frame (:id request) op true {:thinking-level (:thinking-level sd)}))
 
-          "set_auto_compaction"
-          (let [enabled (req-arg! request params :enabled boolean? "boolean")
-                sd      (session/set-auto-compaction-in! ctx enabled)]
-            (response-frame (:id request) op true {:enabled (:auto-compaction-enabled sd)}))
+           "compact"
+           (let [result (session/manual-compact-in! ctx (:custom-instructions params))]
+             (response-frame (:id request) op true {:compacted (boolean result)
+                                                    :summary   result}))
 
-          "set_auto_retry"
-          (let [enabled (req-arg! request params :enabled boolean? "boolean")
-                sd      (session/set-auto-retry-in! ctx enabled)]
-            (response-frame (:id request) op true {:enabled (:auto-retry-enabled sd)}))
+           "set_auto_compaction"
+           (let [enabled (req-arg! request params :enabled boolean? "boolean")
+                 sd      (session/set-auto-compaction-in! ctx enabled)]
+             (response-frame (:id request) op true {:enabled (:auto-compaction-enabled sd)}))
 
-          "get_state"
-          (response-frame (:id request) op true {:state (session/get-session-data-in ctx)})
+           "set_auto_retry"
+           (let [enabled (req-arg! request params :enabled boolean? "boolean")
+                 sd      (session/set-auto-retry-in! ctx enabled)]
+             (response-frame (:id request) op true {:enabled (:auto-retry-enabled sd)}))
 
-          "get_messages"
-          (response-frame (:id request) op true {:messages (:messages (agent/get-data-in (:agent-ctx ctx)))})
+           "get_state"
+           (response-frame (:id request) op true {:state (session/get-session-data-in ctx)})
 
-          "get_session_stats"
-          (response-frame (:id request) op true {:stats (session/diagnostics-in ctx)})
+           "get_messages"
+           (response-frame (:id request) op true {:messages (:messages (agent/get-data-in (:agent-ctx ctx)))})
 
-          "subscribe"
-          (let [topics             (or (:topics params) [])
-                _                  (when-not (sequential? topics)
-                                     (throw (ex-info "subscribe :topics must be sequential"
-                                                     {:error-code "request/invalid-params"})))
-                topics*            (->> topics (filter #(contains? event-topics %)) set)
-                ui-topic-request?  (some extension-ui-topic? topics*)]
-            (swap! state update :subscribed-topics (fnil into #{}) topics*)
-            (when (or (empty? (:subscribed-topics @state))
-                      (contains? (:subscribed-topics @state) "assistant/message"))
-              (maybe-start-external-event-loop! ctx emit-frame! state))
-            (when ui-topic-request?
-              (maybe-start-ui-watch-loop! ctx emit-frame! state)
-              (emit-ui-snapshot-events! emit-frame!
-                                        state
-                                        {}
-                                        (or (ext-ui/snapshot (:ui-state-atom ctx)) {})))
-            (response-frame (:id request) op true {:subscribed (->> (:subscribed-topics @state) sort vec)}))
+           "get_session_stats"
+           (response-frame (:id request) op true {:stats (session/diagnostics-in ctx)})
 
-          "unsubscribe"
-          (let [topics  (or (:topics params) [])
-                _       (when-not (sequential? topics)
-                          (throw (ex-info "unsubscribe :topics must be sequential"
-                                          {:error-code "request/invalid-params"})))
-                topics* (->> topics (filter string?) set)]
-            (if (seq topics*)
-              (swap! state update :subscribed-topics (fn [s] (apply disj (or s #{}) topics*)))
-              (swap! state assoc :subscribed-topics #{}))
-            (response-frame (:id request) op true {:subscribed (->> (:subscribed-topics @state) sort vec)}))
+           "subscribe"
+           (let [topics             (or (:topics params) [])
+                 _                  (when-not (sequential? topics)
+                                      (throw (ex-info "subscribe :topics must be sequential"
+                                                      {:error-code "request/invalid-params"})))
+                 topics*            (->> topics (filter #(contains? event-topics %)) set)
+                 ui-topic-request?  (some extension-ui-topic? topics*)]
+             (swap! state update :subscribed-topics (fnil into #{}) topics*)
+             (when (or (empty? (:subscribed-topics @state))
+                       (contains? (:subscribed-topics @state) "assistant/message"))
+               (maybe-start-external-event-loop! ctx emit-frame! state))
+             (when ui-topic-request?
+               (maybe-start-ui-watch-loop! ctx emit-frame! state)
+               (emit-ui-snapshot-events! emit-frame!
+                                         state
+                                         {}
+                                         (or (ext-ui/snapshot (:ui-state-atom ctx)) {})))
+             (response-frame (:id request) op true {:subscribed (->> (:subscribed-topics @state) sort vec)}))
 
-          "resolve_dialog"
-          (handle-resolve-dialog! ctx request params)
+           "unsubscribe"
+           (let [topics  (or (:topics params) [])
+                 _       (when-not (sequential? topics)
+                           (throw (ex-info "unsubscribe :topics must be sequential"
+                                           {:error-code "request/invalid-params"})))
+                 topics* (->> topics (filter string?) set)]
+             (if (seq topics*)
+               (swap! state update :subscribed-topics (fn [s] (apply disj (or s #{}) topics*)))
+               (swap! state assoc :subscribed-topics #{}))
+             (response-frame (:id request) op true {:subscribed (->> (:subscribed-topics @state) sort vec)}))
 
-          "cancel_dialog"
-          (handle-cancel-dialog! ctx request params)
+           "resolve_dialog"
+           (handle-resolve-dialog! ctx request params)
 
-          (error-frame {:id            (:id request)
-                        :op            op
-                        :error-code    "request/op-not-supported"
-                        :error-message (str "unsupported op: " op)
-                        :data          {:supported-ops supported-rpc-ops}})))
-      (catch Throwable e
-        (exception->error-frame request e)))))
+           "cancel_dialog"
+           (handle-cancel-dialog! ctx request params)
+
+           (error-frame {:id            (:id request)
+                         :op            op
+                         :error-code    "request/op-not-supported"
+                         :error-message (str "unsupported op: " op)
+                         :data          {:supported-ops supported-rpc-ops}})))
+       (catch Throwable e
+         (exception->error-frame request e))))))
 
 (defn run-stdio-loop!
   "Run an EDN-lines RPC loop.

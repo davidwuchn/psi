@@ -4,6 +4,26 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-05 - Session Startup Prompt Spec Decisions (Step 11 planning)
+
+### λ Visible startup behavior should use transcript turns, not hidden system-prompt concatenation
+
+If startup prompts must be visible to UI (and persisted as session history), they
+should execute as normal startup-tagged user messages with normal agent responses.
+This preserves observability and avoids hidden initialization state.
+
+### λ Keep startup prompt source layering minimal at first
+
+Global + project sources with precedence `global < project` are enough for v1.
+Removing session overrides reduces hidden behavior and conflict complexity.
+
+### λ Discoverability is a first-class contract
+
+Startup prompt telemetry attrs should be top-level `:psi.agent-session/*`
+resolvers and must appear in graph introspection (`:psi.graph/resolver-syms`,
+`:psi.graph/nodes`, `:psi.graph/edges`, `:psi.graph/capabilities`,
+`:psi.graph/domain-coverage`).
+
 ## 2026-03-05 - Memory Durability Telemetry Surface (Step 9.5 completion)
 
 ### λ Provider failure telemetry must be registry-level, not provider-specific

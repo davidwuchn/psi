@@ -15,6 +15,7 @@
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.prompt-templates :as pt]
    [psi.agent-session.skills :as skills]
+   [psi.agent-session.startup-prompts :as startup-prompts]
    [psi.memory.runtime :as memory-runtime]
    [psi.recursion.core :as recursion]))
 
@@ -224,3 +225,51 @@
      (when sync-on-git-head-change?
        (safe-maybe-sync-on-git-head-change! ctx))
      result)))
+
+(defn run-startup-prompts-in!
+  "Run configured startup prompts as visible user turns.
+
+   opts:
+   - :ai-ctx
+   - :ai-model
+   - :run-loop-fn
+   - :progress-queue
+   - :session-mode (keyword, optional; default :build)
+
+   Returns {:rules [...] :applied [...]} where :applied contains
+   {:id :user-message :assistant-result} entries for each executed rule."
+  [ctx {:keys [ai-ctx ai-model run-loop-fn progress-queue session-mode]
+        :or   {session-mode :build}}]
+  (let [started-at (java.time.Instant/now)
+        _ (swap! (:session-data-atom ctx) assoc
+                 :startup-bootstrap-started-at started-at
+                 :startup-bootstrap-completed? false
+                 :startup-bootstrap-completed-at nil
+                 :startup-message-ids [])
+        rules (startup-prompts/discover-rules
+               {:cwd (:cwd ctx)
+                :session-mode session-mode})
+        applied (mapv
+                 (fn [rule]
+                   (let [text (:text rule)
+                         user-msg (journal-user-message-in! ctx text)
+                         message-id (some-> @(:journal-atom ctx) last :id)
+                         api-key (resolve-api-key-in ctx ai-model)
+                         result (run-agent-loop-in! ctx ai-ctx ai-model [user-msg]
+                                                    {:run-loop-fn run-loop-fn
+                                                     :api-key api-key
+                                                     :progress-queue progress-queue
+                                                     :sync-on-git-head-change? true})]
+                     (when message-id
+                       (swap! (:session-data-atom ctx) update :startup-message-ids conj message-id))
+                     {:id (:id rule)
+                      :user-message user-msg
+                      :assistant-result result}))
+                 rules)
+        completed-at (java.time.Instant/now)]
+    (swap! (:session-data-atom ctx) assoc
+           :startup-prompts (startup-prompts/applied-view rules)
+           :startup-bootstrap-completed? true
+           :startup-bootstrap-completed-at completed-at)
+    {:rules rules
+     :applied applied}))

@@ -52,11 +52,11 @@
    [taoensso.timbre :as timbre]
    [psi.agent-session.commands :as commands]
    [psi.agent-session.core :as session]
+   [psi.agent-session.runtime :as runtime]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.prompt-templates :as pt]
    [psi.agent-session.rpc :as rpc]
-   [psi.agent-session.runtime :as runtime]
    [psi.agent-session.skills :as skills]
    [psi.agent-session.system-prompt :as sys-prompt]
    [psi.agent-session.tools :as tools]
@@ -266,6 +266,14 @@
     (when (and (empty? text) (empty? errors))
       (println "\nψ: (no response)\n"))))
 
+(defn- print-initial-transcript!
+  [rehydrate]
+  (doseq [m (:messages rehydrate)]
+    (case (:role m)
+      :user (println (str "刀(startup): " (:text m)))
+      :assistant (println (str "ψ(startup): " (:text m)))
+      nil)))
+
 (defn- message->display-text
   "Extract display text from an agent-core message map.
    Includes :text blocks and :error blocks."
@@ -403,6 +411,24 @@
       (timbre/warn e "Unable to query :psi.graph/capabilities for system prompt enrichment")
       [])))
 
+(defn- start-new-session-with-startup!
+  "Create a fresh session branch and run configured startup prompts.
+
+   Returns map:
+   {:agent-messages [...]
+    :messages [...]
+    :tool-calls {...}
+    :tool-order [...]}"
+  [ctx ai-ctx ai-model]
+  (session/new-session-in! ctx)
+  (try
+    (runtime/run-startup-prompts-in! ctx {:ai-ctx ai-ctx :ai-model ai-model})
+    (catch Throwable t
+      (timbre/warn t "Startup prompts failed; continuing with empty startup transcript")))
+  (let [agent-messages (:messages (agent/get-data-in (:agent-ctx ctx)))
+        tui-state      (agent-messages->tui-resume-state agent-messages)]
+    (assoc tui-state :agent-messages agent-messages)))
+
 (defn- bootstrap-runtime-session!
   "Create and bootstrap a live session context shared by CLI/TUI/RPC modes.
 
@@ -453,7 +479,8 @@
                          (swap! (:session-data-atom ctx) assoc :system-prompt system-prompt)
                          (agent/set-system-prompt-in! (:agent-ctx ctx) system-prompt))
         _              (memory-runtime/sync-memory-layer! (merge {:cwd cwd}
-                                                                  (or memory-runtime-opts {})))]
+                                                                  (or memory-runtime-opts {})))
+        startup-rehydrate (start-new-session-with-startup! ctx nil ai-model)]
     (doseq [{:keys [path error]} (:extension-errors summary)]
       (timbre/warn "Extension error:" path error))
     (when (pos? (:extension-loaded-count summary))
@@ -463,6 +490,7 @@
      :templates templates
      :skills    skills
      :summary   summary
+     :startup-rehydrate startup-rehydrate
      :cwd       cwd}))
 
 ;; ============================================================
@@ -478,13 +506,17 @@
    (let [ai-model  (resolve-model model-key)
          ;; ai context: nil signals the executor to use the public ai/stream-response API
          ai-ctx    nil
-         {:keys [ctx oauth-ctx templates skills]}
+         {:keys [ctx oauth-ctx templates skills startup-rehydrate]}
          (bootstrap-runtime-session! ai-model {:memory-runtime-opts memory-runtime-opts})]
      ;; Expose state for nREPL introspection
      (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model
                             :oauth-ctx oauth-ctx})
      (print-banner ai-model templates skills ctx)
-     (let [cmd-opts {:oauth-ctx oauth-ctx :ai-model ai-model}]
+     (print-initial-transcript! startup-rehydrate)
+     (let [cmd-opts {:oauth-ctx oauth-ctx
+                     :ai-model ai-model
+                     :on-new-session! (fn []
+                                        (start-new-session-with-startup! ctx ai-ctx ai-model))}]
        (loop []
          (print "刀: ")
          (flush)
@@ -513,8 +545,11 @@
                    (recur))
 
                (#{:text :new-session :logout} (:type result))
-               (do (println (str "\n" (:message result) "\n"))
-                   (recur))
+               (do
+                 (when (= :new-session (:type result))
+                   (print-initial-transcript! (:rehydrate result)))
+                 (println (str "\n" (:message result) "\n"))
+                 (recur))
 
                (= :login-start (:type result))
                (do (println "\n── OAuth Login ────────────────────────")
@@ -559,6 +594,12 @@
 ;; TUI session (charm.clj Elm Architecture)
 ;; ============================================================
 
+(defn new-session-with-startup-in!
+  "Public helper for runtimes/tests: create new session and run startup prompts.
+   Returns rehydrate payload map with :agent-messages + TUI projection."
+  [ctx ai-ctx ai-model]
+  (start-new-session-with-startup! ctx ai-ctx ai-model))
+
 (defn run-tui-session
   "Create a session and run it as a full-screen TUI via charm.clj.
   Blocks until the user exits (Ctrl+C second press or Ctrl+D on empty input)."
@@ -568,10 +609,10 @@
    (let [ai-model  (resolve-model model-key)
          ai-ctx    nil
          event-queue (java.util.concurrent.LinkedBlockingQueue.)
-         {:keys [ctx oauth-ctx cwd]} (bootstrap-runtime-session!
-                                      ai-model
-                                      {:event-queue event-queue
-                                       :memory-runtime-opts memory-runtime-opts})
+         {:keys [ctx oauth-ctx cwd startup-rehydrate]} (bootstrap-runtime-session!
+                                                        ai-model
+                                                        {:event-queue event-queue
+                                                         :memory-runtime-opts memory-runtime-opts})
 
          ;; Expose state for nREPL introspection
          _         (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model
@@ -597,7 +638,10 @@
                            :tool-calls {}
                            :tool-order []})))
 
-         cmd-opts  {:oauth-ctx oauth-ctx :ai-model ai-model}
+         cmd-opts  {:oauth-ctx oauth-ctx
+                    :ai-model ai-model
+                    :on-new-session! (fn []
+                                       (start-new-session-with-startup! ctx ai-ctx ai-model))}
 
          ;; dispatch-fn — called synchronously by the TUI on submit.
          ;; Returns a command result map, or nil if not a command.
@@ -682,6 +726,9 @@
                       :double-escape-action :none
                       :cwd                  cwd
                       :current-session-file (:session-file (session/get-session-data-in ctx))
+                      :initial-messages     (vec (or (:messages startup-rehydrate) []))
+                      :initial-tool-calls   (or (:tool-calls startup-rehydrate) {})
+                      :initial-tool-order   (vec (or (:tool-order startup-rehydrate) []))
                       :resume-fn!           resume-fn!
                       :event-queue          event-queue
                       :alt-screen           false}))))
@@ -708,7 +755,9 @@
          oauth-ctx   (:oauth-ctx boot)
          state       (atom {:handshake-server-info-fn (fn [] (rpc/session->handshake-server-info ctx))
                             :subscribed-topics #{}
-                            :rpc-ai-model ai-model})
+                            :rpc-ai-model ai-model
+                            :on-new-session! (fn []
+                                               (start-new-session-with-startup! ctx nil ai-model))})
          request-handler (rpc/make-session-request-handler ctx)]
      (reset! session-state {:ctx ctx :ai-model ai-model :oauth-ctx oauth-ctx})
      (rpc/run-stdio-loop! {:request-handler request-handler

@@ -405,7 +405,12 @@
                         :session-name      nil
                         :steering-messages []
                         :follow-up-messages []
-                        :retry-attempt     0)
+                        :retry-attempt     0
+                        :startup-prompts   []
+                        :startup-bootstrap-completed? false
+                        :startup-bootstrap-started-at nil
+                        :startup-bootstrap-completed-at nil
+                        :startup-message-ids [])
          ;; Reset journal and flush state for the new session
          (reset! (:journal-atom ctx) [])
          (when (:persist? ctx)
@@ -488,7 +493,12 @@
     (let [messages (persist/messages-up-to journal entry-id)]
       (swap-session! ctx assoc
                      :session-id (str (java.util.UUID/randomUUID))
-                     :session-file nil)
+                     :session-file nil
+                     :startup-prompts []
+                     :startup-bootstrap-completed? false
+                     :startup-bootstrap-started-at nil
+                     :startup-bootstrap-completed-at nil
+                     :startup-message-ids [])
       (agent/replace-messages-in! (:agent-ctx ctx) (vec messages))
       (ext/dispatch-in reg "session_fork" {})
       (get-session-data-in ctx))))

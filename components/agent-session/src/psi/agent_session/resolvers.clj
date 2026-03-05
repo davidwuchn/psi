@@ -204,7 +204,15 @@
    :psi.startup/extension-loaded-count      — extensions loaded successfully
    :psi.startup/extension-error-count       — extension load errors
    :psi.startup/extension-errors            — [{:path :error}] extension failures
-   :psi.startup/mutations                   — mutation symbols used by bootstrap"
+   :psi.startup/mutations                   — mutation symbols used by bootstrap
+
+   Session startup prompt telemetry
+   ───────────────────────────────
+   :psi.agent-session/startup-prompts
+   :psi.agent-session/startup-bootstrap-completed?
+   :psi.agent-session/startup-bootstrap-started-at
+   :psi.agent-session/startup-bootstrap-completed-at
+   :psi.agent-session/startup-message-ids"
   (:require
    [clojure.set :as set]
    [clojure.string :as str]
@@ -1314,6 +1322,22 @@
   {:psi.agent-session/model-reasoning
    (boolean (:reasoning (:model @(:session-data-atom agent-session-ctx))))})
 
+(pco/defresolver startup-prompts-resolver
+  "Resolve startup prompt execution telemetry for the current session."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.agent-session/startup-prompts
+                 :psi.agent-session/startup-bootstrap-completed?
+                 :psi.agent-session/startup-bootstrap-started-at
+                 :psi.agent-session/startup-bootstrap-completed-at
+                 :psi.agent-session/startup-message-ids]}
+  (let [sd @(:session-data-atom agent-session-ctx)]
+    {:psi.agent-session/startup-prompts               (:startup-prompts sd [])
+     :psi.agent-session/startup-bootstrap-completed?  (boolean (:startup-bootstrap-completed? sd))
+     :psi.agent-session/startup-bootstrap-started-at  (:startup-bootstrap-started-at sd)
+     :psi.agent-session/startup-bootstrap-completed-at (:startup-bootstrap-completed-at sd)
+     :psi.agent-session/startup-message-ids           (:startup-message-ids sd [])}))
+
 (pco/defresolver startup-bootstrap-resolver
   "Resolve startup bootstrap summary and derived fields."
   [{:keys [psi/agent-session-ctx]}]
@@ -1420,6 +1444,7 @@
    agent-session-model-provider
    agent-session-model-id
    agent-session-model-reasoning
+   startup-prompts-resolver
    startup-bootstrap-resolver
    query-graph-bridge
    agent-session-tool-calls

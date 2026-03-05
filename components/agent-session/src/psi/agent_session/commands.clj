@@ -6,7 +6,7 @@
 
    Result types:
      :text          — {:type :text :message string}
-     :new-session   — {:type :new-session :message string}
+     :new-session   — {:type :new-session :message string :rehydrate {:messages [...] :tool-calls {...} :tool-order [...]}}
      :quit          — {:type :quit}
      :resume        — {:type :resume}
      :login-start   — {:type :login-start :provider map :url string :login-state map
@@ -408,7 +408,7 @@
                   :ai-model    resolved model map}
 
    Result types — see ns docstring."
-  [ctx text {:keys [oauth-ctx ai-model]}]
+  [ctx text {:keys [oauth-ctx ai-model on-new-session!]}]
   (let [trimmed (str/trim text)]
     (cond
       ;; Quit
@@ -417,8 +417,14 @@
 
       ;; New session
       (= trimmed "/new")
-      (do (session/new-session-in! ctx)
-          {:type :new-session :message "[New session started]"})
+      (let [rehydrate (if on-new-session!
+                        (on-new-session!)
+                        (do
+                          (session/new-session-in! ctx)
+                          {:messages [] :tool-calls {} :tool-order []}))]
+        {:type :new-session
+         :message "[New session started]"
+         :rehydrate rehydrate})
 
       ;; Resume
       (= trimmed "/resume")
