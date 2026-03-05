@@ -52,6 +52,84 @@
          (with-current-buffer buffer
            (psi-emacs--handle-new-session-response frame)))))))
 
+(defun psi-emacs--session-model-default-provider ()
+  "Return current session model provider for interactive defaults."
+  (or (and psi-emacs--state
+           (psi-emacs-state-session-model-provider psi-emacs--state))
+      ""))
+
+(defun psi-emacs--session-model-default-id ()
+  "Return current session model id for interactive defaults."
+  (or (and psi-emacs--state
+           (psi-emacs-state-session-model-id psi-emacs--state))
+      ""))
+
+(defun psi-emacs--session-thinking-level-default-text ()
+  "Return current session thinking level text for interactive defaults."
+  (let ((level (and psi-emacs--state
+                    (psi-emacs-state-session-thinking-level psi-emacs--state))))
+    (if level
+        (format "%s" level)
+      "")))
+
+(defun psi-emacs--trim-required-input (label value)
+  "Return trimmed VALUE text; raise user error when blank for LABEL."
+  (let ((text (string-trim (format "%s" (or value "")))))
+    (when (string-empty-p text)
+      (user-error "%s is required" label))
+    text))
+
+(defun psi-emacs-set-model (provider model-id)
+  "Select PROVIDER/MODEL-ID via `set_model` RPC op."
+  (interactive
+   (list (read-string "Model provider: " (psi-emacs--session-model-default-provider))
+         (read-string "Model id: " (psi-emacs--session-model-default-id))))
+  (let ((provider* (psi-emacs--trim-required-input "Model provider" provider))
+        (model-id* (psi-emacs--trim-required-input "Model id" model-id)))
+    (when (psi-emacs--dispatch-request
+           "set_model"
+           `((:provider . ,provider*)
+             (:model-id . ,model-id*)))
+      (message "psi: requested model (%s) %s" provider* model-id*))))
+
+(defun psi-emacs-cycle-model (&optional direction)
+  "Cycle model in DIRECTION (`next` or `prev`) via `cycle_model` RPC."
+  (interactive
+   (list (completing-read "Cycle model direction: " '("next" "prev") nil t nil nil "next")))
+  (let ((direction* (string-trim (format "%s" (or direction "next")))))
+    (unless (member direction* '("next" "prev"))
+      (user-error "Direction must be \"next\" or \"prev\""))
+    (when (psi-emacs--dispatch-request
+           "cycle_model"
+           `((:direction . ,direction*)))
+      (message "psi: requested model cycle (%s)" direction*))))
+
+(defun psi-emacs-cycle-model-next ()
+  "Cycle to the next available model via `cycle_model`."
+  (interactive)
+  (psi-emacs-cycle-model "next"))
+
+(defun psi-emacs-cycle-model-prev ()
+  "Cycle to the previous available model via `cycle_model`."
+  (interactive)
+  (psi-emacs-cycle-model "prev"))
+
+(defun psi-emacs-set-thinking-level (level)
+  "Set thinking LEVEL via `set_thinking_level` RPC op."
+  (interactive
+   (list (read-string "Thinking level: " (psi-emacs--session-thinking-level-default-text))))
+  (let ((level* (psi-emacs--trim-required-input "Thinking level" level)))
+    (when (psi-emacs--dispatch-request
+           "set_thinking_level"
+           `((:level . ,level*)))
+      (message "psi: requested thinking level %s" level*))))
+
+(defun psi-emacs-cycle-thinking-level ()
+  "Cycle thinking level via `cycle_thinking_level` RPC op."
+  (interactive)
+  (when (psi-emacs--dispatch-request "cycle_thinking_level" nil)
+    (message "psi: requested thinking level cycle")))
+
 (defun psi-emacs--resume-args-from-message (message)
   "Extract `/resume` argument tail from MESSAGE.
 

@@ -40,7 +40,14 @@ Fallback mode when markdown-mode is unavailable."
   (define-key map (kbd "C-c C-q") #'psi-emacs-queue-from-buffer)
   (define-key map (kbd "C-c C-k") #'psi-emacs-abort)
   (define-key map (kbd "C-c C-r") #'psi-emacs-reconnect)
-  (define-key map (kbd "C-c C-t") #'psi-emacs-toggle-tool-output-view))
+  (define-key map (kbd "C-c C-t") #'psi-emacs-toggle-tool-output-view)
+
+  ;; Model/thinking controls.
+  (define-key map (kbd "C-c m m") #'psi-emacs-set-model)
+  (define-key map (kbd "C-c m n") #'psi-emacs-cycle-model-next)
+  (define-key map (kbd "C-c m p") #'psi-emacs-cycle-model-prev)
+  (define-key map (kbd "C-c m t") #'psi-emacs-set-thinking-level)
+  (define-key map (kbd "C-c m c") #'psi-emacs-cycle-thinking-level))
 
 (provide 'psi-mode)
 

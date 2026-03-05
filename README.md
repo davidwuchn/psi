@@ -145,6 +145,11 @@ In `psi-emacs-mode`:
 - `C-c C-k` abort active streaming (`abort`)
 - `C-c C-r` reconnect (prompts before clearing edited buffer)
 - `C-c C-t` toggle tool-output view mode (collapsed ↔ expanded); also available as `M-x psi-emacs-toggle-tool-output-view`
+- `C-c m m` set model (`M-x psi-emacs-set-model`)
+- `C-c m n` cycle model next (`M-x psi-emacs-cycle-model-next`)
+- `C-c m p` cycle model previous (`M-x psi-emacs-cycle-model-prev`)
+- `C-c m t` set thinking level (`M-x psi-emacs-set-thinking-level`)
+- `C-c m c` cycle thinking level (`M-x psi-emacs-cycle-thinking-level`)
 
 Compose source rules:
 
@@ -204,7 +209,6 @@ Emacs subscribes to the full default topic set (core + extension/footer topics):
 
 ### Still deferred in Emacs frontend
 
-- model/thinking controls keybindings/commands (`set_model`, `set_thinking_level`)
 - compaction/auto-compact/auto-retry controls in-buffer UX
 - richer multi-session/fork/tree command discoverability UI
 - reconnect-time resume picker / auto-resume

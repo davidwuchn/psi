@@ -93,6 +93,20 @@ requests are rejected immediately:
 - `last-error` and the persistent `Error: ...` transcript line are updated
 - draft text is preserved (not consumed)
 
+## Model and thinking controls
+
+Model/thinking controls dispatch canonical RPC ops and rely on `session/updated`
+projection for header/state updates.
+
+- `C-c m m` / `M-x psi-emacs-set-model` -> `set_model`
+- `C-c m n` / `M-x psi-emacs-cycle-model-next` -> `cycle_model` (`direction=next`)
+- `C-c m p` / `M-x psi-emacs-cycle-model-prev` -> `cycle_model` (`direction=prev`)
+- `C-c m t` / `M-x psi-emacs-set-thinking-level` -> `set_thinking_level`
+- `C-c m c` / `M-x psi-emacs-cycle-thinking-level` -> `cycle_thinking_level`
+
+When transport is not ready, these requests are rejected by the same deterministic
+transport guard used for compose send/queue.
+
 ## Extension dialog response flow
 
 On `ui/dialog-requested`, Emacs maps dialog kinds to prompts and sends exactly one response op:

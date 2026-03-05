@@ -216,6 +216,15 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
+(ert-deftest psi-model-thinking-keybindings-are-installed ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (should (eq #'psi-emacs-set-model (key-binding (kbd "C-c m m"))))
+    (should (eq #'psi-emacs-cycle-model-next (key-binding (kbd "C-c m n"))))
+    (should (eq #'psi-emacs-cycle-model-prev (key-binding (kbd "C-c m p"))))
+    (should (eq #'psi-emacs-set-thinking-level (key-binding (kbd "C-c m t"))))
+    (should (eq #'psi-emacs-cycle-thinking-level (key-binding (kbd "C-c m c"))))))
+
 (ert-deftest psi-streaming-p-uses-explicit-run-state ()
   (with-temp-buffer
     (psi-emacs-mode)
@@ -313,6 +322,59 @@
       (should (equal "Cannot run `prompt_while_streaming`: transport is disconnected. Reconnect with C-c C-r."
                      (psi-emacs-state-last-error psi-emacs--state)))
       (should (string-match-p "Error: Cannot run `prompt_while_streaming`" (buffer-string))))))
+
+(ert-deftest psi-set-model-dispatches-canonical-rpc-op ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (let ((calls (psi-test--capture-request-sends
+                  (lambda ()
+                    (psi-emacs-set-model "openai" "gpt-5.3-codex")))))
+      (should (equal '(("set_model" ((:provider . "openai") (:model-id . "gpt-5.3-codex"))))
+                     calls))
+      (should (eq 'idle (psi-emacs-state-run-state psi-emacs--state))))))
+
+(ert-deftest psi-cycle-model-dispatches-canonical-rpc-op ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (let ((calls (psi-test--capture-request-sends
+                  (lambda ()
+                    (psi-emacs-cycle-model-next)
+                    (psi-emacs-cycle-model-prev)))))
+      (should (equal '(("cycle_model" ((:direction . "next")))
+                       ("cycle_model" ((:direction . "prev"))))
+                     calls)))))
+
+(ert-deftest psi-set-thinking-level-and-cycle-dispatch-canonical-rpc-ops ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (let ((calls (psi-test--capture-request-sends
+                  (lambda ()
+                    (psi-emacs-set-thinking-level "high")
+                    (psi-emacs-cycle-thinking-level)))))
+      (should (equal '(("set_thinking_level" ((:level . "high")))
+                       ("cycle_thinking_level" nil))
+                     calls)))))
+
+(ert-deftest psi-model-thinking-controls-blocked-when-transport-not-ready ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-rpc-client psi-emacs--state)
+          (psi-rpc-make-client :transport-state 'disconnected))
+    (setf (psi-emacs-state-transport-state psi-emacs--state) 'disconnected)
+    (let ((calls nil))
+      (cl-letf (((symbol-value 'psi-emacs--send-request-function)
+                 (lambda (_state op params &optional _callback)
+                   (push (list op params) calls))))
+        (psi-emacs-set-model "openai" "gpt-5"))
+      (should (equal '() calls))
+      (should (eq 'error (psi-emacs-state-run-state psi-emacs--state)))
+      (should (equal "Cannot run `set_model`: transport is disconnected. Reconnect with C-c C-r."
+                     (psi-emacs-state-last-error psi-emacs--state)))
+      (should (string-match-p "Error: Cannot run `set_model`" (buffer-string))))))
 
 (ert-deftest psi-idle-send-and-queue-share-slash-handler-path ()
   (with-temp-buffer
