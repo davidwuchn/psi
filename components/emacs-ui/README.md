@@ -2,6 +2,14 @@
 
 This frontend runs psi over `--rpc-edn` in a dedicated Emacs buffer.
 
+## Developer checks
+
+Run repeatable frontend checks from repo root:
+
+- `bb emacs:test` — run ERT suites (`psi-test.el`, `psi-rpc-test.el`)
+- `bb emacs:byte-compile` — byte-compile frontend modules (auto-cleans `.elc`)
+- `bb emacs:check` — run byte-compile + tests
+
 ## Topic subscription
 
 Emacs subscribes to the default topic set (`psi-rpc-default-topics`):

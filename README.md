@@ -125,6 +125,14 @@ owned subprocess per dedicated buffer using:
 
 - `clojure -M:run --rpc-edn`
 
+### Developer checks
+
+From repo root:
+
+- `bb emacs:test`
+- `bb emacs:byte-compile`
+- `bb emacs:check`
+
 ### Compose and keybindings
 
 In `psi-emacs-mode`:

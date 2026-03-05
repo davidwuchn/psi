@@ -1,0 +1,14 @@
+{:tasks
+ {:requires ([babashka.tasks :refer [shell]])
+
+  emacs:test
+  {:doc  "Run Emacs frontend ERT suites (psi-rpc + psi)."
+   :task (shell "emacs -Q --batch -L components/emacs-ui -l components/emacs-ui/test/psi-rpc-test.el -l components/emacs-ui/test/psi-test.el -f ert-run-tests-batch-and-exit")}
+
+  emacs:byte-compile
+  {:doc  "Byte-compile Emacs frontend modules and clean generated .elc artifacts."
+   :task (shell "bash -lc 'set -euo pipefail; trap \"rm -f components/emacs-ui/*.elc\" EXIT; emacs -Q --batch -L components/emacs-ui -f batch-byte-compile components/emacs-ui/psi.el components/emacs-ui/psi-globals.el components/emacs-ui/psi-entry.el components/emacs-ui/psi-lifecycle.el components/emacs-ui/psi-events.el components/emacs-ui/psi-compose.el components/emacs-ui/psi-run-state.el components/emacs-ui/psi-assistant-render.el components/emacs-ui/psi-tool-rows.el components/emacs-ui/psi-session-commands.el components/emacs-ui/psi-projection.el components/emacs-ui/psi-dialogs.el components/emacs-ui/psi-mode.el components/emacs-ui/psi-rpc.el'")}
+
+  emacs:check
+  {:doc     "Run byte-compile guard and Emacs frontend tests."
+   :depends [emacs:byte-compile emacs:test]}}}
