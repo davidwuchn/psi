@@ -69,6 +69,27 @@
       (is (= "Clojure-LSP clojure-lsp TS+ESL,Prett"
              (:status-line payload))))))
 
+(deftest session-updated-payload-includes-model-metadata-test
+  (testing "session payload includes model metadata for frontend header projection"
+    (let [ctx (session/create-context {:initial-session {:session-id "sess-123"
+                                                         :model {:provider "openai"
+                                                                 :id "gpt-5.3-codex"
+                                                                 :reasoning true}
+                                                         :thinking-level :xhigh
+                                                         :is-streaming true
+                                                         :is-compacting false
+                                                         :retry-attempt 2
+                                                         :steering-messages [{:content "a"}]
+                                                         :follow-up-messages [{:content "b"}]}})
+          payload (#'rpc/session-updated-payload ctx)]
+      (is (= "sess-123" (:session-id payload)))
+      (is (= "openai" (:model-provider payload)))
+      (is (= "gpt-5.3-codex" (:model-id payload)))
+      (is (= true (:model-reasoning payload)))
+      (is (= "xhigh" (:thinking-level payload)))
+      (is (= 2 (:pending-message-count payload)))
+      (is (= 2 (:retry-attempt payload))))))
+
 (deftest run-stdio-loop-validates-request-envelopes-test
   (testing "returns canonical protocol/transport errors for invalid input frames"
     (let [{:keys [out-lines]}

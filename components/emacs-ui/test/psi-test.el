@@ -1108,6 +1108,65 @@
     (psi-emacs--set-run-state psi-emacs--state 'error)
     (should (string= "psi [disconnected/starting/error] tools:collapsed" header-line-format))))
 
+(ert-deftest psi-session-updated-projects-model-label-into-header-line ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (psi-emacs--handle-rpc-event
+     '((:event . "session/updated")
+       (:data . ((:session-id . "sess-1")
+                 (:phase . "idle")
+                 (:is-streaming . t)
+                 (:is-compacting . nil)
+                 (:pending-message-count . 2)
+                 (:retry-attempt . 1)
+                 (:model-provider . "openai")
+                 (:model-id . "gpt-5.3-codex")
+                 (:model-reasoning . t)
+                 (:thinking-level . "high")))))
+    (should (eq 'streaming (psi-emacs-state-run-state psi-emacs--state)))
+    (should (equal "(openai) gpt-5.3-codex"
+                   (psi-emacs-state-header-model-label psi-emacs--state)))
+    (should (string= "psi [disconnected/starting/streaming] tools:collapsed model:(openai) gpt-5.3-codex"
+                     header-line-format))))
+
+(ert-deftest psi-session-updated-status-diagnostics-include-session-summary ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (psi-emacs--handle-rpc-event
+     '((:event . "session/updated")
+       (:data . ((:session-id . "sess-2")
+                 (:phase . "idle")
+                 (:is-streaming . nil)
+                 (:is-compacting . nil)
+                 (:pending-message-count . 0)
+                 (:retry-attempt . 0)
+                 (:model-provider . "anthropic")
+                 (:model-id . "claude-sonnet")))))
+    (let ((status (psi-emacs--status-diagnostics-string psi-emacs--state)))
+      (should (string-match-p "session: sess-2" status))
+      (should (string-match-p "phase:idle" status))
+      (should (string-match-p "pending:0" status))
+      (should (string-match-p "retry:0" status)))))
+
+(ert-deftest psi-session-updated-does-not-overwrite-error-run-state ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (psi-emacs--set-run-state psi-emacs--state 'error)
+    (psi-emacs--handle-rpc-event
+     '((:event . "session/updated")
+       (:data . ((:session-id . "sess-3")
+                 (:phase . "streaming")
+                 (:is-streaming . t)
+                 (:pending-message-count . 1)
+                 (:retry-attempt . 0)
+                 (:model-provider . "openai")
+                 (:model-id . "gpt-5")))))
+    (should (eq 'error (psi-emacs-state-run-state psi-emacs--state)))
+    (should (string-match-p "model:(openai) gpt-5" header-line-format))))
+
 (ert-deftest psi-error-line-upsert-replaces-previous ()
   (with-temp-buffer
     (psi-emacs-mode)
@@ -1165,6 +1224,8 @@
     (puthash "t1" (list :id "t1" :stage "result" :text "done")
              (psi-emacs-state-tool-rows psi-emacs--state))
     (psi-emacs--set-last-error psi-emacs--state "old error")
+    (setf (psi-emacs-state-session-id psi-emacs--state) "sess-old")
+    (setf (psi-emacs-state-header-model-label psi-emacs--state) "(openai) gpt-old")
     (let ((started nil)
           (stop-called nil))
       (setf (psi-emacs-state-rpc-client psi-emacs--state) (psi-rpc-make-client))
@@ -1182,6 +1243,8 @@
       (should-not (psi-emacs-state-assistant-in-progress psi-emacs--state))
       (should-not (psi-emacs-state-last-error psi-emacs--state))
       (should-not (psi-emacs-state-error-line-range psi-emacs--state))
+      (should-not (psi-emacs-state-session-id psi-emacs--state))
+      (should-not (psi-emacs-state-header-model-label psi-emacs--state))
       (should (zerop (hash-table-count (psi-emacs-state-tool-rows psi-emacs--state)))))))
 
 (ert-deftest psi-reconnect-does-not-auto-resume ()

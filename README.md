@@ -154,6 +154,10 @@ Compose source rules:
 - ANSI tool output is rendered with faces (no raw escape noise).
 - Header line shows minimal transport + process state + run-state and tool mode:
   `psi [transport/process/run-state] tools:<mode>`.
+  When `session/updated` includes model metadata, header appends
+  `model:(<provider>) <model-id>`.
+- `session/updated` is projected into frontend state for `/status`
+  diagnostics (session id/phase, streaming+compacting flags, pending, retry).
 - RPC errors are surfaced in minibuffer **and** mirrored as one persistent
   in-buffer `Error: ...` line.
 

@@ -555,14 +555,22 @@
 
 (defn- session-updated-payload
   [ctx]
-  (let [sd (session/get-session-data-in ctx)]
+  (let [sd             (session/get-session-data-in ctx)
+        model          (:model sd)
+        thinking-level (:thinking-level sd)]
     {:session-id            (:session-id sd)
+     :session-file          (:session-file sd)
+     :session-name          (:session-name sd)
      :phase                 (some-> (session/sc-phase-in ctx) name)
      :is-streaming          (boolean (:is-streaming sd))
      :is-compacting         (boolean (:is-compacting sd))
      :pending-message-count (+ (count (:steering-messages sd))
                                (count (:follow-up-messages sd)))
-     :retry-attempt         (or (:retry-attempt sd) 0)}))
+     :retry-attempt         (or (:retry-attempt sd) 0)
+     :model-provider        (:provider model)
+     :model-id              (:id model)
+     :model-reasoning       (boolean (:reasoning model))
+     :thinking-level        (some-> thinking-level name)}))
 
 (def ^:private footer-query
   [:psi.agent-session/cwd

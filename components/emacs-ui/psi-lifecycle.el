@@ -35,7 +35,18 @@
    :projection-range nil
    :draft-anchor nil
    :rpc-client nil
-   :tool-output-view-mode 'collapsed))
+   :tool-output-view-mode 'collapsed
+   :session-id nil
+   :session-phase nil
+   :session-is-streaming nil
+   :session-is-compacting nil
+   :session-pending-message-count 0
+   :session-retry-attempt 0
+   :session-model-provider nil
+   :session-model-id nil
+   :session-model-reasoning nil
+   :session-thinking-level nil
+   :header-model-label nil))
 
 (defun psi-emacs--on-rpc-state-change (buffer client)
   "Apply CLIENT state changes to BUFFER-local frontend state."
@@ -194,6 +205,17 @@ reconnect the user starts with the default collapsed view."
     (setf (psi-emacs-state-draft-anchor psi-emacs--state)
           (copy-marker (point-max) nil))
     (setf (psi-emacs-state-tool-output-view-mode psi-emacs--state) 'collapsed)
+    (setf (psi-emacs-state-session-id psi-emacs--state) nil)
+    (setf (psi-emacs-state-session-phase psi-emacs--state) nil)
+    (setf (psi-emacs-state-session-is-streaming psi-emacs--state) nil)
+    (setf (psi-emacs-state-session-is-compacting psi-emacs--state) nil)
+    (setf (psi-emacs-state-session-pending-message-count psi-emacs--state) 0)
+    (setf (psi-emacs-state-session-retry-attempt psi-emacs--state) 0)
+    (setf (psi-emacs-state-session-model-provider psi-emacs--state) nil)
+    (setf (psi-emacs-state-session-model-id psi-emacs--state) nil)
+    (setf (psi-emacs-state-session-model-reasoning psi-emacs--state) nil)
+    (setf (psi-emacs-state-session-thinking-level psi-emacs--state) nil)
+    (setf (psi-emacs-state-header-model-label psi-emacs--state) nil)
     (psi-emacs--set-run-state psi-emacs--state 'idle)
     (psi-emacs--refresh-header-line))
   (set-buffer-modified-p nil))

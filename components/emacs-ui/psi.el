@@ -60,7 +60,18 @@ Used to detect stalled streaming runs and transition to deterministic recovery."
   projection-range
   draft-anchor
   rpc-client
-  tool-output-view-mode)
+  tool-output-view-mode
+  session-id
+  session-phase
+  session-is-streaming
+  session-is-compacting
+  session-pending-message-count
+  session-retry-attempt
+  session-model-provider
+  session-model-id
+  session-model-reasoning
+  session-thinking-level
+  header-model-label)
 
 (defvar psi-emacs--spawn-process-function #'psi-emacs--default-spawn-process
   "Function used to spawn a psi subprocess.

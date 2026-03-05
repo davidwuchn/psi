@@ -45,7 +45,12 @@ Frontend routing is driven by an explicit run-state:
 - `error` — set on RPC errors or streaming watchdog timeout
 
 Header status includes this state: `psi [transport/process/run-state] tools:<mode>`.
-`/status` diagnostics include `last-error: ...` when present.
+When `session/updated` carries model metadata, header appends
+`model:(<provider>) <model-id>`.
+
+`session/updated` is projected into frontend state and `/status` diagnostics,
+including: session id, phase, streaming/compacting flags, pending count,
+and retry attempt. `/status` also includes `last-error: ...` when present.
 
 ### Transition sketch
 

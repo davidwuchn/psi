@@ -10,22 +10,48 @@
 
 (defvar psi-emacs-stream-timeout-seconds)
 
+(defun psi-emacs--status-model-fragment (state)
+  "Return optional model fragment for STATE header text."
+  (let ((label (and state (psi-emacs-state-header-model-label state))))
+    (when (and (stringp label)
+               (not (string-empty-p label)))
+      (format " model:%s" label))))
+
+(defun psi-emacs--status-session-line (state)
+  "Return optional session summary line for STATE diagnostics output."
+  (let ((session-id (and state (psi-emacs-state-session-id state))))
+    (when (and (stringp session-id)
+               (not (string-empty-p session-id)))
+      (format "session: %s phase:%s streaming:%s compacting:%s pending:%s retry:%s"
+              session-id
+              (or (psi-emacs-state-session-phase state) "unknown")
+              (if (psi-emacs-state-session-is-streaming state) "yes" "no")
+              (if (psi-emacs-state-session-is-compacting state) "yes" "no")
+              (or (psi-emacs-state-session-pending-message-count state) 0)
+              (or (psi-emacs-state-session-retry-attempt state) 0)))))
+
 (defun psi-emacs--status-string (state)
   "Return minimal status string for STATE."
-  (format "psi [%s/%s/%s] tools:%s"
+  (format "psi [%s/%s/%s] tools:%s%s"
           (or (psi-emacs-state-transport-state state) 'unknown)
           (or (psi-emacs-state-process-state state) 'unknown)
           (or (psi-emacs-state-run-state state) 'idle)
-          (or (psi-emacs-state-tool-output-view-mode state) 'collapsed)))
+          (or (psi-emacs-state-tool-output-view-mode state) 'collapsed)
+          (or (psi-emacs--status-model-fragment state) "")))
 
 (defun psi-emacs--status-diagnostics-string (state)
-  "Return status diagnostics string for STATE, including last-error summary."
+  "Return status diagnostics string for STATE, including session/error summary."
   (let ((base (psi-emacs--status-string state))
+        (session-line (psi-emacs--status-session-line state))
         (last-error (psi-emacs-state-last-error state)))
-    (if (and (stringp last-error)
-             (not (string-empty-p last-error)))
-      (format "%s\nlast-error: %s" base last-error)
-      base)))
+    (string-join
+     (delq nil
+           (list base
+                 session-line
+                 (when (and (stringp last-error)
+                            (not (string-empty-p last-error)))
+                   (format "last-error: %s" last-error))))
+     "\n")))
 
 (defun psi-emacs--refresh-header-line ()
   "Refresh minimal header-line status for current psi buffer."

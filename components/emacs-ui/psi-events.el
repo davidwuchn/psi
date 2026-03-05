@@ -19,6 +19,71 @@ DATA is expected to be an alist map."
           (throw 'hit v))))
     nil))
 
+(defun psi-emacs--session-normalize-text (value)
+  "Normalize VALUE to a compact text representation, or nil when blank."
+  (let ((text (cond
+               ((null value) nil)
+               ((stringp value) value)
+               ((keywordp value) (string-remove-prefix ":" (symbol-name value)))
+               ((symbolp value) (symbol-name value))
+               (t (format "%s" value)))))
+    (when (and (stringp text)
+               (not (string-empty-p (string-trim text))))
+      (string-trim text))))
+
+(defun psi-emacs--session-model-label (provider model-id)
+  "Return optional compact model label from PROVIDER and MODEL-ID."
+  (let ((provider* (psi-emacs--session-normalize-text provider))
+        (model-id* (psi-emacs--session-normalize-text model-id)))
+    (when model-id*
+      (if provider*
+          (format "(%s) %s" provider* model-id*)
+        model-id*))))
+
+(defun psi-emacs--handle-session-updated-event (data)
+  "Project `session/updated` DATA into frontend session/header state."
+  (when psi-emacs--state
+    (let* ((session-id (psi-emacs--session-normalize-text
+                        (psi-emacs--event-data-get data '(:session-id session-id :sessionId sessionId))))
+           (phase (psi-emacs--session-normalize-text
+                   (psi-emacs--event-data-get data '(:phase phase))))
+           (is-streaming (not (null (psi-emacs--event-data-get data
+                                                                '(:is-streaming is-streaming :isStreaming isStreaming)))))
+           (is-compacting (not (null (psi-emacs--event-data-get data
+                                                                 '(:is-compacting is-compacting :isCompacting isCompacting)))))
+           (pending (or (psi-emacs--event-data-get data
+                                                   '(:pending-message-count pending-message-count :pendingMessageCount pendingMessageCount))
+                        0))
+           (retry (or (psi-emacs--event-data-get data
+                                                 '(:retry-attempt retry-attempt :retryAttempt retryAttempt))
+                      0))
+           (model-provider (psi-emacs--session-normalize-text
+                            (psi-emacs--event-data-get data
+                                                       '(:model-provider model-provider :modelProvider modelProvider))))
+           (model-id (psi-emacs--session-normalize-text
+                      (psi-emacs--event-data-get data
+                                                 '(:model-id model-id :modelId modelId))))
+           (model-reasoning (not (null (psi-emacs--event-data-get data
+                                                                   '(:model-reasoning model-reasoning :modelReasoning modelReasoning)))))
+           (thinking-level (psi-emacs--session-normalize-text
+                            (psi-emacs--event-data-get data
+                                                       '(:thinking-level thinking-level :thinkingLevel thinkingLevel))))
+           (header-model-label (psi-emacs--session-model-label model-provider model-id)))
+      (setf (psi-emacs-state-session-id psi-emacs--state) session-id)
+      (setf (psi-emacs-state-session-phase psi-emacs--state) phase)
+      (setf (psi-emacs-state-session-is-streaming psi-emacs--state) is-streaming)
+      (setf (psi-emacs-state-session-is-compacting psi-emacs--state) is-compacting)
+      (setf (psi-emacs-state-session-pending-message-count psi-emacs--state) pending)
+      (setf (psi-emacs-state-session-retry-attempt psi-emacs--state) retry)
+      (setf (psi-emacs-state-session-model-provider psi-emacs--state) model-provider)
+      (setf (psi-emacs-state-session-model-id psi-emacs--state) model-id)
+      (setf (psi-emacs-state-session-model-reasoning psi-emacs--state) model-reasoning)
+      (setf (psi-emacs-state-session-thinking-level psi-emacs--state) thinking-level)
+      (setf (psi-emacs-state-header-model-label psi-emacs--state) header-model-label)
+      (unless (memq (psi-emacs-state-run-state psi-emacs--state) '(error reconnecting))
+        (psi-emacs--set-run-state psi-emacs--state (if is-streaming 'streaming 'idle)))
+      (psi-emacs--refresh-header-line))))
+
 (defun psi-emacs--handle-rpc-event (frame)
   "Handle inbound rpc-edn event FRAME for transcript rendering."
   (let* ((event (alist-get :event frame nil nil #'equal))
@@ -32,6 +97,8 @@ DATA is expected to be an alist map."
         (or (psi-emacs--event-data-get data '(:text text :message message))
             (psi-emacs--assistant-content->text
              (psi-emacs--event-data-get data '(:content content))))))
+      ("session/updated"
+       (psi-emacs--handle-session-updated-event data))
       ((or "tool/start" "tool/delta" "tool/executing" "tool/update" "tool/result")
        (let* ((tool-id (psi-emacs--event-data-get data
                                                   '(:tool-id tool-id :toolCallId toolCallId :tool-call-id tool-call-id :id id)))
