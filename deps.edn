@@ -26,6 +26,14 @@
           :extra-deps  {nrepl/nrepl {:mvn/version "1.5.1"}}
           :jvm-opts    ["--enable-native-access=ALL-UNNAMED"]
           :main-opts   ["-m" "psi.agent-session.main"]}
+  :psi   {:extra-paths ["components/agent-session/src"
+                        "components/agent-core/src"
+                        "components/ai/src"
+                        "components/engine/src"
+                        "components/query/src"]
+          :extra-deps  {nrepl/nrepl {:mvn/version "1.5.1"}}
+          :jvm-opts    ["--enable-native-access=ALL-UNNAMED"]
+          :main-opts   ["-m" "psi.agent-session.main"]}
   :nrepl {:extra-deps {nrepl/nrepl {:mvn/version "1.5.1"}}}
   :test  {:extra-paths ["test" "components/ai/test" "components/query/test" "components/history/test"
                         "components/introspection/test" "components/memory/test" "components/recursion/test" "components/tui/test" "components/agent-core/test"

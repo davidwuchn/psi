@@ -2,6 +2,10 @@
 
 This frontend runs psi over `--rpc-edn` in a dedicated Emacs buffer.
 
+By default, subprocesses start from the directory where `psi-emacs-start`
+is invoked. Set `psi-emacs-working-directory` to force a specific working
+directory.
+
 ## Developer checks
 
 Run repeatable frontend checks from repo root:
@@ -69,6 +73,14 @@ and retry attempt. `/status` also includes `last-error: ...` when present.
 - `streaming -> error`: watchdog timeout (no streaming progress for `psi-emacs-stream-timeout-seconds`)
 - `* -> error`: RPC error event/callback
 - `reconnecting -> idle`: RPC transport reaches `ready`
+
+## Buffer mode + markdown scope
+
+`psi-emacs-mode` uses `text-mode` as its parent. This keeps baseline
+fontification neutral and avoids whole-buffer markdown styling drift.
+
+Markdown processing is applied only to finalized assistant reply ranges via
+`markdown-fontify-region`.
 
 ## Streaming behavior
 

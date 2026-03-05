@@ -16,6 +16,7 @@
 
 (defvar psi-emacs-command)
 (defvar psi-emacs-buffer-name)
+(defvar psi-emacs-working-directory)
 (defvar psi-emacs-stream-timeout-seconds)
 (defvar psi-emacs-notification-timeout-seconds)
 

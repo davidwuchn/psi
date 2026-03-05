@@ -81,8 +81,7 @@
   (when (< start end)
     (condition-case _
         (cond
-         ((and (derived-mode-p 'markdown-mode)
-               (fboundp 'markdown-fontify-region))
+         ((fboundp 'markdown-fontify-region)
           (markdown-fontify-region start end))
          ((fboundp 'font-lock-flush)
           (font-lock-flush start end)

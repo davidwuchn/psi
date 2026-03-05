@@ -96,23 +96,16 @@
 (defun psi-emacs--preferred-major-mode ()
   "Return major mode symbol for dedicated psi buffer.
 
-Prefers `markdown-mode' when available, otherwise `text-mode'."
-  (if (psi-emacs--markdown-mode-available-p)
-      'markdown-mode
-    'text-mode))
+Uses `text-mode' so markdown fontification can be scoped to assistant replies
+instead of the entire buffer."
+  'text-mode)
 
-(if (psi-emacs--markdown-mode-available-p)
-    (define-derived-mode psi-emacs-mode markdown-mode "psi"
-      "Major mode for dedicated psi chat buffer.
+(define-derived-mode psi-emacs-mode text-mode "psi"
+  "Major mode for dedicated psi chat buffer.
 
-Uses markdown as the parent mode when available so finalized assistant
-content can be markdown-fontified in-place."
-      (setq-local buffer-read-only nil))
-  (define-derived-mode psi-emacs-mode text-mode "psi"
-    "Major mode for dedicated psi chat buffer.
-
-Fallback mode when markdown-mode is unavailable."
-    (setq-local buffer-read-only nil)))
+Uses `text-mode' so markdown fontification can be applied selectively to
+finalized assistant content only."
+  (setq-local buffer-read-only nil))
 
 (let ((map psi-emacs-mode-map))
   (define-key map (kbd "RET") #'newline)

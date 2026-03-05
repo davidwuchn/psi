@@ -17,7 +17,7 @@
   "psi Emacs frontend."
   :group 'applications)
 
-(defcustom psi-emacs-command '("clojure" "-M:run" "--rpc-edn")
+(defcustom psi-emacs-command '("clojure" "-M:psi" "--rpc-edn")
   "Command used to start the owned psi rpc-edn subprocess."
   :type '(repeat string)
   :group 'psi-emacs)
@@ -25,6 +25,15 @@
 (defcustom psi-emacs-buffer-name "*psi*"
   "Default dedicated buffer name for psi Emacs frontend."
   :type 'string
+  :group 'psi-emacs)
+
+(defcustom psi-emacs-working-directory nil
+  "Working directory used to launch the psi subprocess.
+
+When nil, psi uses the `default-directory' where `psi-emacs-start' (or
+`psi-emacs-open-buffer') is invoked."
+  :type '(choice (const :tag "Use invocation directory" nil)
+                 directory)
   :group 'psi-emacs)
 
 (defcustom psi-emacs-stream-timeout-seconds 45
