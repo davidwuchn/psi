@@ -4,6 +4,26 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-03 - Memory Runtime Hardening (Step 9.5 initial)
+
+### λ Boolean config parsing must not use plain `or`
+
+`or` treats `false` as missing. For runtime flags like fallback policy,
+use explicit `some?` precedence (`explicit -> env -> default`) so
+`false` survives and does not collapse to default `true`.
+
+### λ Retention limits should live in state, not constants only
+
+`capture-graph-change-in!` now reads retention from memory state
+(`:retention {:snapshots ... :deltas ...}`), so runtime config can change
+compaction windows without code changes.
+
+### λ Datalevin schema migration needs explicit hook boundaries
+
+Version upgrades are now guarded by schema-version metadata in the DB.
+If runtime target version is higher, each step requires a hook; missing
+hooks fail open with clear health/error state instead of silent drift.
+
 ## 2026-03-05 - Datalevin Store Integration (Step 9a Phase 2)
 
 ### λ Write-through + hydration is a low-risk bridge to persistent memory

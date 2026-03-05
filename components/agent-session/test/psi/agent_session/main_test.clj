@@ -11,6 +11,8 @@
    [psi.agent-session.rpc :as rpc]
    [psi.agent-session.skills :as skills]
    [psi.agent-session.system-prompt :as sys-prompt]
+   [psi.introspection.core :as introspection]
+   [psi.memory.runtime :as memory-runtime]
    [psi.tui.app :as tui-app]))
 
 (deftest select-login-provider-test
@@ -241,3 +243,53 @@
     (is (= "hello" (get-in tool-calls ["call-1" :result])))
     (is (= {:full-output-path "/tmp/all.log"}
            (get-in tool-calls ["call-1" :details])))))
+
+(deftest memory-runtime-opts-from-args-test
+  (is (= {:store-provider "datalevin"
+          :store-root "/tmp/store"
+          :store-db-dir "/tmp/db.dtlv"
+          :auto-store-fallback? false
+          :history-commit-limit 99
+          :retention-snapshots 12
+          :retention-deltas 34}
+         (#'main/memory-runtime-opts-from-args
+          ["--memory-store" "datalevin"
+           "--memory-store-root" "/tmp/store"
+           "--memory-store-db-dir" "/tmp/db.dtlv"
+           "--memory-store-fallback" "off"
+           "--memory-history-limit" "99"
+           "--memory-retention-snapshots" "12"
+           "--memory-retention-deltas" "34"])))
+  (is (= {}
+         (#'main/memory-runtime-opts-from-args
+          ["--memory-history-limit" "not-a-number"
+           "--memory-store-fallback" "maybe"]))))
+
+(deftest bootstrap-runtime-session-passes-memory-runtime-opts-to-sync-test
+  (let [captured (atom nil)]
+    (with-redefs [oauth/create-context (fn [] nil)
+                  pt/discover-templates (fn [] [])
+                  skills/discover-skills (fn [] {:skills [] :diagnostics []})
+                  sys-prompt/discover-context-files (fn [_] [])
+                  sys-prompt/build-system-prompt (fn [_] "")
+                  ext/discover-extension-paths (fn [& _] [])
+                  introspection/register-resolvers! (fn [] nil)
+                  memory-runtime/sync-memory-layer! (fn [opts]
+                                                      (reset! captured opts)
+                                                      {:ok? true})
+                  session/bootstrap-session-in!
+                  (fn [ctx _]
+                    (session/new-session-in! ctx)
+                    {:extension-errors [] :extension-loaded-count 0})]
+      (#'main/bootstrap-runtime-session!
+       {:provider :anthropic
+        :id "test-model"
+        :name "Test Model"
+        :supports-reasoning false}
+       {:memory-runtime-opts {:store-provider "datalevin"
+                              :retention-snapshots 22
+                              :retention-deltas 44}})
+      (is (= "datalevin" (:store-provider @captured)))
+      (is (= 22 (:retention-snapshots @captured)))
+      (is (= 44 (:retention-deltas @captured)))
+      (is (string? (:cwd @captured))))))

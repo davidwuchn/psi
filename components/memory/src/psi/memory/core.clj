@@ -48,11 +48,19 @@
                :deltas graph-history/delta-retention-limit}
    :ranking-defaults ranking/default-weights})
 
+(defn- normalize-retention-limit
+  [value fallback]
+  (cond
+    (and (integer? value) (pos? value)) value
+    (and (number? value) (pos? value)) (int value)
+    :else fallback))
+
 (defn create-context
   "Create an isolated MemoryContext.
 
    Options:
    - :state-overrides                map merged over initial memory state
+   - :retention-overrides            {:snapshots int :deltas int}
    - :require-provenance-on-write?   feature flag for follow-up tasks
                                      (default true)
    - :store-registry-overrides       map merged over bootstrapped registry
@@ -61,17 +69,29 @@
   ([]
    (create-context {}))
   ([{:keys [state-overrides
+            retention-overrides
             require-provenance-on-write?
             store-registry-overrides
             auto-store-fallback?]
      :or   {state-overrides {}
+            retention-overrides {}
             require-provenance-on-write? true
             store-registry-overrides {}
             auto-store-fallback? true}}]
    (let [store-registry (merge (store/bootstrap-registry)
-                               store-registry-overrides)]
+                               store-registry-overrides)
+         base-state     (initial-state)
+         retention      {:snapshots (normalize-retention-limit
+                                     (:snapshots retention-overrides)
+                                     (get-in base-state [:retention :snapshots]))
+                         :deltas (normalize-retention-limit
+                                  (:deltas retention-overrides)
+                                  (get-in base-state [:retention :deltas]))}
+         initial        (-> base-state
+                            (assoc :retention retention)
+                            (merge state-overrides))]
      (->MemoryContext
-      (atom (merge (initial-state) state-overrides))
+      (atom initial)
       {:require-provenance-on-write? require-provenance-on-write?
        :auto-store-fallback? auto-store-fallback?}
       (atom store-registry)))))
@@ -129,6 +149,32 @@
   "Global wrapper for `store-summary-in`."
   []
   (store-summary-in (global-context)))
+
+(defn set-retention-in!
+  "Set memory retention limits for graph snapshots/deltas in isolated `ctx`.
+
+   `retention-overrides` accepts:
+   - :snapshots positive integer
+   - :deltas positive integer"
+  [ctx {:keys [snapshots deltas]}]
+  (swap-state-in! ctx
+                  (fn [state]
+                    (let [snapshot-default (get-in (initial-state) [:retention :snapshots])
+                          delta-default    (get-in (initial-state) [:retention :deltas])
+                          snapshot-limit   (normalize-retention-limit snapshots
+                                                                      (get-in state [:retention :snapshots]
+                                                                              snapshot-default))
+                          delta-limit      (normalize-retention-limit deltas
+                                                                      (get-in state [:retention :deltas]
+                                                                              delta-default))]
+                      (assoc state :retention {:snapshots snapshot-limit
+                                               :deltas delta-limit}))))
+  (:retention (get-state-in ctx)))
+
+(defn set-retention!
+  "Global wrapper for `set-retention-in!`."
+  [retention-overrides]
+  (set-retention-in! (global-context) retention-overrides))
 
 (defn register-store-provider-in!
   "Register a backing store provider in isolated `ctx`.
@@ -775,7 +821,7 @@
    - no-op when fingerprint matches latest snapshot
    - append snapshot on change
    - append delta when prior snapshot exists
-   - enforce fixed-window retention (200 snapshots, 1000 deltas)
+   - enforce configured retention window (defaults: 200 snapshots, 1000 deltas)
    - does not produce summary entities"
   ([ctx capability-graph]
    (capture-graph-change-in! ctx capability-graph (java.time.Instant/now)))
@@ -800,18 +846,24 @@
                                            (capability-history-events-for-baseline-snapshot snapshot))]
            (swap-state-in! ctx
                            (fn [s]
-                             (let [with-snapshot (update s :graph-snapshots
-                                                         (fn [entries]
-                                                           (graph-history/trim-window
-                                                            (conj (vec (or entries [])) snapshot)
-                                                            graph-history/snapshot-retention-limit)))
-                                   with-delta    (if delta
-                                                   (update with-snapshot :graph-deltas
-                                                           (fn [entries]
-                                                             (graph-history/trim-window
-                                                              (conj (vec (or entries [])) delta)
-                                                              graph-history/delta-retention-limit)))
-                                                   with-snapshot)]
+                             (let [snapshot-limit (normalize-retention-limit
+                                                   (get-in s [:retention :snapshots])
+                                                   graph-history/snapshot-retention-limit)
+                                   delta-limit    (normalize-retention-limit
+                                                   (get-in s [:retention :deltas])
+                                                   graph-history/delta-retention-limit)
+                                   with-snapshot  (update s :graph-snapshots
+                                                          (fn [entries]
+                                                            (graph-history/trim-window
+                                                             (conj (vec (or entries [])) snapshot)
+                                                             snapshot-limit)))
+                                   with-delta     (if delta
+                                                    (update with-snapshot :graph-deltas
+                                                            (fn [entries]
+                                                              (graph-history/trim-window
+                                                               (conj (vec (or entries [])) delta)
+                                                               delta-limit)))
+                                                    with-snapshot)]
                                (append-capability-history with-delta capability-history-events))))
            (let [snapshot-store-write (persist-entity-in! ctx :graph-snapshot snapshot)
                  delta-store-write    (when delta

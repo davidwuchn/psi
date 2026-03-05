@@ -100,7 +100,12 @@ Ordered steps toward PSI COMPLETE.
      3) ✓ Datalevin provider (`psi.memory.datalevin`) with open/write/query/load/close
      4) ✓ remember/recover/graph artifacts write-through via active provider + activation-time hydration
    - Next:
-     5) add runtime config/CLI surface and durability/fallback hardening (default provider selection, migration hooks, compaction/retention paths)
+     5) ✓ add runtime config/CLI surface and durability/fallback hardening (default provider selection, migration hooks, compaction/retention paths)
+        - CLI flags + env vars for store selection, fallback policy, history limit, retention limits
+        - explicit unknown-provider handling + deterministic fallback signaling
+        - Datalevin schema-version migration hook path on open
+        - retention window now configurable and enforced from memory state
+     6) finish durability hardening pass (provider failure telemetry surfacing + retention/migration operator docs)
    - Complete: remember/recover lifecycle, graph snapshots + deltas, provenance, EQL surface
 
 10. Step 10 — Feed-forward recursion

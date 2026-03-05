@@ -9,6 +9,7 @@
    [psi.introspection.graph :as graph]
    [psi.memory.core :as memory]
    [psi.memory.datalevin :as datalevin]
+   [psi.memory.store :as store]
    [psi.query.core :as query]
    [psi.query.registry :as registry]))
 
@@ -181,6 +182,10 @@
     (query/rebuild-env-in! qctx)
     qctx))
 
+(defn- getenv
+  [k]
+  (System/getenv k))
+
 (defn- parse-store-provider
   [store-provider]
   (cond
@@ -188,79 +193,202 @@
     (string? store-provider) (keyword (str/lower-case (str/trim store-provider)))
     :else nil))
 
+(defn- parse-bool-value
+  [v]
+  (cond
+    (boolean? v) v
+    (string? v)  (let [x (str/lower-case (str/trim v))]
+                   (cond
+                     (contains? #{"1" "true" "yes" "y" "on"} x) true
+                     (contains? #{"0" "false" "no" "n" "off"} x) false
+                     :else nil))
+    :else nil))
+
+(defn- parse-positive-int
+  [v]
+  (cond
+    (and (integer? v) (pos? v)) v
+    (and (number? v) (pos? v)) (int v)
+    (string? v) (try
+                  (let [n (Integer/parseInt (str/trim v))]
+                    (when (pos? n) n))
+                  (catch Exception _
+                    nil))
+    :else nil))
+
+(defn- non-blank-str
+  [v]
+  (when (string? v)
+    (let [s (str/trim v)]
+      (when-not (str/blank? s)
+        s))))
+
+(defn- resolve-runtime-config
+  [{:keys [cwd
+           history-commit-limit
+           store-provider
+           store-root
+           store-db-dir
+           auto-store-fallback?
+           retention-snapshots
+           retention-deltas
+           store-migration-hooks]}]
+  (let [store-provider*      (or (parse-store-provider store-provider)
+                                 (parse-store-provider (getenv "PSI_MEMORY_STORE")))
+        store-root*          (or (non-blank-str store-root)
+                                 (non-blank-str (getenv "PSI_MEMORY_STORE_ROOT")))
+        store-db-dir*        (or (non-blank-str store-db-dir)
+                                 (non-blank-str (getenv "PSI_MEMORY_STORE_DB_DIR")))
+        explicit-auto-fallback (parse-bool-value auto-store-fallback?)
+        env-auto-fallback      (parse-bool-value (getenv "PSI_MEMORY_STORE_AUTO_FALLBACK"))
+        auto-fallback*         (cond
+                                 (some? explicit-auto-fallback) explicit-auto-fallback
+                                 (some? env-auto-fallback) env-auto-fallback
+                                 :else true)
+        history-limit*       (or (parse-positive-int history-commit-limit)
+                                 (parse-positive-int (getenv "PSI_MEMORY_HISTORY_COMMIT_LIMIT"))
+                                 200)
+        retention-snapshots* (or (parse-positive-int retention-snapshots)
+                                 (parse-positive-int (getenv "PSI_MEMORY_RETENTION_SNAPSHOTS")))
+        retention-deltas*    (or (parse-positive-int retention-deltas)
+                                 (parse-positive-int (getenv "PSI_MEMORY_RETENTION_DELTAS")))]
+    (cond-> {:cwd cwd
+             :history-commit-limit history-limit*
+             :auto-store-fallback? auto-fallback*}
+      store-provider*      (assoc :store-provider store-provider*)
+      store-root*          (assoc :store-root store-root*)
+      store-db-dir*        (assoc :store-db-dir store-db-dir*)
+      (some? retention-snapshots*) (assoc :retention-snapshots retention-snapshots*)
+      (some? retention-deltas*)    (assoc :retention-deltas retention-deltas*)
+      (map? store-migration-hooks) (assoc :store-migration-hooks store-migration-hooks))))
+
 (defn- maybe-register-store-provider!
-  [memory-ctx {:keys [store-provider cwd store-root store-db-dir]}]
-  (let [provider (or (parse-store-provider store-provider)
-                     (parse-store-provider (System/getenv "PSI_MEMORY_STORE")))]
-    (case provider
+  [memory-ctx {:keys [store-provider cwd store-root store-db-dir auto-store-fallback? store-migration-hooks]}]
+  (let [requested-provider-id (some-> store-provider name)]
+    (case store-provider
       :datalevin
       (try
-        (datalevin/register-in-memory-context! memory-ctx
-                                               {:cwd cwd
-                                                :store-root store-root
-                                                :db-dir store-db-dir
-                                                :select? true
-                                                :open? true})
-        {:ok? true
-         :provider :datalevin
-         :store-summary (memory/store-summary-in memory-ctx)}
-        (catch Exception e
-          {:ok? false
+        (let [summary (datalevin/register-in-memory-context! memory-ctx
+                                                              {:cwd cwd
+                                                               :store-root store-root
+                                                               :db-dir store-db-dir
+                                                               :migration-hooks store-migration-hooks
+                                                               :select? true
+                                                               :open? true
+                                                               :auto-fallback? auto-store-fallback?})
+              selected-id (:active-provider-id summary)
+              used-fallback? (true? (get-in summary [:selection :used-fallback]))
+              datalevin-selected? (and (= "datalevin" selected-id)
+                                       (not used-fallback?))]
+          {:ok? datalevin-selected?
            :provider :datalevin
-           :error :store-provider-registration-failed
-           :message (ex-message e)
-           :store-summary (memory/store-summary-in memory-ctx)}))
+           :error (when-not datalevin-selected?
+                    :store-provider-unavailable)
+           :fallback-selected? used-fallback?
+           :store-summary summary})
+        (catch Exception e
+          (let [summary (memory/select-store-provider-in!
+                         memory-ctx
+                         store/+fallback-provider-id+
+                         {:auto-fallback? auto-store-fallback?})]
+            {:ok? false
+             :provider :datalevin
+             :error :store-provider-registration-failed
+             :message (ex-message e)
+             :fallback-selected? (true? (get-in summary [:selection :used-fallback]))
+             :store-summary summary})))
 
+      :in-memory
       {:ok? true
        :provider :in-memory
-       :store-summary (memory/store-summary-in memory-ctx)})))
+       :store-summary (memory/select-store-provider-in!
+                       memory-ctx
+                       store/+default-provider-id+
+                       {:auto-fallback? auto-store-fallback?})}
+
+      nil
+      {:ok? true
+       :provider (keyword (:active-provider-id (memory/store-summary-in memory-ctx)))
+       :store-summary (memory/store-summary-in memory-ctx)}
+
+      (let [summary (memory/select-store-provider-in!
+                     memory-ctx
+                     requested-provider-id
+                     {:auto-fallback? auto-store-fallback?})]
+        {:ok? false
+         :provider store-provider
+         :error :unknown-store-provider
+         :available-providers (mapv :id (:providers summary))
+         :store-summary summary}))))
 
 (defn ^{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]
         :export true}
   sync-memory-layer!
   "Run memory lifecycle sync against current runtime graph.
 
+   - resolves runtime memory config from explicit opts + env vars
    - optionally registers/selects configured memory store provider
+   - applies runtime retention overrides for graph snapshot/delta compaction
    - activates memory layer with global query registry snapshot
    - captures capability graph snapshot/delta when graph is stable
    - ingests git history commit summaries into memory records
 
-   Options:
+   Options (explicit opts override env):
    - :cwd — repository root used for git-history activation gate
    - :history-commit-limit — max git commits imported into memory (default 200)
    - :store-provider — :datalevin or :in-memory (optional)
    - :store-root — provider-specific store root (datalevin)
    - :store-db-dir — explicit provider db dir override (datalevin)
+   - :auto-store-fallback? — fallback to in-memory if selected provider unavailable
+   - :retention-snapshots — snapshot retention limit override
+   - :retention-deltas — delta retention limit override
+   - :store-migration-hooks — optional datalevin migration hook map
 
-   Returns {:store-registration ... :activation ... :capture ... :history-sync ... :capability-graph ...}."
+   Env vars:
+   - PSI_MEMORY_STORE
+   - PSI_MEMORY_STORE_ROOT
+   - PSI_MEMORY_STORE_DB_DIR
+   - PSI_MEMORY_STORE_AUTO_FALLBACK
+   - PSI_MEMORY_HISTORY_COMMIT_LIMIT
+   - PSI_MEMORY_RETENTION_SNAPSHOTS
+   - PSI_MEMORY_RETENTION_DELTAS
+
+   Returns {:runtime-config ... :store-registration ... :activation ...
+            :capture ... :history-sync ... :capability-graph ...}."
   ([]
    (sync-memory-layer! {}))
-  ([{:keys [cwd history-commit-limit store-provider store-root store-db-dir]
-     :or   {history-commit-limit 200}}]
-   (let [capability-graph   (current-capability-graph)
-         query-ctx          (build-global-query-context)
-         git-ctx            (git/create-context (or cwd (System/getProperty "user.dir")))
-         memory-ctx         (memory/global-context)
-         store-registration (maybe-register-store-provider! memory-ctx
-                                                            {:store-provider store-provider
-                                                             :cwd cwd
-                                                             :store-root store-root
-                                                             :store-db-dir store-db-dir})
-         activation         (memory/activate! {:query-ctx query-ctx
-                                               :git-ctx git-ctx
-                                               :capability-graph-status (:status capability-graph)})
-         capture            (if (contains? #{:stable :expanding} (:status capability-graph))
-                              (memory/capture-graph-change! capability-graph)
-                              {:ok? false
-                               :changed? false
-                               :error :graph-not-ready
-                               :graph-status (:status capability-graph)})
-         history-sync       (if (:ready? activation)
-                              (ingest-git-history-in! memory-ctx git-ctx {:n history-commit-limit})
-                              {:ok? false
-                               :skipped? true
-                               :reason :memory-not-ready})]
-     {:store-registration store-registration
+  ([opts]
+   (let [runtime-config    (resolve-runtime-config opts)
+         cwd*              (or (:cwd runtime-config) (System/getProperty "user.dir"))
+         runtime-config*   (assoc runtime-config :cwd cwd*)
+         capability-graph  (current-capability-graph)
+         query-ctx         (build-global-query-context)
+         git-ctx           (git/create-context cwd*)
+         memory-ctx        (memory/global-context)
+         _                 (when (or (some? (:retention-snapshots runtime-config*))
+                                     (some? (:retention-deltas runtime-config*)))
+                             (memory/set-retention-in! memory-ctx
+                                                       {:snapshots (:retention-snapshots runtime-config*)
+                                                        :deltas (:retention-deltas runtime-config*)}))
+         store-registration (maybe-register-store-provider! memory-ctx runtime-config*)
+         activation        (memory/activate-in! memory-ctx
+                                                {:query-ctx query-ctx
+                                                 :git-ctx git-ctx
+                                                 :capability-graph-status (:status capability-graph)})
+         capture           (if (contains? #{:stable :expanding} (:status capability-graph))
+                             (memory/capture-graph-change-in! memory-ctx capability-graph)
+                             {:ok? false
+                              :changed? false
+                              :error :graph-not-ready
+                              :graph-status (:status capability-graph)})
+         history-sync      (if (:ready? activation)
+                             (ingest-git-history-in! memory-ctx git-ctx
+                                                     {:n (:history-commit-limit runtime-config*)})
+                             {:ok? false
+                              :skipped? true
+                              :reason :memory-not-ready})]
+     {:runtime-config (dissoc runtime-config* :store-migration-hooks)
+      :store-registration store-registration
       :activation activation
       :capture capture
       :history-sync history-sync

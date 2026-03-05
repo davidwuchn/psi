@@ -54,6 +54,13 @@
         state (memory/get-state-in ctx)]
     (is (= :ready (:status state)))))
 
+(deftest create-context-supports-retention-overrides
+  (let [ctx   (memory/create-context {:retention-overrides {:snapshots 7
+                                                            :deltas 11}})
+        state (memory/get-state-in ctx)]
+    (is (= 7 (get-in state [:retention :snapshots])))
+    (is (= 11 (get-in state [:retention :deltas])))))
+
 (deftest swap-state-in-updates-isolated-context-only
   (let [ctx-a (memory/create-context)
         ctx-b (memory/create-context)]
@@ -410,6 +417,20 @@
       (is (= graph-history/delta-retention-limit (count deltas)))
       (is (= "fp-1005" (:fingerprint (first snapshots))))
       (is (= "fp-1204" (:fingerprint (last snapshots)))))))
+
+(deftest capture-graph-change-respects-runtime-retention-overrides
+  (let [memory-ctx (memory/create-context {:retention-overrides {:snapshots 3
+                                                                 :deltas 4}})]
+    (doseq [n (range 10)]
+      (memory/capture-graph-change-in! memory-ctx
+                                       {:fingerprint (str "fp-" n)
+                                        :capability-ids [(keyword (str "cap/" n))]
+                                        :operations [(keyword (str "op/" n))]}))
+    (let [state (memory/get-state-in memory-ctx)]
+      (is (= 3 (count (:graph-snapshots state))))
+      (is (= 4 (count (:graph-deltas state))))
+      (is (= "fp-7" (get-in state [:graph-snapshots 0 :fingerprint])))
+      (is (= "fp-9" (get-in state [:graph-snapshots 2 :fingerprint]))))))
 
 (deftest recover-composes-required-sources-and-truncates-results
   (let [memory-ctx (memory/create-context)

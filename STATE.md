@@ -39,6 +39,7 @@ Current truth about the Psi system.
 - ✓ Graph emergence (Step 7): all 9 :psi.graph/* attrs queryable via eql_query from agent-session-ctx
 - ✓ Memory backing-store extension point (Step 9a phase 1): provider protocol + registry (`psi.memory.store`) with in-memory default and `:psi.memory.store/*` EQL attrs
 - ✓ Datalevin persistent memory provider (Step 9a phase 2): `psi.memory.datalevin` + write-through remember/recover/graph artifacts + activation-time hydration
+- ✓ Memory runtime hardening (Step 9.5 initial): CLI/env config surface, explicit provider selection/fallback reporting, retention overrides, Datalevin schema migration hooks
 - ✗ OAuth wired into main.clj (replace env-var-only auth)
 - ✗ /login and /logout commands
 - ✗ Session resolvers wired into global query graph
@@ -54,6 +55,9 @@ ANTHROPIC_API_KEY=sk-... clojure -M:run
 clojure -M:run --model claude-3-5-sonnet
 clojure -M:run --model gpt-4o --tui
 PSI_MEMORY_STORE=datalevin clojure -M:run  # opt-in persistent memory store
+clojure -M:run --memory-store datalevin --memory-store-db-dir /tmp/psi-memory.dtlv
+clojure -M:run --memory-store datalevin --memory-store-fallback off
+clojure -M:run --memory-retention-snapshots 500 --memory-retention-deltas 2000
 clojure -M:run --rpc-edn                 # EDN-lines RPC mode (headless/programmatic)
 clojure -M:run --nrepl                   # random port, printed at startup
 clojure -M:run --nrepl 7888              # specific port
@@ -174,7 +178,7 @@ Caught by `jline-terminal-keymap-test` smoke test.
 
 ## Test Status
 
-660 tests, 3145 assertions, 0 failures. 0 clj-kondo errors.
+669 tests, 3172 assertions, 0 failures. 0 clj-kondo errors.
 
 ## Specs
 
@@ -217,6 +221,8 @@ Caught by `jline-terminal-keymap-test` smoke test.
 - Runtime can opt into Datalevin via `PSI_MEMORY_STORE=datalevin`
 - remember/recover/graph artifacts now write-through to active provider; activation hydrates persisted records/snapshots/deltas/recoveries back into memory state
 - Fallback policy defaults to automatic in-memory fallback when persistent provider is unavailable
+- Runtime memory config is now available via CLI/env (store selection, fallback mode, history limit, retention limits)
+- Datalevin open now enforces schema-version checks and optional migration hooks
 
 ## Step 11 Decisions (Spec)
 

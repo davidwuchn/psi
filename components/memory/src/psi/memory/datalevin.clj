@@ -21,13 +21,23 @@
 (def ^:const +dbi-graph-deltas+ "graph-delta")
 (def ^:const +dbi-recoveries+ "recovery-run")
 (def ^:const +dbi-capability-history+ "capability-history")
+(def ^:const +dbi-meta+ "meta")
+
+(def ^:const +schema-version-key+
+  "KV key storing datalevin schema version."
+  "schema-version")
+
+(def ^:const +default-schema-version+
+  "Runtime schema version expected by this provider implementation."
+  1)
 
 (def ^:private all-dbis
   [+dbi-records+
    +dbi-graph-snapshots+
    +dbi-graph-deltas+
    +dbi-recoveries+
-   +dbi-capability-history+])
+   +dbi-capability-history+
+   +dbi-meta+])
 
 (defn- now []
   (Instant/now))
@@ -166,6 +176,82 @@
               (not (neg? (compare timestamp since)))))
      (text-includes? query-text record))))
 
+(defn- target-schema-version
+  [config]
+  (let [v (:schema-version config)]
+    (if (and (integer? v) (pos? v))
+      v
+      +default-schema-version+)))
+
+(defn- read-schema-version
+  [conn]
+  (let [v (d/get-value conn +dbi-meta+ +schema-version-key+)]
+    (when (number? v)
+      (int v))))
+
+(defn- write-schema-version!
+  [conn version]
+  (d/transact-kv conn [[:put +dbi-meta+ +schema-version-key+ version]])
+  version)
+
+(defn- run-migration-hook!
+  [hook {:keys [conn db-dir provider-id from-version to-version]}]
+  (hook {:conn conn
+         :db-dir db-dir
+         :provider-id provider-id
+         :from-version from-version
+         :to-version to-version})
+  :ok)
+
+(defn- ensure-schema-version!
+  [conn {:keys [db-dir id config]}]
+  (let [target         (target-schema-version config)
+        migration-hooks (:migration-hooks config)
+        current        (read-schema-version conn)]
+    (cond
+      (nil? current)
+      (do
+        (write-schema-version! conn target)
+        {:ok? true
+         :from-version nil
+         :to-version target
+         :migrated? false})
+
+      (= current target)
+      {:ok? true
+       :from-version current
+       :to-version target
+       :migrated? false}
+
+      (> current target)
+      {:ok? false
+       :error :schema-version-ahead-of-runtime
+       :message (str "Datalevin schema version " current
+                     " is newer than runtime target " target)}
+
+      :else
+      (loop [from current]
+        (if (= from target)
+          {:ok? true
+           :from-version current
+           :to-version target
+           :migrated? true}
+          (let [hook (get migration-hooks from)]
+            (if-not (fn? hook)
+              {:ok? false
+               :error :missing-migration-hook
+               :message (str "Missing migration hook for schema version " from
+                             " -> " (inc from)
+                             " (target " target ")")}
+              (let [to (inc from)]
+                (run-migration-hook! hook {:conn conn
+                                           :db-dir db-dir
+                                           :provider-id id
+                                           :from-version from
+                                           :to-version to})
+                (write-schema-version! conn to)
+                (recur to)))))))))
+
 (defrecord DatalevinProvider [id status-atom health-atom kv-atom config]
   store/StoreProvider
   (provider-id [_] id)
@@ -190,15 +276,28 @@
                                               (default-db-dir config)))
               _       (.mkdirs (io/file db-dir))
               conn    (d/open-kv db-dir {:max-dbs 32})]
-          (doseq [dbi all-dbis]
-            (d/open-dbi conn dbi))
-          (reset! kv-atom {:conn conn
-                           :db-dir db-dir})
-          (reset! status-atom :ready)
-          (reset! health-atom {:status :healthy
-                               :checked-at (now)
-                               :details nil})
-          provider))
+          (try
+            (reset! status-atom :opening)
+            (doseq [dbi all-dbis]
+              (d/open-dbi conn dbi))
+            (reset! status-atom :migrating)
+            (let [migration (ensure-schema-version! conn {:db-dir db-dir
+                                                          :id id
+                                                          :config config})]
+              (when-not (:ok? migration)
+                (throw (ex-info (or (:message migration) "Datalevin schema migration failed")
+                                migration)))
+              (reset! kv-atom {:conn conn
+                               :db-dir db-dir})
+              (reset! status-atom :ready)
+              (reset! health-atom {:status :healthy
+                                   :checked-at (now)
+                                   :details nil})
+              provider)
+            (catch Exception e
+              (when (kv-conn-open? conn)
+                (d/close-kv conn))
+              (throw e)))))
       (catch Exception e
         (reset! status-atom :error)
         (reset! health-atom {:status :unavailable
@@ -338,10 +437,12 @@
   "Create Datalevin provider instance.
 
    Options:
-   - :id          provider id (default \"datalevin\")
-   - :cwd         cwd used to derive default db path
-   - :store-root  base directory (default ~/.psi/agent/memory)
-   - :db-dir      explicit Datalevin DB directory path (overrides cwd/store-root)"
+   - :id               provider id (default \"datalevin\")
+   - :cwd              cwd used to derive default db path
+   - :store-root       base directory (default ~/.psi/agent/memory)
+   - :db-dir           explicit Datalevin DB directory path (overrides cwd/store-root)
+   - :schema-version   runtime target schema version (default 1)
+   - :migration-hooks  map of from-version -> migration fn"
   ([]
    (create-provider {}))
   ([{:keys [id] :as opts}]
@@ -358,9 +459,10 @@
 
    Options passed through to create-provider.
    Extra options:
-   - :select?   select provider as active after registration (default true)
-   - :open?     open provider when registering (default true)"
-  [memory-ctx {:keys [select? open?]
+   - :select?          select provider as active after registration (default true)
+   - :open?            open provider when registering (default true)
+   - :auto-fallback?   optional override passed to provider selection"
+  [memory-ctx {:keys [select? open? auto-fallback?]
                :or   {select? true
                       open? true}
                :as   opts}]
@@ -370,5 +472,8 @@
         summarize!  (requiring-resolve 'psi.memory.core/store-summary-in)]
     (register! memory-ctx provider {:open? open?})
     (if select?
-      (select! memory-ctx (store/provider-id provider))
+      (if (some? auto-fallback?)
+        (select! memory-ctx (store/provider-id provider)
+                 {:auto-fallback? auto-fallback?})
+        (select! memory-ctx (store/provider-id provider)))
       (summarize! memory-ctx))))

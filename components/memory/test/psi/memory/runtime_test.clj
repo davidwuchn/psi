@@ -44,3 +44,48 @@
         (is (true? (:ok? recovery)))
         (is (pos? (:result-count recovery)))
         (is (some #(= :git-commit (:content-type %)) (:results recovery)))))))
+
+(deftest runtime-config-resolution-merges-explicit-opts-and-env
+  (with-redefs [psi.memory.runtime/getenv (fn [k]
+                                            ({"PSI_MEMORY_STORE" "datalevin"
+                                              "PSI_MEMORY_STORE_AUTO_FALLBACK" "false"
+                                              "PSI_MEMORY_HISTORY_COMMIT_LIMIT" "321"
+                                              "PSI_MEMORY_RETENTION_SNAPSHOTS" "123"
+                                              "PSI_MEMORY_RETENTION_DELTAS" "456"}
+                                             k))]
+    (let [resolved (#'runtime/resolve-runtime-config {:store-provider "in-memory"
+                                                      :history-commit-limit 42
+                                                      :retention-deltas 9})]
+      (is (= :in-memory (:store-provider resolved)))
+      (is (false? (:auto-store-fallback? resolved)))
+      (is (= 42 (:history-commit-limit resolved)))
+      (is (= 123 (:retention-snapshots resolved)))
+      (is (= 9 (:retention-deltas resolved))))))
+
+(deftest sync-memory-layer-applies-retention-overrides
+  (let [memory-ctx (memory/create-context)
+        git-ctx    (git/create-null-context)]
+    (with-redefs [memory/global-context (fn [] memory-ctx)
+                  git/create-context (fn
+                                       ([] git-ctx)
+                                       ([_] git-ctx))]
+      (runtime/sync-memory-layer! {:retention-snapshots 5
+                                   :retention-deltas 7
+                                   :history-commit-limit 1})
+      (let [state (memory/get-state-in memory-ctx)]
+        (is (= 5 (get-in state [:retention :snapshots])))
+        (is (= 7 (get-in state [:retention :deltas])))))))
+
+(deftest sync-memory-layer-reports-unknown-store-provider
+  (let [memory-ctx (memory/create-context)
+        git-ctx    (git/create-null-context)]
+    (with-redefs [memory/global-context (fn [] memory-ctx)
+                  git/create-context (fn
+                                       ([] git-ctx)
+                                       ([_] git-ctx))]
+      (let [result (runtime/sync-memory-layer! {:store-provider "unknown-store"
+                                                :history-commit-limit 1})]
+        (is (= :unknown-store-provider
+               (get-in result [:store-registration :error])))
+        (is (= "in-memory"
+               (get-in result [:store-registration :store-summary :active-provider-id])))))))

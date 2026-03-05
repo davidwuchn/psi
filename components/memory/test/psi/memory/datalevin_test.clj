@@ -113,3 +113,40 @@
         (store/close-provider! provider-b))
       (finally
         (delete-recursively! db-dir)))))
+
+(deftest datalevin-provider-runs-migration-hook-when-schema-version-increases
+  (let [db-dir       (temp-dir-path)
+        migration-calls (atom [])]
+    (try
+      (let [provider-v1 (datalevin/create-provider {:db-dir db-dir
+                                                    :schema-version 1})]
+        (store/open-provider! provider-v1 {:reason :seed-v1})
+        (store/close-provider! provider-v1))
+
+      (let [provider-v2 (datalevin/create-provider
+                         {:db-dir db-dir
+                          :schema-version 2
+                          :migration-hooks
+                          {1 (fn [ctx] (swap! migration-calls conj (select-keys ctx [:from-version :to-version])))} })]
+        (store/open-provider! provider-v2 {:reason :upgrade-to-v2})
+        (is (= :ready (store/provider-status provider-v2)))
+        (is (= [{:from-version 1 :to-version 2}] @migration-calls))
+        (store/close-provider! provider-v2))
+      (finally
+        (delete-recursively! db-dir)))))
+
+(deftest datalevin-provider-fails-open-when-migration-hook-missing
+  (let [db-dir (temp-dir-path)]
+    (try
+      (let [provider-v1 (datalevin/create-provider {:db-dir db-dir
+                                                    :schema-version 1})]
+        (store/open-provider! provider-v1 {:reason :seed-v1})
+        (store/close-provider! provider-v1))
+
+      (let [provider-v2 (datalevin/create-provider {:db-dir db-dir
+                                                    :schema-version 2})]
+        (store/open-provider! provider-v2 {:reason :upgrade-no-hook})
+        (is (= :error (store/provider-status provider-v2)))
+        (is (= :unavailable (get-in (store/provider-health provider-v2) [:status]))))
+      (finally
+        (delete-recursively! db-dir)))))

@@ -27,6 +27,15 @@ clojure -M:run --model gpt-4o --tui
 # Opt-in persistent memory store (Datalevin)
 PSI_MEMORY_STORE=datalevin clojure -M:run
 
+# Datalevin with explicit DB path + retention overrides
+clojure -M:run --memory-store datalevin \
+  --memory-store-db-dir /tmp/psi-memory.dtlv \
+  --memory-retention-snapshots 500 \
+  --memory-retention-deltas 2000
+
+# Disable automatic fallback to in-memory
+clojure -M:run --memory-store datalevin --memory-store-fallback off
+
 # With live nREPL introspection
 clojure -M:run --tui --nrepl 8888
 ```
@@ -45,6 +54,26 @@ clojure -M:run --tui --nrepl 8888
 
 `/feed-forward` triggers a manual recursion cycle from the runtime command surface.
 It is bound to the internal spec prompt name `feed-forward-manual-trigger`.
+
+### Memory runtime config (CLI + env)
+
+CLI flags:
+- `--memory-store <datalevin|in-memory>`
+- `--memory-store-root <path>`
+- `--memory-store-db-dir <path>`
+- `--memory-store-fallback <on|off>`
+- `--memory-history-limit <n>`
+- `--memory-retention-snapshots <n>`
+- `--memory-retention-deltas <n>`
+
+Env vars:
+- `PSI_MEMORY_STORE`
+- `PSI_MEMORY_STORE_ROOT`
+- `PSI_MEMORY_STORE_DB_DIR`
+- `PSI_MEMORY_STORE_AUTO_FALLBACK`
+- `PSI_MEMORY_HISTORY_COMMIT_LIMIT`
+- `PSI_MEMORY_RETENTION_SNAPSHOTS`
+- `PSI_MEMORY_RETENTION_DELTAS`
 
 ---
 
