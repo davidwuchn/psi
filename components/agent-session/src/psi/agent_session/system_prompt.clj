@@ -94,11 +94,12 @@
   ([] (build-system-prompt {}))
   ([{:keys [cwd custom-prompt append-prompt selected-tools
             context-files skills]}]
-   (let [resolved-cwd  (or cwd (System/getProperty "user.dir"))
-         tool-names    (or selected-tools ["read" "bash" "edit" "write" "eql_query"])
-         has-read?     (some #(= "read" %) tool-names)
-         loaded-skills (or skills [])
-         loaded-ctx    (or context-files [])
+   (let [resolved-cwd   (or cwd (System/getProperty "user.dir"))
+         tool-names     (or selected-tools ["read" "bash" "edit" "write" "eql_query"])
+         has-read?      (some #(= "read" %) tool-names)
+         has-eql-query? (some #(= "eql_query" %) tool-names)
+         loaded-skills  (or skills [])
+         loaded-ctx     (or context-files [])
 
          ;; Date/time stamp
          now    (java.time.ZonedDateTime/now)
@@ -140,6 +141,16 @@
 
          guidelines-section (str/join "\n" (map #(str "- " %) guidelines))
 
+         ;; Graph capability discovery section
+         graph-discovery-section
+         (when has-eql-query?
+           (str "\n\nCapability graph (EQL discovery):\n"
+                "- Purpose: discover live query capabilities and valid attrs before guessing paths.\n"
+                "- Endpoints: :psi.graph/resolver-count :psi.graph/mutation-count :psi.graph/resolver-syms :psi.graph/mutation-syms :psi.graph/env-built :psi.graph/nodes :psi.graph/edges :psi.graph/capabilities :psi.graph/domain-coverage\n"
+                "- Workflow: 1) query :psi.graph/resolver-syms 2) query discovered attrs directly.\n"
+                "- Token usage attrs: :psi.agent-session/usage-input :psi.agent-session/usage-output :psi.agent-session/usage-cache-read :psi.agent-session/usage-cache-write :psi.agent-session/context-tokens :psi.agent-session/context-window\n"
+                "- Example: eql_query(query: \"[:psi.graph/resolver-syms]\")"))
+
          ;; Append section
          append-section (when append-prompt (str "\n\n" append-prompt))
 
@@ -168,7 +179,8 @@
                 tools-section "\n\n"
                 "In addition to the tools above, you may have access to other custom tools depending on the project.\n\n"
                 "Guidelines:\n"
-                guidelines-section))]
+                guidelines-section
+                (or graph-discovery-section "")))]
 
      (str base-prompt
           (or append-section "")

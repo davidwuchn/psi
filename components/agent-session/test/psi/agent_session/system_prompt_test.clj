@@ -58,12 +58,15 @@
 ;; ============================================================
 
 (deftest build-system-prompt-test
-  (testing "default prompt includes tools and guidelines"
+  (testing "default prompt includes tools, guidelines, and graph discovery"
     (let [prompt (sys-prompt/build-system-prompt {:cwd "/test/dir"})]
       (is (str/includes? prompt "Available tools:"))
       (is (str/includes? prompt "read: Read file contents"))
       (is (str/includes? prompt "eql_query: Execute an EQL query against the live session graph."))
       (is (str/includes? prompt "Guidelines:"))
+      (is (str/includes? prompt "Capability graph (EQL discovery):"))
+      (is (str/includes? prompt ":psi.graph/resolver-syms"))
+      (is (str/includes? prompt ":psi.agent-session/usage-input"))
       (is (str/includes? prompt "/test/dir"))))
 
   (testing "includes current date/time"
@@ -96,6 +99,11 @@
                   {:skills skills
                    :selected-tools ["bash" "edit" "write"]})]
       (is (not (str/includes? prompt "<available_skills>")))))
+
+  (testing "excludes graph discovery section when eql_query is not available"
+    (let [prompt (sys-prompt/build-system-prompt
+                  {:selected-tools ["read" "bash" "edit" "write"]})]
+      (is (not (str/includes? prompt "Capability graph (EQL discovery):")))))
 
   (testing "custom prompt replaces default"
     (let [prompt (sys-prompt/build-system-prompt
