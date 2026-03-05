@@ -62,6 +62,25 @@
     ;; Session ID should have changed
     (is (not= old-id (:session-id (session/get-session-data-in ctx))))))
 
+(deftest dispatch-new-session-uses-callback-when-provided-test
+  (let [ctx (make-test-ctx)
+        called? (atom 0)
+        result (commands/dispatch ctx
+                                  "/new"
+                                  (assoc cmd-opts
+                                         :on-new-session!
+                                         (fn []
+                                           (swap! called? inc)
+                                           {:messages [{:role :assistant :text "startup"}]
+                                            :tool-calls {"call-1" {:name "read"}}
+                                            :tool-order ["call-1"]}))) ]
+    (is (= :new-session (:type result)))
+    (is (= 1 @called?))
+    (is (= [{:role :assistant :text "startup"}]
+           (get-in result [:rehydrate :messages])))
+    (is (= ["call-1"]
+           (get-in result [:rehydrate :tool-order])))))
+
 (deftest dispatch-resume-test
   (let [ctx (make-test-ctx)]
     (is (= {:type :resume} (commands/dispatch ctx "/resume" cmd-opts)))))

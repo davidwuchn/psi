@@ -67,7 +67,43 @@
       (is (some #(and (= :model (:kind %))
                       (= "anthropic" (get-in % [:data :provider]))
                       (= "claude-3-5-sonnet" (get-in % [:data :model-id])))
-                @(:journal-atom ctx))))))
+                @(:journal-atom ctx)))))
+
+  (testing "new-session-in! resets startup telemetry"
+    (let [ctx (session/create-context)]
+      (swap! (:session-data-atom ctx) assoc
+             :startup-prompts [{:id "engage-nucleus"}]
+             :startup-bootstrap-completed? true
+             :startup-bootstrap-started-at (java.time.Instant/now)
+             :startup-bootstrap-completed-at (java.time.Instant/now)
+             :startup-message-ids ["m1"])
+      (session/new-session-in! ctx)
+      (let [sd (session/get-session-data-in ctx)]
+        (is (= [] (:startup-prompts sd)))
+        (is (false? (:startup-bootstrap-completed? sd)))
+        (is (nil? (:startup-bootstrap-started-at sd)))
+        (is (nil? (:startup-bootstrap-completed-at sd)))
+        (is (= [] (:startup-message-ids sd)))))))
+
+(deftest fork-session-resets-startup-telemetry-test
+  (let [ctx (session/create-context)]
+    (session/new-session-in! ctx)
+    (let [entry-id (:id (session/journal-append-in! ctx (persist/message-entry {:role "user"
+                                                                                 :content [{:type :text :text "hello"}]
+                                                                                 :timestamp (java.time.Instant/now)})))]
+      (swap! (:session-data-atom ctx) assoc
+             :startup-prompts [{:id "engage-nucleus"}]
+             :startup-bootstrap-completed? true
+             :startup-bootstrap-started-at (java.time.Instant/now)
+             :startup-bootstrap-completed-at (java.time.Instant/now)
+             :startup-message-ids ["m1"])
+      (session/fork-session-in! ctx entry-id)
+      (let [sd (session/get-session-data-in ctx)]
+        (is (= [] (:startup-prompts sd)))
+        (is (false? (:startup-bootstrap-completed? sd)))
+        (is (nil? (:startup-bootstrap-started-at sd)))
+        (is (nil? (:startup-bootstrap-completed-at sd)))
+        (is (= [] (:startup-message-ids sd)))))))
 
 (deftest resume-session-model-fallback-test
   (testing "resume-session-in! keeps current model when resumed journal has no model entry"

@@ -752,6 +752,33 @@
       (is (some #(contains? (:data %) :session-id) events))
       (is (some #(contains? (:data %) :messages) events)))))
 
+(deftest rpc-new-session-uses-callback-rehydrate-payload-test
+  (testing "new_session uses on-new-session! callback when provided"
+    (let [ctx (session/create-context)
+          called? (atom 0)
+          state (atom {:ready? true
+                       :pending {}
+                       :subscribed-topics #{"session/rehydrated"}
+                       :on-new-session! (fn []
+                                          (swap! called? inc)
+                                          {:agent-messages [{:role "assistant"
+                                                             :content [{:type :text :text "startup reply"}]}]
+                                           :messages [{:role :assistant :text "startup reply"}]
+                                           :tool-calls {"call-1" {:name "read"}}
+                                           :tool-order ["call-1"]})})
+          handler (rpc/make-session-request-handler ctx)
+          input (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                     "{:id \"n1\" :kind :request :op \"new_session\"}\n")
+          {:keys [out-lines]} (run-loop input handler state)
+          frames (parse-frames out-lines)
+          rehydrate-event (some #(when (= "session/rehydrated" (:event %)) %) frames)]
+      (is (= 1 @called?))
+      (is (some? rehydrate-event))
+      (is (= [{:role :assistant :text "startup reply"}]
+             (get-in rehydrate-event [:data :messages])))
+      (is (= ["call-1"]
+             (get-in rehydrate-event [:data :tool-order]))))))
+
 (deftest rpc-e2e-handshake-query-and-streaming-test
   (testing "handshake -> query_eql -> prompt with interleaved events"
     (let [ctx (session/create-context)
