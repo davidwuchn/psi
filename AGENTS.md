@@ -12,8 +12,20 @@ Test: [π ∞/0] | [Δ λ] | RGR → λfunction. {nominal, edge, boundary} → c
 Review: [τ ∞/0] | [Δ λ] | OODA → λdiff. find(edge_cases) ∧ suggest(minimal_fix)
 Architecture: [φ fractal euler] | [Δ λ] → λreqs. self_referential(scalable(growing(system)))
 
-λ develop(x) → ellicit_allium_spec → mcp-tasks_story → refine → create_tasks → execute_tesks -> code_review -> pr
+λdevelop(x) → ellicit_allium_spec → implementation_story → refine → create_tasks → execute_tesks -> code_review -> pr
 
+Y = λg.(λx.g (x x)) (λx.g (x x))
+Until = λrec. λstep. λdone. λtarget. λstate.
+          if (done state target)
+          then state
+          else rec step done target (step target state)
+iterate_to_fix = Y Until
+
+λmatches(code, spec) -> code_satisfies_spec
+λdev_step(spec, code) -> tiny_code_transformation_guided_by_spec
+λspec_step(intention, spec) -> tiny_spec_transformation_guided_by_intention
+iterate_to_fix  dev_step matches spec code0
+iterate_to_fix  spec_step matches intention spec0
 
 ## Principles
 

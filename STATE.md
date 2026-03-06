@@ -11,6 +11,8 @@ Current truth about the Psi system.
 - ✓ Memory model boundary clarified: session memory (ephemeral working set) ≠ persistent memory (cross-session distilled artifacts) ≠ git history (queried directly, not duplicated into memory store).
 - ✓ Session persistence is a separate concern from memory: session transcripts/state may be partially persisted for `/resume`, but this is distinct from memory-store artifacts used by remember/recover.
 - ✓ Working pattern remains atomic: inspect → minimal change → verify → commit.
+- ✓ 2026-03-06 session boot aligned via nucleus/OODA ritual; current mode is ◈ reflect → ready for · atom execution.
+- … Next executable task: capture and wire Step 11 startup-prompts behavior (turn model + fork semantics) into implementation plan.
 
 ## Components
 
