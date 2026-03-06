@@ -235,11 +235,14 @@
    - :run-loop-fn
    - :progress-queue
    - :session-mode (keyword, optional; default :build)
+   - :fail-fast? (boolean, optional; default false)
 
-   Returns {:rules [...] :applied [...]} where :applied contains
-   {:id :user-message :assistant-result} entries for each executed rule."
-  [ctx {:keys [ai-ctx ai-model run-loop-fn progress-queue session-mode]
-        :or   {session-mode :build}}]
+   Returns {:rules [...] :applied [...] :errors [...]} where :applied contains
+   per-rule outcomes. On prompt execution failure, execution continues by default
+   with an error outcome captured in :applied/:errors."
+  [ctx {:keys [ai-ctx ai-model run-loop-fn progress-queue session-mode fail-fast?]
+        :or   {session-mode :build
+               fail-fast? false}}]
   (let [started-at (java.time.Instant/now)
         _ (swap! (:session-data-atom ctx) assoc
                  :startup-bootstrap-started-at started-at
@@ -249,27 +252,45 @@
         rules (startup-prompts/discover-rules
                {:cwd (:cwd ctx)
                 :session-mode session-mode})
-        applied (mapv
-                 (fn [rule]
-                   (let [text (:text rule)
-                         user-msg (journal-user-message-in! ctx text)
-                         message-id (some-> @(:journal-atom ctx) last :id)
-                         api-key (resolve-api-key-in ctx ai-model)
-                         result (run-agent-loop-in! ctx ai-ctx ai-model [user-msg]
+        {:keys [applied errors]}
+        (loop [remaining rules
+               applied []
+               errors []]
+          (if-let [rule (first remaining)]
+            (let [text       (:text rule)
+                  user-msg   (journal-user-message-in! ctx text)
+                  message-id (some-> @(:journal-atom ctx) last :id)
+                  api-key    (resolve-api-key-in ctx ai-model)
+                  _          (when message-id
+                               (swap! (:session-data-atom ctx) update :startup-message-ids conj message-id))
+                  outcome    (try
+                               {:status :ok
+                                :assistant-result
+                                (run-agent-loop-in! ctx ai-ctx ai-model [user-msg]
                                                     {:run-loop-fn run-loop-fn
                                                      :api-key api-key
                                                      :progress-queue progress-queue
-                                                     :sync-on-git-head-change? true})]
-                     (when message-id
-                       (swap! (:session-data-atom ctx) update :startup-message-ids conj message-id))
-                     {:id (:id rule)
-                      :user-message user-msg
-                      :assistant-result result}))
-                 rules)
+                                                     :sync-on-git-head-change? true})}
+                               (catch Exception e
+                                 {:status :error
+                                  :error {:message (ex-message e)
+                                          :data (ex-data e)}}))
+                  entry      (merge {:id (:id rule)
+                                     :user-message user-msg}
+                                    outcome)
+                  applied'   (conj applied entry)
+                  errors'    (if (= :error (:status outcome))
+                               (conj errors (:error outcome))
+                               errors)]
+              (if (and fail-fast? (= :error (:status outcome)))
+                {:applied applied' :errors errors'}
+                (recur (rest remaining) applied' errors')))
+            {:applied applied :errors errors}))
         completed-at (java.time.Instant/now)]
     (swap! (:session-data-atom ctx) assoc
            :startup-prompts (startup-prompts/applied-view rules)
            :startup-bootstrap-completed? true
            :startup-bootstrap-completed-at completed-at)
     {:rules rules
-     :applied applied}))
+     :applied applied
+     :errors errors}))
