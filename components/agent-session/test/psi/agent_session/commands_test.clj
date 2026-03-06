@@ -298,7 +298,9 @@
   (let [ctx (make-test-ctx)
         s   (commands/format-status ctx)]
     (is (str/includes? s "Phase"))
-    (is (str/includes? s "idle"))))
+    (is (str/includes? s "idle"))
+    (is (str/includes? s "Roots"))
+    (is (str/includes? s "agent-session-ctx"))))
 
 (deftest format-history-empty-test
   (let [ctx (make-test-ctx)

@@ -40,7 +40,8 @@
                     :psi.agent-session/session-entry-count
                     :psi.agent-session/context-tokens
                     :psi.agent-session/context-window
-                    :psi.agent-session/context-fraction]
+                    :psi.agent-session/context-fraction
+                    :psi.graph/root-seeds]
         recursion-query [:psi.recursion/status
                          :psi.recursion/paused?
                          :psi.recursion/current-cycle]
@@ -62,6 +63,8 @@
          (when recursion-status
            (str "\n  Recurs. : " (name recursion-status)
                 (when (:psi.recursion/paused? d) " (paused)")))
+         (when-let [root-seeds (:psi.graph/root-seeds d)]
+           (str "\n  Roots   : " (str/join ", " (map name root-seeds))))
          (when (and (= :awaiting-approval recursion-status)
                     current-cycle)
            (str "\n  FF Cycle : " (:cycle-id current-cycle)
