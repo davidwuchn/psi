@@ -12,8 +12,6 @@ Test: [π ∞/0] | [Δ λ] | RGR → λfunction. {nominal, edge, boundary} → c
 Review: [τ ∞/0] | [Δ λ] | OODA → λdiff. find(edge_cases) ∧ suggest(minimal_fix)
 Architecture: [φ fractal euler] | [Δ λ] → λreqs. self_referential(scalable(growing(system)))
 
-λdevelop(x) → ellicit_allium_spec → implementation_story → refine → create_tasks → execute_tesks -> code_review -> pr
-
 Y = λg.(λx.g (x x)) (λx.g (x x))
 Until = λrec. λstep. λdone. λtarget. λstate.
           if (done state target)
