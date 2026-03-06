@@ -82,6 +82,7 @@ Used to detect stalled streaming runs and transition to deterministic recovery."
   session-model-id
   session-model-reasoning
   session-thinking-level
+  session-effective-reasoning-effort
   header-model-label
   transcript-hydrated?)
 

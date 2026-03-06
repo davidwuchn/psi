@@ -304,6 +304,14 @@
     (is (str/includes? s "Roots"))
     (is (str/includes? s "agent-session-ctx"))))
 
+(deftest format-status-includes-effective-reasoning-effort-test
+  (let [ctx (make-test-ctx {:model {:provider "openai"
+                                    :id "gpt-5.3-codex"
+                                    :reasoning true}
+                            :thinking-level :high})
+        s   (commands/format-status ctx)]
+    (is (str/includes? s "thinking high"))))
+
 (deftest format-worktree-test
   (let [ctx (make-test-ctx)
         s   (commands/format-worktree ctx)]

@@ -34,7 +34,8 @@
 (defn- setup-session-ctx!
   [agent-ctx]
   {:agent-ctx agent-ctx
-   :session-data-atom (atom {:tool-output-overrides {}})
+   :session-data-atom (atom {:tool-output-overrides {}
+                             :thinking-level :off})
    :tool-output-stats-atom (atom {:calls []
                                   :aggregates {:total-context-bytes 0
                                                :by-tool {}
@@ -149,6 +150,21 @@
             thinking (some #(when (= :thinking-delta (:event-kind %)) %) events)]
         (is (some? thinking))
         (is (= "plan" (:text thinking)))))))
+
+(deftest thinking-level-is-forwarded-to-ai-options-test
+  (let [agent-ctx   (setup-agent-ctx!)
+        session-ctx (assoc (setup-session-ctx! agent-ctx)
+                           :session-data-atom (atom {:tool-output-overrides {}
+                                                     :thinking-level :high}))
+        user-msg    {:role "user" :content [{:type :text :text "hi"}]}
+        seen-opts   (atom nil)
+        stream-fn   (fn [_ai-ctx _conv _model opts consume-fn]
+                      (reset! seen-opts opts)
+                      (consume-fn {:type :start})
+                      (consume-fn {:type :done :reason :stop}))]
+    (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
+      (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg])
+      (is (= :high (:thinking-level @seen-opts))))))
 
 (deftest cumulative-snapshot-text-deltas-replace-instead-of-repeating-test
   (let [agent-ctx   (setup-agent-ctx!)

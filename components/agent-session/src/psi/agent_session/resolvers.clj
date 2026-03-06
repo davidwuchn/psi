@@ -196,6 +196,7 @@
    :psi.agent-session/model-provider
    :psi.agent-session/model-id
    :psi.agent-session/model-reasoning
+   :psi.agent-session/effective-reasoning-effort
 
    Startup bootstrap introspection
    ──────────────────────────────
@@ -1346,13 +1347,32 @@
    ::pco/output [:psi.agent-session/model-id]}
   {:psi.agent-session/model-id (:id (:model @(:session-data-atom agent-session-ctx)))})
 
+(def ^:private thinking-level->reasoning-effort
+  {:off nil
+   :minimal "minimal"
+   :low "low"
+   :medium "medium"
+   :high "high"
+   :xhigh "high"})
+
+(defn- effective-reasoning-effort
+  [model thinking-level]
+  (when (:reasoning model)
+    (get thinking-level->reasoning-effort thinking-level "medium")))
+
 (pco/defresolver agent-session-model-reasoning
-  "Resolve whether the active model supports reasoning."
+  "Resolve whether the active model supports reasoning and effective effort."
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
-   ::pco/output [:psi.agent-session/model-reasoning]}
-  {:psi.agent-session/model-reasoning
-   (boolean (:reasoning (:model @(:session-data-atom agent-session-ctx))))})
+   ::pco/output [:psi.agent-session/model-reasoning
+                 :psi.agent-session/effective-reasoning-effort]}
+  (let [sd    @(:session-data-atom agent-session-ctx)
+        model (:model sd)
+        level (:thinking-level sd)]
+    {:psi.agent-session/model-reasoning
+     (boolean (:reasoning model))
+     :psi.agent-session/effective-reasoning-effort
+     (effective-reasoning-effort model level)}))
 
 (pco/defresolver startup-prompts-resolver
   "Resolve startup prompt execution telemetry for the current session."

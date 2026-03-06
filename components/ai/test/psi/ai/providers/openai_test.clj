@@ -75,7 +75,9 @@
       (let [body (json/parse-string (get-in @captured [:req :body]) true)]
         (is (= "gpt-5.3-codex" (:model body)))
         (is (= "You are a helpful assistant" (:instructions body)))
-        (is (= true (:stream body))))
+        (is (= true (:stream body)))
+        (is (= {:effort "medium" :summary "auto"}
+               (:reasoning body))))
 
       (is (some #(= :start (:type %)) @events))
       (is (some #(and (= :text-delta (:type %)) (= "Hello" (:delta %))) @events))
@@ -122,6 +124,16 @@
                       (= "Plan step" (:delta %)))
                 @events))
       (is (some #(= :done (:type %)) @events)))))
+
+(deftest codex-thinking-level-maps-to-reasoning-effort-test
+  (let [model (models/get-model :gpt-5.3-codex)]
+    (is (= {"effort" "high" "summary" "auto"}
+           (#'openai/codex-reasoning model {:thinking-level :high})))
+    (is (= {"effort" "minimal" "summary" "auto"}
+           (#'openai/codex-reasoning model {:thinking-level :minimal})))
+    (is (nil? (#'openai/codex-reasoning model {:thinking-level :off})))
+    (is (= {"effort" "medium" "summary" "auto"}
+           (#'openai/codex-reasoning model {})))))
 
 (deftest codex-tool-call-id-roundtrip-test
   (testing "tool call ids split into call_id + item id (not single-char prefixes)"

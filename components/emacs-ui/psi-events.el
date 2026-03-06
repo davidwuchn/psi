@@ -31,14 +31,23 @@ DATA is expected to be an alist map."
                (not (string-empty-p (string-trim text))))
       (string-trim text))))
 
-(defun psi-emacs--session-model-label (provider model-id)
-  "Return optional compact model label from PROVIDER and MODEL-ID."
-  (let ((provider* (psi-emacs--session-normalize-text provider))
-        (model-id* (psi-emacs--session-normalize-text model-id)))
-    (when model-id*
-      (if provider*
-          (format "(%s) %s" provider* model-id*)
-        model-id*))))
+(defun psi-emacs--session-model-label (provider model-id model-reasoning thinking-level effective-effort)
+  "Return optional compact model label from session metadata.
+
+When MODEL-REASONING is non-nil, append an explicit thinking/effort suffix."
+  (let* ((provider* (psi-emacs--session-normalize-text provider))
+         (model-id* (psi-emacs--session-normalize-text model-id))
+         (thinking* (psi-emacs--session-normalize-text thinking-level))
+         (effort* (psi-emacs--session-normalize-text effective-effort))
+         (base (when model-id*
+                 (if provider*
+                     (format "(%s) %s" provider* model-id*)
+                   model-id*))))
+    (when base
+      (if model-reasoning
+          (let ((label (or effort* thinking* "off")))
+            (format "%s • thinking %s" base label))
+        base))))
 
 (defun psi-emacs--handle-session-updated-event (data)
   "Project `session/updated` DATA into frontend session/header state."
@@ -68,7 +77,15 @@ DATA is expected to be an alist map."
            (thinking-level (psi-emacs--session-normalize-text
                             (psi-emacs--event-data-get data
                                                        '(:thinking-level thinking-level :thinkingLevel thinkingLevel))))
-           (header-model-label (psi-emacs--session-model-label model-provider model-id)))
+           (effective-reasoning-effort (psi-emacs--session-normalize-text
+                                        (psi-emacs--event-data-get data
+                                                                   '(:effective-reasoning-effort effective-reasoning-effort :effectiveReasoningEffort effectiveReasoningEffort))))
+           (header-model-label (psi-emacs--session-model-label
+                                model-provider
+                                model-id
+                                model-reasoning
+                                thinking-level
+                                effective-reasoning-effort)))
       (setf (psi-emacs-state-session-id psi-emacs--state) session-id)
       (setf (psi-emacs-state-session-phase psi-emacs--state) phase)
       (setf (psi-emacs-state-session-is-streaming psi-emacs--state) is-streaming)
@@ -79,6 +96,8 @@ DATA is expected to be an alist map."
       (setf (psi-emacs-state-session-model-id psi-emacs--state) model-id)
       (setf (psi-emacs-state-session-model-reasoning psi-emacs--state) model-reasoning)
       (setf (psi-emacs-state-session-thinking-level psi-emacs--state) thinking-level)
+      (setf (psi-emacs-state-session-effective-reasoning-effort psi-emacs--state)
+            effective-reasoning-effort)
       (setf (psi-emacs-state-header-model-label psi-emacs--state) header-model-label)
       (unless (memq (psi-emacs-state-run-state psi-emacs--state) '(error reconnecting))
         (psi-emacs--set-run-state psi-emacs--state (if is-streaming 'streaming 'idle)))

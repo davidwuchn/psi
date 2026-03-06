@@ -37,6 +37,8 @@
                              :psi.agent-session/session-id
                              :psi.agent-session/model
                              :psi.agent-session/thinking-level
+                             :psi.agent-session/model-reasoning
+                             :psi.agent-session/effective-reasoning-effort
                              :psi.agent-session/extension-summary
                              :psi.agent-session/session-entry-count
                              :psi.agent-session/context-tokens
@@ -47,7 +49,13 @@
     (str "── Session status ─────────────────────\n"
          "  Phase   : " (:psi.agent-session/phase d) "\n"
          "  ID      : " (:psi.agent-session/session-id d) "\n"
-         "  Model   : " (get-in d [:psi.agent-session/model :id] "none") "\n"
+         "  Model   : " (get-in d [:psi.agent-session/model :id] "none")
+         (if (:psi.agent-session/model-reasoning d)
+           (str " (thinking "
+                (or (:psi.agent-session/effective-reasoning-effort d) "off")
+                ")")
+           "")
+         "\n"
          "  Entries : " (:psi.agent-session/session-entry-count d)
          (when-let [frac (:psi.agent-session/context-fraction d)]
            (str "\n  Context : " (int (* 100 frac)) "%"))

@@ -1630,11 +1630,12 @@
                  (:model-provider . "openai")
                  (:model-id . "gpt-5.3-codex")
                  (:model-reasoning . t)
-                 (:thinking-level . "high")))))
+                 (:thinking-level . "high")
+                 (:effective-reasoning-effort . "high")))))
     (should (eq 'streaming (psi-emacs-state-run-state psi-emacs--state)))
-    (should (equal "(openai) gpt-5.3-codex"
+    (should (equal "(openai) gpt-5.3-codex • thinking high"
                    (psi-emacs-state-header-model-label psi-emacs--state)))
-    (should (string= "psi [disconnected/starting/streaming] tools:collapsed model:(openai) gpt-5.3-codex"
+    (should (string= "psi [disconnected/starting/streaming] tools:collapsed model:(openai) gpt-5.3-codex • thinking high"
                      header-line-format))))
 
 (ert-deftest psi-session-updated-status-diagnostics-include-session-summary ()
@@ -1650,7 +1651,10 @@
                  (:pending-message-count . 0)
                  (:retry-attempt . 0)
                  (:model-provider . "anthropic")
-                 (:model-id . "claude-sonnet")))))
+                 (:model-id . "claude-sonnet")
+                 (:model-reasoning . t)
+                 (:thinking-level . "medium")
+                 (:effective-reasoning-effort . "medium")))))
     (let ((status (psi-emacs--status-diagnostics-string psi-emacs--state)))
       (should (string-match-p "session: sess-2" status))
       (should (string-match-p "phase:idle" status))
@@ -1670,9 +1674,12 @@
                  (:pending-message-count . 1)
                  (:retry-attempt . 0)
                  (:model-provider . "openai")
-                 (:model-id . "gpt-5")))))
+                 (:model-id . "gpt-5")
+                 (:model-reasoning . t)
+                 (:thinking-level . "high")
+                 (:effective-reasoning-effort . "high")))))
     (should (eq 'error (psi-emacs-state-run-state psi-emacs--state)))
-    (should (string-match-p "model:(openai) gpt-5" header-line-format))))
+    (should (string-match-p "model:(openai) gpt-5 • thinking high" header-line-format))))
 
 (ert-deftest psi-error-line-upsert-replaces-previous ()
   (with-temp-buffer

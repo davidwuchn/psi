@@ -48,6 +48,7 @@
    :session-model-id nil
    :session-model-reasoning nil
    :session-thinking-level nil
+   :session-effective-reasoning-effort nil
    :header-model-label nil
    :transcript-hydrated? nil))
 
@@ -242,6 +243,7 @@ When PRESERVE-TOOL-OUTPUT-VIEW-MODE is non-nil, keep the current
     (setf (psi-emacs-state-session-model-id psi-emacs--state) nil)
     (setf (psi-emacs-state-session-model-reasoning psi-emacs--state) nil)
     (setf (psi-emacs-state-session-thinking-level psi-emacs--state) nil)
+    (setf (psi-emacs-state-session-effective-reasoning-effort psi-emacs--state) nil)
     (setf (psi-emacs-state-header-model-label psi-emacs--state) nil)
     (setf (psi-emacs-state-transcript-hydrated? psi-emacs--state) nil)
     (psi-emacs--set-run-state psi-emacs--state 'idle)

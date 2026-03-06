@@ -448,11 +448,13 @@
       (let [result (session/query-in ctx [:psi.agent-session/model-provider
                                           :psi.agent-session/model-id
                                           :psi.agent-session/model-reasoning
+                                          :psi.agent-session/effective-reasoning-effort
                                           :psi.agent-session/cwd
                                           :psi.agent-session/git-branch])]
         (is (= "openai" (:psi.agent-session/model-provider result)))
         (is (= "gpt-5.3-codex" (:psi.agent-session/model-id result)))
         (is (true? (:psi.agent-session/model-reasoning result)))
+        (is (nil? (:psi.agent-session/effective-reasoning-effort result)))
         (is (string? (:psi.agent-session/cwd result)))
         (is (contains? result :psi.agent-session/git-branch)))))
 
@@ -463,7 +465,17 @@
       (let [summary (session/query-in ctx [:psi.tool/count :psi.tool/names :psi.tool/summary])]
         (is (= 1 (:psi.tool/count summary)))
         (is (= ["foo"] (:psi.tool/names summary)))
-        (is (= "foo" (get-in summary [:psi.tool/summary :tools 0 :name])))))))
+        (is (= "foo" (get-in summary [:psi.tool/summary :tools 0 :name]))))))
+
+  (testing "query-in resolves effective reasoning effort for reasoning models"
+    (let [ctx (session/create-context {:initial-session {:model {:provider "openai"
+                                                                 :id "gpt-5.3-codex"
+                                                                 :reasoning true}
+                                                        :thinking-level :high}})
+          result (session/query-in ctx [:psi.agent-session/model-reasoning
+                                        :psi.agent-session/effective-reasoning-effort])]
+      (is (true? (:psi.agent-session/model-reasoning result)))
+      (is (= "high" (:psi.agent-session/effective-reasoning-effort result))))))
 
 (deftest tool-output-eql-introspection-test
   (testing "query-in resolves tool-output policy defaults and overrides"

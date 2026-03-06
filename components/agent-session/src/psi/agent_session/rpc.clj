@@ -591,24 +591,39 @@
     (string? lvl)  lvl
     :else          "info"))
 
+(def ^:private thinking-level->reasoning-effort
+  {:off nil
+   :minimal "minimal"
+   :low "low"
+   :medium "medium"
+   :high "high"
+   :xhigh "high"})
+
+(defn- effective-reasoning-effort
+  [model thinking-level]
+  (when (:reasoning model)
+    (get thinking-level->reasoning-effort thinking-level "medium")))
+
 (defn- session-updated-payload
   [ctx]
-  (let [sd             (session/get-session-data-in ctx)
-        model          (:model sd)
-        thinking-level (:thinking-level sd)]
-    {:session-id            (:session-id sd)
-     :session-file          (:session-file sd)
-     :session-name          (:session-name sd)
-     :phase                 (some-> (session/sc-phase-in ctx) name)
-     :is-streaming          (boolean (:is-streaming sd))
-     :is-compacting         (boolean (:is-compacting sd))
-     :pending-message-count (+ (count (:steering-messages sd))
-                               (count (:follow-up-messages sd)))
-     :retry-attempt         (or (:retry-attempt sd) 0)
-     :model-provider        (:provider model)
-     :model-id              (:id model)
-     :model-reasoning       (boolean (:reasoning model))
-     :thinking-level        (some-> thinking-level name)}))
+  (let [sd               (session/get-session-data-in ctx)
+        model            (:model sd)
+        thinking-level   (:thinking-level sd)
+        effective-effort (effective-reasoning-effort model thinking-level)]
+    {:session-id                  (:session-id sd)
+     :session-file                (:session-file sd)
+     :session-name                (:session-name sd)
+     :phase                       (some-> (session/sc-phase-in ctx) name)
+     :is-streaming                (boolean (:is-streaming sd))
+     :is-compacting               (boolean (:is-compacting sd))
+     :pending-message-count       (+ (count (:steering-messages sd))
+                                     (count (:follow-up-messages sd)))
+     :retry-attempt               (or (:retry-attempt sd) 0)
+     :model-provider              (:provider model)
+     :model-id                    (:id model)
+     :model-reasoning             (boolean (:reasoning model))
+     :thinking-level              (some-> thinking-level name)
+     :effective-reasoning-effort  effective-effort}))
 
 (def ^:private footer-query
   [:psi.agent-session/cwd
@@ -626,6 +641,7 @@
    :psi.agent-session/model-id
    :psi.agent-session/model-reasoning
    :psi.agent-session/thinking-level
+   :psi.agent-session/effective-reasoning-effort
    :psi.ui/statuses])
 
 (defn- footer-data
@@ -700,6 +716,7 @@
         model-id          (:psi.agent-session/model-id d)
         model-reasoning?  (boolean (:psi.agent-session/model-reasoning d))
         thinking-level    (:psi.agent-session/thinking-level d)
+        effective-effort  (:psi.agent-session/effective-reasoning-effort d)
 
         left-parts
         (cond-> []
@@ -723,15 +740,18 @@
 
         left (str/join " " left-parts)
 
-        model-label    (or model-id "no-model")
-        provider-label (or model-provider "no-provider")
-        thinking-label (normalize-thinking-level thinking-level)
-        right-base     (if model-reasoning?
-                         (if (= "off" thinking-label)
-                           (str model-label " • thinking off")
-                           (str model-label " • " thinking-label))
-                         model-label)
-        right          (str "(" provider-label ") " right-base)]
+        model-label     (or model-id "no-model")
+        provider-label  (or model-provider "no-provider")
+        thinking-label  (normalize-thinking-level thinking-level)
+        effort-label    (or effective-effort
+                            (when (not= "off" thinking-label)
+                              thinking-label))
+        right-base      (if model-reasoning?
+                          (if (= "off" thinking-label)
+                            (str model-label " • thinking off")
+                            (str model-label " • thinking " effort-label))
+                          model-label)
+        right           (str "(" provider-label ") " right-base)]
     (if (str/blank? left)
       right
       (str left " " right))))

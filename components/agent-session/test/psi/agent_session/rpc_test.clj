@@ -57,6 +57,7 @@
                                    :psi.agent-session/model-id "gpt-5.3-codex"
                                    :psi.agent-session/model-reasoning true
                                    :psi.agent-session/thinking-level :xhigh
+                                   :psi.agent-session/effective-reasoning-effort "high"
                                    :psi.ui/statuses [{:extension-id "b" :text "TS+ESL,Prett"}
                                                      {:extension-id "a" :text "Clojure-LSP\nclojure-lsp"}]})]
                     (#'rpc/footer-updated-payload ctx))]
@@ -67,7 +68,7 @@
       (is (str/includes? (:stats-line payload) "R5.2M"))
       (is (str/includes? (:stats-line payload) "$1.444"))
       (is (str/includes? (:stats-line payload) "31.9%/272k (auto)"))
-      (is (str/includes? (:stats-line payload) "(openai-codex) gpt-5.3-codex • xhigh"))
+      (is (str/includes? (:stats-line payload) "(openai-codex) gpt-5.3-codex • thinking high"))
       (is (= "Clojure-LSP clojure-lsp TS+ESL,Prett"
              (:status-line payload))))))
 
@@ -89,6 +90,7 @@
       (is (= "gpt-5.3-codex" (:model-id payload)))
       (is (= true (:model-reasoning payload)))
       (is (= "xhigh" (:thinking-level payload)))
+      (is (= "high" (:effective-reasoning-effort payload)))
       (is (= 2 (:pending-message-count payload)))
       (is (= 2 (:retry-attempt payload))))))
 

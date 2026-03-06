@@ -389,11 +389,23 @@
              "strict"      nil})
           (:tools conversation))))
 
+(def ^:private thinking-level->effort
+  {:off nil
+   :minimal "minimal"
+   :low "low"
+   :medium "medium"
+   :high "high"
+   :xhigh "high"})
+
 (defn- codex-reasoning
-  [model]
+  [model options]
   (when (:supports-reasoning model)
-    {"effort" "medium"
-     "summary" "auto"}))
+    (let [effort (get thinking-level->effort
+                      (:thinking-level options)
+                      "medium")]
+      (when effort
+        {"effort" effort
+         "summary" "auto"}))))
 
 (defn- codex-usage->usage-map
   [usage]
@@ -450,8 +462,8 @@
                     (:session-id options)  (assoc "prompt_cache_key" (:session-id options))
                     (seq (codex-tools conversation))
                     (assoc "tools" (codex-tools conversation))
-                    (codex-reasoning model)
-                    (assoc "reasoning" (codex-reasoning model)))]
+                    (codex-reasoning model options)
+                    (assoc "reasoning" (codex-reasoning model options)))]
       {:headers headers
        :body    (json/generate-string body)})))
 

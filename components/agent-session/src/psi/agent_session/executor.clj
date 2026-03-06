@@ -555,6 +555,10 @@ Also tolerates cumulative snapshots that differ near previous tail
        ;; No tool calls (or error) — we're done
        assistant-msg))))
 
+(defn- session-thinking-level
+  [agent-session-ctx]
+  (get @(:session-data-atom agent-session-ctx) :thinking-level))
+
 (defn run-agent-loop!
   "Run a complete agent loop starting from the current agent-core state.
 
@@ -572,7 +576,10 @@ Also tolerates cumulative snapshots that differ near previous tail
    (run-agent-loop! ai-ctx agent-session-ctx agent-ctx ai-model new-messages nil))
   ([ai-ctx agent-session-ctx agent-ctx ai-model new-messages {:keys [turn-ctx-atom api-key progress-queue]}]
    (agent/start-loop-in! agent-ctx new-messages)
-   (let [extra-ai-options (when api-key {:api-key api-key})
+   (let [thinking-level   (session-thinking-level agent-session-ctx)
+         extra-ai-options (cond-> {}
+                            api-key (assoc :api-key api-key)
+                            (keyword? thinking-level) (assoc :thinking-level thinking-level))
          result (try
                   (run-turn! ai-ctx agent-session-ctx agent-ctx ai-model turn-ctx-atom
                              extra-ai-options progress-queue)
