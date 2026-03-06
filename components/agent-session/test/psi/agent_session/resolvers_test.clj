@@ -203,3 +203,32 @@
       (is (vector? (:psi.graph/edges result)))
       (is (vector? (:psi.graph/capabilities result)))
       (is (vector? (:psi.graph/domain-coverage result))))))
+
+;; ── Compatibility alias attrs (legacy/common names) ─────
+
+(deftest compatibility-aliases-test
+  (testing "legacy/common attrs resolve from session root"
+    (let [result (q [:psi.agent-session/current-request-shape
+                     :psi.agent-session/api-error-list
+                     :psi.memory/memory-state
+                     :psi.memory/memory-store-state
+                     :psi.memory/memory-context-state
+                     :psi.history/git-repo-status
+                     :psi.history/git-repo-commits
+                     :psi.history/git-learning-commits
+                     :psi.introspection/query-graph-summary
+                     :psi.introspection/engine-system-state])]
+      (is (map? (:psi.agent-session/current-request-shape result)))
+      (is (map? (:psi.agent-session/api-error-list result)))
+      (is (contains? (:psi.agent-session/api-error-list result) :count))
+
+      (is (map? (:psi.memory/memory-state result)))
+      (is (map? (:psi.memory/memory-store-state result)))
+      (is (map? (:psi.memory/memory-context-state result)))
+
+      (is (map? (:psi.history/git-repo-status result)))
+      (is (map? (:psi.history/git-repo-commits result)))
+      (is (vector? (:psi.history/git-learning-commits result)))
+
+      (is (map? (:psi.introspection/query-graph-summary result)))
+      (is (map? (:psi.introspection/engine-system-state result))))))

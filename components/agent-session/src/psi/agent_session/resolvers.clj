@@ -1415,6 +1415,171 @@
      :psi.graph/capabilities    (:capabilities cgraph)
      :psi.graph/domain-coverage (:domain-coverage cgraph)}))
 
+;; ── Compatibility aliases (older/discoverability attr names) ───────────────
+
+(pco/defresolver current-request-shape-compat
+  "Compatibility alias for :psi.agent-session/current-request-shape.
+   Canonical attr is :psi.agent-session/request-shape."
+  [{:keys [psi.agent-session/request-shape]}]
+  {::pco/input  [:psi.agent-session/request-shape]
+   ::pco/output [:psi.agent-session/current-request-shape]}
+  {:psi.agent-session/current-request-shape request-shape})
+
+(pco/defresolver api-error-list-compat
+  "Compatibility alias for :psi.agent-session/api-error-list.
+   Canonical attrs are :psi.agent-session/api-error-count and :psi.agent-session/api-errors."
+  [{:keys [psi.agent-session/api-error-count psi.agent-session/api-errors]}]
+  {::pco/input  [:psi.agent-session/api-error-count :psi.agent-session/api-errors]
+   ::pco/output [:psi.agent-session/api-error-list]}
+  {:psi.agent-session/api-error-list {:count  api-error-count
+                                      :errors api-errors}})
+
+(pco/defresolver memory-state-compat
+  "Compatibility alias for :psi.memory/memory-state.
+   Canonical attrs live under :psi.memory/* and are seeded via :psi/memory-ctx."
+  [{:keys [psi.memory/status
+           psi.memory/entry-count
+           psi.memory/entries
+           psi.memory/search-results
+           psi.memory/recovery-count
+           psi.memory/recoveries
+           psi.memory/graph-snapshots
+           psi.memory/graph-deltas
+           psi.memory/by-tag
+           psi.memory/capability-history
+           psi.memory/index-stats]}]
+  {::pco/input  [:psi.memory/status
+                 :psi.memory/entry-count
+                 :psi.memory/entries
+                 :psi.memory/search-results
+                 :psi.memory/recovery-count
+                 :psi.memory/recoveries
+                 :psi.memory/graph-snapshots
+                 :psi.memory/graph-deltas
+                 :psi.memory/by-tag
+                 :psi.memory/capability-history
+                 :psi.memory/index-stats]
+   ::pco/output [:psi.memory/memory-state]}
+  {:psi.memory/memory-state {:status             status
+                             :entry-count        entry-count
+                             :entries            entries
+                             :search-results     search-results
+                             :recovery-count     recovery-count
+                             :recoveries         recoveries
+                             :graph-snapshots    graph-snapshots
+                             :graph-deltas       graph-deltas
+                             :by-tag             by-tag
+                             :capability-history capability-history
+                             :index-stats        index-stats}})
+
+(pco/defresolver history-repo-status-compat
+  "Compatibility alias for :psi.history/git-repo-status.
+   Canonical attrs are :git.repo/status, :git.repo/current-commit, :git.repo/has-changes."
+  [{:keys [git.repo/status git.repo/current-commit git.repo/has-changes]}]
+  {::pco/input  [:git.repo/status :git.repo/current-commit :git.repo/has-changes]
+   ::pco/output [:psi.history/git-repo-status]}
+  {:psi.history/git-repo-status {:status         status
+                                 :current-commit current-commit
+                                 :has-changes    has-changes}})
+
+(pco/defresolver history-repo-commits-compat
+  "Compatibility alias for :psi.history/git-repo-commits.
+   Canonical attrs are :git.repo/commits and :git.repo/has-history."
+  [{:keys [git.repo/commits git.repo/has-history]}]
+  {::pco/input  [:git.repo/commits :git.repo/has-history]
+   ::pco/output [:psi.history/git-repo-commits]}
+  {:psi.history/git-repo-commits {:commits     commits
+                                  :has-history has-history}})
+
+(pco/defresolver history-learning-commits-compat
+  "Compatibility alias for :psi.history/git-learning-commits.
+   Canonical attr is :git.repo/learning-commits."
+  [{:keys [git.repo/learning-commits]}]
+  {::pco/input  [:git.repo/learning-commits]
+   ::pco/output [:psi.history/git-learning-commits]}
+  {:psi.history/git-learning-commits learning-commits})
+
+(pco/defresolver introspection-query-graph-summary-compat
+  "Compatibility alias for :psi.introspection/query-graph-summary.
+   Canonical attrs are the :psi.graph/* surface."
+  [{:keys [psi.graph/resolver-count
+           psi.graph/mutation-count
+           psi.graph/resolver-syms
+           psi.graph/mutation-syms
+           psi.graph/env-built
+           psi.graph/nodes
+           psi.graph/edges
+           psi.graph/capabilities
+           psi.graph/domain-coverage]}]
+  {::pco/input  [:psi.graph/resolver-count
+                 :psi.graph/mutation-count
+                 :psi.graph/resolver-syms
+                 :psi.graph/mutation-syms
+                 :psi.graph/env-built
+                 :psi.graph/nodes
+                 :psi.graph/edges
+                 :psi.graph/capabilities
+                 :psi.graph/domain-coverage]
+   ::pco/output [:psi.introspection/query-graph-summary]}
+  {:psi.introspection/query-graph-summary {:resolver-count  resolver-count
+                                           :mutation-count  mutation-count
+                                           :resolver-syms   resolver-syms
+                                           :mutation-syms   mutation-syms
+                                           :env-built       env-built
+                                           :nodes           nodes
+                                           :edges           edges
+                                           :capabilities    capabilities
+                                           :domain-coverage domain-coverage}})
+
+(pco/defresolver introspection-engine-system-state-compat
+  "Compatibility alias for :psi.introspection/engine-system-state.
+   Session-root eql_query does not always seed :psi/engine-ctx, so this
+   resolver returns an explicit unavailable payload instead of planning error."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.introspection/engine-system-state]}
+  (let [_ agent-session-ctx]
+    {:psi.introspection/engine-system-state
+     {:status :unavailable
+      :reason "requires :psi/engine-ctx seed"}}))
+
+(pco/defresolver memory-store-state-compat
+  "Compatibility alias for :psi.memory/memory-store-state.
+   Canonical attrs are under :psi.memory.store/* (seeded by :psi/memory-ctx)."
+  [{:keys [psi.memory.store/providers
+           psi.memory.store/active-provider-id
+           psi.memory.store/default-provider-id
+           psi.memory.store/fallback-provider-id
+           psi.memory.store/selection
+           psi.memory.store/health
+           psi.memory.store/active-provider-telemetry
+           psi.memory.store/last-failure]}]
+  {::pco/input  [:psi.memory.store/providers
+                 :psi.memory.store/active-provider-id
+                 :psi.memory.store/default-provider-id
+                 :psi.memory.store/fallback-provider-id
+                 :psi.memory.store/selection
+                 :psi.memory.store/health
+                 :psi.memory.store/active-provider-telemetry
+                 :psi.memory.store/last-failure]
+   ::pco/output [:psi.memory/memory-store-state]}
+  {:psi.memory/memory-store-state {:providers                 providers
+                                   :active-provider-id        active-provider-id
+                                   :default-provider-id       default-provider-id
+                                   :fallback-provider-id      fallback-provider-id
+                                   :selection                 selection
+                                   :health                    health
+                                   :active-provider-telemetry active-provider-telemetry
+                                   :last-failure              last-failure}})
+
+(pco/defresolver memory-context-state-compat
+  "Compatibility alias for :psi.memory/memory-context-state.
+   Canonical attr is :psi.memory/state (seeded by :psi/memory-ctx)."
+  [{:keys [psi.memory/state]}]
+  {::pco/input  [:psi.memory/state]
+   ::pco/output [:psi.memory/memory-context-state]}
+  {:psi.memory/memory-context-state state})
+
 ;; ── All resolvers ───────────────────────────────────────
 
 (def all-resolvers
@@ -1454,6 +1619,7 @@
    api-error-detail
    api-error-request-shape
    current-request-shape
+   current-request-shape-compat
    agent-session-turn
    prompt-template-summary-resolver
    prompt-template-detail-resolver
@@ -1472,6 +1638,16 @@
    extension-workflow-summary-resolver
    extension-workflows-resolver
    extension-workflow-detail-resolver
+   ;; Compatibility aliases for common/legacy attr names
+   api-error-list-compat
+   memory-state-compat
+   memory-store-state-compat
+   memory-context-state-compat
+   history-repo-status-compat
+   history-repo-commits-compat
+   history-learning-commits-compat
+   introspection-query-graph-summary-compat
+   introspection-engine-system-state-compat
    ;; Extension UI
    extension-ui-resolver
    ;; Session listing
