@@ -203,7 +203,7 @@ Caught by `jline-terminal-keymap-test` smoke test.
 | `memory-layer.allium`      | `query` + `history` + `introspection` | ◇ Step 10 spec authored (provenance, graph snapshots/deltas, recovery over session+history+graph) |
 | `memory-backing-stores.allium` | `memory` | ✓ phase 1 implemented (provider contract + selection/fallback + `:psi.memory.store/*` EQL surface) |
 | `memory-datalevin-store.allium` | `memory` | ✓ phase 2 implemented (Datalevin provider + write-through/hydration + runtime retention/migration hardening + provider failure telemetry surface) |
-| `feed-forward-recursion.allium` | `memory` + `introspection` + `engine` | ◇ Step 11 spec authored (FUTURE_STATE loop, hooks, guardrails, memory writeback) |
+| `feed-forward-recursion.allium` | `memory` + `introspection` + `engine` | ◇ Step 10 spec authored (FUTURE_STATE loop, hooks, guardrails, memory writeback) |
 
 ## Step 7 Decisions (Spec)
 
@@ -211,7 +211,7 @@ Caught by `jline-terminal-keymap-test` smoke test.
 - Attribute links stay implicit on `:psi.graph/edges` (edge metadata), not first-class graph nodes
 - Mutation side-effects are deferred in Step 7 (`sideEffects = nil`) — capability graph is IO-link based for now
 
-## Step 10 Decisions (Spec)
+## Step 10 Decisions (Memory Spec)
 
 - Source: `spec/memory-layer.allium`
 - Recovery ranking defaults: text relevance 50%, recency 25%, capability proximity 25%
@@ -231,12 +231,13 @@ Caught by `jline-terminal-keymap-test` smoke test.
 - Provider operation telemetry is surfaced in store summaries/EQL (`write-count`, `read-count`, `failure-count`, `last-error`, `:psi.memory.store/last-failure`)
 - Operator docs now cover fallback triage, retention windows, and migration-hook wiring (`README.md`)
 
-## Step 11 Decisions (Spec)
+## Step 10 Decisions (Feed-forward Spec)
 
 - Source: `spec/feed-forward-recursion.allium`
-- Trigger model in Step 11 is explicit/manual + event-driven hooks only (no periodic/background cadence)
+- Trigger model in Step 10 is explicit/manual + event-driven hooks only (no periodic/background cadence)
 - Active hooks are runtime-configured via `config.enabled_trigger_hooks`
 - Manual approval remains default; low-risk proposals can auto-approve only in opt-in trusted local mode (`trusted_local_mode_enabled` + `auto_approve_low_risk_in_trusted_local_mode`)
+- Tool hooks are interpreted as human signal by default; non-manual triggers require declared source intent.
 
 ## Canonical Telemetry Attrs (Step 7a)
 
