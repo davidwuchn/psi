@@ -925,6 +925,16 @@ clojure-lsp"}]})
       (is (str/includes? out "Subagent #1 finished"))
       (is (str/includes? out "All good")))))
 
+(deftest plan-state-learning-rich-render-test
+  (testing "plan-state-learning custom-type renders dedicated heading"
+    (let [state (assoc (init-state)
+                       :messages [{:role :assistant
+                                   :custom-type "plan-state-learning"
+                                   :text "PSL phase1 committed PLAN/STATE at abc1234."}])
+          out   (app/view state)]
+      (is (str/includes? out "Plan/State/Learning"))
+      (is (str/includes? out "PSL phase1 committed")))))
+
 ;;;; Text input word wrap
 
 (deftest wrap-text-input-short-test

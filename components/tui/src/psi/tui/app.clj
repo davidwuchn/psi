@@ -1615,6 +1615,7 @@
 
 (def ^:private subagent-title-style (charm/style :fg charm/yellow :bold true))
 (def ^:private subagent-head-style (charm/style :fg charm/cyan :bold true))
+(def ^:private psl-title-style (charm/style :fg charm/green :bold true))
 
 (defn- render-subagent-result
   "Render a rich block for subagent-result custom messages."
@@ -1643,8 +1644,16 @@
     (str (charm/render user-style "刀: ") text)
 
     :assistant
-    (if (= "subagent-result" custom-type)
+    (cond
+      (= "subagent-result" custom-type)
       (render-subagent-result text width)
+
+      (= "plan-state-learning" custom-type)
+      (str (charm/render psl-title-style "ψ: ⟳ Plan/State/Learning")
+           "\n"
+           "   " (or text ""))
+
+      :else
       (let [;; "ψ: " prefix is 3 visible cols; continuation
             ;; lines get 3-space indent. Wrap to width - 3.
             md-width (when (and width (> width 3))
