@@ -1268,15 +1268,25 @@
     {}))
 
 (pco/defresolver agent-session-git-worktrees
-  "Bridge git worktree attrs into agent-session namespace for stable session-root queries."
-  [{:keys [git.worktree/list git.worktree/current git.worktree/count]}]
-  {::pco/input  [:git.worktree/list :git.worktree/current :git.worktree/count]
-   ::pco/output [:psi.agent-session/git-worktrees
-                 :psi.agent-session/git-worktree-current
-                 :psi.agent-session/git-worktree-count]}
-  {:psi.agent-session/git-worktrees       (vec (or list []))
-   :psi.agent-session/git-worktree-current current
-   :psi.agent-session/git-worktree-count  (or count (count (or list [])))} )
+  "Bridge git worktree list into agent-session namespace for stable session-root queries."
+  [{:keys [git.worktree/list]}]
+  {::pco/input  [:git.worktree/list]
+   ::pco/output [:psi.agent-session/git-worktrees]}
+  {:psi.agent-session/git-worktrees (vec (or list []))})
+
+(pco/defresolver agent-session-git-worktree-current
+  "Bridge current git worktree into agent-session namespace."
+  [{:keys [git.worktree/current]}]
+  {::pco/input  [:git.worktree/current]
+   ::pco/output [:psi.agent-session/git-worktree-current]}
+  {:psi.agent-session/git-worktree-current current})
+
+(pco/defresolver agent-session-git-worktree-count
+  "Bridge git worktree count into agent-session namespace."
+  [{:keys [git.worktree/count]}]
+  {::pco/input  [:git.worktree/count]
+   ::pco/output [:psi.agent-session/git-worktree-count]}
+  {:psi.agent-session/git-worktree-count (or count 0)})
 
 (pco/defresolver agent-session-usage-input
   "Resolve cumulative input tokens across assistant messages in the session journal."
@@ -1464,6 +1474,8 @@
    agent-session-git-branch
    agent-session-git-context
    agent-session-git-worktrees
+   agent-session-git-worktree-current
+   agent-session-git-worktree-count
    agent-session-usage-input
    agent-session-usage-output
    agent-session-usage-cache-read
