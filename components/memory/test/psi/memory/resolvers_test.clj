@@ -77,9 +77,9 @@
                           :records [{:record-id "r1"
                                      :content-type :discovery
                                      :content "ff old"
-                                     :tags [:feed-forward "cycle"]
+                                     :tags [:remember "cycle"]
                                      :timestamp older
-                                     :provenance {:source :feed-forward}}
+                                     :provenance {:source :remember}}
                                     {:record-id "r2"
                                      :content-type :session-user-message
                                      :content "session"
@@ -89,13 +89,13 @@
                                     {:record-id "r3"
                                      :content-type :discovery
                                      :content "ff new"
-                                     :tags [:feed-forward "cycle"]
+                                     :tags [:remember "cycle"]
                                      :timestamp newest
-                                     :provenance {:source :feed-forward}}])
+                                     :provenance {:source :remember}}])
         result  (query/query-in qctx
                                 {:psi/memory-ctx memory-ctx}
                                 [:psi.memory/recent-entries])
         entries (:psi.memory/recent-entries result)]
-    (testing "returns only feed-forward entries sorted by newest first"
+    (testing "returns only remember entries sorted by newest first"
       (is (= 2 (count entries)))
       (is (= ["r3" "r1"] (mapv :record-id entries))))))

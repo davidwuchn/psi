@@ -1215,7 +1215,7 @@
               record (first (:records mem-state))]
           (is (some? record))
           (is (= :discovery (:content-type record)))
-          (is (some #{"feed-forward"} (:tags record)))
+          (is (some #{"remember"} (:tags record)))
           (is (some #{"cycle"} (:tags record)))
           (is (some #{"step-11"} (:tags record)))))
 
@@ -1223,7 +1223,7 @@
         (let [mem-state (memory/get-state-in memory-ctx)
               record (first (:records mem-state))
               prov (:provenance record)]
-          (is (= :feed-forward (:source prov)))
+          (is (= :remember (:source prov)))
           (is (= cycle-id (:cycle-id prov)))
           (is (= :manual (:trigger-type prov)))
           (is (= :success (:outcome-status prov)))))

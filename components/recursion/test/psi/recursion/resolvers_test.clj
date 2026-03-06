@@ -242,7 +242,7 @@
           cycle (first (filter #(= cycle-id (:cycle-id %)) (:cycles state)))]
       (is (= :accepted (:result trigger-result)))
       (is (= :awaiting-approval (:phase orchestration)))
-      (is (= core/feed-forward-manual-trigger-prompt-name
+      (is (= core/remember-manual-trigger-prompt-name
              (get-in cycle [:trigger :payload :prompt-name])))
       (is (= :eql-mutation (get-in cycle [:trigger :payload :source]))))))
 

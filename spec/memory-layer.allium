@@ -12,7 +12,7 @@
 --
 -- Excludes:
 --   - HTTP / RPC transports (Steps 8/9)
---   - Feed-forward execution loop and autonomous planning policy (Step 11)
+--   - Remember execution loop and autonomous planning policy (Step 11)
 --   - Rich mutation side-effect entities (deferred from Step 7)
 
 use "./graph-emergence.allium" as graph

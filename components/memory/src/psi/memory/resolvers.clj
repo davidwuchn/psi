@@ -91,9 +91,9 @@
       (:source-type (:provenance record))
       :session))
 
-(defn- feed-forward-message?
+(defn- remember-message?
   [record]
-  (= :feed-forward (source->record record)))
+  (= :remember (source->record record)))
 
 (defn- sort-key
   [record]
@@ -101,9 +101,9 @@
       java.time.Instant/EPOCH))
 
 (pco/defresolver memory-recent-entries
-  "Resolve recent memory entries, prioritizing feed-forward message retrieval.
+  "Resolve recent memory entries, prioritizing remember message retrieval.
 
-   This attr returns recent entries where record provenance source is :feed-forward,
+   This attr returns recent entries where record provenance source is :remember,
    sorted by timestamp descending.
 
    Params are intentionally ignored for now because the current root EQL setup
@@ -113,7 +113,7 @@
    ::pco/output [:psi.memory/recent-entries]}
   (let [records (:records (:psi.memory/state input))
         selected (->> records
-                      (filter feed-forward-message?)
+                      (filter remember-message?)
                       (sort-by sort-key #(compare %2 %1))
                       vec)]
     {:psi.memory/recent-entries selected}))

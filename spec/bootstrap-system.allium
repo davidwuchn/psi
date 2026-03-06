@@ -502,6 +502,6 @@ surface SelfImprovementInterface {
             when system_state.graph_ready = true
 }
 
-open_question "How should the feed-forward recursion mechanism work to enable true AI self-improvement?"
+open_question "How should the remember recursion mechanism work to enable true AI self-improvement?"
 open_question "What specific statechart patterns should the Engine use for modeling system evolution?"
 open_question "How should the system handle conflicts between REPL truth and repository memory?"

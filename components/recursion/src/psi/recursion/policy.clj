@@ -1,5 +1,5 @@
 (ns psi.recursion.policy
-  "Malli schemas and pure policy functions for the feed-forward recursion loop.
+  "Malli schemas and pure policy functions for the remember recursion loop.
 
    Defines the locked-decision defaults from the spec and all value-type schemas
    used across the recursion component."

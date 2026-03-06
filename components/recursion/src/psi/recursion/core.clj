@@ -1,5 +1,5 @@
 (ns psi.recursion.core
-  "Feed-forward recursion controller.
+  "Remember recursion controller.
 
    Establishes an isolated RecursionContext (Nullable pattern), global wrappers,
    the initial controller state shape, trigger intake, readiness gating,
@@ -113,11 +113,11 @@
 
 ;;; --- Trigger intake and readiness gating ---
 
-(def feed-forward-manual-trigger-prompt-name
-  "feed-forward-manual-trigger")
+(def remember-manual-trigger-prompt-name
+  "remember-manual-trigger")
 
-(def feed-forward-manual-trigger-prompt
-  "Trigger a manual feed-forward cycle. Capture operator reason and current readiness context.")
+(def remember-manual-trigger-prompt
+  "Trigger a manual remember cycle. Capture operator reason and current readiness context.")
 
 (defn manual-trigger-signal
   "Build a canonical manual TriggerSignal payload shared by runtime command
@@ -133,8 +133,8 @@
             :or {actor "operator" source :unknown extra-payload {}}}]
    {:type :manual
     :reason (or reason "manual-trigger")
-    :payload (merge {:prompt-name feed-forward-manual-trigger-prompt-name
-                     :prompt-body feed-forward-manual-trigger-prompt
+    :payload (merge {:prompt-name remember-manual-trigger-prompt-name
+                     :prompt-body remember-manual-trigger-prompt
                      :actor actor
                      :source source}
                     extra-payload)
@@ -1006,7 +1006,7 @@
   "Build the memory content string for a cycle outcome."
   [cycle-id outcome cycle]
   (let [action-titles (mapv :title (get-in cycle [:proposal :actions]))]
-    (str "Feed-forward cycle " cycle-id ": "
+    (str "Remember cycle " cycle-id ": "
          (name (:status outcome)) ". "
          (:summary outcome) ". "
          "Actions: " (pr-str action-titles) ".")))
@@ -1020,7 +1020,7 @@
    If cycle has no outcome yet (successful verification path), sets outcome to
    success with action titles and changed goal IDs.
 
-   Calls `psi.memory.core/remember-in!` with tags #{\"feed-forward\" \"cycle\" \"step-11\"}
+   Calls `psi.memory.core/remember-in!` with tags #{\"remember\" \"cycle\" \"step-11\"}
    and provenance linking to this cycle.
 
    Returns {:ok? true, :memory-ids #{record-id}} on success."
@@ -1053,8 +1053,8 @@
             mem-result (remember-fn memory-ctx
                                     {:content-type :discovery
                                      :content content
-                                     :tags ["feed-forward" "cycle" "step-11"]
-                                     :provenance {:source :feed-forward
+                                     :tags ["remember" "cycle" "step-11"]
+                                     :provenance {:source :remember
                                                   :cycle-id cycle-id
                                                   :trigger-type trigger-type
                                                   :outcome-status (:status outcome)}})

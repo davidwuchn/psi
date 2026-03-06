@@ -120,10 +120,10 @@
       (testing "cycle has ended-at timestamp"
         (is (inst? (:ended-at cycle))))
 
-      (testing "memory contains a feed-forward tagged record"
+      (testing "memory contains a remember tagged record"
         (let [mem-state (memory/get-state-in mem-ctx)
               records (:records mem-state)
-              ff-records (filter #(some #{"feed-forward"} (:tags %)) records)]
+              ff-records (filter #(some #{"remember"} (:tags %)) records)]
           (is (= 1 (count ff-records)))
           (is (some #{"cycle"} (:tags (first ff-records))))
           (is (some #{"step-11"} (:tags (first ff-records))))))
@@ -416,7 +416,7 @@
 
       (testing "two memory records written"
         (let [mem-state (memory/get-state-in mem-ctx)
-              ff-records (filter #(some #{"feed-forward"} (:tags %)) (:records mem-state))]
+              ff-records (filter #(some #{"remember"} (:tags %)) (:records mem-state))]
           (is (= 2 (count ff-records))))))))
 
 (deftest integration-eql-surface-contract-test

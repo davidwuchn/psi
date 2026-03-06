@@ -13,7 +13,7 @@
 --   - HTTP transport and OpenAPI wiring (Step 8)
 --   - RPC protocol and editor frontends (Step 9)
 --   - Memory/history/knowledge fusion semantics (Step 10)
---   - Feed-forward recursion hooks (Step 11)
+--   - Remember recursion hooks (Step 11)
 
 ------------------------------------------------------------
 -- External Entities

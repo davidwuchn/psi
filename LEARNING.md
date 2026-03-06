@@ -74,9 +74,9 @@ provider write-through (`remember`, `recover`, graph snapshot/delta) and
 activation-time hydration from provider state gives persistence without
 rewriting recovery semantics.
 
-### λ Feed-forward command tests should pin memory readiness explicitly
+### λ Remember command tests should pin memory readiness explicitly
 
-`/feed-forward` command readiness uses live `:psi.memory/status` via EQL.
+`/remember` command readiness uses live `:psi.memory/status` via EQL.
 Tests that rely on implicit global memory state can become order-dependent.
 Attach explicit per-test memory contexts (`with-ready-memory-ctx` /
 `with-unready-memory-ctx`) to keep command tests deterministic.
