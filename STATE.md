@@ -234,10 +234,10 @@ Caught by `jline-terminal-keymap-test` smoke test.
 ## Step 10 Decisions (Feed-forward Spec)
 
 - Source: `spec/feed-forward-recursion.allium`
-- Trigger model in Step 10 is explicit/manual only (no event-driven or periodic/background cadence)
-- Active hooks are runtime-configured via `config.enabled_trigger_hooks` (manual-only in current scope)
-- Manual approval remains default; low-risk proposals can auto-approve only in opt-in trusted local mode (`trusted_local_mode_enabled` + `auto_approve_low_risk_in_trusted_local_mode`)
-- Tool hooks are interpreted as human signal.
+- Feed-forward scope is manual memory capture only (not automated evolution)
+- `/feed-forward` emits a manual signal and writes one memory artifact with current context
+- Output becomes input via remember/recover (future ψ reads captured artifacts)
+- No controller/process cycle model in spec scope
 
 ## Canonical Telemetry Attrs (Step 7a)
 

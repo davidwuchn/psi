@@ -68,15 +68,15 @@ Ordered steps toward PSI COMPLETE.
 
 ## Next
 
-### Step 10 — Feed-forward recursion ◇ in progress
+### Step 10 — Feed-forward memory capture ◇ in progress
 - Spec: `spec/feed-forward-recursion.allium`
-- Current: `recursion/` component implemented (FUTURE_STATE synthesis, proposal, approval gate, execution, verification, learning cycle)
-- Focus now: runtime hardening + command-surface parity + end-to-end confidence
+- Current: command exists; spec now narrowed to manual capture semantics
+- Focus now: simplify runtime surface to capture/recover behavior
 - Definition of done:
-  - `/feed-forward` and approve/reject/continue flows are stable across REPL, RPC, and Emacs
-  - Manual trigger flow executes deterministically and exposes complete EQL telemetry
-  - Recursion cycle artifacts are persisted/recoverable via active memory provider
-  - End-to-end tests cover manual trigger → proposal → approval → execution → verification → learning
+  - `/feed-forward [reason]` performs a single manual memory capture across REPL, RPC, and Emacs
+  - Capture includes minimal context snapshot and is recoverable via active memory provider
+  - EQL telemetry for feed-forward capture is queryable and stable
+  - End-to-end tests cover manual signal → memory write → recovery visibility
 
 ### Step 11 — Session startup prompts (global + project) ◇ in progress
 - Spec: `spec/session-startup-prompts.allium`
