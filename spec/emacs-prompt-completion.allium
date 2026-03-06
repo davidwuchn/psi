@@ -1,0 +1,186 @@
+-- emacs-prompt-completion.allium
+--
+-- Scope: Emacs-specific completion architecture for prompt input.
+--
+-- Includes:
+--   - CAPF-based completion registration in the emacs-ui prompt buffer
+--   - Context dispatch for slash command ('/...') and reference ('@...') tokens
+--   - Standard Emacs completion metadata categories for prompt/reference candidates
+--   - Compatibility with completion-in-region frontends (built-in, Corfu, Company bridges)
+--   - Compatibility linkage to the owning frontend contract (emacs-frontend.allium)
+--
+-- Excludes:
+--   - Prompt autocomplete domain semantics (see prompt-input-autocomplete.allium)
+--   - Slash command execution semantics (see prompt-slash-commands.allium)
+--   - Transport/session internals
+
+use "./prompt-input-autocomplete.allium" as prompt
+use "./emacs-frontend.allium" as emacs_frontend
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value CapfMetadata {
+    category: psi_prompt | psi_reference
+    annotation_function: String?
+    affixation_function: String?
+    exit_function: String?
+}
+
+value CompletionContext {
+    start_col: Integer
+    end_col: Integer
+    prefix: String
+    mode: slash_command | file_reference | none
+}
+
+------------------------------------------------------------
+-- Entities
+------------------------------------------------------------
+
+entity EmacsPromptBuffer {
+    text: String
+    point_col: Integer
+    completion_at_point_functions: List<String>
+
+    has_psi_capf: completion_at_point_functions.contains("psi-emacs-prompt-capf")
+}
+
+entity EmacsPromptCompletionState {
+    buffer: EmacsPromptBuffer
+
+    active_context: CompletionContext?
+    active_metadata: CapfMetadata?
+
+    uses_dynamic_completion_table: Boolean
+    allows_capf_fallthrough: Boolean
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    capf_symbol: String = "psi-emacs-prompt-capf"
+    slash_category: psi_prompt | psi_reference = psi_prompt
+    reference_category: psi_prompt | psi_reference = psi_reference
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+rule PromptModeRegistersPsiCapf {
+    when: EmacsPromptModeActivated(state)
+
+    ensures: state.buffer.completion_at_point_functions contains config.capf_symbol
+    ensures: state.buffer.has_psi_capf
+}
+
+rule PsiCapfUsesDynamicCompletionTable {
+    when: EmacsPromptModeActivated(state)
+
+    ensures: state.uses_dynamic_completion_table = true
+}
+
+rule SlashTokenContextDispatchesToPromptCommands {
+    when: CompletionRequestedAtPoint(state)
+
+    requires: TokenAtPointStartsWith(state.buffer, "/")
+    requires: CursorInSlashCommandNameContext(state.buffer)
+
+    ensures: state.active_context.mode = slash_command
+    ensures: SuggestionsRequested(state.buffer, context: slash_command, trigger_mode: auto)
+    ensures: prompt/PromptAutocompleteContract governs suggestion behavior
+}
+
+rule AtTokenContextDispatchesToReferences {
+    when: CompletionRequestedAtPoint(state)
+
+    requires: TokenAtPointStartsWith(state.buffer, "@")
+    requires: CursorInFileReferenceContext(state.buffer)
+
+    ensures: state.active_context.mode = file_reference
+    ensures: SuggestionsRequested(state.buffer, context: file_reference, trigger_mode: auto)
+    ensures: prompt/PromptAutocompleteContract governs suggestion behavior
+}
+
+rule SlashContextReturnsPromptCategoryMetadata {
+    when: CapfCandidatesResolved(state, context: slash_command, candidates)
+
+    ensures: state.active_metadata.category = config.slash_category
+}
+
+rule ReferenceContextReturnsReferenceCategoryMetadata {
+    when: CapfCandidatesResolved(state, context: file_reference, candidates)
+
+    ensures: state.active_metadata.category = config.reference_category
+}
+
+rule UnknownContextFallsThroughToOtherCapfs {
+    when: CompletionRequestedAtPoint(state)
+
+    requires: not TokenAtPointStartsWith(state.buffer, "/")
+    requires: not TokenAtPointStartsWith(state.buffer, "@")
+
+    ensures: state.active_context.mode = none
+    ensures: state.allows_capf_fallthrough = true
+    ensures: CapfReturnsNil(state)
+}
+
+rule CompletionInRegionFrontendsConsumeSameCapfContract {
+    when: CapfCandidatesResolved(state, context, candidates)
+
+    requires: context in [slash_command, file_reference]
+
+    ensures: CompletionInRegionCanDisplay(state, frontend: built_in)
+    ensures: CompletionInRegionCanDisplay(state, frontend: corfu)
+    ensures: CompletionInRegionCanDisplay(state, frontend: company_capf)
+}
+
+rule AcceptanceBehaviorDelegatesToSharedPromptContract {
+    when: CapfSuggestionAccepted(state, context, suggestion)
+
+    requires: context in [slash_command, file_reference]
+
+    ensures: prompt/PromptAutocompleteContract governs acceptance behavior
+}
+
+rule FrontendParityOwnsPromptCompletionArchitecture {
+    when: EmacsPromptModeActivated(state)
+
+    ensures: emacs_frontend/ComposeAutocompleteUsesSharedContract references Emacs prompt completion architecture
+}
+
+------------------------------------------------------------
+-- Surface
+------------------------------------------------------------
+
+surface EmacsPromptCompletionArchitecture {
+    for engineer: RuntimeEngineer
+
+    context state: EmacsPromptCompletionState
+
+    exposes:
+        state.buffer.has_psi_capf
+        state.active_context
+        state.active_metadata
+        state.uses_dynamic_completion_table
+        state.allows_capf_fallthrough
+
+    provides:
+        EmacsPromptModeActivated(state)
+        CompletionRequestedAtPoint(state)
+        CapfCandidatesResolved(state, context, candidates)
+        CapfSuggestionAccepted(state, context, suggestion)
+
+    related:
+        prompt/PromptAutocompleteContract
+
+    guidance:
+        -- Use one CAPF dispatcher for prompt input.
+        -- Route '/...' to slash command completion and '@...' to file-reference completion.
+        -- Return standard metadata categories so completion UIs can style/filter by category.
+        -- Return nil outside recognized token contexts to preserve normal CAPF composition.
+}

@@ -49,6 +49,40 @@ When the frontend is **idle** (not streaming), these built-in slash commands are
 
 Unknown slash commands (for example `/foo`) are not handled locally and are sent through the normal `prompt` RPC path.
 
+## Prompt completion (`/` and `@`)
+
+`psi-emacs-mode` installs a CAPF (`psi-emacs-prompt-capf`) for compose input.
+
+- `/...` completes built-in slash commands (category `psi_prompt`)
+- `@...` completes file references (category `psi_reference`)
+  - searches current working directory and project root (when distinct)
+  - hidden file policy is configurable
+  - excluded path prefixes are configurable (default excludes `.git`)
+  - marks directories with trailing `/`
+  - appends trailing space after accepting file candidates
+
+Completion behavior knobs (`M-x customize-group RET psi-emacs-completion`):
+
+- `psi-emacs-slash-max-candidates`
+- `psi-emacs-reference-max-candidates`
+- `psi-emacs-reference-match-style` (`substring` or `prefix`)
+- `psi-emacs-reference-include-hidden`
+- `psi-emacs-reference-excluded-path-prefixes`
+
+The CAPF returns `nil` outside slash/reference token contexts, so normal CAPF composition remains intact.
+
+### Optional category UI tuning (Corfu/Vertico/Default)
+
+You can tune styles per completion category:
+
+```elisp
+(setq completion-category-overrides
+      '((psi_prompt (styles basic partial-completion))
+        (psi_reference (styles basic partial-completion substring))))
+```
+
+Unknown slash commands still fall through to normal `prompt` RPC dispatch when submitted.
+
 ## Run-state model
 
 Frontend routing is driven by an explicit run-state:

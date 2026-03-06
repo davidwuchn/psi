@@ -6,6 +6,7 @@
 ;;; Code:
 
 (require 'psi-globals)
+(require 'psi-completion)
 
 (declare-function markdown-mode "markdown-mode")
 
@@ -110,7 +111,8 @@ instead of the entire buffer."
 
 Uses `text-mode' so markdown fontification can be applied selectively to
 finalized assistant content only."
-  (setq-local buffer-read-only nil))
+  (setq-local buffer-read-only nil)
+  (psi-emacs--install-prompt-capf))
 
 (let ((map psi-emacs-mode-map))
   (define-key map (kbd "RET") #'newline)

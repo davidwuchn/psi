@@ -19,6 +19,7 @@
 --   Shared tool display lifecycle (tool-output-display.allium)
 --   Shared tool renderer contract (tool-output-rendering.allium)
 --   Shared prompt autocomplete semantics (prompt-input-autocomplete.allium)
+--   Emacs prompt completion architecture contract (emacs-prompt-completion.allium)
 --   Shared slash-command execution semantics (prompt-slash-commands.allium)
 --   TUI /resume selector behavior reference (tui-resume-selector.allium)
 --   Emacs footer projection contract (emacs-footer.allium)
@@ -35,6 +36,7 @@ use "./rpc-edn.allium" as rpc
 use "./tool-output-display.allium" as tool_display
 use "./tool-output-rendering.allium" as tool_render
 use "./prompt-input-autocomplete.allium" as prompt_autocomplete
+use "./emacs-prompt-completion.allium" as emacs_prompt_completion
 use "./prompt-slash-commands.allium" as slash_commands
 use "./tui-resume-selector.allium" as tui_resume
 use "./emacs-footer.allium" as emacs_footer
@@ -254,6 +256,7 @@ rule ComposeAutocompleteUsesSharedContract {
     when: EmacsFrontendInitialized(frontend)
 
     ensures: prompt_autocomplete/PromptAutocompleteContract governs compose input autocomplete
+    ensures: emacs_prompt_completion/EmacsPromptCompletionArchitecture governs Emacs completion architecture
     ensures: SlashAndAtCompletionParity(frontend)
 }
 
