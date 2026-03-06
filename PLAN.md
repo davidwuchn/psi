@@ -99,6 +99,19 @@ Ordered steps toward PSI COMPLETE.
   - Startup prompt telemetry attrs are top-level, queryable, and appear in graph introspection surfaces
   - Fork/new-session behavior is explicit and covered by tests
 
+### Step 11a — Git worktree visibility (read-only) ◇ planned
+- Spec: `spec/git-worktrees.allium`
+- Goal: make worktree context first-class and queryable before adding mutation/switch flows
+- Acceptance checklist:
+  - [ ] History layer exposes canonical attrs: `:git.worktree/list`, `:git.worktree/current`, `:git.worktree/count`, `:git.worktree/inside-repo?`
+  - [ ] Worktree parsing handles git porcelain output for main + linked worktrees, detached heads, and non-git cwd
+  - [ ] Agent-session root bridge exposes: `:psi.agent-session/git-worktrees`, `:psi.agent-session/git-worktree-current`, `:psi.agent-session/git-worktree-count`
+  - [ ] `/worktree` built-in slash command returns deterministic text output (header + summary + entries)
+  - [ ] `/status` includes current worktree identity (path + branch/detached state)
+  - [ ] New attrs are discoverable through graph introspection surfaces (`:psi.graph/nodes`, `:psi.graph/edges`, resolver symbols)
+  - [ ] Failure path is non-fatal: parse/command errors degrade to empty list + telemetry marker
+  - [ ] Tests cover: inside-repo, outside-repo, linked worktree listing, detached head, and command rendering
+
 ### Step 12 — Emacs UI ◇ in progress
 - Spec: `spec/emacs-frontend.allium`
 - Current: rpc-edn frontend and core interaction model implemented

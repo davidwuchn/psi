@@ -1,0 +1,245 @@
+-- git-worktrees.allium
+--
+-- Scope: First-class git worktree visibility for Psi sessions.
+--
+-- Includes (Step 1 / read-focused):
+--   - Detect current worktree identity from session cwd
+--   - Enumerate linked worktrees via git porcelain output
+--   - Expose worktree attrs via EQL at session root
+--   - Add deterministic slash command output for /worktree
+--
+-- Excludes (defer):
+--   - Switching active session cwd/worktree (/worktree use ...)
+--   - Creating/removing worktrees from Psi commands
+--   - Automatic worktree lifecycle management for stories/tasks
+--   - UI-specific rendering details
+
+use "./session-management.allium" as session
+use "./prompt-slash-commands.allium" as slash
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value GitWorktree {
+    path: Path
+    head: String                  -- commit SHA
+    branchRef: String?            -- refs/heads/<name> or null when detached
+    branchName: String?           -- derived short branch name
+    detached: Boolean
+    bare: Boolean = false
+    locked: Boolean = false
+    prunable: Boolean = false
+    prunableReason: String?
+    isCurrentCwd: Boolean
+    isMainWorktree: Boolean
+}
+
+value GitWorktreeSummary {
+    cwd: Path
+    insideGitRepo: Boolean
+    currentPath: Path?
+    currentBranch: String?
+    currentDetached: Boolean?
+    worktreeCount: Integer
+    linkedPaths: List<Path>
+}
+
+value WorktreeCommandResult {
+    title: String
+    summary: GitWorktreeSummary
+    lines: List<String>
+}
+
+------------------------------------------------------------
+-- Entities
+------------------------------------------------------------
+
+entity GitWorktreeRegistry {
+    cwd: Path
+    worktrees: List<GitWorktree>
+
+    worktree_count: worktrees.count
+    current: worktrees with isCurrentCwd = true
+    has_current: current.count > 0
+    main: worktrees with isMainWorktree = true
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    worktree_command_enabled: Boolean = true
+    worktree_list_timeout_seconds: Integer = 5
+}
+
+------------------------------------------------------------
+-- Discovery
+------------------------------------------------------------
+
+rule WorktreeRegistryLoadsFromGitPorcelain {
+    when: SessionCreated(sess)
+
+    let cwd = sess.cwd
+    let parsed = ParseGitWorktreePorcelain(cwd)
+
+    ensures: GitWorktreeRegistry.created(
+        cwd: cwd,
+        worktrees: parsed
+    )
+}
+
+rule WorktreeRegistryRefreshesOnStatusRequest {
+    when: SlashCommandDispatchRequested(text)
+
+    requires: text = "/status" or text = "/worktree"
+    requires: exists GitWorktreeRegistry
+
+    let parsed = ParseGitWorktreePorcelain(GitWorktreeRegistry.cwd)
+
+    ensures: GitWorktreeRegistry.worktrees = parsed
+}
+
+rule CurrentWorktreeIsDerivedByCwdMatch {
+    when: GitWorktreeRegistry
+
+    ensures:
+        for wt in GitWorktreeRegistry.worktrees:
+            wt.isCurrentCwd = IsSamePath(wt.path, GitWorktreeRegistry.cwd)
+}
+
+rule MainWorktreeDerivedFromGitMainPath {
+    when: GitWorktreeRegistry
+
+    let mainPath = ResolveMainWorktreePath(GitWorktreeRegistry.worktrees)
+
+    ensures:
+        for wt in GitWorktreeRegistry.worktrees:
+            wt.isMainWorktree = IsSamePath(wt.path, mainPath)
+}
+
+------------------------------------------------------------
+-- EQL surface
+------------------------------------------------------------
+
+surface WorktreeEqlApi {
+    for caller: session/User
+
+    exposes:
+        GitWorktreeRegistry.worktrees
+        GitWorktreeRegistry.worktree_count
+        GitWorktreeRegistry.current
+
+    provides:
+        WorktreeRegistryLoadsFromGitPorcelain(sess)
+        WorktreeRegistryRefreshesOnStatusRequest(text)
+}
+
+rule WorktreeAttrsResolvable {
+    when: WorktreeEqlApi
+
+    ensures: EqlAttributeResolvable(":git.worktree/list")
+    ensures: EqlAttributeResolvable(":git.worktree/current")
+    ensures: EqlAttributeResolvable(":git.worktree/count")
+    ensures: EqlAttributeResolvable(":git.worktree/inside-repo?")
+}
+
+rule WorktreeAttrsBridgeToSessionRoot {
+    when: AgentSessionResolversRegistered
+
+    ensures: EqlAttributeResolvable(":psi.agent-session/git-worktrees")
+    ensures: EqlAttributeResolvable(":psi.agent-session/git-worktree-current")
+    ensures: EqlAttributeResolvable(":psi.agent-session/git-worktree-count")
+}
+
+rule WorktreeAttrsDiscoverableInGraph {
+    when: AgentSessionResolversRegistered
+
+    ensures: GraphNodesContainAttributes([
+        ":git.worktree/list",
+        ":git.worktree/current",
+        ":git.worktree/count",
+        ":psi.agent-session/git-worktrees",
+        ":psi.agent-session/git-worktree-current",
+        ":psi.agent-session/git-worktree-count"
+    ])
+
+    ensures: GraphEdgesContainAttributes([
+        ":git.worktree/list",
+        ":git.worktree/current",
+        ":git.worktree/count",
+        ":psi.agent-session/git-worktrees",
+        ":psi.agent-session/git-worktree-current",
+        ":psi.agent-session/git-worktree-count"
+    ])
+}
+
+------------------------------------------------------------
+-- Slash command integration
+------------------------------------------------------------
+
+rule WorktreeCommandIsBuiltIn {
+    when: SlashCommandDispatchRequested(text)
+
+    requires: config.worktree_command_enabled = true
+    requires: text = "/worktree"
+
+    ensures: SlashCommandDispatchResultProduced(text, slash/SlashCommandDispatchResult{
+        type: text,
+        message: RenderWorktreeCommand(WorktreeCommandResult)
+    })
+}
+
+rule WorktreeCommandOutputIncludesDeterministicSections {
+    when: SlashCommandDispatchRequested(text)
+
+    requires: text = "/worktree"
+
+    ensures: WorktreeCommandResult.title = "── Git worktrees ─────────────────────"
+    ensures: WorktreeCommandResult.summary.worktreeCount >= 0
+    ensures: WorktreeCommandResult.lines.count >= 1
+    ensures: WorktreeCommandResult.lines.each(line => line != "")
+}
+
+rule StatusIncludesCurrentWorktreeIdentity {
+    when: SlashCommandDispatchRequested(text)
+
+    requires: text = "/status"
+    requires: exists GitWorktreeRegistry
+
+    ensures: StatusTextContains("Worktree")
+    ensures: StatusTextContains(FirstOrEmpty(GitWorktreeRegistry.current.path))
+}
+
+------------------------------------------------------------
+-- Error/edge behavior
+------------------------------------------------------------
+
+rule OutsideGitRepoReturnsEmptyWorktreeList {
+    when: SessionCreated(sess)
+
+    requires: not IsInsideGitRepo(sess.cwd)
+
+    ensures: GitWorktreeRegistry.created(
+        cwd: sess.cwd,
+        worktrees: []
+    )
+    ensures: EqlValue(":git.worktree/inside-repo?") = false
+}
+
+rule WorktreeParseFailureDoesNotBreakSession {
+    when: ParseGitWorktreePorcelainFailed(cwd)
+
+    ensures: GitWorktreeRegistry.created(cwd: cwd, worktrees: [])
+    ensures: TelemetryEventRecorded("git.worktree.parse_failed")
+    ensures: SessionRemainsUsable()
+}
+
+------------------------------------------------------------
+-- Open Questions
+------------------------------------------------------------
+
+open_question "Should /worktree support subcommands in this phase (e.g. /worktree list), or stay single-command?"
+open_question "Should /new in a linked worktree always inherit cwd, or allow selecting main worktree by default?"
+open_question "When detached HEAD is detected, should :psi.agent-session/git-branch remain 'detached' or include short SHA?"
