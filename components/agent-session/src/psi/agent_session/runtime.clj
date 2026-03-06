@@ -8,6 +8,7 @@
    - API key resolution
    - agent loop execution + context usage update"
   (:require
+   [clojure.string :as str]
    [psi.agent-session.core :as session]
    [psi.agent-session.executor :as executor]
    [psi.agent-session.extensions :as ext]
@@ -184,6 +185,20 @@
   (let [sync-fn (requiring-resolve 'psi.memory.runtime/maybe-sync-on-git-head-change!)]
     (sync-fn opts)))
 
+(defn- maybe-dispatch-git-head-changed-event!
+  [ctx git-sync]
+  (when (and (true? (:changed? git-sync))
+             (string? (:head git-sync))
+             (not (str/blank? (:head git-sync))))
+    (session/dispatch-extension-event-in!
+     ctx
+     "git_head_changed"
+     {:cwd (:cwd ctx)
+      :head (:head git-sync)
+      :previous-head (:previous-head git-sync)
+      :reason "head-changed"
+      :timestamp (java.time.Instant/now)})))
+
 (defn- safe-maybe-sync-on-git-head-change!
   [ctx]
   (try
@@ -192,6 +207,10 @@
                      :memory-ctx (:memory-ctx ctx)})]
       (try
         (maybe-trigger-recursion-from-git-sync! ctx git-sync)
+        (catch Exception _
+          nil))
+      (try
+        (maybe-dispatch-git-head-changed-event! ctx git-sync)
         (catch Exception _
           nil))
       git-sync)

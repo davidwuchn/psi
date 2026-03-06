@@ -1,6 +1,8 @@
 (ns psi.agent-session.runtime-test
   (:require
+   [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
+   [psi.agent-session.core :as session]
    [psi.agent-session.runtime :as runtime]
    [psi.recursion.core :as recursion]))
 
@@ -80,6 +82,7 @@
 
 (deftest run-agent-loop-sync-flag-with-unchanged-head-skips-recursion-trigger-test
   (let [orchestration-calls (atom 0)
+        extension-events    (atom [])
         ctx                 {:cwd "/tmp/psi-runtime-unchanged"
                              :agent-ctx {}
                              :recursion-ctx (recursion/create-context)}]
@@ -93,9 +96,44 @@
                   recursion/orchestrate-manual-trigger-in!
                   (fn [_ _ _]
                     (swap! orchestration-calls inc)
-                    {:ok? true})]
+                    {:ok? true})
+                  session/dispatch-extension-event-in!
+                  (fn [_ event-name payload]
+                    (swap! extension-events conj {:name event-name :payload payload})
+                    {:cancelled? false :override nil :results []})]
       (runtime/run-agent-loop-in!
        ctx nil {} []
        {:run-loop-fn success-runner
         :sync-on-git-head-change? true})
-      (is (= 0 @orchestration-calls)))))
+      (is (= 0 @orchestration-calls))
+      (is (= [] @extension-events)))))
+
+(deftest run-agent-loop-sync-on-git-head-change-dispatches-extension-event-test
+  (let [extension-events (atom [])
+        ctx              {:cwd "/tmp/psi-runtime-event"
+                          :agent-ctx {}
+                          :recursion-ctx (recursion/create-context)}]
+    (with-redefs [runtime/invoke-git-head-sync!
+                  (fn [_]
+                    {:ok? true
+                     :changed? true
+                     :reason :head-changed
+                     :head "abcdef1234567890"
+                     :previous-head "1111111111111111"
+                     :sync sync-payload})
+                  session/dispatch-extension-event-in!
+                  (fn [_ event-name payload]
+                    (swap! extension-events conj {:name event-name :payload payload})
+                    {:cancelled? false :override nil :results []})]
+      (runtime/run-agent-loop-in!
+       ctx nil {} []
+       {:run-loop-fn success-runner
+        :sync-on-git-head-change? true})
+      (is (= 1 (count @extension-events)))
+      (let [{:keys [name payload]} (first @extension-events)]
+        (is (= "git_head_changed" name))
+        (is (= "/tmp/psi-runtime-event" (:cwd payload)))
+        (is (= "abcdef1234567890" (:head payload)))
+        (is (= "1111111111111111" (:previous-head payload)))
+        (is (= "head-changed" (:reason payload)))
+        (is (str/includes? (str (:timestamp payload)) "T"))))))
