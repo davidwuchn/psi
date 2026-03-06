@@ -3,7 +3,9 @@
    [clojure.test :refer [deftest is testing]]
    [psi.memory.core :as memory]
    [psi.memory.resolvers :as resolvers]
-   [psi.query.core :as query]))
+   [psi.query.core :as query])
+  (:import
+   (java.time Instant)))
 
 (defn- memory-query-ctx
   []
@@ -22,6 +24,7 @@
                                     :psi.memory/entry-count
                                     :psi.memory/entries
                                     :psi.memory/search-results
+                                    :psi.memory/recent-entries
                                     :psi.memory/recovery-count
                                     :psi.memory/recoveries
                                     :psi.memory/graph-snapshots
@@ -45,6 +48,7 @@
     (testing "structured values are returned"
       (is (vector? (:psi.memory/entries result)))
       (is (vector? (:psi.memory/search-results result)))
+      (is (vector? (:psi.memory/recent-entries result)))
       (is (vector? (:psi.memory/recoveries result)))
       (is (vector? (:psi.memory/graph-snapshots result)))
       (is (vector? (:psi.memory/graph-deltas result)))
@@ -61,3 +65,37 @@
       (is (map? (:psi.memory.store/health result)))
       (is (map? (:psi.memory.store/active-provider-telemetry result)))
       (is (nil? (:psi.memory.store/last-failure result))))))
+
+(deftest recent-entries-supports-source-tag-and-limit-params
+  (let [memory-ctx (memory/create-context)
+        qctx       (memory-query-ctx)
+        now        (Instant/parse "2026-03-06T00:00:00Z")
+        older      (Instant/parse "2026-03-05T00:00:00Z")
+        newest     (Instant/parse "2026-03-06T01:00:00Z")
+        _          (swap! (:state-atom memory-ctx)
+                          assoc
+                          :records [{:record-id "r1"
+                                     :content-type :discovery
+                                     :content "ff old"
+                                     :tags [:feed-forward "cycle"]
+                                     :timestamp older
+                                     :provenance {:source :feed-forward}}
+                                    {:record-id "r2"
+                                     :content-type :session-user-message
+                                     :content "session"
+                                     :tags [:session :user]
+                                     :timestamp now
+                                     :provenance {:source :session}}
+                                    {:record-id "r3"
+                                     :content-type :discovery
+                                     :content "ff new"
+                                     :tags [:feed-forward "cycle"]
+                                     :timestamp newest
+                                     :provenance {:source :feed-forward}}])
+        result  (query/query-in qctx
+                                {:psi/memory-ctx memory-ctx}
+                                [:psi.memory/recent-entries])
+        entries (:psi.memory/recent-entries result)]
+    (testing "returns only feed-forward entries sorted by newest first"
+      (is (= 2 (count entries)))
+      (is (= ["r3" "r1"] (mapv :record-id entries))))))
