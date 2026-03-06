@@ -145,6 +145,31 @@
                :operation-count (count ops)}))
           ordered-domains)))
 
+(defn derive-root-queryable-attrs
+  "Compute attrs reachable from an initial seed set using resolver IO metadata.
+
+   This is a fixed-point reachability pass over resolver operations only:
+   if all resolver inputs are already known, all its outputs become known.
+
+   Returns a sorted vector of reachable attrs (excluding the seed attrs)."
+  ([resolver-ops]
+   (derive-root-queryable-attrs resolver-ops #{}))
+  ([resolver-ops seed-attrs]
+   (let [seed-attrs (set seed-attrs)]
+     (loop [known seed-attrs]
+       (let [known' (reduce (fn [acc {:keys [input output]}]
+                              (if (every? acc input)
+                                (into acc output)
+                                acc))
+                            known
+                            resolver-ops)]
+         (if (= known known')
+           (->> (remove seed-attrs known')
+                (filter keyword?)
+                (sort-by str)
+                vec)
+           (recur known')))))))
+
 (defn derive-capability-graph
   "Derive complete Step 7 capability graph structure from operation metadata.
 

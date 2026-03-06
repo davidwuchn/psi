@@ -204,6 +204,31 @@
       (is (vector? (:psi.graph/capabilities result)))
       (is (vector? (:psi.graph/domain-coverage result))))))
 
+(deftest root-queryable-attrs-contract-test
+  (testing "every attr advertised as root-queryable resolves from session root"
+    (let [root-attrs (:psi.graph/root-queryable-attrs
+                      (q [:psi.graph/root-queryable-attrs]))]
+      (is (vector? root-attrs))
+      (is (seq root-attrs))
+      (doseq [attr root-attrs]
+        (let [result (q [attr])]
+          (is (contains? result attr)
+              (str "expected root-queryable attr to resolve: " attr)))))))
+
+(deftest compat-alias-index-contract-test
+  (testing "every alias listed in :psi.graph/compat-aliases resolves"
+    (let [aliases (:psi.graph/compat-aliases
+                   (q [:psi.graph/compat-aliases]))]
+      (is (vector? aliases))
+      (is (seq aliases))
+      (doseq [{:keys [alias canonical status]} aliases]
+        (is (keyword? alias))
+        (is (contains? #{:compat :canonical :deprecated} status))
+        (is canonical)
+        (let [result (q [alias])]
+          (is (contains? result alias)
+              (str "expected compat alias to resolve: " alias)))))))
+
 ;; ── Compatibility alias attrs (legacy/common names) ─────
 
 (deftest compatibility-aliases-test
@@ -238,4 +263,6 @@
       (is (vector? (:psi.history/git-learning-commits result)))
 
       (is (map? (:psi.introspection/query-graph-summary result)))
+      (is (vector? (get-in result [:psi.introspection/query-graph-summary :root-queryable-attrs])))
+      (is (vector? (get-in result [:psi.introspection/query-graph-summary :compat-aliases])))
       (is (map? (:psi.introspection/engine-system-state result))))))

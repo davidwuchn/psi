@@ -1364,7 +1364,7 @@
 
 ;; ── Query graph bridge (seeded by :psi/agent-session-ctx) ────────────────
 
-(declare all-resolvers)
+(declare all-resolvers compat-alias-index)
 
 (defn- operation-metadata
   []
@@ -1388,7 +1388,11 @@
      :psi.graph/nodes            — capability graph nodes
      :psi.graph/edges            — capability graph edges (with :attribute metadata)
      :psi.graph/capabilities     — domain capability summaries
-     :psi.graph/domain-coverage  — per-domain operation counts"
+     :psi.graph/domain-coverage  — per-domain operation counts
+
+   Additional diagnostics:
+     :psi.graph/root-queryable-attrs — attrs reachable from session-root seeds
+     :psi.graph/compat-aliases       — explicit alias→canonical mapping"
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.graph/resolver-count
@@ -1399,23 +1403,97 @@
                  :psi.graph/nodes
                  :psi.graph/edges
                  :psi.graph/capabilities
-                 :psi.graph/domain-coverage]}
-  (let [_              agent-session-ctx
-        op-meta        (operation-metadata)
-        cgraph         (graph/derive-capability-graph op-meta)
-        resolver-syms  (registry/registered-resolver-syms)
-        mutation-syms  (registry/registered-mutation-syms)]
-    {:psi.graph/resolver-count  (count resolver-syms)
-     :psi.graph/mutation-count  (count mutation-syms)
-     :psi.graph/resolver-syms   resolver-syms
-     :psi.graph/mutation-syms   mutation-syms
-     :psi.graph/env-built       (boolean (seq resolver-syms))
-     :psi.graph/nodes           (:nodes cgraph)
-     :psi.graph/edges           (:edges cgraph)
-     :psi.graph/capabilities    (:capabilities cgraph)
-     :psi.graph/domain-coverage (:domain-coverage cgraph)}))
+                 :psi.graph/domain-coverage
+                 :psi.graph/root-queryable-attrs
+                 :psi.graph/compat-aliases]}
+  (let [_                   agent-session-ctx
+        op-meta             (operation-metadata)
+        cgraph              (graph/derive-capability-graph op-meta)
+        resolver-syms       (registry/registered-resolver-syms)
+        mutation-syms       (registry/registered-mutation-syms)
+        root-queryable-attrs (graph/derive-root-queryable-attrs
+                              (:resolver-ops op-meta)
+                              #{:psi/agent-session-ctx :psi/memory-ctx :psi/recursion-ctx})]
+    {:psi.graph/resolver-count      (count resolver-syms)
+     :psi.graph/mutation-count      (count mutation-syms)
+     :psi.graph/resolver-syms       resolver-syms
+     :psi.graph/mutation-syms       mutation-syms
+     :psi.graph/env-built           (boolean (seq resolver-syms))
+     :psi.graph/nodes               (:nodes cgraph)
+     :psi.graph/edges               (:edges cgraph)
+     :psi.graph/capabilities        (:capabilities cgraph)
+     :psi.graph/domain-coverage     (:domain-coverage cgraph)
+     :psi.graph/root-queryable-attrs root-queryable-attrs
+     :psi.graph/compat-aliases      compat-alias-index}))
 
 ;; ── Compatibility aliases (older/discoverability attr names) ───────────────
+
+(def ^:private compat-alias-index
+  [{:alias :psi.agent-session/current-request-shape
+    :canonical :psi.agent-session/request-shape
+    :status :compat}
+   {:alias :psi.agent-session/api-error-list
+    :canonical [:psi.agent-session/api-error-count :psi.agent-session/api-errors]
+    :status :compat}
+   {:alias :psi.memory/memory-state
+    :canonical [:psi.memory/status
+                :psi.memory/entry-count
+                :psi.memory/entries
+                :psi.memory/search-results
+                :psi.memory/recovery-count
+                :psi.memory/recoveries
+                :psi.memory/graph-snapshots
+                :psi.memory/graph-deltas
+                :psi.memory/by-tag
+                :psi.memory/capability-history
+                :psi.memory/index-stats]
+    :status :compat}
+   {:alias :psi.memory/memory-store-state
+    :canonical [:psi.memory.store/providers
+                :psi.memory.store/active-provider-id
+                :psi.memory.store/default-provider-id
+                :psi.memory.store/fallback-provider-id
+                :psi.memory.store/selection
+                :psi.memory.store/health
+                :psi.memory.store/active-provider-telemetry
+                :psi.memory.store/last-failure]
+    :status :compat}
+   {:alias :psi.memory/memory-context-state
+    :canonical :psi.memory/state
+    :status :compat}
+   {:alias :psi.agent-session/memory-state-compat
+    :canonical :psi.memory/memory-state
+    :status :compat}
+   {:alias :psi.agent-session/memory-store-state-compat
+    :canonical :psi.memory/memory-store-state
+    :status :compat}
+   {:alias :psi.agent-session/memory-context-state-compat
+    :canonical :psi.memory/memory-context-state
+    :status :compat}
+   {:alias :psi.history/git-repo-status
+    :canonical [:git.repo/status :git.repo/current-commit :git.repo/has-changes]
+    :status :compat}
+   {:alias :psi.history/git-repo-commits
+    :canonical [:git.repo/commits :git.repo/has-history]
+    :status :compat}
+   {:alias :psi.history/git-learning-commits
+    :canonical :git.repo/learning-commits
+    :status :compat}
+   {:alias :psi.introspection/query-graph-summary
+    :canonical [:psi.graph/resolver-count
+                :psi.graph/mutation-count
+                :psi.graph/resolver-syms
+                :psi.graph/mutation-syms
+                :psi.graph/env-built
+                :psi.graph/nodes
+                :psi.graph/edges
+                :psi.graph/capabilities
+                :psi.graph/domain-coverage
+                :psi.graph/root-queryable-attrs]
+    :status :compat}
+   {:alias :psi.introspection/engine-system-state
+    :canonical :psi.system/state
+    :status :compat}])
 
 (pco/defresolver current-request-shape-compat
   "Compatibility alias for :psi.agent-session/current-request-shape.
@@ -1510,7 +1588,9 @@
            psi.graph/nodes
            psi.graph/edges
            psi.graph/capabilities
-           psi.graph/domain-coverage]}]
+           psi.graph/domain-coverage
+           psi.graph/root-queryable-attrs
+           psi.graph/compat-aliases]}]
   {::pco/input  [:psi.graph/resolver-count
                  :psi.graph/mutation-count
                  :psi.graph/resolver-syms
@@ -1519,17 +1599,21 @@
                  :psi.graph/nodes
                  :psi.graph/edges
                  :psi.graph/capabilities
-                 :psi.graph/domain-coverage]
+                 :psi.graph/domain-coverage
+                 :psi.graph/root-queryable-attrs
+                 :psi.graph/compat-aliases]
    ::pco/output [:psi.introspection/query-graph-summary]}
-  {:psi.introspection/query-graph-summary {:resolver-count  resolver-count
-                                           :mutation-count  mutation-count
-                                           :resolver-syms   resolver-syms
-                                           :mutation-syms   mutation-syms
-                                           :env-built       env-built
-                                           :nodes           nodes
-                                           :edges           edges
-                                           :capabilities    capabilities
-                                           :domain-coverage domain-coverage}})
+  {:psi.introspection/query-graph-summary {:resolver-count       resolver-count
+                                           :mutation-count       mutation-count
+                                           :resolver-syms        resolver-syms
+                                           :mutation-syms        mutation-syms
+                                           :env-built            env-built
+                                           :nodes                nodes
+                                           :edges                edges
+                                           :capabilities         capabilities
+                                           :domain-coverage      domain-coverage
+                                           :root-queryable-attrs root-queryable-attrs
+                                           :compat-aliases       compat-aliases}})
 
 (pco/defresolver introspection-engine-system-state-compat
   "Compatibility alias for :psi.introspection/engine-system-state.
