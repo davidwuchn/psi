@@ -222,9 +222,11 @@
    [psi.introspection.graph :as graph]
    [psi.history.git :as git]
    [psi.history.resolvers :as history-resolvers]
+   [psi.engine.core :as engine]
    [psi.memory.core :as memory]
    [psi.memory.resolvers :as memory-resolvers]
    [psi.query.registry :as registry]
+   [psi.recursion.core :as recursion]
    [psi.recursion.resolvers :as recursion-resolvers]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.session :as session]
@@ -1391,6 +1393,7 @@
      :psi.graph/domain-coverage  — per-domain operation counts
 
    Additional diagnostics:
+     :psi.graph/root-seeds           — transparent root seeds injected for session queries
      :psi.graph/root-queryable-attrs — attrs reachable from session-root seeds
      :psi.graph/compat-aliases       — explicit alias→canonical mapping"
   [{:keys [psi/agent-session-ctx]}]
@@ -1404,6 +1407,7 @@
                  :psi.graph/edges
                  :psi.graph/capabilities
                  :psi.graph/domain-coverage
+                 :psi.graph/root-seeds
                  :psi.graph/root-queryable-attrs
                  :psi.graph/compat-aliases]}
   (let [_                   agent-session-ctx
@@ -1413,18 +1417,22 @@
         mutation-syms       (registry/registered-mutation-syms)
         root-queryable-attrs (graph/derive-root-queryable-attrs
                               (:resolver-ops op-meta)
-                              #{:psi/agent-session-ctx :psi/memory-ctx :psi/recursion-ctx})]
-    {:psi.graph/resolver-count      (count resolver-syms)
-     :psi.graph/mutation-count      (count mutation-syms)
-     :psi.graph/resolver-syms       resolver-syms
-     :psi.graph/mutation-syms       mutation-syms
-     :psi.graph/env-built           (boolean (seq resolver-syms))
-     :psi.graph/nodes               (:nodes cgraph)
-     :psi.graph/edges               (:edges cgraph)
-     :psi.graph/capabilities        (:capabilities cgraph)
-     :psi.graph/domain-coverage     (:domain-coverage cgraph)
+                              #{:psi/agent-session-ctx :psi/memory-ctx :psi/recursion-ctx :psi/engine-ctx})]
+    {:psi.graph/resolver-count       (count resolver-syms)
+     :psi.graph/mutation-count       (count mutation-syms)
+     :psi.graph/resolver-syms        resolver-syms
+     :psi.graph/mutation-syms        mutation-syms
+     :psi.graph/env-built            (boolean (seq resolver-syms))
+     :psi.graph/nodes                (:nodes cgraph)
+     :psi.graph/edges                (:edges cgraph)
+     :psi.graph/capabilities         (:capabilities cgraph)
+     :psi.graph/domain-coverage      (:domain-coverage cgraph)
+     :psi.graph/root-seeds           [:psi/agent-session-ctx
+                                      :psi/memory-ctx
+                                      :psi/recursion-ctx
+                                      :psi/engine-ctx]
      :psi.graph/root-queryable-attrs root-queryable-attrs
-     :psi.graph/compat-aliases      compat-alias-index}))
+     :psi.graph/compat-aliases       compat-alias-index}))
 
 ;; ── Compatibility aliases (older/discoverability attr names) ───────────────
 
@@ -1589,6 +1597,7 @@
            psi.graph/edges
            psi.graph/capabilities
            psi.graph/domain-coverage
+           psi.graph/root-seeds
            psi.graph/root-queryable-attrs
            psi.graph/compat-aliases]}]
   {::pco/input  [:psi.graph/resolver-count
@@ -1600,6 +1609,7 @@
                  :psi.graph/edges
                  :psi.graph/capabilities
                  :psi.graph/domain-coverage
+                 :psi.graph/root-seeds
                  :psi.graph/root-queryable-attrs
                  :psi.graph/compat-aliases]
    ::pco/output [:psi.introspection/query-graph-summary]}
@@ -1612,20 +1622,24 @@
                                            :edges                edges
                                            :capabilities         capabilities
                                            :domain-coverage      domain-coverage
+                                           :root-seeds           root-seeds
                                            :root-queryable-attrs root-queryable-attrs
                                            :compat-aliases       compat-aliases}})
 
 (pco/defresolver introspection-engine-system-state-compat
   "Compatibility alias for :psi.introspection/engine-system-state.
-   Session-root eql_query does not always seed :psi/engine-ctx, so this
-   resolver returns an explicit unavailable payload instead of planning error."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
+   With transparent root seeding, this now resolves a concrete engine/system
+   snapshot instead of returning an unavailable placeholder."
+  [{:keys [psi/engine-ctx]}]
+  {::pco/input  [:psi/engine-ctx]
    ::pco/output [:psi.introspection/engine-system-state]}
-  (let [_ agent-session-ctx]
-    {:psi.introspection/engine-system-state
-     {:status :unavailable
-      :reason "requires :psi/engine-ctx seed"}}))
+  {:psi.introspection/engine-system-state
+   {:system-state       (engine/get-system-state-in engine-ctx)
+    :engine-count       (count (engine/get-all-engines-in engine-ctx))
+    :has-interface      (engine/system-has-interface-in? engine-ctx)
+    :has-substrate      (engine/system-has-substrate-in? engine-ctx)
+    :has-memory-layer   (engine/system-has-memory-layer-in? engine-ctx)
+    :is-ai-complete     (engine/system-is-ai-complete-in? engine-ctx)}})
 
 (pco/defresolver memory-store-state-compat
   "Compatibility alias for :psi.memory/memory-store-state.
@@ -1789,11 +1803,23 @@
 
 (defn query-in
   "Run EQL `q` against `ctx` using this component's Pathom graph.
-   Seeds memory + recursion contexts from the session when available."
+   Transparently seeds root contexts so callers don't need to pass them:
+   - :psi/agent-session-ctx (always)
+   - :psi/memory-ctx (session or global)
+   - :psi/recursion-ctx (session or global)
+   - :psi/engine-ctx (global)
+
+   This keeps session-root eql_query ergonomic while still allowing advanced
+   introspection attrs that depend on non-session roots."
   [ctx q]
-  (p.eql/process (ensure-query-env!)
-                 {:psi/agent-session-ctx ctx
-                  :psi/memory-ctx        (or (:memory-ctx ctx)
-                                             (memory/global-context))
-                  :psi/recursion-ctx     (:recursion-ctx ctx)}
-                 q))
+  (let [memory-ctx    (or (:memory-ctx ctx)
+                          (memory/global-context))
+        recursion-ctx (or (:recursion-ctx ctx)
+                          (recursion/global-context))
+        engine-ctx    (engine/global-context)]
+    (p.eql/process (ensure-query-env!)
+                   {:psi/agent-session-ctx ctx
+                    :psi/memory-ctx        memory-ctx
+                    :psi/recursion-ctx     recursion-ctx
+                    :psi/engine-ctx        engine-ctx}
+                   q)))

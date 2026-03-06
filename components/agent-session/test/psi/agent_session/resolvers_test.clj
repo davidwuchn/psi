@@ -206,8 +206,12 @@
 
 (deftest root-queryable-attrs-contract-test
   (testing "every attr advertised as root-queryable resolves from session root"
-    (let [root-attrs (:psi.graph/root-queryable-attrs
-                      (q [:psi.graph/root-queryable-attrs]))]
+    (let [meta      (q [:psi.graph/root-seeds :psi.graph/root-queryable-attrs])
+          root-seeds (:psi.graph/root-seeds meta)
+          root-attrs (:psi.graph/root-queryable-attrs meta)]
+      (is (vector? root-seeds))
+      (is (= [:psi/agent-session-ctx :psi/memory-ctx :psi/recursion-ctx :psi/engine-ctx]
+             root-seeds))
       (is (vector? root-attrs))
       (is (seq root-attrs))
       (doseq [attr root-attrs]
@@ -263,6 +267,7 @@
       (is (vector? (:psi.history/git-learning-commits result)))
 
       (is (map? (:psi.introspection/query-graph-summary result)))
+      (is (vector? (get-in result [:psi.introspection/query-graph-summary :root-seeds])))
       (is (vector? (get-in result [:psi.introspection/query-graph-summary :root-queryable-attrs])))
       (is (vector? (get-in result [:psi.introspection/query-graph-summary :compat-aliases])))
       (is (map? (:psi.introspection/engine-system-state result))))))

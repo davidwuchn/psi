@@ -157,8 +157,8 @@
 ;; Engine management functions (context-aware core)
 ;; ========================================
 
-(defn- global-context
-  "Return the global (singleton) context map."
+(defn global-context
+  "Return the global (singleton) engine context map."
   []
   {:engines           engines
    :system-state      system-state
