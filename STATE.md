@@ -366,3 +366,5 @@ Combined query:
 ## nREPL
 
 Port: `8888`
+
+- Δ psl source=53082d2cb72c2dbd354c790256f1e48b5663f717 at=2026-03-06T20:57:20.413334Z :: ⚒ Δ Simplify PSL to agent-prompt flow with extension prompt telemetry λ
