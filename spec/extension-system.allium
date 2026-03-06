@@ -168,20 +168,22 @@ rule ExtensionCommandExecuted {
 ------------------------------------------------------------
 
 rule CustomMessageSent {
-    -- Extension injects a custom message with optional LLM trigger.
-    when: CustomMessageSent(session, message, triggerTurn?, deliverAs?)
+    -- Extension injects a custom assistant/transcript message.
+    when: CustomMessageSent(session, message)
+
+    ensures: session.agent.appendMessage(message)
+    ensures: CustomMessageEntry.created(customType: message.customType, content: message.content, display: message.display)
+}
+
+rule ExtensionPromptSent {
+    -- Extension submits a user-style prompt that should invoke/queue agent work.
+    when: ExtensionPromptSent(session, promptText)
 
     ensures:
         if session.isStreaming:
-            if deliverAs = followUp:
-                agent/FollowUp(session.agent, message)
-            else:
-                agent/Steer(session.agent, message)
-        else if triggerTurn:
-            agent/Prompt(session.agent, message)
+            agent/FollowUp(session.agent, promptText)
         else:
-            session.agent.appendMessage(message)
-            CustomMessageEntry.created(customType: message.customType, content: message.content, display: message.display)
+            agent/Prompt(session.agent, promptText)
 }
 
 ------------------------------------------------------------

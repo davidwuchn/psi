@@ -31,6 +31,9 @@
    :psi.agent-session/skills
    :psi.agent-session/prompt-templates
    :psi.agent-session/extension-summary   — map describing registered extensions
+   :psi.agent-session/extension-last-prompt-source
+   :psi.agent-session/extension-last-prompt-delivery
+   :psi.agent-session/extension-last-prompt-at
    :psi.agent-session/session-entry-count
    :psi.agent-session/session-entries     — [{:psi.session-entry/*}] full journal contents
    :psi.agent-session/journal-flushed?    — true once initial bulk write has happened
@@ -343,12 +346,18 @@
 ;; ── Extension summary ───────────────────────────────────
 
 (pco/defresolver agent-session-extensions
-  "Resolve extension registry summary."
+  "Resolve extension registry summary and extension prompt telemetry."
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
-   ::pco/output [:psi.agent-session/extension-summary]}
-  {:psi.agent-session/extension-summary
-   (ext/summary-in (:extension-registry agent-session-ctx))})
+   ::pco/output [:psi.agent-session/extension-summary
+                 :psi.agent-session/extension-last-prompt-source
+                 :psi.agent-session/extension-last-prompt-delivery
+                 :psi.agent-session/extension-last-prompt-at]}
+  (let [sd @(:session-data-atom agent-session-ctx)]
+    {:psi.agent-session/extension-summary              (ext/summary-in (:extension-registry agent-session-ctx))
+     :psi.agent-session/extension-last-prompt-source   (:extension-last-prompt-source sd)
+     :psi.agent-session/extension-last-prompt-delivery (:extension-last-prompt-delivery sd)
+     :psi.agent-session/extension-last-prompt-at       (:extension-last-prompt-at sd)}))
 
 ;; ── Extension introspection ─────────────────────────────
 

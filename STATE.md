@@ -276,6 +276,23 @@ Combined query (mirrors the failing pattern, now fixed):
  :psi.agent-session/start-time :psi.agent-session/current-time]
 ```
 
+## Extension Prompt Telemetry Attrs (Step 12a)
+
+Top-level EQL attrs for extension-initiated agent prompt visibility:
+
+```clojure
+[:psi.agent-session/extension-last-prompt-source]    ;; string? — extension source id (e.g. "plan-state-learning")
+[:psi.agent-session/extension-last-prompt-delivery]  ;; keyword? — :prompt | :follow-up
+[:psi.agent-session/extension-last-prompt-at]        ;; java.time.Instant? — last extension prompt timestamp
+```
+
+Combined query:
+```clojure
+[:psi.agent-session/extension-last-prompt-source
+ :psi.agent-session/extension-last-prompt-delivery
+ :psi.agent-session/extension-last-prompt-at]
+```
+
 ## Remember Telemetry Attrs (Step 10)
 
 Top-level EQL attrs for remember-capture visibility:

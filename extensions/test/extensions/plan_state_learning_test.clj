@@ -40,28 +40,16 @@
           (is (some #(re-find #"PSL skipped" (str %)) texts))
           (is (= ["git log -1 --pretty=format:%H%n%s"] @calls)))))))
 
-(deftest handler-runs-two-phase-flow-for-normal-commit-test
-  (testing "normal commit triggers phase1 and phase2 commands"
+(deftest handler-sends-agent-prompt-for-normal-commit-test
+  (testing "normal commit sends a user-style prompt to the agent"
     (let [{:keys [api state]} (nullable/create-nullable-extension-api
                                {:path "/test/plan_state_learning.clj"})
           calls (atom [])]
       (with-redefs [sut/bash! (fn [_ cmd]
                                 (swap! calls conj cmd)
-                                (cond
-                                  (= cmd "git log -1 --pretty=format:%H%n%s")
+                                (if (= cmd "git log -1 --pretty=format:%H%n%s")
                                   (git-log-response "feedbeef" "⚒ Add feature")
-
-                                  (re-find #"git commit -m '◈ Δ Auto-update PLAN/STATE" cmd)
-                                  {:psi.extension.tool/content "__PSL_COMMIT__ 1111111"
-                                   :psi.extension.tool/is-error false}
-
-                                  (re-find #"git commit -m '◈ λ Auto-update LEARNING" cmd)
-                                  {:psi.extension.tool/content "__PSL_COMMIT__ 2222222"
-                                   :psi.extension.tool/is-error false}
-
-                                  :else
-                                  {:psi.extension.tool/content "__PSL_CHANGED__"
-                                   :psi.extension.tool/is-error false}))
+                                  {:psi.extension.tool/content "" :psi.extension.tool/is-error false}))
                     sut/send-message! (fn [mutate-fn text]
                                         (mutate-fn 'psi.extension/send-message
                                                    {:role "assistant"
@@ -70,12 +58,14 @@
         (sut/init api)
         (let [handler (first (get-in @state [:handlers "git_head_changed"]))
               result  (handler {:head "feedbeef" :previous-head "aaa111" :cwd "/tmp/repo"})
-              texts   (map :content (:messages @state))]
+              messages (:messages @state)
+              texts   (map :content messages)
+              prompt-msg (some #(when (= "extension-prompt" (:custom-type %)) %) messages)]
           (is (false? (:skip? result)))
-          (is (= "1111111" (:phase1-sha result)))
-          (is (= "2222222" (:phase2-sha result)))
+          (is (true? (:prompt-accepted? result)))
+          (is (= :prompt (:prompt-delivery result)))
           (is (some #(re-find #"PSL sync start" (str %)) texts))
-          (is (some #(re-find #"phase1 committed" (str %)) texts))
-          (is (some #(re-find #"phase2 committed" (str %)) texts))
-          (is (= 6 (count @calls)))
-          (is (= "git log -1 --pretty=format:%H%n%s" (first @calls))))))))
+          (is (some #(re-find #"PSL prompt queued via prompt" (str %)) texts))
+          (is (some? prompt-msg))
+          (is (re-find #"Update PLAN.md and STATE.md" (str (:content prompt-msg))))
+          (is (= ["git log -1 --pretty=format:%H%n%s"] @calls)))))))

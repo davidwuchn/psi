@@ -6,8 +6,8 @@
 
    Behavior:
    - skip when latest commit subject contains [psi:psl-auto]
-   - phase 1: append trace lines to PLAN.md + STATE.md, commit if changed
-   - phase 2: append trace line to LEARNING.md, commit if changed
+   - send one user-style prompt turn to the agent with source commit context
+   - agent updates PLAN.md, STATE.md, LEARNING.md and commits changes
    - emit visible transcript messages via psi.extension/send-message"
   (:require
    [clojure.string :as str]))
@@ -15,18 +15,11 @@
 (def ^:private marker "[psi:psl-auto]")
 (def ^:private custom-type "plan-state-learning")
 
-(defn- now-iso []
-  (str (java.time.Instant/now)))
-
 (defn- squish
   [s]
   (-> (str (or s ""))
       (str/replace #"\s+" " ")
       (str/trim)))
-
-(defn- shell-quote
-  [s]
-  (str "'" (str/replace (str (or s "")) "'" "'\"'\"'") "'"))
 
 (defn- tool-content
   [tool-result]
@@ -43,6 +36,12 @@
               :content text
               :custom-type custom-type}))
 
+(defn- send-prompt!
+  [mutate-fn text]
+  (mutate-fn 'psi.extension/send-prompt
+             {:content text
+              :source custom-type}))
+
 (defn- latest-commit
   [mutate-fn]
   (let [result (bash! mutate-fn "git log -1 --pretty=format:%H%n%s")
@@ -51,39 +50,31 @@
     {:sha (squish sha)
      :subject (squish subject)}))
 
-(defn- append-trace-line!
-  [mutate-fn path line source-sha]
-  (let [file-q (shell-quote path)
-        sha-q  (shell-quote (str source-sha))
-        line-q (shell-quote line)
-        command (str
-                 "if [ -f " file-q " ] && grep -Fq " sha-q " " file-q "; then "
-                 "  echo __PSL_NO_CHANGE__; "
-                 "else "
-                 "  printf '\n%s\n' " line-q " >> " file-q "; "
-                 "  echo __PSL_CHANGED__; "
-                 "fi")
-        out (tool-content (bash! mutate-fn command))]
-    (str/includes? out "__PSL_CHANGED__")))
-
-(defn- commit-files!
-  [mutate-fn files commit-message]
-  (let [joined (str/join " " (map shell-quote files))
-        msg-q  (shell-quote commit-message)
-        command (str
-                 "git add " joined " && "
-                 "if git diff --cached --quiet -- " joined "; then "
-                 "  echo __PSL_NO_COMMIT__; "
-                 "else "
-                 "  git commit -m " msg-q " >/dev/null && "
-                 "  echo __PSL_COMMIT__ $(git rev-parse HEAD); "
-                 "fi")
-        out (tool-content (bash! mutate-fn command))]
-    (when-let [[_ sha] (re-find #"__PSL_COMMIT__\s+([0-9a-f]{7,40})" out)]
-      sha)))
+(defn- psl-prompt
+  [{:keys [source-sha subject previous-head cwd]}]
+  (let [source7 (subs source-sha 0 (min 7 (count source-sha)))]
+    (str
+     "PSL follow-up for commit " source7 "\n"
+     "\n"
+     "Context:\n"
+     "- source-sha: " source-sha "\n"
+     "- previous-head: " (or previous-head "unknown") "\n"
+     "- cwd: " (or cwd "") "\n"
+     "- subject: " (squish subject) "\n"
+     "\n"
+     "Task:\n"
+     "1) Update PLAN.md and STATE.md\n"
+     "2) Commit those changes\n"
+     "3) Update LEARNING.md\n"
+     "4) Commit LEARNING.md\n"
+     "\n"
+     "Constraints:\n"
+     "- Do not use git add -A or git add .\n"
+     "- Only stage explicit target files for each commit.\n"
+     "- If a phase has no meaningful changes, skip that commit and explain why in your final response.\n")))
 
 (defn- handle-git-head-changed
-  [mutate-fn {:keys [head]}]
+  [mutate-fn {:keys [head previous-head cwd]}]
   (let [{:keys [sha subject]} (latest-commit mutate-fn)
         source-sha (or (not-empty sha) head "unknown")
         source7    (subs source-sha 0 (min 7 (count source-sha)))]
@@ -92,33 +83,23 @@
         (send-message! mutate-fn
                        (str "PSL skipped for " source7 " (self commit marker " marker ")."))
         {:skip? true :reason :self-commit :source-sha source-sha :subject subject})
-      (let [subject* (squish subject)
-            ts       (now-iso)
-            phase1-line (str "- Δ psl source=" source-sha " at=" ts " :: " subject*)
-            phase2-line (str "- λ psl source=" source-sha " at=" ts " :: " subject*)
-            _        (send-message! mutate-fn (str "PSL sync start for " source7 "."))
-            _        (append-trace-line! mutate-fn "PLAN.md" phase1-line source-sha)
-            _        (append-trace-line! mutate-fn "STATE.md" phase1-line source-sha)
-            phase1-sha (commit-files! mutate-fn
-                                      ["PLAN.md" "STATE.md"]
-                                      (str "◈ Δ Auto-update PLAN/STATE " marker " source=" source7))
-            _        (send-message! mutate-fn
-                                    (if phase1-sha
-                                      (str "PSL phase1 committed PLAN/STATE at " (subs phase1-sha 0 (min 7 (count phase1-sha))) ".")
-                                      "PSL phase1: no PLAN/STATE changes to commit."))
-            _        (append-trace-line! mutate-fn "LEARNING.md" phase2-line source-sha)
-            phase2-sha (commit-files! mutate-fn
-                                      ["LEARNING.md"]
-                                      (str "◈ λ Auto-update LEARNING " marker " source=" source7))
-            _        (send-message! mutate-fn
-                                    (if phase2-sha
-                                      (str "PSL phase2 committed LEARNING at " (subs phase2-sha 0 (min 7 (count phase2-sha))) ".")
-                                      "PSL phase2: no LEARNING changes to commit."))]
+      (let [_            (send-message! mutate-fn (str "PSL sync start for " source7 "."))
+            prompt       (psl-prompt {:source-sha source-sha
+                                      :subject subject
+                                      :previous-head previous-head
+                                      :cwd cwd})
+            prompt-res   (send-prompt! mutate-fn prompt)
+            accepted?    (true? (:psi.extension/prompt-accepted? prompt-res))
+            delivery     (:psi.extension/prompt-delivery prompt-res)
+            _            (send-message! mutate-fn
+                                        (if accepted?
+                                          (str "PSL prompt queued via " (name delivery) ".")
+                                          "PSL prompt was not accepted."))]
         {:skip? false
          :source-sha source-sha
          :subject subject
-         :phase1-sha phase1-sha
-         :phase2-sha phase2-sha}))))
+         :prompt-accepted? accepted?
+         :prompt-delivery delivery}))))
 
 (defn init
   [api]

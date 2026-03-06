@@ -908,7 +908,30 @@
                                     {:id :s2 :tool "prefix-b" :args {:text [:from :s1 :content]}}]})]
         (is (true? (:psi.extension.tool-plan/succeeded? result)))
         (is (= "B:A:hello"
-               (get-in result [:psi.extension.tool-plan/result-by-id :s2 :content])))))))
+               (get-in result [:psi.extension.tool-plan/result-by-id :s2 :content]))))))
+
+  (testing "send-prompt mutation stores extension prompt telemetry"
+    (let [ctx    (session/create-context)
+          qctx   (query/create-query-context)
+          mutate (fn [op params]
+                   (get (query/query-in qctx
+                                        {:psi/agent-session-ctx ctx}
+                                        [(list op (assoc params :psi/agent-session-ctx ctx))])
+                        op))]
+      (session/register-resolvers-in! qctx false)
+      (session/register-mutations-in! qctx true)
+      (let [result (mutate 'psi.extension/send-prompt
+                           {:content "hello from extension"
+                            :source "plan-state-learning"})
+            telemetry (session/query-in ctx
+                                        [:psi.agent-session/extension-last-prompt-source
+                                         :psi.agent-session/extension-last-prompt-delivery
+                                         :psi.agent-session/extension-last-prompt-at])]
+        (is (true? (:psi.extension/prompt-accepted? result)))
+        (is (= :prompt (:psi.extension/prompt-delivery result)))
+        (is (= "plan-state-learning" (:psi.agent-session/extension-last-prompt-source telemetry)))
+        (is (= :prompt (:psi.agent-session/extension-last-prompt-delivery telemetry)))
+        (is (inst? (:psi.agent-session/extension-last-prompt-at telemetry)))))))
 
 (deftest startup-resources-via-mutations-test
   (testing "load-startup-resources-via-mutations-in! adds prompts/skills/tools"

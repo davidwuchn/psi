@@ -936,6 +936,24 @@
                :message msg}))
     msg))
 
+(defn send-extension-prompt-in!
+  "Submit extension-authored text to the agent as a user prompt.
+   If the session is streaming, queue it as a follow-up instead.
+   Persists lightweight telemetry on session data for introspection."
+  [ctx text source]
+  (let [delivery (if (idle-in? ctx)
+                   (do
+                     (prompt-in! ctx (str text))
+                     :prompt)
+                   (do
+                     (follow-up-in! ctx (str text))
+                     :follow-up))]
+    (swap-session! ctx assoc
+                   :extension-last-prompt-source (some-> source str)
+                   :extension-last-prompt-delivery delivery
+                   :extension-last-prompt-at (java.time.Instant/now))
+    {:accepted true :delivery delivery}))
+
 (defn add-extension-in!
   "Load one extension file path into this session's extension registry.
    Returns {:loaded? bool :path string? :error string?}."
@@ -1340,6 +1358,16 @@
                                (or content "")
                                custom-type)})
 
+(pco/defmutation send-prompt
+  [_ {:keys [psi/agent-session-ctx content source]}]
+  {::pco/op-name 'psi.extension/send-prompt
+   ::pco/params  [:psi/agent-session-ctx :content]
+   ::pco/output  [:psi.extension/prompt-accepted?
+                  :psi.extension/prompt-delivery]}
+  (let [{:keys [accepted delivery]} (send-extension-prompt-in! agent-session-ctx (or content "") source)]
+    {:psi.extension/prompt-accepted? accepted
+     :psi.extension/prompt-delivery  delivery}))
+
 (pco/defmutation run-read-tool
   [_ {:keys [psi/agent-session-ctx path offset limit]}]
   {::pco/op-name 'psi.extension.tool/read
@@ -1659,6 +1687,7 @@
    compact
    append-entry
    send-message
+   send-prompt
    run-read-tool
    run-bash-tool
    run-write-tool

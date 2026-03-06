@@ -149,6 +149,12 @@
       (swap! state update :messages conj params)
       {:psi.extension/message-sent? true})
 
+    psi.extension/send-prompt
+    (do
+      (swap! state update :messages conj (assoc params :role "user" :custom-type "extension-prompt"))
+      {:psi.extension/prompt-accepted? true
+       :psi.extension/prompt-delivery :prompt})
+
     ;; Default
     {}))
 

@@ -101,8 +101,18 @@ rule PlanStateLearningHandlesHeadChange {
         )
 }
 
-rule PlanStateLearningPhase1 {
+rule PlanStateLearningCreatesAgentTurn {
     when: PlanStateLearningRun where skipped = false
+
+    ensures: ext/ExtensionPromptSent(
+        source: "plan-state-learning",
+        role: "user"
+    )
+    ensures: AgentTurnStartedFromExtensionPrompt("plan-state-learning")
+}
+
+rule PlanStateLearningAgentExecutesPhase1 {
+    when: AgentTurnStartedFromExtensionPrompt("plan-state-learning")
 
     ensures: UpdateFile("PLAN.md")
     ensures: UpdateFile("STATE.md")
@@ -110,20 +120,16 @@ rule PlanStateLearningPhase1 {
         files: config.psl_phase1_files,
         messageContains: ["Δ", config.psl_marker]
     )
-
-    ensures: PlanStateLearningRun.phase1Committed = true or PlanStateLearningRun.phase1Committed = false
 }
 
-rule PlanStateLearningPhase2 {
-    when: PlanStateLearningRun where skipped = false
+rule PlanStateLearningAgentExecutesPhase2 {
+    when: AgentTurnStartedFromExtensionPrompt("plan-state-learning")
 
     ensures: UpdateFile("LEARNING.md")
     ensures: GitCommitIfChanged(
         files: config.psl_phase2_files,
         messageContains: ["λ", config.psl_marker]
     )
-
-    ensures: PlanStateLearningRun.phase2Committed = true or PlanStateLearningRun.phase2Committed = false
 }
 
 ------------------------------------------------------------
@@ -138,6 +144,15 @@ rule PlanStateLearningMessagesVisibleInTranscript {
         customType: "plan-state-learning",
         visibleInUi: true
     )
+}
+
+rule PlanStateLearningPromptTelemetryVisible {
+    when: AgentTurnStartedFromExtensionPrompt("plan-state-learning")
+
+    ensures: EqlAttributeResolvable(":psi.agent-session/extension-last-prompt-source")
+    ensures: EqlAttributeResolvable(":psi.agent-session/extension-last-prompt-delivery")
+    ensures: EqlAttributeResolvable(":psi.agent-session/extension-last-prompt-at")
+    ensures: EqlValueEquals(":psi.agent-session/extension-last-prompt-source", "plan-state-learning")
 }
 
 rule PlanStateLearningSkipsAreVisible {

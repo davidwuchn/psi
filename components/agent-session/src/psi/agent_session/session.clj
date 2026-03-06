@@ -130,6 +130,9 @@
    [:startup-bootstrap-started-at {:optional true} [:maybe inst?]]
    [:startup-bootstrap-completed-at {:optional true} [:maybe inst?]]
    [:startup-message-ids {:optional true} [:vector :string]]
+   [:extension-last-prompt-source {:optional true} [:maybe :string]]
+   [:extension-last-prompt-delivery {:optional true} [:maybe keyword?]]
+   [:extension-last-prompt-at {:optional true} [:maybe inst?]]
    [:context-tokens {:optional true} [:maybe :int]]
    [:context-window {:optional true} [:maybe :int]]
    [:tool-output-overrides {:optional true} [:map-of :string [:map
@@ -191,6 +194,9 @@
      :startup-bootstrap-started-at nil
      :startup-bootstrap-completed-at nil
      :startup-message-ids     []
+     :extension-last-prompt-source nil
+     :extension-last-prompt-delivery nil
+     :extension-last-prompt-at nil
      :context-tokens          nil
      :context-window          nil
      :tool-output-overrides   {}}
