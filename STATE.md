@@ -12,6 +12,8 @@ Current truth about the Psi system.
 - ✓ Session persistence is a separate concern from memory: session transcripts/state may be partially persisted for `/resume`, but this is distinct from memory-store artifacts used by remember/recover.
 - ✓ Working pattern remains atomic: inspect → minimal change → verify → commit.
 - ✓ 2026-03-06 session boot aligned via nucleus/OODA ritual; current mode is ◈ reflect → ready for · atom execution.
+- ✓ Emacs prompt completion architecture implemented via CAPF: `/` command completion + `@` reference completion, category metadata (`psi_prompt`, `psi_reference`), affixation/annotation/exit hooks, cwd+project-root search, and configurable completion policies.
+- ✓ Emacs completion verification: `components/emacs-ui` ERT suite green at 133/133 after completion work.
 - ✓ Step 11a git-worktree visibility (read-only) implemented: `:git.worktree/*` attrs, session-root bridge attrs, `/worktree` command, and `/status` worktree surfacing.
 - ✓ Worktree failure path now degrades safely with telemetry marker (`git.worktree.parse_failed`) and coverage.
 - ✓ Test isolation hardened: agent-session/introspection tests now use temp cwd to avoid writing repo `.psi/project.edn`.
@@ -190,7 +192,7 @@ Caught by `jline-terminal-keymap-test` smoke test.
 
 ## Test Status
 
-671 tests, 3191 assertions, 0 failures. 0 clj-kondo errors.
+133/133 ERT tests passing for `components/emacs-ui` after CAPF completion work (`emacs -Q --batch -L components/emacs-ui -L components/emacs-ui/test -l components/emacs-ui/test/psi-test.el -f ert-run-tests-batch-and-exit`).
 
 ## Specs
 

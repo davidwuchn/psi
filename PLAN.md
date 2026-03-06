@@ -118,6 +118,14 @@ Ordered steps toward PSI COMPLETE.
 ### Step 12 — Emacs UI ◇ in progress
 - Spec: `spec/emacs-frontend.allium`
 - Current: rpc-edn frontend and core interaction model implemented
+- Completed in this cycle:
+  - [x] Prompt completion architecture added via CAPF (`components/emacs-ui/psi-completion.el`)
+  - [x] `/` completion (slash commands) + `@` completion (file references)
+  - [x] Category metadata (`psi_prompt`, `psi_reference`) + annotation/affixation/exit hooks
+  - [x] Reference search roots include cwd + project root (when distinct)
+  - [x] Completion policy knobs exposed via defcustoms (limits, match style, hidden/excluded paths)
+  - [x] Completion behavior documented in `components/emacs-ui/README.md`
+  - [x] ERT coverage added for completion and policy toggles
 - Definition of done:
   - Startup hydration + `/new` + reconnect flows are stable and tested
   - Tool output rendering modes and theme-aware faces are stable

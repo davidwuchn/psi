@@ -4,6 +4,39 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-06 - Emacs CAPF completion architecture for `/` and `@`
+
+### λ Standard Emacs completion architecture fits prompt input cleanly
+
+A single CAPF dispatcher (`completion-at-point-functions`) can route by token
+context:
+- `/...` → slash command table
+- `@...` → file-reference table
+
+Returning `nil` outside these contexts preserves normal CAPF composition with
+other completion sources.
+
+### λ Category metadata makes completion UI integration predictable
+
+Using explicit categories (`psi_prompt`, `psi_reference`) plus annotation /
+affixation metadata enables consistent behavior across default
+`completion-in-region`, Corfu, and company-capf bridges.
+
+### λ Reference completion needs project-root fallback + configurable policy
+
+`@` completion quality improved when candidate search includes both cwd and
+project-root (when distinct), with operator-tunable knobs:
+- candidate limits
+- match style (`substring` / `prefix`)
+- include hidden paths toggle
+- excluded path prefixes (default excludes `.git`)
+
+### λ Exit hooks are useful for deterministic compose ergonomics
+
+A CAPF `:exit-function` can normalize accepted references (for example,
+appending a trailing space after file candidates while preserving directory
+continuation behavior).
+
 ## 2026-03-05 - Memory Boundary Clarification (session vs persistent vs git)
 
 ### λ Treat memory as two stores plus one query surface
