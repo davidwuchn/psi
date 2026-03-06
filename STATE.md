@@ -4,6 +4,12 @@ Current truth about the Psi system.
 
 ---
 
+## Operating Frame
+
+- ✓ Nucleus framing is now explicit in `AGENTS.md` via **Core Equation** (`刀 ⊣ ψ → 🐍`) and **The Loop** (Observe → Orient → Decide → Act).
+- ✓ Feed-forward recursion wording clarified to: AI tool hooks as human signal to future ψ + FUTURE_STATE.
+- ✓ Working pattern remains atomic: inspect → minimal change → verify → commit.
+
 ## Components
 
 | Component       | Status | Notes                                                      |
