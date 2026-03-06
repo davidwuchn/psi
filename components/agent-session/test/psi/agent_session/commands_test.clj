@@ -6,8 +6,7 @@
    [psi.agent-session.core :as session]
    [psi.agent-session.extensions :as ext]
    [psi.agent-core.core :as agent]
-   [psi.memory.core :as memory]
-   [psi.recursion.core :as recursion]))
+   [psi.memory.core :as memory]))
 
 ;; ── Test helper ─────────────────────────────────────────────
 
@@ -28,12 +27,6 @@
 
 (def ^:private cmd-opts
   {:oauth-ctx nil :ai-model test-ai-model})
-
-(defn- with-recursion-ctx
-  [ctx]
-  (let [rctx (recursion/create-context)]
-    (recursion/register-hooks-in! rctx)
-    (assoc ctx :recursion-ctx rctx)))
 
 (defn- with-ready-memory-ctx
   [ctx]
@@ -175,83 +168,33 @@
     (is (= :text (:type result)))
     (is (= "Usage: /thinking OR /thinking <level>" (:message result)))))
 
-(deftest dispatch-feed-forward-without-recursion-ctx-test
+(deftest dispatch-remember-without-memory-ctx-test
   (let [ctx    (make-test-ctx)
-        result (commands/dispatch ctx "/feed-forward" cmd-opts)]
+        result (commands/dispatch ctx "/remember" cmd-opts)]
     (is (= :text (:type result)))
-    (is (str/includes? (:message result) "not configured"))))
+    (is (str/includes? (:message result) "Memory context not configured"))))
 
-(deftest dispatch-feed-forward-accepted-test
+(deftest dispatch-remember-accepted-test
   (let [ctx    (-> (make-test-ctx)
-                   with-recursion-ctx
                    with-ready-memory-ctx)
-        result (commands/dispatch ctx "/feed-forward verify runtime" cmd-opts)]
+        result (commands/dispatch ctx "/remember verify runtime" cmd-opts)]
     (is (= :text (:type result)))
-    (is (str/includes? (:message result) "trigger accepted"))
-    (is (str/includes? (:message result) "feed-forward-manual-trigger"))
-    (is (str/includes? (:message result) "cycle-id:"))
-    (is (str/includes? (:message result) "awaiting approval"))))
+    (is (str/includes? (:message result) "Remembered"))
+    (is (str/includes? (:message result) "record-id:"))))
 
-(deftest dispatch-feed-forward-busy-test
-  (let [ctx  (-> (make-test-ctx)
-                 with-recursion-ctx
-                 with-ready-memory-ctx)
-        _    (commands/dispatch ctx "/feed-forward first" cmd-opts)
-        busy (commands/dispatch ctx "/feed-forward second" cmd-opts)]
-    (is (= :text (:type busy)))
-    (is (str/includes? (:message busy) "trigger rejected"))
-    (is (str/includes? (:message busy) "controller-busy"))))
-
-(deftest dispatch-feed-forward-blocked-when-live-readiness-fails-test
+(deftest dispatch-remember-blocked-when-memory-not-ready-test
   (let [ctx    (-> (make-test-ctx)
-                   with-recursion-ctx
                    with-unready-memory-ctx)
-        result (commands/dispatch ctx "/feed-forward check live readiness" cmd-opts)]
+        result (commands/dispatch ctx "/remember check live readiness" cmd-opts)]
     (is (= :text (:type result)))
-    (is (str/includes? (:message result) "trigger blocked"))
-    (is (str/includes? (:message result) "recursion_prerequisites_not_ready"))))
+    (is (str/includes? (:message result) "Memory not ready"))))
 
-(deftest dispatch-feed-forward-approve-current-cycle-test
-  (let [ctx     (-> (make-test-ctx)
-                    with-recursion-ctx
-                    with-ready-memory-ctx)
-        _       (commands/dispatch ctx "/feed-forward ship step" cmd-opts)
-        result  (commands/dispatch ctx "/feed-forward approve looks good" cmd-opts)
-        rctx    (:recursion-ctx ctx)
-        state   (recursion/get-state-in rctx)
-        cycle   (last (:cycles state))]
-    (is (= :text (:type result)))
-    (is (str/includes? (:message result) "cycle approved"))
-    (is (str/includes? (:message result) "cycle-status: completed"))
-    (is (str/includes? (:message result) "outcome: success"))
-    (is (= :idle (:status state)))
-    (is (= :completed (:status cycle)))
-    (is (= :success (get-in cycle [:outcome :status])))))
-
-(deftest dispatch-feed-forward-reject-current-cycle-test
-  (let [ctx     (-> (make-test-ctx)
-                    with-recursion-ctx
-                    with-ready-memory-ctx)
-        _       (commands/dispatch ctx "/feed-forward evaluate risk" cmd-opts)
-        result  (commands/dispatch ctx "/feed-forward reject not now" cmd-opts)
-        rctx    (:recursion-ctx ctx)
-        state   (recursion/get-state-in rctx)
-        cycle   (last (:cycles state))]
-    (is (= :text (:type result)))
-    (is (str/includes? (:message result) "cycle rejected"))
-    (is (str/includes? (:message result) "cycle-status: failed"))
-    (is (str/includes? (:message result) "outcome: aborted"))
-    (is (= :idle (:status state)))
-    (is (= :failed (:status cycle)))
-    (is (= :aborted (get-in cycle [:outcome :status])))))
-
-(deftest dispatch-feed-forward-continue-without-active-cycle-test
+(deftest dispatch-feed-forward-aliases-to-remember-test
   (let [ctx    (-> (make-test-ctx)
-                   with-recursion-ctx
                    with-ready-memory-ctx)
-        result (commands/dispatch ctx "/feed-forward continue" cmd-opts)]
+        result (commands/dispatch ctx "/feed-forward legacy alias" cmd-opts)]
     (is (= :text (:type result)))
-    (is (str/includes? (:message result) "No active feed-forward cycle"))))
+    (is (str/includes? (:message result) "Remembered"))))
 
 (deftest dispatch-not-a-command-test
   (testing "plain text returns nil"
@@ -319,8 +262,7 @@
   (let [ctx (make-test-ctx)
         s   (commands/format-help ctx)]
     (doseq [cmd ["/quit" "/status" "/history" "/new" "/resume"
-                 "/login" "/logout" "/feed-forward" "/help" "/prompts" "/skills"
-                 "/feed-forward approve" "/feed-forward reject" "/feed-forward continue"]]
+                 "/login" "/logout" "/remember" "/help" "/prompts" "/skills"]]
       (is (str/includes? s cmd) (str "help should mention " cmd)))))
 
 (deftest format-prompts-none-test

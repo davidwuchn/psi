@@ -235,7 +235,7 @@ Caught by `jline-terminal-keymap-test` smoke test.
 
 - Source: `spec/feed-forward-recursion.allium`
 - Feed-forward scope is manual memory capture only (not automated evolution)
-- `/feed-forward` emits a manual signal and writes one memory artifact with current context
+- `/remember` emits a manual signal and writes one memory artifact with current context
 - Output becomes input via remember/recover (future ψ reads captured artifacts)
 - No controller/process cycle model in spec scope
 

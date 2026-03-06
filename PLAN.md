@@ -73,7 +73,7 @@ Ordered steps toward PSI COMPLETE.
 - Current: command exists; spec now narrowed to manual capture semantics
 - Focus now: simplify runtime surface to capture/recover behavior
 - Definition of done:
-  - `/feed-forward [reason]` performs a single manual memory capture across REPL, RPC, and Emacs
+  - `/remember [text]` performs a single manual memory capture across REPL, RPC, and Emacs
   - Capture includes minimal context snapshot and is recoverable via active memory provider
   - EQL telemetry for feed-forward capture is queryable and stable
   - End-to-end tests cover manual signal → memory write → recovery visibility

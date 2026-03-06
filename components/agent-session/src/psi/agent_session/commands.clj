@@ -23,7 +23,7 @@
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-core.core :as agent]
    [psi.ai.models :as ai-models]
-   [psi.recursion.core :as recursion]))
+   [psi.memory.core :as memory]))
 
 ;; ============================================================
 ;; Formatting helpers (pure — return strings, no side effects)
@@ -32,27 +32,17 @@
 (defn format-status
   "Return a status string for the current session."
   [ctx]
-  (let [base-query [:psi.agent-session/phase
-                    :psi.agent-session/session-id
-                    :psi.agent-session/model
-                    :psi.agent-session/thinking-level
-                    :psi.agent-session/extension-summary
-                    :psi.agent-session/session-entry-count
-                    :psi.agent-session/context-tokens
-                    :psi.agent-session/context-window
-                    :psi.agent-session/context-fraction
-                    :psi.graph/root-seeds]
-        recursion-query [:psi.recursion/status
-                         :psi.recursion/paused?
-                         :psi.recursion/current-cycle]
-        d (session/query-in ctx
-                            (if (:recursion-ctx ctx)
-                              (into base-query recursion-query)
-                              base-query))
-        recursion-status (:psi.recursion/status d)
-        current-cycle (:psi.recursion/current-cycle d)
-        proposal (:proposal current-cycle)
-        actions (or (:actions proposal) [])]
+  (let [d (session/query-in ctx
+                            [:psi.agent-session/phase
+                             :psi.agent-session/session-id
+                             :psi.agent-session/model
+                             :psi.agent-session/thinking-level
+                             :psi.agent-session/extension-summary
+                             :psi.agent-session/session-entry-count
+                             :psi.agent-session/context-tokens
+                             :psi.agent-session/context-window
+                             :psi.agent-session/context-fraction
+                             :psi.graph/root-seeds])]
     (str "── Session status ─────────────────────\n"
          "  Phase   : " (:psi.agent-session/phase d) "\n"
          "  ID      : " (:psi.agent-session/session-id d) "\n"
@@ -60,24 +50,8 @@
          "  Entries : " (:psi.agent-session/session-entry-count d)
          (when-let [frac (:psi.agent-session/context-fraction d)]
            (str "\n  Context : " (int (* 100 frac)) "%"))
-         (when recursion-status
-           (str "\n  Recurs. : " (name recursion-status)
-                (when (:psi.recursion/paused? d) " (paused)")))
          (when-let [root-seeds (:psi.graph/root-seeds d)]
            (str "\n  Roots   : " (str/join ", " (map name root-seeds))))
-         (when (and (= :awaiting-approval recursion-status)
-                    current-cycle)
-           (str "\n  FF Cycle : " (:cycle-id current-cycle)
-                "\n  Approve : pending"
-                (when-let [risk (:risk proposal)]
-                  (str " (risk=" (name risk) ")"))
-                "\n  Actions : " (count actions)
-                (when-let [first-title (:title (first actions))]
-                  (str "\n    - " first-title))
-                (when (> (count actions) 1)
-                  (str "\n    + " (dec (count actions)) " more"))
-                "\n  Next    : /feed-forward approve " (:cycle-id current-cycle) " [notes]"
-                "\n            /feed-forward reject " (:cycle-id current-cycle) " [notes]"))
          "\n───────────────────────────────────────")))
 
 (defn format-history
@@ -117,10 +91,7 @@
          "  /logout  — logout from an OAuth provider\n"
          "  /model [provider model-id] — show current model or set model\n"
          "  /thinking [level] — show current thinking level or set level\n"
-         "  /feed-forward [reason] — trigger a manual feed-forward cycle\n"
-         "  /feed-forward approve [cycle-id] [notes] — approve pending cycle\n"
-         "  /feed-forward reject [cycle-id] [notes] — reject pending cycle\n"
-         "  /feed-forward continue [cycle-id] — continue an approved cycle\n"
+         "  /remember [text] — capture a memory note for future ψ\n"
          "  /help    — show this help\n"
          "  /skill:name — invoke a skill (loads full content)"
          (when (seq templates)
@@ -191,152 +162,26 @@
    :openai    "OPENAI_API_KEY"
    :google    "GOOGLE_API_KEY"})
 
-(def ^:private default-feed-forward-readiness
-  {:query-ready true
-   :graph-ready true
-   :introspection-ready true
-   :memory-ready true})
-
-(defn- runtime-feed-forward-inputs
-  "Derive live runtime readiness + observe snapshots from session query state.
-   Falls back to safe defaults when attrs are unavailable."
+(defn- memory-ready?
   [ctx]
-  (let [snapshot (session/query-in ctx
-                                   [:psi.graph/nodes
-                                    :psi.graph/edges
-                                    :psi.memory/status
-                                    :psi.memory/entry-count])
-        node-count (count (:psi.graph/nodes snapshot))
-        edge-count (count (:psi.graph/edges snapshot))
-        memory-status (:psi.memory/status snapshot)
-        memory-entry-count (or (:psi.memory/entry-count snapshot) 0)
-        memory-ready? (= :ready memory-status)
-        graph-ready? (and (pos? node-count)
-                          (pos? edge-count))
-        readiness (merge default-feed-forward-readiness
-                         {:graph-ready graph-ready?
-                          :memory-ready memory-ready?})
-        graph-state {:node-count node-count
-                     :capability-count edge-count
-                     :status (if graph-ready? :stable :emerging)}
-        memory-state {:entry-count memory-entry-count
-                      :status (if memory-ready? :ready :initializing)
-                      :recovery-count 0}]
-    {:readiness readiness
-     :graph-state graph-state
-     :memory-state memory-state}))
+  (= :ready (:psi.memory/status (session/query-in ctx [:psi.memory/status]))))
 
-(defn- feed-forward-trigger-signal
-  [reason]
-  (recursion/manual-trigger-signal reason {:source :runtime-command}))
-
-(defn- format-feed-forward-trigger-result
-  [trigger-result orchestration]
-  (let [phase (:phase orchestration)]
-    (case (:result trigger-result)
-      :accepted
-      (str "✓ Feed-forward trigger accepted"
-           "\n  cycle-id: " (:cycle-id trigger-result)
-           "\n  prompt: " recursion/feed-forward-manual-trigger-prompt-name
-           (case phase
-             :awaiting-approval "\n  status: awaiting approval"
-             :completed "\n  status: cycle completed"
-             :trigger "\n  status: trigger accepted"
-             (str "\n  phase: " (name phase))))
-
-      :blocked
-      (str "‖ Feed-forward trigger blocked"
-           "\n  cycle-id: " (:cycle-id trigger-result)
-           "\n  reason: recursion_prerequisites_not_ready")
-
-      :ignored
-      "… Feed-forward trigger ignored (manual hook disabled)."
-
-      :rejected
-      (str "✗ Feed-forward trigger rejected"
-           "\n  reason: " (name (:reason trigger-result)))
-
-      (str trigger-result))))
-
-(def ^:private feed-forward-cycle-id-pattern
-  #"^cycle-[0-9a-fA-F-]+$")
-
-(def ^:private feed-forward-action-labels
-  {:approve {:past "approved" :present "approve"}
-   :reject {:past "rejected" :present "reject"}
-   :continue {:past "continued" :present "continue"}})
-
-(defn- cycle-id-token?
-  [s]
-  (boolean (and (string? s)
-                (re-matches feed-forward-cycle-id-pattern s))))
-
-(defn- parse-feed-forward-op-args
-  [arg-text]
-  (let [trimmed (str/trim (or arg-text ""))
-        tokens (if (str/blank? trimmed) [] (str/split trimmed #"\s+"))
-        first-token (first tokens)]
-    (if (cycle-id-token? first-token)
-      {:cycle-id first-token
-       :notes (some->> (rest tokens) (str/join " ") str/trim not-empty)}
-      {:cycle-id nil
-       :notes (not-empty trimmed)})))
-
-(defn- parse-feed-forward-command
-  [trimmed]
-  (let [args (-> (str/replace trimmed #"^/feed-forward\s*" "")
-                 str/trim)]
-    (if (str/blank? args)
-      {:op :trigger :reason nil}
-      (let [[_ first-token rest-text] (re-matches #"^(\S+)(?:\s+(.*))?$" args)
-            op (some-> first-token str/lower-case)]
-        (case op
-          "approve" (assoc (parse-feed-forward-op-args rest-text) :op :approve)
-          "reject" (assoc (parse-feed-forward-op-args rest-text) :op :reject)
-          "continue" (assoc (parse-feed-forward-op-args rest-text) :op :continue)
-          {:op :trigger :reason args})))))
-
-(defn- active-cycle-id
-  [ctx]
-  (get-in (session/query-in ctx [:psi.recursion/current-cycle])
-          [:psi.recursion/current-cycle :cycle-id]))
-
-(defn- cycle-by-id
-  [recursion-ctx cycle-id]
-  (some #(when (= cycle-id (:cycle-id %)) %)
-        (:cycles (recursion/get-state-in recursion-ctx))))
-
-(defn- format-feed-forward-cycle-step-result
-  [action cycle-id step-result recursion-ctx]
-  (let [{:keys [past present]} (get feed-forward-action-labels action)]
-    (if (:ok? step-result)
-      (let [cycle (cycle-by-id recursion-ctx cycle-id)
-            cycle-status (:status cycle)
-            outcome-status (get-in cycle [:outcome :status])]
-        (str "✓ Feed-forward cycle " past
-             "\n  cycle-id: " cycle-id
-             (when-let [phase (:phase step-result)]
-               (str "\n  phase: " (name phase)))
-             (when cycle-status
-               (str "\n  cycle-status: " (name cycle-status)))
-             (when outcome-status
-               (str "\n  outcome: " (name outcome-status)))))
-      (str "✗ Feed-forward cycle " present " failed"
-           "\n  cycle-id: " cycle-id
-           (when-let [phase (:phase step-result)]
-             (str "\n  phase: " (name phase)))
-           (when-let [reason (:error step-result)]
-             (str "\n  reason: " (name reason)))))))
-
-(defn- no-active-feed-forward-cycle-message
-  []
-  "✗ No active feed-forward cycle. Use /feed-forward [reason] first.")
-
-(defn- continue-feed-forward-cycle-in!
-  [recursion-ctx cycle-id opts]
-  (let [continue-fn (requiring-resolve 'psi.recursion.core/continue-cycle-in!)]
-    (continue-fn recursion-ctx cycle-id opts)))
-
+(defn- remember-text!
+  [ctx text]
+  (let [reason (or (not-empty (some-> text str/trim)) "manual /remember")
+        result (memory/remember-in!
+                (:memory-ctx ctx)
+                {:content-type :note
+                 :content reason
+                 :tags [:remember :manual]
+                 :provenance {:source :remember
+                              :sessionId (get-in (session/get-session-data-in ctx)
+                                                 [:session-id])}})]
+    (if (:ok? result)
+      (str "✓ Remembered"
+           "\n  record-id: " (get-in result [:record :record-id]))
+      (str "✗ Remember failed"
+           "\n  reason: " (name (:error result))))))
 (def ^:private canonical-thinking-levels
   [:off :minimal :low :medium :high :xhigh])
 
@@ -453,94 +298,25 @@
       (= trimmed "/skills")
       {:type :text :message (format-skills ctx)}
 
-      ;; Feed-forward trigger + approval lifecycle
-      (or (= trimmed "/feed-forward")
+      ;; Remember
+      (or (= trimmed "/remember")
+          (str/starts-with? trimmed "/remember ")
+          (= trimmed "/feed-forward")
           (str/starts-with? trimmed "/feed-forward "))
-      (if-let [recursion-ctx (:recursion-ctx ctx)]
-        (let [{:keys [op reason cycle-id notes]} (parse-feed-forward-command trimmed)]
-          (case op
-            :trigger
-            (let [{:keys [readiness graph-state memory-state]}
-                  (runtime-feed-forward-inputs ctx)
-                  orchestration
-                  (recursion/orchestrate-manual-trigger-in!
-                   recursion-ctx
-                   (feed-forward-trigger-signal reason)
-                   {:system-state readiness
-                    :graph-state graph-state
-                    :memory-state memory-state
-                    :memory-ctx (:memory-ctx ctx)})
-                  trigger-result (:trigger-result orchestration)]
-              {:type :text
-               :message (format-feed-forward-trigger-result trigger-result orchestration)})
+      (if-let [memory-ctx (:memory-ctx ctx)]
+        (if-not (memory-ready? ctx)
+          {:type :text
+           :message "‖ Memory not ready. Try again when :psi.memory/status is :ready."}
+          (let [reason (cond
+                         (str/starts-with? trimmed "/remember")
+                         (-> (str/replace trimmed #"^/remember\s*" "") str/trim not-empty)
 
-            :approve
-            (let [resolved-cycle-id (or cycle-id (active-cycle-id ctx))]
-              (if-not resolved-cycle-id
-                {:type :text
-                 :message (no-active-feed-forward-cycle-message)}
-                (let [approval-result (recursion/approve-proposal-in!
-                                       recursion-ctx
-                                       resolved-cycle-id
-                                       "operator"
-                                       (or notes ""))
-                      continue-result (when (:ok? approval-result)
-                                        (continue-feed-forward-cycle-in!
-                                         recursion-ctx
-                                         resolved-cycle-id
-                                         {:memory-ctx (:memory-ctx ctx)}))
-                      step-result (if (:ok? approval-result)
-                                    (or continue-result {:ok? true})
-                                    approval-result)]
-                  {:type :text
-                   :message (format-feed-forward-cycle-step-result
-                             :approve
-                             resolved-cycle-id
-                             step-result
-                             recursion-ctx)})))
-
-            :reject
-            (let [resolved-cycle-id (or cycle-id (active-cycle-id ctx))]
-              (if-not resolved-cycle-id
-                {:type :text
-                 :message (no-active-feed-forward-cycle-message)}
-                (let [reject-result (recursion/reject-proposal-in!
-                                     recursion-ctx
-                                     resolved-cycle-id
-                                     "operator"
-                                     (or notes ""))
-                      continue-result (when (:ok? reject-result)
-                                        (continue-feed-forward-cycle-in!
-                                         recursion-ctx
-                                         resolved-cycle-id
-                                         {:memory-ctx (:memory-ctx ctx)}))
-                      step-result (if (:ok? reject-result)
-                                    (or continue-result {:ok? true})
-                                    reject-result)]
-                  {:type :text
-                   :message (format-feed-forward-cycle-step-result
-                             :reject
-                             resolved-cycle-id
-                             step-result
-                             recursion-ctx)})))
-
-            :continue
-            (let [resolved-cycle-id (or cycle-id (active-cycle-id ctx))]
-              (if-not resolved-cycle-id
-                {:type :text
-                 :message (no-active-feed-forward-cycle-message)}
-                (let [continue-result (continue-feed-forward-cycle-in!
-                                       recursion-ctx
-                                       resolved-cycle-id
-                                       {:memory-ctx (:memory-ctx ctx)})]
-                  {:type :text
-                   :message (format-feed-forward-cycle-step-result
-                             :continue
-                             resolved-cycle-id
-                             continue-result
-                             recursion-ctx)})))))
+                         :else
+                         (-> (str/replace trimmed #"^/feed-forward\s*" "") str/trim not-empty))]
+            {:type :text
+             :message (remember-text! (assoc ctx :memory-ctx memory-ctx) reason)}))
         {:type :text
-         :message "✗ Feed-forward recursion context not configured."})
+         :message "✗ Memory context not configured."})
 
       ;; Model
       (or (= trimmed "/model")

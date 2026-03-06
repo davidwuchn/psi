@@ -49,15 +49,11 @@ clojure -M:run --tui --nrepl 8888
 
 ### In-session commands
 
-`/status` `/history` `/new` `/help` `/quit` `/skills` `/prompts` `/feed-forward [reason]`
-`/feed-forward approve [cycle-id] [notes]` `/feed-forward reject [cycle-id] [notes]`
-`/feed-forward continue [cycle-id]` `/skill:<name>` plus any extension commands
+`/status` `/history` `/new` `/help` `/quit` `/skills` `/prompts` `/remember [text]`
+`/skill:<name>` plus any extension commands
 
-`/feed-forward` triggers a manual recursion cycle from the runtime command surface.
-If a proposal is awaiting approval, use `/feed-forward approve ...` or
-`/feed-forward reject ...` to finalize it (cycle id is optional when a single
-active cycle exists).
-It is bound to the internal spec prompt name `feed-forward-manual-trigger`.
+`/remember` performs a single manual memory capture from the runtime command surface.
+It writes one memory artifact with the provided text (or a default note when blank).
 
 ### Session startup prompts (planned)
 

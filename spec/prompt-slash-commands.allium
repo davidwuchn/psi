@@ -25,7 +25,7 @@
 config {
     built_in_slash_commands: Set<String> = {
         "/quit", "/exit", "/resume", "/new", "/status", "/history",
-        "/help", "/?", "/prompts", "/skills", "/feed-forward",
+        "/help", "/?", "/prompts", "/skills", "/remember",
         "/login", "/logout", "/model", "/thinking"
     }
 
@@ -137,11 +137,11 @@ rule InspectionCommandsReturnText {
     ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{type: text, message: FormattedCommandText(text)})
 }
 
-rule FeedForwardCommandSupportsOptionalReason {
+rule RememberCommandSupportsOptionalText {
     when: SlashCommandDispatchRequested(text)
-    requires: text = "/feed-forward" or StartsWith(text, "/feed-forward ")
+    requires: text = "/remember" or StartsWith(text, "/remember ")
 
-    ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{type: text, message: FeedForwardResultText(text)})
+    ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{type: text, message: RememberResultText(text)})
 }
 
 rule LoginAndLogoutCommandsReturnTypedResults {
