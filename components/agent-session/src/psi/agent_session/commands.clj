@@ -300,19 +300,12 @@
 
       ;; Remember
       (or (= trimmed "/remember")
-          (str/starts-with? trimmed "/remember ")
-          (= trimmed "/feed-forward")
-          (str/starts-with? trimmed "/feed-forward "))
+          (str/starts-with? trimmed "/remember "))
       (if-let [memory-ctx (:memory-ctx ctx)]
         (if-not (memory-ready? ctx)
           {:type :text
            :message "‖ Memory not ready. Try again when :psi.memory/status is :ready."}
-          (let [reason (cond
-                         (str/starts-with? trimmed "/remember")
-                         (-> (str/replace trimmed #"^/remember\s*" "") str/trim not-empty)
-
-                         :else
-                         (-> (str/replace trimmed #"^/feed-forward\s*" "") str/trim not-empty))]
+          (let [reason (-> (str/replace trimmed #"^/remember\s*" "") str/trim not-empty)]
             {:type :text
              :message (remember-text! (assoc ctx :memory-ctx memory-ctx) reason)}))
         {:type :text

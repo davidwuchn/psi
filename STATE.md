@@ -7,7 +7,7 @@ Current truth about the Psi system.
 ## Operating Frame
 
 - ✓ Nucleus framing is now explicit in `AGENTS.md` via **Core Equation** (`刀 ⊣ ψ → 🐍`) and **The Loop** (Observe → Orient → Decide → Act).
-- ✓ Feed-forward recursion wording clarified to: AI tool hooks as human signal to future ψ + FUTURE_STATE.
+- ✓ Remember memory-capture framing clarified: human signal to future ψ via manual remember writeback.
 - ✓ Working pattern remains atomic: inspect → minimal change → verify → commit.
 
 ## Components
@@ -203,7 +203,7 @@ Caught by `jline-terminal-keymap-test` smoke test.
 | `memory-layer.allium`      | `query` + `history` + `introspection` | ◇ Step 10 spec authored (provenance, graph snapshots/deltas, recovery over session+history+graph) |
 | `memory-backing-stores.allium` | `memory` | ✓ phase 1 implemented (provider contract + selection/fallback + `:psi.memory.store/*` EQL surface) |
 | `memory-datalevin-store.allium` | `memory` | ✓ phase 2 implemented (Datalevin provider + write-through/hydration + runtime retention/migration hardening + provider failure telemetry surface) |
-| `feed-forward-recursion.allium` | `memory` + `introspection` + `engine` | ◇ Step 10 spec authored (FUTURE_STATE loop, hooks, guardrails, memory writeback) |
+| `remember-capture.allium` | `memory` + `introspection` + `engine` | ◇ Step 10 spec authored (manual remember capture + memory writeback) |
 
 ## Step 7 Decisions (Spec)
 
@@ -231,10 +231,10 @@ Caught by `jline-terminal-keymap-test` smoke test.
 - Provider operation telemetry is surfaced in store summaries/EQL (`write-count`, `read-count`, `failure-count`, `last-error`, `:psi.memory.store/last-failure`)
 - Operator docs now cover fallback triage, retention windows, and migration-hook wiring (`README.md`)
 
-## Step 10 Decisions (Feed-forward Spec)
+## Step 10 Decisions (Remember Spec)
 
-- Source: `spec/feed-forward-recursion.allium`
-- Feed-forward scope is manual memory capture only (not automated evolution)
+- Source: `spec/remember-capture.allium`
+- Remember scope is manual memory capture only (not automated evolution)
 - `/remember` emits a manual signal and writes one memory artifact with current context
 - Output becomes input via remember/recover (future ψ reads captured artifacts)
 - No controller/process cycle model in spec scope

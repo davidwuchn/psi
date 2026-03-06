@@ -1,8 +1,8 @@
--- feed-forward-recursion.allium
+-- remember-capture.allium
 --
--- Scope: Step 10 — Feed-forward memory capture.
+-- Scope: Step 10 — Remember memory capture.
 --
--- Feed Forward = human signal to future ψ via memory writeback.
+-- Remember = human signal to future ψ via memory writeback.
 -- output becomes input.
 --
 -- Includes:
@@ -41,15 +41,15 @@ external entity RecursionEqlSurface {
 -- Value Types
 ------------------------------------------------------------
 
-value FeedForwardSignal {
+value RememberSignal {
     type: manual
     reason: String
     timestamp: Timestamp
 }
 
-value FeedForwardCapture {
+value RememberCapture {
     id: String
-    signal: FeedForwardSignal
+    signal: RememberSignal
 
     sessionId: String?
     cwd: String?
@@ -66,10 +66,10 @@ value FeedForwardCapture {
 -- Entity
 ------------------------------------------------------------
 
-entity FeedForwardMemoryCapture {
+entity RememberCaptureStore {
     status: idle | capturing | error
 
-    captures: List<FeedForwardCapture>
+    captures: List<RememberCapture>
 
     lastCaptureAt: Timestamp?
     lastError: String?
@@ -82,9 +82,9 @@ entity FeedForwardMemoryCapture {
 config {
     accepted_signal_types: Set<String> = {"manual"}
 
-    internal_manual_trigger_prompt_name: String = "feed-forward-manual-trigger"
+    internal_manual_trigger_prompt_name: String = "remember-manual-trigger"
     internal_manual_trigger_prompt: String =
-        "Capture a feed-forward memory entry from operator reason and current context."
+        "Capture a remember memory entry from operator reason and current context."
 
     required_recursion_eql_attrs: Set<String> = {
         ":psi.recursion/status",
@@ -98,7 +98,7 @@ config {
 ------------------------------------------------------------
 
 rule ManualSignalAccepted {
-    when: FeedForwardRequested(capture, signal, state, memoryLayer)
+    when: RememberRequested(capture, signal, state, memoryLayer)
 
     requires: signal.type in config.accepted_signal_types
     requires: signal.type = manual
@@ -112,12 +112,12 @@ rule ManualSignalAccepted {
 }
 
 rule MemoryCaptureWritten {
-    when: FeedForwardContextAvailable(capture, signal, context)
+    when: RememberContextAvailable(capture, signal, context)
 
     requires: capture.status = capturing
     requires: signal.type = manual
 
-    ensures: exists entry = FeedForwardCapture.created(
+    ensures: exists entry = RememberCapture.created(
         id: NewCaptureId(),
         signal: signal,
         sessionId: context.sessionId,
@@ -126,7 +126,7 @@ rule MemoryCaptureWritten {
         summary: context.summary,
         evidence: context.evidence,
         writtenAt: now,
-        memoryId: RememberFeedForwardEntry(signal, context)
+        memoryId: RememberEntry(signal, context)
     )
 
     ensures: capture.captures = capture.captures + [entry]
@@ -135,7 +135,7 @@ rule MemoryCaptureWritten {
 }
 
 rule MemoryCaptureBlocked {
-    when: FeedForwardRequested(capture, signal, state, memoryLayer)
+    when: RememberRequested(capture, signal, state, memoryLayer)
 
     requires:
         state.query_ready = false or
@@ -157,12 +157,12 @@ rule RecursionSurfacedViaEql {
 -- Surface
 ------------------------------------------------------------
 
-actor FeedForwardOperator { identified_by: id = "feed-forward-operator" }
+actor RememberOperator { identified_by: id = "remember-operator" }
 
-surface FeedForwardMemoryApi {
-    for operator: FeedForwardOperator
+surface RememberMemoryApi {
+    for operator: RememberOperator
 
-    context capture: FeedForwardMemoryCapture
+    context capture: RememberCaptureStore
 
     exposes:
         capture.status
@@ -171,15 +171,15 @@ surface FeedForwardMemoryApi {
         capture.lastError
 
     provides:
-        CaptureFeedForwardMemory(operator, reason)
+        CaptureRememberMemory(operator, reason)
             when reason != ""
 
     guidance:
-        -- Emits FeedForwardSignal.type = manual.
+        -- Emits RememberSignal.type = manual.
         -- Prompt name: config.internal_manual_trigger_prompt_name
         -- Prompt body: config.internal_manual_trigger_prompt
         -- Writes one memory entry per invocation.
 }
 
--- Resolved: feed-forward is manual memory capture, not automated evolution.
+-- Resolved: remember is manual memory capture, not automated evolution.
 -- Resolved: output becomes input via memory remember/recover.

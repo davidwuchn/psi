@@ -68,14 +68,14 @@ Ordered steps toward PSI COMPLETE.
 
 ## Next
 
-### Step 10 — Feed-forward memory capture ◇ in progress
-- Spec: `spec/feed-forward-recursion.allium`
+### Step 10 — Remember memory capture ◇ in progress
+- Spec: `spec/remember-capture.allium`
 - Current: command exists; spec now narrowed to manual capture semantics
 - Focus now: simplify runtime surface to capture/recover behavior
 - Definition of done:
   - `/remember [text]` performs a single manual memory capture across REPL, RPC, and Emacs
   - Capture includes minimal context snapshot and is recoverable via active memory provider
-  - EQL telemetry for feed-forward capture is queryable and stable
+  - EQL telemetry for remember capture is queryable and stable
   - End-to-end tests cover manual signal → memory write → recovery visibility
 
 ### Step 11 — Session startup prompts (global + project) ◇ in progress

@@ -189,13 +189,6 @@
     (is (= :text (:type result)))
     (is (str/includes? (:message result) "Memory not ready"))))
 
-(deftest dispatch-feed-forward-aliases-to-remember-test
-  (let [ctx    (-> (make-test-ctx)
-                   with-ready-memory-ctx)
-        result (commands/dispatch ctx "/feed-forward legacy alias" cmd-opts)]
-    (is (= :text (:type result)))
-    (is (str/includes? (:message result) "Remembered"))))
-
 (deftest dispatch-not-a-command-test
   (testing "plain text returns nil"
     (let [ctx (make-test-ctx)]
