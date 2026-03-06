@@ -1,1 +1,1 @@
-{:version 1, :agent-session {:thinking-level :off, :model-provider "openai", :model-id "gpt-5.3-codex"}}
+{:version 1, :agent-session {:thinking-level :xhigh, :model-provider "openai", :model-id "gpt-5.3-codex"}}
