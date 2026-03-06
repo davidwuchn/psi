@@ -66,6 +66,8 @@
       (is (str/includes? prompt "Guidelines:"))
       (is (str/includes? prompt "Capability graph (EQL discovery):"))
       (is (str/includes? prompt ":psi.graph/resolver-syms"))
+      (is (str/includes? prompt "[:psi.graph/root-seeds]"))
+      (is (str/includes? prompt "[:psi.graph/root-queryable-attrs]"))
       (is (str/includes? prompt ":psi.agent-session/usage-input"))
       (is (str/includes? prompt "/test/dir"))))
 

@@ -163,6 +163,9 @@
                 "- Purpose: discover live query capabilities and valid attrs before guessing paths.\n"
                 "- Endpoints: :psi.graph/resolver-count :psi.graph/mutation-count :psi.graph/resolver-syms :psi.graph/mutation-syms :psi.graph/env-built :psi.graph/nodes :psi.graph/edges :psi.graph/capabilities :psi.graph/domain-coverage\n"
                 "- Workflow: 1) query :psi.graph/resolver-syms 2) query discovered attrs directly.\n"
+                "- Canonical root discovery:\n"
+                "  - eql_query(query: \"[:psi.graph/root-seeds]\")        ; shows injected root contexts\n"
+                "  - eql_query(query: \"[:psi.graph/root-queryable-attrs]\") ; authoritative list of root-queryable attrs\n"
                 "- Token usage attrs: :psi.agent-session/usage-input :psi.agent-session/usage-output :psi.agent-session/usage-cache-read :psi.agent-session/usage-cache-write :psi.agent-session/context-tokens :psi.agent-session/context-window\n"
                 "- Example: eql_query(query: \"[:psi.graph/resolver-syms]\")"))
 
