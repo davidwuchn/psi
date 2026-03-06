@@ -3,7 +3,8 @@
    GitContext record (created via `create-context` or `create-null-context`).
    Tests use `create-null-context` which builds an isolated temp git repo —
    no mocking, no shared state, no dependency on the real project repo."
-  (:require [clojure.string :as str])
+  (:require [clojure.string :as str]
+            [taoensso.timbre :as timbre])
   (:import (java.io File)
            (java.nio.file Files)
            (java.nio.file.attribute FileAttribute)))
@@ -182,6 +183,12 @@
     (= "true" (run-git ctx ["rev-parse" "--is-inside-work-tree"]))
     (catch Exception _ false)))
 
+(defn- emit-worktree-parse-failed!
+  [ctx e]
+  (timbre/warn "git.worktree.parse_failed"
+               {:repo-dir (:repo-dir ctx)
+                :error (ex-message e)}))
+
 (defn worktree-list
   "Return vector of worktree maps for `ctx`.
 
@@ -196,7 +203,10 @@
      :git.worktree/prunable?
      :git.worktree/prunable-reason
      :git.worktree/lock-reason
-     :git.worktree/current?"
+     :git.worktree/current?
+
+   On parse/command errors, returns [] and logs a telemetry marker:
+     event: git.worktree.parse_failed."
   [ctx]
   (if-not (inside-repo? ctx)
     []
@@ -209,7 +219,9 @@
                 (assoc wt :git.worktree/current?
                        (= (canonical-path (:git.worktree/path wt)) current-p)))
               parsed))
-      (catch Exception _ []))))
+      (catch Exception e
+        (emit-worktree-parse-failed! ctx e)
+        []))))
 
 (defn current-worktree
   "Return the current worktree map for `ctx`, or nil when unavailable."

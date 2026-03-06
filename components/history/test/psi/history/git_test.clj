@@ -181,6 +181,20 @@
     (is (= [] (git/worktree-list ctx)))
     (is (nil? (git/current-worktree ctx)))))
 
+(deftest worktree-list-command-failure-emits-telemetry-and-empty
+  (let [ctx (git/create-null-context seed-commits)
+        warned (atom nil)]
+    (with-redefs [psi.history.git/inside-repo? (fn [_] true)
+                  psi.history.git/run-git (fn [_ _]
+                                            (throw (ex-info "boom" {:type :boom})))
+                  psi.history.git/emit-worktree-parse-failed!
+                  (fn [_ctx e]
+                    (reset! warned {:event "git.worktree.parse_failed"
+                                    :error (ex-message e)}))]
+      (is (= [] (git/worktree-list ctx)))
+      (is (= "git.worktree.parse_failed" (:event @warned)))
+      (is (= "boom" (:error @warned))))))
+
 (deftest worktree-list-marks-nested-cwd-as-current
   (let [ctx         (git/create-null-context seed-commits)
         root        (:repo-dir ctx)

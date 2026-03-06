@@ -12,7 +12,10 @@ Current truth about the Psi system.
 - ✓ Session persistence is a separate concern from memory: session transcripts/state may be partially persisted for `/resume`, but this is distinct from memory-store artifacts used by remember/recover.
 - ✓ Working pattern remains atomic: inspect → minimal change → verify → commit.
 - ✓ 2026-03-06 session boot aligned via nucleus/OODA ritual; current mode is ◈ reflect → ready for · atom execution.
-- … Next executable task: implement Step 11a git-worktree visibility (read-only): EQL attrs + session-root bridge + `/worktree` and `/status` surfacing per `spec/git-worktrees.allium` and PLAN acceptance checklist.
+- ✓ Step 11a git-worktree visibility (read-only) implemented: `:git.worktree/*` attrs, session-root bridge attrs, `/worktree` command, and `/status` worktree surfacing.
+- ✓ Worktree failure path now degrades safely with telemetry marker (`git.worktree.parse_failed`) and coverage.
+- ✓ Test isolation hardened: agent-session/introspection tests now use temp cwd to avoid writing repo `.psi/project.edn`.
+- … Next executable task: reconcile Step 11a PLAN checklist checkboxes with implemented behavior and defer remaining mutation/switch semantics.
 
 ## Components
 
