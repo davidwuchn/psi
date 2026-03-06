@@ -55,6 +55,22 @@ clojure -M:run --tui --nrepl 8888
 `/remember` performs a single manual memory capture from the runtime command surface.
 It writes one memory artifact with the provided text (or a default note when blank).
 
+If provider write-through fails but in-memory fallback succeeds, `/remember` returns a
+visible warning (not silent success):
+- `⚠ Remembered with store fallback`
+- includes `provider` when available
+- includes `store-error` and `detail` when available
+
+Example warning output:
+
+```text
+⚠ Remembered with store fallback
+  record-id: 3b31b4d2-4a4b-4fb9-87e2-5f66a8f8f0b1
+  provider: failing-store
+  store-error: boom
+  detail: write failed
+```
+
 ### Session startup prompts (planned)
 
 Startup prompt capability spec: `spec/session-startup-prompts.allium`.

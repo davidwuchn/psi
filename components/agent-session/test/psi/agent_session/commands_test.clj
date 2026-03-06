@@ -6,7 +6,8 @@
    [psi.agent-session.core :as session]
    [psi.agent-session.extensions :as ext]
    [psi.agent-core.core :as agent]
-   [psi.memory.core :as memory]))
+   [psi.memory.core :as memory]
+   [psi.memory.store :as store]))
 
 ;; ── Test helper ─────────────────────────────────────────────
 
@@ -175,19 +176,69 @@
     (is (str/includes? (:message result) "Memory context not configured"))))
 
 (deftest dispatch-remember-accepted-test
-  (let [ctx    (-> (make-test-ctx)
-                   with-ready-memory-ctx)
-        result (commands/dispatch ctx "/remember verify runtime" cmd-opts)]
+  (let [ctx          (-> (make-test-ctx)
+                         with-ready-memory-ctx)
+        before-count (count (:records (memory/get-state-in (:memory-ctx ctx))))
+        result       (commands/dispatch ctx "/remember verify runtime" cmd-opts)
+        after-state  (memory/get-state-in (:memory-ctx ctx))
+        after-count  (count (:records after-state))
+        rec          (last (:records after-state))
+        prov         (:provenance rec)
+        telemetry    (session/query-in ctx
+                                       [:psi.memory.remember/captures
+                                        :psi.memory.remember/last-capture-at])]
     (is (= :text (:type result)))
     (is (str/includes? (:message result) "Remembered"))
-    (is (str/includes? (:message result) "record-id:"))))
+    (is (str/includes? (:message result) "record-id:"))
+    (is (= 1 (- after-count before-count)) "exactly one remember record per invocation")
+    (is (= "verify runtime" (:content rec)))
+    (is (= :remember (get-in rec [:provenance :source])))
+    (is (string? (:sessionId prov)))
+    (is (= (:cwd ctx) (:cwd prov)))
+    (is (contains? prov :gitBranch))
+    (is (some #(= (:record-id rec) (:record-id %))
+              (:psi.memory.remember/captures telemetry))
+        "captured remember record should be visible in remember telemetry captures")
+    (is (= (:timestamp rec) (:psi.memory.remember/last-capture-at telemetry)))))
 
 (deftest dispatch-remember-blocked-when-memory-not-ready-test
   (let [ctx    (-> (make-test-ctx)
                    with-unready-memory-ctx)
         result (commands/dispatch ctx "/remember check live readiness" cmd-opts)]
     (is (= :text (:type result)))
-    (is (str/includes? (:message result) "Memory not ready"))))
+    (is (str/includes? (:message result) "Remember blocked"))
+    (is (str/includes? (:message result) "memory_capture_prerequisites_not_ready"))))
+
+(deftest dispatch-remember-store-write-failure-surfaces-fallback-test
+  (let [ctx         (-> (make-test-ctx)
+                        with-ready-memory-ctx)
+        status-atom (atom :ready)
+        provider    (reify store/StoreProvider
+                      (provider-id [_] "failing-store")
+                      (provider-capabilities [_]
+                        {:durability :persistent
+                         :supports-restart-recovery? true
+                         :supports-retention-compaction? true
+                         :supports-capability-history-query? true
+                         :query-mode :indexed})
+                      (open-provider! [this _] this)
+                      (close-provider! [this] this)
+                      (provider-status [_] @status-atom)
+                      (provider-health [_]
+                        {:status :healthy
+                         :checked-at (java.time.Instant/now)
+                         :details nil})
+                      (provider-write! [_ _ _]
+                        {:ok? false :error :boom :message "write failed"})
+                      (provider-query! [_ _] {:ok? true :results []})
+                      (provider-load-state [_] {:ok? true}))
+        _ (memory/register-store-provider-in! (:memory-ctx ctx) provider)
+        _ (memory/select-store-provider-in! (:memory-ctx ctx) "failing-store")
+        result (commands/dispatch ctx "/remember provider outage path" cmd-opts)]
+    (is (= :text (:type result)))
+    (is (str/includes? (:message result) "Remembered with store fallback"))
+    (is (str/includes? (:message result) "store-error: boom"))
+    (is (str/includes? (:message result) "provider: failing-store"))))
 
 (deftest dispatch-not-a-command-test
   (testing "plain text returns nil"

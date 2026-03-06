@@ -8,6 +8,8 @@ Current truth about the Psi system.
 
 - ✓ Nucleus framing is now explicit in `AGENTS.md` via **Core Equation** (`刀 ⊣ ψ → 🐍`) and **The Loop** (Observe → Orient → Decide → Act).
 - ✓ Remember memory-capture framing clarified: human signal to future ψ via manual remember writeback.
+- ✓ Memory model boundary clarified: session memory (ephemeral working set) ≠ persistent memory (cross-session distilled artifacts) ≠ git history (queried directly, not duplicated into memory store).
+- ✓ Session persistence is a separate concern from memory: session transcripts/state may be partially persisted for `/resume`, but this is distinct from memory-store artifacts used by remember/recover.
 - ✓ Working pattern remains atomic: inspect → minimal change → verify → commit.
 
 ## Components
@@ -231,12 +233,22 @@ Caught by `jline-terminal-keymap-test` smoke test.
 - Provider operation telemetry is surfaced in store summaries/EQL (`write-count`, `read-count`, `failure-count`, `last-error`, `:psi.memory.store/last-failure`)
 - Operator docs now cover fallback triage, retention windows, and migration-hook wiring (`README.md`)
 
+## Step 10 Status
+
+- ✓ Step 10 acceptance checklist is complete (manual remember capture semantics, telemetry, blocked/fallback paths, cross-surface parity, end-to-end visibility).
+
 ## Step 10 Decisions (Remember Spec)
 
 - Source: `spec/remember-capture.allium`
 - Remember scope is manual memory capture only (not automated evolution)
 - `/remember` emits a manual signal and writes one memory artifact with current context
+- Memory semantics are split explicitly:
+  - session memory: short-term, ephemeral working context for current run
+  - persistent memory: cross-session, distilled artifacts for future recovery
+  - session persistence (`/resume`): partial session transcript/state saved to disk; operational continuity, not memory distillation
+  - git history: external/queryable provenance, not mirrored into memory artifacts
 - Output becomes input via remember/recover (future ψ reads captured artifacts)
+- Store outage behavior is explicit: if memory write-through fails but fallback succeeds, `/remember` returns a visible warning (`⚠ Remembered with store fallback ...`) including provider/error detail when available
 - No controller/process cycle model in spec scope
 
 ## Canonical Telemetry Attrs (Step 7a)
@@ -255,6 +267,25 @@ Combined query (mirrors the failing pattern, now fixed):
 [:psi.agent-session/phase :psi.agent-session/model :psi.agent-session/session-id
  :psi.agent-session/messages-count :psi.agent-session/tool-call-count
  :psi.agent-session/start-time :psi.agent-session/current-time]
+```
+
+## Remember Telemetry Attrs (Step 10)
+
+Top-level EQL attrs for remember-capture visibility:
+
+```clojure
+[:psi.memory.remember/status]           ;; keyword — :idle | :error
+[:psi.memory.remember/captures]         ;; vector — remember-sourced memory records (newest first)
+[:psi.memory.remember/last-capture-at]  ;; java.time.Instant? — timestamp of newest capture
+[:psi.memory.remember/last-error]       ;; any? — last remember-related error marker (nil when none)
+```
+
+Combined query:
+```clojure
+[:psi.memory.remember/status
+ :psi.memory.remember/captures
+ :psi.memory.remember/last-capture-at
+ :psi.memory.remember/last-error]
 ```
 
 ## Memory Store Telemetry Attrs (Step 9.5)

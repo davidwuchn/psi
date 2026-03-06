@@ -68,15 +68,23 @@ Ordered steps toward PSI COMPLETE.
 
 ## Next
 
-### Step 10 — Remember memory capture ◇ in progress
+### Step 10 — Remember memory capture ✓ complete
 - Spec: `spec/remember-capture.allium`
 - Current: command exists; spec now narrowed to manual capture semantics
 - Focus now: simplify runtime surface to capture/recover behavior
-- Definition of done:
-  - `/remember [text]` performs a single manual memory capture across REPL, RPC, and Emacs
-  - Capture includes minimal context snapshot and is recoverable via active memory provider
-  - EQL telemetry for remember capture is queryable and stable
-  - End-to-end tests cover manual signal → memory write → recovery visibility
+- Acceptance checklist:
+  - [x] `/remember [text]` performs exactly one manual capture per invocation (no background/automatic capture)
+  - [x] Command behavior is consistent across REPL, RPC, and Emacs surfaces
+  - [x] Capture writes a minimal context snapshot (session-id, cwd, git-branch when available, summary/evidence)
+  - [x] Capture is persisted via active memory provider and recoverable in later sessions
+  - [x] Recovery ranking operates over memory artifacts (not over mirrored git-history summaries)
+  - [x] If memory prerequisites are not ready, capture fails with explicit `memory_capture_prerequisites_not_ready`
+  - [x] EQL remember telemetry attrs are stable/queryable (status, captures, last-capture-at, last-error)
+  - [x] Session persistence (`/resume`) remains separate from remember memory semantics
+  - [x] End-to-end tests cover manual signal → memory write → recovery visibility
+  - [x] Negative tests cover blocked capture paths and unavailable provider behavior
+  - [x] Store-write fallback warning contract is stable across REPL/RPC/Emacs (`⚠ Remembered with store fallback …`)
+- Test matrix: `doc/remember-capture-test-matrix.md` (U/I/E coverage IDs U1–U6, I1–I8, E1–E7)
 
 ### Step 11 — Session startup prompts (global + project) ◇ in progress
 - Spec: `spec/session-startup-prompts.allium`

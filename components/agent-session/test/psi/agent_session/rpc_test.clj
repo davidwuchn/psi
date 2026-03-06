@@ -8,6 +8,8 @@
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.rpc :as rpc]
    [psi.agent-session.runtime :as runtime]
+   [psi.memory.core :as memory]
+   [psi.memory.store :as store]
    [psi.tui.extension-ui :as ext-ui]))
 
 (defn- run-loop
@@ -1144,7 +1146,7 @@
           (is (some? msg-evt) "assistant/message must be emitted for quit")
           (is (some #(str/includes? (get % :text "") "not supported over RPC prompt")
                     (get-in msg-evt [:data :content]))
-              "fallback text must appear in assistant/message content"))))
+              "fallback text must appear in assistant/message content")))))
 
   (testing "resume-emits-fallback-text"
     (let [ctx    (session/create-context)
@@ -1167,7 +1169,114 @@
           (is (some? msg-evt) "assistant/message must be emitted for resume")
           (is (some #(str/includes? (get % :text "") "not supported over RPC prompt")
                     (get-in msg-evt [:data :content]))
-              "fallback text must appear in assistant/message content")))))))
+              "fallback text must appear in assistant/message content")))))
+
+  (testing "remember accepted path emits confirmation and writes exactly one record"
+    (let [ctx     (assoc (session/create-context)
+                         :memory-ctx
+                         (memory/create-context {:state-overrides {:status :ready}}))
+          state   (atom {:ready? true
+                         :pending {}
+                         :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
+                         :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
+          handler (rpc/make-session-request-handler ctx)
+          before-count (count (:records (memory/get-state-in (:memory-ctx ctx))))
+          input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                       "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
+                       "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/remember rpc-accepted\"}}\n")
+          {:keys [out-lines]} (run-loop input handler state 300)
+          frames   (->> out-lines
+                        (keep (fn [line] (try (edn/read-string line) (catch Throwable _ nil))))
+                        vec)
+          events   (filter #(= :event (:kind %)) frames)
+          msg-evts (filter #(= "assistant/message" (:event %)) events)
+          texts    (mapcat #(map :text (get-in % [:data :content])) msg-evts)
+          after-state (memory/get-state-in (:memory-ctx ctx))
+          after-count (count (:records after-state))
+          rec (last (:records after-state))
+          prov (:provenance rec)
+          telemetry (session/query-in ctx
+                                      [:psi.memory.remember/captures
+                                       :psi.memory.remember/last-capture-at])]
+      (is (some #(str/includes? % "Remembered") texts))
+      (is (= 1 (- after-count before-count)) "exactly one remember record per RPC invocation")
+      (is (= "rpc-accepted" (:content rec)))
+      (is (= :remember (get-in rec [:provenance :source])))
+      (is (string? (:sessionId prov)))
+      (is (= (:cwd ctx) (:cwd prov)))
+      (is (contains? prov :gitBranch))
+      (is (some #(= (:record-id rec) (:record-id %))
+                (:psi.memory.remember/captures telemetry))
+          "captured remember record should be visible in remember telemetry captures")
+      (is (= (:timestamp rec) (:psi.memory.remember/last-capture-at telemetry)))))
+
+  (testing "remember emits canonical blocked error when memory is not ready"
+    (let [ctx     (assoc (session/create-context)
+                         :memory-ctx
+                         (memory/create-context
+                          {:state-overrides {:status :initializing}}))
+          state   (atom {:ready? true
+                         :pending {}
+                         :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
+                         :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
+          handler (rpc/make-session-request-handler ctx)
+          input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                       "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
+                       "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/remember blocked-path\"}}\n")
+          {:keys [out-lines]} (run-loop input handler state 300)
+          frames   (->> out-lines
+                        (keep (fn [line] (try (edn/read-string line) (catch Throwable _ nil))))
+                        vec)
+          events   (filter #(= :event (:kind %)) frames)
+          msg-evts (filter #(= "assistant/message" (:event %)) events)
+          texts    (mapcat #(map :text (get-in % [:data :content])) msg-evts)]
+      (is (some #(str/includes? % "Remember blocked") texts))
+      (is (some #(str/includes? % "memory_capture_prerequisites_not_ready") texts))))
+
+  (testing "remember emits fallback warning when active store write fails"
+    (let [ctx         (assoc (session/create-context)
+                             :memory-ctx
+                             (memory/create-context {:state-overrides {:status :ready}}))
+          status-atom (atom :ready)
+          provider    (reify store/StoreProvider
+                        (provider-id [_] "failing-store")
+                        (provider-capabilities [_]
+                          {:durability :persistent
+                           :supports-restart-recovery? true
+                           :supports-retention-compaction? true
+                           :supports-capability-history-query? true
+                           :query-mode :indexed})
+                        (open-provider! [this _] this)
+                        (close-provider! [this] this)
+                        (provider-status [_] @status-atom)
+                        (provider-health [_]
+                          {:status :healthy
+                           :checked-at (java.time.Instant/now)
+                           :details nil})
+                        (provider-write! [_ _ _]
+                          {:ok? false :error :boom :message "write failed"})
+                        (provider-query! [_ _] {:ok? true :results []})
+                        (provider-load-state [_] {:ok? true}))
+          _ (memory/register-store-provider-in! (:memory-ctx ctx) provider)
+          _ (memory/select-store-provider-in! (:memory-ctx ctx) "failing-store")
+          state   (atom {:ready? true
+                         :pending {}
+                         :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
+                         :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
+          handler (rpc/make-session-request-handler ctx)
+          input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                       "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
+                       "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/remember provider-outage\"}}\n")
+          {:keys [out-lines]} (run-loop input handler state 300)
+          frames   (->> out-lines
+                        (keep (fn [line] (try (edn/read-string line) (catch Throwable _ nil))))
+                        vec)
+          events   (filter #(= :event (:kind %)) frames)
+          msg-evts (filter #(= "assistant/message" (:event %)) events)
+          texts    (mapcat #(map :text (get-in % [:data :content])) msg-evts)]
+      (is (some #(str/includes? % "Remembered with store fallback") texts))
+      (is (some #(str/includes? % "store-error: boom") texts))
+      (is (some #(str/includes? % "provider: failing-store") texts)))))
 
 (deftest rpc-prompt-slash-command-journaled-test
   (testing "slash command user message is journaled even when dispatch matches (not only on agent-loop path)"

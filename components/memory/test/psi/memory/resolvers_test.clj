@@ -39,7 +39,11 @@
                                     :psi.memory.store/selection
                                     :psi.memory.store/health
                                     :psi.memory.store/active-provider-telemetry
-                                    :psi.memory.store/last-failure])]
+                                    :psi.memory.store/last-failure
+                                    :psi.memory.remember/status
+                                    :psi.memory.remember/captures
+                                    :psi.memory.remember/last-capture-at
+                                    :psi.memory.remember/last-error])]
     (testing "status and counters are present"
       (is (= :initializing (:psi.memory/status result)))
       (is (= 0 (:psi.memory/entry-count result)))
@@ -64,7 +68,50 @@
       (is (map? (:psi.memory.store/selection result)))
       (is (map? (:psi.memory.store/health result)))
       (is (map? (:psi.memory.store/active-provider-telemetry result)))
-      (is (nil? (:psi.memory.store/last-failure result))))))
+      (is (nil? (:psi.memory.store/last-failure result))))
+
+    (testing "remember telemetry attrs are queryable"
+      (is (= :idle (:psi.memory.remember/status result)))
+      (is (vector? (:psi.memory.remember/captures result)))
+      (is (nil? (:psi.memory.remember/last-capture-at result)))
+      (is (nil? (:psi.memory.remember/last-error result))))))
+
+(deftest remember-telemetry-prefers-remember-sourced-records
+  (let [memory-ctx (memory/create-context)
+        qctx       (memory-query-ctx)
+        older      (Instant/parse "2026-03-05T00:00:00Z")
+        newest     (Instant/parse "2026-03-06T01:00:00Z")
+        _          (swap! (:state-atom memory-ctx)
+                          assoc
+                          :records [{:record-id "r1"
+                                     :content-type :discovery
+                                     :content "old remember"
+                                     :tags [:remember "cycle"]
+                                     :timestamp older
+                                     :provenance {:source :remember}}
+                                    {:record-id "r2"
+                                     :content-type :session-user-message
+                                     :content "session"
+                                     :tags [:session :user]
+                                     :timestamp newest
+                                     :provenance {:source :session}}
+                                    {:record-id "r3"
+                                     :content-type :discovery
+                                     :content "new remember"
+                                     :tags [:remember "cycle"]
+                                     :timestamp newest
+                                     :provenance {:source :remember}}])
+        result     (query/query-in qctx
+                                   {:psi/memory-ctx memory-ctx}
+                                   [:psi.memory.remember/status
+                                    :psi.memory.remember/captures
+                                    :psi.memory.remember/last-capture-at
+                                    :psi.memory.remember/last-error])
+        captures   (:psi.memory.remember/captures result)]
+    (is (= :idle (:psi.memory.remember/status result)))
+    (is (= ["r3" "r1"] (mapv :record-id captures)))
+    (is (= newest (:psi.memory.remember/last-capture-at result)))
+    (is (nil? (:psi.memory.remember/last-error result)))))
 
 (deftest recent-entries-supports-source-tag-and-limit-params
   (let [memory-ctx (memory/create-context)

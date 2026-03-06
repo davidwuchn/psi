@@ -100,6 +100,36 @@
   (or (:timestamp record)
       java.time.Instant/EPOCH))
 
+(defn- remember-captures
+  [records]
+  (->> records
+       (filter remember-message?)
+       (sort-by sort-key #(compare %2 %1))
+       vec))
+
+(pco/defresolver memory-remember-telemetry
+  "Resolve remember-capture telemetry attrs from :psi.memory/state.
+
+   Attrs are stable and intentionally scoped to manual remember capture UX:
+   - :psi.memory.remember/status
+   - :psi.memory.remember/captures
+   - :psi.memory.remember/last-capture-at
+   - :psi.memory.remember/last-error"
+  [input]
+  {::pco/input  [:psi.memory/state]
+   ::pco/output [:psi.memory.remember/status
+                 :psi.memory.remember/captures
+                 :psi.memory.remember/last-capture-at
+                 :psi.memory.remember/last-error]}
+  (let [state        (:psi.memory/state input)
+        records      (:records state)
+        captures     (remember-captures records)
+        last-capture (some-> captures first :timestamp)]
+    {:psi.memory.remember/status          (if (some? (:last-error state)) :error :idle)
+     :psi.memory.remember/captures        captures
+     :psi.memory.remember/last-capture-at last-capture
+     :psi.memory.remember/last-error      (:last-error state)}))
+
 (pco/defresolver memory-recent-entries
   "Resolve recent memory entries, prioritizing remember message retrieval.
 
@@ -112,14 +142,12 @@
   {::pco/input  [:psi.memory/state]
    ::pco/output [:psi.memory/recent-entries]}
   (let [records (:records (:psi.memory/state input))
-        selected (->> records
-                      (filter remember-message?)
-                      (sort-by sort-key #(compare %2 %1))
-                      vec)]
+        selected (remember-captures records)]
     {:psi.memory/recent-entries selected}))
 
 (def all-resolvers
   [memory-context-state
    memory-store-state
    memory-state
+   memory-remember-telemetry
    memory-recent-entries])

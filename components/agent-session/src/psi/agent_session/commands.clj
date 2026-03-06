@@ -166,6 +166,20 @@
   [ctx]
   (= :ready (:psi.memory/status (session/query-in ctx [:psi.memory/status]))))
 
+(defn- remember-provenance
+  [ctx]
+  (let [session-id (get-in (session/get-session-data-in ctx) [:session-id])
+        cwd        (:cwd ctx)
+        git-branch (try
+                     (:psi.agent-session/git-branch
+                      (session/query-in ctx [:psi.agent-session/git-branch]))
+                     (catch Exception _
+                       nil))]
+    {:source :remember
+     :sessionId session-id
+     :cwd cwd
+     :gitBranch git-branch}))
+
 (defn- remember-text!
   [ctx text]
   (let [reason (or (not-empty (some-> text str/trim)) "manual /remember")
@@ -174,12 +188,20 @@
                 {:content-type :note
                  :content reason
                  :tags [:remember :manual]
-                 :provenance {:source :remember
-                              :sessionId (get-in (session/get-session-data-in ctx)
-                                                 [:session-id])}})]
+                 :provenance (remember-provenance ctx)})
+        store-result (:store result)]
     (if (:ok? result)
-      (str "✓ Remembered"
-           "\n  record-id: " (get-in result [:record :record-id]))
+      (if (false? (:ok? store-result))
+        (str "⚠ Remembered with store fallback"
+             "\n  record-id: " (get-in result [:record :record-id])
+             (when-let [provider-id (:provider-id store-result)]
+               (str "\n  provider: " provider-id))
+             (when-let [store-error (:error store-result)]
+               (str "\n  store-error: " (name store-error)))
+             (when-let [message (:message store-result)]
+               (str "\n  detail: " message)))
+        (str "✓ Remembered"
+             "\n  record-id: " (get-in result [:record :record-id])))
       (str "✗ Remember failed"
            "\n  reason: " (name (:error result))))))
 (def ^:private canonical-thinking-levels
@@ -304,7 +326,9 @@
       (if-let [memory-ctx (:memory-ctx ctx)]
         (if-not (memory-ready? ctx)
           {:type :text
-           :message "‖ Memory not ready. Try again when :psi.memory/status is :ready."}
+           :message (str "✗ Remember blocked"
+                         "\n  reason: memory_capture_prerequisites_not_ready"
+                         "\n  detail: :psi.memory/status must be :ready")}
           (let [reason (-> (str/replace trimmed #"^/remember\s*" "") str/trim not-empty)]
             {:type :text
              :message (remember-text! (assoc ctx :memory-ctx memory-ctx) reason)}))

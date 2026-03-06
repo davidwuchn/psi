@@ -172,6 +172,9 @@
                                  (:providers summary))]
       (is (true? (:ok? result)))
       (is (= "in-memory" (:active-provider-id summary)))
+      (is (= false (get-in result [:store :ok?])))
+      (is (= :boom (get-in result [:store :error])))
+      (is (= "failing-store" (get-in result [:store :provider-id])))
       (is (true? (get-in result [:store :fallback-selected?])))
       (is (= 1 (get-in failing-provider [:telemetry :write-count])))
       (is (= 1 (get-in failing-provider [:telemetry :failure-count])))

@@ -4,6 +4,33 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-05 - Memory Boundary Clarification (session vs persistent vs git)
+
+### λ Treat memory as two stores plus one query surface
+
+The system should model memory as:
+- session memory (short-term, ephemeral, high-churn working context)
+- persistent memory (cross-session, distilled and reusable artifacts)
+- git history (queryable provenance, not stored as memory artifacts)
+
+### λ Do not duplicate git history into persistent memory
+
+Git commit/log/diff data is already canonical and queryable through history
+resolvers. Storing mirrored git summaries in memory introduces drift and
+maintenance overhead without adding new capability.
+
+### λ Persist only non-derivable, action-improving knowledge
+
+A practical filter for persistent memory:
+- keep: stable operator preferences, validated conventions, distilled facts
+- drop: temporary turn context, unresolved scratch notes, git-derivable facts
+
+### λ Session persistence for `/resume` is distinct from memory-store semantics
+
+Persisted session transcript/state supports operational continuity (resume),
+while remember/recover memory artifacts support cross-session distillation and
+retrieval. These should remain separate contracts even if both are disk-backed.
+
 ## 2026-03-05 - Session Startup Prompt Spec Decisions (Step 11 planning)
 
 ### λ Visible startup behavior should use transcript turns, not hidden system-prompt concatenation
