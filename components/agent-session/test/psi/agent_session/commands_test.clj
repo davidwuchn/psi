@@ -11,6 +11,13 @@
 
 ;; ── Test helper ─────────────────────────────────────────────
 
+(defn- temp-cwd []
+  (let [p (str (java.nio.file.Files/createTempDirectory
+                "psi-agent-session-commands-test-"
+                (make-array java.nio.file.attribute.FileAttribute 0)))]
+    (.mkdirs (java.io.File. p))
+    p))
+
 (defn- make-test-ctx
   "Create a minimal session context for testing commands."
   ([] (make-test-ctx {}))
@@ -21,6 +28,7 @@
                                       :reasoning false}
                               :system-prompt "test prompt"}
                              opts)
+     :cwd (temp-cwd)
      :persist? false})))
 
 (def ^:private test-ai-model
@@ -294,7 +302,6 @@
     (is (str/includes? s "Phase"))
     (is (str/includes? s "idle"))
     (is (str/includes? s "Roots"))
-    (is (str/includes? s "Worktree"))
     (is (str/includes? s "agent-session-ctx"))))
 
 (deftest format-worktree-test

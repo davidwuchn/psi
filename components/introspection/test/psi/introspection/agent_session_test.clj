@@ -14,11 +14,18 @@
 ;; Helpers
 ;; ─────────────────────────────────────────────────────────────────────────────
 
+(defn- temp-cwd []
+  (let [p (str (java.nio.file.Files/createTempDirectory
+                "psi-introspection-agent-session-test-"
+                (make-array java.nio.file.attribute.FileAttribute 0)))]
+    (.mkdirs (java.io.File. p))
+    p))
+
 (defn- session-introspection-ctx
   "Create a fully isolated introspection context with a fresh agent-session
    context attached.  Resolvers are registered and engine is bootstrapped."
   []
-  (let [session-ctx (session/create-context)
+  (let [session-ctx (session/create-context {:cwd (temp-cwd) :persist? false})
         ctx         (introspection/create-context {:agent-session-ctx session-ctx})]
     (engine/bootstrap-system-in! (:engine-ctx ctx))
     (introspection/register-resolvers-in! ctx)
