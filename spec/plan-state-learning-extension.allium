@@ -1,0 +1,172 @@
+-- plan-state-learning-extension.allium
+--
+-- Scope: Post-commit automation extension that keeps PLAN/STATE/LEARNING
+-- synchronized after human commits, with loop-safe self-commits.
+--
+-- Includes:
+--   - first-class commit/head-change extension event
+--   - extension reaction policy and loop guard
+--   - two-phase commit behavior (PLAN+STATE, then LEARNING)
+--   - visible transcript/UI turns for automation activity
+--
+-- Excludes:
+--   - semantic quality/rubric of generated prose
+--   - branch/worktree mutation policy
+--   - remote push/pull operations
+
+use "./extension-system.allium" as ext
+use "./session-management.allium" as session
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value GitHeadChangedEvent {
+    cwd: Path
+    previousHead: String?
+    head: String
+    reason: String
+    timestamp: Timestamp
+}
+
+value CommitSummary {
+    sha: String
+    subject: String
+}
+
+value PlanStateLearningRun {
+    triggerHead: String
+    skipped: Boolean = false
+    skipReason: String?
+    phase1Committed: Boolean = false
+    phase1CommitSha: String?
+    phase2Committed: Boolean = false
+    phase2CommitSha: String?
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    psl_enabled: Boolean = true
+    psl_marker: String = "[psi:psl-auto]"
+    psl_phase1_files: List<Path> = ["PLAN.md", "STATE.md"]
+    psl_phase2_files: List<Path> = ["LEARNING.md"]
+}
+
+------------------------------------------------------------
+-- First-class extension event
+------------------------------------------------------------
+
+rule GitHeadChangedExtensionEventEmitted {
+    when: GitHeadObservedChanged(cwd)
+
+    ensures: ext/ExtensionEventDispatched(
+        eventName: "git_head_changed",
+        payload: GitHeadChangedEvent
+    )
+}
+
+rule GitHeadChangedEventPayloadIsCanonical {
+    when: ext/ExtensionEventDispatched(eventName: "git_head_changed", payload)
+
+    ensures: payload.cwd != ""
+    ensures: payload.head != ""
+    ensures: payload.reason = "head-changed"
+    ensures: payload.timestamp != null
+}
+
+------------------------------------------------------------
+-- Extension behavior
+------------------------------------------------------------
+
+rule PlanStateLearningHandlesHeadChange {
+    when: ext/ExtensionEventReceived(name: "git_head_changed", payload)
+
+    requires: config.psl_enabled = true
+
+    let latest = ReadLatestCommitSummary(payload.cwd)
+
+    ensures:
+        if Contains(latest.subject, config.psl_marker)
+        then PlanStateLearningRun.created(
+            triggerHead: payload.head,
+            skipped: true,
+            skipReason: "self_commit_marker"
+        )
+        else PlanStateLearningRun.created(
+            triggerHead: payload.head,
+            skipped: false
+        )
+}
+
+rule PlanStateLearningPhase1 {
+    when: PlanStateLearningRun where skipped = false
+
+    ensures: UpdateFile("PLAN.md")
+    ensures: UpdateFile("STATE.md")
+    ensures: GitCommitIfChanged(
+        files: config.psl_phase1_files,
+        messageContains: ["Δ", config.psl_marker]
+    )
+
+    ensures: PlanStateLearningRun.phase1Committed = true or PlanStateLearningRun.phase1Committed = false
+}
+
+rule PlanStateLearningPhase2 {
+    when: PlanStateLearningRun where skipped = false
+
+    ensures: UpdateFile("LEARNING.md")
+    ensures: GitCommitIfChanged(
+        files: config.psl_phase2_files,
+        messageContains: ["λ", config.psl_marker]
+    )
+
+    ensures: PlanStateLearningRun.phase2Committed = true or PlanStateLearningRun.phase2Committed = false
+}
+
+------------------------------------------------------------
+-- UI visibility
+------------------------------------------------------------
+
+rule PlanStateLearningMessagesVisibleInTranscript {
+    when: ext/ExtensionEventReceived(name: "git_head_changed", payload)
+
+    ensures: ext/ExtensionMessageAppended(
+        role: "assistant",
+        customType: "plan-state-learning",
+        visibleInUi: true
+    )
+}
+
+rule PlanStateLearningSkipsAreVisible {
+    when: PlanStateLearningRun where skipped = true
+
+    ensures: ext/ExtensionMessageTextContains("skipped")
+    ensures: ext/ExtensionMessageTextContains(config.psl_marker)
+}
+
+------------------------------------------------------------
+-- Safety
+------------------------------------------------------------
+
+rule PlanStateLearningDoesNotCommitUnrelatedFiles {
+    when: PlanStateLearningRun where skipped = false
+
+    ensures: GitAddUsesExplicitPaths(config.psl_phase1_files + config.psl_phase2_files)
+    ensures: not GitAddAllUsed()
+}
+
+rule PlanStateLearningNoOpWhenNoFileChanges {
+    when: PlanStateLearningRun where skipped = false
+
+    ensures: GitCommitOnlyIfStagedDiffExists()
+}
+
+------------------------------------------------------------
+-- Open Questions
+------------------------------------------------------------
+
+open_question "Should psl_enabled default to false for conservative rollout, or true for always-on memory hygiene?"
+open_question "Should generated PLAN/STATE/LEARNING edits be template-driven only, or allow model-generated summaries per commit?"
