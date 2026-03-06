@@ -56,8 +56,10 @@
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.prompt-templates :as pt]
+   [psi.agent-session.project-preferences :as project-prefs]
    [psi.agent-session.rpc :as rpc]
    [psi.agent-session.skills :as skills]
+   [psi.agent-session.session :as session-data]
    [psi.agent-session.system-prompt :as sys-prompt]
    [psi.agent-session.tools :as tools]
    [psi.agent-core.core :as agent]
@@ -154,6 +156,33 @@
      (or (second (drop-while #(not= "--model" %) args))
          env-model
          (name default-model-key)))))
+
+(defn- resolve-model-by-provider+id
+  "Find a runtime model map by provider string + model-id string."
+  [provider model-id]
+  (let [provider* (some-> provider keyword)]
+    (some (fn [[_ model]]
+            (when (and (= provider* (:provider model))
+                       (= model-id (:id model)))
+              model))
+          models/all-models)))
+
+(defn- effective-model-from-project-preferences
+  "Return project-selected runtime model map when valid, else fallback `ai-model`."
+  [cwd ai-model]
+  (let [prefs (project-prefs/read-preferences cwd)]
+    (if-let [{:keys [provider id]} (project-prefs/project-model prefs)]
+      (or (resolve-model-by-provider+id provider id)
+          ai-model)
+      ai-model)))
+
+(defn- effective-thinking-level-from-project-preferences
+  "Return project-selected thinking level (clamped by model), else :off/model default." 
+  [cwd model]
+  (let [prefs (project-prefs/read-preferences cwd)
+        pref-level (project-prefs/project-thinking-level prefs)]
+    (session-data/clamp-thinking-level (or pref-level :off)
+                                       {:reasoning (:supports-reasoning model)})))
 
 (defn- arg-value
   [args flag]
@@ -434,15 +463,18 @@
 
    Options:
    - :event-queue optional TUI/RPC event queue
-   - :memory-runtime-opts optional memory/runtime sync opts"
-  [ai-model {:keys [event-queue memory-runtime-opts]}]
+   - :memory-runtime-opts optional memory/runtime sync opts
+   - :cwd optional cwd override (primarily for tests)"
+  [ai-model {:keys [event-queue memory-runtime-opts cwd]}]
   (let [oauth-ctx      (oauth/create-context)
         templates      (pt/discover-templates)
         {:keys [skills diagnostics]} (skills/discover-skills)
         _              (doseq [d diagnostics]
                          (timbre/warn "Skill" (:type d) ":" (:message d) (:path d)))
-        cwd            (System/getProperty "user.dir")
+        cwd            (or cwd (System/getProperty "user.dir"))
         ctx-files      (sys-prompt/discover-context-files cwd)
+        effective-model (effective-model-from-project-preferences cwd ai-model)
+        effective-thinking-level (effective-thinking-level-from-project-preferences cwd effective-model)
         base-prompt    (sys-prompt/build-system-prompt
                         {:cwd           cwd
                          :context-files ctx-files
@@ -450,9 +482,10 @@
         developer-prompt (developer-prompt-from-env)
         recursion-ctx  (recursion/create-context)
         ctx            (session/create-context
-                        {:initial-session {:model {:provider  (name (:provider ai-model))
-                                                   :id        (:id ai-model)
-                                                   :reasoning (:supports-reasoning ai-model)}
+                        {:initial-session {:model {:provider  (name (:provider effective-model))
+                                                   :id        (:id effective-model)
+                                                   :reasoning (:supports-reasoning effective-model)}
+                                           :thinking-level effective-thinking-level
                                            :system-prompt   base-prompt}
                          :event-queue event-queue
                          :oauth-ctx oauth-ctx

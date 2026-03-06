@@ -8,6 +8,7 @@
    [psi.agent-session.main :as main]
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.prompt-templates :as pt]
+   [psi.agent-session.project-preferences :as project-prefs]
    [psi.agent-session.rpc :as rpc]
    [psi.agent-session.skills :as skills]
    [psi.agent-session.system-prompt :as sys-prompt]
@@ -307,12 +308,74 @@
                   (session/new-session-in! ctx)
                   {:extension-errors [] :extension-loaded-count 0})]
     (let [{:keys [ctx]} (#'main/bootstrap-runtime-session!
-                        {:provider :anthropic
-                         :id "test-model"
-                         :name "Test Model"
-                         :supports-reasoning false}
-                        {})
+                         {:provider :anthropic
+                          :id "test-model"
+                          :name "Test Model"
+                          :supports-reasoning false}
+                         {})
           prompt (:psi.agent-session/system-prompt
                   (session/query-in ctx [:psi.agent-session/system-prompt]))]
       (is (str/includes? prompt "Current capabilities (from :psi.graph/capabilities):"))
       (is (str/includes? prompt "- agent-session (ops=")))))
+
+(deftest bootstrap-runtime-session-applies-project-preferences-test
+  (let [cwd (str (System/getProperty "java.io.tmpdir") "/psi-main-project-prefs-" (java.util.UUID/randomUUID))
+        _   (.mkdirs (java.io.File. cwd))]
+    (project-prefs/update-agent-session!
+     cwd
+     {:model-provider "openai"
+      :model-id "gpt-5.3-codex"
+      :thinking-level :high})
+    (with-redefs [oauth/create-context (fn [] nil)
+                  pt/discover-templates (fn [] [])
+                  skills/discover-skills (fn [] {:skills [] :diagnostics []})
+                  sys-prompt/discover-context-files (fn [_] [])
+                  sys-prompt/build-system-prompt (fn [_] "")
+                  ext/discover-extension-paths (fn [& _] [])
+                  introspection/register-resolvers! (fn [] nil)
+                  memory-runtime/sync-memory-layer! (fn [_] {:ok? true})
+                  session/bootstrap-session-in!
+                  (fn [ctx _]
+                    (session/new-session-in! ctx)
+                    {:extension-errors [] :extension-loaded-count 0})]
+      (let [{:keys [ctx]} (#'main/bootstrap-runtime-session!
+                           {:provider :anthropic
+                            :id "claude-sonnet-4-6"
+                            :name "Claude Sonnet 4.6"
+                            :supports-reasoning true}
+                           {:cwd cwd})
+            sd (session/get-session-data-in ctx)]
+        (is (= "openai" (get-in sd [:model :provider])))
+        (is (= "gpt-5.3-codex" (get-in sd [:model :id])))
+        (is (= :high (:thinking-level sd)))))))
+
+(deftest bootstrap-runtime-session-invalid-project-model-falls-back-test
+  (let [cwd (str (System/getProperty "java.io.tmpdir") "/psi-main-project-prefs-" (java.util.UUID/randomUUID))
+        _   (.mkdirs (java.io.File. cwd))]
+    (project-prefs/update-agent-session!
+     cwd
+     {:model-provider "nope"
+      :model-id "missing"
+      :thinking-level :xhigh})
+    (with-redefs [oauth/create-context (fn [] nil)
+                  pt/discover-templates (fn [] [])
+                  skills/discover-skills (fn [] {:skills [] :diagnostics []})
+                  sys-prompt/discover-context-files (fn [_] [])
+                  sys-prompt/build-system-prompt (fn [_] "")
+                  ext/discover-extension-paths (fn [& _] [])
+                  introspection/register-resolvers! (fn [] nil)
+                  memory-runtime/sync-memory-layer! (fn [_] {:ok? true})
+                  session/bootstrap-session-in!
+                  (fn [ctx _]
+                    (session/new-session-in! ctx)
+                    {:extension-errors [] :extension-loaded-count 0})]
+      (let [{:keys [ctx]} (#'main/bootstrap-runtime-session!
+                           {:provider :anthropic
+                            :id "claude-sonnet-4-6"
+                            :name "Claude Sonnet 4.6"
+                            :supports-reasoning false}
+                           {:cwd cwd})
+            sd (session/get-session-data-in ctx)]
+        (is (= "anthropic" (get-in sd [:model :provider])))
+        (is (= "claude-sonnet-4-6" (get-in sd [:model :id])))
+        (is (= :off (:thinking-level sd)))))))

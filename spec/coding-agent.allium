@@ -13,6 +13,7 @@
 --   Tool management — active tool set
 --   System prompt assembly
 --   Session persistence
+--   Project-local model/thinking preferences (project-preferences.allium)
 --   Run modes — interactive (TUI), print (headless), RPC (EDN stdio)
 --
 -- Delegates to:
@@ -41,6 +42,7 @@ use "./oauth-auth.allium" as auth
 use "./default-footer.allium" as footer
 use "./compaction.allium" as compaction
 use "./tools.allium" as tools
+use "./project-preferences.allium" as projectprefs
 
 ------------------------------------------------------------
 -- External Entities

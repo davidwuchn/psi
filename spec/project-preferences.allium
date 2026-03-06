@@ -1,0 +1,113 @@
+-- project-preferences.allium
+--
+-- Scope: Persist project-local AgentSession defaults for model + thinking level
+--        and re-apply them on startup.
+--
+-- Includes:
+--   - Project preference file location and shape
+--   - Persist-on-change behavior for /model and /thinking
+--   - Bootstrap application of persisted preferences
+--   - Fallback behavior when persisted model is invalid
+--   - Thinking-level clamping based on model reasoning support
+--
+-- Excludes:
+--   - Global/user preference files
+--   - Prompt/skills/startup-prompt settings
+--   - Multi-profile preference layering
+
+use "./coding-agent.allium" as session
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value ProjectAgentSessionPreferences {
+    modelProvider: String?
+    modelId: String?
+    thinkingLevel: off | minimal | low | medium | high | xhigh?
+}
+
+value ProjectPreferencesFile {
+    version: Integer = 1
+    agentSession: ProjectAgentSessionPreferences
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    project_preferences_file: Path = .psi/project.edn
+}
+
+------------------------------------------------------------
+-- Persistence on change
+------------------------------------------------------------
+
+rule ModelSelectionPersistsProjectPreferences {
+    when: SessionModelSelected(session, model)
+
+    ensures: WriteEdn(config.project_preferences_file,
+        merge: {
+            version: 1,
+            agentSession: {
+                modelProvider: model.provider,
+                modelId: model.id,
+                thinkingLevel: session.thinkingLevel
+            }
+        })
+}
+
+rule ThinkingLevelSelectionPersistsProjectPreferences {
+    when: SessionThinkingLevelSelected(session, thinkingLevel)
+
+    ensures: WriteEdn(config.project_preferences_file,
+        merge: {
+            version: 1,
+            agentSession: {
+                thinkingLevel: thinkingLevel
+            }
+        })
+}
+
+------------------------------------------------------------
+-- Bootstrap application
+------------------------------------------------------------
+
+rule BootstrapReadsProjectPreferences {
+    when: SessionBootstrapStarted(session)
+
+    ensures: projectPrefs = ReadEdn(config.project_preferences_file)
+    ensures: projectPrefs is ProjectPreferencesFile or EmptyMap
+}
+
+rule BootstrapUsesPersistedModelWhenValid {
+    when: SessionBootstrapStarted(session)
+
+    requires: projectPrefs.agentSession.modelProvider != null
+    requires: projectPrefs.agentSession.modelId != null
+    requires: ExistsModel(provider: projectPrefs.agentSession.modelProvider,
+                          id: projectPrefs.agentSession.modelId)
+
+    ensures: session.model = ResolveModel(projectPrefs.agentSession.modelProvider,
+                                          projectPrefs.agentSession.modelId)
+}
+
+rule BootstrapFallsBackToProvidedModelWhenPersistedModelInvalid {
+    when: SessionBootstrapStarted(session)
+
+    requires: projectPrefs.agentSession.modelProvider != null
+    requires: projectPrefs.agentSession.modelId != null
+    requires: not ExistsModel(provider: projectPrefs.agentSession.modelProvider,
+                              id: projectPrefs.agentSession.modelId)
+
+    ensures: session.model = BootstrapProvidedModel(session)
+}
+
+rule BootstrapAppliesPersistedThinkingLevelWithClamping {
+    when: SessionBootstrapStarted(session)
+
+    let requested = projectPrefs.agentSession.thinkingLevel or off
+
+    ensures: session.thinkingLevel = ClampThinkingLevel(requested, session.model)
+}

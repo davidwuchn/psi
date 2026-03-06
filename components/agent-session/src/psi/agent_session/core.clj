@@ -64,6 +64,7 @@
    [psi.agent-session.workflows :as wf]
    [psi.tui.extension-ui :as ext-ui]
    [psi.agent-session.persistence :as persist]
+   [psi.agent-session.project-preferences :as project-prefs]
    [psi.agent-session.resolvers :as resolvers]
    [psi.agent-session.session :as session]
    [psi.agent-session.statechart :as sc]
@@ -584,6 +585,14 @@
     (swap-session! ctx assoc :model model :thinking-level clamped-level)
     (agent/set-model-in! (:agent-ctx ctx) model)
     (journal-append! ctx (persist/model-entry (:provider model) (:id model)))
+    (try
+      (project-prefs/update-agent-session!
+       (:cwd ctx)
+       {:model-provider (:provider model)
+        :model-id (:id model)
+        :thinking-level clamped-level})
+      (catch Exception _
+        nil))
     (ext/dispatch-in (:extension-registry ctx) "model_select" {:model model :source :set})
     (get-session-data-in ctx)))
 
@@ -618,6 +627,12 @@
     (swap-session! ctx assoc :thinking-level clamped)
     (agent/set-thinking-level-in! (:agent-ctx ctx) clamped)
     (journal-append! ctx (persist/thinking-level-entry clamped))
+    (try
+      (project-prefs/update-agent-session!
+       (:cwd ctx)
+       {:thinking-level clamped})
+      (catch Exception _
+        nil))
     (get-session-data-in ctx)))
 
 (defn cycle-thinking-level-in!

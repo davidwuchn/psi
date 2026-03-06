@@ -12,6 +12,7 @@
    [psi.agent-core.core :as agent-core]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.persistence :as persist]
+   [psi.agent-session.project-preferences :as project-prefs]
    [psi.query.core :as query]
    [psi.recursion.core :as recursion])
   (:import
@@ -157,6 +158,26 @@
       (session/set-model-in! ctx {:provider "x" :id "y" :reasoning true})
       (session/set-thinking-level-in! ctx :medium)
       (is (= :medium (:thinking-level (session/get-session-data-in ctx))))))
+
+  (testing "set-model-in! persists project preferences"
+    (let [cwd (str (System/getProperty "java.io.tmpdir") "/psi-project-prefs-" (java.util.UUID/randomUUID))
+          _   (.mkdirs (java.io.File. cwd))
+          ctx (session/create-context {:cwd cwd})
+          model {:provider "anthropic" :id "claude-sonnet-4-6" :reasoning true}]
+      (session/set-model-in! ctx model)
+      (let [prefs (project-prefs/read-preferences cwd)]
+        (is (= "anthropic" (get-in prefs [:agent-session :model-provider])))
+        (is (= "claude-sonnet-4-6" (get-in prefs [:agent-session :model-id])))
+        (is (= :off (get-in prefs [:agent-session :thinking-level]))))))
+
+  (testing "set-thinking-level-in! persists project preferences"
+    (let [cwd (str (System/getProperty "java.io.tmpdir") "/psi-project-prefs-" (java.util.UUID/randomUUID))
+          _   (.mkdirs (java.io.File. cwd))
+          ctx (session/create-context {:cwd cwd})]
+      (session/set-model-in! ctx {:provider "x" :id "y" :reasoning true})
+      (session/set-thinking-level-in! ctx :high)
+      (let [prefs (project-prefs/read-preferences cwd)]
+        (is (= :high (get-in prefs [:agent-session :thinking-level]))))))
 
   (testing "cycle-thinking-level-in! advances level for reasoning model"
     (let [ctx (session/create-context {:initial-session {:thinking-level :off}})]
