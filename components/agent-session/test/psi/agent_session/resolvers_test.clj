@@ -213,6 +213,9 @@
                      :psi.memory/memory-state
                      :psi.memory/memory-store-state
                      :psi.memory/memory-context-state
+                     :psi.agent-session/memory-state-compat
+                     :psi.agent-session/memory-store-state-compat
+                     :psi.agent-session/memory-context-state-compat
                      :psi.history/git-repo-status
                      :psi.history/git-repo-commits
                      :psi.history/git-learning-commits
@@ -225,6 +228,10 @@
       (is (map? (:psi.memory/memory-state result)))
       (is (map? (:psi.memory/memory-store-state result)))
       (is (map? (:psi.memory/memory-context-state result)))
+
+      (is (map? (:psi.agent-session/memory-state-compat result)))
+      (is (map? (:psi.agent-session/memory-store-state-compat result)))
+      (is (map? (:psi.agent-session/memory-context-state-compat result)))
 
       (is (map? (:psi.history/git-repo-status result)))
       (is (map? (:psi.history/git-repo-commits result)))

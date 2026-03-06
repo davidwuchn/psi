@@ -1580,6 +1580,33 @@
    ::pco/output [:psi.memory/memory-context-state]}
   {:psi.memory/memory-context-state state})
 
+(pco/defresolver agent-session-memory-state-compat
+  "Session-namespace compatibility alias for :psi.memory/memory-state.
+   Useful for callers that assume all compatibility attrs live under
+   :psi.agent-session/* namespace."
+  [{:keys [psi.memory/memory-state]}]
+  {::pco/input  [:psi.memory/memory-state]
+   ::pco/output [:psi.agent-session/memory-state-compat]}
+  {:psi.agent-session/memory-state-compat memory-state})
+
+(pco/defresolver agent-session-memory-store-state-compat
+  "Session-namespace compatibility alias for :psi.memory/memory-store-state.
+   Useful for callers that assume all compatibility attrs live under
+   :psi.agent-session/* namespace."
+  [{:keys [psi.memory/memory-store-state]}]
+  {::pco/input  [:psi.memory/memory-store-state]
+   ::pco/output [:psi.agent-session/memory-store-state-compat]}
+  {:psi.agent-session/memory-store-state-compat memory-store-state})
+
+(pco/defresolver agent-session-memory-context-state-compat
+  "Session-namespace compatibility alias for :psi.memory/memory-context-state.
+   Useful for callers that assume all compatibility attrs live under
+   :psi.agent-session/* namespace."
+  [{:keys [psi.memory/memory-context-state]}]
+  {::pco/input  [:psi.memory/memory-context-state]
+   ::pco/output [:psi.agent-session/memory-context-state-compat]}
+  {:psi.agent-session/memory-context-state-compat memory-context-state})
+
 ;; ── All resolvers ───────────────────────────────────────
 
 (def all-resolvers
@@ -1643,6 +1670,9 @@
    memory-state-compat
    memory-store-state-compat
    memory-context-state-compat
+   agent-session-memory-state-compat
+   agent-session-memory-store-state-compat
+   agent-session-memory-context-state-compat
    history-repo-status-compat
    history-repo-commits-compat
    history-learning-commits-compat
