@@ -74,9 +74,9 @@ Ordered steps toward PSI COMPLETE.
 - Focus now: runtime hardening + command-surface parity + end-to-end confidence
 - Definition of done:
   - `/feed-forward` and approve/reject/continue flows are stable across REPL, RPC, and Emacs
-  - Trigger hooks execute deterministically and expose complete EQL telemetry
+  - Manual trigger flow executes deterministically and exposes complete EQL telemetry
   - Recursion cycle artifacts are persisted/recoverable via active memory provider
-  - End-to-end tests cover proposal → approval → execution → verification → learning
+  - End-to-end tests cover manual trigger → proposal → approval → execution → verification → learning
 
 ### Step 11 — Session startup prompts (global + project) ◇ in progress
 - Spec: `spec/session-startup-prompts.allium`

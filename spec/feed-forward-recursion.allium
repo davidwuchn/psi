@@ -6,7 +6,7 @@
 --
 -- Includes:
 --   - FUTURE_STATE model and lifecycle
---   - Trigger/hook driven recursion cycles (human-signal interpreted)
+--   - Operator-triggered recursion cycles
 --   - Observe → Plan → Approve → Execute → Verify → Learn loop
 --   - Safety guardrails (approval, atomicity, rollback)
 --   - Memory writeback integration for cycle outcomes
@@ -83,7 +83,7 @@ value FutureStateSnapshot {
 }
 
 value TriggerSignal {
-    type: manual | session_end | graph_changed | memory_updated | verification_failed
+    type: manual
     reason: String
     payload: Map<String, Any>
     timestamp: Timestamp
@@ -152,7 +152,7 @@ entity FeedForwardController {
 
 entity ToolingHook {
     id: String
-    triggerType: manual | session_end | graph_changed | memory_updated | verification_failed
+    triggerType: manual
     enabled: Boolean
     timeoutMs: Integer?
 }
@@ -238,20 +238,19 @@ config {
         "tests", "lint", "eql-health"
     }
 
-    -- Step 10 supports explicit/manual and event-driven hooks only.
-    -- Periodic/background cadence is intentionally excluded.
+    -- Step 10 supports explicit/manual trigger only.
+    -- No event-driven or periodic/background cadence.
     accepted_trigger_types: Set<String> = {
-        "manual", "session_end", "graph_changed", "memory_updated", "verification_failed"
+        "manual"
     }
 
     -- Runtime-selectable subset of accepted trigger types.
-    -- This controls which hooks are active in a given deployment/session.
+    -- Manual remains the only allowed trigger in this scope.
     enabled_trigger_hooks: Set<String> = {
-        "manual", "session_end", "graph_changed", "memory_updated", "verification_failed"
+        "manual"
     }
 
-    -- Governance constraint: tool hooks are treated as human signal by default.
-    -- Non-manual/event triggers must declare source intent in payload/context.
+    -- Governance constraint: tool hooks are treated as human signal.
 
     -- Internal manual-trigger prompt definition (spec-owned, not external).
     internal_manual_trigger_prompt_name: String = "feed-forward-manual-trigger"
@@ -279,7 +278,7 @@ rule FeedForwardTriggerAccepted {
 
     requires: trigger.type in config.accepted_trigger_types
     requires: trigger.type in config.enabled_trigger_hooks
-    requires: trigger.type = manual or TriggerHasDeclaredSourceIntent(trigger)
+    requires: trigger.type = manual
     requires: controller.canStartCycle
 
     requires: state.query_ready = true
@@ -627,10 +626,9 @@ surface FeedForwardManualTriggerApi {
         -- This prompt is internally defined by this spec (not an external /template).
 }
 
--- Resolved: Step 10 uses explicit/manual + event-driven hooks (no periodic cadence).
+-- Resolved: Step 10 uses explicit/manual trigger only (no event-driven or periodic cadence).
 -- Hook activation is controlled by config.enabled_trigger_hooks.
--- Resolved: tool hooks are interpreted as human signal by default;
--- non-manual triggers require declared source intent.
+-- Resolved: tool hooks are interpreted as human signal.
 -- Resolved: manual approval remains default; low-risk auto-approval is opt-in
 -- via trusted_local_mode_enabled + auto_approve_low_risk_in_trusted_local_mode.
 -- Manual-trigger prompt note: internal prompt "feed-forward-manual-trigger" (spec-defined).
