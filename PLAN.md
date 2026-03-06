@@ -86,18 +86,21 @@ Ordered steps toward PSI COMPLETE.
   - [x] Store-write fallback warning contract is stable across REPL/RPC/Emacs (`⚠ Remembered with store fallback …`)
 - Test matrix: `doc/remember-capture-test-matrix.md` (U/I/E coverage IDs U1–U6, I1–I8, E1–E7)
 
-### Step 11 — Session startup prompts (global + project) ◇ in progress
+### Step 11 — Session startup prompts (global + project) ✓ complete
 - Spec: `spec/session-startup-prompts.allium`
-- Add configurable startup prompts loaded from `~/.psi/agent/startup-prompts.edn` and `.psi/startup-prompts.edn`
-- Deterministic merge/order with precedence `global < project`
-- Execute prompts at new session start as visible transcript turns (startup-tagged user msgs + agent responses)
-- No session override source; no token budget guard
-- Expose startup telemetry attrs on EQL and ensure discoverability via `:psi.graph/*` introspection attrs
-- Definition of done:
-  - Global/project prompt sets merge deterministically with tested ordering and enable rules
-  - Startup prompts execute exactly once on new session start and remain visible in transcript/UI
-  - Startup prompt telemetry attrs are top-level, queryable, and appear in graph introspection surfaces
-  - Fork/new-session behavior is explicit and covered by tests
+- Config sources implemented: `~/.psi/agent/startup-prompts.edn` + `.psi/startup-prompts.edn`
+- Deterministic merge/order implemented with precedence `global < project`
+- Startup prompts execute as visible transcript turns at new session bootstrap
+- Startup telemetry attrs are top-level EQL attrs and discoverable via graph introspection
+- Behavior decisions now explicit in implementation/tests:
+  - prompts run sequentially as independent turns
+  - new-session bootstrap runs startup prompts
+  - fork resets startup telemetry and does not implicitly re-run bootstrap
+- Verification:
+  - `psi.agent-session.startup-prompts-test`
+  - `psi.agent-session.runtime-startup-prompts-test`
+  - `psi.agent-session.resolvers-startup-prompts-test`
+  - (latest run: 9 tests, 35 assertions, 0 failures)
 
 ### Step 11a — Git worktree visibility (read-only) ✓ complete
 - Spec: `spec/git-worktrees.allium`

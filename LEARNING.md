@@ -4,6 +4,29 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-06 - Step 11 startup-prompts completion reclassification
+
+### λ Verify before planning: implementation/tests outrank stale plan text
+
+When `PLAN.md` says "in progress" but code paths, resolver surfaces, and tests
+say "done", treat plan/state docs as stale memory and reclassify from observed
+runtime+repo truth.
+
+### λ Startup prompts contract is now closed in implementation
+
+Step 11 is complete when all of these are present together:
+- config discovery from `~/.psi/agent/startup-prompts.edn` + `.psi/startup-prompts.edn`
+- deterministic merge/order (`global < project`)
+- startup execution as visible transcript turns during new-session bootstrap
+- top-level EQL startup telemetry attrs + graph discoverability
+- explicit fork/new-session behavior with tests
+
+### λ Keep STATE/PLAN/Open Questions synchronized with closure
+
+After reclassification, remove resolved startup-prompt open questions and move
+"next executable" focus to the next real frontier (currently Step 12 Emacs UI
+stabilization).
+
 ## 2026-03-06 - Emacs CAPF completion architecture for `/` and `@`
 
 ### λ Standard Emacs completion architecture fits prompt input cleanly

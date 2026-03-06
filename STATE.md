@@ -17,7 +17,7 @@ Current truth about the Psi system.
 - ✓ Step 11a git-worktree visibility (read-only) implemented: `:git.worktree/*` attrs, session-root bridge attrs, `/worktree` command, and `/status` worktree surfacing.
 - ✓ Worktree failure path now degrades safely with telemetry marker (`git.worktree.parse_failed`) and coverage.
 - ✓ Test isolation hardened: agent-session/introspection tests now use temp cwd to avoid writing repo `.psi/project.edn`.
-- … Next executable task: reconcile Step 11a PLAN checklist checkboxes with implemented behavior and defer remaining mutation/switch semantics.
+- … Next executable task: continue Step 12 Emacs UI stabilization (startup hydration + `/new` + reconnect flows), while keeping worktree Step 11b mutation semantics deferred.
 
 ## Components
 
@@ -318,20 +318,25 @@ Combined query:
  :psi.memory.store/providers]
 ```
 
-## Session startup prompts (Step 11 planned)
+## Session startup prompts (Step 11)
 
-- Spec added: `spec/session-startup-prompts.allium`
-- Repo config added: `.psi/startup-prompts.edn`
+- Status: ✓ complete
+- Spec: `spec/session-startup-prompts.allium`
+- Config sources active: `~/.psi/agent/startup-prompts.edn` + `.psi/startup-prompts.edn`
 - Repo startup prompt set currently includes one prompt (`engage-nucleus`)
-- Design decisions:
-  - no session override source
-  - no token budget guard
-  - startup prompts execute as visible transcript turns (UI can see prompts + responses)
-  - startup attrs must be top-level EQL attrs and discoverable via graph introspection (`:psi.graph/*`)
+- Implemented behavior:
+  - deterministic merge/order with precedence `global < project`
+  - startup prompts execute as visible transcript turns during new session bootstrap
+  - startup telemetry persisted on session data (`:startup-prompts`, bootstrap started/completed timestamps, startup message ids)
+  - startup attrs are top-level EQL attrs and discoverable via graph introspection (`:psi.graph/*`)
+  - fork/new-session behavior is explicit and covered by tests (new-session runs bootstrap; fork resets startup telemetry)
+- Validation:
+  - `psi.agent-session.startup-prompts-test`
+  - `psi.agent-session.runtime-startup-prompts-test`
+  - `psi.agent-session.resolvers-startup-prompts-test`
+  - latest run: 9 tests, 35 assertions, 0 failures
 
 ## Open Questions
-- Startup prompts: run as one concatenated turn or sequential turns per prompt?
-- Startup prompts: should forked sessions re-run startup prompts by default?
 - TUI: per-token streaming (currently shows spinner until agent done)
 - TUI: tool execution status display during agent loop
 - Extension UI: should dialogs support auto-dismiss timeout?
