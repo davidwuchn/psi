@@ -206,7 +206,7 @@
 
 (deftest root-queryable-attrs-contract-test
   (testing "every attr advertised as root-queryable resolves from session root"
-    (let [meta      (q [:psi.graph/root-seeds :psi.graph/root-queryable-attrs])
+    (let [meta       (q [:psi.graph/root-seeds :psi.graph/root-queryable-attrs])
           root-seeds (:psi.graph/root-seeds meta)
           root-attrs (:psi.graph/root-queryable-attrs meta)]
       (is (vector? root-seeds))
@@ -219,55 +219,20 @@
           (is (contains? result attr)
               (str "expected root-queryable attr to resolve: " attr)))))))
 
-(deftest compat-alias-index-contract-test
-  (testing "every alias listed in :psi.graph/compat-aliases resolves"
-    (let [aliases (:psi.graph/compat-aliases
-                   (q [:psi.graph/compat-aliases]))]
-      (is (vector? aliases))
-      (is (seq aliases))
-      (doseq [{:keys [alias canonical status]} aliases]
-        (is (keyword? alias))
-        (is (contains? #{:compat :canonical :deprecated} status))
-        (is canonical)
-        (let [result (q [alias])]
-          (is (contains? result alias)
-              (str "expected compat alias to resolve: " alias)))))))
+(deftest root-queryable-attrs-clean-contract-test
+  (testing "root-queryable attrs do not expose legacy/compat names"
+    (let [root-attrs (set (:psi.graph/root-queryable-attrs
+                           (q [:psi.graph/root-queryable-attrs])))]
+      (is (not-any? #(re-find #"-compat$" (name %)) root-attrs))
+      (is (not (contains? root-attrs :psi.agent-session/current-request-shape)))
+      (is (not (contains? root-attrs :psi.agent-session/api-error-list)))
+      (is (not (contains? root-attrs :psi.memory/memory-state)))
+      (is (not (contains? root-attrs :psi.memory/memory-store-state)))
+      (is (not (contains? root-attrs :psi.memory/memory-context-state)))
+      (is (not (contains? root-attrs :psi.history/git-repo-status)))
+      (is (not (contains? root-attrs :psi.history/git-repo-commits)))
+      (is (not (contains? root-attrs :psi.history/git-learning-commits)))
+      (is (not (contains? root-attrs :psi.introspection/query-graph-summary)))
+      (is (not (contains? root-attrs :psi.introspection/engine-system-state))))))
 
-;; ── Compatibility alias attrs (legacy/common names) ─────
 
-(deftest compatibility-aliases-test
-  (testing "legacy/common attrs resolve from session root"
-    (let [result (q [:psi.agent-session/current-request-shape
-                     :psi.agent-session/api-error-list
-                     :psi.memory/memory-state
-                     :psi.memory/memory-store-state
-                     :psi.memory/memory-context-state
-                     :psi.agent-session/memory-state-compat
-                     :psi.agent-session/memory-store-state-compat
-                     :psi.agent-session/memory-context-state-compat
-                     :psi.history/git-repo-status
-                     :psi.history/git-repo-commits
-                     :psi.history/git-learning-commits
-                     :psi.introspection/query-graph-summary
-                     :psi.introspection/engine-system-state])]
-      (is (map? (:psi.agent-session/current-request-shape result)))
-      (is (map? (:psi.agent-session/api-error-list result)))
-      (is (contains? (:psi.agent-session/api-error-list result) :count))
-
-      (is (map? (:psi.memory/memory-state result)))
-      (is (map? (:psi.memory/memory-store-state result)))
-      (is (map? (:psi.memory/memory-context-state result)))
-
-      (is (map? (:psi.agent-session/memory-state-compat result)))
-      (is (map? (:psi.agent-session/memory-store-state-compat result)))
-      (is (map? (:psi.agent-session/memory-context-state-compat result)))
-
-      (is (map? (:psi.history/git-repo-status result)))
-      (is (map? (:psi.history/git-repo-commits result)))
-      (is (vector? (:psi.history/git-learning-commits result)))
-
-      (is (map? (:psi.introspection/query-graph-summary result)))
-      (is (vector? (get-in result [:psi.introspection/query-graph-summary :root-seeds])))
-      (is (vector? (get-in result [:psi.introspection/query-graph-summary :root-queryable-attrs])))
-      (is (vector? (get-in result [:psi.introspection/query-graph-summary :compat-aliases])))
-      (is (map? (:psi.introspection/engine-system-state result))))))
