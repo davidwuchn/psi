@@ -78,6 +78,30 @@
                        :exit exit})))
     (str/trim out)))
 
+(defn- canonical-path
+  ^String [p]
+  (when (seq (str p))
+    (try
+      (.getCanonicalPath (File. (str p)))
+      (catch Exception _
+        (.getAbsolutePath (File. (str p)))))))
+
+(defn- inside-path?
+  [^String child ^String parent]
+  (and (seq child)
+       (seq parent)
+       (or (= child parent)
+           (str/starts-with? child (str parent File/separator)))))
+
+(defn- select-containing-worktree
+  [cwd worktrees]
+  (let [cwd* (canonical-path cwd)]
+    (->> worktrees
+         (filter (fn [wt]
+                   (inside-path? cwd* (canonical-path (:git.worktree/path wt)))))
+         (sort-by (fn [wt] (count (canonical-path (:git.worktree/path wt)))) >)
+         first)))
+
 (def ^:private sep    "\u001F")
 (def ^:private sep-re (re-pattern sep))
 
@@ -88,6 +112,109 @@
   [text]
   (let [vocab #{"⚒" "◇" "⊘" "◈" "∿" "·" "λ" "Δ" "✓" "✗" "‖" "↺" "…" "刀" "ψ"}]
     (into #{} (filter #(str/includes? text %) vocab))))
+
+;;; Worktree parsing
+
+(defn- parse-worktree-block
+  [lines]
+  (reduce (fn [acc line]
+            (cond
+              (str/starts-with? line "worktree ")
+              (assoc acc :git.worktree/path (subs line 9))
+
+              (str/starts-with? line "HEAD ")
+              (assoc acc :git.worktree/head (subs line 5))
+
+              (str/starts-with? line "branch ")
+              (let [ref (subs line 7)]
+                (assoc acc
+                       :git.worktree/branch-ref ref
+                       :git.worktree/branch-name (when (str/starts-with? ref "refs/heads/")
+                                                   (subs ref 11))
+                       :git.worktree/detached? false))
+
+              (= line "detached")
+              (assoc acc :git.worktree/detached? true)
+
+              (= line "bare")
+              (assoc acc :git.worktree/bare? true)
+
+              (str/starts-with? line "locked")
+              (assoc acc
+                     :git.worktree/locked? true
+                     :git.worktree/lock-reason (some-> (subs line (min (count line) 7))
+                                                       str/trim
+                                                       not-empty))
+
+              (str/starts-with? line "prunable")
+              (assoc acc
+                     :git.worktree/prunable? true
+                     :git.worktree/prunable-reason (some-> (subs line (min (count line) 9))
+                                                          str/trim
+                                                          not-empty))
+
+              :else acc))
+          {:git.worktree/branch-ref nil
+           :git.worktree/branch-name nil
+           :git.worktree/detached? false
+           :git.worktree/bare? false
+           :git.worktree/locked? false
+           :git.worktree/prunable? false
+           :git.worktree/prunable-reason nil
+           :git.worktree/lock-reason nil}
+          lines))
+
+(defn parse-worktree-porcelain
+  "Parse `git worktree list --porcelain` output into worktree maps."
+  [s]
+  (if (str/blank? s)
+    []
+    (->> (str/split s #"\n\s*\n")
+         (map str/split-lines)
+         (map parse-worktree-block)
+         (filter :git.worktree/path)
+         vec)))
+
+(defn inside-repo?
+  "Return true when `ctx` points inside a git worktree/repository."
+  [ctx]
+  (try
+    (= "true" (run-git ctx ["rev-parse" "--is-inside-work-tree"]))
+    (catch Exception _ false)))
+
+(defn worktree-list
+  "Return vector of worktree maps for `ctx`.
+
+   Each map includes:
+     :git.worktree/path
+     :git.worktree/head
+     :git.worktree/branch-ref
+     :git.worktree/branch-name
+     :git.worktree/detached?
+     :git.worktree/bare?
+     :git.worktree/locked?
+     :git.worktree/prunable?
+     :git.worktree/prunable-reason
+     :git.worktree/lock-reason
+     :git.worktree/current?"
+  [ctx]
+  (if-not (inside-repo? ctx)
+    []
+    (try
+      (let [out       (run-git ctx ["worktree" "list" "--porcelain"])
+            parsed    (parse-worktree-porcelain out)
+            current   (select-containing-worktree (:repo-dir ctx) parsed)
+            current-p (some-> current :git.worktree/path canonical-path)]
+        (mapv (fn [wt]
+                (assoc wt :git.worktree/current?
+                       (= (canonical-path (:git.worktree/path wt)) current-p)))
+              parsed))
+      (catch Exception _ []))))
+
+(defn current-worktree
+  "Return the current worktree map for `ctx`, or nil when unavailable."
+  [ctx]
+  (first (filter :git.worktree/current? (worktree-list ctx))))
 
 ;;; Public API — all take a GitContext as first arg
 

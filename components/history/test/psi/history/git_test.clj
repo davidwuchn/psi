@@ -6,7 +6,11 @@
   (:require
    [clojure.test :refer [deftest testing is]]
    [clojure.string :as str]
-   [psi.history.git :as git]))
+   [psi.history.git :as git])
+  (:import
+   (java.io File)
+   (java.nio.file Files)
+   (java.nio.file.attribute FileAttribute)))
 
 ;;; Shared null context fixture (per test via let — each test gets its own)
 
@@ -135,14 +139,70 @@
     (testing "no match is nil or empty"
       (is (or (nil? results) (empty? results))))))
 
+;;; worktree parsing + listing
+
+(deftest parse-worktree-porcelain-empty
+  (is (= [] (git/parse-worktree-porcelain ""))))
+
+(deftest parse-worktree-porcelain-linked-and-detached
+  (let [porcelain (str "worktree /repo/main\n"
+                       "HEAD 1111111111111111111111111111111111111111\n"
+                       "branch refs/heads/master\n\n"
+                       "worktree /repo/wt-1\n"
+                       "HEAD 2222222222222222222222222222222222222222\n"
+                       "branch refs/heads/feature-x\n\n"
+                       "worktree /repo/wt-detached\n"
+                       "HEAD 3333333333333333333333333333333333333333\n"
+                       "detached\n")
+        worktrees (git/parse-worktree-porcelain porcelain)]
+    (is (= 3 (count worktrees)))
+    (is (= "master" (get-in worktrees [0 :git.worktree/branch-name])))
+    (is (= "feature-x" (get-in worktrees [1 :git.worktree/branch-name])))
+    (is (true? (get-in worktrees [2 :git.worktree/detached?])))))
+
+(deftest inside-repo-detects-null-context
+  (let [ctx (git/create-null-context seed-commits)]
+    (is (true? (git/inside-repo? ctx)))))
+
+(deftest worktree-list-includes-current-on-null-context
+  (let [ctx       (git/create-null-context seed-commits)
+        worktrees (git/worktree-list ctx)
+        current   (git/current-worktree ctx)]
+    (is (seq worktrees))
+    (is (map? current))
+    (is (true? (:git.worktree/current? current)))
+    (is (some :git.worktree/current? worktrees))))
+
+(deftest worktree-list-outside-repo-is-empty
+  (let [tmp (str (Files/createTempDirectory "psi-no-git-"
+                                            (make-array FileAttribute 0)))
+        ctx (git/create-context tmp)]
+    (is (false? (git/inside-repo? ctx)))
+    (is (= [] (git/worktree-list ctx)))
+    (is (nil? (git/current-worktree ctx)))))
+
+(deftest worktree-list-marks-nested-cwd-as-current
+  (let [ctx         (git/create-null-context seed-commits)
+        root        (:repo-dir ctx)
+        nested      (str root File/separator "src")
+        _           (.mkdirs (File. nested))
+        nested-ctx  (git/create-context nested)
+        worktrees   (git/worktree-list nested-ctx)
+        current     (git/current-worktree nested-ctx)]
+    (is (seq worktrees))
+    (is (map? current))
+    (is (true? (:git.worktree/current? current)))
+    (is (= (.getCanonicalPath (File. root))
+           (.getCanonicalPath (File. (:git.worktree/path current)))))))
+
 ;;; context isolation
 
 (deftest two-null-contexts-are-independent
   ;; each null context is a separate temp repo — no shared state
   (let [ctx-a (git/create-null-context [{:message "only in A"
-                                          :files   {"a.txt" "a\n"}}])
+                                         :files   {"a.txt" "a\n"}}])
         ctx-b (git/create-null-context [{:message "only in B"
-                                          :files   {"b.txt" "b\n"}}])]
+                                         :files   {"b.txt" "b\n"}}])]
     (testing "ctx-a has its commit"
       (is (str/includes?
            (:git.commit/subject (first (git/log ctx-a {})))

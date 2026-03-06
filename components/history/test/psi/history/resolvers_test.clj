@@ -198,8 +198,42 @@
     (testing "ctx-b is still empty"
       (is (zero? (:resolver-count (query/graph-summary-in ctx-b)))))))
 
+;;; git-worktree resolvers
+
+(deftest worktree-resolvers-inside-repo
+  (let [git-ctx   (make-git-ctx)
+        query-ctx (make-query-ctx)
+        result    (query/query-in query-ctx
+                                  {:git/context git-ctx}
+                                  [:git.worktree/list
+                                   :git.worktree/current
+                                   :git.worktree/count
+                                   :git.worktree/inside-repo?])]
+    (is (true? (:git.worktree/inside-repo? result)))
+    (is (vector? (:git.worktree/list result)))
+    (is (map? (:git.worktree/current result)))
+    (is (= (count (:git.worktree/list result))
+           (:git.worktree/count result)))))
+
+(deftest worktree-resolvers-outside-repo
+  (let [tmp       (str (java.nio.file.Files/createTempDirectory
+                        "psi-history-no-git-"
+                        (make-array java.nio.file.attribute.FileAttribute 0)))
+        git-ctx    (git/create-context tmp)
+        query-ctx  (make-query-ctx)
+        result     (query/query-in query-ctx
+                                   {:git/context git-ctx}
+                                   [:git.worktree/list
+                                    :git.worktree/current
+                                    :git.worktree/count
+                                    :git.worktree/inside-repo?])]
+    (is (false? (:git.worktree/inside-repo? result)))
+    (is (= [] (:git.worktree/list result)))
+    (is (nil? (:git.worktree/current result)))
+    (is (= 0 (:git.worktree/count result)))))
+
 ;;; Resolver count sanity
 
 (deftest all-resolvers-registered
   (testing "all-resolvers count"
-    (is (= 7 (count resolvers/all-resolvers)))))
+    (is (= 11 (count resolvers/all-resolvers)))))

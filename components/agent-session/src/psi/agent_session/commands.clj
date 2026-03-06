@@ -42,6 +42,7 @@
                              :psi.agent-session/context-tokens
                              :psi.agent-session/context-window
                              :psi.agent-session/context-fraction
+                             :psi.agent-session/git-worktree-current
                              :psi.graph/root-seeds])]
     (str "── Session status ─────────────────────\n"
          "  Phase   : " (:psi.agent-session/phase d) "\n"
@@ -50,6 +51,8 @@
          "  Entries : " (:psi.agent-session/session-entry-count d)
          (when-let [frac (:psi.agent-session/context-fraction d)]
            (str "\n  Context : " (int (* 100 frac)) "%"))
+         (when-let [wt-path (get-in d [:psi.agent-session/git-worktree-current :git.worktree/path])]
+           (str "\n  Worktree: " wt-path))
          (when-let [root-seeds (:psi.graph/root-seeds d)]
            (str "\n  Roots   : " (str/join ", " (map name root-seeds))))
          "\n───────────────────────────────────────")))
@@ -92,6 +95,7 @@
          "  /model [provider model-id] — show current model or set model\n"
          "  /thinking [level] — show current thinking level or set level\n"
          "  /remember [text] — capture a memory note for future ψ\n"
+         "  /worktree — show git worktree context\n"
          "  /help    — show this help\n"
          "  /skill:name — invoke a skill (loads full content)"
          (when (seq templates)
@@ -152,6 +156,49 @@
                                  " [" (name (:source s)) "]"))
                           loaded-skills)))
          "\n───────────────────────────────────────")))
+
+(defn format-worktree
+  "Return a deterministic git worktree status string for the session cwd." 
+  [ctx]
+  (let [d (session/query-in ctx
+                            [:psi.agent-session/cwd
+                             :psi.agent-session/git-branch
+                             :git.worktree/inside-repo?
+                             :git.worktree/list
+                             :git.worktree/current
+                             :git.worktree/count])
+        inside?   (boolean (:git.worktree/inside-repo? d))
+        cwd       (:psi.agent-session/cwd d)
+        branch    (:psi.agent-session/git-branch d)
+        current   (:git.worktree/current d)
+        worktrees (vec (or (:git.worktree/list d) []))
+        count*    (or (:git.worktree/count d) (count worktrees))]
+    (if-not inside?
+      (str "── Git worktrees ─────────────────────\n"
+           "  cwd      : " cwd "\n"
+           "  inside   : false\n"
+           "  worktrees: 0\n"
+           "───────────────────────────────────────")
+      (str "── Git worktrees ─────────────────────\n"
+           "  cwd      : " cwd "\n"
+           "  branch   : " (or branch "(none)") "\n"
+           "  current  : " (or (:git.worktree/path current) "(unknown)") "\n"
+           "  worktrees: " count* "\n"
+           (when (seq worktrees)
+             (str "\n"
+                  (str/join "\n"
+                            (map (fn [wt]
+                                   (let [cur?    (:git.worktree/current? wt)
+                                         det?    (:git.worktree/detached? wt)
+                                         path    (:git.worktree/path wt)
+                                         bname   (:git.worktree/branch-name wt)
+                                         marker  (if cur? "*" "-")
+                                         branch* (if det?
+                                                   "detached"
+                                                   (or bname "(no-branch)"))]
+                                     (str "  " marker " " path " [" branch* "]")))
+                                 worktrees))))
+           "\n───────────────────────────────────────"))))
 
 ;; ============================================================
 ;; Provider env var hint (for login error messages)
@@ -319,6 +366,10 @@
       ;; Skills
       (= trimmed "/skills")
       {:type :text :message (format-skills ctx)}
+
+      ;; Worktree
+      (= trimmed "/worktree")
+      {:type :text :message (format-worktree ctx)}
 
       ;; Remember
       (or (= trimmed "/remember")

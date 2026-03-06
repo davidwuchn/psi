@@ -1267,6 +1267,17 @@
     {:git/context (git/create-context cwd)}
     {}))
 
+(pco/defresolver agent-session-git-worktrees
+  "Bridge git worktree attrs into agent-session namespace for stable session-root queries."
+  [{:keys [git.worktree/list git.worktree/current git.worktree/count]}]
+  {::pco/input  [:git.worktree/list :git.worktree/current :git.worktree/count]
+   ::pco/output [:psi.agent-session/git-worktrees
+                 :psi.agent-session/git-worktree-current
+                 :psi.agent-session/git-worktree-count]}
+  {:psi.agent-session/git-worktrees       (vec (or list []))
+   :psi.agent-session/git-worktree-current current
+   :psi.agent-session/git-worktree-count  (or count (count (or list [])))} )
+
 (pco/defresolver agent-session-usage-input
   "Resolve cumulative input tokens across assistant messages in the session journal."
   [{:keys [psi/agent-session-ctx]}]
@@ -1452,6 +1463,7 @@
    agent-session-cwd
    agent-session-git-branch
    agent-session-git-context
+   agent-session-git-worktrees
    agent-session-usage-input
    agent-session-usage-output
    agent-session-usage-cache-read

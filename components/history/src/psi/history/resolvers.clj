@@ -109,6 +109,38 @@
    ::pco/output [:git.repo/learning-commits]}
   {:git.repo/learning-commits (vec (git/log context {:grep "λ"}))})
 
+;;; Git worktree resolvers
+
+(pco/defresolver git-worktree-list
+  "Resolve :git.worktree/list for the current git context.
+   Returns [] outside git repositories or on parse failure."
+  [{:keys [git/context]}]
+  {::pco/input  [:git/context]
+   ::pco/output [:git.worktree/list]}
+  {:git.worktree/list (vec (git/worktree-list context))})
+
+(pco/defresolver git-worktree-current
+  "Resolve :git.worktree/current for the current git context.
+   Returns nil outside git repositories or when no current worktree found."
+  [{:keys [git/context]}]
+  {::pco/input  [:git/context]
+   ::pco/output [:git.worktree/current]}
+  {:git.worktree/current (git/current-worktree context)})
+
+(pco/defresolver git-worktree-count
+  "Resolve :git.worktree/count as count of :git.worktree/list."
+  [{:keys [git.worktree/list]}]
+  {::pco/input  [:git.worktree/list]
+   ::pco/output [:git.worktree/count]}
+  {:git.worktree/count (count list)})
+
+(pco/defresolver git-worktree-inside-repo
+  "Resolve :git.worktree/inside-repo? for the current git context."
+  [{:keys [git/context]}]
+  {::pco/input  [:git/context]
+   ::pco/output [:git.worktree/inside-repo?]}
+  {:git.worktree/inside-repo? (boolean (git/inside-repo? context))})
+
 ;;; All resolvers
 
 (def all-resolvers
@@ -118,4 +150,8 @@
    git-commit-detail
    git-commit-derived
    git-grep
-   git-learning-commits])
+   git-learning-commits
+   git-worktree-list
+   git-worktree-current
+   git-worktree-count
+   git-worktree-inside-repo])

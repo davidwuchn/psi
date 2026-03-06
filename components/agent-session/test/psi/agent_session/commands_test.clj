@@ -116,6 +116,13 @@
     (is (= :text (:type result)))
     (is (str/includes? (:message result) "Skills"))))
 
+(deftest dispatch-worktree-test
+  (let [ctx    (make-test-ctx)
+        result (commands/dispatch ctx "/worktree" cmd-opts)]
+    (is (= :text (:type result)))
+    (is (str/includes? (:message result) "Git worktrees"))
+    (is (str/includes? (:message result) "worktrees:"))))
+
 (deftest dispatch-model-no-arg-test
   (let [ctx    (make-test-ctx)
         result (commands/dispatch ctx "/model" cmd-opts)]
@@ -287,7 +294,15 @@
     (is (str/includes? s "Phase"))
     (is (str/includes? s "idle"))
     (is (str/includes? s "Roots"))
+    (is (str/includes? s "Worktree"))
     (is (str/includes? s "agent-session-ctx"))))
+
+(deftest format-worktree-test
+  (let [ctx (make-test-ctx)
+        s   (commands/format-worktree ctx)]
+    (is (str/includes? s "Git worktrees"))
+    (is (str/includes? s "cwd"))
+    (is (str/includes? s "worktrees:"))))
 
 (deftest format-history-empty-test
   (let [ctx (make-test-ctx)
@@ -306,7 +321,7 @@
   (let [ctx (make-test-ctx)
         s   (commands/format-help ctx)]
     (doseq [cmd ["/quit" "/status" "/history" "/new" "/resume"
-                 "/login" "/logout" "/remember" "/help" "/prompts" "/skills"]]
+                 "/login" "/logout" "/remember" "/worktree" "/help" "/prompts" "/skills"]]
       (is (str/includes? s cmd) (str "help should mention " cmd)))))
 
 (deftest format-prompts-none-test

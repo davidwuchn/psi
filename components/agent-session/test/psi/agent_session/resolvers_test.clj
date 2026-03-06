@@ -128,6 +128,28 @@
         (is (string? (:git.commit/sha (first commits))))
         (is (string? (:git.commit/subject (first commits))))))))
 
+(deftest git-worktree-query-test
+  (testing "git.worktree attrs are queryable from session root via git-context bridge"
+    (let [result (q [:git.worktree/inside-repo?
+                     :git.worktree/list
+                     :git.worktree/current
+                     :git.worktree/count])]
+      (is (boolean? (:git.worktree/inside-repo? result)))
+      (is (vector? (:git.worktree/list result)))
+      (is (integer? (:git.worktree/count result)))
+      (when (:git.worktree/inside-repo? result)
+        (is (map? (:git.worktree/current result)))))))
+
+(deftest session-git-worktree-bridge-query-test
+  (testing "session bridge exposes namespaced git worktree attrs"
+    (let [result (q [:psi.agent-session/git-worktrees
+                     :psi.agent-session/git-worktree-current
+                     :psi.agent-session/git-worktree-count])]
+      (is (vector? (:psi.agent-session/git-worktrees result)))
+      (is (integer? (:psi.agent-session/git-worktree-count result)))
+      (when (pos? (:psi.agent-session/git-worktree-count result))
+        (is (map? (:psi.agent-session/git-worktree-current result)))))))
+
 ;; ── Step 7 graph bridge — :psi.graph/* ───────────────────
 
 (deftest graph-bridge-resolver-count-test
