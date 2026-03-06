@@ -616,6 +616,27 @@
                                    :content-index 0
                                    :delta delta}))
 
+                    "response.reasoning_text.delta"
+                    (when-let [delta (:delta event)]
+                      (emit-start!)
+                      (consume-fn {:type :thinking-delta
+                                   :content-index 0
+                                   :delta delta}))
+
+                    "response.reasoning_summary.delta"
+                    (when-let [delta (:delta event)]
+                      (emit-start!)
+                      (consume-fn {:type :thinking-delta
+                                   :content-index 0
+                                   :delta delta}))
+
+                    "response.reasoning.delta"
+                    (when-let [delta (:delta event)]
+                      (emit-start!)
+                      (consume-fn {:type :thinking-delta
+                                   :content-index 0
+                                   :delta delta}))
+
                     "response.completed"
                     (do (emit-start!)
                         (emit-done! event))

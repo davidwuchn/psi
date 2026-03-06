@@ -94,6 +94,35 @@
       (is (re-find #"chatgpt_account_id"
                    (:error-message (first @events)))))))
 
+(deftest codex-reasoning-text-delta-maps-to-thinking-delta-test
+  (testing "response.reasoning_text.delta is bridged as :thinking-delta"
+    (let [model    (models/get-model :gpt-5.3-codex)
+          token    (jwt-with-account-id "acc_test")
+          convo    (-> (conv/create "You are a helpful assistant")
+                       (conv/add-user-message "Think then answer"))
+          events   (atom [])
+          sse      (str
+                    "data: " (json/generate-string
+                               {:type "response.output_item.added"
+                                :item {:type "reasoning" :id "rs_1"}}) "\n\n"
+                    "data: " (json/generate-string
+                               {:type "response.reasoning_text.delta"
+                                :delta "Plan step"}) "\n\n"
+                    "data: " (json/generate-string
+                               {:type "response.completed"
+                                :response {:status "completed"}}) "\n\n")]
+      (with-redefs [http/post (fn [_url _req]
+                                {:body (stream-body sse)})]
+        ((:stream openai/provider)
+         convo model {:api-key token}
+         (fn [ev] (swap! events conj ev))))
+
+      (is (some #(= :start (:type %)) @events))
+      (is (some #(and (= :thinking-delta (:type %))
+                      (= "Plan step" (:delta %)))
+                @events))
+      (is (some #(= :done (:type %)) @events)))))
+
 (deftest codex-tool-call-id-roundtrip-test
   (testing "tool call ids split into call_id + item id (not single-char prefixes)"
     (let [call-id "call_abc123"
