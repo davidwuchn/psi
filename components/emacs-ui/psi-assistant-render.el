@@ -239,13 +239,15 @@ Also tolerates snapshot updates that differ near the previous tail
       (psi-emacs--set-assistant-line next t))))
 
 (defun psi-emacs--assistant-thinking-delta (text)
-  "Apply assistant thinking delta TEXT to the in-progress thinking block."
+  "Apply assistant thinking delta TEXT to the in-progress thinking block.
+
+Thinking deltas are always incremental (never cumulative snapshots),
+so we append directly without the snapshot-merge heuristic."
   (when psi-emacs--state
     (psi-emacs--set-run-state psi-emacs--state 'streaming)
     (psi-emacs--reset-stream-watchdog psi-emacs--state)
-    (let ((next (psi-emacs--merge-assistant-stream-text
-                 (psi-emacs-state-thinking-in-progress psi-emacs--state)
-                 text)))
+    (let ((next (concat (or (psi-emacs-state-thinking-in-progress psi-emacs--state) "")
+                        (or text ""))))
       (setf (psi-emacs-state-thinking-in-progress psi-emacs--state) next)
       (psi-emacs--set-thinking-line next))))
 

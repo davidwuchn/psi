@@ -72,9 +72,31 @@
             acc))
         [])))
 
+(def ^:private thinking-level->budget
+  "Map thinking-level keyword to Anthropic extended-thinking budget_tokens.
+   nil means thinking is disabled."
+  {:off     nil
+   :minimal 1024
+   :low     2048
+   :medium  8000
+   :high    16000
+   :xhigh   32000})
+
+(defn- thinking-param
+  "Return the Anthropic `thinking` request param map for OPTIONS, or nil when disabled."
+  [model options]
+  (when (:supports-reasoning model)
+    (let [level  (:thinking-level options)
+          budget (get thinking-level->budget level)]
+      (when budget
+        {:type          "enabled"
+         :budget_tokens budget}))))
+
 (defn build-request
   "Build Anthropic API request map.
-   Includes tools from conversation when present."
+   Includes tools from conversation when present.
+   When the model supports reasoning and thinking-level is set (non-:off),
+   adds the extended-thinking param and the required interleaved-thinking beta header."
   [conversation model options]
   (let [tool-defs (when (seq (:tools conversation))
                     (mapv (fn [t]
@@ -82,24 +104,37 @@
                              :description  (:description t)
                              :input_schema (:parameters t)})
                           (:tools conversation)))
+        thinking  (thinking-param model options)
         api-key   (or (:api-key options) (System/getenv "ANTHROPIC_API_KEY"))
         oauth?    (and api-key (str/includes? api-key "sk-ant-oat"))
-        headers   (if oauth?
-                    {"Content-Type"      "application/json"
-                     "Authorization"     (str "Bearer " api-key)
-                     "anthropic-version" "2023-06-01"
-                     "anthropic-beta"    "claude-code-20250219,oauth-2025-04-20"}
-                    {"Content-Type"      "application/json"
-                     "x-api-key"         api-key
-                     "anthropic-version" "2023-06-01"})]
+        base-beta (if oauth?
+                    "claude-code-20250219,oauth-2025-04-20"
+                    nil)
+        beta      (cond
+                    (and thinking base-beta)
+                    (str base-beta ",interleaved-thinking-2025-05-14")
+                    thinking
+                    "interleaved-thinking-2025-05-14"
+                    :else
+                    base-beta)
+        headers   (cond-> (if oauth?
+                            {"Content-Type"      "application/json"
+                             "Authorization"     (str "Bearer " api-key)
+                             "anthropic-version" "2023-06-01"}
+                            {"Content-Type"      "application/json"
+                             "x-api-key"         api-key
+                             "anthropic-version" "2023-06-01"})
+                    beta (assoc "anthropic-beta" beta))]
     {:headers headers
      :body    (json/generate-string
-               (cond-> {:model       (:id model)
-                        :max_tokens  (or (:max-tokens options) (:max-tokens model))
-                        :temperature (or (:temperature options) 0.7)
-                        :system      (:system-prompt conversation)
-                        :messages    (transform-messages conversation)
-                        :stream      true}
+               (cond-> {:model      (:id model)
+                        :max_tokens (or (:max-tokens options) (:max-tokens model))
+                        :system     (:system-prompt conversation)
+                        :messages   (transform-messages conversation)
+                        :stream     true}
+                 ;; temperature is incompatible with extended thinking
+                 (not thinking) (assoc :temperature (or (:temperature options) 0.7))
+                 thinking       (assoc :thinking thinking)
                  (seq tool-defs) (assoc :tools tool-defs)))}))
 
 (defn parse-sse-line
@@ -119,18 +154,20 @@
 
    Event types emitted:
      {:type :start}
-     {:type :text-start    :content-index n}
-     {:type :text-delta    :content-index n  :delta \"...\"}
-     {:type :text-end      :content-index n}
-     {:type :toolcall-start :content-index n :id \"toolu_...\" :name \"tool-name\"}
-     {:type :toolcall-delta :content-index n :delta \"partial-json\"}
-     {:type :toolcall-end   :content-index n}
-     {:type :done          :reason kw  :usage {...}}
-     {:type :error         :error-message \"...\"}
+     {:type :text-start      :content-index n}
+     {:type :text-delta      :content-index n  :delta \"...\"}
+     {:type :text-end        :content-index n}
+     {:type :thinking-delta  :content-index n  :delta \"...\"}
+     {:type :toolcall-start  :content-index n :id \"toolu_...\" :name \"tool-name\"}
+     {:type :toolcall-delta  :content-index n :delta \"partial-json\"}
+     {:type :toolcall-end    :content-index n}
+     {:type :done            :reason kw  :usage {...}}
+     {:type :error           :error-message \"...\"}
    "
   [conversation model options consume-fn]
   (let [request (build-request conversation model options)
         ;; Track content block types by index to route deltas correctly
+        ;; Values: \"text\" | \"thinking\" | \"tool_use\"
         block-types (atom {})
         done?       (atom false)]
     (try
@@ -148,11 +185,13 @@
                       block (:content_block event-data)
                       btype (:type block)]
                   (swap! block-types assoc idx btype)
-                  (if (= "tool_use" btype)
+                  (case btype
+                    "tool_use"
                     (consume-fn {:type          :toolcall-start
                                  :content-index idx
                                  :id            (:id block)
                                  :name          (:name block)})
+                    ;; thinking and text both get a text-start marker
                     (consume-fn {:type          :text-start
                                  :content-index idx})))
 
@@ -160,11 +199,19 @@
                 (let [idx   (:index event-data)
                       btype (get @block-types idx)
                       delta (:delta event-data)]
-                  (if (= "tool_use" btype)
+                  (case btype
+                    "tool_use"
                     (when-let [json-delta (:partial_json delta)]
                       (consume-fn {:type          :toolcall-delta
                                    :content-index idx
                                    :delta         json-delta}))
+                    "thinking"
+                    ;; Anthropic sends delta.type="thinking_delta", delta.thinking=<str>
+                    (when-let [text (or (:thinking delta) (:text delta))]
+                      (consume-fn {:type          :thinking-delta
+                                   :content-index idx
+                                   :delta         text}))
+                    ;; "text" and any unknown block type
                     (when-let [text (:text delta)]
                       (consume-fn {:type          :text-delta
                                    :content-index idx
