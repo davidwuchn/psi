@@ -4,6 +4,28 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-07 - Agent-chain run progress should heartbeat independently of step transitions
+
+### λ Long-running workflow waits need heartbeat updates, not change-only updates
+
+When `run_chain` waits on extension workflow completion, purely change-driven tool
+updates can go silent during long steps. Emitting throttled heartbeat progress
+updates (time-based) keeps frontend tool output alive and prevents "stalled"
+perception even when the active step has not changed.
+
+### λ Run-state tracking should be first-class extension state for UI projection
+
+Maintaining explicit per-run tracked state (`phase`, `step-index`, `step-agent`,
+`elapsed-ms`, `last-work`) enables deterministic status projection to both tool
+updates and extension widgets, instead of reconstructing status ad hoc from
+workflow snapshots.
+
+### λ Widget projection should refresh on lifecycle boundaries, not only on run completion
+
+For extension UI parity, widget refresh needs to occur on init/reload/session-switch
+as well as run updates. Deterministic refresh hooks prevent stale "active runs"
+views when chain definitions or sessions change.
+
 ## 2026-03-07 - Emacs project startup command: prefix semantics should be explicit and test-anchored
 
 ### λ `C-u` and `C-u N` need distinct buffer lifecycle semantics
