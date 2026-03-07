@@ -30,6 +30,7 @@
    [psi.agent-core.core :as agent]
    [psi.agent-session.executor :as executor]
    [psi.agent-session.tools :as tools]
+   [psi.ai.models :as models]
    [taoensso.timbre :as timbre]))
 
 ;;; State — module-level atom, initialized in `init`
@@ -176,6 +177,27 @@
   (str "[chain:" (:name chain) "] "
        (if success? "done" "error")
        " in " (quot (or elapsed-ms 0) 1000) "s"))
+
+(defn- emit-chain-result!
+  [{:keys [run-id chain-name ok? elapsed-ms output]}]
+  (let [seconds  (quot (or elapsed-ms 0) 1000)
+        heading  (str "Chain run " run-id " (" chain-name ") "
+                      (if ok? "finished" "failed")
+                      " in " seconds "s")
+        full     (str heading "\n\nResult:\n"
+                      (if (> (count (or output "")) 8000)
+                        (str (subs output 0 8000) "\n\n... [truncated]")
+                        (or output "")))]
+    (when-let [mf (:mutate-fn @state)]
+      (try
+        (mf 'psi.extension/send-message
+            {:role        "assistant"
+             :content     full
+             :custom-type "chain-result"})
+        (catch Exception _ nil)))
+    (println "\n[chain-result]" heading "\n")
+    (when (seq output)
+      (println (task-preview output 800)))))
 
 (defn- now-ms []
   (System/currentTimeMillis))
@@ -407,8 +429,8 @@
           {:output  text
            :success true
            :elapsed elapsed}))
-      (catch Exception e
-        {:output  (str "Error: " (ex-message e))
+      (catch Throwable t
+        {:output  (str "Error: " (or (ex-message t) (.getMessage t) (str t)))
          :success false
          :elapsed (- (System/currentTimeMillis) start-time)}))))
 
@@ -495,6 +517,20 @@
         steps           (:steps chain)
         step-count      (count steps)
         get-api-key-fn  (:get-api-key-fn @state)
+        ai-model*       (or (when ai-model
+                              (some (fn [m]
+                                      (when (and (= (:provider m) (:provider ai-model))
+                                                 (= (:id m) (:id ai-model)))
+                                        m))
+                                    (vals models/all-models)))
+                            (when-let [qf (:query-fn @state)]
+                              (let [m (:psi.agent-session/model (qf [:psi.agent-session/model]))]
+                                (some (fn [mm]
+                                        (when (and (= (:provider mm) (:provider m))
+                                                   (= (:id mm) (:id m)))
+                                          mm))
+                                      (vals models/all-models))))
+                            (get models/all-models :sonnet-4.6))
         on-step         (fn [idx status elapsed last-work]
                           (let [step-agent (:agent (nth steps idx nil))
                                 elapsed*   (- (now-ms) started-ms)]
@@ -532,7 +568,7 @@
                            :elapsed-ms 0
                            :started-ms started-ms})))
     (try
-      (let [result  (run-chain! chain agents agent-sessions ai-model task on-step get-api-key-fn)
+      (let [result  (run-chain! chain agents agent-sessions ai-model* task on-step get-api-key-fn)
             success (:success result)
             summary (chain-summary chain success (:elapsed result))]
         (upsert-run! run-id*
@@ -570,7 +606,14 @@
 
 (defn- done-script
   [_ data]
-  (let [ev (get-in data [:_event :data])]
+  (let [ev          (get-in data [:_event :data])
+        on-finished (:chain/on-finished data)]
+    (when (fn? on-finished)
+      (on-finished {:run-id     (:chain/run-id data)
+                    :chain-name (get-in data [:chain/config :name])
+                    :ok?        true
+                    :elapsed-ms (long (or (:elapsed-ms ev) 0))
+                    :output     (:output ev)}))
     [{:op :assign
       :data {:workflow/error-message nil
              :workflow/result (:output ev)
@@ -582,8 +625,15 @@
 
 (defn- error-script
   [_ data]
-  (let [ev  (get-in data [:_event :data])
-        msg (or (:error-message ev) (:output ev) "Unknown error")]
+  (let [ev          (get-in data [:_event :data])
+        msg         (or (:error-message ev) (:output ev) "Unknown error")
+        on-finished (:chain/on-finished data)]
+    (when (fn? on-finished)
+      (on-finished {:run-id     (:chain/run-id data)
+                    :chain-name (get-in data [:chain/config :name])
+                    :ok?        false
+                    :elapsed-ms (long (or (:elapsed-ms ev) 0))
+                    :output     (or (:output ev) msg)}))
     [{:op :assign
       :data {:workflow/error-message msg
              :workflow/result (:output ev)
@@ -617,6 +667,10 @@
 
 (defn- register-chain-workflow-type! []
   (let [agent-sessions (:agent-sessions @state)
+        on-finished    (fn [result]
+                         (future
+                           (Thread/sleep 30)
+                           (emit-chain-result! result)))
         r (mutate! 'psi.extension.workflow/register-type
                    {:type            chain-workflow-type
                     :description     "Execute an agent chain run."
@@ -628,7 +682,8 @@
                                         :chain/task           (:task input)
                                         :chain/model          (:model input)
                                         :chain/all-agents     (:agents input)
-                                        :chain/agent-sessions agent-sessions})
+                                        :chain/agent-sessions agent-sessions
+                                        :chain/on-finished    on-finished})
                     :public-data-fn  (fn [data]
                                        (select-keys data
                                                     [:chain/summary

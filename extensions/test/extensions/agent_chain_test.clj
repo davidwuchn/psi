@@ -3,7 +3,10 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
+   [com.fulcrologic.statecharts.chart :as chart]
+   [com.fulcrologic.statecharts.elements :as ele]
    [extensions.agent-chain :as sut]
+   [psi.agent-session.workflows :as wf]
    [psi.extension-test-helpers.nullable-api :as nullable :refer [with-user-dir]]))
 
 (defn- temp-dir
@@ -17,6 +20,27 @@
   (let [f (io/file tmp ".psi" "agents" "agent-chain.edn")]
     (io/make-parents f)
     (spit f (pr-str chains))))
+
+(def invoke-chart
+  (chart/statechart {:id :invoke-workflow}
+    (ele/state {:id :idle}
+      (ele/transition {:event :workflow/start :target :running}))
+
+    (ele/state {:id :running}
+      (ele/invoke
+       {:id     :job
+        :type   :future
+        :params (fn [_ data] {:value (:value data)})
+        :src    (fn [{:keys [value]}]
+                  (Thread/sleep 40)
+                  {:value value})})
+      (ele/transition {:event :done.invoke.job :target :done}
+        (ele/script
+         {:expr (fn [_ data]
+                  [{:op :assign
+                    :data {:result (get-in data [:_event :data :value])}}])})))
+
+    (ele/final {:id :done})))
 
 (deftest init-registers-surface-test
   (testing "agent chain registers workflow type, tool, commands, and session handler"
@@ -152,3 +176,32 @@
               (is (empty? (:workflows @state))))))
         (finally
           (.delete tmp))))))
+
+(deftest workflow-runtime-future-invoke-smoke-test
+  (testing "workflow runtime handles :future invoke completion"
+    (let [reg (wf/create-registry)]
+      (try
+        (is (true?
+             (:registered?
+              (wf/register-type-in!
+               reg
+               "/test/agent_chain.clj"
+               {:type :smoke
+                :chart invoke-chart
+                :initial-data-fn (fn [input] {:value (:value input)})}))))
+        (is (true?
+             (:created?
+              (wf/create-workflow-in!
+               reg
+               "/test/agent_chain.clj"
+               {:type :smoke :id "w1" :input {:value 9}}))))
+        (loop [i 0]
+          (let [w (wf/workflow-in reg "/test/agent_chain.clj" "w1")]
+            (if (or (>= i 200) (= :done (:phase w)))
+              (do
+                (is (= :done (:phase w)))
+                (is (= 9 (:result w))))
+              (do (Thread/sleep 10)
+                  (recur (inc i))))))
+        (finally
+          (wf/shutdown-in! reg))))))
