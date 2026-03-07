@@ -749,116 +749,120 @@
                                    :elapsed-ms (- (now-ms) started-ms))))
              {:content  msg
               :is-error true})
-           (let [last-heartbeat-ms (atom 0)
-                 last-progress-key (atom nil)
-                 emit-progress!
-                 (fn [wf now]
-                   (let [run       (or (run-by-id run-id)
-                                       {:run-id run-id
-                                        :chain-name (:name chain)
-                                        :phase (if wf (workflow-phase wf) :running)})
-                         wf-phase  (or (some-> wf workflow-phase) (:phase run) :running)
-                         run*      (if (= wf-phase (:phase run))
-                                     run
-                                     (assoc run :phase wf-phase))
-                         key*      [(:phase run*)
-                                    (:step-index run*)
-                                    (:step-agent run*)
-                                    (:last-work run*)
-                                    (:elapsed-ms run*)]
-                         heartbeat? (>= (- now @last-heartbeat-ms) tool-heartbeat-ms)]
-                     (when (or heartbeat?
-                               (not= key* @last-progress-key))
-                       (reset! last-heartbeat-ms now)
-                       (reset! last-progress-key key*)
-                       (emit-tool-update! on-update
-                                          (progress-line run*)
-                                          {:run-id run-id
-                                           :phase  (or (:phase run*) wf-phase)
-                                           :step-index (:step-index run*)
-                                           :step-count (:step-count run*)}
-                                          false))))
-                 {:keys [status workflow]}
-                 (wait-for-workflow!
-                  run-id
-                  (* 30 60 1000)
-                  {:poll-ms wait-poll-ms
-                   :on-poll emit-progress!})]
-             (case status
-               :done
-               (let [data      (:psi.extension.workflow/data workflow)
-                     output    (or (:psi.extension.workflow/result workflow)
-                                   (:chain/output data)
-                                   "")
-                     elapsed   (or (:psi.extension.workflow/elapsed-ms workflow)
+           (if-not (fn? on-update)
+             {:content  (str "Chain run started: " run-id
+                             " (" (:name chain) "). Monitor with /chain-list.")
+              :is-error false}
+             (let [last-heartbeat-ms (atom 0)
+                   last-progress-key (atom nil)
+                   emit-progress!
+                   (fn [wf now]
+                     (let [run       (or (run-by-id run-id)
+                                         {:run-id run-id
+                                          :chain-name (:name chain)
+                                          :phase (if wf (workflow-phase wf) :running)})
+                           wf-phase  (or (some-> wf workflow-phase) (:phase run) :running)
+                           run*      (if (= wf-phase (:phase run))
+                                       run
+                                       (assoc run :phase wf-phase))
+                           key*      [(:phase run*)
+                                      (:step-index run*)
+                                      (:step-agent run*)
+                                      (:last-work run*)
+                                      (:elapsed-ms run*)]
+                           heartbeat? (>= (- now @last-heartbeat-ms) tool-heartbeat-ms)]
+                       (when (or heartbeat?
+                                 (not= key* @last-progress-key))
+                         (reset! last-heartbeat-ms now)
+                         (reset! last-progress-key key*)
+                         (emit-tool-update! on-update
+                                            (progress-line run*)
+                                            {:run-id run-id
+                                             :phase  (or (:phase run*) wf-phase)
+                                             :step-index (:step-index run*)
+                                             :step-count (:step-count run*)}
+                                            false))))
+                   {:keys [status workflow]}
+                   (wait-for-workflow!
+                    run-id
+                    (* 30 60 1000)
+                    {:poll-ms wait-poll-ms
+                     :on-poll emit-progress!})]
+               (case status
+                 :done
+                 (let [data      (:psi.extension.workflow/data workflow)
+                       output    (or (:psi.extension.workflow/result workflow)
+                                     (:chain/output data)
+                                     "")
+                       elapsed   (or (:psi.extension.workflow/elapsed-ms workflow)
+                                     (:chain/elapsed-ms data)
+                                     0)
+                       summary   (or (:chain/summary data)
+                                     (chain-summary chain true elapsed))
+                       truncated (if (> (count output) 8000)
+                                   (str (subs output 0 8000) "\n\n... [truncated]")
+                                   output)]
+                   (upsert-run! run-id
+                                (fn [r]
+                                  (assoc r
+                                         :phase :done
+                                         :elapsed-ms (long elapsed)
+                                         :last-work summary)))
+                   (emit-tool-update! on-update summary {:run-id run-id :phase :done} false)
+                   (println (str "  " summary "\n"))
+                   {:content  (str summary "\n\n" truncated)
+                    :is-error false})
+
+                 :error
+                 (let [data    (:psi.extension.workflow/data workflow)
+                       elapsed (or (:psi.extension.workflow/elapsed-ms workflow)
                                    (:chain/elapsed-ms data)
                                    0)
-                     summary   (or (:chain/summary data)
-                                   (chain-summary chain true elapsed))
-                     truncated (if (> (count output) 8000)
-                                 (str (subs output 0 8000) "\n\n... [truncated]")
-                                 output)]
-                 (upsert-run! run-id
-                              (fn [r]
-                                (assoc r
-                                       :phase :done
-                                       :elapsed-ms (long elapsed)
-                                       :last-work summary)))
-                 (emit-tool-update! on-update summary {:run-id run-id :phase :done} false)
-                 (println (str "  " summary "\n"))
-                 {:content  (str summary "\n\n" truncated)
-                  :is-error false})
+                       summary (or (:chain/summary data)
+                                   (chain-summary chain false elapsed))
+                       msg     (or (:psi.extension.workflow/error-message workflow)
+                                   (:psi.extension.workflow/result workflow)
+                                   (:chain/output data)
+                                   "Unknown workflow error")]
+                   (upsert-run! run-id
+                                (fn [r]
+                                  (assoc r
+                                         :phase :error
+                                         :elapsed-ms (long elapsed)
+                                         :last-work msg)))
+                   (emit-tool-update! on-update msg {:run-id run-id :phase :error} true)
+                   (println (str "  " summary "\n"))
+                   {:content  (str summary "\n\n" msg)
+                    :is-error true})
 
-               :error
-               (let [data    (:psi.extension.workflow/data workflow)
-                     elapsed (or (:psi.extension.workflow/elapsed-ms workflow)
-                                 (:chain/elapsed-ms data)
-                                 0)
-                     summary (or (:chain/summary data)
-                                 (chain-summary chain false elapsed))
-                     msg     (or (:psi.extension.workflow/error-message workflow)
-                                 (:psi.extension.workflow/result workflow)
-                                 (:chain/output data)
-                                 "Unknown workflow error")]
-                 (upsert-run! run-id
-                              (fn [r]
-                                (assoc r
-                                       :phase :error
-                                       :elapsed-ms (long elapsed)
-                                       :last-work msg)))
-                 (emit-tool-update! on-update msg {:run-id run-id :phase :error} true)
-                 (println (str "  " summary "\n"))
-                 {:content  (str summary "\n\n" msg)
-                  :is-error true})
+                 :timeout
+                 (do
+                   (mutate! 'psi.extension.workflow/abort
+                            {:id run-id
+                             :reason "Timed out waiting for workflow completion"})
+                   (upsert-run! run-id
+                                (fn [r]
+                                  (assoc r
+                                         :phase :error
+                                         :elapsed-ms (- (now-ms) started-ms)
+                                         :last-work "Timed out waiting for workflow completion")))
+                   (emit-tool-update! on-update
+                                      (str "run_chain " run-id " timed out")
+                                      {:run-id run-id :phase :error}
+                                      true)
+                   {:content  (str "Chain run timed out: " run-id)
+                    :is-error true})
 
-               :timeout
-               (do
-                 (mutate! 'psi.extension.workflow/abort
-                          {:id run-id
-                           :reason "Timed out waiting for workflow completion"})
-                 (upsert-run! run-id
-                              (fn [r]
-                                (assoc r
-                                       :phase :error
-                                       :elapsed-ms (- (now-ms) started-ms)
-                                       :last-work "Timed out waiting for workflow completion")))
-                 (emit-tool-update! on-update
-                                    (str "run_chain " run-id " timed out")
-                                    {:run-id run-id :phase :error}
-                                    true)
-                 {:content  (str "Chain run timed out: " run-id)
-                  :is-error true})
-
-               (let [msg (str "Chain run status unknown: " run-id)]
-                 (upsert-run! run-id
-                              (fn [r]
-                                (assoc r
-                                       :phase :error
-                                       :elapsed-ms (- (now-ms) started-ms)
-                                       :last-work msg)))
-                 (emit-tool-update! on-update msg {:run-id run-id :phase :error} true)
-                 {:content  msg
-                  :is-error true})))))))))
+                 (let [msg (str "Chain run status unknown: " run-id)]
+                   (upsert-run! run-id
+                                (fn [r]
+                                  (assoc r
+                                         :phase :error
+                                         :elapsed-ms (- (now-ms) started-ms)
+                                         :last-work msg)))
+                   (emit-tool-update! on-update msg {:run-id run-id :phase :error} true)
+                   {:content  msg
+                    :is-error true}))))))))))
 
 ;;; Extension init
 

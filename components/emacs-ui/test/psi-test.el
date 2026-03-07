@@ -1549,6 +1549,27 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
+(ert-deftest psi-thinking-streaming-tool-event-clears-stale-thinking-text-when-range-missing ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (progn
+          ;; Simulate stale state where thinking text remains but live marker range was lost.
+          (setf (psi-emacs-state-thinking-in-progress psi-emacs--state) "plan-1")
+          (setf (psi-emacs-state-thinking-range psi-emacs--state) nil)
+          (psi-emacs--handle-rpc-event
+           '((:event . "tool/start") (:data . ((:tool-id . "t-break") (:text . "start")))))
+          (should-not (psi-emacs-state-thinking-in-progress psi-emacs--state))
+          (should-not (psi-emacs-state-thinking-range psi-emacs--state))
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/thinking-delta") (:data . ((:text . "plan-2")))))
+          (should (equal "plan-2" (psi-emacs-state-thinking-in-progress psi-emacs--state)))
+          (should (equal "t-break pending\nψ⋯ plan-2\n"
+                         (buffer-string))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
 (ert-deftest psi-assistant-streaming-cumulative-snapshots-replace-in-place ()
   (with-temp-buffer
     (psi-emacs-mode)

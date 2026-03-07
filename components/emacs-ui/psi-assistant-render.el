@@ -271,12 +271,22 @@ so we append directly without the snapshot-merge heuristic."
 (defun psi-emacs--assistant-before-tool-event ()
   "Prepare transcript before rendering a tool lifecycle event.
 
-When a thinking line is in progress, archive it so subsequent thinking
-deltas render as a fresh block after the tool output."
-  (when (and psi-emacs--state
-             (psi-emacs--assistant-range-live-p
-              (psi-emacs-state-thinking-range psi-emacs--state)))
-    (psi-emacs--archive-thinking-line)))
+When thinking text is in progress, split before tool output so subsequent
+thinking deltas render as a fresh block after the tool output.
+
+Normally this archives the live thinking line. If marker state drifted and
+only `thinking-in-progress' text remains, clear that stale in-progress text
+so the next thinking delta still starts a fresh block."
+  (when psi-emacs--state
+    (let* ((thinking-text (or (psi-emacs-state-thinking-in-progress psi-emacs--state) ""))
+           (has-thinking-text (not (string-empty-p thinking-text)))
+           (range-live (psi-emacs--assistant-range-live-p
+                        (psi-emacs-state-thinking-range psi-emacs--state))))
+      (when has-thinking-text
+        (if range-live
+            (psi-emacs--archive-thinking-line)
+          (setf (psi-emacs-state-thinking-range psi-emacs--state) nil)
+          (setf (psi-emacs-state-thinking-in-progress psi-emacs--state) nil))))))
 
 (defun psi-emacs--assistant-finalize (text)
   "Finalize assistant block with TEXT and clear in-progress state."
