@@ -4,6 +4,35 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-06 - OpenAI chat-completions thinking required both request + parser fixes
+
+### λ OpenAI reasoning visibility is two-part: request intent + stream parsing
+
+For `:openai-completions` models, no visible thinking can come from either:
+
+1. request side missing reasoning intent (`reasoning_effort` not sent), or
+2. response side parser too narrow for real delta shapes.
+
+Both must be correct to get stable `:thinking-delta` output.
+
+### λ Delta schemas drift; parse by shape families, not one path
+
+OpenAI reasoning arrived in multiple observed forms, not one canonical field:
+- `delta.reasoning_content`
+- `delta.reasoning` as map/string
+- `delta.reasoning` as vector of typed parts
+- reasoning parts inside `delta.content` vector
+
+A parser that only checks one field silently drops thinking output. Robust
+extractors should normalize across shape families and then emit one internal
+signal (`:thinking-delta`).
+
+### λ Keep usage maps normalized before cost calculation
+
+Completion usage payloads can omit cache token fields. Cost functions should
+receive a normalized map (`input/output/cache-read/cache-write/total`) to avoid
+nil arithmetic failures and preserve deterministic terminal events.
+
 ## 2026-03-06 - Anthropic extended thinking: two independent bugs
 
 ### λ Thinking text leaked into main stream (provider bug)
