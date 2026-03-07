@@ -22,7 +22,11 @@ Current truth about the Psi system.
 - ✓ OpenAI thinking streaming restored for chat-completions models (4c20882): provider now forwards `reasoning_effort` from thinking-level, extracts reasoning deltas across multiple chunk shapes, and emits reliable `:thinking-delta` events (plus normalized usage map for completion cost calculation).
 - ✓ OpenAI thinking visibility now lands consistently across stream surfaces including TUI rendering (fbbb173), closing parity gaps between provider deltas and terminal presentation.
 - ? Divider-length regression report is in Emacs UI, not TUI: commit `3e02b97` made TUI separators width-aware, but user-observed uneven separators remain in `components/emacs-ui` projection/input paths.
-- … Next executable task: continue Step 12 Emacs UI stabilization with explicit focus on separator width parity in startup/replay/projection flows, while keeping worktree Step 11b mutation semantics deferred.
+- ✓ Commit `db9d4c7` now refreshes width-sensitive separators on window-configuration changes in Emacs buffers.
+- ✓ Width source for projection/footer separators now prefers `window-text-width` (visible text area), with margin-based fallback.
+- ✓ Window-change handler now calls `psi-emacs--ensure-input-area`, repairing stale/misaligned pre-edit separator markers before projection refresh.
+- ✓ Emacs verification after separator follow-up: `bb emacs:test` green at 155/155.
+- … Next executable task: validate live Emacs behavior in user layout and, if needed, tighten separator width parity for fringe/visual-line edge cases while keeping worktree Step 11b mutation semantics deferred.
 
 ## Components
 

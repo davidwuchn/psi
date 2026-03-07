@@ -123,6 +123,8 @@ Ordered steps toward PSI COMPLETE.
 - Current: rpc-edn frontend and core interaction model implemented
 - Recent stabilization: OpenAI chat-completions reasoning stream restored (`:thinking-delta` visibility + `reasoning_effort` request forwarding, commit `4c20882`) and stream-to-TUI thinking visibility parity landed (`fbbb173`).
 - New follow-up: divider/separator length mismatch reported in Emacs UI transcript/projection area; commit `3e02b97` adjusted TUI separators but did not address the user-reported Emacs path.
+- Progress: commit `db9d4c7` added resize-driven refresh hooks for width-sensitive separators in Emacs UI.
+- Active fix focus: footer/projection separator still too long in some layouts and pre-edit separator can fail to refresh; align width source to visible text area (`window-text-width`) and force input-area repair on window-configuration changes.
 - Completed in this cycle:
   - [x] Prompt completion architecture added via CAPF (`components/emacs-ui/psi-completion.el`)
   - [x] `/` completion (slash commands) + `@` completion (file references)
