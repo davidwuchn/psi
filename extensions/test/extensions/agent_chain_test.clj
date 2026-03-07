@@ -22,7 +22,8 @@
             (is (contains? (:tools @state) "run_chain"))
             (is (= #{"chain" "chain-list" "chain-reload"}
                    (set (keys (:commands @state)))))
-            (is (= 1 (count (get-in @state [:handlers "session_switch"]))))))
+            (is (= 1 (count (get-in @state [:handlers "session_switch"]))))
+            (is (contains? (:widgets @state) "agent-chain"))))
         (finally
           (.delete tmp))))))
 
@@ -34,9 +35,15 @@
           (let [{:keys [api state]} (nullable/create-nullable-extension-api
                                      {:path "/test/agent_chain.clj"})]
             (sut/init api)
-            (let [execute (get-in @state [:tools "run_chain" :execute])]
+            (let [execute (get-in @state [:tools "run_chain" :execute])
+                  updates (atom [])]
               (is (= {:content "No chain active. Use /chain to select one."
                       :is-error true}
-                     (execute {"task" "summarize this"}))))))
+                     (execute {"task" "summarize this"})))
+              (is (= {:content "No chain active. Use /chain to select one."
+                      :is-error true}
+                     (execute {"task" "summarize this"}
+                              {:on-update #(swap! updates conj %)})))
+              (is (empty? @updates)))))
         (finally
           (.delete tmp))))))
