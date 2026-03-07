@@ -121,7 +121,7 @@ Ordered steps toward PSI COMPLETE.
 ### Step 12 — Emacs UI ◇ in progress
 - Spec: `spec/emacs-frontend.allium`
 - Current: rpc-edn frontend and core interaction model implemented
-- Recent stabilization: OpenAI chat-completions reasoning stream restored (`:thinking-delta` visibility + `reasoning_effort` request forwarding, commit `4c20882`)
+- Recent stabilization: OpenAI chat-completions reasoning stream restored (`:thinking-delta` visibility + `reasoning_effort` request forwarding, commit `4c20882`) and stream-to-TUI thinking visibility parity landed (`fbbb173`).
 - Completed in this cycle:
   - [x] Prompt completion architecture added via CAPF (`components/emacs-ui/psi-completion.el`)
   - [x] `/` completion (slash commands) + `@` completion (file references)
@@ -134,6 +134,7 @@ Ordered steps toward PSI COMPLETE.
   - Startup hydration + `/new` + reconnect flows are stable and tested
   - Tool output rendering modes and theme-aware faces are stable
   - Interactive command parity with RPC loop is documented and verified
+  - dedicated input area (persistent cursor focus while streaming + multiline compose + history traversal) is stable and tested
   - `bb emacs:test` and `bb emacs:byte-compile` remain green
 
 ### Step 13 — Terminal UI (TUI) ◇ in progress

@@ -20,6 +20,7 @@ Current truth about the Psi system.
 - ✓ PSL extension 400 fix: `agent-messages->ai-conversation` filters `:custom-type` messages; `extension-run-fn-atom` wired so PSL prompts invoke a real LLM call (not orphaned user messages). `register-extension-run-fn-in!` called after bootstrap in `main.clj`.
 - ✓ Thinking output bug fixed (c8e43eb): Anthropic provider now handles `thinking` content blocks correctly (`:thinking-delta` events, `thinking` request param, `interleaved-thinking-2025-05-14` beta header, temperature suppressed when thinking enabled). Emacs render fixed: `psi-emacs--assistant-thinking-delta` uses pure `concat` append instead of snapshot-merge heuristic that caused ever-growing repeated lines.
 - ✓ OpenAI thinking streaming restored for chat-completions models (4c20882): provider now forwards `reasoning_effort` from thinking-level, extracts reasoning deltas across multiple chunk shapes, and emits reliable `:thinking-delta` events (plus normalized usage map for completion cost calculation).
+- ✓ OpenAI thinking visibility now lands consistently across stream surfaces including TUI rendering (fbbb173), closing parity gaps between provider deltas and terminal presentation.
 - … Next executable task: continue Step 12 Emacs UI stabilization (startup hydration + `/new` + reconnect flows), while keeping worktree Step 11b mutation semantics deferred.
 
 ## Components
@@ -195,7 +196,7 @@ Caught by `jline-terminal-keymap-test` smoke test.
 
 ## Test Status
 
-133/133 ERT tests passing for `components/emacs-ui` after CAPF completion work (`emacs -Q --batch -L components/emacs-ui -L components/emacs-ui/test -l components/emacs-ui/test/psi-test.el -f ert-run-tests-batch-and-exit`).
+148/148 ERT tests passing for `components/emacs-ui` after dedicated input area + input history updates (`bb emacs:test`).
 
 ## Specs
 
