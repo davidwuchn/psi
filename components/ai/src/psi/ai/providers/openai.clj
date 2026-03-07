@@ -20,6 +20,79 @@
 ;; OpenAI Chat Completions API
 ;; ───────────────────────────────────────────────────────────────────────────
 
+(def ^:private thinking-level->effort
+  {:off nil
+   :minimal "minimal"
+   :low "low"
+   :medium "medium"
+   :high "high"
+   :xhigh "high"})
+
+(defn- reasoning-effort
+  "Return provider reasoning effort string for MODEL/OPTIONS, or nil when disabled."
+  [model options]
+  (when (:supports-reasoning model)
+    (get thinking-level->effort
+         (:thinking-level options)
+         "medium")))
+
+(defn- normalize-part-type
+  [part]
+  (let [t (:type part)]
+    (cond
+      (keyword? t) (name t)
+      (string? t) t
+      :else nil)))
+
+(defn- join-parts
+  [parts]
+  (when (seq parts)
+    (str/join "" parts)))
+
+(defn- extract-reasoning-delta
+  [delta]
+  (or
+   (get-in delta [:reasoning :content])
+   (:reasoning_content delta)
+   (when (string? (:reasoning delta))
+     (:reasoning delta))
+   (when (map? (:reasoning delta))
+     (or (:content (:reasoning delta))
+         (:text (:reasoning delta))))
+   (when (sequential? (:reasoning delta))
+     (join-parts
+      (keep (fn [part]
+              (when (map? part)
+                (let [ptype (normalize-part-type part)]
+                  (when (contains? #{"reasoning" "reasoning_text" "reasoning_content"} ptype)
+                    (or (:text part) (:content part))))))
+            (:reasoning delta))))
+   (when (sequential? (:content delta))
+     (join-parts
+      (keep (fn [part]
+              (when (map? part)
+                (let [ptype (normalize-part-type part)]
+                  (when (contains? #{"reasoning" "reasoning_text" "reasoning_content"} ptype)
+                    (or (:text part) (:content part))))))
+            (:content delta))))))
+
+(defn- extract-text-delta
+  [delta]
+  (cond
+    (string? (:content delta))
+    (:content delta)
+
+    (sequential? (:content delta))
+    (join-parts
+     (keep (fn [part]
+             (when (map? part)
+               (let [ptype (normalize-part-type part)]
+                 (when (contains? #{"text" "output_text"} ptype)
+                   (or (:text part) (:content part))))))
+           (:content delta)))
+
+    :else nil))
+
 (defn transform-messages
   "Transform conversation messages to OpenAI chat completions format.
    Handles user, assistant (with optional tool_calls), and tool-result messages."
@@ -70,7 +143,8 @@
 
 (defn build-request
   "Build OpenAI Chat Completions API request map.
-   Includes tools from conversation when present." 
+   Includes tools from conversation when present.
+   For reasoning-capable models, forwards `reasoning_effort` unless thinking is off."
   [conversation model options]
   (let [base-messages (transform-messages conversation)
         messages      (if (:system-prompt conversation)
@@ -85,16 +159,18 @@
                                             :description (:description t)
                                             :parameters  (:parameters t)}})
                               (:tools conversation)))
+        effort        (reasoning-effort model options)
         body          (cond-> {:model          (:id model)
                                :messages       (vec messages)
                                :stream         true
                                :stream_options {:include_usage true}}
                         (:temperature options) (assoc :temperature (:temperature options))
                         (:max-tokens options)  (assoc :max_tokens  (:max-tokens options))
-                        (seq tool-defs)        (assoc :tools tool-defs))]
+                        (seq tool-defs)        (assoc :tools tool-defs)
+                        effort                 (assoc :reasoning_effort effort))]
     {:headers {"Content-Type"  "application/json"
-               "Authorization" (str "Bearer " (or (:api-key options)
-                                                    (System/getenv "OPENAI_API_KEY")))}
+               "Authorization" (str "Bearer " (or (:api-key options
+                                                            (System/getenv "OPENAI_API_KEY"))))}
      :body    (json/generate-string body)}))
 
 (defn parse-sse-line
@@ -170,7 +246,6 @@
    "
   [conversation model options consume-fn]
   (let [request       (build-request conversation model options)
-        ;; Track which tool-call indices have been started
         started-tools (atom #{})
         done?         (atom false)]
     (try
@@ -180,75 +255,71 @@
           (doseq [line (line-seq reader)]
             (when-let [chunk (parse-sse-line line)]
               (let [choice (first (:choices chunk))
-                    delta  (:delta choice)]
+                    delta  (:delta choice)
+                    text-delta (extract-text-delta delta)
+                    reasoning-delta (extract-reasoning-delta delta)]
 
                 ;; Start of response — fires once, does NOT gate other fields.
-                ;; OpenAI packs role + tool_calls in the same first chunk.
                 (when (and choice (= (:role delta) "assistant"))
                   (consume-fn {:type :start}))
 
-                (cond
-                  ;; Content delta
-                  (:content delta)
-                  (consume-fn {:type          :text-delta
+                ;; Non-terminal deltas can co-exist in one chunk.
+                (when (seq text-delta)
+                  (consume-fn {:type :text-delta
                                :content-index 0
-                               :delta         (:content delta)})
+                               :delta text-delta}))
 
-                  ;; Reasoning content (o1 models)
-                  (get-in delta [:reasoning :content])
-                  (consume-fn {:type          :thinking-delta
+                (when (seq reasoning-delta)
+                  (consume-fn {:type :thinking-delta
                                :content-index 0
-                               :delta         (get-in delta [:reasoning :content])})
+                               :delta reasoning-delta}))
 
-                  ;; Tool calls — first chunk per index has :id + :name → start
-                  (:tool_calls delta)
-                  (doseq [tool-call (:tool_calls delta)]
-                    (let [idx (:index tool-call)]
-                      ;; Emit toolcall-start on first appearance of this index
-                      (when (and (:id tool-call)
-                                 (not (contains? @started-tools idx)))
-                        (swap! started-tools conj idx)
-                        (consume-fn {:type          :toolcall-start
+                ;; Tool calls
+                (doseq [tool-call (:tool_calls delta)]
+                  (let [idx (:index tool-call)]
+                    (when (and (:id tool-call)
+                               (not (contains? @started-tools idx)))
+                      (swap! started-tools conj idx)
+                      (consume-fn {:type :toolcall-start
+                                   :content-index idx
+                                   :id (:id tool-call)
+                                   :name (get-in tool-call [:function :name])}))
+                    (when-let [args (get-in tool-call [:function :arguments])]
+                      (when (seq args)
+                        (consume-fn {:type :toolcall-delta
                                      :content-index idx
-                                     :id            (:id tool-call)
-                                     :name          (get-in tool-call
-                                                            [:function :name])}))
-                      ;; Argument fragments → string delta
-                      (when-let [args (get-in tool-call [:function :arguments])]
-                        (when (seq args)
-                          (consume-fn {:type          :toolcall-delta
-                                       :content-index idx
-                                       :delta         args})))))
+                                     :delta args})))))
 
+                (cond
                   ;; Completion with usage (final chunk)
                   (:usage chunk)
-                  (let [usage (:usage chunk)]
-                    ;; Close any open tool calls
+                  (let [usage (:usage chunk)
+                        usage-map {:input-tokens       (or (:prompt_tokens usage) 0)
+                                   :output-tokens      (or (:completion_tokens usage) 0)
+                                   :cache-read-tokens  0
+                                   :cache-write-tokens 0
+                                   :total-tokens       (or (:total_tokens usage)
+                                                           (+ (or (:prompt_tokens usage) 0)
+                                                              (or (:completion_tokens usage) 0)))}]
                     (doseq [idx @started-tools]
                       (consume-fn {:type :toolcall-end :content-index idx}))
                     (reset! started-tools #{})
                     (when-not @done?
                       (reset! done? true)
-                      (consume-fn {:type   :done
-                                   :reason (keyword (get-in choice
-                                                            [:finish_reason]
-                                                            "stop"))
-                                   :usage  {:input-tokens  (:prompt_tokens usage)
-                                            :output-tokens (:completion_tokens usage)
-                                            :total-tokens  (:total_tokens usage)
-                                            :cost          (models/calculate-cost
-                                                            model usage)}})))
+                      (consume-fn {:type :done
+                                   :reason (keyword (get-in choice [:finish_reason] "stop"))
+                                   :usage (assoc usage-map
+                                                 :cost (models/calculate-cost model usage-map))})))
 
                   ;; Finish without usage
                   (:finish_reason choice)
                   (do
-                    ;; Close any open tool calls
                     (doseq [idx @started-tools]
                       (consume-fn {:type :toolcall-end :content-index idx}))
                     (reset! started-tools #{})
                     (when-not @done?
                       (reset! done? true)
-                      (consume-fn {:type   :done
+                      (consume-fn {:type :done
                                    :reason (keyword (:finish_reason choice))})))))))))
       (catch Exception e
         (consume-fn (exception->error e))))))
@@ -283,13 +354,13 @@
 
 (defn- extract-chatgpt-account-id
   "Extract chatgpt_account_id from OAuth JWT access token.
-   Returns nil when extraction fails." 
+   Returns nil when extraction fails."
   [token]
   (try
     (let [[_ payload _] (str/split (or token "") #"\." 3)
           decoded       (String. (.decode (Base64/getUrlDecoder)
                                           (pad-base64url payload))
-                                "UTF-8")
+                                 "UTF-8")
           json-map      (json/parse-string decoded false)]
       (get-in json-map ["https://api.openai.com/auth" "chatgpt_account_id"]))
     (catch Exception _
@@ -318,8 +389,8 @@
                            "status"  "completed"
                            "id"      (str "msg_" (UUID/randomUUID))
                            "content" [{"type" "output_text"
-                                        "text" text
-                                        "annotations" []}]})
+                                       "text" text
+                                       "annotations" []}]})
             tool-items  (map (fn [tc]
                                (let [raw-id          (or (:id tc) (str "call_" (UUID/randomUUID)))
                                      [call-id item-id] (if (str/includes? raw-id "|")
@@ -340,8 +411,8 @@
             "status"  "completed"
             "id"      (str "msg_" (UUID/randomUUID))
             "content" [{"type" "output_text"
-                         "text" text
-                         "annotations" []}]}]
+                        "text" text
+                        "annotations" []}]}]
           [])))))
 
 (defn- tool-result->codex-item
@@ -365,7 +436,7 @@
                    :user
                    [{"role"    "user"
                      "content" [{"type" "input_text"
-                                  "text" (user-text msg)}]}]
+                                 "text" (user-text msg)}]}]
 
                    :assistant
                    (assistant-content->codex-items msg)
@@ -388,14 +459,6 @@
              ;; Matches pi-mono's Codex provider behavior (strict null)
              "strict"      nil})
           (:tools conversation))))
-
-(def ^:private thinking-level->effort
-  {:off nil
-   :minimal "minimal"
-   :low "low"
-   :medium "medium"
-   :high "high"
-   :xhigh "high"})
 
 (defn- codex-reasoning
   [model options]
@@ -429,7 +492,7 @@
 
 (defn- build-codex-request
   "Build OpenAI Codex Responses API request map.
-   Requires an OAuth access token that includes chatgpt_account_id." 
+   Requires an OAuth access token that includes chatgpt_account_id."
   [conversation model options]
   (let [api-key    (or (:api-key options)
                        (System/getenv "OPENAI_API_KEY"))
@@ -476,7 +539,7 @@
    Emits normalized events expected by the executor:
      :start, :text-delta, :thinking-delta,
      :toolcall-start, :toolcall-delta, :toolcall-end,
-     :done, :error" 
+     :done, :error"
   [conversation model options consume-fn]
   (let [started?             (atom false)
         done?                (atom false)

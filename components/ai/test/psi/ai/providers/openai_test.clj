@@ -158,3 +158,53 @@
       (is (= item-id (get call "id")))
       (is (= "function_call_output" (get result "type")))
       (is (= call-id (get result "call_id"))))))
+
+(deftest completions-thinking-level-maps-to-reasoning-effort-test
+  (let [model (models/get-model :gpt-5)
+        convo (-> (conv/create "sys") (conv/add-user-message "hi"))]
+    (testing "default reasoning effort is medium for reasoning-capable models"
+      (let [req  (#'openai/build-request convo model {:api-key "sk-test"})
+            body (json/parse-string (:body req) true)]
+        (is (= "medium" (:reasoning_effort body)))))
+
+    (testing "explicit thinking level maps to expected reasoning effort"
+      (let [req  (#'openai/build-request convo model {:api-key "sk-test"
+                                                      :thinking-level :high})
+            body (json/parse-string (:body req) true)]
+        (is (= "high" (:reasoning_effort body)))))
+
+    (testing "thinking off omits reasoning effort"
+      (let [req  (#'openai/build-request convo model {:api-key "sk-test"
+                                                      :thinking-level :off})
+            body (json/parse-string (:body req) true)]
+        (is (nil? (:reasoning_effort body)))))))
+
+(deftest completions-reasoning-delta-shapes-map-to-thinking-delta-test
+  (testing "chat completions reasoning delta variants are emitted as :thinking-delta"
+    (let [model  (models/get-model :gpt-5)
+          convo  (-> (conv/create "sys") (conv/add-user-message "think"))
+          events (atom [])
+          sse    (str
+                  "data: " (json/generate-string
+                             {:choices [{:delta {:role "assistant"}}]}) "\n\n"
+                  "data: " (json/generate-string
+                             {:choices [{:delta {:reasoning_content "A"}}]}) "\n\n"
+                  "data: " (json/generate-string
+                             {:choices [{:delta {:reasoning [{:type "reasoning_text" :text "B"}]}}]}) "\n\n"
+                  "data: " (json/generate-string
+                             {:choices [{:delta {:content [{:type "reasoning" :text "C"}]}}]}) "\n\n"
+                  "data: " (json/generate-string
+                             {:choices [{:finish_reason "stop"}]
+                              :usage {:prompt_tokens 1 :completion_tokens 1 :total_tokens 2}}) "\n\n")]
+      (with-redefs [http/post (fn [_url _req]
+                                {:body (stream-body sse)})]
+        ((:stream openai/provider)
+         convo model {:api-key "sk-test"}
+         (fn [ev] (swap! events conj ev))))
+
+      (is (some #(= :start (:type %)) @events))
+      (is (= ["A" "B" "C"]
+             (->> @events
+                  (filter #(= :thinking-delta (:type %)))
+                  (mapv :delta))))
+      (is (some #(= :done (:type %)) @events)))))
