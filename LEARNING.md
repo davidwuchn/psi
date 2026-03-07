@@ -4,6 +4,50 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-07 - Chain result delivery: close the loop back to the session
+
+### λ Background workflow output must be routed back to the session explicitly
+
+`run_chain` runs the chain in a background statechart workflow. Without an
+explicit delivery step, the chain output exists only in workflow state and never
+reaches the operator. `emit-chain-result!` closes this gap: `done-script` and
+`error-script` call the `on-finished` callback, which delivers a formatted
+assistant message (`custom-type: "chain-result"`) via `mutate-fn`.
+
+### λ `on-finished` belongs at registration time, not inside statechart data
+
+Wiring the callback at `register-chain-workflow-type!` time (closure over the
+extension state atom) keeps statechart data free of function references and
+makes the delivery contract explicit at the boundary between workflow-runtime and
+extension-API layers.
+
+### λ Deliver after a tick, not synchronously in the script
+
+A 30ms `future` sleep before `emit-chain-result!` lets the statechart finish its
+transition (assign ops, final-state entry) before the delivery side-effect fires.
+Delivering synchronously inside a `done-script` can race with state finalization.
+
+### λ Model resolution needs a priority chain, not a single fallback
+
+`run-chain-workflow-job` needs a model but may be invoked without one in the
+input. The correct resolution order is:
+1. explicit model from workflow input (operator override)
+2. session model from `query-fn` (active session preference)
+3. hard coded safe default (`:sonnet-4.6`)
+
+Missing step 2 meant chains always fell back to the hard default even when a
+session model was configured.
+
+### λ Catch `Throwable` in execution boundaries, not just `Exception`
+
+JVM `Error` subclasses (e.g. `AssertionError`, `StackOverflowError`) are not
+`Exception` descendants. Step execution code that only catches `Exception` lets
+errors propagate unchecked and produce opaque workflow failures. Broadening to
+`Throwable` ensures the step produces a structured error result regardless of
+thrown type.
+
+---
+
 ## 2026-03-07 - tool_use.input must always be a JSON object
 
 ### λ json/parse-string does not guarantee a map — validate before use as tool input
