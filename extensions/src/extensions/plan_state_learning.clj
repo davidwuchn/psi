@@ -69,6 +69,7 @@
      "4) Commit LEARNING.md\n"
      "\n"
      "Constraints:\n"
+     "- commit messages should summarise the changes"
      "- Do not use git add -A or git add .\n"
      "- Only stage explicit target files for each commit.\n"
      "- If a phase has no meaningful changes, skip that commit and explain why in your final response.\n")))
