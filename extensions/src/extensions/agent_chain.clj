@@ -912,17 +912,27 @@
       :execute     execute-run-chain})
 
     ((:register-command api) "chain"
-                             {:description "Switch active chain (usage: /chain <number>)"
+                             {:description "Switch active chain (usage: /chain <number|name>)"
                               :handler
                               (fn [args]
                                 (let [cs @chains-a]
                                   (if (empty? cs)
                                     (println "  No chains defined in .psi/agents/agent-chain.edn")
-                                    (let [idx (when (seq args)
-                                                (try (dec (Integer/parseInt (str/trim args)))
-                                                     (catch Exception _ nil)))]
-                                      (if (and idx (>= idx 0) (< idx (count cs)))
-                                        (do (reset! active-chain-a (nth cs idx))
+                                    (let [arg*         (some-> args str/trim not-empty)
+                                          idx          (some-> arg* parse-int dec)
+                                          chain-index  (when (and (number? idx)
+                                                                  (>= idx 0)
+                                                                  (< idx (count cs)))
+                                                         (nth cs idx))
+                                          chain-name   (when (seq arg*)
+                                                         (some (fn [c]
+                                                                 (when (= (str/lower-case arg*)
+                                                                          (str/lower-case (or (:name c) "")))
+                                                                   c))
+                                                               cs))
+                                          target-chain (or chain-index chain-name)]
+                                      (if target-chain
+                                        (do (reset! active-chain-a target-chain)
                                             (refresh-widget!)
                                             (println (str "  ✓ Active chain: " (:name @active-chain-a))))
                                         (do (println "\n  Available chains:")
@@ -934,7 +944,7 @@
                                                               (when (seq (:description c))
                                                                 (str " — " (:description c)))
                                                               "\n     " flow))))
-                                            (println "\n  Usage: /chain <number>")))))))})
+                                            (println "\n  Usage: /chain <number|name>")))))))})
 
     ((:register-command api) "chain-list"
                              {:description "List all available chains, agents, and chain runs"

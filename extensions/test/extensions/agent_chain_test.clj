@@ -63,3 +63,28 @@
               (is (empty? @updates)))))
         (finally
           (.delete tmp))))))
+
+(deftest chain-command-selects-by-name-test
+  (testing "/chain accepts a chain name, case-insensitive"
+    (let [tmp (temp-dir)]
+      (try
+        (write-chain-config!
+         tmp
+         [{:name "plan-build-review"
+           :description "Plan then build"
+           :steps [{:agent "planner" :prompt "$INPUT"}]}
+          {:name "prompt-build"
+           :description "Build prompts"
+           :steps [{:agent "prompt-compiler" :prompt "$INPUT"}]}])
+        (with-user-dir (.getAbsolutePath tmp)
+          (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                                     {:path "/test/agent_chain.clj"})]
+            (sut/init api)
+            (let [chain-handler (get-in @state [:commands "chain" :handler])]
+              (is (str/includes? (with-out-str (chain-handler "Prompt-Build"))
+                                 "✓ Active chain: prompt-build"))
+              (is (str/includes?
+                   (str/join "\n" (get-in @state [:widgets "agent-chain" :lines]))
+                   "active: prompt-build")))))
+        (finally
+          (.delete tmp))))))
