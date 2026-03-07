@@ -518,6 +518,9 @@
       (timbre/warn "Extension error:" path error))
     (when (pos? (:extension-loaded-count summary))
       (timbre/debug "Extensions loaded:" (:extension-loaded-count summary)))
+    ;; Register extension run-fn so extension-initiated prompts (e.g. PSL)
+    ;; actually invoke the LLM instead of orphaning a user message in agent-core.
+    (runtime/register-extension-run-fn-in! ctx nil ai-model)
     {:ctx       ctx
      :oauth-ctx oauth-ctx
      :templates templates

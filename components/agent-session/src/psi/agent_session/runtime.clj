@@ -18,7 +18,8 @@
    [psi.agent-session.skills :as skills]
    [psi.agent-session.startup-prompts :as startup-prompts]
    [psi.memory.runtime :as memory-runtime]
-   [psi.recursion.core :as recursion]))
+   [psi.recursion.core :as recursion]
+   [taoensso.timbre :as timbre]))
 
 (defn make-user-message
   "Create a canonical user message map from text and optional image blocks."
@@ -244,6 +245,29 @@
      (when sync-on-git-head-change?
        (safe-maybe-sync-on-git-head-change! ctx))
      result)))
+
+(defn register-extension-run-fn-in!
+  "Register a background agent-loop runner for extension-initiated prompts.
+
+   After this is called, `send-extension-prompt-in!` will invoke the runner
+   in a background thread instead of orphaning a user message in agent-core.
+
+   The runner fn is (fn [text source]) — it prepares the user message,
+   resolves the API key, and calls `run-agent-loop-in!`.
+
+   Call this once after bootstrap, passing the live ai-ctx and ai-model."
+  [ctx ai-ctx ai-model]
+  (let [run-fn (fn [text _source]
+                 (try
+                   (when (session/idle-in? ctx)
+                     (let [{:keys [user-message]} (prepare-user-message-in! ctx text)
+                           api-key (resolve-api-key-in ctx ai-model)]
+                       (run-agent-loop-in! ctx ai-ctx ai-model [user-message]
+                                           {:api-key api-key
+                                            :sync-on-git-head-change? true})))
+                   (catch Exception e
+                     (timbre/warn e "Extension run-fn failed"))))]
+    (session/set-extension-run-fn-in! ctx run-fn)))
 
 (defn run-startup-prompts-in!
   "Run configured startup prompts as visible user turns.

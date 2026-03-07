@@ -922,7 +922,7 @@
         (is (= "B:A:hello"
                (get-in result [:psi.extension.tool-plan/result-by-id :s2 :content]))))))
 
-  (testing "send-prompt mutation stores extension prompt telemetry"
+  (testing "send-prompt mutation stores extension prompt telemetry (no run-fn → follow-up)"
     (let [ctx    (session/create-context)
           qctx   (query/create-query-context)
           mutate (fn [op params]
@@ -932,6 +932,7 @@
                         op))]
       (session/register-resolvers-in! qctx false)
       (session/register-mutations-in! qctx true)
+      ;; Without a run-fn registered, delivery falls back to :follow-up (safe queue)
       (let [result (mutate 'psi.extension/send-prompt
                            {:content "hello from extension"
                             :source "plan-state-learning"})
@@ -940,10 +941,41 @@
                                          :psi.agent-session/extension-last-prompt-delivery
                                          :psi.agent-session/extension-last-prompt-at])]
         (is (true? (:psi.extension/prompt-accepted? result)))
+        (is (= :follow-up (:psi.extension/prompt-delivery result)))
+        (is (= "plan-state-learning" (:psi.agent-session/extension-last-prompt-source telemetry)))
+        (is (= :follow-up (:psi.agent-session/extension-last-prompt-delivery telemetry)))
+        (is (inst? (:psi.agent-session/extension-last-prompt-at telemetry)))))
+
+  (testing "send-prompt mutation with run-fn registered delivers as :prompt"
+    (let [ctx    (session/create-context)
+          qctx   (query/create-query-context)
+          mutate (fn [op params]
+                   (get (query/query-in qctx
+                                        {:psi/agent-session-ctx ctx}
+                                        [(list op (assoc params :psi/agent-session-ctx ctx))])
+                        op))
+          run-calls (atom [])]
+      (session/register-resolvers-in! qctx false)
+      (session/register-mutations-in! qctx true)
+      ;; Register a stub run-fn that captures calls
+      (session/set-extension-run-fn-in! ctx (fn [text source]
+                                               (swap! run-calls conj {:text text :source source})))
+      (let [result (mutate 'psi.extension/send-prompt
+                           {:content "hello from extension"
+                            :source "plan-state-learning"})
+            telemetry (session/query-in ctx
+                                        [:psi.agent-session/extension-last-prompt-source
+                                         :psi.agent-session/extension-last-prompt-delivery
+                                         :psi.agent-session/extension-last-prompt-at])]
+        ;; Allow the background future to complete
+        (Thread/sleep 50)
+        (is (true? (:psi.extension/prompt-accepted? result)))
         (is (= :prompt (:psi.extension/prompt-delivery result)))
         (is (= "plan-state-learning" (:psi.agent-session/extension-last-prompt-source telemetry)))
         (is (= :prompt (:psi.agent-session/extension-last-prompt-delivery telemetry)))
-        (is (inst? (:psi.agent-session/extension-last-prompt-at telemetry)))))))
+        (is (inst? (:psi.agent-session/extension-last-prompt-at telemetry)))
+        (is (= 1 (count @run-calls)))
+        (is (= "hello from extension" (:text (first @run-calls)))))))))
 
 (deftest startup-resources-via-mutations-test
   (testing "load-startup-resources-via-mutations-in! adds prompts/skills/tools"

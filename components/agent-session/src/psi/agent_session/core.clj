@@ -280,7 +280,11 @@
                             :recursion-ctx         recursion-ctx
                             :compaction-fn         (or compaction-fn compaction/stub-compaction-fn)
                             :branch-summary-fn     (or branch-summary-fn compaction/stub-branch-summary-fn)
-                            :config                merged-config}
+                            :config                merged-config
+                            ;; Atom holding (fn [text source]) that actually runs the agent loop.
+                            ;; Set by the runtime layer (main/RPC) after bootstrap.
+                            ;; Extensions use this to submit prompts that trigger real LLM calls.
+                            :extension-run-fn-atom (atom nil)}
          actions-fn        (make-actions-fn ctx)]
 
      ;; Watch agent-core events atom — forward new events to session statechart
@@ -936,15 +940,41 @@
                :message msg}))
     msg))
 
+(defn set-extension-run-fn-in!
+  "Register the runtime agent-loop runner for extension-initiated prompts.
+   `run-fn` is (fn [text source]) — it journals the user message and runs
+   the full agent loop (LLM call included) in a background thread.
+   Called by the runtime layer (main/RPC) after bootstrap."
+  [ctx run-fn]
+  (reset! (:extension-run-fn-atom ctx) run-fn))
+
 (defn send-extension-prompt-in!
   "Submit extension-authored text to the agent as a user prompt.
-   If the session is streaming, queue it as a follow-up instead.
+
+   When idle and a run-fn is registered, invokes it in a background thread
+   so the LLM call actually happens (avoids orphaned user messages in
+   agent-core that cause consecutive-user-message 400 errors).
+
+   When streaming (or no run-fn registered), queues as a follow-up for
+   delivery after the current agent run completes.
+
    Persists lightweight telemetry on session data for introspection."
   [ctx text source]
-  (let [delivery (if (idle-in? ctx)
+  (let [run-fn   @(:extension-run-fn-atom ctx)
+        delivery (cond
+                   (and (idle-in? ctx) run-fn)
                    (do
-                     (prompt-in! ctx (str text))
+                     (future (run-fn (str text) source))
                      :prompt)
+
+                   (idle-in? ctx)
+                   ;; No run-fn registered — fall back to follow-up queue so at
+                   ;; least the text is not silently dropped (caller can drain it).
+                   (do
+                     (follow-up-in! ctx (str text))
+                     :follow-up)
+
+                   :else
                    (do
                      (follow-up-in! ctx (str text))
                      :follow-up))]
