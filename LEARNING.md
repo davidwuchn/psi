@@ -1676,3 +1676,20 @@ This preserves safety-by-default while enabling faster local iteration.
 
 
 - λ psl source=53082d2cb72c2dbd354c790256f1e48b5663f717 at=2026-03-06T20:57:20.413334Z :: ⚒ Δ Simplify PSL to agent-prompt flow with extension prompt telemetry λ
+
+## 2026-03-06 - PSL Extension 400: Custom-Type Messages Must Not Reach LLM
+
+### λ Extension Transcript Markers Cause Consecutive-Role 400s
+
+`send-message!` (role "assistant", `:custom-type`) appends a display-only marker
+to agent-core history. When PSL fires immediately after, the LLM conversation
+sequence becomes `[..., assistant(LLM), assistant(marker), user(prompt)]` —
+two consecutive assistant messages → Anthropic 400 Bad Request.
+
+**Fix**: filter `:custom-type` messages in `agent-messages->ai-conversation`
+(executor) before building the LLM payload. They remain in agent-core history
+for TUI/RPC display, but never reach the provider.
+
+**Pattern**: any message injected into agent-core with `:custom-type` is
+display-only. The conversation-rebuild layer is the correct filter point —
+not the append site — so history fidelity is preserved for all non-LLM consumers.
