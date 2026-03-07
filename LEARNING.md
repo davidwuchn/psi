@@ -4,6 +4,28 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-07 - Agent-chain discoverability + completion parity
+
+### λ Workflow discoverability should include configured chain catalog, not only runtime tools
+
+Exposing only `run_chain`/`chain-*` commands made capability presence discoverable,
+but not the available chain definitions themselves. Adding top-level query attrs for
+chain config (`:psi.agent-chain/*`) closes this gap and lets frontends/agents inspect
+configured flows without parsing files directly.
+
+### λ Long-running tool flows should default to non-blocking unless synchronous output is required
+
+For UI-driven sessions, default blocking behavior in `run_chain` can stall the active
+request path even when the underlying workflow is asynchronous. Defaulting to
+background start, with explicit opt-in wait (`wait=true`), preserves responsiveness
+while still allowing synchronous callers when needed.
+
+### λ Completion sources must be backend-driven to keep extension UX in sync
+
+Static slash command completion drifts as extensions change. Pulling
+`:psi.extension/command-names` into completion state (Emacs CAPF + TUI autocomplete)
+keeps command discovery aligned with live extension registration.
+
 ## 2026-03-07 - Chain selection UX should accept operator intent directly
 
 ### λ Name-first selection is a natural operator behavior
