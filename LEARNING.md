@@ -4,6 +4,24 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-06 - OpenAI thinking parity needs provider + executor + UI alignment
+
+### λ Thinking visibility is a pipeline contract, not a single parser fix
+
+`fbbb173` confirmed that restoring OpenAI reasoning requires end-to-end alignment:
+
+1. provider extracts reasoning deltas from real chat-completions chunk shapes,
+2. executor preserves/emits canonical `:thinking-delta` events,
+3. UI layer (TUI) renders thinking deltas distinctly from assistant text.
+
+If any layer is missing, reasoning may exist in payloads but remain invisible to users.
+
+### λ Stream parity is an explicit acceptance target
+
+When adding/fixing provider streaming features, verify parity across active frontends
+(not just provider/unit tests): transport event shape, session event mapping, and final UI
+rendering must all agree on the same semantic channel (`thinking` vs `text`).
+
 ## 2026-03-06 - OpenAI chat-completions thinking required both request + parser fixes
 
 ### λ OpenAI reasoning visibility is two-part: request intent + stream parsing
