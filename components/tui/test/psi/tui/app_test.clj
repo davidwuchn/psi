@@ -657,6 +657,20 @@ clojure-lsp"}]})
       (is (str/includes? out "Enter queues input"))
       (is (not (str/includes? out "⠋ waiting for response…"))))))
 
+(deftest thinking-delta-updates-stream-thinking-and-renders-test
+  (testing "thinking progress accumulates and is visible in streaming view"
+    (let [update-fn (app/make-update (stub-agent-fn ""))
+          state     (assoc (init-state) :phase :streaming)
+          [s1 _]    (update-fn state {:type :agent-event
+                                      :event-kind :thinking-delta
+                                      :text "Plan"})
+          [s2 _]    (update-fn s1 {:type :agent-event
+                                   :event-kind :thinking-delta
+                                   :text " step"})
+          out       (app/view s2)]
+      (is (= "Plan step" (:stream-thinking s2)))
+      (is (str/includes? out "Plan step")))))
+
 (deftest view-shows-spinner-in-waiting-indicator-with-tool-history-test
   (testing "streaming view keeps a visible spinner even after tools complete"
     (let [state (-> (init-state)

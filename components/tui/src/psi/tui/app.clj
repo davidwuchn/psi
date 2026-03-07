@@ -906,6 +906,7 @@
            :height                24
            ;; Live turn progress
            :stream-text           nil
+           :stream-thinking       nil
            :tool-calls            (or (:initial-tool-calls opts) {})
            :tool-order            (vec (or (:initial-tool-order opts) []))
            :tools-expanded?       (ext-ui/get-tools-expanded ui-state-atom)}
@@ -1054,6 +1055,7 @@
                                         :current-session-file path
                                         :messages         (or restored-msgs [])
                                         :stream-text      nil
+                                        :stream-thinking  nil
                                         :tool-calls       (or restored-tool-calls {})
                                         :tool-order       (or restored-tool-order [])))]
             [new-state nil])
@@ -1073,10 +1075,11 @@
     (run-agent-fn! text queue)
     [(-> state
          (update :messages conj {:role :user :text text})
-         (assoc :phase         :streaming
-                :error         nil
-                :spinner-frame 0
-                :stream-text   nil)
+         (assoc :phase           :streaming
+                :error           nil
+                :spinner-frame   0
+                :stream-text     nil
+                :stream-thinking nil)
          (set-input-model (charm/text-input-reset (:input state))))
      (poll-cmd queue)]))
 
@@ -1144,6 +1147,12 @@
     (case kind
       :text-delta
       [(assoc state :stream-text (:text event)) nil]
+
+      :thinking-delta
+      [(update state :stream-thinking
+               (fn [current]
+                 (str (or current "") (or (:text event) ""))))
+       nil]
 
       :tool-start
       (let [id   (:tool-id event)
@@ -1220,9 +1229,10 @@
         display (if (seq text) text "(no response)")]
     [(-> state
          (update :messages conj {:role :assistant :text display})
-         (assoc :phase       :idle
-                :error       error
-                :stream-text nil))
+         (assoc :phase           :idle
+                :error           error
+                :stream-text     nil
+                :stream-thinking nil))
      (poll-cmd (:queue state))]))
 
 (defn- handle-agent-poll
@@ -1297,8 +1307,9 @@
           merged-text (merge-queued-and-draft queued-text (input-value state))
           next-state  (-> state
                           (set-input-value merged-text)
-                          (assoc :phase :idle
-                                 :stream-text nil)
+                          (assoc :phase           :idle
+                                 :stream-text     nil
+                                 :stream-thinking nil)
                           (clear-autocomplete)
                           (assoc-in [:prompt-input-state :timing :last-escape-ms] (now-ms))
                           (append-assistant-status (or message "Interrupted.")))]
@@ -1423,9 +1434,10 @@
       ;; Agent error
         (agent-error? m)
         [(-> state
-             (assoc :phase       :idle
-                    :error       (:error m)
-                    :stream-text nil))
+             (assoc :phase           :idle
+                    :error           (:error m)
+                    :stream-text     nil
+                    :stream-thinking nil))
          (poll-cmd (:queue state))]
 
       ;; Agent aborted via interrupt
@@ -1435,8 +1447,9 @@
               status-msg  (or (:message m) "Interrupted.")]
           [(-> state
                (set-input-value merged-text)
-               (assoc :phase :idle
-                      :stream-text nil)
+               (assoc :phase           :idle
+                      :stream-text     nil
+                      :stream-thinking nil)
                (append-assistant-status status-msg))
            (poll-cmd (:queue state))])
 
@@ -2323,6 +2336,14 @@
                                    wrapped)))
                           warning-lines))))))))))))
 
+(defn- render-stream-thinking
+  "Render accumulated streaming thinking from the LLM.
+
+   Thinking is shown as a dim inline transcript above the main assistant text."
+  [text]
+  (when (and text (not (str/blank? text)))
+    (str (charm/render dim-style (str "ψ⋯ " text)) "\n")))
+
 (defn- render-stream-text
   "Render accumulated streaming text from the LLM
    with markdown styling. `width` is terminal columns."
@@ -2343,11 +2364,11 @@
   [state]
   (let [{:keys [messages phase error input spinner-frame model-name
                 prompt-templates skills extension-summary ui-state-atom
-                stream-text tool-calls tool-order tools-expanded?
+                stream-text stream-thinking tool-calls tool-order tools-expanded?
                 session-selector current-session-file width force-clear?]} state
         spinner-char   (nth spinner-frames (mod spinner-frame (count spinner-frames)))
         dialog-active? (has-active-dialog? state)
-        has-progress?  (or (seq stream-text) (seq tool-order))
+        has-progress?  (or (seq stream-thinking) (seq stream-text) (seq tool-order))
         active-tool-spinner?
         (boolean
          (some (fn [id]
@@ -2375,7 +2396,8 @@
             ;; Current turn progress
             (when (= :streaming phase)
               (if has-progress?
-                (str (render-stream-text stream-text term-width)
+                (str (render-stream-thinking stream-thinking)
+                     (render-stream-text stream-text term-width)
                      (render-tool-calls tool-calls tool-order spinner-char term-width tools-expanded? ui-state-atom)
                      "\n")
                 (str "\n" (charm/render assist-style "ψ: ")

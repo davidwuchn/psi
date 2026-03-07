@@ -125,6 +125,32 @@
                 @events))
       (is (some #(= :done (:type %)) @events)))))
 
+(deftest codex-reasoning-map-delta-normalized-to-string-test
+  (testing "non-string reasoning delta payloads are normalized to text"
+    (let [model    (models/get-model :gpt-5.3-codex)
+          token    (jwt-with-account-id "acc_test")
+          convo    (-> (conv/create "sys") (conv/add-user-message "think"))
+          events   (atom [])
+          sse      (str
+                    "data: " (json/generate-string
+                               {:type "response.output_item.added"
+                                :item {:type "reasoning" :id "rs_1"}}) "\n\n"
+                    "data: " (json/generate-string
+                               {:type "response.reasoning_summary.delta"
+                                :delta {:text "Plan chunk"}}) "\n\n"
+                    "data: " (json/generate-string
+                               {:type "response.completed"
+                                :response {:status "completed"}}) "\n\n")]
+      (with-redefs [http/post (fn [_url _req]
+                                {:body (stream-body sse)})]
+        ((:stream openai/provider)
+         convo model {:api-key token}
+         (fn [ev] (swap! events conj ev))))
+
+      (is (some #(and (= :thinking-delta (:type %))
+                      (= "Plan chunk" (:delta %)))
+                @events)))))
+
 (deftest codex-thinking-level-maps-to-reasoning-effort-test
   (let [model (models/get-model :gpt-5.3-codex)]
     (is (= {"effort" "high" "summary" "auto"}
@@ -194,6 +220,12 @@
                   "data: " (json/generate-string
                              {:choices [{:delta {:content [{:type "reasoning" :text "C"}]}}]}) "\n\n"
                   "data: " (json/generate-string
+                             {:choices [{:delta {:reasoning {:content [{:type "reasoning_text"
+                                                                       :text "D"}]}}}]}) "\n\n"
+                  "data: " (json/generate-string
+                             {:choices [{:delta {:reasoning {:summary [{:type "summary_text"
+                                                                       :text "E"}]}}}]}) "\n\n"
+                  "data: " (json/generate-string
                              {:choices [{:finish_reason "stop"}]
                               :usage {:prompt_tokens 1 :completion_tokens 1 :total_tokens 2}}) "\n\n")]
       (with-redefs [http/post (fn [_url _req]
@@ -203,7 +235,7 @@
          (fn [ev] (swap! events conj ev))))
 
       (is (some #(= :start (:type %)) @events))
-      (is (= ["A" "B" "C"]
+      (is (= ["A" "B" "C" "D" "E"]
              (->> @events
                   (filter #(= :thinking-delta (:type %)))
                   (mapv :delta))))

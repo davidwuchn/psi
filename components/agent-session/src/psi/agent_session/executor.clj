@@ -353,7 +353,10 @@ Also tolerates cumulative snapshots that differ near previous tail
                     :thinking-delta
                     (emit-progress! progress-queue
                                     {:event-kind :thinking-delta
-                                     :text       (:delta event)})
+                                     :text       (let [d (:delta event)]
+                                                   (if (string? d)
+                                                     d
+                                                     (str (or d ""))))})
 
                     :toolcall-start
                     (turn-sc/send-event! turn-ctx :turn/toolcall-start

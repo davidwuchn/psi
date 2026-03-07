@@ -49,32 +49,83 @@
   (when (seq parts)
     (str/join "" parts)))
 
+(def ^:private reasoning-part-types
+  #{"reasoning"
+    "reasoning_text"
+    "reasoning_content"
+    "reasoning_summary"
+    "summary"
+    "summary_text"})
+
+(defn- string-fragment
+  "Normalize provider text fragments to a plain string.
+
+   Handles string leaves as well as nested maps/vectors often used in
+   OpenAI reasoning payloads. Returns nil when no textual content is found."
+  [x]
+  (letfn [(->text [v]
+            (cond
+              (nil? v) nil
+              (string? v) v
+              (number? v) (str v)
+              (keyword? v) (name v)
+
+              (sequential? v)
+              (join-parts (keep ->text v))
+
+              (map? v)
+              (or (->text (:text v))
+                  (->text (:content v))
+                  (->text (:delta v))
+                  (->text (:summary v))
+                  (->text (:value v)))
+
+              :else nil))]
+    (->text x)))
+
 (defn- extract-reasoning-delta
   [delta]
-  (or
-   (get-in delta [:reasoning :content])
-   (:reasoning_content delta)
-   (when (string? (:reasoning delta))
-     (:reasoning delta))
-   (when (map? (:reasoning delta))
-     (or (:content (:reasoning delta))
-         (:text (:reasoning delta))))
-   (when (sequential? (:reasoning delta))
-     (join-parts
-      (keep (fn [part]
-              (when (map? part)
-                (let [ptype (normalize-part-type part)]
-                  (when (contains? #{"reasoning" "reasoning_text" "reasoning_content"} ptype)
-                    (or (:text part) (:content part))))))
-            (:reasoning delta))))
-   (when (sequential? (:content delta))
-     (join-parts
-      (keep (fn [part]
-              (when (map? part)
-                (let [ptype (normalize-part-type part)]
-                  (when (contains? #{"reasoning" "reasoning_text" "reasoning_content"} ptype)
-                    (or (:text part) (:content part))))))
-            (:content delta))))))
+  (let [reasoning (:reasoning delta)]
+    (or
+     (string-fragment (get-in delta [:reasoning :content]))
+     (string-fragment (get-in delta [:reasoning :summary]))
+     (string-fragment (:reasoning_content delta))
+
+     (when (string? reasoning)
+       reasoning)
+
+     (when (map? reasoning)
+       (or (string-fragment (:content reasoning))
+           (string-fragment (:summary reasoning))
+           (string-fragment (:text reasoning))
+           (string-fragment (:delta reasoning))))
+
+     (when (sequential? reasoning)
+       (join-parts
+        (keep (fn [part]
+                (when (map? part)
+                  (let [ptype (normalize-part-type part)]
+                    (when (or (contains? reasoning-part-types ptype)
+                              (contains? part :reasoning)
+                              (contains? part :summary))
+                      (or (string-fragment (:text part))
+                          (string-fragment (:content part))
+                          (string-fragment (:delta part))
+                          (string-fragment (:reasoning part))
+                          (string-fragment (:summary part)))))))
+              reasoning)))
+
+     (when (sequential? (:content delta))
+       (join-parts
+        (keep (fn [part]
+                (when (map? part)
+                  (let [ptype (normalize-part-type part)]
+                    (when (contains? reasoning-part-types ptype)
+                      (or (string-fragment (:text part))
+                          (string-fragment (:content part))
+                          (string-fragment (:delta part))
+                          (string-fragment (:summary part)))))))
+              (:content delta)))))))
 
 (defn- extract-text-delta
   [delta]
@@ -88,7 +139,8 @@
              (when (map? part)
                (let [ptype (normalize-part-type part)]
                  (when (contains? #{"text" "output_text"} ptype)
-                   (or (:text part) (:content part))))))
+                   (or (string-fragment (:text part))
+                       (string-fragment (:content part)))))))
            (:content delta)))
 
     :else nil))
@@ -169,8 +221,8 @@
                         (seq tool-defs)        (assoc :tools tool-defs)
                         effort                 (assoc :reasoning_effort effort))]
     {:headers {"Content-Type"  "application/json"
-               "Authorization" (str "Bearer " (or (:api-key options
-                                                            (System/getenv "OPENAI_API_KEY"))))}
+               "Authorization" (str "Bearer " (:api-key options
+                                                    (System/getenv "OPENAI_API_KEY")))}
      :body    (json/generate-string body)}))
 
 (defn parse-sse-line
@@ -678,35 +730,35 @@
                                            :content-index idx}))))))
 
                     "response.output_text.delta"
-                    (when-let [delta (:delta event)]
+                    (when-let [delta (string-fragment (:delta event))]
                       (emit-start!)
                       (consume-fn {:type :text-delta
                                    :content-index 0
                                    :delta delta}))
 
                     "response.reasoning_summary_text.delta"
-                    (when-let [delta (:delta event)]
+                    (when-let [delta (string-fragment (:delta event))]
                       (emit-start!)
                       (consume-fn {:type :thinking-delta
                                    :content-index 0
                                    :delta delta}))
 
                     "response.reasoning_text.delta"
-                    (when-let [delta (:delta event)]
+                    (when-let [delta (string-fragment (:delta event))]
                       (emit-start!)
                       (consume-fn {:type :thinking-delta
                                    :content-index 0
                                    :delta delta}))
 
                     "response.reasoning_summary.delta"
-                    (when-let [delta (:delta event)]
+                    (when-let [delta (string-fragment (:delta event))]
                       (emit-start!)
                       (consume-fn {:type :thinking-delta
                                    :content-index 0
                                    :delta delta}))
 
                     "response.reasoning.delta"
-                    (when-let [delta (:delta event)]
+                    (when-let [delta (string-fragment (:delta event))]
                       (emit-start!)
                       (consume-fn {:type :thinking-delta
                                    :content-index 0
