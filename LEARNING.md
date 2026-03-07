@@ -4,6 +4,33 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-07 - Extension output: prefer outcome messages over internal state messages
+
+### λ Status messages should describe what the user cares about, not internal delivery state
+
+Prior PSL messages surfaced internal jargon (`"PSL prompt queued via deferred."`,
+`"PSL sync start for abc1234."`, `"PSL skipped for abc1234 (self commit marker)."`)
+that reflects implementation details, not operator outcomes.
+
+Cleaner contract:
+- success → `"Updating PLAN.md, STATE.md and LEARNING.md …"` (what is happening)
+- failure → `"Failed to update PLAN.md, STATE.md and LEARNING.md"` (what went wrong)
+- skip (self-commit) → silent (no message needed; the commit marker explains itself)
+
+### λ Silent skip is cleaner than a "skipped" message
+
+A self-commit skip message creates noise in the transcript for every PSL-auto
+commit. Since the skip reason is encoded in the commit subject (`[psi:psl-auto]`),
+no additional message is needed — silence is the correct output.
+
+### λ Remove intermediate progress messages when the final outcome message is sufficient
+
+`"PSL sync start for …"` was emitted before `send-prompt!` then superseded by
+the accepted/rejected message. Two messages for one logical operation creates
+chattiness. A single outcome message after the operation is complete is cleaner.
+
+---
+
 ## 2026-03-07 - Chain result delivery: close the loop back to the session
 
 ### λ Background workflow output must be routed back to the session explicitly
