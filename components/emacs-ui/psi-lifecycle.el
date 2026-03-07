@@ -211,12 +211,10 @@ COMMAND is a list suitable for `make-process'."
 (defun psi-emacs--handle-window-configuration-change ()
   "Refresh width-sensitive separators after window configuration changes."
   (when psi-emacs--state
-    (when (and (fboundp 'psi-emacs--input-separator-marker-valid-p)
-               (fboundp 'psi-emacs--input-separator-needs-refresh-p)
-               (fboundp 'psi-emacs--refresh-input-separator-line)
-               (psi-emacs--input-separator-marker-valid-p)
-               (psi-emacs--input-separator-needs-refresh-p))
-      (psi-emacs--refresh-input-separator-line))
+    ;; Keep input separator healthy + width-aligned even if marker drifted.
+    (when (fboundp 'psi-emacs--ensure-input-area)
+      (save-excursion
+        (psi-emacs--ensure-input-area)))
     ;; Re-render projection block when present so footer/projection separator
     ;; widths track the current visible window after resize/split changes.
     (when (and (fboundp 'psi-emacs--upsert-projection-block)

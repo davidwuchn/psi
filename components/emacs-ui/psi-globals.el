@@ -31,6 +31,7 @@
 (declare-function psi-emacs-previous-input "psi-compose")
 (declare-function psi-emacs-next-input "psi-compose")
 (declare-function psi-emacs--upsert-projection-block "psi-projection")
+(declare-function psi-emacs--handle-window-configuration-change "psi-lifecycle")
 
 (declare-function markdown-mode "markdown-mode")
 (declare-function markdown-fontify-region "markdown-mode" (begin end))

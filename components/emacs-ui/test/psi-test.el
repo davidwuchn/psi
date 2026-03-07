@@ -2245,10 +2245,24 @@
       (should (string-match-p "  (openai) gpt-5\\.3-codex • thinking off$" stats-line))
       (should (= 70 (string-width stats-line))))))
 
-(ert-deftest psi-footer-projection-width-excludes-window-margins ()
+(ert-deftest psi-footer-projection-width-prefers-window-text-width ()
   (with-temp-buffer
     (cl-letf (((symbol-function 'get-buffer-window)
                (lambda (&rest _args) 'fake-win))
+              ((symbol-function 'window-text-width)
+               (lambda (_win) 96))
+              ((symbol-function 'window-body-width)
+               (lambda (_win &optional _pixelwise) 120))
+              ((symbol-function 'window-margins)
+               (lambda (_win) '(2 . 1))))
+      (should (= 96 (psi-emacs--projection-window-width))))))
+
+(ert-deftest psi-footer-projection-width-falls-back-to-margins-when-text-width-unavailable ()
+  (with-temp-buffer
+    (cl-letf (((symbol-function 'get-buffer-window)
+               (lambda (&rest _args) 'fake-win))
+              ((symbol-function 'window-text-width)
+               (lambda (_win) nil))
               ((symbol-function 'window-body-width)
                (lambda (_win &optional _pixelwise) 120))
               ((symbol-function 'window-margins)
@@ -2269,6 +2283,13 @@
          (:data . ((:path-line . "~/psi-main")
                    (:stats-line . "latency 12ms")))))
       (should (= 20 (psi-emacs--input-separator-current-width))))
+    ;; Simulate input-separator drift: marker exists but no longer points at a
+    ;; separator character. `psi-emacs--ensure-input-area` should repair it.
+    (let ((sep (psi-emacs-state-input-separator-marker psi-emacs--state)))
+      (save-excursion
+        (goto-char (marker-position sep))
+        (delete-char 1)
+        (insert "X")))
     (cl-letf (((symbol-function 'psi-emacs--projection-window-width)
                (lambda () 33)))
       (psi-emacs--handle-window-configuration-change)

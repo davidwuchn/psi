@@ -88,15 +88,19 @@ from transcript projection rendering."
 (defun psi-emacs--projection-window-width ()
   "Return render width for footer projection in current buffer.
 
-Uses the live window body width minus active left/right margins so alignment
-matches the visible text area. Falls back to 80 for non-visible buffers
-(e.g. tests/background)."
+Prefers `window-text-width' when available (tracks visible text area in
+columns). Falls back to body-width minus left/right margins for compatibility.
+Returns 80 for non-visible buffers (e.g. tests/background)."
   (if-let ((win (get-buffer-window (current-buffer) t)))
-      (let* ((body (window-body-width win))
-             (margins (window-margins win))
-             (left-margin (or (car margins) 0))
-             (right-margin (or (cdr margins) 0))
-             (text-width (- body left-margin right-margin)))
+      (let* ((text-width* (and (fboundp 'window-text-width)
+                               (window-text-width win)))
+             (text-width (if (and (integerp text-width*) (> text-width* 0))
+                             text-width*
+                           (let* ((body (window-body-width win))
+                                  (margins (window-margins win))
+                                  (left-margin (or (car margins) 0))
+                                  (right-margin (or (cdr margins) 0)))
+                             (- body left-margin right-margin)))))
         (max 1 text-width))
     80))
 
