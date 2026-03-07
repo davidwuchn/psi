@@ -153,6 +153,7 @@ Ordered steps toward PSI COMPLETE.
 - Progress: commit `11feddf` keeps interactive `run_chain` tool calls non-blocking even when `wait=true` is requested, preserving UI responsiveness while workflow execution continues in background.
 - Progress: commit `8d36927` added graph-discoverable agent-chain config attrs (`:psi.agent-chain/config-path`, `:psi.agent-chain/count`, `:psi.agent-chain/names`, `:psi.agent-chain/chains`, `:psi.agent-chain/error`).
 - Follow-up queued: align `/chain` command UX with user intent by supporting both index and name selection (`/chain <number|name>`), while keeping no-default-active semantics.
+- Follow-up queued: add explicit extension transcript status for deferred PSL prompt delivery (`queued via deferred; will auto-run when idle`) so operator feedback distinguishes queued-follow-up from auto-deferred execution.
 - Definition of done:
   - Per-token streaming render is available (not spinner-only)
   - Tool execution status is visible during active turns
