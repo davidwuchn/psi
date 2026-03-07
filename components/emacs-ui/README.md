@@ -49,6 +49,26 @@ When the frontend is **idle** (not streaming), these built-in slash commands are
 
 Unknown slash commands (for example `/foo`) are not handled locally and are sent through the normal `prompt` RPC path.
 
+## Dedicated input area + history
+
+The frontend now maintains a dedicated compose input area above the footer/projection block.
+
+- A horizontal separator marks the boundary between transcript output (above) and editable input (below).
+- Send (`C-c RET`) or queue (`C-c C-q`) copies input into transcript as `User: ...`, then clears input.
+- Input supports multi-line editing (`RET` inserts newline).
+- While assistant/tool output streams, point remains in the input area.
+
+Input history navigation (standard Emacs keys):
+
+- `M-p` -> previous input
+- `M-n` -> next/newer input
+
+History behavior:
+
+- newest-first history ring
+- duplicate-consecutive submissions are collapsed
+- unsent draft is restored when navigating back to newest entry
+
 ## Prompt completion (`/` and `@`)
 
 `psi-emacs-mode` installs a CAPF (`psi-emacs-prompt-capf`) for compose input.

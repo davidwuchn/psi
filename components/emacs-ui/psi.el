@@ -69,7 +69,11 @@ Used to detect stalled streaming runs and transition to deterministic recovery."
   projection-notification-seq
   projection-notification-timers
   projection-range
+  input-separator-marker
   draft-anchor
+  input-history
+  input-history-index
+  input-history-stash
   rpc-client
   tool-output-view-mode
   session-id

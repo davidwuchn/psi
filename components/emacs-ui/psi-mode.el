@@ -116,6 +116,8 @@ finalized assistant content only."
 
 (let ((map psi-emacs-mode-map))
   (define-key map (kbd "RET") #'newline)
+  (define-key map (kbd "M-p") #'psi-emacs-previous-input)
+  (define-key map (kbd "M-n") #'psi-emacs-next-input)
   (define-key map (kbd "C-c RET") #'psi-emacs-send-from-buffer)
   (define-key map (kbd "C-c C-q") #'psi-emacs-queue-from-buffer)
   (define-key map (kbd "C-c C-k") #'psi-emacs-abort)

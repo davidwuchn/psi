@@ -479,19 +479,21 @@ When MESSAGE is a slash command candidate, run
 `psi-emacs--idle-slash-command-handler-function'. If not handled, fall through
 to normal prompt dispatch.
 
-Returns non-nil when MESSAGE was consumed locally or dispatched remotely."
+Returns plist:
+  :dispatched?  non-nil when consumed locally or dispatched remotely
+  :local-only?  non-nil when consumed by local slash interception." 
   (let ((handled (and psi-emacs--state
                       (psi-emacs--slash-command-candidate-p message)
                       (funcall psi-emacs--idle-slash-command-handler-function
                                psi-emacs--state
                                message))))
     (if handled
-        t
+        (list :dispatched? t :local-only? t)
       (let ((sent? (psi-emacs--dispatch-request "prompt" `((:message . ,message)))))
         (when sent?
           (psi-emacs--set-run-state psi-emacs--state 'streaming)
           (psi-emacs--reset-stream-watchdog psi-emacs--state))
-        sent?))))
+        (list :dispatched? sent? :local-only? nil)))))
 
 (provide 'psi-session-commands)
 

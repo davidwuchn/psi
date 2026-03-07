@@ -311,9 +311,12 @@
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
     (unwind-protect
         (progn
-          (insert "transcript\nDraft text")
+          (insert "transcript\n")
           (setf (psi-emacs-state-draft-anchor psi-emacs--state)
-                (copy-marker (+ (length "transcript\n") 1) nil))
+                (copy-marker (point-max) nil))
+          (psi-emacs--ensure-input-area)
+          (goto-char (psi-emacs--draft-end-position))
+          (insert "Draft text")
           (deactivate-mark)
           (should (equal "Draft text" (psi-emacs--composed-text))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
@@ -324,12 +327,17 @@
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
     (unwind-protect
-        (let ((calls (psi-test--capture-request-sends
-                      (lambda ()
-                        (insert "a")
-                        (call-interactively (key-binding (kbd "RET")))))))
-          (should (equal "a\n" (buffer-string)))
-          (should (equal '() calls)))
+        (progn
+          (psi-emacs--ensure-input-area)
+          (goto-char (psi-emacs--draft-end-position))
+          (let ((calls (psi-test--capture-request-sends
+                        (lambda ()
+                          (insert "a")
+                          (call-interactively (key-binding (kbd "RET"))))))
+                (input-text nil))
+            (setq input-text (psi-emacs--tail-draft-text))
+            (should (equal "a\n" input-text))
+            (should (equal '() calls))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
@@ -359,8 +367,9 @@
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
     (unwind-protect
         (progn
+          (psi-emacs--ensure-input-area)
+          (goto-char (psi-emacs--draft-end-position))
           (insert "hello")
-          (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker 1 nil))
           (let ((calls (psi-test--capture-request-sends
                         (lambda ()
                           (setf (psi-emacs-state-run-state psi-emacs--state) 'idle)
@@ -384,8 +393,9 @@
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
     (unwind-protect
         (progn
+          (psi-emacs--ensure-input-area)
+          (goto-char (psi-emacs--draft-end-position))
           (insert "queued")
-          (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker 1 nil))
           (let ((calls (psi-test--capture-request-sends
                         (lambda ()
                           (setf (psi-emacs-state-run-state psi-emacs--state) 'streaming)
@@ -722,10 +732,8 @@
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
     (unwind-protect
         (let ((rpc-calls nil)
-              (selected-paths nil)
-              (before nil))
+              (selected-paths nil))
           (insert "/resume")
-          (setq before (buffer-string))
           (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker 1 nil))
           (cl-letf (((symbol-function 'completing-read)
                      (lambda (&rest _args)
@@ -750,7 +758,7 @@
           (setq rpc-calls (nreverse rpc-calls))
           (should (equal '("query_eql") (mapcar #'car rpc-calls)))
           (should (equal '() selected-paths))
-          (should (string= before (buffer-string)))
+          (should (string-empty-p (psi-emacs--tail-draft-text)))
           (should-not (string-match-p "ψ:" (buffer-string))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
@@ -1167,14 +1175,14 @@
                      (lambda (_state op params &optional _callback)
                        (push (list op params) rpc-calls))))
             (psi-emacs-send-from-buffer nil)
-            (goto-char (point-max))
-            (insert "\n/status")
+            (goto-char (psi-emacs--draft-end-position))
+            (insert "/status")
             ;; Intentionally do not reset draft anchor between sends.
             (setq status (psi-emacs--status-string psi-emacs--state))
             (psi-emacs-send-from-buffer nil))
           (should (equal '() rpc-calls))
-          (should (string-suffix-p (concat "ψ: " status "\n")
-                                   (buffer-string))))
+          (should (string-match-p (regexp-quote (concat "ψ: " status "\n"))
+                                  (buffer-string))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
@@ -1422,7 +1430,7 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-assistant-finalize-moves-point-to-end ()
+(ert-deftest psi-assistant-finalize-keeps-point-in-input-area ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -2410,6 +2418,52 @@
       (should (string-match-p "\\[ext-t\\] Temp" (buffer-string)))
       (apply scheduled-callback scheduled-args)
       (should-not (string-match-p "\\[ext-t\\] Temp" (buffer-string))))))
+
+(ert-deftest psi-input-area-creates-separator-and-start-marker ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (insert "existing transcript")
+    (setf (psi-emacs-state-draft-anchor psi-emacs--state)
+          (copy-marker (point-max) nil))
+    (psi-emacs--ensure-input-area)
+    (let ((sep (psi-emacs-state-input-separator-marker psi-emacs--state)))
+      (should (markerp sep))
+      (should (eq ?─ (char-after (marker-position sep))))
+      (should (= (psi-emacs--input-start-position)
+                 (marker-position (psi-emacs-state-draft-anchor psi-emacs--state)))))))
+
+(ert-deftest psi-send-copies-input-to-transcript-and-clears-input ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (psi-emacs--ensure-input-area)
+    (goto-char (psi-emacs--draft-end-position))
+    (insert "hello input")
+    (let ((calls (psi-test--capture-request-sends
+                  (lambda ()
+                    (psi-emacs-send-from-buffer nil)))))
+      (should (equal '(("prompt" ((:message . "hello input")))) calls))
+      (should (string-empty-p (psi-emacs--tail-draft-text)))
+      (should (string-match-p "^User: hello input" (buffer-string))))))
+
+(ert-deftest psi-input-history-m-p-m-n-navigates-submissions ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (psi-emacs--history-record-input "first")
+    (psi-emacs--history-record-input "second")
+    (psi-emacs--ensure-input-area)
+    (goto-char (psi-emacs--draft-end-position))
+    (insert "draft")
+    (psi-emacs-previous-input)
+    (should (equal "second" (psi-emacs--tail-draft-text)))
+    (psi-emacs-previous-input)
+    (should (equal "first" (psi-emacs--tail-draft-text)))
+    (psi-emacs-next-input)
+    (should (equal "second" (psi-emacs--tail-draft-text)))
+    (psi-emacs-next-input)
+    (should (equal "draft" (psi-emacs--tail-draft-text)))))
 
 (ert-deftest psi-capf-installed-in-psi-mode-buffer ()
   (with-temp-buffer

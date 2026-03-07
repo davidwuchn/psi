@@ -255,16 +255,19 @@ so we append directly without the snapshot-merge heuristic."
   "Finalize assistant block with TEXT and clear in-progress state."
   (when psi-emacs--state
     (let* ((text* (if (and (stringp text) (string-empty-p text)) nil text))
-           (final (or text* (psi-emacs-state-assistant-in-progress psi-emacs--state) "")))
+           (final (or text* (psi-emacs-state-assistant-in-progress psi-emacs--state) ""))
+           (follow-input (psi-emacs--draft-anchor-at-end-p)))
       (psi-emacs--set-assistant-line final nil)
       (psi-emacs--process-finalized-assistant-range
        (psi-emacs-state-assistant-range psi-emacs--state))
-      (goto-char (point-max))
       (setf (psi-emacs-state-assistant-in-progress psi-emacs--state) nil)
       (setf (psi-emacs-state-assistant-range psi-emacs--state) nil)
       (psi-emacs--clear-thinking-line)
       (psi-emacs--disarm-stream-watchdog psi-emacs--state)
-      (psi-emacs--set-run-state psi-emacs--state 'idle))))
+      (psi-emacs--set-run-state psi-emacs--state 'idle)
+      (if follow-input
+          (goto-char (psi-emacs--draft-end-position))
+        (goto-char (psi-emacs--transcript-append-position))))))
 
 (defun psi-emacs--assistant-content->text (content)
   "Extract assistant display text from CONTENT blocks."

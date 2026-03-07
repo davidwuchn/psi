@@ -1,10 +1,11 @@
 ;;; psi-compose.el --- Compose input + send/queue/abort flow for psi frontend  -*- lexical-binding: t; -*-
 
 ;;; Commentary:
-;; Extracted compose-region/tail-draft helpers and send routing used by psi.el.
+;; Extracted compose input area + send routing used by psi.el.
 
 ;;; Code:
 
+(require 'subr-x)
 (require 'psi-globals)
 
 (defun psi-emacs--streaming-p ()
@@ -13,7 +14,7 @@
        (eq (psi-emacs-state-run-state psi-emacs--state) 'streaming)))
 
 (defun psi-emacs--draft-end-position ()
-  "Return end position of editable draft region.
+  "Return end position of editable draft/input region.
 
 When a projection/footer block is present, draft ends at projection start.
 Otherwise, draft ends at `point-max'."
@@ -25,21 +26,32 @@ Otherwise, draft ends at `point-max'."
         (marker-position projection-start)
       (point-max))))
 
-(defun psi-emacs--tail-draft-text ()
-  "Return compose text from draft anchor to draft end boundary."
-  (let* ((anchor (and psi-emacs--state
-                      (psi-emacs-state-draft-anchor psi-emacs--state)))
-         (start (if (and (markerp anchor) (marker-buffer anchor))
-                    (marker-position anchor)
-                  (psi-emacs--draft-end-position)))
-         (end   (psi-emacs--draft-end-position)))
-    (buffer-substring-no-properties (min start end) end)))
+(defun psi-emacs--input-separator-marker-valid-p ()
+  "Return non-nil when input separator marker is live and points to separator line."
+  (and psi-emacs--state
+       (markerp (psi-emacs-state-input-separator-marker psi-emacs--state))
+       (marker-buffer (psi-emacs-state-input-separator-marker psi-emacs--state))
+       (let ((pos (marker-position (psi-emacs-state-input-separator-marker psi-emacs--state))))
+         (and (<= pos (point-max))
+              (eq (char-after pos) ?─)))))
 
-(defun psi-emacs--composed-text ()
-  "Return composed text using region-first, else tail draft."
-  (if (use-region-p)
-      (buffer-substring-no-properties (region-beginning) (region-end))
-    (psi-emacs--tail-draft-text)))
+(defun psi-emacs--input-separator-position ()
+  "Return buffer position of input separator marker, or nil."
+  (when (psi-emacs--input-separator-marker-valid-p)
+    (marker-position (psi-emacs-state-input-separator-marker psi-emacs--state))))
+
+(defun psi-emacs--input-separator-width ()
+  "Return separator render width for input area."
+  (if (fboundp 'psi-emacs--projection-window-width)
+      (psi-emacs--projection-window-width)
+    80))
+
+(defun psi-emacs--input-separator-line ()
+  "Return rendered horizontal separator line for input area."
+  (concat (propertize (make-string (max 1 (psi-emacs--input-separator-width)) ?─)
+                      'face 'psi-emacs-projection-separator-face
+                      'font-lock-face 'psi-emacs-projection-separator-face)
+          "\n"))
 
 (defun psi-emacs--draft-anchor-valid-p ()
   "Return non-nil when the current draft anchor marker is valid."
@@ -47,28 +59,186 @@ Otherwise, draft ends at `point-max'."
        (markerp (psi-emacs-state-draft-anchor psi-emacs--state))
        (marker-buffer (psi-emacs-state-draft-anchor psi-emacs--state))))
 
+(defun psi-emacs--input-start-position ()
+  "Return dedicated input start position."
+  (let ((anchor (and psi-emacs--state
+                     (psi-emacs-state-draft-anchor psi-emacs--state))))
+    (if (and (markerp anchor)
+             (marker-buffer anchor))
+        (marker-position anchor)
+      (psi-emacs--draft-end-position))))
+
+(defun psi-emacs--ensure-input-area ()
+  "Ensure a dedicated input area exists before projection/footer content."
+  (when psi-emacs--state
+    (unless (psi-emacs--input-separator-marker-valid-p)
+      (let* ((input-start (psi-emacs--input-start-position))
+             (input-end (psi-emacs--draft-end-position))
+             (point-in-input? (and (>= (point) input-start)
+                                   (<= (point) input-end)))
+             (point-offset (and point-in-input? (- (point) input-start)))
+             (existing-input (buffer-substring-no-properties input-start input-end)))
+        (save-excursion
+          (goto-char input-start)
+          (delete-region input-start input-end)
+          (unless (or (bobp)
+                      (eq (char-before) ?\n))
+            (insert "\n"))
+          (let ((separator-start (point)))
+            (insert (psi-emacs--input-separator-line))
+            (let ((separator-marker (copy-marker separator-start t)))
+              (set-marker-insertion-type separator-marker t)
+              (setf (psi-emacs-state-input-separator-marker psi-emacs--state)
+                    separator-marker))
+            (setf (psi-emacs-state-draft-anchor psi-emacs--state)
+                  (copy-marker (point) nil))
+            (insert existing-input)))
+        (when point-in-input?
+          (goto-char (+ (psi-emacs--input-start-position)
+                        (min (or point-offset 0)
+                             (length existing-input)))))))))
+
+(defun psi-emacs--input-range ()
+  "Return dedicated input range as (START . END)."
+  (let ((start (psi-emacs--input-start-position))
+        (end (psi-emacs--draft-end-position)))
+    (cons (min start end) (max start end))))
+
+(defun psi-emacs--tail-draft-text ()
+  "Return compose text from dedicated input area."
+  (let* ((range (psi-emacs--input-range))
+         (start (car range))
+         (end (cdr range)))
+    (buffer-substring-no-properties start end)))
+
+(defun psi-emacs--composed-text ()
+  "Return composed text using region-first, else dedicated input text."
+  (if (use-region-p)
+      (buffer-substring-no-properties (region-beginning) (region-end))
+    (psi-emacs--tail-draft-text)))
+
 (defun psi-emacs--draft-anchor-at-end-p ()
-  "Return non-nil when draft anchor is currently at draft end boundary."
-  (and (psi-emacs--draft-anchor-valid-p)
-       (= (marker-position (psi-emacs-state-draft-anchor psi-emacs--state))
-          (psi-emacs--draft-end-position))))
+  "Return non-nil when point is currently in input-follow mode."
+  (if (psi-emacs--input-separator-marker-valid-p)
+      (let* ((range (psi-emacs--input-range))
+             (start (car range))
+             (end (cdr range))
+             (pt (point)))
+        (and (<= start pt) (<= pt end)))
+    (and (psi-emacs--draft-anchor-valid-p)
+         (= (marker-position (psi-emacs-state-draft-anchor psi-emacs--state))
+            (psi-emacs--draft-end-position)))))
 
 (defun psi-emacs--set-draft-anchor-to-end ()
-  "Move/create draft anchor at draft end boundary."
+  "Normalize draft anchor marker boundary.
+
+When input area exists, anchor stays at input start. Otherwise, anchor tracks
+legacy draft end behavior."
   (when psi-emacs--state
     (let ((anchor (psi-emacs-state-draft-anchor psi-emacs--state))
-          (end-pos (psi-emacs--draft-end-position)))
+          (target-pos (if (psi-emacs--input-separator-marker-valid-p)
+                          (psi-emacs--input-start-position)
+                        (psi-emacs--draft-end-position))))
       (if (and (markerp anchor) (marker-buffer anchor))
-          (set-marker anchor end-pos)
+          (set-marker anchor target-pos)
         (setf (psi-emacs-state-draft-anchor psi-emacs--state)
-              (copy-marker end-pos nil))))))
+              (copy-marker target-pos nil))))))
+
+(defun psi-emacs--history-reset-navigation ()
+  "Reset transient input history navigation state."
+  (when psi-emacs--state
+    (setf (psi-emacs-state-input-history-index psi-emacs--state) nil)
+    (setf (psi-emacs-state-input-history-stash psi-emacs--state) nil)))
+
+(defun psi-emacs--history-record-input (text)
+  "Record TEXT in input history when non-empty."
+  (when psi-emacs--state
+    (let ((text* (or text ""))
+          (history (or (psi-emacs-state-input-history psi-emacs--state) '())))
+      (when (not (string-empty-p text*))
+        (unless (equal text* (car history))
+          (setf (psi-emacs-state-input-history psi-emacs--state)
+                (cons text* history))))
+      (psi-emacs--history-reset-navigation))))
+
+(defun psi-emacs--history-entry-at (idx)
+  "Return input history entry at IDX, or nil."
+  (let ((history (and psi-emacs--state
+                      (psi-emacs-state-input-history psi-emacs--state))))
+    (when (and (listp history)
+               (integerp idx)
+               (>= idx 0)
+               (< idx (length history)))
+      (nth idx history))))
+
+(defun psi-emacs--replace-input-text (text)
+  "Replace dedicated input area content with TEXT and place point at end."
+  (psi-emacs--ensure-input-area)
+  (let* ((range (psi-emacs--input-range))
+         (start (car range))
+         (end (cdr range))
+         (text* (or text "")))
+    (save-excursion
+      (goto-char start)
+      (delete-region start end)
+      (insert text*))
+    (goto-char (+ start (length text*)))
+    (psi-emacs--set-draft-anchor-to-end)))
+
+(defun psi-emacs-previous-input ()
+  "Navigate to older input history entry in dedicated input area."
+  (interactive)
+  (unless psi-emacs--state
+    (user-error "psi buffer is not initialized"))
+  (let* ((history (or (psi-emacs-state-input-history psi-emacs--state) '()))
+         (max-idx (1- (length history)))
+         (idx (psi-emacs-state-input-history-index psi-emacs--state)))
+    (when (< max-idx 0)
+      (user-error "No previous inputs"))
+    (unless (integerp idx)
+      (setf (psi-emacs-state-input-history-stash psi-emacs--state)
+            (psi-emacs--tail-draft-text))
+      (setq idx -1))
+    (let ((next-idx (min max-idx (1+ idx))))
+      (setf (psi-emacs-state-input-history-index psi-emacs--state) next-idx)
+      (psi-emacs--replace-input-text (or (psi-emacs--history-entry-at next-idx) "")))))
+
+(defun psi-emacs-next-input ()
+  "Navigate to newer input history entry in dedicated input area."
+  (interactive)
+  (unless psi-emacs--state
+    (user-error "psi buffer is not initialized"))
+  (let ((idx (psi-emacs-state-input-history-index psi-emacs--state)))
+    (unless (integerp idx)
+      (user-error "No newer input"))
+    (if (> idx 0)
+        (let ((next-idx (1- idx)))
+          (setf (psi-emacs-state-input-history-index psi-emacs--state) next-idx)
+          (psi-emacs--replace-input-text (or (psi-emacs--history-entry-at next-idx) "")))
+      (let ((stash (or (psi-emacs-state-input-history-stash psi-emacs--state) "")))
+        (psi-emacs--history-reset-navigation)
+        (psi-emacs--replace-input-text stash)))))
+
+(defun psi-emacs--clear-input ()
+  "Clear dedicated input area and keep point in input."
+  (if (psi-emacs--input-separator-marker-valid-p)
+      (psi-emacs--replace-input-text "")
+    (psi-emacs--set-draft-anchor-to-end)))
 
 (defun psi-emacs--consume-tail-draft (used-region-p)
-  "Advance draft anchor when tail draft was consumed.
+  "Advance/clear draft after successful compose dispatch.
 
-USED-REGION-P non-nil means compose came from region and anchor is untouched."
+USED-REGION-P non-nil means compose came from region,
+so input text is untouched."
   (unless used-region-p
-    (psi-emacs--set-draft-anchor-to-end)))
+    (psi-emacs--clear-input)))
+
+(defun psi-emacs--transcript-append-position ()
+  "Return insertion position for transcript/tool/error output.
+
+Output is inserted immediately above the dedicated input separator."
+  (or (psi-emacs--input-separator-position)
+      (psi-emacs--draft-end-position)))
 
 (defun psi-emacs--transport-ready-for-request-p (state)
   "Return non-nil when STATE can dispatch a frontend RPC request.
@@ -104,9 +274,32 @@ Returns non-nil when the request was dispatched."
   (when (buffer-live-p (current-buffer))
     (kill-buffer (current-buffer))))
 
+(defun psi-emacs--append-user-message-to-transcript (text)
+  "Append sent user TEXT above dedicated input separator."
+  (let ((text* (or text "")))
+    (when (not (string-empty-p text*))
+      (save-excursion
+        (psi-emacs--ensure-newline-before-append)
+        (let ((line-start (point)))
+          (insert (format "User: %s\n" text*))
+          (goto-char line-start)
+          (psi-emacs--apply-prefix-overlay line-start "User: " 'psi-emacs-user-prompt-face))))))
+
 (defun psi-emacs--append-assistant-message (text)
   "Append assistant TEXT as a finalized transcript line."
   (psi-emacs--assistant-finalize text))
+
+(defun psi-emacs--consume-dispatched-input (used-region-p message &optional local-only)
+  "Apply post-dispatch input lifecycle for USED-REGION-P and MESSAGE.
+
+When LOCAL-ONLY is non-nil, input is still consumed but transcript copy/history
+entry are skipped (idle slash command interception path)."
+  (when (and psi-emacs--state
+             (buffer-live-p (current-buffer)))
+    (unless local-only
+      (psi-emacs--history-record-input message)
+      (psi-emacs--append-user-message-to-transcript message))
+    (psi-emacs--consume-tail-draft used-region-p)))
 
 (defun psi-emacs-send-from-buffer (prefix)
   "Send composed text using canonical send semantics.
@@ -115,8 +308,13 @@ With PREFIX while streaming, queue override is used.
 Without PREFIX while streaming, steer is used.
 When idle, routes through slash interception then normal prompt fallback."
   (interactive "P")
+  (when (and psi-emacs--state
+             (not (psi-emacs--input-separator-marker-valid-p)))
+    (psi-emacs--ensure-input-area)
+    (goto-char (psi-emacs--draft-end-position)))
   (let* ((used-region-p (use-region-p))
          (message (psi-emacs--composed-text))
+         (local-only nil)
          (dispatched?
           (if (psi-emacs--streaming-p)
               (let ((sent?
@@ -128,15 +326,22 @@ When idle, routes through slash interception then normal prompt fallback."
                   (psi-emacs--set-run-state psi-emacs--state 'streaming)
                   (psi-emacs--reset-stream-watchdog psi-emacs--state))
                 sent?)
-            (psi-emacs--dispatch-idle-compose-message message))))
+            (let ((result (psi-emacs--dispatch-idle-compose-message message)))
+              (setq local-only (plist-get result :local-only?))
+              (plist-get result :dispatched?)))))
     (when dispatched?
-      (psi-emacs--consume-tail-draft used-region-p))))
+      (psi-emacs--consume-dispatched-input used-region-p message local-only))))
 
 (defun psi-emacs-queue-from-buffer ()
   "Queue composed text while streaming; use idle slash dispatch when idle."
   (interactive)
+  (when (and psi-emacs--state
+             (not (psi-emacs--input-separator-marker-valid-p)))
+    (psi-emacs--ensure-input-area)
+    (goto-char (psi-emacs--draft-end-position)))
   (let* ((used-region-p (use-region-p))
          (message (psi-emacs--composed-text))
+         (local-only nil)
          (dispatched?
           (if (psi-emacs--streaming-p)
               (let ((sent?
@@ -148,9 +353,11 @@ When idle, routes through slash interception then normal prompt fallback."
                   (psi-emacs--set-run-state psi-emacs--state 'streaming)
                   (psi-emacs--reset-stream-watchdog psi-emacs--state))
                 sent?)
-            (psi-emacs--dispatch-idle-compose-message message))))
+            (let ((result (psi-emacs--dispatch-idle-compose-message message)))
+              (setq local-only (plist-get result :local-only?))
+              (plist-get result :dispatched?)))))
     (when dispatched?
-      (psi-emacs--consume-tail-draft used-region-p))))
+      (psi-emacs--consume-dispatched-input used-region-p message local-only))))
 
 (defun psi-emacs-abort ()
   "Abort active streaming request via RPC and transition to non-streaming UI state."
@@ -166,9 +373,8 @@ When idle, routes through slash interception then normal prompt fallback."
 (defun psi-emacs--ensure-newline-before-append ()
   "Ensure transcript append boundary starts on a fresh line.
 
-When a projection/footer block exists, append before that block so transcript
-content (assistant/tool/error rows) never renders below the footer."
-  (goto-char (psi-emacs--draft-end-position))
+Content appends immediately above the dedicated input separator."
+  (goto-char (psi-emacs--transcript-append-position))
   (unless (or (bobp)
               (eq (char-before) ?\n))
     (insert "\n")))

@@ -22,6 +22,8 @@
 
 (declare-function make-psi-emacs-state "psi" (&rest args))
 (declare-function psi-emacs--clear-thinking-line "psi-assistant-render")
+(declare-function psi-emacs-previous-input "psi-compose")
+(declare-function psi-emacs-next-input "psi-compose")
 
 (declare-function markdown-mode "markdown-mode")
 (declare-function markdown-fontify-region "markdown-mode" (begin end))

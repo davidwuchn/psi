@@ -35,7 +35,11 @@
    :projection-notification-seq 0
    :projection-notification-timers (make-hash-table :test #'equal)
    :projection-range nil
+   :input-separator-marker nil
    :draft-anchor nil
+   :input-history nil
+   :input-history-index nil
+   :input-history-stash nil
    :rpc-client nil
    :tool-output-view-mode 'collapsed
    :session-id nil
@@ -168,6 +172,9 @@ COMMAND is a list suitable for `make-process'."
              (markerp (psi-emacs-state-draft-anchor psi-emacs--state)))
     (set-marker (psi-emacs-state-draft-anchor psi-emacs--state) nil))
   (when (and psi-emacs--state
+             (markerp (psi-emacs-state-input-separator-marker psi-emacs--state)))
+    (set-marker (psi-emacs-state-input-separator-marker psi-emacs--state) nil))
+  (when (and psi-emacs--state
              (consp (psi-emacs-state-assistant-range psi-emacs--state)))
     (set-marker (car (psi-emacs-state-assistant-range psi-emacs--state)) nil)
     (set-marker (cdr (psi-emacs-state-assistant-range psi-emacs--state)) nil))
@@ -229,8 +236,13 @@ When PRESERVE-TOOL-OUTPUT-VIEW-MODE is non-nil, keep the current
       (set-marker (car (psi-emacs-state-projection-range psi-emacs--state)) nil)
       (set-marker (cdr (psi-emacs-state-projection-range psi-emacs--state)) nil))
     (setf (psi-emacs-state-projection-range psi-emacs--state) nil)
+    (when (markerp (psi-emacs-state-input-separator-marker psi-emacs--state))
+      (set-marker (psi-emacs-state-input-separator-marker psi-emacs--state) nil))
+    (setf (psi-emacs-state-input-separator-marker psi-emacs--state) nil)
     (setf (psi-emacs-state-draft-anchor psi-emacs--state)
           (copy-marker (point-max) nil))
+    (setf (psi-emacs-state-input-history-index psi-emacs--state) nil)
+    (setf (psi-emacs-state-input-history-stash psi-emacs--state) nil)
     (unless preserve-tool-output-view-mode
       (setf (psi-emacs-state-tool-output-view-mode psi-emacs--state) 'collapsed))
     (setf (psi-emacs-state-session-id psi-emacs--state) nil)
