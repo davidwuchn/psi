@@ -21,7 +21,8 @@ Current truth about the Psi system.
 - ✓ Thinking output bug fixed (c8e43eb): Anthropic provider now handles `thinking` content blocks correctly (`:thinking-delta` events, `thinking` request param, `interleaved-thinking-2025-05-14` beta header, temperature suppressed when thinking enabled). Emacs render fixed: `psi-emacs--assistant-thinking-delta` uses pure `concat` append instead of snapshot-merge heuristic that caused ever-growing repeated lines.
 - ✓ OpenAI thinking streaming restored for chat-completions models (4c20882): provider now forwards `reasoning_effort` from thinking-level, extracts reasoning deltas across multiple chunk shapes, and emits reliable `:thinking-delta` events (plus normalized usage map for completion cost calculation).
 - ✓ OpenAI thinking visibility now lands consistently across stream surfaces including TUI rendering (fbbb173), closing parity gaps between provider deltas and terminal presentation.
-- … Next executable task: continue Step 12 Emacs UI stabilization (startup hydration + `/new` + reconnect flows), while keeping worktree Step 11b mutation semantics deferred.
+- ? Divider-length regression report is in Emacs UI, not TUI: commit `3e02b97` made TUI separators width-aware, but user-observed uneven separators remain in `components/emacs-ui` projection/input paths.
+- … Next executable task: continue Step 12 Emacs UI stabilization with explicit focus on separator width parity in startup/replay/projection flows, while keeping worktree Step 11b mutation semantics deferred.
 
 ## Components
 

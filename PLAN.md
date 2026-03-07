@@ -122,6 +122,7 @@ Ordered steps toward PSI COMPLETE.
 - Spec: `spec/emacs-frontend.allium`
 - Current: rpc-edn frontend and core interaction model implemented
 - Recent stabilization: OpenAI chat-completions reasoning stream restored (`:thinking-delta` visibility + `reasoning_effort` request forwarding, commit `4c20882`) and stream-to-TUI thinking visibility parity landed (`fbbb173`).
+- New follow-up: divider/separator length mismatch reported in Emacs UI transcript/projection area; commit `3e02b97` adjusted TUI separators but did not address the user-reported Emacs path.
 - Completed in this cycle:
   - [x] Prompt completion architecture added via CAPF (`components/emacs-ui/psi-completion.el`)
   - [x] `/` completion (slash commands) + `@` completion (file references)
