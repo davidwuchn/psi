@@ -55,7 +55,8 @@
             (should (process-live-p psi-emacs--owned-process))
             (should (psi-emacs-state-p psi-emacs--state))
             (should (hash-table-p (psi-emacs-state-tool-rows psi-emacs--state)))
-            (should (markerp (psi-emacs-state-draft-anchor psi-emacs--state))))
+            (should (markerp (psi-emacs-state-draft-anchor psi-emacs--state)))
+            (should (psi-emacs--input-separator-marker-valid-p)))
           (should (psi-emacs-state-for-buffer buffer)))
       (when (buffer-live-p buffer)
         (kill-buffer buffer)))))
@@ -450,6 +451,26 @@
                      (psi-emacs-state-last-error psi-emacs--state)))
       (should (string-match-p "Error: Cannot run `prompt_while_streaming`" (buffer-string))))))
 
+(ert-deftest psi-send-fails-when-dispatch-function-returns-nil ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (psi-emacs--ensure-input-area)
+    (goto-char (psi-emacs--draft-end-position))
+    (insert "hello")
+    (let ((calls nil))
+      (cl-letf (((symbol-value 'psi-emacs--send-request-function)
+                 (lambda (_state op params &optional _callback)
+                   (push (list op params) calls)
+                   nil)))
+        (psi-emacs-send-from-buffer nil))
+      (should (equal '(("prompt" ((:message . "hello")))) calls))
+      (should (eq 'error (psi-emacs-state-run-state psi-emacs--state)))
+      (should (equal "Cannot run `prompt`: request dispatch failed. Reconnect with C-c C-r."
+                     (psi-emacs-state-last-error psi-emacs--state)))
+      (should (equal "hello" (psi-emacs--tail-draft-text)))
+      (should-not (string-match-p "^User: hello$" (buffer-string))))))
+
 (ert-deftest psi-set-model-dispatches-canonical-rpc-op ()
   (with-temp-buffer
     (psi-emacs-mode)
@@ -841,7 +862,8 @@
           (setq rpc-calls (nreverse rpc-calls))
           (should (equal '("switch_session" "get_messages") (mapcar #'car rpc-calls)))
           (should cleared-before-replay)
-          (should (equal "User: First\nψ: Second\n" (buffer-string)))
+          (should (string-prefix-p "User: First\nψ: Second\n" (buffer-string)))
+          (should (psi-emacs--input-separator-marker-valid-p))
           (should (eq 'idle (psi-emacs-state-run-state psi-emacs--state))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
@@ -929,7 +951,8 @@
           (should (equal '("new_session" "get_messages") (mapcar #'car rpc-calls)))
           (should (equal '(nil nil) (mapcar #'cadr rpc-calls)))
           (should cleared-before-replay)
-          (should (string= "User: engage nucleus\nψ: Nucleus engaged\n" (buffer-string)))
+          (should (string-prefix-p "User: engage nucleus\nψ: Nucleus engaged\n" (buffer-string)))
+          (should (psi-emacs--input-separator-marker-valid-p))
           (should (zerop (hash-table-count (psi-emacs-state-tool-rows psi-emacs--state)))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
@@ -1614,6 +1637,50 @@
       (should (equal '("get_messages") (mapcar #'car (nreverse rpc-calls))))
       (should (= 1 (how-many "^ψ: boot ok$" (point-min) (point-max)))))))
 
+(ert-deftest psi-initial-transcript-hydration-scrolls-to-point-min-when-messages ()
+  "AC: initial hydration with messages moves point to point-min so startup output is visible."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-draft-anchor psi-emacs--state)
+          (copy-marker (point-max) nil))
+    (psi-emacs--ensure-input-area)
+    (goto-char (psi-emacs--draft-end-position))
+    (let ((client (psi-rpc-make-client :process-state 'running :transport-state 'ready)))
+      (cl-letf (((symbol-value 'psi-emacs--send-request-function)
+                 (lambda (_state op _params &optional callback)
+                   (when (and callback (equal op "get_messages"))
+                     (funcall callback
+                              '((:kind . :response)
+                                (:ok . t)
+                                (:data . ((:messages . [((:role . :assistant) (:text . "engage nucleus"))])))))))))
+        (psi-emacs--on-rpc-state-change (current-buffer) client)))
+    ;; Point should be at point-min so startup messages are visible
+    (should (= (point) (point-min)))
+    (should (= 1 (how-many "engage nucleus" (point-min) (point-max))))))
+
+(ert-deftest psi-initial-transcript-hydration-no-scroll-when-no-messages ()
+  "AC: initial hydration with empty messages does not move point."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-draft-anchor psi-emacs--state)
+          (copy-marker (point-max) nil))
+    (psi-emacs--ensure-input-area)
+    (goto-char (psi-emacs--draft-end-position))
+    (let ((initial-point (point))
+          (client (psi-rpc-make-client :process-state 'running :transport-state 'ready)))
+      (cl-letf (((symbol-value 'psi-emacs--send-request-function)
+                 (lambda (_state op _params &optional callback)
+                   (when (and callback (equal op "get_messages"))
+                     (funcall callback
+                              '((:kind . :response)
+                                (:ok . t)
+                                (:data . ((:messages . [])))))))))
+        (psi-emacs--on-rpc-state-change (current-buffer) client))
+      ;; Point should stay at draft end when no messages
+      (should (= (point) initial-point)))))
+
 (ert-deftest psi-header-line-reflects-run-state-transitions ()
   (with-temp-buffer
     (psi-emacs-mode)
@@ -1760,7 +1827,8 @@
       (should stop-called)
       (should started)
       (should (eq 'reconnecting (psi-emacs-state-run-state psi-emacs--state)))
-      (should (string= "" (buffer-string)))
+      (should (psi-emacs--input-separator-marker-valid-p))
+      (should (string-prefix-p "─" (buffer-string)))
       (should-not (buffer-modified-p))
       (should-not (psi-emacs-state-assistant-in-progress psi-emacs--state))
       (should-not (psi-emacs-state-last-error psi-emacs--state))
@@ -1836,7 +1904,8 @@
                        (cadr (nth 1 sent))))
         (should (= 1 stop-count))
         (should (= 1 restart-count))
-        (should (string= "" (buffer-string)))))))
+        (should (psi-emacs--input-separator-marker-valid-p))
+        (should (string-prefix-p "─" (buffer-string)))))))
 
 ;;; Tool-output-mode acceptance criteria tests (10 tests)
 
@@ -2446,6 +2515,21 @@
       (should (equal '(("prompt" ((:message . "hello input")))) calls))
       (should (string-empty-p (psi-emacs--tail-draft-text)))
       (should (string-match-p "^User: hello input" (buffer-string))))))
+
+(ert-deftest psi-replay-session-messages-with-input-area-stays-above-separator ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-draft-anchor psi-emacs--state)
+          (copy-marker (point-max) nil))
+    (psi-emacs--ensure-input-area)
+    (psi-emacs--replay-session-messages
+     '(((:role . :assistant) (:text . "boot ok"))))
+    (let ((sep-pos (psi-emacs--input-separator-position)))
+      (should (integerp sep-pos))
+      (should (string-match-p "^ψ: boot ok$" (buffer-string)))
+      (should (< (or (string-match-p "ψ: boot ok" (buffer-string)) 0)
+                 sep-pos)))))
 
 (ert-deftest psi-input-history-m-p-m-n-navigates-submissions ()
   (with-temp-buffer

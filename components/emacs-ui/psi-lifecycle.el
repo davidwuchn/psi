@@ -67,14 +67,23 @@
        (when (buffer-live-p buffer)
          (with-current-buffer buffer
            (when (eq state psi-emacs--state)
-             (psi-emacs--replay-session-messages
-              (psi-emacs--frame-messages-list frame)))))))))
+             (let ((messages (psi-emacs--frame-messages-list frame)))
+               (psi-emacs--replay-session-messages messages)
+               ;; Scroll to show replayed startup messages.  replay uses
+               ;; save-excursion so point stays in the input area, leaving
+               ;; the messages above the separator invisible.  When there
+               ;; are messages, move point to the top of the transcript so
+               ;; the user can see them; the input area remains accessible
+               ;; via normal navigation.
+               (when messages
+                 (goto-char (point-min)))))))))))
 
 (defun psi-emacs--on-rpc-state-change (buffer client)
   "Apply CLIENT state changes to BUFFER-local frontend state."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
       (when psi-emacs--state
+        (setf (psi-emacs-state-rpc-client psi-emacs--state) client)
         (setf (psi-emacs-state-process-state psi-emacs--state)
               (psi-rpc-client-process-state client))
         (setf (psi-emacs-state-transport-state psi-emacs--state)
@@ -258,6 +267,8 @@ When PRESERVE-TOOL-OUTPUT-VIEW-MODE is non-nil, keep the current
     (setf (psi-emacs-state-session-effective-reasoning-effort psi-emacs--state) nil)
     (setf (psi-emacs-state-header-model-label psi-emacs--state) nil)
     (setf (psi-emacs-state-transcript-hydrated? psi-emacs--state) nil)
+    (psi-emacs--ensure-input-area)
+    (goto-char (psi-emacs--draft-end-position))
     (psi-emacs--set-run-state psi-emacs--state 'idle)
     (psi-emacs--refresh-header-line))
   (set-buffer-modified-p nil))
