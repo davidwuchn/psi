@@ -1677,6 +1677,27 @@ This preserves safety-by-default while enabling faster local iteration.
 
 - λ psl source=53082d2cb72c2dbd354c790256f1e48b5663f717 at=2026-03-06T20:57:20.413334Z :: ⚒ Δ Simplify PSL to agent-prompt flow with extension prompt telemetry λ
 
+## 2026-03-06 - Extension Run-Fn: Bridging Extensions to the Agent Loop
+
+### λ Extensions Need a Live Runner, Not a Queue Stub
+
+`send-extension-prompt-in!` originally called `prompt-in!` (agent-core only) —
+this appended a user message but never triggered an LLM call. PSL prompts were
+silently orphaned.
+
+**Pattern**: extensions must not call into agent-core directly for prompts.
+They need a runtime-provided `(fn [text source])` that:
+1. Prepares the user message (expansion, memory hooks, journal)
+2. Resolves API key from session oauth context
+3. Calls `run-agent-loop-in!` with `sync-on-git-head-change? true`
+
+The atom (`extension-run-fn-atom`) lives on the session context. The runtime
+registers it after bootstrap. Extensions remain decoupled — they call
+`psi.extension/send-prompt` and the registered runner does the rest.
+
+**Idle guard**: the runner checks `idle-in?` before firing. If streaming,
+it falls back to the follow-up queue for delivery after the current turn.
+
 ## 2026-03-06 - PSL Extension 400: Custom-Type Messages Must Not Reach LLM
 
 ### λ Extension Transcript Markers Cause Consecutive-Role 400s
