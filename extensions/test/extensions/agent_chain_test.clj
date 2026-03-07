@@ -65,7 +65,7 @@
           (.delete tmp))))))
 
 (deftest run-chain-starts-in-background-by-default-test
-  (testing "run_chain returns immediately (non-blocking) when wait is not set"
+  (testing "run_chain returns immediately (non-blocking)"
     (let [tmp (temp-dir)]
       (try
         (write-chain-config!
@@ -119,8 +119,8 @@
         (finally
           (.delete tmp))))))
 
-(deftest run-chain-interactive-wait-true-stays-non-blocking-test
-  (testing "interactive tool calls ignore wait=true and start in background"
+(deftest run-chain-rejects-wait-arg-test
+  (testing "run_chain returns an error when wait arg is provided"
     (let [tmp (temp-dir)]
       (try
         (write-chain-config!
@@ -142,16 +142,13 @@
             ((get-in @state [:commands "chain" :handler]) "prompt-build")
             (let [execute (get-in @state [:tools "run_chain" :execute])
                   updates (atom [])
-                  t0      (System/currentTimeMillis)
                   result  (execute {"task" "say hello"
                                     "wait" true}
-                                   {:on-update #(swap! updates conj %)})
-                  dt      (- (System/currentTimeMillis) t0)]
-              (is (false? (:is-error result)))
-              (is (< dt 1000))
-              (is (str/includes? (:content result) "Chain run started:"))
-              (is (str/includes? (:content result) "wait=true ignored for interactive tool calls"))
-              (is (contains? (:workflows @state) "run-1"))
-              (is (seq @updates)))))
+                                   {:on-update #(swap! updates conj %)})]
+              (is (= {:content "Unsupported argument: wait. run_chain is always non-blocking; monitor with /chain-list."
+                      :is-error true}
+                     result))
+              (is (empty? @updates))
+              (is (empty? (:workflows @state))))))
         (finally
           (.delete tmp))))))

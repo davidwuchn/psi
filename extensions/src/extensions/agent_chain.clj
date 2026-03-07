@@ -60,8 +60,6 @@
 (def ^:private widget-id "agent-chain")
 (def ^:private widget-placement :above-editor)
 (def ^:private max-widget-runs 4)
-(def ^:private wait-poll-ms 250)
-(def ^:private tool-heartbeat-ms 5000)
 
 ;;; Frontmatter parser
 
@@ -141,15 +139,6 @@
     (number? x) (long x)
     (string? x) (try (Long/parseLong (str/trim x)) (catch Exception _ nil))
     :else nil))
-
-(defn- parse-bool
-  [x]
-  (cond
-    (true? x) true
-    (false? x) false
-    (string? x) (contains? #{"1" "true" "yes" "on"}
-                           (str/lower-case (str/trim x)))
-    :else false))
 
 (defn- display-name
   "Convert kebab-case to Title Case."
@@ -335,34 +324,6 @@
       (mutate! 'psi.extension.workflow/remove
                {:id (:psi.extension.workflow/id wf)}))
     (count runs)))
-
-(defn- wait-for-workflow!
-  ([id timeout-ms]
-   (wait-for-workflow! id timeout-ms nil))
-  ([id timeout-ms {:keys [on-poll poll-ms]}]
-   (let [deadline (+ (now-ms) timeout-ms)
-         sleep-ms (max 10 (long (or poll-ms wait-poll-ms)))]
-     (loop []
-       (let [wf  (workflow-by-id id)
-             now (now-ms)]
-         (when (fn? on-poll)
-           (try
-             (on-poll wf now)
-             (catch Exception _ nil)))
-         (cond
-           (and wf (:psi.extension.workflow/done? wf))
-           {:status :done :workflow wf}
-
-           (and wf (:psi.extension.workflow/error? wf))
-           {:status :error :workflow wf}
-
-           (>= now deadline)
-           {:status :timeout :workflow wf}
-
-           :else
-           (do
-             (Thread/sleep sleep-ms)
-             (recur))))))))
 
 ;;; Sub-agent execution (in-process)
 
@@ -689,26 +650,18 @@
          chain            @active-chain
          agents           @all-agents
          on-update        (:on-update opts)
-         interactive?     (fn? on-update)
          model            (when query-fn
                             (:psi.agent-session/model
                              (query-fn [:psi.agent-session/model])))
-         task             (str/trim (or (get args-map "task") ""))
-         requested-wait?  (cond
-                            (contains? args-map "wait")
-                            (parse-bool (get args-map "wait"))
-
-                            (contains? opts :wait?)
-                            (boolean (:wait? opts))
-
-                            :else false)
-         ;; Keep interactive tool calls responsive: run in background even if
-         ;; the model/user requested wait=true.
-         wait?            (and requested-wait?
-                               (not interactive?))]
+         task             (str/trim (or (get args-map "task") ""))]
      (cond
        (nil? chain)
        {:content  "No chain active. Use /chain to select one."
+        :is-error true}
+
+       (or (contains? args-map "wait")
+           (contains? args-map :wait))
+       {:content  "Unsupported argument: wait. run_chain is always non-blocking; monitor with /chain-list."
         :is-error true}
 
        (str/blank? task)
@@ -771,122 +724,10 @@
                                    :elapsed-ms (- (now-ms) started-ms))))
              {:content  msg
               :is-error true})
-           (if-not wait?
-             {:content  (str "Chain run started: " run-id
-                             " (" (:name chain) "). Monitor with /chain-list."
-                             (when (and requested-wait? interactive?)
-                               " (wait=true ignored for interactive tool calls)"))
-              :is-error false}
-             (let [last-heartbeat-ms (atom 0)
-                   last-progress-key (atom nil)
-                   emit-progress!
-                   (fn [wf now]
-                     (let [run       (or (run-by-id run-id)
-                                         {:run-id run-id
-                                          :chain-name (:name chain)
-                                          :phase (if wf (workflow-phase wf) :running)})
-                           wf-phase  (or (some-> wf workflow-phase) (:phase run) :running)
-                           run*      (if (= wf-phase (:phase run))
-                                       run
-                                       (assoc run :phase wf-phase))
-                           key*      [(:phase run*)
-                                      (:step-index run*)
-                                      (:step-agent run*)
-                                      (:last-work run*)
-                                      (:elapsed-ms run*)]
-                           heartbeat? (>= (- now @last-heartbeat-ms) tool-heartbeat-ms)]
-                       (when (or heartbeat?
-                                 (not= key* @last-progress-key))
-                         (reset! last-heartbeat-ms now)
-                         (reset! last-progress-key key*)
-                         (emit-tool-update! on-update
-                                            (progress-line run*)
-                                            {:run-id run-id
-                                             :phase  (or (:phase run*) wf-phase)
-                                             :step-index (:step-index run*)
-                                             :step-count (:step-count run*)}
-                                            false))))
-                   {:keys [status workflow]}
-                   (wait-for-workflow!
-                    run-id
-                    (* 30 60 1000)
-                    {:poll-ms wait-poll-ms
-                     :on-poll emit-progress!})]
-               (case status
-                 :done
-                 (let [data      (:psi.extension.workflow/data workflow)
-                       output    (or (:psi.extension.workflow/result workflow)
-                                     (:chain/output data)
-                                     "")
-                       elapsed   (or (:psi.extension.workflow/elapsed-ms workflow)
-                                     (:chain/elapsed-ms data)
-                                     0)
-                       summary   (or (:chain/summary data)
-                                     (chain-summary chain true elapsed))
-                       truncated (if (> (count output) 8000)
-                                   (str (subs output 0 8000) "\n\n... [truncated]")
-                                   output)]
-                   (upsert-run! run-id
-                                (fn [r]
-                                  (assoc r
-                                         :phase :done
-                                         :elapsed-ms (long elapsed)
-                                         :last-work summary)))
-                   (emit-tool-update! on-update summary {:run-id run-id :phase :done} false)
-                   (println (str "  " summary "\n"))
-                   {:content  (str summary "\n\n" truncated)
-                    :is-error false})
+           {:content  (str "Chain run started: " run-id
+                           " (" (:name chain) "). Monitor with /chain-list.")
+            :is-error false}))))))
 
-                 :error
-                 (let [data    (:psi.extension.workflow/data workflow)
-                       elapsed (or (:psi.extension.workflow/elapsed-ms workflow)
-                                   (:chain/elapsed-ms data)
-                                   0)
-                       summary (or (:chain/summary data)
-                                   (chain-summary chain false elapsed))
-                       msg     (or (:psi.extension.workflow/error-message workflow)
-                                   (:psi.extension.workflow/result workflow)
-                                   (:chain/output data)
-                                   "Unknown workflow error")]
-                   (upsert-run! run-id
-                                (fn [r]
-                                  (assoc r
-                                         :phase :error
-                                         :elapsed-ms (long elapsed)
-                                         :last-work msg)))
-                   (emit-tool-update! on-update msg {:run-id run-id :phase :error} true)
-                   (println (str "  " summary "\n"))
-                   {:content  (str summary "\n\n" msg)
-                    :is-error true})
-
-                 :timeout
-                 (do
-                   (mutate! 'psi.extension.workflow/abort
-                            {:id run-id
-                             :reason "Timed out waiting for workflow completion"})
-                   (upsert-run! run-id
-                                (fn [r]
-                                  (assoc r
-                                         :phase :error
-                                         :elapsed-ms (- (now-ms) started-ms)
-                                         :last-work "Timed out waiting for workflow completion")))
-                   (emit-tool-update! on-update
-                                      (str "run_chain " run-id " timed out")
-                                      {:run-id run-id :phase :error}
-                                      true)
-                   {:content  (str "Chain run timed out: " run-id)
-                    :is-error true})
-
-                 (let [msg (str "Chain run status unknown: " run-id)]
-                   (upsert-run! run-id
-                                (fn [r]
-                                  (assoc r
-                                         :phase :error
-                                         :elapsed-ms (- (now-ms) started-ms)
-                                         :last-work msg)))
-                   (emit-tool-update! on-update msg {:run-id run-id :phase :error} true)
-                   {:content  msg
-                    :is-error true}))))))))))
 
 ;;; Extension init
 
@@ -928,13 +769,10 @@
       :description (str "Execute the active agent chain pipeline. "
                         "Each step runs sequentially — output from one step feeds into the next. "
                         "Agents maintain session context across runs. "
-                        "Runs execute via the extension workflow runtime. "
-                        "Interactive tool calls always start in background to keep UI responsive.")
+                        "Runs execute via the extension workflow runtime.")
       :parameters  (pr-str {:type       "object"
                             :properties {"task" {:type "string"
-                                                 :description "The task/prompt for the chain to process"}
-                                         "wait" {:type "boolean"
-                                                 :description "When true, block until workflow completion and return final chain output. Default false (start in background)."}}
+                                                 :description "The task/prompt for the chain to process"}}
                             :required   ["task"]})
       :execute     execute-run-chain})
 
