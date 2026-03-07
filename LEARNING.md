@@ -20,6 +20,14 @@ request path even when the underlying workflow is asynchronous. Defaulting to
 background start, with explicit opt-in wait (`wait=true`), preserves responsiveness
 while still allowing synchronous callers when needed.
 
+### λ Interactive tool-call execution should ignore synchronous wait hints for workflow-backed tools
+
+Even with `wait=true` available for programmatic callers, interactive tool-call
+contexts (where `on-update` streaming is active) should remain non-blocking to avoid
+UI lockups. Commit `11feddf` codifies this by forcing background start for
+interactive `run_chain` requests and surfacing an explicit note when `wait=true`
+is ignored.
+
 ### λ Completion sources must be backend-driven to keep extension UX in sync
 
 Static slash command completion drifts as extensions change. Pulling
