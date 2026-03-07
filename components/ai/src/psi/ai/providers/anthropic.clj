@@ -242,8 +242,18 @@
                 ;; Unknown event — ignore
                 nil)))))
       (catch Exception e
-        (consume-fn (cond-> {:type :error :error-message (str e)}
-                      (:status (ex-data e)) (assoc :http-status (:status (ex-data e)))))))))
+        (let [data       (ex-data e)
+              http-status (:status data)
+              body-stream (:body data)
+              api-error  (when (and body-stream (instance? java.io.InputStream body-stream))
+                           (try
+                             (let [body-str (slurp (io/reader body-stream))]
+                               (or (get-in (json/parse-string body-str true) [:error :message])
+                                   body-str))
+                             (catch Exception _ nil)))
+              msg        (or api-error (ex-message e) (str e))]
+          (consume-fn (cond-> {:type :error :error-message msg}
+                        http-status (assoc :http-status http-status))))))))
 
 ;; Provider implementation
 (def provider
