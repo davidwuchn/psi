@@ -235,10 +235,16 @@ psi in a dedicated process buffer over rpc-edn.
 
 1. Ensure this repository is available locally.
 2. In Emacs, add `components/emacs-ui` to `load-path` and load `psi.el`.
-3. Run `M-x psi-emacs-start`.
-   - Use `C-u M-x psi-emacs-start` to force a fresh buffer name (`*psi*<2>`, etc.).
+3. Run one of:
+   - `M-x psi-emacs-start` for the default/global buffer.
+     - Use `C-u M-x psi-emacs-start` to force a fresh buffer name (`*psi*<2>`, etc.).
+   - `M-x psi-emacs-project` for a project-scoped buffer in the current project.
+     - Buffer naming style: `*psi:<project>*` (for example `*psi:psi-main*`).
+     - `C-u M-x psi-emacs-project` forces a fresh generated project buffer name.
+     - `C-u N M-x psi-emacs-project` opens/uses slot `N`
+       (`N<=1` => `*psi:<project>*`, `N>=2` => `*psi:<project>*<N>`).
 
-This opens `*psi*` (configurable via `psi-emacs-buffer-name`) and starts one
+This opens a dedicated psi buffer (default `*psi*`, or project-scoped `*psi:<project>*`) and starts one
 owned subprocess per dedicated buffer using:
 
 - `clojure -M:psi --rpc-edn`

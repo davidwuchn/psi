@@ -26,6 +26,52 @@ START-DIRECTORY (the directory where `psi-emacs-start' was invoked)."
       (psi-emacs--normalize-directory start-directory)
       (psi-emacs--normalize-directory default-directory)))
 
+(defun psi-emacs--entry-project-root-directory (&optional start-directory)
+  "Return canonical project root for START-DIRECTORY, or nil.
+
+Unlike helper functions used for display paths, this is strict: it only
+returns a root when Emacs project discovery finds one."
+  (let* ((base (psi-emacs--normalize-directory
+                (or start-directory default-directory)))
+         (project-root
+          (when (and base (fboundp 'project-current))
+            (let ((proj (ignore-errors (project-current nil base))))
+              (cond
+               ((and proj (fboundp 'project-root))
+                (ignore-errors (project-root proj)))
+               ((and proj (fboundp 'project-roots))
+                (car (ignore-errors (project-roots proj))))
+               (t nil))))))
+    (psi-emacs--normalize-directory project-root)))
+
+(defun psi-emacs--project-buffer-base-name (&optional project-root)
+  "Return project-scoped psi buffer base name for PROJECT-ROOT."
+  (let* ((root (or (and (stringp project-root)
+                        (> (length project-root) 0)
+                        (file-name-as-directory (expand-file-name project-root)))
+                   (psi-emacs--entry-project-root-directory default-directory)))
+         (project-name (and root
+                            (file-name-nondirectory
+                             (directory-file-name root)))))
+    (format "*psi:%s*" (or project-name "project"))))
+
+(defun psi-emacs--project-buffer-name-for-prefix (base-name prefix)
+  "Return project-scoped buffer name from BASE-NAME and PREFIX.
+
+No PREFIX reuses BASE-NAME.
+Plain `C-u' forces a fresh generated name.
+Numeric prefix selects slot N (`N<=1' => BASE-NAME, else `BASE-NAME<N>')."
+  (cond
+   ((null prefix)
+    base-name)
+   ((equal prefix '(4))
+    (generate-new-buffer-name base-name))
+   (t
+    (let ((n (prefix-numeric-value prefix)))
+      (if (<= n 1)
+          base-name
+        (format "%s<%d>" base-name n))))))
+
 (defun psi-emacs-open-buffer (&optional buffer-name start-directory)
   "Open and initialize dedicated psi chat buffer BUFFER-NAME.
 
@@ -79,6 +125,25 @@ With PREFIX, create and switch to a fresh dedicated buffer name."
   (let ((buffer-name (when prefix
                        (generate-new-buffer-name psi-emacs-buffer-name))))
     (pop-to-buffer (psi-emacs-open-buffer buffer-name default-directory))))
+
+;;;###autoload
+(defun psi-emacs-project (&optional prefix)
+  "Start psi frontend for the current project.
+
+Buffer naming style is project-scoped: `*psi:<project>*'.
+
+No PREFIX reuses canonical project buffer.
+Plain `C-u' forces a fresh project buffer name.
+Numeric prefix (`C-u N') opens project buffer slot N."
+  (interactive "P")
+  (let ((project-root (or (psi-emacs--entry-project-root-directory default-directory)
+                          (user-error "No project found for current directory"))))
+    (pop-to-buffer
+     (psi-emacs-open-buffer
+      (psi-emacs--project-buffer-name-for-prefix
+       (psi-emacs--project-buffer-base-name project-root)
+       prefix)
+      project-root))))
 
 (defun psi-emacs-state-for-buffer (buffer)
   "Return frontend state tracked for BUFFER, or nil."

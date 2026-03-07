@@ -1,10 +1,31 @@
 # psi Emacs frontend
 
-This frontend runs psi over `--rpc-edn` in a dedicated Emacs buffer.
+This frontend runs psi over `--rpc-edn` in dedicated Emacs buffers.
 
-By default, subprocesses start from the directory where `psi-emacs-start`
-is invoked. Set `psi-emacs-working-directory` to force a specific working
-directory.
+Entry commands:
+
+- `M-x psi-emacs-start` — global/default psi buffer (`*psi*` by default)
+- `M-x psi-emacs-project` — project-scoped psi buffer (`*psi:<project>*`)
+
+By default, subprocesses start from the directory where the start command is
+invoked. `psi-emacs-project` uses the detected project root as startup cwd.
+Set `psi-emacs-working-directory` to force a specific working directory.
+
+## Project command prefix behavior (`psi-emacs-project`)
+
+`psi-emacs-project` supports buffer naming + prefix behaviors:
+
+- no prefix (`M-x psi-emacs-project`): reuse canonical `*psi:<project>*`
+- `C-u M-x psi-emacs-project`: force fresh generated name from project base
+- `C-u N M-x psi-emacs-project`: open/use project slot `N`
+  - `N <= 1` => canonical `*psi:<project>*`
+  - `N >= 2` => `*psi:<project>*<N>`
+
+Examples:
+
+- `M-x psi-emacs-project` -> `*psi:psi-main*`
+- `C-u M-x psi-emacs-project` -> `*psi:psi-main*<2>` (first free generated)
+- `C-u 3 M-x psi-emacs-project` -> `*psi:psi-main*<3>`
 
 ## Developer checks
 
