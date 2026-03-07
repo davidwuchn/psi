@@ -686,21 +686,26 @@
    (execute-run-chain args-map nil))
   ([args-map opts]
    (let [{:keys [active-chain all-agents query-fn]} @state
-         chain      @active-chain
-         agents     @all-agents
-         on-update  (:on-update opts)
-         model      (when query-fn
-                      (:psi.agent-session/model
-                       (query-fn [:psi.agent-session/model])))
-         task       (str/trim (or (get args-map "task") ""))
-         wait?      (cond
-                      (contains? args-map "wait")
-                      (parse-bool (get args-map "wait"))
+         chain            @active-chain
+         agents           @all-agents
+         on-update        (:on-update opts)
+         interactive?     (fn? on-update)
+         model            (when query-fn
+                            (:psi.agent-session/model
+                             (query-fn [:psi.agent-session/model])))
+         task             (str/trim (or (get args-map "task") ""))
+         requested-wait?  (cond
+                            (contains? args-map "wait")
+                            (parse-bool (get args-map "wait"))
 
-                      (contains? opts :wait?)
-                      (boolean (:wait? opts))
+                            (contains? opts :wait?)
+                            (boolean (:wait? opts))
 
-                      :else false)]
+                            :else false)
+         ;; Keep interactive tool calls responsive: run in background even if
+         ;; the model/user requested wait=true.
+         wait?            (and requested-wait?
+                               (not interactive?))]
      (cond
        (nil? chain)
        {:content  "No chain active. Use /chain to select one."
@@ -768,7 +773,9 @@
               :is-error true})
            (if-not wait?
              {:content  (str "Chain run started: " run-id
-                             " (" (:name chain) "). Monitor with /chain-list.")
+                             " (" (:name chain) "). Monitor with /chain-list."
+                             (when (and requested-wait? interactive?)
+                               " (wait=true ignored for interactive tool calls)"))
               :is-error false}
              (let [last-heartbeat-ms (atom 0)
                    last-progress-key (atom nil)
@@ -921,7 +928,8 @@
       :description (str "Execute the active agent chain pipeline. "
                         "Each step runs sequentially — output from one step feeds into the next. "
                         "Agents maintain session context across runs. "
-                        "Runs execute via the extension workflow runtime.")
+                        "Runs execute via the extension workflow runtime. "
+                        "Interactive tool calls always start in background to keep UI responsive.")
       :parameters  (pr-str {:type       "object"
                             :properties {"task" {:type "string"
                                                  :description "The task/prompt for the chain to process"}

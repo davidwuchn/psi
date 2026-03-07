@@ -118,3 +118,40 @@
                    "active: prompt-build")))))
         (finally
           (.delete tmp))))))
+
+(deftest run-chain-interactive-wait-true-stays-non-blocking-test
+  (testing "interactive tool calls ignore wait=true and start in background"
+    (let [tmp (temp-dir)]
+      (try
+        (write-chain-config!
+         tmp
+         [{:name "prompt-build"
+           :description "Build prompts"
+           :steps [{:agent "prompt-compiler" :prompt "$INPUT"}]}])
+        (spit (io/file tmp ".psi" "agents" "prompt-compiler.md")
+              (str "---\n"
+                   "name: prompt-compiler\n"
+                   "description: test agent\n"
+                   "tools: read,bash\n"
+                   "---\n\n"
+                   "Use prompt-compiler skill."))
+        (with-user-dir (.getAbsolutePath tmp)
+          (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                                     {:path "/test/agent_chain.clj"})]
+            (sut/init api)
+            ((get-in @state [:commands "chain" :handler]) "prompt-build")
+            (let [execute (get-in @state [:tools "run_chain" :execute])
+                  updates (atom [])
+                  t0      (System/currentTimeMillis)
+                  result  (execute {"task" "say hello"
+                                    "wait" true}
+                                   {:on-update #(swap! updates conj %)})
+                  dt      (- (System/currentTimeMillis) t0)]
+              (is (false? (:is-error result)))
+              (is (< dt 1000))
+              (is (str/includes? (:content result) "Chain run started:"))
+              (is (str/includes? (:content result) "wait=true ignored for interactive tool calls"))
+              (is (contains? (:workflows @state) "run-1"))
+              (is (seq @updates)))))
+        (finally
+          (.delete tmp))))))
