@@ -208,9 +208,27 @@ COMMAND is a list suitable for `make-process'."
   (setq psi-emacs--owned-process nil)
   (setq psi-emacs--state nil))
 
+(defun psi-emacs--handle-window-configuration-change ()
+  "Refresh width-sensitive separators after window configuration changes."
+  (when psi-emacs--state
+    (when (and (fboundp 'psi-emacs--input-separator-marker-valid-p)
+               (fboundp 'psi-emacs--input-separator-needs-refresh-p)
+               (fboundp 'psi-emacs--refresh-input-separator-line)
+               (psi-emacs--input-separator-marker-valid-p)
+               (psi-emacs--input-separator-needs-refresh-p))
+      (psi-emacs--refresh-input-separator-line))
+    ;; Re-render projection block when present so footer/projection separator
+    ;; widths track the current visible window after resize/split changes.
+    (when (and (fboundp 'psi-emacs--upsert-projection-block)
+               (consp (psi-emacs-state-projection-range psi-emacs--state)))
+      (psi-emacs--upsert-projection-block))))
+
 (defun psi-emacs--install-buffer-lifecycle-hooks ()
   "Install local lifecycle hooks for dedicated psi buffer."
-  (add-hook 'kill-buffer-hook #'psi-emacs--teardown-buffer nil t))
+  (add-hook 'kill-buffer-hook #'psi-emacs--teardown-buffer nil t)
+  (add-hook 'window-configuration-change-hook
+            #'psi-emacs--handle-window-configuration-change
+            nil t))
 
 (defun psi-emacs--buffer-modified-p ()
   "Return non-nil when current buffer has pending user edits."

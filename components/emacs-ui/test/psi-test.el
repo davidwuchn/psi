@@ -2255,6 +2255,35 @@
                (lambda (_win) '(2 . 1))))
       (should (= 117 (psi-emacs--projection-window-width))))))
 
+(ert-deftest psi-window-configuration-change-refreshes-width-sensitive-separators ()
+  (with-temp-buffer
+    (insert "ψ: hello\n")
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker (point-max) nil))
+    (cl-letf (((symbol-function 'psi-emacs--projection-window-width)
+               (lambda () 20)))
+      (psi-emacs--ensure-input-area)
+      (psi-emacs--handle-rpc-event
+       '((:event . "footer/updated")
+         (:data . ((:path-line . "~/psi-main")
+                   (:stats-line . "latency 12ms")))))
+      (should (= 20 (psi-emacs--input-separator-current-width))))
+    (cl-letf (((symbol-function 'psi-emacs--projection-window-width)
+               (lambda () 33)))
+      (psi-emacs--handle-window-configuration-change)
+      (should (= 33 (psi-emacs--input-separator-current-width)))
+      (let* ((lines (split-string (buffer-string) "\n"))
+             (separator-lines (seq-filter (lambda (line)
+                                            (and (not (string-empty-p line))
+                                                 (string-match-p "^─+$" line)))
+                                          lines)))
+        ;; input separator + projection separator should both refresh to width 33
+        (should (>= (length separator-lines) 2))
+        (should (seq-every-p (lambda (line)
+                               (= 33 (string-width line)))
+                             separator-lines))))))
+
 (ert-deftest psi-extension-ui-footer-refresh-preserves-assistant-transcript ()
   (with-temp-buffer
     (psi-emacs-mode)
