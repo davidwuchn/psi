@@ -136,6 +136,7 @@ Ordered steps toward PSI COMPLETE.
   - [x] Completion policy knobs exposed via defcustoms (limits, match style, hidden/excluded paths)
   - [x] Completion behavior documented in `components/emacs-ui/README.md`
   - [x] ERT coverage added for completion and policy toggles
+  - [x] Extension slash command completion now merges backend command names (`:psi.extension/command-names`) with built-in CAPF command specs (commit `8d36927`)
 - Definition of done:
   - Startup hydration + `/new` + reconnect flows are stable and tested
   - Tool output rendering modes and theme-aware faces are stable
@@ -148,6 +149,8 @@ Ordered steps toward PSI COMPLETE.
 - Current: charm.clj/JLine3 session loop is operational
 - Progress: commit `18e0c50` fixed agent-chain `run_chain` progress heartbeat + widget projection (tracked run state, throttled tool updates, and deterministic widget refresh on init/reload/session switch).
 - Progress: commit `53c0f40` removed implicit default chain activation; widget now stays `active: (none)` until explicit chain selection (init/reload/session-switch parity).
+- Progress: commit `8d36927` made `run_chain` non-blocking by default (background workflow start), with explicit opt-in `wait` flag for synchronous completion.
+- Progress: commit `8d36927` added graph-discoverable agent-chain config attrs (`:psi.agent-chain/config-path`, `:psi.agent-chain/count`, `:psi.agent-chain/names`, `:psi.agent-chain/chains`, `:psi.agent-chain/error`).
 - Follow-up queued: align `/chain` command UX with user intent by supporting both index and name selection (`/chain <number|name>`), while keeping no-default-active semantics.
 - Definition of done:
   - Per-token streaming render is available (not spinner-only)

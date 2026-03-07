@@ -31,6 +31,11 @@ Current truth about the Psi system.
 - ✓ Emacs verification after project-command addition: `bb emacs:test` green at 165/165; `bb emacs:check` green (with one pre-existing byte-compile warning unrelated to this change).
 - ✓ Agent-chain `run_chain` progress heartbeat + widget projection landed (`18e0c50`): extension now tracks per-run phase/step/elapsed state, emits throttled tool updates while waiting for workflow completion, and refreshes widget state deterministically on init/reload/session-switch.
 - ✓ Agent-chain default selection behavior tightened (`53c0f40`): extension no longer auto-selects first chain on init/reload/session-switch; widget remains `active: (none)` until explicit chain selection.
+- ✓ `run_chain` execution mode now defaults to non-blocking background workflow start (commit `8d36927`), preventing Emacs UI request-path blocking; synchronous wait remains available via explicit `wait=true`.
+- ✓ Agent-chain definitions are now discoverable via top-level EQL attrs (`:psi.agent-chain/config-path`, `:psi.agent-chain/count`, `:psi.agent-chain/names`, `:psi.agent-chain/chains`, `:psi.agent-chain/error`) after runtime reload.
+- ✓ Extension slash command completion now includes backend extension commands in both frontends:
+  - Emacs CAPF merges built-ins with cached `:psi.extension/command-names`
+  - TUI slash autocomplete refreshes `:psi.extension/command-names` during update loop
 - ✓ Operator intent mismatch identified: users naturally try `/chain <name>` (for example `/chain prompt-build`) while current command handling is index-only; follow-up is in progress to support name-based selection without reintroducing implicit defaults.
 - ? Live user layout still shows unequal separator lengths after `d36fe3d` (footer separator resized but remains too long; separator before edit area still mismatched), so parity is not yet fully resolved in production layout.
 - … Next executable task: reproduce the exact live Emacs layout mismatch and unify width derivation across all separator insertion points (projection + pre-edit boundary) while keeping worktree Step 11b mutation semantics deferred.
