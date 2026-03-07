@@ -37,6 +37,7 @@ Current truth about the Psi system.
 - ✓ Agent-chain default selection behavior tightened (`53c0f40`): extension no longer auto-selects first chain on init/reload/session-switch; widget remains `active: (none)` until explicit chain selection.
 - ✓ `run_chain` execution mode now defaults to non-blocking background workflow start (commit `8d36927`), preventing Emacs UI request-path blocking; synchronous wait remains available via explicit `wait=true`.
 - ✓ Interactive tool-call path now enforces non-blocking `run_chain` execution even when `wait=true` is requested (commit `11feddf`), avoiding request-path stalls in UI clients.
+- ✓ Chain result delivery to chat (commit `81af559`): `emit-chain-result!` sends chain output back to the active session as an assistant message (`custom-type: "chain-result"`) on both success and error; ai-model resolution now falls back through session model → `:sonnet-4.6`; `done-script`/`error-script` call `on-finished` callback; step execution now catches `Throwable` (not just `Exception`).
 - ✓ Agent-chain definitions are now discoverable via top-level EQL attrs (`:psi.agent-chain/config-path`, `:psi.agent-chain/count`, `:psi.agent-chain/names`, `:psi.agent-chain/chains`, `:psi.agent-chain/error`) after runtime reload.
 - ✓ Extension slash command completion now includes backend extension commands in both frontends:
   - Emacs CAPF merges built-ins with cached `:psi.extension/command-names`

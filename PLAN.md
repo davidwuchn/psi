@@ -154,6 +154,7 @@ Ordered steps toward PSI COMPLETE.
 - Progress: commit `8d36927` added graph-discoverable agent-chain config attrs (`:psi.agent-chain/config-path`, `:psi.agent-chain/count`, `:psi.agent-chain/names`, `:psi.agent-chain/chains`, `:psi.agent-chain/error`).
 - Progress: commit `4ffaa11` decodes Anthropic 400/error response bodies from GZIP+JSON, surfacing the real API error message rather than opaque ExceptionInfo; aids diagnosis of chain run failures (e.g. invalid model IDs).
 - Progress: commit `26fedd9` hardens `tool_use.input` to always be a JSON dict: `parse-args` validates parsed type; `transform-messages` guards at wire layer. Fixes 400 `tool_use.input: Input should be a valid dictionary` from non-map tool argument JSON.
+- Progress: commit `81af559` delivers chain results back to chat — `emit-chain-result!` sends final output as an assistant message (`custom-type: "chain-result"`) on done/error; model resolution falls back session model → `:sonnet-4.6`; step errors now catch `Throwable`.
 - Follow-up queued: align `/chain` command UX with user intent by supporting both index and name selection (`/chain <number|name>`), while keeping no-default-active semantics.
 - Follow-up queued: add explicit extension transcript status for deferred PSL prompt delivery (`queued via deferred; will auto-run when idle`) so operator feedback distinguishes queued-follow-up from auto-deferred execution.
 - Definition of done:
