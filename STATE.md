@@ -26,7 +26,8 @@ Current truth about the Psi system.
 - ✓ Width source for projection/footer separators now prefers `window-text-width` (visible text area), with margin-based fallback.
 - ✓ Window-change handler now calls `psi-emacs--ensure-input-area`, repairing stale/misaligned pre-edit separator markers before projection refresh.
 - ✓ Emacs verification after separator follow-up: `bb emacs:test` green at 155/155.
-- … Next executable task: validate live Emacs behavior in user layout and, if needed, tighten separator width parity for fringe/visual-line edge cases while keeping worktree Step 11b mutation semantics deferred.
+- ? Live user layout still shows unequal separator lengths after `d36fe3d` (footer separator resized but remains too long; separator before edit area still mismatched), so parity is not yet fully resolved in production layout.
+- … Next executable task: reproduce the exact live Emacs layout mismatch and unify width derivation across all separator insertion points (projection + pre-edit boundary) while keeping worktree Step 11b mutation semantics deferred.
 
 ## Components
 
