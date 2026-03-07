@@ -4,6 +4,50 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-07 - Extension run-fn needs emit-frame! to be visible to RPC clients
+
+### λ The default extension run-fn has no progress-queue — its output is invisible
+
+`register-extension-run-fn-in!` in `main.clj` creates a run-fn that calls
+`run-agent-loop-in!` without a `progress-queue`. Streaming deltas go only to
+`agent-core events-atom`. The RPC `run-prompt-async!` polls its own `progress-q`
+(created locally, not shared), so the extension run's events never reach it.
+Result: PSL response streams, tools, and final `assistant/message` are all
+silently dropped from the RPC client's perspective.
+
+### λ Re-register the run-fn from the RPC subscribe handler with emit-frame! closure
+
+The fix pattern:
+1. At `subscribe` time (when `emit-frame!` is available), replace the run-fn.
+2. New run-fn creates a fresh `progress-queue` per invocation.
+3. A background future polls the queue → `progress-event->rpc-event` → `emit-frame!`.
+4. After `run-agent-loop-in!` returns, stop the poller, flush remaining events,
+   emit `assistant/message` + `session/updated` + `footer/updated`.
+
+This mirrors exactly what `run-prompt-async!` does for normal user prompts.
+
+### λ Guard one-time registration with a state flag
+
+`subscribe` may be called multiple times. Use a `:rpc-run-fn-registered` flag in
+the RPC `state` atom to ensure the run-fn is only replaced once per connection.
+Without the guard, each subscribe would create a new closure over a stale
+`emit-frame!` or overwrite a valid one.
+
+### λ Two layers set the extension run-fn — the RPC layer must win
+
+`main.clj` sets a baseline run-fn (no streaming) for CLI/REPL mode.
+`rpc.clj` must replace it after `subscribe` with a streaming-aware version.
+The resolution order is: `main.clj` bootstrap → `rpc.clj` subscribe override.
+Any code path that needs streaming must be the last writer.
+
+### λ Extension-initiated and user-initiated runs must share the same emission contract
+
+A user prompt in `run-prompt-async!` emits: deltas → `assistant/message` →
+`session/updated` → `footer/updated`. Extension runs must emit the same sequence
+or frontends get stuck in a stale streaming/idle state.
+
+---
+
 ## 2026-03-07 - Extension output: prefer outcome messages over internal state messages
 
 ### λ Status messages should describe what the user cares about, not internal delivery state
