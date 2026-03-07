@@ -95,25 +95,19 @@
 
 (defn- psl-job
   [{:keys [source-sha subject]}]
-  (let [mutate-fn (:mutate-fn @state)
-        source7   (subs source-sha 0 (min 7 (count source-sha)))]
+  (let [mutate-fn (:mutate-fn @state)]
     (try
       (if (str/includes? subject marker)
-        (do
+        {:status :done :skipped? true}
+        (let [prompt     (psl-prompt {:source-sha source-sha})
+              prompt-res (send-prompt! mutate-fn prompt)
+              accepted?  (true? (:psi.extension/prompt-accepted? prompt-res))
+              delivery   (:psi.extension/prompt-delivery prompt-res)]
           (send-message! mutate-fn
-                         (str "PSL skipped for " source7 " (self commit marker " marker ")."))
-          {:status :done :skipped? true})
-        (do
-          (send-message! mutate-fn (str "PSL sync start for " source7 "."))
-          (let [prompt       (psl-prompt {:source-sha source-sha})
-                prompt-res   (send-prompt! mutate-fn prompt)
-                accepted?    (true? (:psi.extension/prompt-accepted? prompt-res))
-                delivery     (:psi.extension/prompt-delivery prompt-res)]
-            (send-message! mutate-fn
-                           (if accepted?
-                             (str "PSL prompt queued via " (name delivery) ".")
-                             "PSL prompt was not accepted."))
-            {:status :done :accepted? accepted? :delivery delivery})))
+                         (if accepted?
+                           "Updating PLAN.md, STATE.md and LEARNING.md …"
+                           "Failed to update PLAN.md, STATE.md and LEARNING.md"))
+          {:status :done :accepted? accepted? :delivery delivery}))
       (catch Exception e
         (send-message! mutate-fn (str "PSL error: " (ex-message e)))
         {:status :error :error (ex-message e)}))))
