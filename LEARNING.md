@@ -4,6 +4,21 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-07 - Chain selection UX should accept operator intent directly
+
+### λ Name-first selection is a natural operator behavior
+
+After removing implicit default activation, operators often try `/chain <name>`
+(e.g. `/chain prompt-build`) rather than remembering numeric indexes.
+Treating name-based selection as first-class keeps command ergonomics aligned
+with chain labels shown in `chain-list` and widget output.
+
+### λ Explicit selection and no-default-active are complementary
+
+`active: (none)` on init/reload/session-switch preserves intent boundaries.
+Supporting `/chain <number|name>` adds convenience without reintroducing hidden
+activation behavior.
+
 ## 2026-03-07 - Agent-chain default selection should be explicit, not implicit
 
 ### λ Defaulting to first chain on load hides operator intent
