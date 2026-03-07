@@ -4,6 +4,42 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-07 - Anthropic API error diagnosis: always decode the error body
+
+### λ clj-http 400 exceptions carry the error body as a stream in ex-data, not in the message
+
+When Anthropic returns a 400, clj-http throws an `ExceptionInfo` with the full
+response map in `ex-data`. The useful error text is in `:body` — a
+`GZIPInputStream` that must be explicitly read. Stringifying the exception only
+yields the status code and response metadata, not the API error message.
+
+Pattern:
+```clojure
+(catch Exception e
+  (let [body-stream (:body (ex-data e))
+        api-error   (when (instance? java.io.InputStream body-stream)
+                      (get-in (json/parse-string (slurp (io/reader body-stream)) true)
+                              [:error :message]))]
+    ...))
+```
+
+### λ Opaque HTTP errors in agent chains are likely invalid model IDs
+
+A chain run 400 that shows only `"clj-http: status 400 {...}"` almost always
+means the model ID sent to the API doesn't exist. Common cause: the fallback
+model in `run-chain-workflow-job` (e.g. `:sonnet-4.6` → `"claude-sonnet-4-6"`)
+is a speculative/future model name not yet live on Anthropic's API. Decoding the
+body confirms this immediately.
+
+### λ Decode before you debug: surface the API message first
+
+Opaque HTTP error strings cause unnecessary guesswork. Always surface the
+provider's error message text as the `:error-message` before any other
+diagnosis. The fix is one layer — provider catch block — and benefits all
+callers (chain runs, direct session turns, sub-agents).
+
+---
+
 ## 2026-03-07 - PSL ordering: event handler vs workflow job
 
 ### λ Extension event handlers fire during/after the triggering turn — not after it
