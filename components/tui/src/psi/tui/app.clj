@@ -1689,8 +1689,10 @@
                    (map #(render-message % width) messages))
          "\n")))
 
-(defn- render-separator []
-  (charm/render sep-style (apply str (repeat 40 "─"))))
+(defn- render-separator
+  "Render a horizontal separator sized to terminal WIDTH."
+  [width]
+  (charm/render sep-style (apply str (repeat (max 1 (or width 1)) "─"))))
 
 (def ^:private clear-to-end-seq
   "ANSI CSI J — clear from cursor to end of screen.
@@ -2063,7 +2065,7 @@
                        "  " (charm/render selector-hint-style "[Tab=scope ↑↓=nav Enter=select Esc=cancel]"))]
     (str title "\n"
          (charm/render selector-search-style (str "Search: " search "█")) "\n"
-         (render-separator) "\n"
+         (render-separator width) "\n"
          (if (zero? n)
            (charm/render dim-style "  (no sessions found)\n")
            (str/join "\n"
@@ -2407,7 +2409,7 @@
             ;; Widgets above editor
             (render-widgets ui-state-atom :above-editor)
             "\n"
-            (render-separator) "\n"
+            (render-separator term-width) "\n"
             ;; Dialog replaces editor when active
             (if dialog-active?
               (render-dialog ui-state-atom)
@@ -2420,7 +2422,7 @@
                                           (str spinner-char " waiting for response…")))
                           clear-line-end-seq))))
             "\n"
-            (render-separator) "\n"
+            (render-separator term-width) "\n"
             ;; Widgets below editor
             (render-widgets ui-state-atom :below-editor)
             ;; Default footer (path, stats, statuses)

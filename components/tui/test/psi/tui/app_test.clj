@@ -12,6 +12,7 @@
    [charm.message :as msg]
    [psi.agent-session.persistence :as persist]
    [psi.tui.app :as app]
+   [psi.tui.ansi :as ansi]
    [psi.tui.extension-ui :as ext-ui])
   (:import
    [java.util.concurrent LinkedBlockingQueue]))
@@ -648,6 +649,29 @@ clojure-lsp"}]})
       (is (str/includes? out "(openai) gpt-5.3-codex • xhigh"))
       ;; status sort + sanitization (a before b, newline collapsed to space)
       (is (str/includes? out "Clojure-LSP clojure-lsp TS+ESL,Prett")))))
+
+(deftest view-separators-track-terminal-width-test
+  (testing "chat separators render to current terminal width"
+    (let [width 97
+          out   (app/view (assoc (init-state) :width width))
+          plain (ansi/strip-ansi out)
+          sep   (apply str (repeat width "─"))]
+      ;; two input-area separators in normal chat view
+      (is (>= (count (re-seq (re-pattern (java.util.regex.Pattern/quote sep)) plain)) 2)))))
+
+(deftest view-resume-selector-separator-tracks-terminal-width-test
+  (testing "resume selector separator renders to current terminal width"
+    (let [width 93
+          state (assoc (init-state) :phase :selecting-session
+                       :session-selector {:scope :current
+                                          :cwd "/repo/project"
+                                          :search ""
+                                          :selected 0
+                                          :sessions []})
+          out   (app/view (assoc state :width width))
+          plain (ansi/strip-ansi out)
+          sep   (apply str (repeat width "─"))]
+      (is (str/includes? plain sep)))))
 
 (deftest view-shows-spinner-during-streaming-test
   (testing "view shows spinner while streaming"
