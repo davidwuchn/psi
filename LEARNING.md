@@ -1677,6 +1677,25 @@ This preserves safety-by-default while enabling faster local iteration.
 
 - λ psl source=53082d2cb72c2dbd354c790256f1e48b5663f717 at=2026-03-06T20:57:20.413334Z :: ⚒ Δ Simplify PSL to agent-prompt flow with extension prompt telemetry λ
 
+## 2026-03-07 - Live Extension Reload via nREPL
+
+### λ Reload Pattern for Extensions
+
+Extensions are loaded dynamically (not on classpath), so `require :reload`
+doesn't work. The correct live-reload sequence:
+
+```clojure
+(let [ctx  (#'psi.agent-session.core/global-context)
+      reg  (:extension-registry ctx)
+      path "/path/to/extension.clj"]
+  (psi.agent-session.extensions/unregister-all-in! reg)
+  (psi.agent-session.core/add-extension-in! ctx path))
+```
+
+- `unregister-all-in!` clears all registered handlers/tools/commands
+- `add-extension-in!` re-evaluates the file and re-runs `init`
+- nREPL port for the running psi JVM is 8889 (not 8888, which is Node)
+
 ## 2026-03-06 - Extension Run-Fn: Bridging Extensions to the Agent Loop
 
 ### λ Extensions Need a Live Runner, Not a Queue Stub
