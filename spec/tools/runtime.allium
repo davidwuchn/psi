@@ -3,7 +3,7 @@
 -- Scope: Built-in tools runtime contracts.
 --
 -- Includes:
---   - Tool schema/runtime registration for read/bash/edit/write/eql_query
+--   - Tool schema/runtime registration for read/bash/edit/write/app-query-tool
 --   - Built-in dispatcher behavior
 --   - CWD-scoped tool wrappers
 --   - Shared output-limit policy resolution (defaults + per-tool overrides)
@@ -12,13 +12,13 @@
 --   - EQL introspection surface for limit hits and context-byte accretion
 --
 -- Excludes:
---   - Per-tool execution internals (see read/bash/edit/write/eql-query)
+--   - Per-tool execution internals (see read/bash/edit/write/app-query-tool)
 
 use "./read.allium" as read
 use "./bash.allium" as bash
 use "./edit.allium" as edit
 use "./write.allium" as write
-use "./eql-query.allium" as eql
+use "./app-query-tool.allium" as eql
 
 ------------------------------------------------------------
 -- Value Types
@@ -101,7 +101,7 @@ value ProcessTempStore {
 
 value ToolOperations {
     -- Abstract operation bundle for remote execution adapters.
-    -- Concrete shape is tool-specific (read/bash/edit/write/eql_query/etc).
+    -- Concrete shape is tool-specific (read/bash/edit/write/app-query-tool/etc).
     kind: local | remote | custom
     adapterName: String?
 }
@@ -124,7 +124,7 @@ config {
     -- {
     --   "read": {"maxLines": 500, "maxBytes": 16384},
     --   "bash": {"maxLines": 1500},
-    --   "eql_query": {"maxBytes": 8192}
+    --   "app-query-tool": {"maxBytes": 8192}
     -- }
     tool_output_overrides: Map<String, ToolOutputOverride> = {}
 }
@@ -140,18 +140,18 @@ rule AllToolSchemasIncludeAllBuiltIns {
     ensures: all-tool-schemas contains ToolSchema{name: "bash"}
     ensures: all-tool-schemas contains ToolSchema{name: "edit"}
     ensures: all-tool-schemas contains ToolSchema{name: "write"}
-    ensures: all-tool-schemas contains ToolSchema{name: "eql_query"}
+    ensures: all-tool-schemas contains ToolSchema{name: "app-query-tool"}
 }
 
 rule AllToolsExcludeEqlQueryFactoryOnly {
-    -- eql_query requires a live query-fn closure and is created via factory.
+    -- app-query-tool requires a live query-fn closure and is created via factory.
     when: RuntimeToolsRequested()
 
     ensures: all-tools contains ToolDefinition{name: "read"}
     ensures: all-tools contains ToolDefinition{name: "bash"}
     ensures: all-tools contains ToolDefinition{name: "edit"}
     ensures: all-tools contains ToolDefinition{name: "write"}
-    ensures: all-tools does not contain ToolDefinition{name: "eql_query"}
+    ensures: all-tools does not contain ToolDefinition{name: "app-query-tool"}
 }
 
 rule ExecuteToolDispatchesBuiltIns {

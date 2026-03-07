@@ -23,11 +23,11 @@
 ;; ============================================================
 
 (def ^:private tool-descriptions
-  {"read"      "Read file contents"
-   "bash"      "Execute bash commands (ls, grep, find, etc.)"
-   "edit"      "Make surgical edits to files (find exact text and replace)"
-   "write"     "Create or overwrite files"
-   "eql_query" "Execute an EQL query against the live session graph. Returns session state, tool info, extension status, and more."})
+  {"read"           "Read file contents"
+   "bash"           "Execute bash commands (ls, grep, find, etc.)"
+   "edit"           "Make surgical edits to files (find exact text and replace)"
+   "write"          "Create or overwrite files"
+   "app-query-tool" "Execute an EQL query against the live session graph. Returns session state, tool info, extension status, and more."})
 
 (defn- format-graph-capabilities
   "Format a terse capability list from :psi.graph/capabilities maps."
@@ -98,7 +98,7 @@
      :cwd               — working directory (default: user.dir)
      :custom-prompt      — replaces the default prompt entirely
      :append-prompt      — text appended after the main prompt
-     :selected-tools     — tool name strings (default: read bash edit write eql_query)
+     :selected-tools     — tool name strings (default: read bash edit write app-query-tool)
      :context-files      — [{:path :content}] pre-loaded context files
      :skills             — [Skill] pre-loaded skills
      :graph-capabilities — [{:domain :operation-count :resolver-count :mutation-count}]
@@ -109,9 +109,9 @@
   ([{:keys [cwd custom-prompt append-prompt selected-tools
             context-files skills graph-capabilities]}]
    (let [resolved-cwd   (or cwd (System/getProperty "user.dir"))
-         tool-names     (or selected-tools ["read" "bash" "edit" "write" "eql_query"])
+         tool-names     (or selected-tools ["read" "bash" "edit" "write" "app-query-tool"])
          has-read?      (some #(= "read" %) tool-names)
-         has-eql-query? (some #(= "eql_query" %) tool-names)
+         has-app-query? (some #(= "app-query-tool" %) tool-names)
          loaded-skills  (or skills [])
          loaded-ctx     (or context-files [])
          loaded-caps    (or graph-capabilities [])
@@ -158,19 +158,19 @@
 
          ;; Graph capability discovery section
          graph-discovery-section
-         (when has-eql-query?
+         (when has-app-query?
            (str "\n\nCapability graph (EQL discovery):\n"
                 "- Purpose: discover live query capabilities and valid attrs before guessing paths.\n"
                 "- Endpoints: :psi.graph/resolver-count :psi.graph/mutation-count :psi.graph/resolver-syms :psi.graph/mutation-syms :psi.graph/env-built :psi.graph/nodes :psi.graph/edges :psi.graph/capabilities :psi.graph/domain-coverage\n"
                 "- Workflow: 1) query :psi.graph/resolver-syms 2) query discovered attrs directly.\n"
                 "- Canonical root discovery:\n"
-                "  - eql_query(query: \"[:psi.graph/root-seeds]\")        ; shows injected root contexts\n"
-                "  - eql_query(query: \"[:psi.graph/root-queryable-attrs]\") ; authoritative list of root-queryable attrs\n"
+                "  - app-query-tool(query: \"[:psi.graph/root-seeds]\")        ; shows injected root contexts\n"
+                "  - app-query-tool(query: \"[:psi.graph/root-queryable-attrs]\") ; authoritative list of root-queryable attrs\n"
                 "- Token usage attrs: :psi.agent-session/usage-input :psi.agent-session/usage-output :psi.agent-session/usage-cache-read :psi.agent-session/usage-cache-write :psi.agent-session/context-tokens :psi.agent-session/context-window\n"
-                "- Example: eql_query(query: \"[:psi.graph/resolver-syms]\")"))
+                "- Example: app-query-tool(query: \"[:psi.graph/resolver-syms]\")"))
 
          graph-capabilities-section
-         (when (and has-eql-query? (seq loaded-caps))
+         (when (and has-app-query? (seq loaded-caps))
            (str "\nCurrent capabilities (from :psi.graph/capabilities):\n"
                 (format-graph-capabilities loaded-caps)))
 

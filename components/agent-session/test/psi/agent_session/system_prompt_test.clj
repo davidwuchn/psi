@@ -62,7 +62,7 @@
     (let [prompt (sys-prompt/build-system-prompt {:cwd "/test/dir"})]
       (is (str/includes? prompt "Available tools:"))
       (is (str/includes? prompt "read: Read file contents"))
-      (is (str/includes? prompt "eql_query: Execute an EQL query against the live session graph."))
+      (is (str/includes? prompt "app-query-tool: Execute an EQL query against the live session graph."))
       (is (str/includes? prompt "Guidelines:"))
       (is (str/includes? prompt "Capability graph (EQL discovery):"))
       (is (str/includes? prompt ":psi.graph/resolver-syms"))
@@ -116,7 +116,7 @@
                    :selected-tools ["bash" "edit" "write"]})]
       (is (not (str/includes? prompt "<available_skills>")))))
 
-  (testing "excludes graph discovery section when eql_query is not available"
+  (testing "excludes graph discovery section when app-query-tool is not available"
     (let [prompt (sys-prompt/build-system-prompt
                   {:selected-tools ["read" "bash" "edit" "write"]})]
       (is (not (str/includes? prompt "Capability graph (EQL discovery):")))))

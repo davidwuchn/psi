@@ -205,9 +205,9 @@ files), and enables direct debugging/auditing of prompt assembly.
 
 ## 2026-02-28 - EQL Prompt Querying
 
-### λ Query only resolver-backed attrs in eql_query
+### λ Query only resolver-backed attrs in app-query-tool
 
-`eql_query` succeeds for `:psi.agent-session/system-prompt`, but queries that include
+`app-query-tool` succeeds for `:psi.agent-session/system-prompt`, but queries that include
 non-existent attrs (for example `:psi.agent-session/prompt`,
 `:psi.agent-session/instructions`, `:psi.agent-session/messages`) can fail the whole
 request.
@@ -253,9 +253,9 @@ Per-call entities use `:psi.tool-output.call/*` attrs:
 
 - Default tool output policy: `max-lines=1000`, `max-bytes=25600`.
 - Per-tool overrides are read from session data `:tool-output-overrides`.
-- `read`, `eql_query`, `ls`, `find`, `grep` use head-style truncation.
+- `read`, `app-query-tool`, `ls`, `find`, `grep` use head-style truncation.
 - `bash` uses tail-style truncation.
-- Truncated `bash`/`eql_query` responses include `:details {:full-output-path ...}`.
+- Truncated `bash`/`app-query-tool` responses include `:details {:full-output-path ...}`.
 
 ### λ Context-bytes-added semantics
 

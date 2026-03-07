@@ -58,16 +58,16 @@
                                       :content {:type "string" :description "Content to write"}}
                          :required   ["path" "content"]})})
 
-(def eql-query-tool
-  {:name        "eql_query"
-   :label       "EQL Query"
+(def app-query-tool
+  {:name        "app-query-tool"
+   :label       "App Query Tool"
    :description "Execute an EQL query against the live session graph. Returns session state, tool info, extension status, and more. Input is an EDN vector, e.g. [:psi.agent-session/phase :psi.agent-session/model]"
    :parameters  (pr-str {:type       "object"
                          :properties {:query {:type "string" :description "EQL query vector as EDN string, e.g. \"[:psi.agent-session/phase :psi.agent-session/session-id]\""}}
                          :required   ["query"]})})
 
 (def all-tool-schemas
-  [read-tool bash-tool edit-tool write-tool eql-query-tool])
+  [read-tool bash-tool edit-tool write-tool app-query-tool])
 
 ;; ============================================================
 ;; Tool implementations
@@ -552,8 +552,8 @@
      {:content  (str "Successfully wrote " bytes " bytes to " fpath)
       :is-error false})))
 
-(defn make-eql-query-tool
-  "Create an eql_query tool with an :execute fn that closes over `query-fn`.
+(defn make-app-query-tool
+  "Create an app-query tool with an :execute fn that closes over `query-fn`.
    `query-fn` should be (fn [eql-query-vec] -> result-map), typically
    `(partial resolvers/query-in ctx)` or `(fn [q] (session/query-in ctx q))`.
 
@@ -561,9 +561,9 @@
    - :overrides   output-policy overrides map
    - :tool-call-id identifier for temp artifact naming when output is truncated"
   ([query-fn]
-   (make-eql-query-tool query-fn nil))
+   (make-app-query-tool query-fn nil))
   ([query-fn {:keys [overrides tool-call-id]}]
-   (assoc eql-query-tool
+   (assoc app-query-tool
           :execute
           (fn [{:strs [query]}]
             (try
@@ -573,12 +573,12 @@
                   (throw (ex-info "Query must be an EDN vector" {:input query})))
                 (let [result      (query-fn q)
                       output      (pr-str result)
-                      policy      (tool-output/effective-policy (or overrides {}) "eql_query")
+                      policy      (tool-output/effective-policy (or overrides {}) "app-query-tool")
                       truncation  (tool-output/head-truncate output policy)
                       truncated?  (:truncated truncation)
                       spill-path  (when truncated?
                                     (tool-output/persist-truncated-output!
-                                     "eql_query"
+                                     "app-query-tool"
                                      (or tool-call-id (str (java.util.UUID/randomUUID)))
                                      output))]
                   (if truncated?
@@ -600,8 +600,8 @@
 (def all-tools
   "Built-in tool definitions including execution fns.
    Use this when registering tools into agent state.
-   Note: eql_query is excluded — it requires a session context.
-   Use `make-eql-query-tool` to create it with a query-fn."
+   Note: app-query-tool is excluded — it requires a session context.
+   Use `make-app-query-tool` to create it with a query-fn."
   [{:name        (:name read-tool)
     :label       (:label read-tool)
     :description (:description read-tool)
@@ -677,7 +677,7 @@
 (defn execute-tool
   "Dispatch a tool call by name. Returns {:content string|blocks :is-error boolean}.
   Throws ex-info for unknown tools.
-  Note: eql_query is not dispatched here — it requires a session context
+  Note: app-query-tool is not dispatched here — it requires a session context
   and is handled via the tool registry's :execute fn."
   ([tool-name args-map]
    (execute-tool tool-name args-map nil))

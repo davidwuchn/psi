@@ -36,7 +36,7 @@ When nil, psi uses the `default-directory' where `psi-emacs-start' (or
                  directory)
   :group 'psi-emacs)
 
-(defcustom psi-emacs-stream-timeout-seconds 45
+(defcustom psi-emacs-stream-timeout-seconds 120
   "Seconds without streaming progress before watchdog timeout triggers.
 
 Used to detect stalled streaming runs and transition to deterministic recovery."

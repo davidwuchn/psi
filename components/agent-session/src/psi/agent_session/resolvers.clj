@@ -1269,7 +1269,7 @@
 
 (pco/defresolver agent-session-git-context
   "Bridge resolver: derive :git/context from :psi.agent-session/cwd so
-   history resolvers can be queried from in-session eql_query roots."
+   history resolvers can be queried from in-session app-query-tool roots."
   [{:keys [psi.agent-session/cwd]}]
   {::pco/input  [:psi.agent-session/cwd]
    ::pco/output [:git/context]}
@@ -1428,7 +1428,7 @@
      :mutation-ops (mapv #(graph/operation->metadata :mutation %) (registry/all-mutations))}))
 
 (pco/defresolver query-graph-bridge
-  "Resolve all :psi.graph/* attrs from :psi/agent-session-ctx so eql_query can access
+  "Resolve all :psi.graph/* attrs from :psi/agent-session-ctx so app-query-tool can access
    the full Step 7 capability graph surface without requiring a :psi/query-ctx seed.
 
    Exposes all 9 required Step 7 graph attrs:
@@ -1574,7 +1574,7 @@
    - :psi/recursion-ctx (session or global)
    - :psi/engine-ctx (global)
 
-   This keeps session-root eql_query ergonomic while still allowing advanced
+   This keeps session-root app-query-tool ergonomic while still allowing advanced
    introspection attrs that depend on non-session roots."
   [ctx q]
   (let [memory-ctx    (or (:memory-ctx ctx)

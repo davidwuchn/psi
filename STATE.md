@@ -42,7 +42,7 @@ Current truth about the Psi system.
 - ✓ Git history resolvers
 - ✓ Introspection (engine queries itself)
 - ✓ Coding-agent session orchestration (agent-session component)
-- ✓ Built-in tools (read, bash, edit, write, eql_query)
+- ✓ Built-in tools (read, bash, edit, write, app-query-tool)
 - ✓ Executor (bridges ai streaming → agent-core loop protocol)
 - ✓ Turn statechart (per-turn streaming state, EQL queryable)
 - ✓ Runnable entry point (`clojure -M:run`)
@@ -51,7 +51,7 @@ Current truth about the Psi system.
 - ✓ Extension UI (dialogs, widgets, status, notifications, render registry, EQL introspection)
 - ✓ OAuth module (PKCE, callback server, credential store, provider registry, Anthropic)
 - ✓ Session introspection hardening (Step 7a): messages-count, tool-call-count, start-time, current-time
-- ✓ Graph emergence (Step 7): all 9 :psi.graph/* attrs queryable via eql_query from agent-session-ctx
+- ✓ Graph emergence (Step 7): all 9 :psi.graph/* attrs queryable via app-query-tool from agent-session-ctx
 - ✓ Memory backing-store extension point (Step 9a phase 1): provider protocol + registry (`psi.memory.store`) with in-memory default and `:psi.memory.store/*` EQL attrs
 - ✓ Datalevin persistent memory provider (Step 9a phase 2): `psi.memory.datalevin` + write-through remember/recover/graph artifacts + activation-time hydration
 - ✓ Memory runtime hardening (Step 9.5): CLI/env config surface, provider failure telemetry surfacing, explicit provider selection/fallback reporting, retention overrides, Datalevin schema migration hooks, operator docs
@@ -86,29 +86,29 @@ Implemented operations: `handshake`, `ping`, `query_eql`, `prompt`, `steer`, `fo
 
 In-session commands: `/status`, `/history`, `/new`, `/help`, `/quit`, `/exit`, `/skills`, `/prompts`, `/skill:<name>`, plus extension commands
 
-Built-in tools: `read`, `bash`, `edit`, `write`, `eql_query`
+Built-in tools: `read`, `bash`, `edit`, `write`, `app-query-tool`
 
-The `eql_query` tool enables in-session EQL introspection without nREPL:
+The `app-query-tool` tool enables in-session EQL introspection without nREPL:
 ```
-eql_query(query: "[:psi.agent-session/phase :psi.agent-session/session-id]")
-eql_query(query: "[{:psi.agent-session/stats [:total-messages :context-tokens]}]")
-eql_query(query: "[:psi.tool/names :psi.skill/names]")
+app-query-tool(query: "[:psi.agent-session/phase :psi.agent-session/session-id]")
+app-query-tool(query: "[{:psi.agent-session/stats [:total-messages :context-tokens]}]")
+app-query-tool(query: "[:psi.tool/names :psi.skill/names]")
 ```
 
 Canonical agent-session telemetry query path (direct top-level attrs):
 ```
-eql_query(query: "[:psi.agent-session/messages-count]")
-eql_query(query: "[:psi.agent-session/tool-call-count]")
-eql_query(query: "[:psi.agent-session/start-time]")
-eql_query(query: "[:psi.agent-session/current-time]")
-eql_query(query: "[:psi.agent-session/messages-count :psi.agent-session/tool-call-count :psi.agent-session/start-time :psi.agent-session/current-time]")
+app-query-tool(query: "[:psi.agent-session/messages-count]")
+app-query-tool(query: "[:psi.agent-session/tool-call-count]")
+app-query-tool(query: "[:psi.agent-session/start-time]")
+app-query-tool(query: "[:psi.agent-session/current-time]")
+app-query-tool(query: "[:psi.agent-session/messages-count :psi.agent-session/tool-call-count :psi.agent-session/start-time :psi.agent-session/current-time]")
 ```
 
 Live verification (2026-03-01): all 5 queries above return successfully with no resolver error; counts return integers and both time attrs return `java.time.Instant`.
 
 ## Canonical Graph Attrs (Step 7)
 
-All 9 required Step 7 graph attrs are queryable via `eql_query` (seeded from `:psi/agent-session-ctx`):
+All 9 required Step 7 graph attrs are queryable via `app-query-tool` (seeded from `:psi/agent-session-ctx`):
 
 ```clojure
 [:psi.graph/resolver-count]    ;; integer — resolvers in global registry
@@ -202,7 +202,7 @@ Caught by `jline-terminal-keymap-test` smoke test.
 | `agent.allium`             | `agent-core`            | ✓ implemented                         |
 | `ai-abstract-model.allium` | `ai`                    | ✓ implemented                         |
 | `coding-agent.allium`      | `agent-session`         | ✓ split → 3 sub-specs; ✓ implemented  |
-| `tools.allium`             | `agent-session/tools`   | ◇ target contracts (runtime policy + read/bash/edit/write/ls/find/grep/eql_query + path resolution + introspection) |
+| `tools.allium`             | `agent-session/tools`   | ◇ target contracts (runtime policy + read/bash/edit/write/ls/find/grep/app-query-tool + path resolution + introspection) |
 | `tool-output-handling.allium` | `agent-session/tools` | ◇ compatibility index (superseded by tools/*.allium) |
 | `skills.allium`            | `agent-session/skills`  | ✓ implemented                         |
 | `tui.allium`               | `tui`                   | ◇ partial — core session loop working; streaming/tool-status UX still open |

@@ -70,7 +70,7 @@
           diff   (Math/abs (- (.toEpochMilli now) (.toEpochMilli ^java.time.Instant ct)))]
       (is (< diff 60000) "current-time should be within 60s of system clock"))))
 
-;; ── Combined query (mirrors the failing eql_query pattern) ──
+;; ── Combined query (mirrors the failing app-query-tool pattern) ──
 
 (deftest combined-telemetry-query-test
   (testing "all canonical telemetry attrs succeed in one query"

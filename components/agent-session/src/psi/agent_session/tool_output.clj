@@ -7,7 +7,7 @@
    - effective-policy merges overrides over defaults
 
    Truncation:
-   - head-truncate: keeps first N lines/bytes (used by read and eql_query)
+   - head-truncate: keeps first N lines/bytes (used by read and app-query-tool)
    - tail-truncate: keeps last N lines/bytes (used by bash)
 
    Temp Store:

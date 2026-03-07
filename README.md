@@ -187,11 +187,11 @@ TUI    (charm.clj)   → Elm Architecture terminal UI
 
 ### Built-in Tools
 
-`read` `bash` `edit` `write` `eql_query`
+`read` `bash` `edit` `write` `app-query-tool`
 
 ### EQL Introspection Tips
 
-- Query only attributes that exist in the graph; unknown attrs can cause the whole `eql_query` request to fail.
+- Query only attributes that exist in the graph; unknown attrs can cause the whole `app-query-tool` request to fail.
 - For the active system prompt, use:
   - `[:psi.agent-session/system-prompt]`
 - For prompt sizing (chars + estimated tokens), use:

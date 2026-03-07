@@ -1,6 +1,6 @@
--- tools/eql-query.allium
+-- tools/app-query-tool.allium
 --
--- Scope: Target behavior for the eql_query tool.
+-- Scope: Target behavior for the app-query-tool tool.
 --
 -- Includes:
 --   - tool factory requiring injected query-fn
@@ -47,7 +47,7 @@ value EqlQueryResult {
 }
 
 entity EqlQueryTool {
-    name: "eql_query"
+    name: "app-query-tool"
     label: "EQL Query"
     description: String
     parameters: String
@@ -96,7 +96,7 @@ rule EqlQueryAppliesHeadTruncation {
     requires: ParsedEdn(queryText) is Vector
 
     let serialized = PrStr(query-fn(ParsedEdn(queryText)))
-    let policy = EffectiveOutputPolicy(eql_query)
+    let policy = EffectiveOutputPolicy(app-query-tool)
     let truncation = HeadTruncate(serialized, policy)
 
     ensures: result.is-error = false
@@ -111,10 +111,10 @@ rule EqlQueryWritesFullOutputFileWhenTruncated {
     requires: ParsedEdn(queryText) is Vector
 
     let serialized = PrStr(query-fn(ParsedEdn(queryText)))
-    let truncation = HeadTruncate(serialized, EffectiveOutputPolicy(eql_query))
+    let truncation = HeadTruncate(serialized, EffectiveOutputPolicy(app-query-tool))
     requires: truncation.truncated
 
-    ensures: path = PersistTruncatedFullOutput(toolName: "eql_query", fullText: serialized)
+    ensures: path = PersistTruncatedFullOutput(toolName: "app-query-tool", fullText: serialized)
     ensures: result.details.fullOutputPath = path
     ensures: result.content includes "Output truncated"
     ensures: result.content includes "Full output"
@@ -129,7 +129,7 @@ rule EqlQueryAddsNarrowingGuidanceWhenTruncated {
 }
 
 rule EqlQueryTruncatedFilesUseProcessTempStore {
-    when: PersistTruncatedFullOutput(toolName: "eql_query", fullText)
+    when: PersistTruncatedFullOutput(toolName: "app-query-tool", fullText)
 
     ensures: path in ActiveProcessTempStore().rootDir
 }
@@ -145,9 +145,9 @@ rule EqlQueryConvertsExceptionsToErrorPayload {
 }
 
 rule EqlQueryExcludedFromDirectDispatcher {
-    when: ExecuteToolCalled("eql_query", args)
+    when: ExecuteToolCalled("app-query-tool", args)
 
-    ensures: Error.thrown("Unknown tool: eql_query")
+    ensures: Error.thrown("Unknown tool: app-query-tool")
 }
 
 ------------------------------------------------------------
@@ -161,6 +161,6 @@ surface EqlQueryToolApi {
         MakeEqlQueryTool(query-fn)
 
     guidance:
-        -- eql_query is factory-only because it requires live query context.
+        -- app-query-tool is factory-only because it requires live query context.
         -- Truncated outputs must include recoverable fullOutputPath metadata.
 }

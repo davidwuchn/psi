@@ -449,7 +449,7 @@ surface BootstrapInterface {
         InitiateEvolution(observer: User)
             -> EvolutionCycle
             
-        QuerySystem(session: EvolutionCycle, eql_query: String)
+        QuerySystem(session: EvolutionCycle, app-query-tool: String)
             when session.is_active = true
             when system_state.query_ready = true
             

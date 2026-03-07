@@ -491,10 +491,10 @@
                          :oauth-ctx oauth-ctx
                          :recursion-ctx recursion-ctx})
         ext-paths      (ext/discover-extension-paths [] cwd)
-        eql-tool       (tools/make-eql-query-tool (fn [q] (session/query-in ctx q)))
+        app-query-tool (tools/make-app-query-tool (fn [q] (session/query-in ctx q)))
         summary        (session/bootstrap-session-in!
                         ctx {:register-global-query? false
-                             :base-tools             (conj (vec tools/all-tools) eql-tool)
+                             :base-tools             (conj (vec tools/all-tools) app-query-tool)
                              :system-prompt          base-prompt
                              :developer-prompt       developer-prompt
                              :developer-prompt-source (if developer-prompt :env :fallback)
