@@ -32,6 +32,7 @@ Current truth about the Psi system.
 - ✓ Agent-chain `run_chain` progress heartbeat + widget projection landed (`18e0c50`): extension now tracks per-run phase/step/elapsed state, emits throttled tool updates while waiting for workflow completion, and refreshes widget state deterministically on init/reload/session-switch.
 - ✓ Agent-chain default selection behavior tightened (`53c0f40`): extension no longer auto-selects first chain on init/reload/session-switch; widget remains `active: (none)` until explicit chain selection.
 - ✓ `run_chain` execution mode now defaults to non-blocking background workflow start (commit `8d36927`), preventing Emacs UI request-path blocking; synchronous wait remains available via explicit `wait=true`.
+- ✓ Interactive tool-call path now enforces non-blocking `run_chain` execution even when `wait=true` is requested (commit `11feddf`), avoiding request-path stalls in UI clients.
 - ✓ Agent-chain definitions are now discoverable via top-level EQL attrs (`:psi.agent-chain/config-path`, `:psi.agent-chain/count`, `:psi.agent-chain/names`, `:psi.agent-chain/chains`, `:psi.agent-chain/error`) after runtime reload.
 - ✓ Extension slash command completion now includes backend extension commands in both frontends:
   - Emacs CAPF merges built-ins with cached `:psi.extension/command-names`
@@ -303,7 +304,7 @@ Top-level EQL attrs for extension-initiated agent prompt visibility:
 
 ```clojure
 [:psi.agent-session/extension-last-prompt-source]    ;; string? — extension source id (e.g. "plan-state-learning")
-[:psi.agent-session/extension-last-prompt-delivery]  ;; keyword? — :prompt | :follow-up
+[:psi.agent-session/extension-last-prompt-delivery]  ;; keyword? — :prompt | :deferred | :follow-up
 [:psi.agent-session/extension-last-prompt-at]        ;; java.time.Instant? — last extension prompt timestamp
 ```
 
