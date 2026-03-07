@@ -59,57 +59,63 @@
 (defn- agent-messages->ai-conversation
   "Rebuild an ai/conversation from agent-core message history.
   Used to reconstruct the conversation context before each LLM call.
-  Includes tool definitions so the Anthropic API can offer tool_use."
+  Includes tool definitions so the Anthropic API can offer tool_use.
+
+  Messages with :custom-type are extension transcript markers (e.g. PSL status
+  messages) and are excluded — they must not be sent to the LLM because they
+  can produce consecutive same-role messages that cause provider 400 errors."
   [system-prompt messages agent-tools]
   (let [conv (reduce
               (fn [conv msg]
-                (case (:role msg)
-                  "user"
-                  (conv/add-user-message
-                   conv
-                   (or (some #(when (= :text (:type %)) (:text %))
-                             (:content msg))
-                       (str (:content msg))))
+                (if (:custom-type msg)
+                  conv ;; skip extension transcript markers
+                  (case (:role msg)
+                    "user"
+                    (conv/add-user-message
+                     conv
+                     (or (some #(when (= :text (:type %)) (:text %))
+                               (:content msg))
+                         (str (:content msg))))
 
-                  "assistant"
-                  (let [text-parts (keep #(when (= :text (:type %)) (:text %))
-                                         (:content msg))
-                        tool-calls (filter #(= :tool-call (:type %))
+                    "assistant"
+                    (let [text-parts (keep #(when (= :text (:type %)) (:text %))
                                            (:content msg))
-                        text       (str/join "\n" text-parts)]
-                    (if (seq tool-calls)
+                          tool-calls (filter #(= :tool-call (:type %))
+                                             (:content msg))
+                          text       (str/join "\n" text-parts)]
+                      (if (seq tool-calls)
                       ;; Structured content with tool calls
-                      (conv/add-assistant-message
-                       conv
-                       {:content
-                        {:kind   :structured
-                         :blocks (vec
-                                  (concat
-                                   (when (seq text)
-                                     [{:kind :text :text text}])
-                                   (map (fn [tc]
-                                          {:kind  :tool-call
-                                           :id    (:id tc)
-                                           :name  (:name tc)
-                                           :input (parse-args (:arguments tc))})
-                                        tool-calls)))}})
+                        (conv/add-assistant-message
+                         conv
+                         {:content
+                          {:kind   :structured
+                           :blocks (vec
+                                    (concat
+                                     (when (seq text)
+                                       [{:kind :text :text text}])
+                                     (map (fn [tc]
+                                            {:kind  :tool-call
+                                             :id    (:id tc)
+                                             :name  (:name tc)
+                                             :input (parse-args (:arguments tc))})
+                                          tool-calls)))}})
                       ;; Text only
-                      (conv/add-assistant-message
-                       conv
-                       {:content {:kind :text :text text}})))
+                        (conv/add-assistant-message
+                         conv
+                         {:content {:kind :text :text text}})))
 
-                  "toolResult"
-                  (let [text (or (some #(when (= :text (:type %)) (:text %))
-                                       (:content msg))
-                                 "")]
-                    (conv/add-tool-result conv
-                                          (:tool-call-id msg)
-                                          (:tool-name msg)
-                                          {:kind :text :text text}
-                                          (boolean (:is-error msg))))
+                    "toolResult"
+                    (let [text (or (some #(when (= :text (:type %)) (:text %))
+                                         (:content msg))
+                                   "")]
+                      (conv/add-tool-result conv
+                                            (:tool-call-id msg)
+                                            (:tool-name msg)
+                                            {:kind :text :text text}
+                                            (boolean (:is-error msg))))
 
                   ;; unknown roles — skip
-                  conv))
+                    conv)))
               (conv/create system-prompt)
               messages)]
     ;; Add agent tools to conversation so the provider includes them in the request

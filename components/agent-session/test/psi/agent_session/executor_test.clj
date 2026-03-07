@@ -202,6 +202,35 @@
                (some #(when (= :text (:type %)) (:text %))
                      (:content result))))))))
 
+(deftest custom-type-messages-excluded-from-llm-conversation-test
+  (testing "messages with :custom-type are filtered out before LLM call"
+    ;; PSL extension appends assistant-role custom-type messages as transcript markers.
+    ;; These must not reach the LLM — consecutive assistant messages cause Anthropic 400.
+    (let [messages
+          [{:role "user"    :content [{:type :text :text "hello"}]}
+           {:role "assistant" :content [{:type :text :text "hi there"}]}
+           ;; PSL send-message! — assistant role, custom-type marker
+           {:role "assistant" :content [{:type :text :text "PSL sync start."}]
+            :custom-type "plan-state-learning"}
+           {:role "user"    :content [{:type :text :text "PSL follow-up"}]}]
+          conv (#'psi.agent-session.executor/agent-messages->ai-conversation
+                "sys" messages [])
+          roles (mapv :role (:messages conv))]
+      (is (= [:user :assistant :user] roles)
+          "custom-type assistant message is excluded; no consecutive assistant messages")
+      (is (not-any? :custom-type (:messages conv))
+          "no custom-type keys in LLM conversation messages")))
+
+  (testing "non-custom-type messages are all included"
+    (let [messages
+          [{:role "user"      :content [{:type :text :text "q"}]}
+           {:role "assistant" :content [{:type :text :text "a"}]}
+           {:role "user"      :content [{:type :text :text "q2"}]}]
+          conv (#'psi.agent-session.executor/agent-messages->ai-conversation
+                "sys" messages [])
+          roles (mapv :role (:messages conv))]
+      (is (= [:user :assistant :user] roles)))))
+
 (deftest tool-output-accounting-test
   (testing "captures per-call stats and aggregates, including limit-hit"
     (let [agent-ctx   (setup-agent-ctx!)
