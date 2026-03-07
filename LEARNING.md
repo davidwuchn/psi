@@ -4,6 +4,44 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-07 - tool_use.input must always be a JSON object
+
+### λ json/parse-string does not guarantee a map — validate before use as tool input
+
+`json/parse-string` returns whatever the JSON top-level value is: map, vector,
+string, number, boolean, or nil. When a LLM emits tool arguments whose JSON is
+not an object (rare but possible — e.g. a string literal or array), the raw
+non-map flows through to `tool_use.input`, producing Anthropic 400:
+`Input should be a valid dictionary`.
+
+Fix: validate after parse.
+```clojure
+(let [parsed (json/parse-string arguments)]
+  (if (map? parsed) parsed {}))
+```
+
+### λ Guard at both the parse layer and the wire layer (belt-and-suspenders)
+
+Two defence points cover independent failure paths:
+
+1. **`parse-args` (executor.clj)**: catches non-map values from raw JSON parsing.
+2. **`transform-messages` (anthropic.clj)**: catches non-map `:input` values that
+   might arrive via other conversation reconstruction paths.
+
+Neither guard alone is sufficient — conversation can be rebuilt from persisted
+history where the `:input` field was already set to a non-map before the parse-args
+fix existed.
+
+### λ Validated API error messages enable immediate root-cause identification
+
+The prior session's 400 was diagnosed in one step once error body decoding was
+in place (commit `4ffaa11`). The decoded message
+`messages.19.content.1.tool_use.input: Input should be a valid dictionary`
+identified the exact field and constraint without any request logging or
+reproduction effort. Error body decoding pays for itself immediately.
+
+---
+
 ## 2026-03-07 - Anthropic API error diagnosis: always decode the error body
 
 ### λ clj-http 400 exceptions carry the error body as a stream in ex-data, not in the message
