@@ -56,12 +56,6 @@
     (str
      "PSL follow-up for commit " source7 "\n"
      "\n"
-     "Context:\n"
-     "- source-sha: " source-sha "\n"
-     "- previous-head: " (or previous-head "unknown") "\n"
-     "- cwd: " (or cwd "") "\n"
-     "- subject: " (squish subject) "\n"
-     "\n"
      "Task:\n"
      "1) Update PLAN.md and STATE.md\n"
      "2) Commit those changes\n"
@@ -69,7 +63,7 @@
      "4) Commit LEARNING.md\n"
      "\n"
      "Constraints:\n"
-     "- Commit messages must include [psi:psl-auto] and summarise what actually changed (not just 'Auto-update X').\n"
+     "- Commit message title must summarise the learning or plan/state change and finish with [psi:psl-auto].\n"
      "- Do not use git add -A or git add .\n"
      "- Only stage explicit target files for each commit.\n"
      "- If a phase has no meaningful changes, skip that commit and explain why in your final response.\n")))
