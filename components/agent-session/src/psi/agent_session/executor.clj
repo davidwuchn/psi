@@ -45,10 +45,13 @@
 ;; ============================================================
 
 (defn- parse-args
-  "Parse JSON tool arguments string into a map."
+  "Parse JSON tool arguments string into a map.
+   Always returns a map — if the parsed value is not a map (e.g. string, array,
+   nil) or parsing fails, returns {} so tool_use.input is always a valid dict."
   [arguments]
   (try
-    (json/parse-string arguments)
+    (let [parsed (json/parse-string arguments)]
+      (if (map? parsed) parsed {}))
     (catch Exception _ {})))
 
 (defn- parse-tool-parameters

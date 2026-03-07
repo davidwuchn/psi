@@ -39,7 +39,8 @@
                               {:type  "tool_use"
                                :id    (:id block)
                                :name  (:name block)
-                               :input (:input block)}
+                               :input (let [inp (:input block)]
+                                        (if (map? inp) inp {}))}
 
                               ;; fallback
                               {:type "text" :text (str block)}))
