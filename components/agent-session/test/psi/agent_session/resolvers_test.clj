@@ -5,7 +5,8 @@
    returns a well-typed value for the target attribute — no resolver error."
   (:require
    [clojure.test :refer [deftest is testing]]
-   [psi.agent-session.core :as session]))
+   [psi.agent-session.core :as session]
+   [psi.agent-session.oauth.core :as oauth]))
 
 ;; ── helpers ─────────────────────────────────────────────
 
@@ -13,6 +14,11 @@
   "Run EQL query against a fresh session context."
   [eql]
   (session/query-in (session/create-context {:persist? false}) eql))
+
+(defn- q-in
+  "Run EQL query against explicit session context CTX."
+  [ctx eql]
+  (session/query-in ctx eql))
 
 ;; ── :psi.agent-session/messages-count ───────────────────
 
@@ -103,6 +109,38 @@
       (is (integer? (:psi.agent-session/tool-call-count result)))
       (is (instance? java.time.Instant (:psi.agent-session/start-time result)))
       (is (instance? java.time.Instant (:psi.agent-session/current-time result))))))
+
+;; ── Model selector bridge attrs ──────────────────────────
+
+(deftest model-catalog-resolver-test
+  (testing "model-catalog is queryable with deterministic model entries"
+    (let [result (q [:psi.agent-session/model-catalog])
+          catalog (:psi.agent-session/model-catalog result)]
+      (is (vector? catalog))
+      (is (seq catalog))
+      (is (every? map? catalog))
+      (is (every? string? (keep :provider catalog)))
+      (is (every? string? (keep :id catalog)))
+      (is (every? string? (keep :name catalog)))
+      (is (= (sort-by (juxt :provider :id) catalog) catalog)
+          "catalog should be sorted by provider then model id"))))
+
+(deftest authenticated-providers-resolver-test
+  (testing "resolver returns empty vector when oauth context is absent"
+    (let [result (q [:psi.agent-session/authenticated-providers])]
+      (is (= [] (:psi.agent-session/authenticated-providers result)))))
+
+  (testing "resolver reports providers with configured auth"
+    (let [oauth-ctx (oauth/create-null-context
+                     {:credentials {:anthropic {:type :oauth
+                                                :access "test-access"
+                                                :refresh "test-refresh"
+                                                :expires (+ (System/currentTimeMillis) 3600000)}}})
+          ctx      (session/create-context {:persist? false :oauth-ctx oauth-ctx})
+          result   (q-in ctx [:psi.agent-session/authenticated-providers])
+          providers (:psi.agent-session/authenticated-providers result)]
+      (is (vector? providers))
+      (is (= ["anthropic"] providers)))))
 
 ;; ── Git history bridge (cwd -> :git/context) ─────────────
 

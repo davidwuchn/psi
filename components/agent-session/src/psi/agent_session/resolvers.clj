@@ -197,6 +197,8 @@
    :psi.agent-session/model-id
    :psi.agent-session/model-reasoning
    :psi.agent-session/effective-reasoning-effort
+   :psi.agent-session/model-catalog       — runtime model picker payload [{:provider :id :name :reasoning}]
+   :psi.agent-session/authenticated-providers — provider ids with configured auth for this session
 
    Startup bootstrap introspection
    ──────────────────────────────
@@ -242,6 +244,8 @@
    [psi.tui.extension-ui :as ext-ui]
    [psi.agent-session.statechart :as sc]
    [psi.agent-session.turn-statechart :as turn-sc]
+   [psi.agent-session.oauth.core :as oauth]
+   [psi.ai.models :as ai-models]
    [psi.agent-core.core :as agent]))
 
 ;; ── Core session fields ─────────────────────────────────
@@ -1374,6 +1378,50 @@
      :psi.agent-session/effective-reasoning-effort
      (effective-reasoning-effort model level)}))
 
+(defn- runtime-model-catalog
+  "Return deterministic runtime model catalog for frontend selectors."
+  []
+  (->> ai-models/all-models
+       vals
+       (map (fn [m]
+              {:provider  (name (:provider m))
+               :id        (:id m)
+               :name      (:name m)
+               :reasoning (boolean (:supports-reasoning m))}))
+       (sort-by (juxt :provider :id))
+       vec))
+
+(defn- authenticated-provider-ids
+  "Return provider ids with configured auth for this session context."
+  [agent-session-ctx]
+  (if-let [oauth-ctx (:oauth-ctx agent-session-ctx)]
+    (->> (oauth/available-providers oauth-ctx)
+         (keep (fn [provider]
+                 (let [provider-id (:id provider)]
+                   (when (and provider-id
+                              (oauth/has-auth? oauth-ctx provider-id))
+                     (name provider-id)))))
+         distinct
+         sort
+         vec)
+    []))
+
+(pco/defresolver agent-session-model-catalog
+  "Resolve runtime model catalog for frontend model selectors."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.agent-session/model-catalog]}
+  (let [_ agent-session-ctx]
+    {:psi.agent-session/model-catalog (runtime-model-catalog)}))
+
+(pco/defresolver agent-session-authenticated-providers
+  "Resolve provider ids with configured auth for this session."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.agent-session/authenticated-providers]}
+  {:psi.agent-session/authenticated-providers
+   (authenticated-provider-ids agent-session-ctx)})
+
 (pco/defresolver startup-prompts-resolver
   "Resolve startup prompt execution telemetry for the current session."
   [{:keys [psi/agent-session-ctx]}]
@@ -1513,6 +1561,8 @@
    agent-session-model-provider
    agent-session-model-id
    agent-session-model-reasoning
+   agent-session-model-catalog
+   agent-session-authenticated-providers
    startup-prompts-resolver
    startup-bootstrap-resolver
    query-graph-bridge
@@ -1566,13 +1616,25 @@
 (defn- ensure-query-env! []
   (or @query-env (reset! query-env (build-env))))
 
+(defn- snapshot-engine-context
+  "Build a read-only engine context snapshot from global engine wrappers.
+
+   Avoids direct dependency on engine private/global internals while still
+   seeding :psi/engine-ctx for introspection resolvers that expect an
+   EngineContext-shaped map."
+  []
+  {:engines           (atom (or (engine/get-all-engines) {}))
+   :system-state      (atom (engine/get-system-state))
+   :state-transitions (atom (vec (or (engine/get-state-transitions) [])))
+   :sc-env            (atom nil)})
+
 (defn query-in
   "Run EQL `q` against `ctx` using this component's Pathom graph.
    Transparently seeds root contexts so callers don't need to pass them:
    - :psi/agent-session-ctx (always)
    - :psi/memory-ctx (session or global)
    - :psi/recursion-ctx (session or global)
-   - :psi/engine-ctx (global)
+   - :psi/engine-ctx (session override or read-only global snapshot)
 
    This keeps session-root app-query-tool ergonomic while still allowing advanced
    introspection attrs that depend on non-session roots."
@@ -1581,7 +1643,8 @@
                           (memory/global-context))
         recursion-ctx (or (:recursion-ctx ctx)
                           (recursion/global-context))
-        engine-ctx    (engine/global-context)]
+        engine-ctx    (or (:engine-ctx ctx)
+                          (snapshot-engine-context))]
     (p.eql/process (ensure-query-env!)
                    {:psi/agent-session-ctx ctx
                     :psi/memory-ctx        memory-ctx

@@ -8,6 +8,229 @@
 (require 'subr-x)
 (require 'psi-globals)
 
+(defcustom psi-emacs-model-selector-provider-scope 'all
+  "Provider scope used by `psi-emacs-set-model` when opening the model picker.
+
+When set to `all`, the picker lists all runtime models.
+When set to `authenticated`, the picker only lists models whose provider
+appears in `:psi.agent-session/authenticated-providers`."
+  :type '(choice (const :tag "All providers" all)
+                 (const :tag "Providers with configured auth" authenticated))
+  :group 'psi-emacs)
+
+(defun psi-emacs--trim-optional-input (value)
+  "Return trimmed VALUE text, or nil when VALUE is blank."
+  (let ((text (string-trim (format "%s" (or value "")))))
+    (unless (string-empty-p text)
+      text)))
+
+(defun psi-emacs--normalize-provider-id (value)
+  "Return canonical provider id string for VALUE, or nil."
+  (when-let ((text (psi-emacs--trim-optional-input value)))
+    (downcase (string-remove-prefix ":" text))))
+
+(defun psi-emacs--alist-get-any (alist keys)
+  "Return first non-nil value in ALIST for any of KEYS."
+  (let ((value nil))
+    (while (and keys (null value))
+      (setq value (alist-get (car keys) alist nil nil #'equal)
+            keys (cdr keys)))
+    value))
+
+(defun psi-emacs--model-provider (model)
+  "Return normalized provider id text from MODEL entry."
+  (psi-emacs--normalize-provider-id
+   (psi-emacs--alist-get-any model '(:provider provider :model-provider model-provider))))
+
+(defun psi-emacs--model-id (model)
+  "Return normalized model id text from MODEL entry."
+  (psi-emacs--trim-optional-input
+   (psi-emacs--alist-get-any model '(:id id :model-id model-id))))
+
+(defun psi-emacs--model-name (model)
+  "Return optional display name text from MODEL entry."
+  (psi-emacs--trim-optional-input
+   (psi-emacs--alist-get-any model '(:name name))))
+
+(defun psi-emacs--model-reasoning-p (model)
+  "Return non-nil when MODEL reports reasoning support."
+  (not (null (psi-emacs--alist-get-any
+              model
+              '(:reasoning reasoning :supports-reasoning supports-reasoning)))))
+
+(defun psi-emacs--model-selector-query ()
+  "Return canonical EQL query string for `/model` selector data."
+  "[:psi.agent-session/model-catalog
+    :psi.agent-session/authenticated-providers]")
+
+(defun psi-emacs--query-result-from-frame (frame)
+  "Extract `query_eql` result payload map from FRAME."
+  (let ((data (alist-get :data frame nil nil #'equal)))
+    (and (listp data)
+         (alist-get :result data nil nil #'equal))))
+
+(defun psi-emacs--model-catalog-from-query-frame (frame)
+  "Extract model catalog list from `query_eql` FRAME."
+  (let* ((result (psi-emacs--query-result-from-frame frame))
+         (catalog (and (listp result)
+                       (alist-get :psi.agent-session/model-catalog result nil nil #'equal))))
+    (cond
+     ((vectorp catalog) (append catalog nil))
+     ((listp catalog) catalog)
+     (t nil))))
+
+(defun psi-emacs--authenticated-providers-from-query-frame (frame)
+  "Extract authenticated provider id list from `query_eql` FRAME."
+  (let* ((result (psi-emacs--query-result-from-frame frame))
+         (providers (and (listp result)
+                         (alist-get :psi.agent-session/authenticated-providers result nil nil #'equal))))
+    (cond
+     ((vectorp providers) (append providers nil))
+     ((listp providers) providers)
+     (t nil))))
+
+(defun psi-emacs--normalize-provider-list (providers)
+  "Return deduplicated normalized provider id list from PROVIDERS."
+  (delete-dups
+   (delq nil (mapcar #'psi-emacs--normalize-provider-id providers))))
+
+(defun psi-emacs--filter-model-catalog (catalog authenticated-providers)
+  "Return filtered CATALOG using AUTHENTICATED-PROVIDERS and user scope setting."
+  (if (eq psi-emacs-model-selector-provider-scope 'authenticated)
+      (let ((allowed (psi-emacs--normalize-provider-list authenticated-providers))
+            (out nil))
+        (dolist (model catalog)
+          (when (member (psi-emacs--model-provider model) allowed)
+            (push model out)))
+        (nreverse out))
+    catalog))
+
+(defun psi-emacs--sort-model-catalog (catalog)
+  "Return CATALOG sorted by provider id then model id."
+  (sort (copy-sequence catalog)
+        (lambda (a b)
+          (let ((ap (or (psi-emacs--model-provider a) ""))
+                (bp (or (psi-emacs--model-provider b) ""))
+                (ai (or (psi-emacs--model-id a) ""))
+                (bi (or (psi-emacs--model-id b) "")))
+            (if (string= ap bp)
+                (string< ai bi)
+              (string< ap bp))))))
+
+(defun psi-emacs--model-candidate-label (model)
+  "Return deterministic completion label for MODEL entry."
+  (let* ((provider (or (psi-emacs--model-provider model) "?"))
+         (model-id (or (psi-emacs--model-id model) "?"))
+         (name (psi-emacs--model-name model))
+         (reasoning? (psi-emacs--model-reasoning-p model))
+         (name-part (if name (format " — %s" name) ""))
+         (reasoning-part (if reasoning? " • reasoning" "")))
+    (format "(%s) %s%s%s" provider model-id name-part reasoning-part)))
+
+(defun psi-emacs--model-selector-candidates (catalog)
+  "Build deterministic completion candidates from model CATALOG.
+
+Return list of (DISPLAY . MODEL-ENTRY)."
+  (let ((seen (make-hash-table :test #'equal))
+        (candidates nil))
+    (dolist (model (psi-emacs--sort-model-catalog catalog))
+      (let ((provider (psi-emacs--model-provider model))
+            (model-id (psi-emacs--model-id model)))
+        (when (and provider model-id)
+          (let* ((base (psi-emacs--model-candidate-label model))
+                 (count (1+ (gethash base seen 0)))
+                 (label (if (= count 1)
+                            base
+                          (format "%s (%d)" base count))))
+            (puthash base count seen)
+            (push (cons label model) candidates)))))
+    (nreverse candidates)))
+
+(defun psi-emacs--model-selector-default-label (candidates)
+  "Return default completion label from CANDIDATES based on active session model."
+  (let ((provider (psi-emacs--normalize-provider-id (psi-emacs--session-model-default-provider)))
+        (model-id (psi-emacs--trim-optional-input (psi-emacs--session-model-default-id)))
+        (default nil))
+    (dolist (candidate candidates)
+      (let* ((model (cdr candidate))
+             (candidate-provider (psi-emacs--model-provider model))
+             (candidate-id (psi-emacs--model-id model)))
+        (when (and (null default)
+                   provider
+                   model-id
+                   (equal candidate-provider provider)
+                   (equal candidate-id model-id))
+          (setq default (car candidate)))))
+    default))
+
+(defun psi-emacs--select-model-candidate (candidates)
+  "Prompt for model selection from CANDIDATES.
+
+CANDIDATES is a list of (DISPLAY . MODEL-ENTRY).
+Returns selected MODEL-ENTRY map or nil when cancelled/no selection."
+  (condition-case _
+      (let* ((labels (mapcar #'car candidates))
+             (default (or (psi-emacs--model-selector-default-label candidates)
+                          (car labels)))
+             (chosen (completing-read "Model: " labels nil t nil nil default)))
+        (when (and (stringp chosen)
+                   (not (string-empty-p chosen)))
+          (cdr (assoc chosen candidates))))
+    (quit nil)))
+
+(defun psi-emacs--model-selector-error-message (frame)
+  "Return deterministic model-selector error text derived from FRAME."
+  (let* ((data (alist-get :data frame nil nil #'equal))
+         (details (or (alist-get :error-message frame nil nil #'equal)
+                      (and (listp data)
+                           (or (alist-get :error-message data nil nil #'equal)
+                               (alist-get :message data nil nil #'equal))))))
+    (if (and (stringp details) (not (string-empty-p details)))
+        (format "Unable to open model selector: %s" details)
+      "Unable to open model selector.")))
+
+(defun psi-emacs--model-selector-empty-message ()
+  "Return deterministic empty-model-selector message for current scope."
+  (if (eq psi-emacs-model-selector-provider-scope 'authenticated)
+      "No models available for providers with configured auth. Use /login or set provider API keys, or customize `psi-emacs-model-selector-provider-scope`."
+    "No models available from backend model catalog."))
+
+(defun psi-emacs--request-model-selector-data (callback)
+  "Fetch model selector payload via `query_eql` and invoke CALLBACK."
+  (psi-emacs--dispatch-request
+   "query_eql"
+   `((:query . ,(psi-emacs--model-selector-query)))
+   callback))
+
+(defun psi-emacs--handle-model-selector-response (frame)
+  "Handle model selector `query_eql` FRAME and dispatch selected model."
+  (if (and (eq (alist-get :kind frame) :response)
+           (eq (alist-get :ok frame) t))
+      (let* ((catalog (psi-emacs--model-catalog-from-query-frame frame))
+             (authenticated-providers
+              (psi-emacs--authenticated-providers-from-query-frame frame))
+             (filtered (psi-emacs--filter-model-catalog catalog authenticated-providers))
+             (candidates (psi-emacs--model-selector-candidates filtered)))
+        (if (null candidates)
+            (psi-emacs--append-assistant-message (psi-emacs--model-selector-empty-message))
+          (when-let* ((selected (psi-emacs--select-model-candidate candidates))
+                      (provider (psi-emacs--model-provider selected))
+                      (model-id (psi-emacs--model-id selected)))
+            (psi-emacs-set-model provider model-id))))
+    (psi-emacs--append-assistant-message
+     (psi-emacs--model-selector-error-message frame))))
+
+(defun psi-emacs--open-model-selector ()
+  "Open standard Emacs completion UI for selecting a runtime model."
+  (let ((buffer (current-buffer))
+        (state psi-emacs--state))
+    (psi-emacs--request-model-selector-data
+     (lambda (frame)
+       (when (buffer-live-p buffer)
+         (with-current-buffer buffer
+           (when (eq state psi-emacs--state)
+             (psi-emacs--handle-model-selector-response frame))))))))
+
 (defun psi-emacs--idle-slash-help-text ()
   "Return deterministic help text for supported idle slash commands."
   (string-join
@@ -84,18 +307,21 @@
       (user-error "%s is required" label))
     text))
 
-(defun psi-emacs-set-model (provider model-id)
-  "Select PROVIDER/MODEL-ID via `set_model` RPC op."
-  (interactive
-   (list (read-string "Model provider: " (psi-emacs--session-model-default-provider))
-         (read-string "Model id: " (psi-emacs--session-model-default-id))))
-  (let ((provider* (psi-emacs--trim-required-input "Model provider" provider))
-        (model-id* (psi-emacs--trim-required-input "Model id" model-id)))
-    (when (psi-emacs--dispatch-request
-           "set_model"
-           `((:provider . ,provider*)
-             (:model-id . ,model-id*)))
-      (message "psi: requested model (%s) %s" provider* model-id*))))
+(defun psi-emacs-set-model (&optional provider model-id)
+  "Select PROVIDER/MODEL-ID via `set_model` RPC op.
+
+When PROVIDER/MODEL-ID are omitted, open a completion picker backed by
+runtime model catalog query data."
+  (interactive)
+  (let ((provider* (psi-emacs--normalize-provider-id provider))
+        (model-id* (psi-emacs--trim-optional-input model-id)))
+    (if (and provider* model-id*)
+        (when (psi-emacs--dispatch-request
+               "set_model"
+               `((:provider . ,provider*)
+                 (:model-id . ,model-id*)))
+          (message "psi: requested model (%s) %s" provider* model-id*))
+      (psi-emacs--open-model-selector))))
 
 (defun psi-emacs-cycle-model (&optional direction)
   "Cycle model in DIRECTION (`next` or `prev`) via `cycle_model` RPC."
@@ -481,7 +707,7 @@ to normal prompt dispatch.
 
 Returns plist:
   :dispatched?  non-nil when consumed locally or dispatched remotely
-  :local-only?  non-nil when consumed by local slash interception." 
+  :local-only?  non-nil when consumed by local slash interception."
   (let ((handled (and psi-emacs--state
                       (psi-emacs--slash-command-candidate-p message)
                       (funcall psi-emacs--idle-slash-command-handler-function
