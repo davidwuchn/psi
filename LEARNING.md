@@ -4,6 +4,35 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-07 - Emacs project startup command: prefix semantics should be explicit and test-anchored
+
+### λ `C-u` and `C-u N` need distinct buffer lifecycle semantics
+
+For project-scoped command UX, plain universal arg (`C-u`) should mean
+"fresh generated name" while numeric universal arg (`C-u N`) should mean
+"deterministic slot selection." Encoding this split keeps behavior predictable:
+- no prefix -> canonical `*psi:<project>*`
+- `C-u` -> fresh generated from project base
+- `C-u N` -> slot name `*psi:<project>*<N>` (with `N<=1` collapsing to canonical)
+
+### λ Reuse helper names carefully in split Emacs modules
+
+`psi-emacs--project-root-directory` already existed in tool rendering helpers.
+Adding entry-point logic with the same symbol changed unrelated runtime behavior
+(project-relative tool-path summaries). Using a dedicated entry helper
+(`psi-emacs--entry-project-root-directory`) preserves module boundaries and
+prevents cross-feature regressions.
+
+### λ New interactive command contracts should ship with behavior-level ERT tests
+
+Project command work stayed stable after adding tests that assert:
+- canonical-buffer reuse
+- fresh-buffer creation via `C-u`
+- numeric slot behavior via `C-u N`
+- project-root absence error path
+
+This test set prevents regressions in command semantics and startup cwd behavior.
+
 ## 2026-03-07 - Emacs separator width parity needs both width-source correctness and marker repair
 
 ### λ Refresh-on-resize alone is insufficient when separator markers drift
