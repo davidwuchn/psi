@@ -4,6 +4,61 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-06 - Anthropic extended thinking: two independent bugs
+
+### λ Thinking text leaked into main stream (provider bug)
+
+Anthropic's extended thinking emits `content_block_start` with `type: "thinking"`,
+then `content_block_delta` with `delta.type: "thinking_delta"` and `delta.thinking`.
+
+The provider only tracked `"tool_use"` vs everything-else in `block-types`, so
+thinking block deltas fell through to the `:text-delta` branch — thinking text
+appeared inline in the main response, not as a separate thinking signal.
+
+**Fix**: track `"thinking"` as a distinct block type; route `delta.thinking` →
+`:thinking-delta`. Also: add `thinking` param + `interleaved-thinking-2025-05-14`
+beta header to requests when `thinking-level` is non-`:off`; suppress `temperature`
+(incompatible with extended thinking per Anthropic API).
+
+```clojure
+;; content_block_delta routing (anthropic.clj)
+(case btype
+  "tool_use"  (emit :toolcall-delta ...)
+  "thinking"  (emit :thinking-delta {:delta (:thinking delta)})
+  ;; default: "text" + unknown
+              (emit :text-delta {:delta (:text delta)}))
+```
+
+### λ Emacs thinking render: snapshot-merge heuristic wrong for incremental deltas
+
+`psi-emacs--merge-assistant-stream-text` detects cumulative snapshots vs
+incremental deltas using a common-prefix heuristic. This is correct for the
+main text stream (RPC can send either style), but **thinking deltas are always
+incremental** — each event is a small new chunk, never a growing snapshot.
+
+The heuristic misfired on short/repeated chunks, triggering `concat` on what
+it thought were deltas when they were actually misidentified, producing
+ever-growing repeated lines.
+
+**Fix**: `psi-emacs--assistant-thinking-delta` uses direct `concat` append,
+bypassing the merge heuristic entirely. The main text path (`psi-emacs--assistant-delta`)
+retains the heuristic — it is still needed there.
+
+```elisp
+;; pure append — thinking deltas are always incremental
+(let ((next (concat (or (psi-emacs-state-thinking-in-progress psi-emacs--state) "")
+                    (or text ""))))
+  ...)
+```
+
+### λ Two streams, two contracts — keep merge strategies separate
+
+- Main text stream: may be cumulative snapshot OR incremental delta → use merge heuristic
+- Thinking stream: always incremental delta → use pure append
+- Tool input stream: always incremental JSON delta → use pure append (already correct)
+
+Don't unify what has different contracts.
+
 ## 2026-03-06 - Step 11 startup-prompts completion reclassification
 
 ### λ Verify before planning: implementation/tests outrank stale plan text
