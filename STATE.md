@@ -30,6 +30,7 @@ Current truth about the Psi system.
 - ✓ Emacs UI docs now include project command behavior and prefix semantics in both `README.md` and `components/emacs-ui/README.md`.
 - ✓ Emacs verification after project-command addition: `bb emacs:test` green at 165/165; `bb emacs:check` green (with one pre-existing byte-compile warning unrelated to this change).
 - ✓ Agent-chain `run_chain` progress heartbeat + widget projection landed (`18e0c50`): extension now tracks per-run phase/step/elapsed state, emits throttled tool updates while waiting for workflow completion, and refreshes widget state deterministically on init/reload/session-switch.
+- ✓ Agent-chain default selection behavior tightened (`53c0f40`): extension no longer auto-selects first chain on init/reload/session-switch; widget remains `active: (none)` until explicit `/chain <number>` selection.
 - ? Live user layout still shows unequal separator lengths after `d36fe3d` (footer separator resized but remains too long; separator before edit area still mismatched), so parity is not yet fully resolved in production layout.
 - … Next executable task: reproduce the exact live Emacs layout mismatch and unify width derivation across all separator insertion points (projection + pre-edit boundary) while keeping worktree Step 11b mutation semantics deferred.
 

@@ -147,6 +147,7 @@ Ordered steps toward PSI COMPLETE.
 - Spec: `spec/tui.allium`
 - Current: charm.clj/JLine3 session loop is operational
 - Progress: commit `18e0c50` fixed agent-chain `run_chain` progress heartbeat + widget projection (tracked run state, throttled tool updates, and deterministic widget refresh on init/reload/session switch).
+- Progress: commit `53c0f40` removed implicit default chain activation; widget now stays `active: (none)` until explicit `/chain <number>` selection (init/reload/session-switch parity).
 - Definition of done:
   - Per-token streaming render is available (not spinner-only)
   - Tool execution status is visible during active turns
