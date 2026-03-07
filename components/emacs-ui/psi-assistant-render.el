@@ -176,6 +176,23 @@ while streaming; markdown processing is deferred until finalization."
       (when follow-anchor
         (psi-emacs--set-draft-anchor-to-end)))))
 
+(defun psi-emacs--archive-thinking-line ()
+  "Freeze current thinking line as transcript history and clear in-progress state."
+  (when psi-emacs--state
+    (let ((range (psi-emacs-state-thinking-range psi-emacs--state)))
+      (when (psi-emacs--assistant-range-live-p range)
+        (let ((archived (cons (copy-marker (marker-position (car range)) nil)
+                              (copy-marker (marker-position (cdr range)) nil))))
+          (setf (psi-emacs-state-thinking-archived-ranges psi-emacs--state)
+                (append (psi-emacs-state-thinking-archived-ranges psi-emacs--state)
+                        (list archived)))))
+      (when (and (consp range) (markerp (car range)))
+        (set-marker (car range) nil))
+      (when (and (consp range) (markerp (cdr range)))
+        (set-marker (cdr range) nil))
+      (setf (psi-emacs-state-thinking-range psi-emacs--state) nil)
+      (setf (psi-emacs-state-thinking-in-progress psi-emacs--state) nil))))
+
 (defun psi-emacs--clear-thinking-line ()
   "Remove any in-progress assistant thinking line and clear thinking state."
   (when psi-emacs--state
@@ -250,6 +267,16 @@ so we append directly without the snapshot-merge heuristic."
                         (or text ""))))
       (setf (psi-emacs-state-thinking-in-progress psi-emacs--state) next)
       (psi-emacs--set-thinking-line next))))
+
+(defun psi-emacs--assistant-before-tool-event ()
+  "Prepare transcript before rendering a tool lifecycle event.
+
+When a thinking line is in progress, archive it so subsequent thinking
+deltas render as a fresh block after the tool output."
+  (when (and psi-emacs--state
+             (psi-emacs--assistant-range-live-p
+              (psi-emacs-state-thinking-range psi-emacs--state)))
+    (psi-emacs--archive-thinking-line)))
 
 (defun psi-emacs--assistant-finalize (text)
   "Finalize assistant block with TEXT and clear in-progress state."

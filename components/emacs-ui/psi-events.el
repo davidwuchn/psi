@@ -122,6 +122,7 @@ When MODEL-REASONING is non-nil, append an explicit thinking/effort suffix."
       ("session/updated"
        (psi-emacs--handle-session-updated-event data))
       ((or "tool/start" "tool/delta" "tool/executing" "tool/update" "tool/result")
+       (psi-emacs--assistant-before-tool-event)
        (let* ((tool-id (psi-emacs--event-data-get data
                                                   '(:tool-id tool-id :toolCallId toolCallId :tool-call-id tool-call-id :id id)))
               (tool-name (psi-emacs--event-data-get data
