@@ -17,7 +17,7 @@ Current truth about the Psi system.
 - ✓ Step 11a git-worktree visibility (read-only) implemented: `:git.worktree/*` attrs, session-root bridge attrs, `/worktree` command, and `/status` worktree surfacing.
 - ✓ Worktree failure path now degrades safely with telemetry marker (`git.worktree.parse_failed`) and coverage.
 - ✓ Test isolation hardened: agent-session/introspection tests now use temp cwd to avoid writing repo `.psi/project.edn`.
-- ✓ PSL extension 400 fix: `agent-messages->ai-conversation` now filters `:custom-type` messages before LLM call — extension transcript markers never reach the provider, preventing consecutive-assistant-message 400 errors.
+- ✓ PSL extension 400 fix: `agent-messages->ai-conversation` filters `:custom-type` messages; `extension-run-fn-atom` wired so PSL prompts invoke a real LLM call (not orphaned user messages). `register-extension-run-fn-in!` called after bootstrap in `main.clj`.
 - … Next executable task: continue Step 12 Emacs UI stabilization (startup hydration + `/new` + reconnect flows), while keeping worktree Step 11b mutation semantics deferred.
 
 ## Components
