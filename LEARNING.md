@@ -4,6 +4,25 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-07 - Agent-chain default selection should be explicit, not implicit
+
+### λ Defaulting to first chain on load hides operator intent
+
+Auto-selecting the first configured chain on init/reload/session-switch makes the
+widget appear "active" before the user has made any chain choice. This creates
+implicit behavior and can trigger accidental runs against the wrong chain.
+
+### λ Keep active-chain nil across lifecycle resets until explicit `/chain <number>`
+
+Reset paths should converge on one rule: `active-chain = nil` unless user selects
+one. This keeps init/reload/session-switch behavior consistent and makes the widget
+state truthful (`active: (none)`).
+
+### λ Regression tests should assert UI state, not just command registration
+
+The no-default-active contract is best pinned by reading rendered widget lines and
+asserting `active: (none)` after extension init with configured chains.
+
 ## 2026-03-07 - Agent-chain run progress should heartbeat independently of step transitions
 
 ### λ Long-running workflow waits need heartbeat updates, not change-only updates
