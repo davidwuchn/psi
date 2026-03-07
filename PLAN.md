@@ -146,6 +146,7 @@ Ordered steps toward PSI COMPLETE.
 ### Step 13 — Terminal UI (TUI) ◇ in progress
 - Spec: `spec/tui.allium`
 - Current: charm.clj/JLine3 session loop is operational
+- Progress: commit `18e0c50` fixed agent-chain `run_chain` progress heartbeat + widget projection (tracked run state, throttled tool updates, and deterministic widget refresh on init/reload/session switch).
 - Definition of done:
   - Per-token streaming render is available (not spinner-only)
   - Tool execution status is visible during active turns
