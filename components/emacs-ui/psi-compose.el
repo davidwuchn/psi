@@ -46,12 +46,41 @@ Otherwise, draft ends at `point-max'."
       (psi-emacs--projection-window-width)
     80))
 
+(defun psi-emacs--input-separator-current-width ()
+  "Return current rendered width of input separator line, or nil."
+  (when (psi-emacs--input-separator-marker-valid-p)
+    (save-excursion
+      (goto-char (marker-position (psi-emacs-state-input-separator-marker psi-emacs--state)))
+      (- (line-end-position) (line-beginning-position)))))
+
+(defun psi-emacs--input-separator-needs-refresh-p ()
+  "Return non-nil when input separator width does not match current window width."
+  (let ((current (psi-emacs--input-separator-current-width))
+        (desired (max 1 (psi-emacs--input-separator-width))))
+    (and (integerp current)
+         (/= current desired))))
+
 (defun psi-emacs--input-separator-line ()
   "Return rendered horizontal separator line for input area."
   (concat (propertize (make-string (max 1 (psi-emacs--input-separator-width)) ?─)
                       'face 'psi-emacs-projection-separator-face
                       'font-lock-face 'psi-emacs-projection-separator-face)
           "\n"))
+
+(defun psi-emacs--refresh-input-separator-line ()
+  "Refresh existing input separator line to current window width."
+  (when (psi-emacs--input-separator-marker-valid-p)
+    (let* ((separator-marker (psi-emacs-state-input-separator-marker psi-emacs--state))
+           (separator-start (marker-position separator-marker))
+           (line (psi-emacs--input-separator-line)))
+      (save-excursion
+        (goto-char separator-start)
+        (let ((bol (line-beginning-position))
+              (eol (line-end-position)))
+          (delete-region bol (min (point-max) (1+ eol)))
+          (goto-char bol)
+          (insert line)
+          (set-marker separator-marker bol))))))
 
 (defun psi-emacs--draft-anchor-valid-p ()
   "Return non-nil when the current draft anchor marker is valid."
@@ -71,7 +100,11 @@ Otherwise, draft ends at `point-max'."
 (defun psi-emacs--ensure-input-area ()
   "Ensure a dedicated input area exists before projection/footer content."
   (when psi-emacs--state
-    (unless (psi-emacs--input-separator-marker-valid-p)
+    (cond
+     ((psi-emacs--input-separator-marker-valid-p)
+      (when (psi-emacs--input-separator-needs-refresh-p)
+        (psi-emacs--refresh-input-separator-line)))
+     (t
       (let* ((input-start (psi-emacs--input-start-position))
              (input-end (psi-emacs--draft-end-position))
              (point-in-input? (and (>= (point) input-start)
@@ -96,7 +129,7 @@ Otherwise, draft ends at `point-max'."
         (when point-in-input?
           (goto-char (+ (psi-emacs--input-start-position)
                         (min (or point-offset 0)
-                             (length existing-input)))))))))
+                             (length existing-input))))))))))
 
 (defun psi-emacs--input-range ()
   "Return dedicated input range as (START . END)."
@@ -254,15 +287,28 @@ When a client is present, transport must be `ready'."
           op
           (or (psi-emacs-state-transport-state state) 'unknown)))
 
+(defun psi-emacs--request-dispatch-failed-message (op)
+  "Return deterministic dispatch failure message for OP."
+  (format "Cannot run `%s`: request dispatch failed. Reconnect with C-c C-r." op))
+
 (defun psi-emacs--dispatch-request (op params &optional callback)
   "Dispatch OP PARAMS CALLBACK through configured request function.
 
 Returns non-nil when the request was dispatched."
   (when psi-emacs--state
     (if (psi-emacs--transport-ready-for-request-p psi-emacs--state)
-        (progn
-          (funcall psi-emacs--send-request-function psi-emacs--state op params callback)
-          t)
+        (let ((sent? (funcall psi-emacs--send-request-function
+                              psi-emacs--state
+                              op
+                              params
+                              callback)))
+          (if (or sent? callback)
+              t
+            (let ((message (psi-emacs--request-dispatch-failed-message op)))
+              (psi-emacs--set-last-error psi-emacs--state message)
+              (psi-emacs--set-run-state psi-emacs--state 'error)
+              (message "psi: %s" message)
+              nil)))
       (let ((message (psi-emacs--transport-not-ready-message psi-emacs--state op)))
         (psi-emacs--set-last-error psi-emacs--state message)
         (psi-emacs--set-run-state psi-emacs--state 'error)

@@ -307,12 +307,27 @@ path-line, stats-line, status-line (blank lines omitted)."
                 "\n")
       "")))
 
+(defun psi-emacs--ensure-newline-before-projection-append ()
+  "Ensure projection append boundary starts on a fresh line at buffer tail."
+  (goto-char (point-max))
+  (unless (or (bobp)
+              (eq (char-before) ?\n))
+    (insert "\n")))
+
 (defun psi-emacs--upsert-projection-block ()
   "Upsert deterministic projection block from current state.
 
 Projection is always reinserted at end-of-buffer so footer/projection content
 tracks transcript growth like a terminal footer."
   (when psi-emacs--state
+    ;; Keep dedicated input separator width aligned with current visible window
+    ;; whenever projection is re-rendered (notably after startup hydration).
+    (when (and (fboundp 'psi-emacs--input-separator-marker-valid-p)
+               (fboundp 'psi-emacs--input-separator-needs-refresh-p)
+               (fboundp 'psi-emacs--refresh-input-separator-line)
+               (psi-emacs--input-separator-marker-valid-p)
+               (psi-emacs--input-separator-needs-refresh-p))
+      (psi-emacs--refresh-input-separator-line))
     (let* ((follow-anchor (psi-emacs--draft-anchor-at-end-p))
            (range (psi-emacs-state-projection-range psi-emacs--state))
            (start (and (consp range) (car range)))
@@ -332,7 +347,7 @@ tracks transcript growth like a terminal footer."
       ;; Reinsert at current end-of-buffer.
       (unless (string-empty-p rendered)
         (save-excursion
-          (psi-emacs--ensure-newline-before-append)
+          (psi-emacs--ensure-newline-before-projection-append)
           (let ((new-start (copy-marker (point) nil))
                 ;; Keep insertion-type nil on end marker so appends at the
                 ;; projection tail stay outside the projection range.

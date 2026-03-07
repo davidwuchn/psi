@@ -331,20 +331,20 @@ Returns a proper list in canonical order, or nil when missing/unreadable."
   "Replay MESSAGES into transcript in deterministic input order."
   (let ((follow-anchor (psi-emacs--draft-anchor-at-end-p)))
     (save-excursion
-      (goto-char (point-max))
       (dolist (message messages)
         (when (listp message)
           (let* ((role-raw (or (alist-get :role message nil nil #'equal)
                                (alist-get 'role message nil nil #'equal)
                                :assistant))
-                 (role (if (stringp role-raw) (intern role-raw) role-raw))
-                 (line-start (point)))
-            (insert (psi-emacs--message->transcript-line message))
-            (save-excursion
-              (goto-char line-start)
-              (if (eq role :user)
-                  (psi-emacs--apply-prefix-overlay line-start "User: " 'psi-emacs-user-prompt-face)
-                (psi-emacs--apply-prefix-overlay line-start "ψ: " 'psi-emacs-assistant-reply-face)))))))
+                 (role (if (stringp role-raw) (intern role-raw) role-raw)))
+            (psi-emacs--ensure-newline-before-append)
+            (let ((line-start (point)))
+              (insert (psi-emacs--message->transcript-line message))
+              (save-excursion
+                (goto-char line-start)
+                (if (eq role :user)
+                    (psi-emacs--apply-prefix-overlay line-start "User: " 'psi-emacs-user-prompt-face)
+                  (psi-emacs--apply-prefix-overlay line-start "ψ: " 'psi-emacs-assistant-reply-face))))))))
     (when follow-anchor
       (psi-emacs--set-draft-anchor-to-end))))
 

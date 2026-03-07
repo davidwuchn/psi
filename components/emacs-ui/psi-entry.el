@@ -45,11 +45,26 @@ frontend state boundaries."
       (setq-local default-directory
                   (psi-emacs--resolve-working-directory start-directory*))
       (if psi-emacs--state
-          (unless (process-live-p (psi-emacs-state-process psi-emacs--state))
-            (psi-emacs--start-rpc-client buffer))
+          (let* ((state psi-emacs--state)
+                 (process (psi-emacs-state-process state))
+                 (process-live? (process-live-p process))
+                 (client (psi-emacs-state-rpc-client state)))
+            (unless (markerp (psi-emacs-state-draft-anchor state))
+              (setf (psi-emacs-state-draft-anchor state)
+                    (copy-marker (point-max) nil)))
+            (psi-emacs--ensure-input-area)
+            (goto-char (psi-emacs--draft-end-position))
+            ;; Recover from stale buffer state where a process exists but no
+            ;; rpc client is attached (e.g. after partial code reload).
+            (unless (and client process-live?)
+              (when process-live?
+                (delete-process process))
+              (psi-emacs--start-rpc-client buffer)))
         (setq psi-emacs--state (psi-emacs--initialize-state nil))
         (setf (psi-emacs-state-draft-anchor psi-emacs--state)
               (copy-marker (point-max) nil))
+        (psi-emacs--ensure-input-area)
+        (goto-char (psi-emacs--draft-end-position))
         (puthash buffer psi-emacs--state psi-emacs--state-by-buffer)
         (psi-emacs--refresh-header-line)
         (psi-emacs--start-rpc-client buffer)))
