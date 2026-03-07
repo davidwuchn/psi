@@ -4,6 +4,36 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-07 - PSL ordering: event handler vs workflow job
+
+### λ Extension event handlers fire during/after the triggering turn — not after it
+
+`git_head_changed` is dispatched while or just after the commit agent turn is
+running. Any `send-message!` or `send-prompt!` called synchronously in the handler
+lands in the transcript before that turn's output is flushed, creating visible
+ordering inversions (PSL header before commit summary).
+
+### λ Move side-effects that must follow a turn into a workflow job
+
+The statechart `:future` invoke runs in a background thread and calls
+`send-prompt!` through the normal deferred path. The deferred runner waits for
+the session to go idle before executing — guaranteeing the PSL prompt fires
+after the triggering turn completes.
+
+Pattern:
+```
+event handler → fast check only → workflow/create
+workflow job (future) → send-message + send-prompt (deferred)
+```
+
+### λ Skip-check belongs in the handler, not the job
+
+The self-commit skip (`[psi:psl-auto]` marker) is a fast git-log read.
+Keep it in the handler to avoid creating a workflow at all for self-commits,
+while keeping all transcript side-effects in the job.
+
+---
+
 ## 2026-03-07 - Agent-chain discoverability + completion parity
 
 ### λ Workflow discoverability should include configured chain catalog, not only runtime tools
