@@ -18,13 +18,14 @@ Current truth about the Psi system.
 - ✓ Worktree failure path now degrades safely with telemetry marker (`git.worktree.parse_failed`) and coverage.
 - ✓ Test isolation hardened: agent-session/introspection tests now use temp cwd to avoid writing repo `.psi/project.edn`.
 - ✓ PSL extension 400 fix: `agent-messages->ai-conversation` filters `:custom-type` messages; `extension-run-fn-atom` wired so PSL prompts invoke a real LLM call (not orphaned user messages). `register-extension-run-fn-in!` called after bootstrap in `main.clj`.
+- ✓ Thinking output bug fixed (c8e43eb): Anthropic provider now handles `thinking` content blocks correctly (`:thinking-delta` events, `thinking` request param, `interleaved-thinking-2025-05-14` beta header, temperature suppressed when thinking enabled). Emacs render fixed: `psi-emacs--assistant-thinking-delta` uses pure `concat` append instead of snapshot-merge heuristic that caused ever-growing repeated lines.
 - … Next executable task: continue Step 12 Emacs UI stabilization (startup hydration + `/new` + reconnect flows), while keeping worktree Step 11b mutation semantics deferred.
 
 ## Components
 
 | Component       | Status | Notes                                                      |
 |-----------------|--------|------------------------------------------------------------|
-| `ai`            | ✓      | Provider streaming, model registry, tested                 |
+| `ai`            | ✓      | Provider streaming, model registry, extended thinking, tested |
 | `engine`        | ✓      | Statechart infra, system state, nullable ctx               |
 | `query`         | ✓      | Pathom3 EQL registry, `query-in`, nullable ctx             |
 | `agent-core`    | ✓      | LLM agent lifecycle statechart + EQL resolvers             |
