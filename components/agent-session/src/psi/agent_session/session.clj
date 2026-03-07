@@ -131,7 +131,7 @@
    [:startup-bootstrap-completed-at {:optional true} [:maybe inst?]]
    [:startup-message-ids {:optional true} [:vector :string]]
    [:extension-last-prompt-source {:optional true} [:maybe :string]]
-   [:extension-last-prompt-delivery {:optional true} [:maybe keyword?]]
+   [:extension-last-prompt-delivery {:optional true} [:maybe [:enum :prompt :deferred :follow-up]]]
    [:extension-last-prompt-at {:optional true} [:maybe inst?]]
    [:context-tokens {:optional true} [:maybe :int]]
    [:context-window {:optional true} [:maybe :int]]

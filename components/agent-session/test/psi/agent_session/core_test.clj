@@ -90,8 +90,8 @@
   (let [ctx (session/create-context)]
     (session/new-session-in! ctx)
     (let [entry-id (:id (session/journal-append-in! ctx (persist/message-entry {:role "user"
-                                                                                 :content [{:type :text :text "hello"}]
-                                                                                 :timestamp (java.time.Instant/now)})))]
+                                                                                :content [{:type :text :text "hello"}]
+                                                                                :timestamp (java.time.Instant/now)})))]
       (swap! (:session-data-atom ctx) assoc
              :startup-prompts [{:id "engage-nucleus"}]
              :startup-bootstrap-completed? true
@@ -471,7 +471,7 @@
     (let [ctx (session/create-context {:initial-session {:model {:provider "openai"
                                                                  :id "gpt-5.3-codex"
                                                                  :reasoning true}
-                                                        :thinking-level :high}})
+                                                         :thinking-level :high}})
           result (session/query-in ctx [:psi.agent-session/model-reasoning
                                         :psi.agent-session/effective-reasoning-effort])]
       (is (true? (:psi.agent-session/model-reasoning result)))
@@ -944,7 +944,7 @@
         (is (= :follow-up (:psi.extension/prompt-delivery result)))
         (is (= "plan-state-learning" (:psi.agent-session/extension-last-prompt-source telemetry)))
         (is (= :follow-up (:psi.agent-session/extension-last-prompt-delivery telemetry)))
-        (is (inst? (:psi.agent-session/extension-last-prompt-at telemetry)))))
+        (is (inst? (:psi.agent-session/extension-last-prompt-at telemetry))))))
 
   (testing "send-prompt mutation with run-fn registered delivers as :prompt"
     (let [ctx    (session/create-context)
@@ -959,7 +959,7 @@
       (session/register-mutations-in! qctx true)
       ;; Register a stub run-fn that captures calls
       (session/set-extension-run-fn-in! ctx (fn [text source]
-                                               (swap! run-calls conj {:text text :source source})))
+                                              (swap! run-calls conj {:text text :source source})))
       (let [result (mutate 'psi.extension/send-prompt
                            {:content "hello from extension"
                             :source "plan-state-learning"})
@@ -975,7 +975,39 @@
         (is (= :prompt (:psi.agent-session/extension-last-prompt-delivery telemetry)))
         (is (inst? (:psi.agent-session/extension-last-prompt-at telemetry)))
         (is (= 1 (count @run-calls)))
-        (is (= "hello from extension" (:text (first @run-calls)))))))))
+        (is (= "hello from extension" (:text (first @run-calls)))))))
+
+  (testing "send-prompt mutation while streaming with run-fn registered reports :deferred"
+    (let [ctx    (session/create-context)
+          qctx   (query/create-query-context)
+          mutate (fn [op params]
+                   (get (query/query-in qctx
+                                        {:psi/agent-session-ctx ctx}
+                                        [(list op (assoc params :psi/agent-session-ctx ctx))])
+                        op))
+          run-calls (atom [])]
+      (session/register-resolvers-in! qctx false)
+      (session/register-mutations-in! qctx true)
+      ;; Force non-idle session phase so send-extension-prompt-in! takes deferred path.
+      (session/prompt-in! ctx "seed busy turn")
+      (session/set-extension-run-fn-in! ctx (fn [text source]
+                                              (swap! run-calls conj {:text text :source source})))
+      (let [result (mutate 'psi.extension/send-prompt
+                           {:content "hello while busy"
+                            :source "plan-state-learning"})
+            telemetry (session/query-in ctx
+                                        [:psi.agent-session/extension-last-prompt-source
+                                         :psi.agent-session/extension-last-prompt-delivery
+                                         :psi.agent-session/extension-last-prompt-at])]
+        ;; Allow the background future to run.
+        (Thread/sleep 50)
+        (is (true? (:psi.extension/prompt-accepted? result)))
+        (is (= :deferred (:psi.extension/prompt-delivery result)))
+        (is (= "plan-state-learning" (:psi.agent-session/extension-last-prompt-source telemetry)))
+        (is (= :deferred (:psi.agent-session/extension-last-prompt-delivery telemetry)))
+        (is (inst? (:psi.agent-session/extension-last-prompt-at telemetry)))
+        (is (= 1 (count @run-calls)))
+        (is (= "hello while busy" (:text (first @run-calls))))))))
 
 (deftest startup-resources-via-mutations-test
   (testing "load-startup-resources-via-mutations-in! adds prompts/skills/tools"

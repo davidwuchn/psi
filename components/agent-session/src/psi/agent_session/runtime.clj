@@ -249,22 +249,26 @@
 (defn register-extension-run-fn-in!
   "Register a background agent-loop runner for extension-initiated prompts.
 
-   After this is called, `send-extension-prompt-in!` will invoke the runner
-   in a background thread instead of orphaning a user message in agent-core.
+   After this is called, `send-extension-prompt-in!` can always invoke the
+   runner in a background thread.
 
-   The runner fn is (fn [text source]) — it prepares the user message,
-   resolves the API key, and calls `run-agent-loop-in!`.
+   The runner fn is (fn [text source]) — it waits until the session is idle,
+   prepares the user message, resolves the API key, and calls `run-agent-loop-in!`.
 
    Call this once after bootstrap, passing the live ai-ctx and ai-model."
   [ctx ai-ctx ai-model]
   (let [run-fn (fn [text _source]
                  (try
-                   (when (session/idle-in? ctx)
-                     (let [{:keys [user-message]} (prepare-user-message-in! ctx text)
-                           api-key (resolve-api-key-in ctx ai-model)]
-                       (run-agent-loop-in! ctx ai-ctx ai-model [user-message]
-                                           {:api-key api-key
-                                            :sync-on-git-head-change? true})))
+                   (loop [attempt 0]
+                     (if (session/idle-in? ctx)
+                       (let [{:keys [user-message]} (prepare-user-message-in! ctx text)
+                             api-key (resolve-api-key-in ctx ai-model)]
+                         (run-agent-loop-in! ctx ai-ctx ai-model [user-message]
+                                             {:api-key api-key
+                                              :sync-on-git-head-change? true}))
+                       (when (< attempt 1200) ;; ~5m max wait (250ms backoff)
+                         (Thread/sleep 250)
+                         (recur (inc attempt)))))
                    (catch Exception e
                      (timbre/warn e "Extension run-fn failed"))))]
     (session/set-extension-run-fn-in! ctx run-fn)))

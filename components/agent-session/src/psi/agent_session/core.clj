@@ -951,33 +951,35 @@
 (defn send-extension-prompt-in!
   "Submit extension-authored text to the agent as a user prompt.
 
-   When idle and a run-fn is registered, invokes it in a background thread
-   so the LLM call actually happens (avoids orphaned user messages in
-   agent-core that cause consecutive-user-message 400 errors).
+   Delivery semantics:
+   - run-fn registered + idle      -> run immediately in background (:prompt)
+   - run-fn registered + streaming -> run deferred in background (:deferred)
+   - no run-fn registered          -> queue follow-up text (:follow-up)
 
-   When streaming (or no run-fn registered), queues as a follow-up for
-   delivery after the current agent run completes.
+   Note: deferred delivery does not enqueue a follow-up message; the run-fn
+   itself waits for idle and executes once the current run completes.
 
    Persists lightweight telemetry on session data for introspection."
   [ctx text source]
-  (let [run-fn   @(:extension-run-fn-atom ctx)
-        delivery (cond
-                   (and (idle-in? ctx) run-fn)
-                   (do
-                     (future (run-fn (str text) source))
-                     :prompt)
+  (let [run-fn    @(:extension-run-fn-atom ctx)
+        idle?     (idle-in? ctx)
+        delivery  (cond
+                    (and run-fn idle?)
+                    (do
+                      (future (run-fn (str text) source))
+                      :prompt)
 
-                   (idle-in? ctx)
-                   ;; No run-fn registered — fall back to follow-up queue so at
-                   ;; least the text is not silently dropped (caller can drain it).
-                   (do
-                     (follow-up-in! ctx (str text))
-                     :follow-up)
+                    run-fn
+                    (do
+                      (future (run-fn (str text) source))
+                      :deferred)
 
-                   :else
-                   (do
-                     (follow-up-in! ctx (str text))
-                     :follow-up))]
+                    :else
+                    ;; No run-fn registered — fall back to follow-up queue so at
+                    ;; least the text is not silently dropped (caller can drain it).
+                    (do
+                      (follow-up-in! ctx (str text))
+                      :follow-up))]
     (swap-session! ctx assoc
                    :extension-last-prompt-source (some-> source str)
                    :extension-last-prompt-delivery delivery
