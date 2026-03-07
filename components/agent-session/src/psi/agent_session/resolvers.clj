@@ -184,6 +184,14 @@
    :psi.ui/tool-renderers                 — vector of tool renderer metadata maps
    :psi.ui/message-renderers              — vector of message renderer metadata maps
 
+   Agent chain discovery
+   ─────────────────────
+   :psi.agent-chain/config-path           — absolute path to .psi/agents/agent-chain.edn
+   :psi.agent-chain/count                 — number of configured chains
+   :psi.agent-chain/names                 — configured chain names
+   :psi.agent-chain/chains                — configured chain summaries
+   :psi.agent-chain/error                 — parse/load error string, or nil
+
    Session-derived usage and git attrs (read-only)
    ───────────────────────────────────────────────
    :psi.agent-session/cwd
@@ -220,6 +228,8 @@
    :psi.agent-session/startup-bootstrap-completed-at
    :psi.agent-session/startup-message-ids"
   (:require
+   [clojure.edn :as edn]
+   [clojure.java.io :as io]
    [clojure.set :as set]
    [clojure.string :as str]
    [com.wsscode.pathom3.connect.operation :as pco]
@@ -504,6 +514,38 @@
      :psi.extension.workflow/last-event    (:last-event workflow)
      :psi.extension.workflow/events        (mapv event->eql (:events workflow))}))
 
+(defn- read-agent-chain-config
+  [cwd]
+  (let [path (str cwd "/.psi/agents/agent-chain.edn")
+        f    (io/file path)]
+    (if (.exists f)
+      (try
+        (let [data (edn/read-string (slurp f))]
+          {:path   path
+           :chains (if (vector? data) data [])
+           :error  nil})
+        (catch Exception e
+          {:path   path
+           :chains []
+           :error  (ex-message e)}))
+      {:path   path
+       :chains []
+       :error  nil})))
+
+(defn- chain->summary
+  [chain]
+  (let [steps (vec (or (:steps chain) []))]
+    {:name         (:name chain)
+     :description  (:description chain)
+     :step-count   (count steps)
+     :agents       (vec (keep :agent steps))
+     :steps        (mapv (fn [idx step]
+                           {:index  (inc idx)
+                            :agent  (:agent step)
+                            :prompt (:prompt step)})
+                         (range)
+                         steps)}))
+
 (pco/defresolver extension-workflow-summary-resolver
   "Resolve workflow counts and workflow type names across extensions."
   [{:keys [psi/agent-session-ctx]}]
@@ -515,6 +557,24 @@
     {:psi.extension.workflow/count         (wf/workflow-count-in reg)
      :psi.extension.workflow/running-count (wf/running-count-in reg)
      :psi.extension.workflow/type-names    (wf/type-names-in reg)}))
+
+(pco/defresolver agent-chain-discovery-resolver
+  "Resolve discoverable agent-chain definitions from .psi/agents/agent-chain.edn."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.agent-chain/config-path
+                 :psi.agent-chain/count
+                 :psi.agent-chain/names
+                 :psi.agent-chain/chains
+                 :psi.agent-chain/error]}
+  (let [cwd (:cwd agent-session-ctx)
+        {:keys [path chains error]} (read-agent-chain-config cwd)
+        summaries (mapv chain->summary chains)]
+    {:psi.agent-chain/config-path path
+     :psi.agent-chain/count       (count summaries)
+     :psi.agent-chain/names       (mapv :name summaries)
+     :psi.agent-chain/chains      summaries
+     :psi.agent-chain/error       error}))
 
 (pco/defresolver extension-workflows-resolver
   "Resolve workflow instances.
@@ -1589,6 +1649,7 @@
    extension-details-resolver
    extension-detail-by-path-resolver
    extension-workflow-summary-resolver
+   agent-chain-discovery-resolver
    extension-workflows-resolver
    extension-workflow-detail-resolver
    ;; Extension UI

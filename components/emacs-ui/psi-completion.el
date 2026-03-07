@@ -10,6 +10,7 @@
 (require 'subr-x)
 (require 'seq)
 (require 'project nil t)
+(require 'psi-globals)
 
 (defgroup psi-emacs-completion nil
   "Completion settings for psi Emacs frontend."
@@ -81,9 +82,23 @@ A token is delimited by whitespace/newlines."
   (and (stringp token)
        (string-prefix-p "@" token)))
 
+(defun psi-emacs--state-slash-command-specs ()
+  "Return merged built-in + backend extension slash command specs."
+  (let* ((base psi-emacs-slash-command-specs)
+         (ext-names (and psi-emacs--state
+                         (psi-emacs-state-extension-command-names psi-emacs--state)))
+         (ext-specs
+          (mapcar (lambda (name)
+                    (let ((cmd (string-trim (format "%s" (or name "")))))
+                      (cons (if (string-prefix-p "/" cmd) cmd (concat "/" cmd))
+                            "Extension command")))
+                  (or ext-names []))))
+    (seq-uniq (append base ext-specs)
+              (lambda (a b) (equal (car a) (car b))))))
+
 (defun psi-emacs--slash-annotation (candidate)
   "Return annotation text for slash CANDIDATE."
-  (let ((desc (cdr (assoc candidate psi-emacs-slash-command-specs))))
+  (let ((desc (cdr (assoc candidate (psi-emacs--state-slash-command-specs)))))
     (when (and (stringp desc) (not (string-empty-p desc)))
       (format "  %s" desc))))
 
@@ -236,10 +251,11 @@ Returns nil outside recognized contexts to allow CAPF fallthrough."
       (list start end
             (completion-table-dynamic
              (lambda (_prefix)
-               (cl-subseq (mapcar #'car psi-emacs-slash-command-specs)
-                          0
-                          (min (length psi-emacs-slash-command-specs)
-                               (max 1 psi-emacs-slash-max-candidates)))))
+               (let ((specs (psi-emacs--state-slash-command-specs)))
+                 (cl-subseq (mapcar #'car specs)
+                            0
+                            (min (length specs)
+                                 (max 1 psi-emacs-slash-max-candidates))))))
             :category 'psi_prompt
             :annotation-function #'psi-emacs--slash-annotation
             :affixation-function #'psi-emacs--slash-affixation

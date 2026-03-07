@@ -21,6 +21,7 @@
 (defvar psi-emacs-notification-timeout-seconds)
 
 (declare-function make-psi-emacs-state "psi" (&rest args))
+(declare-function psi-emacs-state-extension-command-names "psi" (state))
 (declare-function psi-emacs--clear-thinking-line "psi-assistant-render")
 (declare-function psi-emacs--archive-thinking-line "psi-assistant-render")
 (declare-function psi-emacs--assistant-before-tool-event "psi-assistant-render")

@@ -1874,7 +1874,8 @@
         (psi-emacs--on-rpc-state-change (current-buffer) client))
       (should (eq 'idle (psi-emacs-state-run-state psi-emacs--state)))
       (should (string= "psi [ready/running/idle] tools:collapsed" header-line-format))
-      (should (equal '("get_messages") (mapcar #'car (nreverse rpc-calls))))
+      (should (equal '("get_messages" "query_eql")
+                     (mapcar #'car (nreverse rpc-calls))))
       (should (string-match-p "User: engage nucleus" (buffer-string))))))
 
 (ert-deftest psi-initial-transcript-hydration-runs-once-per-ready-lifecycle ()
@@ -1893,7 +1894,8 @@
                                 (:data . ((:messages . [((:role . :assistant) (:text . "boot ok"))])))))))))
         (psi-emacs--on-rpc-state-change (current-buffer) client)
         (psi-emacs--on-rpc-state-change (current-buffer) client))
-      (should (equal '("get_messages") (mapcar #'car (nreverse rpc-calls))))
+      (should (equal '("get_messages" "query_eql")
+                     (mapcar #'car (nreverse rpc-calls))))
       (should (= 1 (how-many "^ψ: boot ok$" (point-min) (point-max)))))))
 
 (ert-deftest psi-initial-transcript-hydration-scrolls-to-point-min-when-messages ()
@@ -2157,10 +2159,10 @@
         (psi-emacs-reconnect)
 
         (setq sent (nreverse sent))
-        (should (equal '("get_messages" "prompt" "abort")
+        (should (equal '("get_messages" "query_eql" "prompt" "abort")
                        (mapcar #'car sent)))
         (should (equal '((:message . "hello from smoke"))
-                       (cadr (nth 1 sent))))
+                       (cadr (nth 2 sent))))
         (should (= 1 stop-count))
         (should (= 1 restart-count))
         (should (psi-emacs--input-separator-marker-valid-p))
@@ -2894,6 +2896,19 @@
       (should capf)
       (should (eq category 'psi_prompt))
       (should (member "/resume" cands)))))
+
+(ert-deftest psi-capf-slash-includes-extension-commands-from-state ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state
+                (make-psi-emacs-state :extension-command-names '("chain" "/chain-list")))
+    (insert "/ch")
+    (let* ((capf (psi-emacs-prompt-capf))
+           (table (nth 2 capf))
+           (cands (all-completions "/ch" table)))
+      (should capf)
+      (should (member "/chain" cands))
+      (should (member "/chain-list" cands)))))
 
 (ert-deftest psi-capf-at-reference-context-returns-file-candidates-and-category ()
   (let* ((tmp (make-temp-file "psi-capf-ref-" t))

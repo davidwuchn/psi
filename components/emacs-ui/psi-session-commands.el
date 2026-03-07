@@ -231,6 +231,39 @@ Returns selected MODEL-ENTRY map or nil when cancelled/no selection."
            (when (eq state psi-emacs--state)
              (psi-emacs--handle-model-selector-response frame))))))))
 
+(defun psi-emacs--request-extension-command-names (callback)
+  "Fetch extension command names via `query_eql` and invoke CALLBACK."
+  (psi-emacs--dispatch-request
+   "query_eql"
+   '((:query . "[:psi.extension/command-names]"))
+   callback))
+
+(defun psi-emacs--extension-command-names-from-query-frame (frame)
+  "Extract extension command names vector/list from `query_eql` FRAME."
+  (let* ((result (psi-emacs--query-result-from-frame frame))
+         (names (and (listp result)
+                     (alist-get :psi.extension/command-names result nil nil #'equal))))
+    (cond
+     ((vectorp names) (append names nil))
+     ((listp names) names)
+     (t nil))))
+
+(defun psi-emacs--refresh-extension-command-names ()
+  "Refresh cached extension command names for slash completion."
+  (let ((buffer (current-buffer))
+        (state psi-emacs--state))
+    (psi-emacs--request-extension-command-names
+     (lambda (frame)
+       (when (buffer-live-p buffer)
+         (with-current-buffer buffer
+           (when (eq state psi-emacs--state)
+             (let ((names (psi-emacs--extension-command-names-from-query-frame frame)))
+               (when names
+                 (setf (psi-emacs-state-extension-command-names psi-emacs--state)
+                       (mapcar (lambda (name)
+                                 (string-trim (format "%s" (or name ""))))
+                               names)))))))))))
+
 (defun psi-emacs--idle-slash-help-text ()
   "Return deterministic help text for supported idle slash commands."
   (string-join

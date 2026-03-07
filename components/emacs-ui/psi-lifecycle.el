@@ -55,6 +55,7 @@
    :session-thinking-level nil
    :session-effective-reasoning-effort nil
    :header-model-label nil
+   :extension-command-names nil
    :transcript-hydrated? nil))
 
 (defun psi-emacs--request-initial-transcript-hydration (buffer state)
@@ -95,7 +96,11 @@
                    (eq (psi-rpc-client-transport-state client) 'ready))
           (psi-emacs--set-run-state psi-emacs--state 'idle))
         (when (eq (psi-rpc-client-transport-state client) 'ready)
-          (psi-emacs--request-initial-transcript-hydration buffer psi-emacs--state))
+          (let ((hydrated-before (psi-emacs-state-transcript-hydrated? psi-emacs--state)))
+            (psi-emacs--request-initial-transcript-hydration buffer psi-emacs--state)
+            (when (and (not hydrated-before)
+                       (fboundp 'psi-emacs--refresh-extension-command-names))
+              (psi-emacs--refresh-extension-command-names))))
         (setq psi-emacs--owned-process (psi-rpc-client-process client))
         (psi-emacs--refresh-header-line)))))
 
@@ -290,6 +295,7 @@ When PRESERVE-TOOL-OUTPUT-VIEW-MODE is non-nil, keep the current
     (setf (psi-emacs-state-session-thinking-level psi-emacs--state) nil)
     (setf (psi-emacs-state-session-effective-reasoning-effort psi-emacs--state) nil)
     (setf (psi-emacs-state-header-model-label psi-emacs--state) nil)
+    (setf (psi-emacs-state-extension-command-names psi-emacs--state) nil)
     (setf (psi-emacs-state-transcript-hydrated? psi-emacs--state) nil)
     (psi-emacs--ensure-input-area)
     (goto-char (psi-emacs--draft-end-position))

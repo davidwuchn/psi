@@ -4,6 +4,7 @@
    Each test asserts that a direct EQL query against a fresh session context
    returns a well-typed value for the target attribute — no resolver error."
   (:require
+   [clojure.java.io :as io]
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.core :as session]
    [psi.agent-session.oauth.core :as oauth]))
@@ -19,6 +20,16 @@
   "Run EQL query against explicit session context CTX."
   [ctx eql]
   (session/query-in ctx eql))
+
+(defmacro with-user-dir
+  "Temporarily set java user.dir while evaluating body."
+  [dir & body]
+  `(let [orig# (System/getProperty "user.dir")]
+     (try
+       (System/setProperty "user.dir" (str ~dir))
+       ~@body
+       (finally
+         (System/setProperty "user.dir" orig#)))))
 
 ;; ── :psi.agent-session/messages-count ───────────────────
 
@@ -231,6 +242,47 @@
   (testing "capabilities is a vector with at least one entry"
     (let [result (q [:psi.graph/capabilities])]
       (is (vector? (:psi.graph/capabilities result))))))
+
+(deftest agent-chain-discovery-resolver-test
+  (testing "agent-chain config is queryable from session root"
+    (let [tmp (str (java.nio.file.Files/createTempDirectory
+                    "psi-agent-chain-resolver-test-"
+                    (make-array java.nio.file.attribute.FileAttribute 0)))
+          cfg (io/file tmp ".psi" "agents" "agent-chain.edn")]
+      (try
+        (io/make-parents cfg)
+        (spit cfg (pr-str [{:name "prompt-build"
+                            :description "Build prompts"
+                            :steps [{:agent "prompt-compiler" :prompt "$INPUT"}
+                                    {:agent "prompt-compiler" :prompt "again: $INPUT"}]}]))
+        (with-user-dir tmp
+          (let [result (q [:psi.agent-chain/config-path
+                           :psi.agent-chain/count
+                           :psi.agent-chain/names
+                           :psi.agent-chain/chains
+                           :psi.agent-chain/error])
+                chains (:psi.agent-chain/chains result)]
+            (is (= 1 (:psi.agent-chain/count result)))
+            (is (= ["prompt-build"] (:psi.agent-chain/names result)))
+            (is (string? (:psi.agent-chain/config-path result)))
+            (is (nil? (:psi.agent-chain/error result)))
+            (is (= 1 (count chains)))
+            (is (= "prompt-build" (:name (first chains))))
+            (is (= 2 (:step-count (first chains))))
+            (is (= ["prompt-compiler" "prompt-compiler"]
+                   (:agents (first chains))))))
+        (finally
+          (when (.exists cfg)
+            (.delete cfg))
+          (let [agents-dir (.getParentFile cfg)
+                psi-dir (.getParentFile agents-dir)
+                root-dir (io/file tmp)]
+            (when (and agents-dir (.exists agents-dir))
+              (.delete agents-dir))
+            (when (and psi-dir (.exists psi-dir))
+              (.delete psi-dir))
+            (when (.exists root-dir)
+              (.delete root-dir))))))))
 
 (deftest graph-bridge-domain-coverage-test
   (testing "domain-coverage includes required Step 7 domains"

@@ -64,6 +64,36 @@
         (finally
           (.delete tmp))))))
 
+(deftest run-chain-starts-in-background-by-default-test
+  (testing "run_chain returns immediately (non-blocking) when wait is not set"
+    (let [tmp (temp-dir)]
+      (try
+        (write-chain-config!
+         tmp
+         [{:name "prompt-build"
+           :description "Build prompts"
+           :steps [{:agent "prompt-compiler" :prompt "$INPUT"}]}])
+        (spit (io/file tmp ".psi" "agents" "prompt-compiler.md")
+              (str "---\n"
+                   "name: prompt-compiler\n"
+                   "description: test agent\n"
+                   "tools: read,bash\n"
+                   "---\n\n"
+                   "Use prompt-compiler skill."))
+        (with-user-dir (.getAbsolutePath tmp)
+          (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                                     {:path "/test/agent_chain.clj"})]
+            (sut/init api)
+            ((get-in @state [:commands "chain" :handler]) "prompt-build")
+            (let [execute (get-in @state [:tools "run_chain" :execute])
+                  result  (execute {"task" "say hello"})]
+              (is (false? (:is-error result)))
+              (is (str/includes? (:content result) "Chain run started:"))
+              (is (str/includes? (:content result) "Monitor with /chain-list."))
+              (is (contains? (:workflows @state) "run-1")))))
+        (finally
+          (.delete tmp))))))
+
 (deftest chain-command-selects-by-name-test
   (testing "/chain accepts a chain name, case-insensitive"
     (let [tmp (temp-dir)]

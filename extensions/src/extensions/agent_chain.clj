@@ -142,6 +142,15 @@
     (string? x) (try (Long/parseLong (str/trim x)) (catch Exception _ nil))
     :else nil))
 
+(defn- parse-bool
+  [x]
+  (cond
+    (true? x) true
+    (false? x) false
+    (string? x) (contains? #{"1" "true" "yes" "on"}
+                           (str/lower-case (str/trim x)))
+    :else false))
+
 (defn- display-name
   "Convert kebab-case to Title Case."
   [s]
@@ -683,7 +692,15 @@
          model      (when query-fn
                       (:psi.agent-session/model
                        (query-fn [:psi.agent-session/model])))
-         task       (str/trim (or (get args-map "task") ""))]
+         task       (str/trim (or (get args-map "task") ""))
+         wait?      (cond
+                      (contains? args-map "wait")
+                      (parse-bool (get args-map "wait"))
+
+                      (contains? opts :wait?)
+                      (boolean (:wait? opts))
+
+                      :else false)]
      (cond
        (nil? chain)
        {:content  "No chain active. Use /chain to select one."
@@ -749,7 +766,7 @@
                                    :elapsed-ms (- (now-ms) started-ms))))
              {:content  msg
               :is-error true})
-           (if-not (fn? on-update)
+           (if-not wait?
              {:content  (str "Chain run started: " run-id
                              " (" (:name chain) "). Monitor with /chain-list.")
               :is-error false}
@@ -907,7 +924,9 @@
                         "Runs execute via the extension workflow runtime.")
       :parameters  (pr-str {:type       "object"
                             :properties {"task" {:type "string"
-                                                 :description "The task/prompt for the chain to process"}}
+                                                 :description "The task/prompt for the chain to process"}
+                                         "wait" {:type "boolean"
+                                                 :description "When true, block until workflow completion and return final chain output. Default false (start in background)."}}
                             :required   ["task"]})
       :execute     execute-run-chain})
 

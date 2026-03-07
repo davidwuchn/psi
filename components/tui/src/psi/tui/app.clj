@@ -369,11 +369,19 @@
      :context context
      :prefix token}))
 
+(defn- as-slash-command
+  [x]
+  (let [s (some-> x str str/trim)]
+    (when (seq s)
+      (if (str/starts-with? s "/")
+        s
+        (str "/" s)))))
+
 (defn- slash-candidates
   [state prefix]
   (let [templates  (mapv (fn [{:keys [name]}] (str "/" name)) (:prompt-templates state))
         skills     (mapv (fn [{:keys [name]}] (str "/skill:" name)) (:skills state))
-        ext-cmds   (vec (:extension-command-names state))
+        ext-cmds   (vec (keep as-slash-command (:extension-command-names state)))
         all        (->> (concat builtin-slash-commands templates skills ext-cmds)
                         (remove str/blank?)
                         distinct
@@ -840,6 +848,22 @@
   []
   (contains? #{"1" "true" "yes" "on"}
              (some-> (System/getenv "PSI_TUI_DEBUG_KEYS") str/lower-case)))
+
+(def ^:private command-refresh-query
+  [:psi.extension/command-names])
+
+(defn- refresh-extension-command-names
+  [state]
+  (if-let [query-fn (:query-fn state)]
+    (try
+      (let [data     (or (query-fn command-refresh-query) {})
+            ext-cmds (:psi.extension/command-names data)]
+        (if (vector? ext-cmds)
+          (assoc state :extension-command-names (vec ext-cmds))
+          state))
+      (catch Exception _
+        state))
+    state))
 
 (defn make-init
   "Create an init function for the charm program.
@@ -1359,7 +1383,9 @@
           ;; Keep app state in sync with extension-controlled tools-expanded state.
           state (if-let [ui-atom (:ui-state-atom state)]
                   (assoc state :tools-expanded? (ext-ui/get-tools-expanded ui-atom))
-                  state)]
+                  state)
+          ;; Refresh extension slash commands discovered from the backend.
+          state (refresh-extension-command-names state)]
       ;; Dismiss expired notifications on every tick
       (when-let [ui-atom (:ui-state-atom state)]
         (ext-ui/dismiss-expired! ui-atom)

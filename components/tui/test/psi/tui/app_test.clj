@@ -495,6 +495,15 @@
       (is (seq (:candidates ac)))
       (is (some #(= "/help" (:value %)) (:candidates ac))))))
 
+(deftest autocomplete-slash-includes-extension-commands-test
+  (testing "slash autocomplete includes extension command names"
+    (let [update-fn (app/make-update (stub-agent-fn ""))
+          state     (assoc (init-state) :extension-command-names ["chain" "chain-list"])
+          [s1 _]    (update-fn state (msg/key-press "/"))
+          cand-vals (set (map :value (get-in s1 [:prompt-input-state :autocomplete :candidates])))]
+      (is (contains? cand-vals "/chain"))
+      (is (contains? cand-vals "/chain-list")))))
+
 (deftest autocomplete-accept-on-enter-submits-slash-test
   (testing "enter accepts selected slash suggestion and submits"
     (let [submitted (atom nil)
