@@ -26,6 +26,9 @@ Current truth about the Psi system.
 - ✓ Width source for projection/footer separators now prefers `window-text-width` (visible text area), with margin-based fallback.
 - ✓ Window-change handler now calls `psi-emacs--ensure-input-area`, repairing stale/misaligned pre-edit separator markers before projection refresh.
 - ✓ Emacs verification after separator follow-up: `bb emacs:test` green at 155/155.
+- ✓ Project-scoped Emacs startup command added (`psi-emacs-project`): starts psi at detected project root, names buffers as `*psi:<project>*`, and supports prefix semantics (`C-u` fresh generated, `C-u N` slot selection).
+- ✓ Emacs UI docs now include project command behavior and prefix semantics in both `README.md` and `components/emacs-ui/README.md`.
+- ✓ Emacs verification after project-command addition: `bb emacs:test` green at 165/165; `bb emacs:check` green (with one pre-existing byte-compile warning unrelated to this change).
 - ? Live user layout still shows unequal separator lengths after `d36fe3d` (footer separator resized but remains too long; separator before edit area still mismatched), so parity is not yet fully resolved in production layout.
 - … Next executable task: reproduce the exact live Emacs layout mismatch and unify width derivation across all separator insertion points (projection + pre-edit boundary) while keeping worktree Step 11b mutation semantics deferred.
 

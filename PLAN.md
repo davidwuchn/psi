@@ -125,6 +125,8 @@ Ordered steps toward PSI COMPLETE.
 - New follow-up: divider/separator length mismatch reported in Emacs UI transcript/projection area; commit `3e02b97` adjusted TUI separators but did not address the user-reported Emacs path.
 - Progress: commit `db9d4c7` added resize-driven refresh hooks for width-sensitive separators in Emacs UI.
 - Progress: commit `d36fe3d` switched projection width to prefer `window-text-width` and made resize handler run input-area repair (`psi-emacs--ensure-input-area`).
+- Progress: commit `bfa604a` added `psi-emacs-project` for current-project startup with project-scoped buffer naming (`*psi:<project>*`) plus explicit prefix behavior (`C-u` fresh generated name, `C-u N` slot selection).
+- Progress: Emacs docs/tests now cover project command behavior (`README.md`, `components/emacs-ui/README.md`, and new ERT coverage in `components/emacs-ui/test/psi-test.el`).
 - Active fix focus: user still reports mixed separator lengths in live Emacs layout after `d36fe3d` (one separator remains too long while another differs), indicating an unresolved width-source/placement mismatch across separator render paths.
 - Completed in this cycle:
   - [x] Prompt completion architecture added via CAPF (`components/emacs-ui/psi-completion.el`)
