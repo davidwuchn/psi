@@ -151,6 +151,41 @@
         (is (some? thinking))
         (is (= "plan" (:text thinking)))))))
 
+(deftest idle-timeout-resets-on-stream-progress-test
+  (let [agent-ctx   (setup-agent-ctx!)
+        session-ctx (setup-session-ctx! agent-ctx)
+        user-msg    {:role "user" :content [{:type :text :text "hi"}]}
+        stream-fn   (fn [_ai-ctx _conv _model _opts consume-fn]
+                      (future
+                        (consume-fn {:type :start})
+                        (Thread/sleep 120)
+                        (consume-fn {:type :thinking-delta :delta "plan-1"})
+                        (Thread/sleep 120)
+                        (consume-fn {:type :thinking-delta :delta "plan-2"})
+                        (Thread/sleep 120)
+                        (consume-fn {:type :done :reason :stop})))]
+    (with-redefs [psi.agent-session.executor/do-stream! stream-fn
+                  psi.agent-session.executor/llm-stream-idle-timeout-ms 200
+                  psi.agent-session.executor/llm-stream-wait-poll-ms 20]
+      (let [result (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg])]
+        (is (= :stop (:stop-reason result)))))))
+
+(deftest idle-timeout-errors-when-stream-stalls-test
+  (let [agent-ctx   (setup-agent-ctx!)
+        session-ctx (setup-session-ctx! agent-ctx)
+        user-msg    {:role "user" :content [{:type :text :text "hi"}]}
+        stream-fn   (fn [_ai-ctx _conv _model _opts consume-fn]
+                      (future
+                        (consume-fn {:type :start})
+                        (Thread/sleep 260)
+                        (consume-fn {:type :done :reason :stop})))]
+    (with-redefs [psi.agent-session.executor/do-stream! stream-fn
+                  psi.agent-session.executor/llm-stream-idle-timeout-ms 120
+                  psi.agent-session.executor/llm-stream-wait-poll-ms 20]
+      (let [result (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg])]
+        (is (= :error (:stop-reason result)))
+        (is (= "Timeout waiting for LLM response" (:error-message result)))))))
+
 (deftest thinking-level-is-forwarded-to-ai-options-test
   (let [agent-ctx   (setup-agent-ctx!)
         session-ctx (assoc (setup-session-ctx! agent-ctx)
@@ -165,6 +200,20 @@
     (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
       (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg])
       (is (= :high (:thinking-level @seen-opts))))))
+
+(deftest session-idle-timeout-config-is-forwarded-to-ai-options-test
+  (let [agent-ctx   (setup-agent-ctx!)
+        session-ctx (assoc (setup-session-ctx! agent-ctx)
+                           :config {:llm-stream-idle-timeout-ms 777})
+        user-msg    {:role "user" :content [{:type :text :text "hi"}]}
+        seen-opts   (atom nil)
+        stream-fn   (fn [_ai-ctx _conv _model opts consume-fn]
+                      (reset! seen-opts opts)
+                      (consume-fn {:type :start})
+                      (consume-fn {:type :done :reason :stop}))]
+    (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
+      (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg])
+      (is (= 777 (:llm-stream-idle-timeout-ms @seen-opts))))))
 
 (deftest cumulative-snapshot-text-deltas-replace-instead-of-repeating-test
   (let [agent-ctx   (setup-agent-ctx!)

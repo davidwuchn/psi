@@ -281,6 +281,36 @@ Also tolerates cumulative snapshots that differ near previous tail
     (ai/stream-response-in ai-ctx ai-conv ai-model ai-options consume-fn)
     (ai/stream-response ai-conv ai-model ai-options consume-fn)))
 
+(def ^:private llm-stream-idle-timeout-ms 120000)
+(def ^:private llm-stream-wait-poll-ms 250)
+
+(defn- now-ms []
+  (System/currentTimeMillis))
+
+(defn- wait-for-turn-result
+  "Wait for `done-p` with an idle timeout.
+
+   The timeout window resets whenever `last-progress-ms` is updated by
+   incoming provider events (text/thinking/tool/done/error).
+
+   Optional opts:
+   - :idle-timeout-ms
+   - :wait-poll-ms"
+  [done-p last-progress-ms {:keys [idle-timeout-ms wait-poll-ms]}]
+  (let [poll-ms    (max 1 (long (or wait-poll-ms llm-stream-wait-poll-ms 250)))
+        timeout-ms (max 1 (long (or idle-timeout-ms llm-stream-idle-timeout-ms 120000)))]
+    (loop []
+      (let [result (deref done-p poll-ms ::pending)]
+        (cond
+          (not= ::pending result)
+          result
+
+          (>= (- (now-ms) @last-progress-ms) timeout-ms)
+          ::timeout
+
+          :else
+          (recur))))))
+
 (defn- stream-turn!
   "Stream one LLM response into agent-core via the per-turn statechart.
 
@@ -294,15 +324,16 @@ Also tolerates cumulative snapshots that differ near previous tail
    `extra-ai-options` — merged into the ai-options map sent to the provider
                         (e.g. {:api-key \"...\"})"
   [ai-ctx agent-ctx ai-model turn-ctx-atom extra-ai-options progress-queue]
-  (let [data          (agent/get-data-in agent-ctx)
-        system-prompt (:system-prompt data)
-        messages      (:messages data)
-        agent-tools   (:tools data)
-        ai-conv       (agent-messages->ai-conversation system-prompt messages agent-tools)
-        ai-options    (or extra-ai-options {})
-        done-p        (promise)
-        actions-fn    (make-turn-actions agent-ctx done-p progress-queue)
-        turn-ctx      (turn-sc/create-turn-context actions-fn)]
+  (let [data             (agent/get-data-in agent-ctx)
+        system-prompt    (:system-prompt data)
+        messages         (:messages data)
+        agent-tools      (:tools data)
+        ai-conv          (agent-messages->ai-conversation system-prompt messages agent-tools)
+        ai-options       (or extra-ai-options {})
+        done-p           (promise)
+        actions-fn       (make-turn-actions agent-ctx done-p progress-queue)
+        turn-ctx         (turn-sc/create-turn-context actions-fn)
+        last-progress-ms (atom (now-ms))]
     ;; Expose turn context for nREPL introspection
     (when turn-ctx-atom
       (reset! turn-ctx-atom turn-ctx))
@@ -311,6 +342,7 @@ Also tolerates cumulative snapshots that differ near previous tail
     ;; Start provider stream — callback translates events to statechart events
     (do-stream! ai-ctx ai-conv ai-model ai-options
                 (fn [event]
+                  (reset! last-progress-ms (now-ms))
                   (case (:type event)
                     :start nil ;; already transitioned via :turn/start
 
@@ -350,8 +382,12 @@ Also tolerates cumulative snapshots that differ near previous tail
 
                     ;; :text-start :text-end :thinking-* — ignore
                     nil)))
-    ;; Block until streaming completes
-    (let [result (deref done-p 120000 ::timeout)]
+    ;; Block until streaming completes (idle timeout resets on stream progress)
+    (let [result (wait-for-turn-result
+                  done-p
+                  last-progress-ms
+                  {:idle-timeout-ms (:llm-stream-idle-timeout-ms ai-options)
+                   :wait-poll-ms    (:llm-stream-wait-poll-ms ai-options)})]
       (if (= result ::timeout)
         (let [timeout-msg {:role          "assistant"
                            :content       [{:type  :error
@@ -565,6 +601,12 @@ Also tolerates cumulative snapshots that differ near previous tail
   [agent-session-ctx]
   (get @(:session-data-atom agent-session-ctx) :thinking-level))
 
+(defn- session-llm-stream-idle-timeout-ms
+  [agent-session-ctx]
+  (let [v (get-in agent-session-ctx [:config :llm-stream-idle-timeout-ms])]
+    (when (and (number? v) (pos? v))
+      (long v))))
+
 (defn run-agent-loop!
   "Run a complete agent loop starting from the current agent-core state.
 
@@ -577,15 +619,21 @@ Also tolerates cumulative snapshots that differ near previous tail
      :api-key        — API key to pass through to the provider (from OAuth store)
      :progress-queue — LinkedBlockingQueue for TUI progress events
 
+   Timeout behavior:
+     Idle timeout defaults to 120s and resets on any stream progress event.
+     Session config key `:llm-stream-idle-timeout-ms` overrides that default.
+
    Returns the final assistant message."
   ([ai-ctx agent-session-ctx agent-ctx ai-model new-messages]
    (run-agent-loop! ai-ctx agent-session-ctx agent-ctx ai-model new-messages nil))
   ([ai-ctx agent-session-ctx agent-ctx ai-model new-messages {:keys [turn-ctx-atom api-key progress-queue]}]
    (agent/start-loop-in! agent-ctx new-messages)
-   (let [thinking-level   (session-thinking-level agent-session-ctx)
-         extra-ai-options (cond-> {}
-                            api-key (assoc :api-key api-key)
-                            (keyword? thinking-level) (assoc :thinking-level thinking-level))
+   (let [thinking-level       (session-thinking-level agent-session-ctx)
+         idle-timeout-ms      (session-llm-stream-idle-timeout-ms agent-session-ctx)
+         extra-ai-options     (cond-> {}
+                                api-key (assoc :api-key api-key)
+                                (keyword? thinking-level) (assoc :thinking-level thinking-level)
+                                idle-timeout-ms (assoc :llm-stream-idle-timeout-ms idle-timeout-ms))
          result (try
                   (run-turn! ai-ctx agent-session-ctx agent-ctx ai-model turn-ctx-atom
                              extra-ai-options progress-queue)

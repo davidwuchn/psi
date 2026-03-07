@@ -162,6 +162,7 @@
    :auto-retry-max-retries         3
    :auto-retry-base-delay-ms       2000
    :auto-retry-max-delay-ms        60000
+   :llm-stream-idle-timeout-ms     120000
    :default-active-tools           #{"read" "bash" "edit" "write"}})
 
 (defn initial-session

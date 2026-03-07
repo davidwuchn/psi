@@ -234,6 +234,31 @@
       (some? retention-snapshots) (assoc :retention-snapshots retention-snapshots)
       (some? retention-deltas)    (assoc :retention-deltas retention-deltas))))
 
+(defn- llm-idle-timeout-ms-from-env
+  "Parse optional LLM idle timeout from PSI_LLM_IDLE_TIMEOUT_MS env var."
+  []
+  (parse-positive-int-arg (System/getenv "PSI_LLM_IDLE_TIMEOUT_MS")))
+
+(defn- session-runtime-config-from-args
+  "Extract optional session/runtime config flags from CLI args.
+
+   CLI flags:
+   - --llm-idle-timeout-ms <positive-int>
+
+   Env fallback:
+   - PSI_LLM_IDLE_TIMEOUT_MS <positive-int>
+
+   Precedence:
+   CLI flag > env var > default config."
+  [args]
+  (let [idle-timeout-arg-raw (arg-value args "--llm-idle-timeout-ms")
+        idle-timeout-arg     (parse-positive-int-arg idle-timeout-arg-raw)
+        idle-timeout-ms      (if (some? idle-timeout-arg-raw)
+                               idle-timeout-arg
+                               (llm-idle-timeout-ms-from-env))]
+    (cond-> {}
+      (some? idle-timeout-ms) (assoc :llm-stream-idle-timeout-ms idle-timeout-ms))))
+
 (defn- developer-prompt-from-env
   "Return optional developer prompt text from PSI_DEVELOPER_PROMPT.
    Blank values are treated as nil."
@@ -464,8 +489,9 @@
    Options:
    - :event-queue optional TUI/RPC event queue
    - :memory-runtime-opts optional memory/runtime sync opts
+   - :session-config optional session config overrides (merged with defaults)
    - :cwd optional cwd override (primarily for tests)"
-  [ai-model {:keys [event-queue memory-runtime-opts cwd]}]
+  [ai-model {:keys [event-queue memory-runtime-opts session-config cwd]}]
   (let [oauth-ctx      (oauth/create-context)
         templates      (pt/discover-templates)
         {:keys [skills diagnostics]} (skills/discover-skills)
@@ -487,6 +513,7 @@
                                                    :reasoning (:supports-reasoning effective-model)}
                                            :thinking-level effective-thinking-level
                                            :system-prompt   base-prompt}
+                         :config session-config
                          :event-queue event-queue
                          :oauth-ctx oauth-ctx
                          :recursion-ctx recursion-ctx})
@@ -537,13 +564,16 @@
   "Create a session and enter the interactive prompt loop.
   Returns when the user exits."
   ([model-key]
-   (run-session model-key {}))
+   (run-session model-key {} {}))
   ([model-key memory-runtime-opts]
+   (run-session model-key memory-runtime-opts {}))
+  ([model-key memory-runtime-opts session-config]
    (let [ai-model  (resolve-model model-key)
          ;; ai context: nil signals the executor to use the public ai/stream-response API
          ai-ctx    nil
          {:keys [ctx oauth-ctx templates skills startup-rehydrate]}
-         (bootstrap-runtime-session! ai-model {:memory-runtime-opts memory-runtime-opts})]
+         (bootstrap-runtime-session! ai-model {:memory-runtime-opts memory-runtime-opts
+                                               :session-config session-config})]
      ;; Expose state for nREPL introspection
      (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model
                             :oauth-ctx oauth-ctx})
@@ -640,15 +670,18 @@
   "Create a session and run it as a full-screen TUI via charm.clj.
   Blocks until the user exits (Ctrl+C second press or Ctrl+D on empty input)."
   ([model-key]
-   (run-tui-session model-key {}))
+   (run-tui-session model-key {} {}))
   ([model-key memory-runtime-opts]
+   (run-tui-session model-key memory-runtime-opts {}))
+  ([model-key memory-runtime-opts session-config]
    (let [ai-model  (resolve-model model-key)
          ai-ctx    nil
          event-queue (java.util.concurrent.LinkedBlockingQueue.)
          {:keys [ctx oauth-ctx cwd startup-rehydrate]} (bootstrap-runtime-session!
                                                         ai-model
                                                         {:event-queue event-queue
-                                                         :memory-runtime-opts memory-runtime-opts})
+                                                         :memory-runtime-opts memory-runtime-opts
+                                                         :session-config session-config})
 
          ;; Expose state for nREPL introspection
          _         (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model
@@ -782,8 +815,10 @@
    In rpc-edn mode, reserve stdout strictly for protocol frames and route
    incidental println/log output to stderr."
   ([model-key]
-   (run-rpc-edn-session! model-key {}))
+   (run-rpc-edn-session! model-key {} {}))
   ([model-key memory-runtime-opts]
+   (run-rpc-edn-session! model-key memory-runtime-opts {}))
+  ([model-key memory-runtime-opts session-config]
    (let [protocol-out       *out*
          original-systemout System/out]
      (try
@@ -795,7 +830,8 @@
                event-queue (java.util.concurrent.LinkedBlockingQueue.)
                boot        (bootstrap-runtime-session! ai-model
                                                        {:event-queue event-queue
-                                                        :memory-runtime-opts memory-runtime-opts})
+                                                        :memory-runtime-opts memory-runtime-opts
+                                                        :session-config session-config})
                ctx         (:ctx boot)
                oauth-ctx   (:oauth-ctx boot)
                state       (atom {:handshake-server-info-fn (fn [] (rpc/session->handshake-server-info ctx))
@@ -826,26 +862,31 @@
    --memory-store-fallback <on|off>
    --memory-history-limit <n>
    --memory-retention-snapshots <n>
-   --memory-retention-deltas <n>"
+   --memory-retention-deltas <n>
+   --llm-idle-timeout-ms <n>
+
+   Env:
+   PSI_LLM_IDLE_TIMEOUT_MS=<n>"
   [& args]
   (set-log-level! (log-level-from-args args))
-  (let [model-key         (model-key-from-args args)
-        memory-runtime-opts (memory-runtime-opts-from-args args)
-        tui?              (some #(= "--tui" %) args)
-        rpc-edn?          (some #(= "--rpc-edn" %) args)
-        nrepl-port        (nrepl-port-from-args args)
-        nrepl-srv         (when (and nrepl-port (not rpc-edn?))
-                            (start-nrepl! nrepl-port))]
+  (let [model-key            (model-key-from-args args)
+        memory-runtime-opts  (memory-runtime-opts-from-args args)
+        session-runtime-opts (session-runtime-config-from-args args)
+        tui?                 (some #(= "--tui" %) args)
+        rpc-edn?             (some #(= "--rpc-edn" %) args)
+        nrepl-port           (nrepl-port-from-args args)
+        nrepl-srv            (when (and nrepl-port (not rpc-edn?))
+                               (start-nrepl! nrepl-port))]
     (try
       (cond
         rpc-edn?
-        (run-rpc-edn-session! model-key memory-runtime-opts)
+        (run-rpc-edn-session! model-key memory-runtime-opts session-runtime-opts)
 
         tui?
-        (run-tui-session model-key memory-runtime-opts)
+        (run-tui-session model-key memory-runtime-opts session-runtime-opts)
 
         :else
-        (run-session model-key memory-runtime-opts))
+        (run-session model-key memory-runtime-opts session-runtime-opts))
       (finally
         (stop-nrepl! nrepl-srv)))
     ;; clj-http (Apache HttpClient) parks a non-daemon connection-eviction thread.

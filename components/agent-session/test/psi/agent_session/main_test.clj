@@ -266,6 +266,29 @@
           ["--memory-history-limit" "not-a-number"
            "--memory-store-fallback" "maybe"]))))
 
+(deftest session-runtime-config-from-args-test
+  (testing "CLI flag sets timeout"
+    (is (= {:llm-stream-idle-timeout-ms 90000}
+           (#'main/session-runtime-config-from-args
+            ["--llm-idle-timeout-ms" "90000"]))))
+
+  (testing "env var is used when CLI flag is absent"
+    (with-redefs [main/llm-idle-timeout-ms-from-env (fn [] 42000)]
+      (is (= {:llm-stream-idle-timeout-ms 42000}
+             (#'main/session-runtime-config-from-args [])))))
+
+  (testing "CLI flag wins over env var"
+    (with-redefs [main/llm-idle-timeout-ms-from-env (fn [] 42000)]
+      (is (= {:llm-stream-idle-timeout-ms 90000}
+             (#'main/session-runtime-config-from-args
+              ["--llm-idle-timeout-ms" "90000"])))))
+
+  (testing "invalid CLI value does not fall back to env"
+    (with-redefs [main/llm-idle-timeout-ms-from-env (fn [] 42000)]
+      (is (= {}
+             (#'main/session-runtime-config-from-args
+              ["--llm-idle-timeout-ms" "not-a-number"]))))))
+
 (deftest bootstrap-runtime-session-passes-memory-runtime-opts-to-sync-test
   (let [captured (atom nil)]
     (with-redefs [oauth/create-context (fn [] nil)
@@ -282,18 +305,20 @@
                   (fn [ctx _]
                     (session/new-session-in! ctx)
                     {:extension-errors [] :extension-loaded-count 0})]
-      (#'main/bootstrap-runtime-session!
-       {:provider :anthropic
-        :id "test-model"
-        :name "Test Model"
-        :supports-reasoning false}
-       {:memory-runtime-opts {:store-provider "datalevin"
-                              :retention-snapshots 22
-                              :retention-deltas 44}})
-      (is (= "datalevin" (:store-provider @captured)))
-      (is (= 22 (:retention-snapshots @captured)))
-      (is (= 44 (:retention-deltas @captured)))
-      (is (string? (:cwd @captured))))))
+      (let [{:keys [ctx]} (#'main/bootstrap-runtime-session!
+                           {:provider :anthropic
+                            :id "test-model"
+                            :name "Test Model"
+                            :supports-reasoning false}
+                           {:memory-runtime-opts {:store-provider "datalevin"
+                                                  :retention-snapshots 22
+                                                  :retention-deltas 44}
+                            :session-config {:llm-stream-idle-timeout-ms 54321}})]
+        (is (= "datalevin" (:store-provider @captured)))
+        (is (= 22 (:retention-snapshots @captured)))
+        (is (= 44 (:retention-deltas @captured)))
+        (is (string? (:cwd @captured)))
+        (is (= 54321 (get-in ctx [:config :llm-stream-idle-timeout-ms])))))))
 
 (deftest bootstrap-runtime-session-enriches-system-prompt-with-capabilities-test
   (with-redefs [oauth/create-context (fn [] nil)
