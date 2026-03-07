@@ -4,6 +4,20 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-07 - Separator regressions are surface-specific (Emacs UI ≠ TUI)
+
+### λ Confirm reported UI surface before fixing width/render bugs
+
+A divider-length report from Emacs UI was initially patched in TUI (`3e02b97`),
+which improved TUI separator sizing but did not address the user-visible Emacs
+issue. Separator/render bugs are frontend-specific in this repo:
+
+- TUI separators: `components/tui/src/psi/tui/app.clj`
+- Emacs projection/input separators: `components/emacs-ui/*`
+
+Before patching, pin the failing surface (Emacs vs TUI) from the transcript/screenshot,
+then validate in that path's tests/runtime loop.
+
 ## 2026-03-06 - OpenAI thinking parity needs provider + executor + UI alignment
 
 ### λ Thinking visibility is a pipeline contract, not a single parser fix
