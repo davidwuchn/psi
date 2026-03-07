@@ -1969,8 +1969,12 @@ The atom (`extension-run-fn-atom`) lives on the session context. The runtime
 registers it after bootstrap. Extensions remain decoupled — they call
 `psi.extension/send-prompt` and the registered runner does the rest.
 
-**Idle guard**: the runner checks `idle-in?` before firing. If streaming,
-it falls back to the follow-up queue for delivery after the current turn.
+**Updated pattern (fcf9db3)**: when a run-fn is present and the session is
+streaming, `send-extension-prompt-in!` marks delivery as `:deferred` and still
+invokes the runner. The runner waits until idle and then executes the prompt,
+so PSL no longer depends on an extra UI prompt to trigger queued work.
+
+`follow-up` remains the fallback only when no run-fn is registered.
 
 ## 2026-03-06 - PSL Extension 400: Custom-Type Messages Must Not Reach LLM
 
