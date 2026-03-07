@@ -4,7 +4,21 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
-## 2026-03-07 - Separator regressions are surface-specific (Emacs UI ≠ TUI)
+## 2026-03-07 - Emacs separator width parity needs both width-source correctness and marker repair
+
+### λ Refresh-on-resize alone is insufficient when separator markers drift
+
+`db9d4c7` added window-configuration refresh hooks, which helped footer updates,
+but user feedback showed the pre-edit separator could still fail to resize. Root cause:
+if the input separator marker is present but stale/misaligned, narrow "refresh-if-valid"
+logic can skip repair. Calling `psi-emacs--ensure-input-area` on window changes gives
+idempotent repair + width refresh.
+
+### λ Use visible text width (`window-text-width`) as first-choice for separator sizing
+
+Margin/body arithmetic can still overestimate in real layouts. For separator lines that
+must match the editable text column, prefer `window-text-width`, with margin-based fallback
+for compatibility/test contexts.
 
 ### λ Confirm reported UI surface before fixing width/render bugs
 
