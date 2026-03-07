@@ -80,6 +80,7 @@ Example: `⚒ Add nrepl task to bb.edn`
 | ◈      | reflect | Meta, patterns         |
 | ∿      | play    | Creative, experimental |
 | ·      | atom    | Atomic, single step    |
+| ⊨      | spec    | Specification, formal  |
 
 ## Events
 
