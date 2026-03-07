@@ -993,8 +993,6 @@
                                   (reset! agent-sessions-a {})
                                   (reset! runs-a {})
                                   (reset! next-run-id-a 1)
-                                  (when-let [first-chain (first @chains-a)]
-                                    (reset! active-chain-a first-chain))
                                   (refresh-widget!)
                                   (println (str "  ✓ Reloaded: " (count @chains-a) " chains, "
                                                 (count @all-agents-a) " agents"
@@ -1011,14 +1009,8 @@
                  (reset! all-agents-a (scan-agent-dirs cwd))
                  (reset! chains-a (load-chains cwd))
                  (reset! next-run-id-a 1)
-                 (if-let [first-chain (first @chains-a)]
-                   (reset! active-chain-a first-chain)
-                   (reset! active-chain-a nil))
+                 (reset! active-chain-a nil)
                  (refresh-widget!)))
 
-    (if-let [first-chain (first @chains-a)]
-      (do
-        (reset! active-chain-a first-chain)
-        (timbre/info "agent-chain active chain:" (:name first-chain)))
-      (reset! active-chain-a nil))
+    (reset! active-chain-a nil)
     (refresh-widget!)))
