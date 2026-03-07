@@ -885,6 +885,66 @@
   (doseq [{:keys [event data]} (ui-snapshot->events (or previous {}) (or current {}))]
     (emit-event! emit-frame! state {:event event :data data})))
 
+(defn- register-rpc-extension-run-fn!
+  "Re-register the extension run-fn with an emit-frame!-aware implementation.
+
+   The default run-fn registered in main.clj has no progress-queue, so
+   extension-initiated agent runs (e.g. PSL) produce no streaming events
+   visible to the RPC client. This version creates a progress-queue, polls
+   it in a background loop, and routes events to emit-frame! — giving the
+   PSL response the same streaming visibility as a normal user prompt.
+
+   Called once from the subscribe handler. Guard via :rpc-run-fn-registered
+   in state so it is only set up once per session connection."
+  [ctx emit-frame! state]
+  (when-not (:rpc-run-fn-registered @state)
+    (swap! state assoc :rpc-run-fn-registered true)
+    (let [ai-model-fn (fn [] (current-ai-model ctx state))
+          run-fn      (fn [text _source]
+                        (try
+                          (loop [attempt 0]
+                            (if (session/idle-in? ctx)
+                              (let [{:keys [user-message]} (runtime/prepare-user-message-in! ctx text)
+                                    ai-model  (ai-model-fn)
+                                    api-key   (runtime/resolve-api-key-in ctx ai-model)
+                                    emit!     (fn [event payload]
+                                                (emit-event! emit-frame! state {:event event :data payload}))
+                                    progress-q (java.util.concurrent.LinkedBlockingQueue.)
+                                    stop?      (atom false)
+                                    poll-loop  (future
+                                                 (loop []
+                                                   (when-not @stop?
+                                                     (when-let [evt (.poll progress-q 50
+                                                                          java.util.concurrent.TimeUnit/MILLISECONDS)]
+                                                       (when-let [{:keys [event data]} (progress-event->rpc-event evt)]
+                                                         (emit! event data)))
+                                                     (recur))))
+                                    result    (runtime/run-agent-loop-in!
+                                               ctx nil ai-model [user-message]
+                                               {:api-key        api-key
+                                                :progress-queue progress-q
+                                                :sync-on-git-head-change? true})]
+                                (reset! stop? true)
+                                (deref poll-loop 200 nil)
+                                (emit-progress-queue! progress-q emit!)
+                                (emit! "assistant/message"
+                                       (cond-> {:role    (:role result)
+                                                :content (or (:content result) [])}
+                                         (contains? result :stop-reason)   (assoc :stop-reason (:stop-reason result))
+                                         (contains? result :error-message) (assoc :error-message (:error-message result))
+                                         (contains? result :usage)         (assoc :usage (:usage result))))
+                                (emit! "session/updated" (session-updated-payload ctx))
+                                (emit! "footer/updated"  (footer-updated-payload ctx)))
+                              (when (< attempt 1200)
+                                (Thread/sleep 250)
+                                (recur (inc attempt)))))
+                          (catch Exception e
+                            (emit-event! emit-frame! state
+                                         {:event "error"
+                                          :data  {:error-code    "runtime/failed"
+                                                  :error-message (or (ex-message e) "extension run failed")}}))))]
+      (session/set-extension-run-fn-in! ctx run-fn))))
+
 (defn- maybe-start-ui-watch-loop!
   [ctx emit-frame! state]
   (when (and (:ui-state-atom ctx)
@@ -1378,6 +1438,9 @@
              (when (or (empty? (:subscribed-topics @state))
                        (contains? (:subscribed-topics @state) "assistant/message"))
                (maybe-start-external-event-loop! ctx emit-frame! state))
+             ;; Re-register extension run-fn with emit-frame! so extension-initiated
+             ;; agent runs (e.g. PSL) stream deltas + final message to the RPC client.
+             (register-rpc-extension-run-fn! ctx emit-frame! state)
              (when ui-topic-request?
                (maybe-start-ui-watch-loop! ctx emit-frame! state)
                (emit-ui-snapshot-events! emit-frame!
