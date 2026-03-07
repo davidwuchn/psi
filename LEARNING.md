@@ -14,6 +14,16 @@ if the input separator marker is present but stale/misaligned, narrow "refresh-i
 logic can skip repair. Calling `psi-emacs--ensure-input-area` on window changes gives
 idempotent repair + width refresh.
 
+### λ `window-text-width` preference alone may not guarantee parity across all separators
+
+Switching projection width logic to prefer `window-text-width` improves one class of
+mismatch, but user-observed layouts can still show unequal lines when different separator
+paths are inserted/refreshed under slightly different boundary assumptions.
+
+Practical implication: treat separator parity as a multi-path invariant (projection/footer
+separator and pre-edit/input separator must derive width from the same effective context)
+rather than assuming one width helper change resolves all rendered lines.
+
 ### λ Use visible text width (`window-text-width`) as first-choice for separator sizing
 
 Margin/body arithmetic can still overestimate in real layouts. For separator lines that
