@@ -4,6 +4,59 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-07 - Extension messages during bootstrap corrupt LLM history
+
+### λ `send-message!` during `init` appends to LLM history before any user turn
+
+`send-extension-message-in!` calls `agent/append-message-in!` unconditionally.
+When an extension calls it inside `init`, extensions load during
+`bootstrap-session-in!` — before `startup-bootstrap-completed?` is set true.
+The resulting assistant message sits at position 0 in history, and the UI shows
+it prepended to the first user prompt.
+
+### λ Guard history append behind `startup-bootstrap-completed?`
+
+The session data atom already carries this flag. Reading it in
+`send-extension-message-in!` is cheap and correct:
+
+```clojure
+(let [bootstrap-complete? (boolean (:startup-bootstrap-completed?
+                                     (get-session-data-in ctx)))]
+  (when bootstrap-complete?
+    (agent/append-message-in! (:agent-ctx ctx) msg)
+    (agent/emit-in! ...)))
+```
+
+Messages sent during bootstrap still reach the event queue (UI notification),
+but never corrupt the conversation context the LLM will see.
+
+### λ Don't silence extension events — redirect them
+
+Dropping bootstrap messages entirely would make `send-message!` silently fail
+from an extension's perspective. The correct fix preserves the event-queue path
+(UI notification) while blocking the history-append path. Extensions that call
+`send-message!` during `init` get UI visibility; they just don't pollute history.
+
+### λ Remove noise at the source AND at the infrastructure layer
+
+Two-layer fix:
+1. Infrastructure: `send-extension-message-in!` guards against bootstrap-time
+   history mutation (robust to any extension).
+2. PSL: remove the `send-message! "PSL extension loaded."` call — it served no
+   operator purpose and was the only known caller of this anti-pattern at init time.
+
+Both layers are needed: the guard protects against future extensions; the removal
+eliminates the known trigger.
+
+### λ `startup-bootstrap-completed?` is the right gate — not `idle?`
+
+The session is already `:idle` (statechart) at the time extensions run, so
+`idle-in?` would return `true` and would not gate anything. The semantic question
+is "has startup finished?" — which is exactly what `startup-bootstrap-completed?`
+tracks. Use the right predicate for the right question.
+
+---
+
 ## 2026-03-07 - Extension run-fn needs emit-frame! to be visible to RPC clients
 
 ### λ The default extension run-fn has no progress-queue — its output is invisible
