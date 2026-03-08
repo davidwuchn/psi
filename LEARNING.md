@@ -4,6 +4,51 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-08 - Anthropic SSE usage is split across two events; hardcoded zeros are silent
+
+### λ Anthropic streaming usage arrives in two separate SSE events — not one
+
+`message_start` carries input-side tokens (`input_tokens`, `cache_read_input_tokens`,
+`cache_creation_input_tokens`). `message_delta` carries `output_tokens`. The `:done`
+event must merge both to produce a complete usage map. Treating either event in
+isolation produces a partial (or zero) usage count.
+
+### λ Hardcoded zeros in provider code produce silent, incorrect telemetry
+
+The Anthropic provider emitted `{:input-tokens 0 :output-tokens 0 :total-tokens 0}`
+unconditionally. This is syntactically valid — no error, no warning — but silently
+wrong. The TUI footer received zeros, computed `context-fraction nil`, and displayed
+`?/0`. The bug was invisible until the footer symptom was reported.
+
+Pattern: when telemetry shows `?` or `0` unexpectedly, check whether the provider
+layer is actually reading the API response or substituting a placeholder.
+
+### λ Accumulate mutable state across SSE events with an atom, not a single-event read
+
+SSE streaming is a sequence of partial events. Usage accumulation requires:
+1. An atom initialized at stream start with zero values.
+2. `message_start` handler: `swap!` to set input/cache tokens.
+3. `message_delta` handler: `swap!` to set output tokens.
+4. `:done` construction: deref atom, compute total, calculate cost.
+
+Trying to read usage from a single event will always miss part of the data.
+
+### λ Compare provider implementations when one is broken and one is correct
+
+OpenAI provider correctly read usage from the final chunk (`(:usage chunk)`).
+Anthropic provider hardcoded zeros. Diffing the two implementations immediately
+revealed the pattern: OpenAI builds a `usage-map` from the API response; Anthropic
+did not. Cross-provider comparison is a fast diagnostic for "why does X work but Y
+doesn't."
+
+### λ Add a require for `models/calculate-cost` at the same time as usage accumulation
+
+Usage without cost is incomplete telemetry. Adding `[psi.ai.models :as models]` to
+the Anthropic provider namespace and calling `(models/calculate-cost model usage)`
+at `:done` time brings Anthropic cost reporting to parity with OpenAI in one commit.
+
+---
+
 ## 2026-03-08 - Subagent profiles should be explicit tool/session inputs, not implicit prompt assumptions
 
 ### λ Normalize agent identity once at the boundary (`@name` → canonical key)
