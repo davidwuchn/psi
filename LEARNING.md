@@ -4,6 +4,36 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-08 - Emacs `defcustom` vs `.dir-locals.el` safety are separate contracts
+
+### λ `defcustom` does not imply safe local variable
+
+A variable defined with `defcustom` is customizable via Customize, but Emacs
+still warns in `.dir-locals.el` unless the variable is marked safe for local
+assignment (`:safe` or safe-local-variable metadata).
+
+### λ Mark command vectors safe with a shape predicate
+
+For process command settings like `psi-emacs-command`, the safe contract is
+"list of strings". Encoding that directly in the variable declaration keeps the
+policy explicit and sharable across repositories:
+
+```elisp
+:safe (lambda (value)
+        (and (listp value)
+             (cl-every #'stringp value)))
+```
+
+This allows project-level overrides in `.dir-locals.el` without per-user prompt
+acceptance and without weakening safety to arbitrary forms.
+
+### λ Prefer variable-level safety over per-value user allowlists
+
+Adding exact entries to `safe-local-variable-values` works locally but does not
+travel with the codebase. Marking the variable itself with a structural
+predicate gives consistent team behavior and keeps trust rules versioned.
+
+
 ## 2026-03-07 - Extension messages during bootstrap corrupt LLM history
 
 ### λ `send-message!` during `init` appends to LLM history before any user turn
