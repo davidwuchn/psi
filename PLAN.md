@@ -131,6 +131,7 @@ Ordered steps toward PSI COMPLETE.
 - Progress: commit `0c6667f` fixed Emacs startup `*lsp-log*` read-only regression by removing buffer-local `inhibit-read-only` from `psi-emacs-mode`, localizing transcript mutations behind explicit `let ((inhibit-read-only t))` boundaries, tightening separator marker validity checks, and updating ERT transcript-clearing tests for read-only semantics.
 - Progress: commit `7b63628` fixed `psi-emacs-project` re-running all prompts when switching to an existing buffer — `psi-emacs-open-buffer` now only activates modes on a fresh buffer (`unless derived-mode-p`), making the function idempotent and preventing buffer-local state wipe on re-entry.
 - Progress: commit `098cead` fixed "Text is read-only" error on buffer switch — `psi-emacs--refresh-input-separator-line` now binds `inhibit-read-only` around its `delete-region`/`insert` pair, matching all other internal transcript mutation sites.
+- Progress: commit `3cc8a76` made runtime UI surface introspectable (`:psi.agent-session/ui-type`) and exposed `:ui-type` on extension API; extension widgets now branch placement by UI (`:console|:tui|:emacs`) in `subagent_widget`, `agent_chain`, and `mcp_tasks_run`.
 - Completed in this cycle:
   - [x] Prompt completion architecture added via CAPF (`components/emacs-ui/psi-completion.el`)
   - [x] `/` completion (slash commands) + `@` completion (file references)
