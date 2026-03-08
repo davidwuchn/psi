@@ -391,6 +391,29 @@ Project command work stayed stable after adding tests that assert:
 
 This test set prevents regressions in command semantics and startup cwd behavior.
 
+## 2026-03-08 - Emacs submit path should enforce separator invariants
+
+### λ Submit lifecycle should reassert input-area boundary immediately
+
+Even with resize/window-change repair hooks, the separator can still appear to
+vanish specifically on prompt submission if marker validity drifts during send
+and no immediate repair runs. A reliable fix is to enforce the invariant in the
+submit path itself: after successful dispatch + input consumption, call
+`psi-emacs--ensure-input-area`.
+
+### λ Invariant location matters more than incidental refresh triggers
+
+Repair logic tied only to window changes or projection refresh is opportunistic.
+Separator correctness is a compose/send invariant, so it should be guaranteed in
+`psi-emacs--consume-dispatched-input`, not left to later unrelated events.
+
+### λ Add a behavior-level regression test for submit-cycle separator resilience
+
+A focused ERT (`psi-send-repairs-missing-input-separator-after-submit`) pins the
+contract that submit keeps or repairs a valid input separator marker and preserves
+expected transcript/input behavior. This prevents future regressions from submit
+flow refactors.
+
 ## 2026-03-07 - Emacs separator width parity needs both width-source correctness and marker repair
 
 ### λ Refresh-on-resize alone is insufficient when separator markers drift
