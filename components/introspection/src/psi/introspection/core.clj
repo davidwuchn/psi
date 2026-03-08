@@ -82,10 +82,8 @@
             (when-not (contains? existing-mutations sym)
               (query/register-mutation! mutation))))]
     ;; AI resolvers (register directly to avoid per-domain env rebuilds)
-    (register-resolver-if-missing! ai/ai-model-resolver)
-    (register-resolver-if-missing! ai/ai-model-list-resolver)
-    (register-resolver-if-missing! ai/ai-provider-models-resolver)
-    (register-resolver-if-missing! ai/ai-provider-registry-resolver)
+    (doseq [r ai/all-resolvers]
+      (register-resolver-if-missing! r))
 
     ;; History + Introspection + Memory + Recursion + Agent-session resolvers
     (doseq [r history-resolvers/all-resolvers]
@@ -196,10 +194,8 @@
   [ctx]
   (let [qctx (:query-ctx ctx)]
     ;; AI resolvers
-    (query/register-resolver-in! qctx ai/ai-model-resolver)
-    (query/register-resolver-in! qctx ai/ai-model-list-resolver)
-    (query/register-resolver-in! qctx ai/ai-provider-models-resolver)
-    (query/register-resolver-in! qctx ai/ai-provider-registry-resolver)
+    (doseq [r ai/all-resolvers]
+      (query/register-resolver-in! qctx r))
 
     ;; History + Introspection + Memory resolvers
     (doseq [r history-resolvers/all-resolvers]

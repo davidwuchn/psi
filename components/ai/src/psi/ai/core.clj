@@ -75,22 +75,23 @@
 ;; Register resolvers with the query component
 ;; ───────────────────────────────────────────────────────────────────────────
 
+(def all-resolvers
+  "All AI resolvers. Used by introspection to avoid duplicating the list."
+  [ai-model-resolver
+   ai-model-list-resolver
+   ai-provider-models-resolver
+   ai-provider-registry-resolver])
+
 (defn register-resolvers-in!
   "Register all AI resolvers into an isolated `qctx` query context and rebuild its env."
   [qctx]
-  (query/register-resolver-in! qctx ai-model-resolver)
-  (query/register-resolver-in! qctx ai-model-list-resolver)
-  (query/register-resolver-in! qctx ai-provider-models-resolver)
-  (query/register-resolver-in! qctx ai-provider-registry-resolver)
+  (run! #(query/register-resolver-in! qctx %) all-resolvers)
   (query/rebuild-env-in! qctx))
 
 (defn register-resolvers!
   "Register all AI resolvers into the global query graph and rebuild the environment."
   []
-  (query/register-resolver! ai-model-resolver)
-  (query/register-resolver! ai-model-list-resolver)
-  (query/register-resolver! ai-provider-models-resolver)
-  (query/register-resolver! ai-provider-registry-resolver)
+  (run! query/register-resolver! all-resolvers)
   (query/rebuild-env!))
 
 ;; ───────────────────────────────────────────────────────────────────────────
