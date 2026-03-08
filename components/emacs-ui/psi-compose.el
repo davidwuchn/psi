@@ -8,6 +8,24 @@
 (require 'subr-x)
 (require 'psi-globals)
 
+(defun psi-emacs--mark-region-read-only (start end)
+  "Mark transcript/output region START..END as read-only."
+  (when (< start end)
+    (add-text-properties start end '(read-only t front-sticky (read-only) rear-nonsticky (read-only)))))
+
+(defun psi-emacs--input-read-only-filter (beg end)
+  "Prevent edits outside compose input region between BEG and END."
+  (let* ((range (psi-emacs--input-range))
+         (start (car range))
+         (finish (cdr range)))
+    (unless (and (>= beg start)
+                 (<= end finish))
+      (signal 'text-read-only nil))))
+
+(defun psi-emacs--install-input-read-only-guard ()
+  "Install compose input-only edit guard in current psi buffer."
+  (add-hook 'before-change-functions #'psi-emacs--input-read-only-filter nil t))
+
 (defun psi-emacs--streaming-p ()
   "Return non-nil when the frontend is in streaming mode."
   (and psi-emacs--state
@@ -327,7 +345,9 @@ Returns non-nil when the request was dispatched."
       (save-excursion
         (psi-emacs--ensure-newline-before-append)
         (let ((line-start (point)))
-          (insert (format "User: %s\n" text*))
+          (let ((inhibit-read-only t))
+            (insert (format "User: %s\n" text*))
+            (psi-emacs--mark-region-read-only line-start (point)))
           (goto-char line-start)
           (psi-emacs--apply-prefix-overlay line-start "User: " 'psi-emacs-user-prompt-face))))))
 
@@ -420,10 +440,11 @@ When idle, routes through slash interception then normal prompt fallback."
   "Ensure transcript append boundary starts on a fresh line.
 
 Content appends immediately above the dedicated input separator."
-  (goto-char (psi-emacs--transcript-append-position))
-  (unless (or (bobp)
-              (eq (char-before) ?\n))
-    (insert "\n")))
+  (let ((inhibit-read-only t))
+    (goto-char (psi-emacs--transcript-append-position))
+    (unless (or (bobp)
+                (eq (char-before) ?\n))
+      (insert "\n"))))
 
 (provide 'psi-compose)
 

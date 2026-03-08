@@ -26,6 +26,7 @@
 (declare-function psi-emacs--archive-thinking-line "psi-assistant-render")
 (declare-function psi-emacs--assistant-before-tool-event "psi-assistant-render")
 (declare-function psi-emacs--ensure-input-area "psi-compose")
+(declare-function psi-emacs--input-range "psi-compose")
 (declare-function psi-emacs--draft-end-position "psi-compose")
 (declare-function psi-emacs--input-separator-marker-valid-p "psi-compose")
 (declare-function psi-emacs--input-separator-needs-refresh-p "psi-compose")

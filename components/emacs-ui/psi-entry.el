@@ -88,6 +88,7 @@ frontend state boundaries."
       (unless (derived-mode-p 'psi-emacs-mode)
         (psi-emacs-mode))
       (psi-emacs--install-buffer-lifecycle-hooks)
+      (psi-emacs--install-input-read-only-guard)
       (setq-local default-directory
                   (psi-emacs--resolve-working-directory start-directory*))
       (if psi-emacs--state
