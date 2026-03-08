@@ -112,7 +112,6 @@ instead of the entire buffer."
 Uses `text-mode' so markdown fontification can be applied selectively to
 finalized assistant content only."
   (setq-local buffer-read-only nil)
-  (setq-local inhibit-read-only t)
   (setq-local read-only-inhibit-point-motion t)
   (psi-emacs--install-prompt-capf))
 

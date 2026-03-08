@@ -14,13 +14,17 @@
     (add-text-properties start end '(read-only t front-sticky (read-only) rear-nonsticky (read-only)))))
 
 (defun psi-emacs--input-read-only-filter (beg end)
-  "Prevent edits outside compose input region between BEG and END."
-  (let* ((range (psi-emacs--input-range))
-         (start (car range))
-         (finish (cdr range)))
-    (unless (and (>= beg start)
-                 (<= end finish))
-      (signal 'text-read-only nil))))
+  "Prevent edits outside compose input region between BEG and END.
+
+Programmatic frontend updates can bypass this guard by binding
+`inhibit-read-only' to non-nil around transcript mutations."
+  (unless inhibit-read-only
+    (let* ((range (psi-emacs--input-range))
+           (start (car range))
+           (finish (cdr range)))
+      (unless (and (>= beg start)
+                   (<= end finish))
+        (signal 'text-read-only nil)))))
 
 (defun psi-emacs--install-input-read-only-guard ()
   "Install compose input-only edit guard in current psi buffer."
@@ -45,12 +49,15 @@ Otherwise, draft ends at `point-max'."
       (point-max))))
 
 (defun psi-emacs--input-separator-marker-valid-p ()
-  "Return non-nil when input separator marker is live and points to separator line."
+  "Return non-nil when input separator marker is live and points to separator line start."
   (and psi-emacs--state
        (markerp (psi-emacs-state-input-separator-marker psi-emacs--state))
        (marker-buffer (psi-emacs-state-input-separator-marker psi-emacs--state))
        (let ((pos (marker-position (psi-emacs-state-input-separator-marker psi-emacs--state))))
          (and (<= pos (point-max))
+              (save-excursion
+                (goto-char pos)
+                (= pos (line-beginning-position)))
               (eq (char-after pos) ?─)))))
 
 (defun psi-emacs--input-separator-position ()
@@ -130,20 +137,21 @@ Otherwise, draft ends at `point-max'."
              (point-offset (and point-in-input? (- (point) input-start)))
              (existing-input (buffer-substring-no-properties input-start input-end)))
         (save-excursion
-          (goto-char input-start)
-          (delete-region input-start input-end)
-          (unless (or (bobp)
-                      (eq (char-before) ?\n))
-            (insert "\n"))
-          (let ((separator-start (point)))
-            (insert (psi-emacs--input-separator-line))
-            (let ((separator-marker (copy-marker separator-start t)))
-              (set-marker-insertion-type separator-marker t)
-              (setf (psi-emacs-state-input-separator-marker psi-emacs--state)
-                    separator-marker))
-            (setf (psi-emacs-state-draft-anchor psi-emacs--state)
-                  (copy-marker (point) nil))
-            (insert existing-input)))
+          (let ((inhibit-read-only t))
+            (goto-char input-start)
+            (delete-region input-start input-end)
+            (unless (or (bobp)
+                        (eq (char-before) ?\n))
+              (insert "\n"))
+            (let ((separator-start (point)))
+              (insert (psi-emacs--input-separator-line))
+              (let ((separator-marker (copy-marker separator-start t)))
+                (set-marker-insertion-type separator-marker t)
+                (setf (psi-emacs-state-input-separator-marker psi-emacs--state)
+                      separator-marker))
+              (setf (psi-emacs-state-draft-anchor psi-emacs--state)
+                    (copy-marker (point) nil))
+              (insert existing-input))))
         (when point-in-input?
           (goto-char (+ (psi-emacs--input-start-position)
                         (min (or point-offset 0)
@@ -230,9 +238,10 @@ legacy draft end behavior."
          (end (cdr range))
          (text* (or text "")))
     (save-excursion
-      (goto-char start)
-      (delete-region start end)
-      (insert text*))
+      (let ((inhibit-read-only t))
+        (goto-char start)
+        (delete-region start end)
+        (insert text*)))
     (goto-char (+ start (length text*)))
     (psi-emacs--set-draft-anchor-to-end)))
 

@@ -63,12 +63,13 @@
     (let ((start (car content-range))
           (end (cdr content-range)))
       (when (< start end)
-        (add-text-properties
-         start
-         end
-         (list 'face 'default
-               'font-lock-face nil
-               psi-emacs--assistant-stream-verbatim-property t))))))
+        (let ((inhibit-read-only t))
+          (add-text-properties
+           start
+           end
+           (list 'face 'default
+                 'font-lock-face nil
+                 psi-emacs--assistant-stream-verbatim-property t)))))))
 
 (defun psi-emacs--clear-assistant-stream-verbatim (range)
   "Remove verbatim display properties from assistant RANGE."
@@ -76,12 +77,13 @@
     (let ((start (car content-range))
           (end (cdr content-range)))
       (when (< start end)
-        (remove-list-of-text-properties
-         start
-         end
-         (list 'face
-               'font-lock-face
-               psi-emacs--assistant-stream-verbatim-property))))))
+        (let ((inhibit-read-only t))
+          (remove-list-of-text-properties
+           start
+           end
+           (list 'face
+                 'font-lock-face
+                 psi-emacs--assistant-stream-verbatim-property)))))))
 
 (defun psi-emacs--apply-finalized-assistant-markdown (start end)
   "Apply markdown/font-lock processing to finalized assistant text START..END."
@@ -157,15 +159,19 @@ while streaming; markdown processing is deferred until finalization."
           (save-excursion
             (let ((start (car range))
                   (end (cdr range)))
-              (goto-char start)
-              (delete-region start end)
-              (insert (psi-emacs--render-thinking-line text))
-              (set-marker end (point))))
+              (let ((inhibit-read-only t))
+                (goto-char start)
+                (delete-region start end)
+                (insert (psi-emacs--render-thinking-line text))
+                (psi-emacs--mark-region-read-only start (point))
+                (set-marker end (point)))))
         (save-excursion
           (psi-emacs--ensure-newline-before-append)
           (let ((start (copy-marker (point) nil))
                 (end (copy-marker (point) nil)))
-            (insert (psi-emacs--render-thinking-line text))
+            (let ((inhibit-read-only t))
+              (insert (psi-emacs--render-thinking-line text))
+              (psi-emacs--mark-region-read-only start (point)))
             (set-marker end (point))
             (setf (psi-emacs-state-thinking-range psi-emacs--state)
                   (cons start end)))))
@@ -203,7 +209,8 @@ while streaming; markdown processing is deferred until finalization."
     (let ((range (psi-emacs-state-thinking-range psi-emacs--state)))
       (when (psi-emacs--assistant-range-live-p range)
         (save-excursion
-          (delete-region (car range) (cdr range))))
+          (let ((inhibit-read-only t))
+            (delete-region (car range) (cdr range)))))
       (when (and (consp range) (markerp (car range)))
         (set-marker (car range) nil))
       (when (and (consp range) (markerp (cdr range)))
