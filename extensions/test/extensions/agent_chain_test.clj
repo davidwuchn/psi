@@ -23,24 +23,24 @@
 
 (def invoke-chart
   (chart/statechart {:id :invoke-workflow}
-    (ele/state {:id :idle}
-      (ele/transition {:event :workflow/start :target :running}))
+                    (ele/state {:id :idle}
+                               (ele/transition {:event :workflow/start :target :running}))
 
-    (ele/state {:id :running}
-      (ele/invoke
-       {:id     :job
-        :type   :future
-        :params (fn [_ data] {:value (:value data)})
-        :src    (fn [{:keys [value]}]
-                  (Thread/sleep 40)
-                  {:value value})})
-      (ele/transition {:event :done.invoke.job :target :done}
-        (ele/script
-         {:expr (fn [_ data]
-                  [{:op :assign
-                    :data {:result (get-in data [:_event :data :value])}}])})))
+                    (ele/state {:id :running}
+                               (ele/invoke
+                                {:id     :job
+                                 :type   :future
+                                 :params (fn [_ data] {:value (:value data)})
+                                 :src    (fn [{:keys [value]}]
+                                           (Thread/sleep 40)
+                                           {:value value})})
+                               (ele/transition {:event :done.invoke.job :target :done}
+                                               (ele/script
+                                                {:expr (fn [_ data]
+                                                         [{:op :assign
+                                                           :data {:result (get-in data [:_event :data :value])}}])})))
 
-    (ele/final {:id :done})))
+                    (ele/final {:id :done})))
 
 (deftest init-registers-surface-test
   (testing "agent chain registers workflow type, tool, commands, session handler, and prompt contribution"
@@ -61,6 +61,7 @@
                    (set (keys (:commands @state)))))
             (is (= 1 (count (get-in @state [:handlers "session_switch"]))))
             (is (contains? (:widgets @state) "agent-chain"))
+            (is (= :above-editor (get-in @state [:widgets "agent-chain" :position])))
             ;; Widget no longer shows "active:" — just the header
             (is (str/includes?
                  (str/join "\n" (get-in @state [:widgets "agent-chain" :lines]))
@@ -169,7 +170,7 @@
                   result  (execute {"action" "list"})]
               (is (false? (:is-error result)))
               (is (str/includes? (:content result) "plan-build-review"))
-              (is (str/includes? (:content result) "planner")))))
+              (is (str/includes? (:content result) "Planner")))))
         (finally
           (.delete tmp))))))
 
@@ -216,6 +217,25 @@
                   result  (execute {"action" "explode"})]
               (is (true? (:is-error result)))
               (is (str/includes? (:content result) "Unknown action")))))
+        (finally
+          (.delete tmp))))))
+
+(deftest agent-chain-widget-placement-follows-ui-type-test
+  (testing "agent_chain widget renders below editor in emacs ui"
+    (let [tmp (temp-dir)]
+      (try
+        (write-chain-config!
+         tmp
+         [{:name "prompt-build"
+           :description "Build prompts"
+           :steps [{:agent "prompt-compiler" :prompt "$INPUT"}]}])
+        (with-user-dir (.getAbsolutePath tmp)
+          (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                                     {:path "/test/agent_chain.clj"
+                                      :ui-type :emacs})]
+            (sut/init api)
+            (is (= :below-editor
+                   (get-in @state [:widgets "agent-chain" :position])))))
         (finally
           (.delete tmp))))))
 

@@ -145,6 +145,7 @@
            :system-prompt (str/trim (nth m 2))})))))
 
 (declare current-session-cwd)
+(declare widget-placement)
 
 (defn- normalize-agent-name [x]
   (some-> x str str/trim (str/replace #"^@" "") str/lower-case not-empty))
@@ -365,7 +366,7 @@
       (doseq [wf wfs]
         ((:set-widget ui)
          (str "sub-" (:psi.extension.workflow/id wf))
-         :above-editor
+         (widget-placement)
          (widget-lines wf)))
       (swap! state assoc :widget-ids current-ids)
       (sync-prompt-contribution!))))
@@ -377,6 +378,14 @@
   (future
     (Thread/sleep 30)
     (refresh-widgets!)))
+
+(defn- ui-type []
+  (or (:ui-type (:api @state)) :console))
+
+(defn- widget-placement []
+  (if (= :emacs (ui-type))
+    :below-editor
+    :above-editor))
 
 (defn- notify! [text level]
   (if-let [ui (:ui @state)]
@@ -545,35 +554,35 @@
 
 (def ^:private subagent-chart
   (chart/statechart {:id :subagent-workflow}
-    (ele/state {:id :idle}
-      (ele/transition {:event :subagent/start :target :running}
-        (ele/script {:expr start-script})))
+                    (ele/state {:id :idle}
+                               (ele/transition {:event :subagent/start :target :running}
+                                               (ele/script {:expr start-script})))
 
-    (ele/state {:id :running}
-      (ele/invoke {:id     :runner
-                   :type   :future
-                   :params (fn [_ data]
-                             {:agent-ctx       (:subagent/agent-ctx data)
-                              :session-ctx     (:subagent/session-ctx data)
-                              :prompt          (:subagent/current-prompt data)
-                              :query-fn        (:subagent/query-fn data)
-                              :get-api-key-fn  (:subagent/get-api-key-fn data)})
-                   :src    run-subagent-job})
-      (ele/transition {:event :done.invoke.runner
-                       :target :done
-                       :cond   invoke-ok?}
-        (ele/script {:expr done-script}))
-      (ele/transition {:event :done.invoke.runner
-                       :target :error}
-        (ele/script {:expr error-script})))
+                    (ele/state {:id :running}
+                               (ele/invoke {:id     :runner
+                                            :type   :future
+                                            :params (fn [_ data]
+                                                      {:agent-ctx       (:subagent/agent-ctx data)
+                                                       :session-ctx     (:subagent/session-ctx data)
+                                                       :prompt          (:subagent/current-prompt data)
+                                                       :query-fn        (:subagent/query-fn data)
+                                                       :get-api-key-fn  (:subagent/get-api-key-fn data)})
+                                            :src    run-subagent-job})
+                               (ele/transition {:event :done.invoke.runner
+                                                :target :done
+                                                :cond   invoke-ok?}
+                                               (ele/script {:expr done-script}))
+                               (ele/transition {:event :done.invoke.runner
+                                                :target :error}
+                                               (ele/script {:expr error-script})))
 
-    (ele/state {:id :done}
-      (ele/transition {:event :subagent/continue :target :running}
-        (ele/script {:expr continue-script})))
+                    (ele/state {:id :done}
+                               (ele/transition {:event :subagent/continue :target :running}
+                                               (ele/script {:expr continue-script})))
 
-    (ele/state {:id :error}
-      (ele/transition {:event :subagent/continue :target :running}
-        (ele/script {:expr continue-script})))))
+                    (ele/state {:id :error}
+                               (ele/transition {:event :subagent/continue :target :running}
+                                               (ele/script {:expr continue-script})))))
 
 (defn- register-subagent-workflow-type! []
   (let [qf          (:query-fn @state)
@@ -821,16 +830,16 @@
     :description "Unified subagent tool. action=create|continue|remove|list"
     :parameters  (pr-str {:type       "object"
                           :properties {"action" {:type "string"
-                                                   :enum subagent-actions
-                                                   :description "Operation to run: create, continue, remove, or list"}
+                                                 :enum subagent-actions
+                                                 :description "Operation to run: create, continue, remove, or list"}
                                        "task"   {:type "string"
-                                                   :description "Task text for action=create"}
+                                                 :description "Task text for action=create"}
                                        "agent"  {:type "string"
-                                                   :description "Optional agent profile name from .psi/agents/*.md for action=create"}
+                                                 :description "Optional agent profile name from .psi/agents/*.md for action=create"}
                                        "id"     {:type "integer"
-                                                   :description "Subagent id for action=continue/remove"}
+                                                 :description "Subagent id for action=continue/remove"}
                                        "prompt" {:type "string"
-                                                   :description "Prompt text for action=continue"}}
+                                                 :description "Prompt text for action=continue"}}
                           :required   ["action"]})
     :execute     (fn [args]
                    (execute-subagent-tool args))})
@@ -876,7 +885,7 @@
                                              (println (if (zero? n)
                                                         "No subagents to clear."
                                                         (str "Cleared " n " subagent"
-                                                             (when (not= 1 n) "s") ".")))))} )
+                                                             (when (not= 1 n) "s") ".")))))})
 
   ((:register-command api) "sublist"
                            {:description "List all subagents"
@@ -891,4 +900,4 @@
                (refresh-widgets!)))
 
   (refresh-widgets!)
-  (notify! "subagent-widget loaded (workflow runtime)" :info))
+  (notify! (str "subagent-widget loaded (workflow runtime, ui=" (name (ui-type)) ")") :info))

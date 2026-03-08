@@ -210,6 +210,7 @@
    :psi.agent-session/model-id
    :psi.agent-session/model-reasoning
    :psi.agent-session/effective-reasoning-effort
+   :psi.agent-session/ui-type             — runtime UI type hint (:console | :tui | :emacs)
    :psi.agent-session/model-catalog       — runtime model picker payload [{:provider :id :name :reasoning}]
    :psi.agent-session/authenticated-providers — provider ids with configured auth for this session
 
@@ -301,10 +302,12 @@
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.agent-session/model
-                 :psi.agent-session/thinking-level]}
+                 :psi.agent-session/thinking-level
+                 :psi.agent-session/ui-type]}
   (let [sd @(:session-data-atom agent-session-ctx)]
     {:psi.agent-session/model          (:model sd)
-     :psi.agent-session/thinking-level (:thinking-level sd)}))
+     :psi.agent-session/thinking-level (:thinking-level sd)
+     :psi.agent-session/ui-type        (:ui-type sd)}))
 
 (defn- contribution->attrs
   [c]

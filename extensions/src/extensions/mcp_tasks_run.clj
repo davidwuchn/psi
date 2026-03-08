@@ -163,6 +163,14 @@
       (quot (- (now-ms) started-ms) 1000)
       (quot elapsed-ms 1000))))
 
+(defn- ui-type []
+  (or (:ui-type @state) :console))
+
+(defn- widget-placement []
+  (if (= :emacs (ui-type))
+    :below-editor
+    :above-editor))
+
 (defn- notify!
   [text level]
   (if-let [ui (:ui @state)]
@@ -1058,7 +1066,7 @@
       (doseq [wf wfs]
         ((:set-widget ui)
          (str "mcp-run-" (:psi.extension.workflow/id wf))
-         :above-editor
+         (widget-placement)
          (widget-lines wf)))
       (when-let [set-status (:set-status ui)]
         (set-status (if (seq wfs)
@@ -1941,6 +1949,7 @@
          :query-fn   (:query api)
          :mutate-fn  (:mutate api)
          :ui         (:ui api)
+         :ui-type    (or (:ui-type api) :console)
          :next-run-id (atom 1)
          :run-controls (atom {})
          :live-progress (atom {})
@@ -1962,4 +1971,4 @@
      (reset! (:next-run-id @state) 1)))
 
   (refresh-widgets-later!)
-  (notify! "mcp-tasks-run loaded" :info))
+  (notify! (str "mcp-tasks-run loaded (ui=" (name (ui-type)) ")") :info))

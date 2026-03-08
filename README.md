@@ -194,6 +194,8 @@ TUI    (charm.clj)   → Elm Architecture terminal UI
 - Query only attributes that exist in the graph; unknown attrs can cause the whole `app-query-tool` request to fail.
 - For the active system prompt, use:
   - `[:psi.agent-session/system-prompt]`
+- For runtime UI surface detection (extension/UI branching), use:
+  - `[:psi.agent-session/ui-type]`  ; `:console` | `:tui` | `:emacs`
 - For prompt sizing (chars + estimated tokens), use:
   - `[{:psi.agent-session/request-shape [:psi.request-shape/system-prompt-chars :psi.request-shape/estimated-tokens :psi.request-shape/total-chars]}]`
 - Avoid non-existent attrs like `:psi.agent-session/prompt`, `:psi.agent-session/instructions`, `:psi.agent-session/messages` unless resolvers are added for them.

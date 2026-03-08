@@ -244,14 +244,17 @@
     :config            — config overrides merged over session/default-config
     :cwd               — working directory for session file layout (default: process cwd)
     :persist?          — if false, disable all disk I/O (default: true)
-    :oauth-ctx         — optional OAuth context for extension auth helpers"
+    :oauth-ctx         — optional OAuth context for extension auth helpers
+    :ui-type           — runtime UI type hint (:console | :tui | :emacs)"
   ([] (create-context {}))
-  ([{:keys [initial-session compaction-fn branch-summary-fn agent-initial config cwd persist? event-queue oauth-ctx recursion-ctx]
+  ([{:keys [initial-session compaction-fn branch-summary-fn agent-initial config cwd persist? event-queue oauth-ctx recursion-ctx ui-type]
      :or   {persist? true}}]
    (let [sc-env            (sc/create-sc-env)
          sc-session-id     (java.util.UUID/randomUUID)
          resolved-cwd      (or cwd (System/getProperty "user.dir"))
-         session-data-atom (atom (session/initial-session (or initial-session {})))
+         initial-session*  (cond-> (or initial-session {})
+                             (some? ui-type) (assoc :ui-type ui-type))
+         session-data-atom (atom (session/initial-session initial-session*))
          agent-ctx         (agent/create-context)
          ext-reg           (ext/create-registry)
          wf-reg            (wf/create-registry)
@@ -639,13 +642,13 @@
        vec))
 
 (defn list-prompt-contributions-in
-  "Return prompt contributions sorted by deterministic render order."  
+  "Return prompt contributions sorted by deterministic render order."
   [ctx]
   (sorted-prompt-contributions (:prompt-contributions (get-session-data-in ctx))))
 
 (defn refresh-system-prompt-in!
   "Recompute runtime :system-prompt from :base-system-prompt plus enabled
-   extension prompt contributions, then sync agent-core."  
+   extension prompt contributions, then sync agent-core."
   [ctx]
   (let [sd      (get-session-data-in ctx)
         base    (or (:base-system-prompt sd) (:system-prompt sd) "")
@@ -659,7 +662,7 @@
   "Set the base system prompt for this session and refresh runtime prompt.
 
    Stores the given prompt in :base-system-prompt, recomputes :system-prompt
-   with extension contributions, and updates agent-core prompt state."  
+   with extension contributions, and updates agent-core prompt state."
   [ctx prompt]
   (swap-session! ctx assoc :base-system-prompt (or prompt ""))
   (refresh-system-prompt-in! ctx))
@@ -888,6 +891,10 @@
      (when-let [oauth-ctx (:oauth-ctx ctx)]
        (oauth/get-api-key oauth-ctx provider)))
 
+   :ui-type-fn
+   (fn []
+     (:ui-type (get-session-data-in ctx)))
+
    :ui-state-atom (:ui-state-atom ctx)})
 
 (defn load-extensions-in!
@@ -906,7 +913,7 @@
   "Unregister all extensions and re-discover/load them.
 
    Clears extension-owned prompt contributions before reload so stale
-   fragments do not persist when extension composition changes."  
+   fragments do not persist when extension composition changes."
   ([ctx] (reload-extensions-in! ctx []))
   ([ctx configured-paths]
    (reload-extensions-in! ctx configured-paths nil))
@@ -978,6 +985,12 @@
   [ctx name]
   (swap-session! ctx assoc :session-name name)
   (journal-append! ctx (persist/session-info-entry name))
+  (get-session-data-in ctx))
+
+(defn set-ui-type-in!
+  "Set runtime UI type hint for this session (:console | :tui | :emacs)."
+  [ctx ui-type]
+  (swap-session! ctx assoc :ui-type ui-type)
   (get-session-data-in ctx))
 
 ;; ============================================================
@@ -2140,6 +2153,7 @@
 (defn set-thinking!     [l]      (set-thinking-level-in!  (global-context) l))
 (defn cycle-thinking!   []       (cycle-thinking-level-in! (global-context)))
 (defn set-name!         [n]      (set-session-name-in!    (global-context) n))
+(defn set-ui-type!      [ui]     (set-ui-type-in!         (global-context) ui))
 (defn compact!          []       (manual-compact-in!      (global-context)))
 (defn compact-with!     [instr]  (manual-compact-in!      (global-context) instr))
 (defn set-auto-compact! [e]      (set-auto-compaction-in! (global-context) e))

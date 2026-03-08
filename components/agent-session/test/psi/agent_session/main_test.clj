@@ -50,72 +50,65 @@
       (is (str/includes? error "OPENAI_API_KEY"))
       (is (str/includes? error "anthropic")))))
 
+(defn- with-main-bootstrap-stubs
+  [f]
+  (with-redefs [psi.agent-session.main/resolve-model
+                (fn [_]
+                  {:provider           :anthropic
+                   :id                 "test-model"
+                   :name               "Test Model"
+                   :supports-reasoning false
+                   :context-window     200000})
+                oauth/create-context (fn [] nil)
+                pt/discover-templates (fn [] [])
+                skills/discover-skills (fn [] {:skills [] :diagnostics []})
+                sys-prompt/discover-context-files (fn [_] [])
+                sys-prompt/build-system-prompt (fn [_] "")
+                ext/discover-extension-paths (fn [& _] [])
+                session/bootstrap-session-in!
+                (fn [ctx _]
+                  (session/new-session-in! ctx)
+                  {:extension-errors [] :extension-loaded-count 0})]
+    (f)))
+
 (deftest run-session-initializes-session-file-test
   (let [orig-state @main/session-state]
     (try
-      (with-redefs [psi.agent-session.main/resolve-model
-                    (fn [_]
-                      {:provider           :anthropic
-                       :id                 "test-model"
-                       :name               "Test Model"
-                       :supports-reasoning false
-                       :context-window     200000})
-                    oauth/create-context (fn [] nil)
-                    pt/discover-templates (fn [] [])
-                    skills/discover-skills (fn [] {:skills [] :diagnostics []})
-                    sys-prompt/discover-context-files (fn [_] [])
-                    sys-prompt/build-system-prompt (fn [_] "")
-                    ext/discover-extension-paths (fn [& _] [])
-                    session/bootstrap-session-in!
-                    (fn [ctx _]
-                      (session/new-session-in! ctx)
-                      {:extension-errors [] :extension-loaded-count 0})
-                    clojure.core/read-line (let [calls (atom 0)]
-                                             (fn []
-                                               (if (= 1 (swap! calls inc))
-                                                 "/quit"
-                                                 nil)))]
-        (main/run-session :ignored)
-        (let [ctx (:ctx @main/session-state)]
-          (is (some? ctx))
-          (is (string? (:session-file (session/get-session-data-in ctx))))))
+      (with-main-bootstrap-stubs
+        (fn []
+          (with-redefs [clojure.core/read-line (let [calls (atom 0)]
+                                                 (fn []
+                                                   (if (= 1 (swap! calls inc))
+                                                     "/quit"
+                                                     nil)))]
+            (main/run-session :ignored)
+            (let [ctx (:ctx @main/session-state)
+                  sd  (session/get-session-data-in ctx)]
+              (is (some? ctx))
+              (is (string? (:session-file sd)))
+              (is (= :console (:ui-type sd)))))))
       (finally
         (reset! main/session-state orig-state)))))
 
 (deftest run-session-journals-command-inputs-test
   (let [orig-state @main/session-state]
     (try
-      (with-redefs [psi.agent-session.main/resolve-model
-                    (fn [_]
-                      {:provider           :anthropic
-                       :id                 "test-model"
-                       :name               "Test Model"
-                       :supports-reasoning false
-                       :context-window     200000})
-                    oauth/create-context (fn [] nil)
-                    pt/discover-templates (fn [] [])
-                    skills/discover-skills (fn [] {:skills [] :diagnostics []})
-                    sys-prompt/discover-context-files (fn [_] [])
-                    sys-prompt/build-system-prompt (fn [_] "")
-                    ext/discover-extension-paths (fn [& _] [])
-                    session/bootstrap-session-in!
-                    (fn [ctx _]
-                      (session/new-session-in! ctx)
-                      {:extension-errors [] :extension-loaded-count 0})
-                    clojure.core/read-line (let [calls (atom 0)]
-                                             (fn []
-                                               (case (swap! calls inc)
-                                                 1 "/history"
-                                                 2 "/quit"
-                                                 nil)))]
-        (main/run-session :ignored)
-        (let [ctx (:ctx @main/session-state)
-              msg-texts (->> @(:journal-atom ctx)
-                             (filter #(= :message (:kind %)))
-                             (map #(get-in % [:data :message :content 0 :text]))
-                             set)]
-          (is (contains? msg-texts "/history"))
-          (is (contains? msg-texts "/quit"))))
+      (with-main-bootstrap-stubs
+        (fn []
+          (with-redefs [clojure.core/read-line (let [calls (atom 0)]
+                                                 (fn []
+                                                   (case (swap! calls inc)
+                                                     1 "/history"
+                                                     2 "/quit"
+                                                     nil)))]
+            (main/run-session :ignored)
+            (let [ctx (:ctx @main/session-state)
+                  msg-texts (->> @(:journal-atom ctx)
+                                 (filter #(= :message (:kind %)))
+                                 (map #(get-in % [:data :message :content 0 :text]))
+                                 set)]
+              (is (contains? msg-texts "/history"))
+              (is (contains? msg-texts "/quit"))))))
       (finally
         (reset! main/session-state orig-state)))))
 
@@ -123,63 +116,34 @@
   (let [orig-state @main/session-state
         captured   (atom nil)]
     (try
-      (with-redefs [psi.agent-session.main/resolve-model
-                    (fn [_]
-                      {:provider           :anthropic
-                       :id                 "test-model"
-                       :name               "Test Model"
-                       :supports-reasoning false
-                       :context-window     200000})
-                    oauth/create-context (fn [] nil)
-                    pt/discover-templates (fn [] [])
-                    skills/discover-skills (fn [] {:skills [] :diagnostics []})
-                    sys-prompt/discover-context-files (fn [_] [])
-                    sys-prompt/build-system-prompt (fn [_] "")
-                    ext/discover-extension-paths (fn [& _] [])
-                    session/bootstrap-session-in!
-                    (fn [ctx _]
-                      (session/new-session-in! ctx)
-                      {:extension-errors [] :extension-loaded-count 0})
-                    tui-app/start! (fn [_model-name _run-agent-fn opts]
-                                     (reset! captured opts)
-                                     :ok)]
-        (is (= :ok (main/run-tui-session :ignored)))
-        (is (string? (:current-session-file @captured)))
-        (is (fn? (:dispatch-fn @captured)))
-        (is (fn? (:on-interrupt-fn! @captured))))
+      (with-main-bootstrap-stubs
+        (fn []
+          (with-redefs [tui-app/start! (fn [_model-name _run-agent-fn opts]
+                                         (reset! captured opts)
+                                         :ok)]
+            (is (= :ok (main/run-tui-session :ignored)))
+            (is (string? (:current-session-file @captured)))
+            (is (fn? (:dispatch-fn @captured)))
+            (is (fn? (:on-interrupt-fn! @captured)))
+            (is (= :tui (:ui-type (session/get-session-data-in (:ctx @main/session-state))))))))
       (finally
         (reset! main/session-state orig-state)))))
 
 (deftest run-tui-dispatch-journals-command-input-test
   (let [orig-state @main/session-state]
     (try
-      (with-redefs [psi.agent-session.main/resolve-model
-                    (fn [_]
-                      {:provider           :anthropic
-                       :id                 "test-model"
-                       :name               "Test Model"
-                       :supports-reasoning false
-                       :context-window     200000})
-                    oauth/create-context (fn [] nil)
-                    pt/discover-templates (fn [] [])
-                    skills/discover-skills (fn [] {:skills [] :diagnostics []})
-                    sys-prompt/discover-context-files (fn [_] [])
-                    sys-prompt/build-system-prompt (fn [_] "")
-                    ext/discover-extension-paths (fn [& _] [])
-                    session/bootstrap-session-in!
-                    (fn [ctx _]
-                      (session/new-session-in! ctx)
-                      {:extension-errors [] :extension-loaded-count 0})
-                    tui-app/start! (fn [_model-name _run-agent-fn opts]
-                                     ((:dispatch-fn opts) "/history")
-                                     :ok)]
-        (is (= :ok (main/run-tui-session :ignored)))
-        (let [ctx (:ctx @main/session-state)
-              msg-texts (->> @(:journal-atom ctx)
-                             (filter #(= :message (:kind %)))
-                             (map #(get-in % [:data :message :content 0 :text]))
-                             set)]
-          (is (contains? msg-texts "/history"))))
+      (with-main-bootstrap-stubs
+        (fn []
+          (with-redefs [tui-app/start! (fn [_model-name _run-agent-fn opts]
+                                         ((:dispatch-fn opts) "/history")
+                                         :ok)]
+            (is (= :ok (main/run-tui-session :ignored)))
+            (let [ctx (:ctx @main/session-state)
+                  msg-texts (->> @(:journal-atom ctx)
+                                 (filter #(= :message (:kind %)))
+                                 (map #(get-in % [:data :message :content 0 :text]))
+                                 set)]
+              (is (contains? msg-texts "/history"))))))
       (finally
         (reset! main/session-state orig-state)))))
 
@@ -187,32 +151,22 @@
   (let [orig-state @main/session-state
         captured   (atom nil)]
     (try
-      (with-redefs [psi.agent-session.main/resolve-model
-                    (fn [_]
-                      {:provider           :anthropic
-                       :id                 "test-model"
-                       :name               "Test Model"
-                       :supports-reasoning false
-                       :context-window     200000})
-                    oauth/create-context (fn [] nil)
-                    pt/discover-templates (fn [] [])
-                    skills/discover-skills (fn [] {:skills [] :diagnostics []})
-                    sys-prompt/discover-context-files (fn [_] [])
-                    sys-prompt/build-system-prompt (fn [_] "")
-                    ext/discover-extension-paths (fn [& _] [])
-                    session/bootstrap-session-in!
-                    (fn [ctx _]
-                      (session/new-session-in! ctx)
-                      {:extension-errors [] :extension-loaded-count 0})
-                    rpc/run-stdio-loop!
-                    (fn [opts]
-                      (reset! captured opts)
-                      :ok)]
-        (#'main/run-rpc-edn-session! :ignored)
-        (let [ctx (:ctx @main/session-state)]
-          (is (some? ctx))
-          (is (string? (:session-file (session/get-session-data-in ctx))))
-          (is (fn? (:request-handler @captured)))))
+      (with-main-bootstrap-stubs
+        (fn []
+          (with-redefs [rpc/run-stdio-loop!
+                        (fn [opts]
+                          (reset! captured opts)
+                          :ok)]
+            (#'main/run-rpc-edn-session! :ignored)
+            (let [ctx (:ctx @main/session-state)
+                  sd  (session/get-session-data-in ctx)
+                  hs  (:handshake-server-info-fn @(:state @captured))]
+              (is (some? ctx))
+              (is (string? (:session-file sd)))
+              (is (= :emacs (:ui-type sd)))
+              (is (fn? hs))
+              (is (= :emacs (:ui-type (hs))))
+              (is (fn? (:request-handler @captured)))))))
       (finally
         (reset! main/session-state orig-state)))))
 

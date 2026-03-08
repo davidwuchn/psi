@@ -94,11 +94,13 @@
     (let [result (q [:psi.agent-session/messages-count
                      :psi.agent-session/ai-call-count
                      :psi.agent-session/tool-call-count
+                     :psi.agent-session/ui-type
                      :psi.agent-session/start-time
                      :psi.agent-session/current-time])]
       (is (integer? (:psi.agent-session/messages-count result)))
       (is (integer? (:psi.agent-session/ai-call-count result)))
       (is (integer? (:psi.agent-session/tool-call-count result)))
+      (is (contains? #{:console :tui :emacs} (:psi.agent-session/ui-type result)))
       (is (instance? java.time.Instant (:psi.agent-session/start-time result)))
       (is (instance? java.time.Instant (:psi.agent-session/current-time result))))))
 
@@ -108,6 +110,7 @@
   (testing "new attrs compose with existing stable attrs"
     (let [result (q [:psi.agent-session/phase
                      :psi.agent-session/model
+                     :psi.agent-session/ui-type
                      :psi.agent-session/session-id
                      :psi.agent-session/messages-count
                      :psi.agent-session/ai-call-count
@@ -115,6 +118,7 @@
                      :psi.agent-session/start-time
                      :psi.agent-session/current-time])]
       (is (keyword? (:psi.agent-session/phase result)))
+      (is (contains? #{:console :tui :emacs} (:psi.agent-session/ui-type result)))
       (is (integer? (:psi.agent-session/messages-count result)))
       (is (integer? (:psi.agent-session/ai-call-count result)))
       (is (integer? (:psi.agent-session/tool-call-count result)))

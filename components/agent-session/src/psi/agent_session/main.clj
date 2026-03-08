@@ -177,7 +177,7 @@
       ai-model)))
 
 (defn- effective-thinking-level-from-project-preferences
-  "Return project-selected thinking level (clamped by model), else :off/model default." 
+  "Return project-selected thinking level (clamped by model), else :off/model default."
   [cwd model]
   (let [prefs (project-prefs/read-preferences cwd)
         pref-level (project-prefs/project-thinking-level prefs)]
@@ -490,8 +490,9 @@
    - :event-queue optional TUI/RPC event queue
    - :memory-runtime-opts optional memory/runtime sync opts
    - :session-config optional session config overrides (merged with defaults)
-   - :cwd optional cwd override (primarily for tests)"
-  [ai-model {:keys [event-queue memory-runtime-opts session-config cwd]}]
+   - :cwd optional cwd override (primarily for tests)
+   - :ui-type runtime UI type hint (:console | :tui | :emacs)"
+  [ai-model {:keys [event-queue memory-runtime-opts session-config cwd ui-type]}]
   (let [oauth-ctx      (oauth/create-context)
         templates      (pt/discover-templates)
         {:keys [skills diagnostics]} (skills/discover-skills)
@@ -512,11 +513,13 @@
                                                    :id        (:id effective-model)
                                                    :reasoning (:supports-reasoning effective-model)}
                                            :thinking-level effective-thinking-level
-                                           :system-prompt   base-prompt}
+                                           :system-prompt   base-prompt
+                                           :ui-type         (or ui-type :console)}
                          :config session-config
                          :event-queue event-queue
                          :oauth-ctx oauth-ctx
-                         :recursion-ctx recursion-ctx})
+                         :recursion-ctx recursion-ctx
+                         :ui-type ui-type})
         ext-paths      (ext/discover-extension-paths [] cwd)
         app-query-tool (tools/make-app-query-tool (fn [q] (session/query-in ctx q)))
         summary        (session/bootstrap-session-in!
@@ -537,7 +540,7 @@
                          :graph-capabilities graph-caps})
         _              (session/set-system-prompt-in! ctx system-prompt)
         _              (memory-runtime/sync-memory-layer! (merge {:cwd cwd}
-                                                                  (or memory-runtime-opts {})))
+                                                                 (or memory-runtime-opts {})))
         startup-rehydrate (start-new-session-with-startup! ctx nil ai-model)]
     (doseq [{:keys [path error]} (:extension-errors summary)]
       (timbre/warn "Extension error:" path error))
@@ -571,7 +574,8 @@
          ai-ctx    nil
          {:keys [ctx oauth-ctx templates skills startup-rehydrate]}
          (bootstrap-runtime-session! ai-model {:memory-runtime-opts memory-runtime-opts
-                                               :session-config session-config})]
+                                               :session-config session-config
+                                               :ui-type :console})]
      ;; Expose state for nREPL introspection
      (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model
                             :oauth-ctx oauth-ctx})
@@ -679,7 +683,8 @@
                                                         ai-model
                                                         {:event-queue event-queue
                                                          :memory-runtime-opts memory-runtime-opts
-                                                         :session-config session-config})
+                                                         :session-config session-config
+                                                         :ui-type :tui})
 
          ;; Expose state for nREPL introspection
          _         (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model
@@ -829,10 +834,12 @@
                boot        (bootstrap-runtime-session! ai-model
                                                        {:event-queue event-queue
                                                         :memory-runtime-opts memory-runtime-opts
-                                                        :session-config session-config})
+                                                        :session-config session-config
+                                                        :ui-type :emacs})
                ctx         (:ctx boot)
                oauth-ctx   (:oauth-ctx boot)
-               state       (atom {:handshake-server-info-fn (fn [] (rpc/session->handshake-server-info ctx))
+               state       (atom {:handshake-server-info-fn (fn [] (assoc (rpc/session->handshake-server-info ctx)
+                                                                          :ui-type :emacs))
                                   :subscribed-topics #{}
                                   :rpc-ai-model ai-model
                                   :on-new-session! (fn []

@@ -418,6 +418,7 @@
      :query-fn      — (fn [eql-query])
      :mutate-fn     — (fn [op-sym params])
      :get-api-key-fn — (fn [provider]) ; narrow auth capability
+     :ui-type-fn    — (fn [] => :console|:tui|:emacs|nil)
      :ui-state-atom — atom used to build extension UI context
 
    Any missing runtime key throws."
@@ -569,6 +570,13 @@
      :events
      {:emit (fn [channel data] (bus-emit-in! reg channel data))
       :on   (fn [channel handler] (bus-on-in! reg channel handler))}
+
+     ;; ── UI type hint ───────────────────────────────────
+     ;; Runtime UI surface marker for extension branching.
+     :ui-type
+     (if-let [f (:ui-type-fn runtime-fns)]
+       (f)
+       nil)
 
      ;; ── UI context ─────────────────────────────────────
      ;; nil when headless (no TUI); present when TUI is active.

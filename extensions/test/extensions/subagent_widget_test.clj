@@ -16,7 +16,7 @@
 (defn with-test-agents-dir
   [agent-files f]
   (let [tmp-dir    (java.nio.file.Files/createTempDirectory "subagent-widget-test"
-                                                              (make-array java.nio.file.attribute.FileAttribute 0))
+                                                            (make-array java.nio.file.attribute.FileAttribute 0))
         root       (.toFile tmp-dir)
         agents-dir (io/file root ".psi" "agents")]
     (.mkdirs agents-dir)
@@ -40,7 +40,7 @@
       (is (= expected-command-names
              (set (keys (:commands @state)))))
       (is (= 1 (count (get-in @state [:handlers "session_switch"]))))
-      (is (= "subagent-widget loaded (workflow runtime)"
+      (is (= "subagent-widget loaded (workflow runtime, ui=console)"
              (-> @state :notifications last :text)))
       (is (= 1 (count (:prompt-contributions @state))))
       (is (contains? (:prompt-contributions @state)
@@ -177,3 +177,13 @@
           (is (:ok? result))
           (is (= [fake-agent-ctx qf] @created))
           (is (= fake-session-ctx (nth @captured 1))))))))
+
+(deftest subagent-widget-placement-follows-ui-type-test
+  (testing "widgets render below editor in emacs ui"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/subagent_widget.clj"
+                                :ui-type :emacs})]
+      (sut/init api)
+      (let [execute (get-in @state [:tools "subagent" :execute])]
+        (execute {"action" "create" "task" "test task"})
+        (is (= :below-editor (get-in @state [:widgets "sub-1" :position])))))))

@@ -591,7 +591,22 @@
       (is (= "handshake" (:op frame)))
       (is (= "1.0" (:protocol-version info)))
       (is (contains? info :session-id))
-      (is (= ["eql-graph" "eql-memory"] (:features info))))))
+      (is (= ["eql-graph" "eql-memory"] (:features info)))))
+
+  (testing "handshake includes runtime ui-type when provided by bootstrap/runtime state"
+    (let [ctx     (session/create-context)
+          state   (atom {:handshake-server-info-fn (fn [] (assoc (rpc/session->handshake-server-info ctx)
+                                                                 :ui-type :emacs))})
+          handler (rpc/make-session-request-handler ctx)
+          {:keys [out-lines]}
+          (run-loop "{:id \"h2\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                    handler
+                    state)
+          frame   (-> out-lines first edn/read-string)
+          info    (get-in frame [:data :server-info])]
+      (is (= :response (:kind frame)))
+      (is (= "handshake" (:op frame)))
+      (is (= :emacs (:ui-type info))))))
 
 (deftest rpc-dialog-response-ops-test
   (testing "resolve_dialog succeeds with active dialog and matching id"

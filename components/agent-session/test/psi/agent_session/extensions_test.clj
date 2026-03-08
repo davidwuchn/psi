@@ -283,7 +283,7 @@
                        (throw (Exception. "should not be called")))
           _          (ext/register-extension-in! reg "/ext/a")
           _          (ext/register-handler-in! reg "/ext/a" "tool_call"
-                                              (fn [_] {:block true :reason "blocked!"}))
+                                               (fn [_] {:block true :reason "blocked!"}))
           wrapped    (ext/wrap-tool-executor reg execute-fn)]
       (is (= {:content "blocked!" :is-error true}
              (wrapped "bash" {"command" "rm -rf /"})))))
@@ -293,7 +293,7 @@
           execute-fn (fn [_tool-name _args] {:content "original" :is-error false})
           _          (ext/register-extension-in! reg "/ext/a")
           _          (ext/register-handler-in! reg "/ext/a" "tool_result"
-                                              (fn [_] {:content "modified"}))
+                                               (fn [_] {:content "modified"}))
           wrapped    (ext/wrap-tool-executor reg execute-fn)]
       (is (= {:content "modified" :is-error false}
              (wrapped "read" {"path" "test.txt"})))))
@@ -303,7 +303,7 @@
           execute-fn (fn [_tool-name _args] {:content "result" :is-error false})
           _          (ext/register-extension-in! reg "/ext/a")
           _          (ext/register-handler-in! reg "/ext/a" "tool_result"
-                                              (fn [_] {:is-error true}))
+                                               (fn [_] {:is-error true}))
           wrapped    (ext/wrap-tool-executor reg execute-fn)]
       (is (= {:content "result" :is-error true}
              (wrapped "read" {"path" "test.txt"}))))))
@@ -457,6 +457,13 @@
           runtime-fns {:query-fn (fn [q] {:echo q})}
           api         (ext/create-extension-api reg "/ext/test" runtime-fns)]
       (is (= {:echo [:x]} ((:query api) [:x])))))
+
+  (testing "API :ui-type delegates to runtime ui-type fn"
+    (let [reg         (ext/create-registry)
+          _           (ext/register-extension-in! reg "/ext/test")
+          runtime-fns {:ui-type-fn (fn [] :emacs)}
+          api         (ext/create-extension-api reg "/ext/test" runtime-fns)]
+      (is (= :emacs (:ui-type api)))))
 
   (testing "API :mutate delegates to runtime mutate fn"
     (let [reg         (ext/create-registry)

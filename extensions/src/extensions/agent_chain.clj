@@ -64,7 +64,6 @@
      :psi.extension.workflow/started-at]}])
 
 (def ^:private widget-id "agent-chain")
-(def ^:private widget-placement :above-editor)
 (def ^:private max-widget-runs 4)
 (def ^:private prompt-contribution-id "agent-chain-chains")
 
@@ -267,10 +266,15 @@
                 :enabled  true
                 :content  (prompt-contribution-content)})))
 
+(defn- widget-placement []
+  (if (= :emacs (or (:ui-type @state) :console))
+    :below-editor
+    :above-editor))
+
 (defn- refresh-widget! []
   (when-let [ui (:ui @state)]
     (when-let [set-widget (:set-widget ui)]
-      (set-widget widget-id widget-placement (widget-lines)))))
+      (set-widget widget-id (widget-placement) (widget-lines)))))
 
 (defn- trim-runs! []
   (when-let [runs-a (:runs @state)]
@@ -902,13 +906,13 @@
        {:content  (str "Unknown action: \"" action "\". Valid actions: run, list, reload.")
         :is-error true}))))
 
-
 ;;; Extension init
 
 (defn init
   "Initialize the agent-chain extension."
   [api]
   (let [cwd              (System/getProperty "user.dir")
+        ui-type          (or (:ui-type api) :console)
         all-agents-a     (atom (scan-agent-dirs cwd))
         chains-a         (atom (load-chains cwd))
         agent-sessions-a (atom {})
@@ -930,7 +934,8 @@
              :next-run-id    next-run-id-a
              :query-fn       query-fn
              :mutate-fn      mutate-fn
-             :get-api-key-fn get-api-key-fn})
+             :get-api-key-fn get-api-key-fn
+             :ui-type        ui-type})
 
     (register-chain-workflow-type!)
     (register-prompt-contribution! api)
@@ -978,4 +983,6 @@
                  (refresh-widget!)
                  (sync-prompt-contribution!)))
 
-    (refresh-widget!)))
+    (refresh-widget!)
+    (when-let [ui (:ui api)]
+      ((:notify ui) (str "agent-chain loaded (ui=" (name ui-type) ")") :info))))

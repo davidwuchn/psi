@@ -27,7 +27,8 @@
      :extensions            — {extension-path Extension-map}
      :session-entries       — [SessionEntry map], append-only journal
      :context-tokens        — nil | integer, nil after compaction until next turn
-     :context-window        — integer, model context window size"
+     :context-window        — integer, model context window size
+     :ui-type               — :console | :tui | :emacs (runtime surface hint for extensions)"
   (:require
    [malli.core :as m]))
 
@@ -37,6 +38,9 @@
 
 (def thinking-level-schema
   [:enum :off :minimal :low :medium :high :xhigh])
+
+(def ui-type-schema
+  [:enum :console :tui :emacs])
 
 (def model-schema
   [:map
@@ -149,6 +153,7 @@
    [:extension-last-prompt-at {:optional true} [:maybe inst?]]
    [:context-tokens {:optional true} [:maybe :int]]
    [:context-window {:optional true} [:maybe :int]]
+   [:ui-type {:optional true} ui-type-schema]
    [:tool-output-overrides {:optional true} [:map-of :string [:map
                                                               [:max-lines {:optional true} [:maybe :int]]
                                                               [:max-bytes {:optional true} [:maybe :int]]]]]])
@@ -216,6 +221,7 @@
      :extension-last-prompt-at nil
      :context-tokens          nil
      :context-window          nil
+     :ui-type                 :console
      :tool-output-overrides   {}}
     overrides)))
 

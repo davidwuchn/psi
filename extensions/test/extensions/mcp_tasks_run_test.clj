@@ -56,7 +56,7 @@
       (is (contains? (:workflow-types @state) :mcp-tasks-run))
       (is (contains? (:commands @state) "mcp-tasks-run"))
       (is (= 1 (count (get-in @state [:handlers "session_switch"]))))
-      (is (= "mcp-tasks-run loaded"
+      (is (= "mcp-tasks-run loaded (ui=console)"
              (-> @state :notifications last :text))))))
 
 (deftest command-basic-behavior-test
@@ -784,6 +784,25 @@
           "should include follow-up lines")
       (is (some #(re-find #"- Option B" %) lines)
           "should include all question lines"))))
+
+(deftest widget-placement-follows-ui-type-test
+  (testing "refresh-widgets places widgets below editor in emacs ui"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/mcp_tasks_run.clj"
+                                :ui-type :emacs})
+          wf {:psi.extension.workflow/id "run-1"
+              :psi.extension.workflow/phase :running
+              :psi.extension.workflow/running? true
+              :psi.extension.workflow/error? false
+              :psi.extension.workflow/data {:run/task-id 42
+                                            :run/entity-type :task
+                                            :run/current-state :refined
+                                            :run/last-step "execute-task"}}]
+      (sut/init api)
+      (with-redefs [sut/mcp-run-workflows (fn [] [wf])]
+        (#'sut/refresh-widgets!))
+      (is (= :below-editor
+             (get-in @state [:widgets "mcp-run-run-1" :position]))))))
 
 (deftest list-runs-shows-question-on-user-confirmation-test
   ;; Tests that list-runs! includes the question text in output

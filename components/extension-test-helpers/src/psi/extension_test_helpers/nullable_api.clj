@@ -38,7 +38,7 @@
        vec))
 
 (defn- default-query-fn
-  [state {:keys [path model system-prompt]} q]
+  [state {:keys [path model system-prompt ui-type]} q]
   (swap! state update :queries conj q)
   (cond
     ;; Session model
@@ -51,6 +51,10 @@
     ;; Session system prompt
     (= q [:psi.agent-session/system-prompt])
     {:psi.agent-session/system-prompt system-prompt}
+
+    ;; Session UI type
+    (= q [:psi.agent-session/ui-type])
+    {:psi.agent-session/ui-type (or ui-type :console)}
 
     ;; Extension workflows
     (and (vector? q)
@@ -232,78 +236,79 @@
                          (mutate-base op params')))
          get-key*    (or get-api-key-fn (fn [_provider] nil))
          api         {:path path*
-                     :query query*
-                     :mutate mutate*
-                     :get-api-key get-key*
+                      :query query*
+                      :mutate mutate*
+                      :get-api-key get-key*
+                      :ui-type (or (:ui-type opts*) :console)
 
-                     :register-tool
-                     (fn [tool]
-                       (swap! state assoc-in [:tools (:name tool)] tool)
-                       tool)
+                      :register-tool
+                      (fn [tool]
+                        (swap! state assoc-in [:tools (:name tool)] tool)
+                        tool)
 
-                     :register-command
-                     (fn [name opts]
-                       (let [cmd (assoc opts :name name)]
-                         (swap! state assoc-in [:commands name] cmd)
-                         cmd))
+                      :register-command
+                      (fn [name opts]
+                        (let [cmd (assoc opts :name name)]
+                          (swap! state assoc-in [:commands name] cmd)
+                          cmd))
 
-                     :register-flag
-                     (fn [name opts]
-                       (let [flag (assoc opts :name name)]
-                         (swap! state assoc-in [:flags name] flag)
-                         (when (and (contains? flag :default)
-                                    (not (contains? (:flag-values @state) name)))
-                           (swap! state assoc-in [:flag-values name] (:default flag)))
-                         flag))
+                      :register-flag
+                      (fn [name opts]
+                        (let [flag (assoc opts :name name)]
+                          (swap! state assoc-in [:flags name] flag)
+                          (when (and (contains? flag :default)
+                                     (not (contains? (:flag-values @state) name)))
+                            (swap! state assoc-in [:flag-values name] (:default flag)))
+                          flag))
 
-                     :register-shortcut
-                     (fn [key opts]
-                       (let [shortcut (assoc opts :key key)]
-                         (swap! state assoc-in [:shortcuts key] shortcut)
-                         shortcut))
+                      :register-shortcut
+                      (fn [key opts]
+                        (let [shortcut (assoc opts :key key)]
+                          (swap! state assoc-in [:shortcuts key] shortcut)
+                          shortcut))
 
-                     :on
-                     (fn [event-name handler-fn]
-                       (swap! state update-in [:handlers event-name] (fnil conj []) handler-fn)
-                       handler-fn)
+                      :on
+                      (fn [event-name handler-fn]
+                        (swap! state update-in [:handlers event-name] (fnil conj []) handler-fn)
+                        handler-fn)
 
-                     :get-flag
-                     (fn [name]
-                       (get-in @state [:flag-values name]))
+                      :get-flag
+                      (fn [name]
+                        (get-in @state [:flag-values name]))
 
-                     :register-prompt-contribution
-                     (fn [id contribution]
-                       (mutate* 'psi.extension/register-prompt-contribution
-                                {:id id :contribution contribution}))
+                      :register-prompt-contribution
+                      (fn [id contribution]
+                        (mutate* 'psi.extension/register-prompt-contribution
+                                 {:id id :contribution contribution}))
 
-                     :update-prompt-contribution
-                     (fn [id patch]
-                       (mutate* 'psi.extension/update-prompt-contribution
-                                {:id id :patch patch}))
+                      :update-prompt-contribution
+                      (fn [id patch]
+                        (mutate* 'psi.extension/update-prompt-contribution
+                                 {:id id :patch patch}))
 
-                     :unregister-prompt-contribution
-                     (fn [id]
-                       (mutate* 'psi.extension/unregister-prompt-contribution
-                                {:id id}))
+                      :unregister-prompt-contribution
+                      (fn [id]
+                        (mutate* 'psi.extension/unregister-prompt-contribution
+                                 {:id id}))
 
-                     :list-prompt-contributions
-                     (fn []
-                       (let [all (:psi.extension/prompt-contributions
-                                  (query* [:psi.extension/prompt-contributions]))]
-                         (->> all
-                              (filter #(= path* (:ext-path %)))
-                              vec)))
+                      :list-prompt-contributions
+                      (fn []
+                        (let [all (:psi.extension/prompt-contributions
+                                   (query* [:psi.extension/prompt-contributions]))]
+                          (->> all
+                               (filter #(= path* (:ext-path %)))
+                               vec)))
 
-                     :ui {:notify       (fn [text level]
-                                          (swap! state update :notifications conj {:text text :level level}))
-                          :set-widget   (fn [id position lines]
-                                          (swap! state assoc-in [:widgets id]
-                                                 {:id id :position position :lines lines}))
-                          :clear-widget (fn [id]
-                                          (swap! state update :widgets dissoc id)
-                                          (swap! state update :cleared-widgets conj id))
-                          :set-status   (fn [text]
-                                          (swap! state update :status-lines conj (str/trim (or text ""))))}}]
+                      :ui {:notify       (fn [text level]
+                                           (swap! state update :notifications conj {:text text :level level}))
+                           :set-widget   (fn [id position lines]
+                                           (swap! state assoc-in [:widgets id]
+                                                  {:id id :position position :lines lines}))
+                           :clear-widget (fn [id]
+                                           (swap! state update :widgets dissoc id)
+                                           (swap! state update :cleared-widgets conj id))
+                           :set-status   (fn [text]
+                                           (swap! state update :status-lines conj (str/trim (or text ""))))}}]
      {:api api
       :state state})))
 
