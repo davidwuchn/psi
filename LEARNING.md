@@ -467,6 +467,62 @@ Static slash command completion drifts as extensions change. Pulling
 `:psi.extension/command-names` into completion state (Emacs CAPF + TUI autocomplete)
 keeps command discovery aligned with live extension registration.
 
+## 2026-03-08 - Tool APIs should carry their context as arguments, not as pre-selected global state
+
+### λ A tool that depends on prior side-effect selection is fragile and context-blind
+
+`run_chain` required the operator (or agent) to first call `/chain <name>` to set
+`active-chain`, then call `run_chain(task=...)`. Two separate steps, one of which
+is a global mutation. If the session is switched, reloaded, or the agent forgets to
+select, the tool silently runs against the wrong chain or returns an error.
+
+Replace: `active-chain` atom + pre-selection requirement
+With: `agent_chain(action="run", chain="<name>", task="...")`
+
+The chain is resolved by name at call time from the loaded chains. No state to
+pre-configure, no selection to remember.
+
+### λ Named lookup is more robust than indexed or globally-selected state
+
+A chain name is stable and self-describing across sessions. An index or a pre-selected
+atom is fragile: it drifts on reload, session-switch, or agent context loss.
+`resolve-chain` does a case-insensitive name lookup on each call — cheap and correct.
+
+### λ Consolidate related tool actions into one tool with an `action` parameter
+
+Before: three separate surfaces for chain interaction — `run_chain` tool, `/chain-list`
+command, `/chain-reload` command. The agent had to know about all three.
+
+After: one tool, three actions:
+- `agent_chain(action="run", chain=..., task=...)` — run
+- `agent_chain(action="list")` — inspect
+- `agent_chain(action="reload")` — reset
+
+A single tool with an enum `action` field is discoverable from the tool schema alone.
+The agent can introspect all available operations without needing knowledge of the
+slash command surface.
+
+### λ Human-facing slash commands can remain as thin aliases without cost
+
+`/chain` and `/chain-reload` still exist and delegate to `action-list` /
+`action-reload` respectively. They cost one line each in `init`. Humans keep the
+ergonomic shortcut; the agent uses the tool. Both surfaces stay in sync because
+they share the same implementation functions.
+
+### λ Removing global state from an extension simplifies lifecycle management
+
+`active-chain` atom had to be reset in three places: `init`, `chain-reload` handler,
+and `session_switch` handler. Removing it removes all three reset sites and the
+widget code that displayed it. Less state → fewer reset paths → fewer bugs.
+
+### λ Widget display should reflect actual dynamic state, not configured selection
+
+`active: (none)` / `active: <name>` was a display of pre-selection state, not of
+what was running. The widget now shows only run history — a reflection of actual
+activity, not operator intent that may or may not have been acted on.
+
+---
+
 ## 2026-03-07 - Chain selection UX should accept operator intent directly
 
 ### λ Name-first selection is a natural operator behavior
