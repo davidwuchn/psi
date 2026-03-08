@@ -44,6 +44,11 @@ Current truth about the Psi system.
 - ✓ Extension slash command completion now includes backend extension commands in both frontends:
   - Emacs CAPF merges built-ins with cached `:psi.extension/command-names`
   - TUI slash autocomplete refreshes `:psi.extension/command-names` during update loop
+- ✓ Generic extension prompt-contribution layer landed (commit `e2fe3ed`): session now tracks `:base-system-prompt` + ordered `:prompt-contributions`, runtime recomposes `:system-prompt` deterministically, and extensions can register/update/unregister/list contribution fragments without domain-specific coupling.
+- ✓ Prompt contribution surfaces are queryable/mutable via EQL (commit `e2fe3ed`):
+  - mutations: `psi.extension/register-prompt-contribution`, `psi.extension/update-prompt-contribution`, `psi.extension/unregister-prompt-contribution`
+  - attrs: `:psi.agent-session/base-system-prompt`, `:psi.agent-session/prompt-contributions`, `:psi.extension/prompt-contributions`, `:psi.extension/prompt-contribution-count`
+- ✓ subagent-widget now advertises its tool capabilities through prompt contributions (commit `e2fe3ed`, refined copy in follow-up), enabling direct model-side discovery of subagent operations from system prompt context.
 - ✓ Operator intent mismatch identified: users naturally try `/chain <name>` (for example `/chain prompt-build`) while current command handling is index-only; follow-up is in progress to support name-based selection without reintroducing implicit defaults.
 - ✓ Submit-cycle separator disappearance in Emacs input area is now repaired in the send lifecycle (commit `c649a68`): `psi-emacs--consume-dispatched-input` re-runs `psi-emacs--ensure-input-area` after dispatch, making separator visibility self-healing on prompt submission.
 - ✓ Focused regression coverage added: `psi-send-repairs-missing-input-separator-after-submit` (`components/emacs-ui/test/psi-test.el`).
