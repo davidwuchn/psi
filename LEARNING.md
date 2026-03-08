@@ -467,6 +467,58 @@ Static slash command completion drifts as extensions change. Pulling
 `:psi.extension/command-names` into completion state (Emacs CAPF + TUI autocomplete)
 keeps command discovery aligned with live extension registration.
 
+## 2026-03-08 - Prompt contributions should carry the catalog, not just the capability name
+
+### λ A tool schema tells the model what arguments to supply; a prompt contribution tells it what values are valid
+
+`agent_chain` tool schema advertises `action`, `chain`, and `task` parameters.
+But the schema alone cannot enumerate valid `chain` values — those come from
+`.psi/agents/agent-chain.edn` at runtime. Without the catalog in the system
+prompt, the model must call `action="list"` as a discovery step before every
+`action="run"` call. That is an avoidable round-trip.
+
+The prompt contribution closes this gap:
+```
+tool: agent_chain
+available chains:
+- plan-build-review: Plan, build, and review code changes
+- prompt-build: Build prompts
+```
+
+The model can now select the correct chain name directly from context.
+
+### λ Contribution content is runtime state — it must be kept in sync with the underlying data
+
+Registering a static contribution at init is insufficient if the underlying
+data can change. `agent_chain` chains can be reloaded via `action="reload"` or
+on session switch. Every path that mutates chain definitions must call
+`sync-prompt-contribution!` immediately after. Missing one update path leaves
+the model working from a stale catalog.
+
+Sync points for agent_chain:
+1. `init` — initial registration
+2. `action-reload` — after disk rescan
+3. `session_switch` event — after session-scoped rescan
+
+### λ Priority and section placement are part of the contribution contract
+
+`priority=200` places agent_chain below subagent-widget (`priority=250`) in
+the `Extension Capabilities` section. Lower number = higher in the composed
+system prompt. For peer tools in the same section, ordering by priority keeps
+the prompt layout deterministic and reviewable.
+
+### λ The subagent-widget pattern is the established template — follow it exactly
+
+`subagent_widget.clj` established: `prompt-contribution-id` constant →
+`prompt-contribution-content` fn → `sync-prompt-contribution!` fn →
+`register-prompt-contribution!` fn → wire into init + refresh paths.
+
+Deviating from this structure (e.g. inlining content generation, skipping the
+sync fn, calling register directly from multiple sites) creates inconsistency
+and makes future audits harder. The pattern is the contract.
+
+---
+
 ## 2026-03-08 - Tool APIs should carry their context as arguments, not as pre-selected global state
 
 ### λ A tool that depends on prior side-effect selection is fragile and context-blind
