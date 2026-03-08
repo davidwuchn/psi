@@ -4,6 +4,44 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-08 - Emacs transcript read-only boundaries must be local, not mode-global
+
+### λ Never set `inhibit-read-only` as a mode-local default
+
+Setting `setq-local inhibit-read-only t` in `psi-emacs-mode` leaked broad
+read-only bypass semantics into interactive flows and conflicted with unrelated
+hook-driven buffer updates (notably LSP `*lsp-log*` writes on post-command).
+
+Correct pattern: keep mode defaults conservative and use explicit local
+bindings only at known internal mutation points.
+
+### λ Input guards must honor intentional internal writes
+
+`before-change-functions` guards that enforce input-only editing should short-
+circuit when `inhibit-read-only` is non-nil. This preserves strong user-facing
+boundaries while allowing deterministic internal transcript/render updates.
+
+### λ Read-only transcript regions require paired write windows
+
+Once transcript/error/thinking/replay regions are marked read-only, every
+programmatic mutation path must wrap edits and property changes in
+`(let ((inhibit-read-only t)) ...)`. Missing even one path causes sporadic
+`text-read-only` failures in runtime or tests.
+
+### λ Tests must model read-only transcript semantics explicitly
+
+ERT tests that clear or rewrite whole buffers after transcript rendering must
+bind `inhibit-read-only` around `erase-buffer`. Previously-valid test helpers
+that assumed writable buffers become invalid once transcript immutability is
+enforced.
+
+### λ Separator-marker validity should verify anchor invariants, not only glyph
+
+Checking only the separator character at marker position can miss drift when
+edits insert text at the same point. Requiring both line-start anchoring and
+separator glyph yields reliable detection/repair behavior.
+
+
 ## 2026-03-08 - Emacs `defcustom` vs `.dir-locals.el` safety are separate contracts
 
 ### λ `defcustom` does not imply safe local variable
