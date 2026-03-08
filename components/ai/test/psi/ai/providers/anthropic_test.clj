@@ -114,3 +114,35 @@
           events (run-stream sse model {:api-key "test-key"})]
       (is (not-any? #(= :thinking-delta (:type %)) events))
       (is (some #(= :text-delta (:type %)) events)))))
+
+(deftest usage-captured-from-sse-events-test
+  (testing "usage tokens are read from message_start and message_delta SSE events"
+    (let [model (models/get-model :sonnet-4.6)
+          sse   (str (sse-line "message_start"
+                               {:type    "message_start"
+                                :message {:usage {:input_tokens                  100
+                                                  :cache_read_input_tokens        20
+                                                  :cache_creation_input_tokens    10}}})
+                     (sse-line "content_block_start"
+                               {:type "content_block_start" :index 0
+                                :content_block {:type "text"}})
+                     (sse-line "content_block_delta"
+                               {:type "content_block_delta" :index 0
+                                :delta {:type "text_delta" :text "Hi"}})
+                     (sse-line "content_block_stop"
+                               {:type "content_block_stop" :index 0})
+                     (sse-line "message_delta"
+                               {:type  "message_delta"
+                                :delta {:stop_reason "end_turn"}
+                                :usage {:output_tokens 50}})
+                     (sse-line "message_stop" {:type "message_stop"}))
+          events (run-stream sse model {:api-key "test-key"})
+          done   (first (filter #(= :done (:type %)) events))
+          usage  (:usage done)]
+      (is (some? done) "should emit a :done event")
+      (is (= 100 (:input-tokens usage))  "input-tokens from message_start")
+      (is (= 50  (:output-tokens usage)) "output-tokens from message_delta")
+      (is (= 20  (:cache-read-tokens usage))  "cache-read-tokens from message_start")
+      (is (= 10  (:cache-write-tokens usage)) "cache-write-tokens from message_start")
+      (is (= 180 (:total-tokens usage)) "total = input + output + cache-read + cache-write")
+      (is (map? (:cost usage)) "cost map present"))))

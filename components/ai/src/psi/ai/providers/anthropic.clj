@@ -8,7 +8,8 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clj-http.client :as http]
-            [cheshire.core :as json]))
+            [cheshire.core :as json]
+            [psi.ai.models :as models]))
 
 (defn transform-messages
   "Transform conversation messages to Anthropic API format.
@@ -170,6 +171,11 @@
         ;; Track content block types by index to route deltas correctly
         ;; Values: \"text\" | \"thinking\" | \"tool_use\"
         block-types (atom {})
+        ;; Accumulate usage across message_start (input) and message_delta (output)
+        usage-acc   (atom {:input-tokens       0
+                           :output-tokens      0
+                           :cache-read-tokens  0
+                           :cache-write-tokens 0})
         done?       (atom false)]
     (try
       (let [response (http/post (str (:base-url model) "/v1/messages")
@@ -179,7 +185,13 @@
             (when-let [event-data (parse-sse-line line)]
               (case (:type event-data)
                 "message_start"
-                (consume-fn {:type :start})
+                (let [msg-usage (get-in event-data [:message :usage])]
+                  (when msg-usage
+                    (swap! usage-acc assoc
+                           :input-tokens       (or (:input_tokens msg-usage) 0)
+                           :cache-read-tokens  (or (:cache_read_input_tokens msg-usage) 0)
+                           :cache-write-tokens (or (:cache_creation_input_tokens msg-usage) 0)))
+                  (consume-fn {:type :start}))
 
                 "content_block_start"
                 (let [idx   (:index event-data)
@@ -227,14 +239,20 @@
                                :content-index idx}))
 
                 "message_delta"
-                (when-let [reason (get-in event-data [:delta :stop_reason])]
-                  (reset! done? true)
-                  (consume-fn {:type   :done
-                               :reason (keyword reason)
-                               :usage  {:input-tokens  0
-                                        :output-tokens 0
-                                        :total-tokens  0
-                                        :cost          {:total 0.0}}}))
+                (let [delta-usage (:usage event-data)]
+                  (when delta-usage
+                    (swap! usage-acc assoc
+                           :output-tokens (or (:output_tokens delta-usage) 0)))
+                  (when-let [reason (get-in event-data [:delta :stop_reason])]
+                    (reset! done? true)
+                    (let [usage (-> @usage-acc
+                                   (assoc :total-tokens (+ (:input-tokens @usage-acc)
+                                                           (:output-tokens @usage-acc)
+                                                           (:cache-read-tokens @usage-acc)
+                                                           (:cache-write-tokens @usage-acc))))]
+                      (consume-fn {:type   :done
+                                   :reason (keyword reason)
+                                   :usage  (assoc usage :cost (models/calculate-cost model usage))}))))
 
                 "message_stop"
                 (when-not @done?
