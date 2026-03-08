@@ -924,16 +924,24 @@
 
 (defn send-extension-message-in!
   "Append an extension-injected message to agent history and emit message events.
-   Optionally fan out to the TUI event queue for immediate transcript updates."
+   Optionally fan out to the TUI event queue for immediate transcript updates.
+
+   During bootstrap (before startup prompts complete) the message is NOT
+   appended to LLM history — it is only forwarded to the event queue so the
+   UI can display it as a transient notification without corrupting the
+   conversation context."
   [ctx role content custom-type]
   (let [msg {:role      role
              :content   [{:type :text :text (str content)}]
              :timestamp (java.time.Instant/now)}
         msg (cond-> msg
-              custom-type (assoc :custom-type custom-type))]
-    (agent/append-message-in! (:agent-ctx ctx) msg)
-    (agent/emit-in! (:agent-ctx ctx) {:type :message-start :message msg})
-    (agent/emit-in! (:agent-ctx ctx) {:type :message-end :message msg})
+              custom-type (assoc :custom-type custom-type))
+        bootstrap-complete? (boolean (:startup-bootstrap-completed?
+                                      (get-session-data-in ctx)))]
+    (when bootstrap-complete?
+      (agent/append-message-in! (:agent-ctx ctx) msg)
+      (agent/emit-in! (:agent-ctx ctx) {:type :message-start :message msg})
+      (agent/emit-in! (:agent-ctx ctx) {:type :message-end :message msg}))
     (when-let [q (:event-queue ctx)]
       (.offer ^java.util.concurrent.LinkedBlockingQueue q
               {:type    :external-message

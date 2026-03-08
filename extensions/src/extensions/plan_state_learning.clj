@@ -245,5 +245,4 @@
                                 (catch Exception e
                                   (send-message! mutate-fn
                                                  (str "PSL error: " (ex-message e)))
-                                  {:error (ex-message e)})))})
-    (send-message! mutate-fn "PSL extension loaded.")))
+                                  {:error (ex-message e)})))})))
