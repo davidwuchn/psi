@@ -83,9 +83,9 @@ frontend state boundaries."
   (let* ((start-directory* (or start-directory default-directory))
          (buffer (get-buffer-create (or buffer-name psi-emacs-buffer-name))))
     (with-current-buffer buffer
-      (let ((mode (psi-emacs--preferred-major-mode)))
-        (funcall mode))
       (unless (derived-mode-p 'psi-emacs-mode)
+        (let ((mode (psi-emacs--preferred-major-mode)))
+          (funcall mode))
         (psi-emacs-mode))
       (psi-emacs--install-buffer-lifecycle-hooks)
       (psi-emacs--install-input-read-only-guard)
