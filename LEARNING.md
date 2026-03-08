@@ -4,6 +4,49 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-08 - `psi-emacs-open-buffer` must be idempotent for live buffers
+
+### λ Unconditional mode activation resets buffer-local state on every call
+
+`psi-emacs-open-buffer` called `(text-mode)` unconditionally before checking
+for `psi-emacs-mode`. Calling a major mode function clears buffer-local variables,
+wiping `psi-emacs--state`. This caused the `psi-emacs--state` nil branch to fire,
+which called `psi-emacs--start-rpc-client`, triggering transcript hydration and
+re-running all startup prompts — every time `psi-emacs-project` was invoked on an
+already-live buffer.
+
+### λ Guard mode setup with `derived-mode-p` to make open-buffer idempotent
+
+The correct pattern: check first, activate only if needed.
+
+```elisp
+(unless (derived-mode-p 'psi-emacs-mode)
+  (let ((mode (psi-emacs--preferred-major-mode)))
+    (funcall mode))
+  (psi-emacs-mode))
+```
+
+When the buffer is already in `psi-emacs-mode`, skip all mode setup. The
+existing-state branch then handles the live-buffer case cleanly (RPC client
+recovery only if process died), and `pop-to-buffer` focuses the buffer.
+
+### λ The existing-state guard in open-buffer is correct — the mode setup was the bug
+
+`psi-emacs-open-buffer` already handled the alive vs. dead process distinction
+correctly inside the `(if psi-emacs--state ...)` branch. The bug was upstream:
+mode activation wiped `psi-emacs--state` before that branch was reached, so the
+alive-process path was never taken for existing buffers.
+
+### λ Trace re-runs to their cause before patching the symptom
+
+The visible symptom was "prompts re-run on buffer switch." The natural patch
+target might have been `psi-emacs-project` or the hydration logic — but the root
+cause was `(text-mode)` clearing buffer-local state. Tracing the call chain
+(`psi-emacs-project` → `psi-emacs-open-buffer` → `(funcall mode)` → `text-mode`
+clears locals → `psi-emacs--state` nil → full init) identified the real fix site.
+
+---
+
 ## 2026-03-08 - Emacs transcript read-only boundaries must be local, not mode-global
 
 ### λ Never set `inhibit-read-only` as a mode-local default
