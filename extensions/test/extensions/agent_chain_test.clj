@@ -43,7 +43,7 @@
     (ele/final {:id :done})))
 
 (deftest init-registers-surface-test
-  (testing "agent chain registers workflow type, tool, commands, and session handler"
+  (testing "agent chain registers workflow type, tool, commands, session handler, and prompt contribution"
     (let [tmp (temp-dir)]
       (try
         (write-chain-config!
@@ -64,7 +64,14 @@
             ;; Widget no longer shows "active:" — just the header
             (is (str/includes?
                  (str/join "\n" (get-in @state [:widgets "agent-chain" :lines]))
-                 "Agent Chain"))))
+                 "Agent Chain"))
+            ;; Prompt contribution registered with chain catalog
+            (let [contrib-key ["/test/agent_chain.clj" "agent-chain-chains"]
+                  contrib     (get-in @state [:prompt-contributions contrib-key])]
+              (is (some? contrib) "prompt contribution should be registered")
+              (is (str/includes? (:content contrib) "agent_chain"))
+              (is (str/includes? (:content contrib) "plan-build-review"))
+              (is (str/includes? (:content contrib) "Plan then build")))))
         (finally
           (.delete tmp))))))
 
@@ -167,7 +174,7 @@
           (.delete tmp))))))
 
 (deftest agent-chain-reload-test
-  (testing "agent_chain action=reload reloads chains and agents"
+  (testing "agent_chain action=reload reloads chains and agents and updates prompt contribution"
     (let [tmp (temp-dir)]
       (try
         (write-chain-config!
@@ -183,12 +190,17 @@
             (write-chain-config!
              tmp
              [{:name "initial-chain" :description "initial" :steps [{:agent "planner" :prompt "$INPUT"}]}
-              {:name "new-chain" :description "new" :steps [{:agent "builder" :prompt "$INPUT"}]}])
+              {:name "new-chain" :description "new stuff" :steps [{:agent "builder" :prompt "$INPUT"}]}])
             (let [execute (get-in @state [:tools "agent_chain" :execute])
                   result  (execute {"action" "reload"})]
               (is (false? (:is-error result)))
               (is (str/includes? (:content result) "Reloaded"))
-              (is (str/includes? (:content result) "2 chains")))))
+              (is (str/includes? (:content result) "2 chains"))
+              ;; Contribution updated to include new chain
+              (let [contrib-key ["/test/agent_chain.clj" "agent-chain-chains"]
+                    contrib     (get-in @state [:prompt-contributions contrib-key])]
+                (is (str/includes? (:content contrib) "new-chain"))
+                (is (str/includes? (:content contrib) "new stuff"))))))
         (finally
           (.delete tmp))))))
 

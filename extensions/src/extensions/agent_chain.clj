@@ -66,6 +66,7 @@
 (def ^:private widget-id "agent-chain")
 (def ^:private widget-placement :above-editor)
 (def ^:private max-widget-runs 4)
+(def ^:private prompt-contribution-id "agent-chain-chains")
 
 ;;; Frontmatter parser
 
@@ -239,6 +240,32 @@
           (if (seq runs)
             (map widget-run-line runs)
             ["(no recent runs)"])))))
+
+(defn- prompt-contribution-content []
+  (let [cs @(:chains @state)]
+    (str "tool: agent_chain\n"
+         "available chains:\n"
+         (if (seq cs)
+           (->> cs
+                (map (fn [c]
+                       (str "- " (:name c)
+                            (when (seq (:description c))
+                              (str ": " (:description c))))))
+                (str/join "\n"))
+           "- none"))))
+
+(defn- sync-prompt-contribution! []
+  (when-let [update! (some-> @state :api :update-prompt-contribution)]
+    (update! prompt-contribution-id
+             {:content (prompt-contribution-content)})))
+
+(defn- register-prompt-contribution! [api]
+  (when-let [register! (:register-prompt-contribution api)]
+    (register! prompt-contribution-id
+               {:section  "Extension Capabilities"
+                :priority 200
+                :enabled  true
+                :content  (prompt-contribution-content)})))
 
 (defn- refresh-widget! []
   (when-let [ui (:ui @state)]
@@ -855,6 +882,7 @@
     (reset! (:runs @state) {})
     (reset! (:next-run-id @state) 1)
     (refresh-widget!)
+    (sync-prompt-contribution!)
     {:content  (str "Reloaded: " (count @(:chains @state)) " chains, "
                     (count @(:all-agents @state)) " agents"
                     ", cleared " cleared " chain run"
@@ -905,6 +933,7 @@
              :get-api-key-fn get-api-key-fn})
 
     (register-chain-workflow-type!)
+    (register-prompt-contribution! api)
     (refresh-widget!)
 
     ((:register-tool api)
@@ -946,6 +975,7 @@
                  (reset! all-agents-a (scan-agent-dirs cwd))
                  (reset! chains-a (load-chains cwd))
                  (reset! next-run-id-a 1)
-                 (refresh-widget!)))
+                 (refresh-widget!)
+                 (sync-prompt-contribution!)))
 
     (refresh-widget!)))
