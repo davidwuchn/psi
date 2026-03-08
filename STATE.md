@@ -45,8 +45,9 @@ Current truth about the Psi system.
   - Emacs CAPF merges built-ins with cached `:psi.extension/command-names`
   - TUI slash autocomplete refreshes `:psi.extension/command-names` during update loop
 - ✓ Operator intent mismatch identified: users naturally try `/chain <name>` (for example `/chain prompt-build`) while current command handling is index-only; follow-up is in progress to support name-based selection without reintroducing implicit defaults.
-- ? Live user layout still shows unequal separator lengths after `d36fe3d` (footer separator resized but remains too long; separator before edit area still mismatched), so parity is not yet fully resolved in production layout.
-- … Next executable task: reproduce the exact live Emacs layout mismatch and unify width derivation across all separator insertion points (projection + pre-edit boundary) while keeping worktree Step 11b mutation semantics deferred.
+- ✓ Submit-cycle separator disappearance in Emacs input area is now repaired in the send lifecycle (commit `c649a68`): `psi-emacs--consume-dispatched-input` re-runs `psi-emacs--ensure-input-area` after dispatch, making separator visibility self-healing on prompt submission.
+- ✓ Focused regression coverage added: `psi-send-repairs-missing-input-separator-after-submit` (`components/emacs-ui/test/psi-test.el`).
+- ✓ Verification: `bb emacs:test` passing at 168/168 after separator submit-cycle fix.
 
 ## Components
 

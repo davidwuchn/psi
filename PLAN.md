@@ -127,7 +127,7 @@ Ordered steps toward PSI COMPLETE.
 - Progress: commit `d36fe3d` switched projection width to prefer `window-text-width` and made resize handler run input-area repair (`psi-emacs--ensure-input-area`).
 - Progress: commit `bfa604a` added `psi-emacs-project` for current-project startup with project-scoped buffer naming (`*psi:<project>*`) plus explicit prefix behavior (`C-u` fresh generated name, `C-u N` slot selection).
 - Progress: Emacs docs/tests now cover project command behavior (`README.md`, `components/emacs-ui/README.md`, and new ERT coverage in `components/emacs-ui/test/psi-test.el`).
-- Active fix focus: user still reports mixed separator lengths in live Emacs layout after `d36fe3d` (one separator remains too long while another differs), indicating an unresolved width-source/placement mismatch across separator render paths.
+- Active fix focus: user reported submit-cycle separator disappearance in Emacs input area; commit `c649a68` now enforces post-submit input-area repair (`psi-emacs--ensure-input-area`) and adds a focused regression test (`psi-send-repairs-missing-input-separator-after-submit`).
 - Completed in this cycle:
   - [x] Prompt completion architecture added via CAPF (`components/emacs-ui/psi-completion.el`)
   - [x] `/` completion (slash commands) + `@` completion (file references)
