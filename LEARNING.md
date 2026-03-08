@@ -497,6 +497,46 @@ Static slash command completion drifts as extensions change. Pulling
 `:psi.extension/command-names` into completion state (Emacs CAPF + TUI autocomplete)
 keeps command discovery aligned with live extension registration.
 
+## 2026-03-08 - Runtime UI type should be first-class context for extension rendering
+
+### λ Expose UI surface once, consume everywhere
+
+Extensions need to branch rendering/interaction policy by runtime surface
+(console, TUI, Emacs). Pulling this from ad-hoc heuristics in each extension
+creates drift and hidden coupling. A single session attr + API projection is
+cleaner:
+- canonical session attr: `:psi.agent-session/ui-type`
+- extension API field: `:ui-type`
+
+This gives both query-path introspection and zero-roundtrip runtime access.
+
+### λ Seed UI type at bootstrap boundary, not inside extensions
+
+The right place to determine UI type is runtime bootstrap (`run-session`,
+`run-tui-session`, rpc-edn/Emacs handshake path), not extension init.
+Extensions should consume a resolved value, not infer transport from available
+APIs.
+
+### λ Handshake metadata is part of UI identity contract
+
+For rpc-edn clients, backend/UI coupling should be explicit in handshake
+server-info. Including `:ui-type` in handshake payload lets frontends and
+debug tooling verify negotiated runtime surface early, before any prompt run.
+
+### λ Widget placement policy should be deterministic per UI surface
+
+A simple policy (`:emacs -> :below-editor`, otherwise `:above-editor`) avoids
+extension-specific divergence and keeps projection order predictable across
+surfaces.
+
+### λ Nullable extension fixtures should model ui-type explicitly
+
+If test fixtures don’t carry `:ui-type`, extension behavior silently defaults
+and UI-branching logic goes untested. Extending nullable API helpers with
+`:ui-type` makes extension tests deterministic and catches rendering regressions.
+
+---
+
 ## 2026-03-08 - Prompt contributions should carry the catalog, not just the capability name
 
 ### λ A tool schema tells the model what arguments to supply; a prompt contribution tells it what values are valid
