@@ -56,6 +56,7 @@ Current truth about the Psi system.
 - ✓ `psi-emacs-command` is now marked safe for local variables (`:safe` predicate accepts list-of-strings), so project `.dir-locals.el` command overrides no longer trigger Emacs unsafe-local warnings.
 - ✓ Emacs startup `*lsp-log*` read-only regression fixed (commit `0c6667f`): removed `psi-emacs-mode` buffer-local `inhibit-read-only`; localized transcript/property mutations behind explicit `let ((inhibit-read-only t))`; separator marker validity now requires line-start marker anchoring; Emacs tests updated for intentional read-only transcript clearing.
 - ✓ Verification after read-only regression fix: `bb emacs:test` passing at 168/168 and `bb emacs:byte-compile` clean (pre-existing docstring width warnings only).
+- ✓ `psi-emacs-project` buffer-reuse regression fixed (commit `7b63628`): `psi-emacs-open-buffer` was unconditionally calling `(text-mode)` on every invocation, resetting buffer-local state (including `psi-emacs--state`) and triggering a full re-init + transcript replay even for already-live buffers. Fixed by guarding the mode-setup block inside `unless (derived-mode-p 'psi-emacs-mode)`. Switching to an existing psi buffer now just focuses it. All 168 tests pass.
 
 ## Components
 
