@@ -48,6 +48,7 @@ Current truth about the Psi system.
 - ✓ Submit-cycle separator disappearance in Emacs input area is now repaired in the send lifecycle (commit `c649a68`): `psi-emacs--consume-dispatched-input` re-runs `psi-emacs--ensure-input-area` after dispatch, making separator visibility self-healing on prompt submission.
 - ✓ Focused regression coverage added: `psi-send-repairs-missing-input-separator-after-submit` (`components/emacs-ui/test/psi-test.el`).
 - ✓ Verification: `bb emacs:test` passing at 168/168 after separator submit-cycle fix.
+- ✓ `psi-emacs-command` is now marked safe for local variables (`:safe` predicate accepts list-of-strings), so project `.dir-locals.el` command overrides no longer trigger Emacs unsafe-local warnings.
 
 ## Components
 
