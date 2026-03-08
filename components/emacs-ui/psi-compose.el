@@ -365,7 +365,10 @@ entry are skipped (idle slash command interception path)."
     (unless local-only
       (psi-emacs--history-record-input message)
       (psi-emacs--append-user-message-to-transcript message))
-    (psi-emacs--consume-tail-draft used-region-p)))
+    (psi-emacs--consume-tail-draft used-region-p)
+    ;; Keep dedicated input boundary resilient after submit cycles.
+    ;; Marker drift can make the separator vanish until some later refresh.
+    (psi-emacs--ensure-input-area)))
 
 (defun psi-emacs-send-from-buffer (prefix)
   "Send composed text using canonical send semantics.

@@ -2847,6 +2847,29 @@
       (should (string-empty-p (psi-emacs--tail-draft-text)))
       (should (string-match-p "^User: hello input" (buffer-string))))))
 
+(ert-deftest psi-send-repairs-missing-input-separator-after-submit ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (psi-emacs--ensure-input-area)
+    (goto-char (psi-emacs--draft-end-position))
+    (insert "hello input")
+    ;; Simulate drift: marker exists but no longer points to a separator char.
+    (let ((sep (psi-emacs-state-input-separator-marker psi-emacs--state)))
+      (save-excursion
+        (goto-char (marker-position sep))
+        (let ((inhibit-read-only t))
+          (delete-char 1)
+          (insert "x"))))
+    (should-not (psi-emacs--input-separator-marker-valid-p))
+    (let ((calls (psi-test--capture-request-sends
+                  (lambda ()
+                    (psi-emacs-send-from-buffer nil)))))
+      (should (equal '(("prompt" ((:message . "hello input")))) calls))
+      (should (psi-emacs--input-separator-marker-valid-p))
+      (should (string-empty-p (psi-emacs--tail-draft-text)))
+      (should (string-match-p "^User: hello input" (buffer-string))))))
+
 (ert-deftest psi-replay-session-messages-with-input-area-stays-above-separator ()
   (with-temp-buffer
     (psi-emacs-mode)
