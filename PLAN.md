@@ -157,6 +157,7 @@ Ordered steps toward PSI COMPLETE.
 - Progress: commit `81af559` delivers chain results back to chat — `emit-chain-result!` sends final output as an assistant message (`custom-type: "chain-result"`) on done/error; model resolution falls back session model → `:sonnet-4.6`; step errors now catch `Throwable`.
 - Follow-up queued: align `/chain` command UX with user intent by supporting both index and name selection (`/chain <number|name>`), while keeping no-default-active semantics.
 - Follow-up queued: add explicit extension transcript status for deferred PSL prompt delivery (`queued via deferred; will auto-run when idle`) so operator feedback distinguishes queued-follow-up from auto-deferred execution.
+- Progress: commit `a3c9756` hardened extension isolation during bootstrap — `send-extension-message-in!` now guards history append behind `startup-bootstrap-completed?`; PSL startup noise message removed.
 - Definition of done:
   - Per-token streaming render is available (not spinner-only)
   - Tool execution status is visible during active turns
