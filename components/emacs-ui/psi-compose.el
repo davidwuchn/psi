@@ -100,7 +100,8 @@ Otherwise, draft ends at `point-max'."
            (line (psi-emacs--input-separator-line)))
       (save-excursion
         (goto-char separator-start)
-        (let ((bol (line-beginning-position))
+        (let ((inhibit-read-only t)
+              (bol (line-beginning-position))
               (eol (line-end-position)))
           (delete-region bol (min (point-max) (1+ eol)))
           (goto-char bol)

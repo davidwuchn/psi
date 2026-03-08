@@ -15,6 +15,7 @@
 
    No extension-managed runner futures or ticker loops."
   (:require
+   [clojure.java.io :as io]
    [clojure.set :as set]
    [clojure.string :as str]
    [com.fulcrologic.statecharts.chart :as chart]
@@ -125,16 +126,70 @@
     (:psi.agent-session/system-prompt
      (query-fn [:psi.agent-session/system-prompt]))))
 
-(defn- create-sub-agent-ctx [query-fn]
-  (let [agent-ctx (agent/create-context)
-        tools     (->> tools/all-tools
-                       (filter #(contains? subagent-tool-names (:name %)))
-                       vec)]
+(defn- parse-frontmatter
+  "Parse markdown frontmatter and return {:name :system-prompt} when present."
+  [raw]
+  (let [m (re-find #"(?s)^---\n(.*?)\n---\n(.*)" (or raw ""))]
+    (when m
+      (let [fm-lines (str/split-lines (nth m 1))
+            fm       (into {}
+                           (keep (fn [line]
+                                   (let [idx (str/index-of line ":")]
+                                     (when (and idx (pos? idx))
+                                       [(str/trim (subs line 0 idx))
+                                        (str/trim (subs line (inc idx)))]))))
+                           fm-lines)]
+        (when-let [name (not-empty (get fm "name"))]
+          {:name          name
+           :system-prompt (str/trim (nth m 2))})))))
+
+(defn- agents-dir [query-fn]
+  (when-let [cwd (current-session-cwd query-fn)]
+    (str cwd "/.psi/agents")))
+
+(defn- load-agent-prompts [query-fn]
+  (let [dir (some-> (agents-dir query-fn) io/file)]
+    (if (and dir (.exists dir) (.isDirectory dir))
+      (->> (.listFiles dir)
+           (keep (fn [f]
+                   (when (and (.isFile f)
+                              (str/ends-with? (.getName f) ".md"))
+                     (try
+                       (let [raw    (slurp f)
+                             parsed (parse-frontmatter raw)]
+                         (when (and parsed
+                                    (seq (:name parsed))
+                                    (seq (:system-prompt parsed)))
+                           [(str/lower-case (:name parsed))
+                            (:system-prompt parsed)]))
+                       (catch Exception _ nil))))
+           (into {}))
+      {})))
+
+(defn- selected-agent-prompt [query-fn agent-name]
+  (let [name (some-> agent-name str str/trim str/lower-case not-empty)]
+    (when name
+      (get (load-agent-prompts query-fn) name))))
+
+(defn- compose-system-prompt [base-prompt query-fn agent-name]
+  (if-let [agent-prompt (selected-agent-prompt query-fn agent-name)]
+    (str (or base-prompt "")
+         "\n\n[Subagent Profile: " (str/trim (or agent-name "")) "]\n"
+         agent-prompt)
+    base-prompt))
+
+(defn- create-sub-agent-ctx [query-fn agent-name]
+  (let [agent-ctx    (agent/create-context)
+        tools        (->> tools/all-tools
+                          (filter #(contains? subagent-tool-names (:name %)))
+                          vec)
+        base-prompt  (current-system-prompt query-fn)
+        final-prompt (compose-system-prompt base-prompt query-fn agent-name)]
     (agent/create-agent-in! agent-ctx)
     (agent/set-tools-in! agent-ctx tools)
     (agent/set-thinking-level-in! agent-ctx :off)
-    (when-let [sp (current-system-prompt query-fn)]
-      (agent/set-system-prompt-in! agent-ctx sp))
+    (when (seq final-prompt)
+      (agent/set-system-prompt-in! agent-ctx final-prompt))
     agent-ctx))
 
 (defn- current-session-cwd [query-fn]
@@ -197,6 +252,10 @@
       (:psi.extension.workflow/error-message wf)
       ""))
 
+(defn- wf-agent-name [wf]
+  (or (:subagent/agent-name (wf-data wf))
+      (get-in wf [:psi.extension.workflow/input :agent])))
+
 (defn- elapsed-seconds [wf]
   (let [running?   (:psi.extension.workflow/running? wf)
         elapsed-ms (or (:psi.extension.workflow/elapsed-ms wf) 0)
@@ -240,17 +299,41 @@
          (:psi.extension.workflow/id wf))))
 
 (defn- widget-lines [wf]
-  (let [line-1      (str (status-icon wf)
+  (let [agent-tag   (when-let [agent-name (some-> (wf-agent-name wf) str str/trim not-empty)]
+                      (str " · @" agent-name))
+        line-1      (str (status-icon wf)
                          " Subagent #" (:psi.extension.workflow/id wf)
                          " " (phase-badge wf)
                          " · T" (wf-turn-count wf)
                          " · " (elapsed-seconds wf) "s"
+                         agent-tag
                          " · " (task-preview (wf-task wf) 52))
         detail-line (widget-detail-line wf)
         action-line (widget-action-line wf)]
     (cond-> [line-1]
       (seq detail-line) (conj detail-line)
       (seq action-line) (conj action-line))))
+
+(defn- available-agent-prompts []
+  (load-agent-prompts (:query-fn @state)))
+
+(defn- available-agent-names []
+  (->> (keys (available-agent-prompts))
+       sort
+       vec))
+
+(defn- prompt-contribution-content []
+  (let [names (available-agent-names)]
+    (str "tool: subagent\n"
+         "available agents:\n"
+         (if (seq names)
+           (str/join "\n" (map #(str "- " %) names))
+           "- none"))))
+
+(defn- sync-prompt-contribution! []
+  (when-let [update! (some-> @state :api :update-prompt-contribution)]
+    (update! prompt-contribution-id
+             {:content (prompt-contribution-content)})))
 
 (defn- clear-widget! [id]
   (when-let [ui (:ui @state)]
@@ -269,7 +352,8 @@
          (str "sub-" (:psi.extension.workflow/id wf))
          :above-editor
          (widget-lines wf)))
-      (swap! state assoc :widget-ids current-ids))))
+      (swap! state assoc :widget-ids current-ids)
+      (sync-prompt-contribution!))))
 
 (defn- refresh-widgets-later! []
   ;; Workflow completion callbacks run during statechart event processing,
@@ -609,19 +693,65 @@
         (when (and n (seq prompt))
           {:id n :prompt prompt})))))
 
+(def ^:private subagent-actions
+  ["create" "continue" "remove" "list"])
+
 (defn- register-prompt-contribution! [api]
   (when-let [register! (:register-prompt-contribution api)]
     (register! prompt-contribution-id
                {:section  "Extension Capabilities"
                 :priority 250
                 :enabled  true
-                :content  (str
-                           "subagent-widget tools:\n"
-                           "- subagent_create(task): start background subagent run\n"
-                           "- subagent_continue(id,prompt): continue a run\n"
-                           "- subagent_remove(id): remove a run\n"
-                           "- subagent_list(): list run status\n"
-                           "Flow: create → list → continue/remove.")})))
+                :content  (prompt-contribution-content)})))
+
+(defn- execute-subagent-tool [args]
+  (let [action (some-> (get args "action") str str/trim str/lower-case)]
+    (case action
+      "create"
+      (let [task (str/trim (or (get args "task") ""))]
+        (if (str/blank? task)
+          {:content "Error: task is required." :is-error true}
+          (let [r (spawn-subagent! task)]
+            (if-let [e (:error r)]
+              {:content (str "Error: " e) :is-error true}
+              {:content (str "Subagent #" (:ok r) " spawned in background.")
+               :is-error false}))))
+
+      "continue"
+      (let [id     (parse-int (get args "id"))
+            prompt (str/trim (or (get args "prompt") ""))]
+        (cond
+          (nil? id)
+          {:content "Error: id is required." :is-error true}
+
+          (str/blank? prompt)
+          {:content "Error: prompt is required." :is-error true}
+
+          :else
+          (let [result (continue-subagent! id prompt)]
+            (if-let [e (:error result)]
+              {:content e :is-error true}
+              {:content (str "Subagent #" id " continuing in background.")
+               :is-error false}))))
+
+      "remove"
+      (let [id (parse-int (get args "id"))]
+        (if (nil? id)
+          {:content "Error: id is required." :is-error true}
+          (let [result (remove-subagent! id)]
+            (if-let [e (:error result)]
+              {:content e :is-error true}
+              {:content (str "Subagent #" id " removed.")
+               :is-error false}))))
+
+      "list"
+      {:content  (list-subagents-text)
+       :is-error false}
+
+      {:content (str "Error: action must be one of "
+                     (str/join ", " subagent-actions)
+                     ".")
+       :is-error true})))
 
 (defn init [api]
   (swap! state assoc
@@ -635,74 +765,24 @@
   (register-subagent-workflow-type!)
   (register-prompt-contribution! api)
 
-  ;; Tools (for main agent orchestration)
+  ;; Tool (for main agent orchestration)
   ((:register-tool api)
-   {:name        "subagent_create"
-    :label       "Subagent Create"
-    :description "Spawn a background subagent workflow for a task."
+   {:name        "subagent"
+    :label       "Subagent"
+    :description "Unified subagent tool. action=create|continue|remove|list"
     :parameters  (pr-str {:type       "object"
-                          :properties {"task" {:type "string"
-                                                 :description "Task for the subagent"}}
-                          :required   ["task"]})
+                          :properties {"action" {:type "string"
+                                                   :enum subagent-actions
+                                                   :description "Operation to run: create, continue, remove, or list"}
+                                       "task"   {:type "string"
+                                                   :description "Task text for action=create"}
+                                       "id"     {:type "integer"
+                                                   :description "Subagent id for action=continue/remove"}
+                                       "prompt" {:type "string"
+                                                   :description "Prompt text for action=continue"}}
+                          :required   ["action"]})
     :execute     (fn [args]
-                   (let [task (str/trim (or (get args "task") ""))]
-                     (if (str/blank? task)
-                       {:content "Error: task is required." :is-error true}
-                       (let [r (spawn-subagent! task)]
-                         (if-let [e (:error r)]
-                           {:content (str "Error: " e) :is-error true}
-                           {:content (str "Subagent #" (:ok r) " spawned in background.")
-                            :is-error false})))))} )
-
-  ((:register-tool api)
-   {:name        "subagent_continue"
-    :label       "Subagent Continue"
-    :description "Continue an existing subagent conversation."
-    :parameters  (pr-str {:type       "object"
-                          :properties {"id" {:type "integer"}
-                                       "prompt" {:type "string"}}
-                          :required   ["id" "prompt"]})
-    :execute     (fn [args]
-                   (let [id     (parse-int (get args "id"))
-                         prompt (str/trim (or (get args "prompt") ""))]
-                     (cond
-                       (nil? id)
-                       {:content "Error: id is required." :is-error true}
-
-                       (str/blank? prompt)
-                       {:content "Error: prompt is required." :is-error true}
-
-                       :else
-                       (let [result (continue-subagent! id prompt)]
-                         (if-let [e (:error result)]
-                           {:content e :is-error true}
-                           {:content (str "Subagent #" id " continuing in background.")
-                            :is-error false})))))} )
-
-  ((:register-tool api)
-   {:name        "subagent_remove"
-    :label       "Subagent Remove"
-    :description "Remove a subagent workflow."
-    :parameters  (pr-str {:type       "object"
-                          :properties {"id" {:type "integer"}}
-                          :required   ["id"]})
-    :execute     (fn [args]
-                   (let [id (parse-int (get args "id"))]
-                     (if (nil? id)
-                       {:content "Error: id is required." :is-error true}
-                       (let [result (remove-subagent! id)]
-                         (if-let [e (:error result)]
-                           {:content e :is-error true}
-                           {:content (str "Subagent #" id " removed.") :is-error false})))))} )
-
-  ((:register-tool api)
-   {:name        "subagent_list"
-    :label       "Subagent List"
-    :description "List all subagents and their status."
-    :parameters  (pr-str {:type "object" :properties {}})
-    :execute     (fn [_args]
-                   {:content  (list-subagents-text)
-                    :is-error false})})
+                   (execute-subagent-tool args))})
 
   ;; Slash commands
   ((:register-command api) "sub"

@@ -6,7 +6,7 @@
    [psi.extension-test-helpers.nullable-api :as nullable]))
 
 (def expected-tool-names
-  #{"subagent_create" "subagent_continue" "subagent_remove" "subagent_list"})
+  #{"subagent"})
 
 (def expected-command-names
   #{"sub" "subcont" "subrm" "subclear" "sublist"})
@@ -29,21 +29,30 @@
                      ["/test/subagent_widget.clj" "subagent-widget-capabilities"])))))
 
 (deftest tool-validation-test
-  (testing "subagent_create validates empty task"
+  (testing "subagent validates missing action"
     (let [{:keys [api state]} (nullable/create-nullable-extension-api
                                {:path "/test/subagent_widget.clj"})]
       (sut/init api)
-      (let [execute (get-in @state [:tools "subagent_create" :execute])]
-        (is (= {:content "Error: task is required." :is-error true}
+      (let [execute (get-in @state [:tools "subagent" :execute])]
+        (is (= {:content "Error: action must be one of create, continue, remove, list."
+                :is-error true}
                (execute {}))))))
 
-  (testing "subagent_list returns empty-state summary"
+  (testing "subagent create validates empty task"
     (let [{:keys [api state]} (nullable/create-nullable-extension-api
                                {:path "/test/subagent_widget.clj"})]
       (sut/init api)
-      (let [execute (get-in @state [:tools "subagent_list" :execute])]
+      (let [execute (get-in @state [:tools "subagent" :execute])]
+        (is (= {:content "Error: task is required." :is-error true}
+               (execute {"action" "create"}))))))
+
+  (testing "subagent list returns empty-state summary"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/subagent_widget.clj"})]
+      (sut/init api)
+      (let [execute (get-in @state [:tools "subagent" :execute])]
         (is (= {:content "No active subagents." :is-error false}
-               (execute {})))))))
+               (execute {"action" "list"})))))))
 
 (deftest run-subagent-job-executor-arg-order-test
   (testing "run-subagent-job passes executor args in run-agent-loop order"
