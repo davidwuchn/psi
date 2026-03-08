@@ -2673,3 +2673,41 @@ then recomputing prompt after extensions re-init, prevents orphaned prompt fragm
 Capability advertisements in system prompt should be compact and operational.
 For subagent-widget, concise tool signatures and flow guidance (`create → list → continue/remove`)
 communicate enough for tool invocation without bloating context.
+
+## 2026-03-08 - Resolver List Deduplication
+
+### λ Keep domain resolver lists in one place — the domain component
+
+When a component (e.g. `ai`) defines its resolver set, that set belongs
+exclusively to the component.  Callers that need to register those resolvers
+should use the component's public API (`all-resolvers` var or
+`register-resolvers-in!` fn), not re-enumerate the resolvers at the call site.
+
+**Anti-pattern** (what was fixed in commit `f8727db`):
+```clojure
+;; introspection/core.clj — hand-listing ai resolvers (duplicated)
+(register-resolver-if-missing! ai/ai-model-resolver)
+(register-resolver-if-missing! ai/ai-model-list-resolver)
+(register-resolver-if-missing! ai/ai-provider-models-resolver)
+(register-resolver-if-missing! ai/ai-provider-registry-resolver)
+```
+
+**Fix**:
+1. Make `all-resolvers` public in the owning component (`ai/core.clj`).
+2. Callers iterate over it:
+```clojure
+(doseq [r ai/all-resolvers]
+  (register-resolver-if-missing! r))
+```
+
+**Why it matters**: the hand-listed form has two copies (global and isolated
+registration paths) and both silently drift when a new resolver is added to
+the `ai` component.  The single-source form fails loudly (compilation error)
+if the var is removed.
+
+### λ `^:private` on a shared collection is a maintenance trap
+
+If a `def` is marked `^:private` but callers in other namespaces need to
+iterate it, they will hand-enumerate instead — creating the duplication
+described above.  Make the canonical collection public with a doc string
+describing its purpose and consumers.
