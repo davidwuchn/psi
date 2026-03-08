@@ -1,5 +1,7 @@
 (ns extensions.subagent-widget-test
   (:require
+   [clojure.java.io :as io]
+   [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
    [extensions.subagent-widget :as sut]
    [psi.agent-session.executor :as executor]
@@ -10,6 +12,22 @@
 
 (def expected-command-names
   #{"sub" "subcont" "subrm" "subclear" "sublist"})
+
+(defn with-test-agents-dir
+  [agent-files f]
+  (let [tmp-dir    (java.nio.file.Files/createTempDirectory "subagent-widget-test"
+                                                              (make-array java.nio.file.attribute.FileAttribute 0))
+        root       (.toFile tmp-dir)
+        agents-dir (io/file root ".psi" "agents")]
+    (.mkdirs agents-dir)
+    (doseq [[name content] agent-files]
+      (spit (io/file agents-dir name) content))
+    (nullable/with-user-dir (.getAbsolutePath root)
+      (try
+        (f)
+        (finally
+          (doseq [f* (reverse (file-seq root))]
+            (.delete f*)))))))
 
 (deftest init-registers-surface-test
   (testing "subagent widget registers workflow type, tools, commands, and lifecycle handler"
@@ -52,7 +70,49 @@
       (sut/init api)
       (let [execute (get-in @state [:tools "subagent" :execute])]
         (is (= {:content "No active subagents." :is-error false}
-               (execute {"action" "list"})))))))
+               (execute {"action" "list"}))))))
+
+  (testing "subagent create rejects unknown agent"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/subagent_widget.clj"})]
+      (sut/init api)
+      (let [execute (get-in @state [:tools "subagent" :execute])]
+        (is (= {:content "Error: Unknown agent 'not-real'." :is-error true}
+               (execute {"action" "create"
+                         "task" "do thing"
+                         "agent" "not-real"})))))))
+
+(deftest prompt-contribution-lists-available-agents-test
+  (testing "prompt contribution lists names discovered from .psi/agents"
+    (with-test-agents-dir
+      {"planner.md" "---\nname: planner\ndescription: plan\n---\nYou are planner."
+       "builder.md" "---\nname: builder\ndescription: build\n---\nYou are builder."
+       "README.txt" "ignored"}
+      (fn []
+        (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                                   {:path "/test/subagent_widget.clj"
+                                    :query-fn (fn [q]
+                                                (cond
+                                                  (= q [:psi.agent-session/cwd])
+                                                  {:psi.agent-session/cwd (System/getProperty "user.dir")}
+
+                                                  (= q [:psi.agent-session/model])
+                                                  {:psi.agent-session/model {:provider :anthropic
+                                                                             :id       "claude-sonnet-4-6"}}
+
+                                                  (= q [:psi.agent-session/system-prompt])
+                                                  {:psi.agent-session/system-prompt "base"}
+
+                                                  :else
+                                                  {}))})]
+          (sut/init api)
+          (let [contrib (get-in @state [:prompt-contributions
+                                        ["/test/subagent_widget.clj" "subagent-widget-capabilities"]
+                                        :content])]
+            (is (str/includes? contrib "tool: subagent"))
+            (is (str/includes? contrib "available agents:"))
+            (is (str/includes? contrib "- planner: plan"))
+            (is (str/includes? contrib "- builder: build"))))))))
 
 (deftest run-subagent-job-executor-arg-order-test
   (testing "run-subagent-job passes executor args in run-agent-loop order"

@@ -2,7 +2,7 @@
   "Subagent widget backed by extension workflows.
 
    Commands/tools:
-   - /sub <task>
+   - /sub [@agent] <task>
    - /subcont <id> <prompt>
    - /subrm <id>
    - /subclear
@@ -127,7 +127,7 @@
      (query-fn [:psi.agent-session/system-prompt]))))
 
 (defn- parse-frontmatter
-  "Parse markdown frontmatter and return {:name :system-prompt} when present."
+  "Parse markdown frontmatter and return {:name :description :system-prompt} when present."
   [raw]
   (let [m (re-find #"(?s)^---\n(.*?)\n---\n(.*)" (or raw ""))]
     (when m
@@ -141,13 +141,19 @@
                            fm-lines)]
         (when-let [name (not-empty (get fm "name"))]
           {:name          name
+           :description   (some-> (get fm "description") str/trim not-empty)
            :system-prompt (str/trim (nth m 2))})))))
+
+(declare current-session-cwd)
+
+(defn- normalize-agent-name [x]
+  (some-> x str str/trim (str/replace #"^@" "") str/lower-case not-empty))
 
 (defn- agents-dir [query-fn]
   (when-let [cwd (current-session-cwd query-fn)]
     (str cwd "/.psi/agents")))
 
-(defn- load-agent-prompts [query-fn]
+(defn- load-agent-defs [query-fn]
   (let [dir (some-> (agents-dir query-fn) io/file)]
     (if (and dir (.exists dir) (.isDirectory dir))
       (->> (.listFiles dir)
@@ -156,26 +162,32 @@
                               (str/ends-with? (.getName f) ".md"))
                      (try
                        (let [raw    (slurp f)
-                             parsed (parse-frontmatter raw)]
-                         (when (and parsed
-                                    (seq (:name parsed))
+                             parsed (parse-frontmatter raw)
+                             k      (normalize-agent-name (:name parsed))]
+                         (when (and k
                                     (seq (:system-prompt parsed)))
-                           [(str/lower-case (:name parsed))
-                            (:system-prompt parsed)]))
-                       (catch Exception _ nil))))
+                           [k {:name k
+                               :description (:description parsed)
+                               :system-prompt (:system-prompt parsed)}]))
+                       (catch Exception _ nil)))))
            (into {}))
       {})))
 
+(defn- selected-agent-def [query-fn agent-name]
+  (when-let [name (normalize-agent-name agent-name)]
+    (get (load-agent-defs query-fn) name)))
+
 (defn- selected-agent-prompt [query-fn agent-name]
-  (let [name (some-> agent-name str str/trim str/lower-case not-empty)]
-    (when name
-      (get (load-agent-prompts query-fn) name))))
+  (:system-prompt (selected-agent-def query-fn agent-name)))
 
 (defn- compose-system-prompt [base-prompt query-fn agent-name]
   (if-let [agent-prompt (selected-agent-prompt query-fn agent-name)]
-    (str (or base-prompt "")
-         "\n\n[Subagent Profile: " (str/trim (or agent-name "")) "]\n"
-         agent-prompt)
+    (let [base (str/trim (or base-prompt ""))
+          profile (str "[Subagent Profile: " (or (normalize-agent-name agent-name) "custom") "]\n"
+                       agent-prompt)]
+      (if (seq base)
+        (str base "\n\n" profile)
+        profile))
     base-prompt))
 
 (defn- create-sub-agent-ctx [query-fn agent-name]
@@ -314,20 +326,23 @@
       (seq detail-line) (conj detail-line)
       (seq action-line) (conj action-line))))
 
-(defn- available-agent-prompts []
-  (load-agent-prompts (:query-fn @state)))
+(defn- available-agent-defs []
+  (load-agent-defs (:query-fn @state)))
 
-(defn- available-agent-names []
-  (->> (keys (available-agent-prompts))
-       sort
-       vec))
+(defn- prompt-agent-line [[name {:keys [description]}]]
+  (if (seq description)
+    (str "- " name ": " description)
+    (str "- " name)))
 
 (defn- prompt-contribution-content []
-  (let [names (available-agent-names)]
+  (let [agents (available-agent-defs)]
     (str "tool: subagent\n"
          "available agents:\n"
-         (if (seq names)
-           (str/join "\n" (map #(str "- " %) names))
+         (if (seq agents)
+           (->> agents
+                (sort-by key)
+                (map prompt-agent-line)
+                (str/join "\n"))
            "- none"))))
 
 (defn- sync-prompt-contribution! []
@@ -578,9 +593,11 @@
                               :description     "Run a background subagent workflow."
                               :chart           subagent-chart
                               :start-event     :subagent/start
-                              :initial-data-fn (fn [_input]
-                                                 (let [agent-ctx (create-sub-agent-ctx qf)]
-                                                   {:subagent/agent-ctx      agent-ctx
+                              :initial-data-fn (fn [input]
+                                                 (let [agent-name (normalize-agent-name (get input :agent))
+                                                       agent-ctx   (create-sub-agent-ctx qf agent-name)]
+                                                   {:subagent/agent-name     agent-name
+                                                    :subagent/agent-ctx      agent-ctx
                                                     :subagent/session-ctx    (create-sub-session-ctx agent-ctx qf)
                                                     :subagent/query-fn       qf
                                                     :subagent/get-api-key-fn get-api-key
@@ -592,7 +609,8 @@
                                                     :subagent/elapsed-ms     0}))
                               :public-data-fn  (fn [data]
                                                  (select-keys data
-                                                              [:subagent/turn-count
+                                                              [:subagent/agent-name
+                                                               :subagent/turn-count
                                                                :subagent/current-prompt
                                                                :subagent/last-text
                                                                :subagent/elapsed-ms]))})]
@@ -600,15 +618,23 @@
       (notify! (str "Failed to register subagent workflow type: " e) :error))))
 
 (defn- spawn-subagent!
-  [task]
-  (let [task (str/trim (or task ""))]
-    (if (str/blank? task)
+  [task agent-name]
+  (let [task       (str/trim (or task ""))
+        agent-name (normalize-agent-name agent-name)]
+    (cond
+      (str/blank? task)
       {:error "task is required"}
+
+      (and agent-name (nil? (selected-agent-def (:query-fn @state) agent-name)))
+      {:error (str "Unknown agent '" agent-name "'.")}
+
+      :else
       (let [id (:next-id @state)
             r  (mutate! 'psi.extension.workflow/create
                         {:type  subagent-type
                          :id    (str id)
-                         :input {:task task}})]
+                         :input (cond-> {:task task}
+                                  agent-name (assoc :agent agent-name))})]
         (if (:psi.extension.workflow/created? r)
           (do
             (swap! state update :next-id inc)
@@ -669,10 +695,13 @@
             errors  (count (filter :psi.extension.workflow/error? subs))
             lines   (mapcat
                      (fn [s]
-                       (let [base (str "#" (:psi.extension.workflow/id s)
+                       (let [agent-tag (when-let [agent-name (some-> (wf-agent-name s) str str/trim not-empty)]
+                                         (str " · @" agent-name))
+                             base (str "#" (:psi.extension.workflow/id s)
                                        " " (phase-badge s)
                                        " · T" (wf-turn-count s)
                                        " · " (elapsed-seconds s) "s"
+                                       agent-tag
                                        " · " (task-preview (wf-task s) 70))
                              err  (when (:psi.extension.workflow/error? s)
                                     (when-let [e (wf-error-line s)]
@@ -683,6 +712,22 @@
         (str "Subagents (" (count subs)
              " total · " running " running · " done " done · " errors " error):\n"
              (str/join "\n" lines))))))
+
+(defn- parse-sub-args [args]
+  (let [trimmed (str/trim (or args ""))]
+    (cond
+      (str/blank? trimmed)
+      nil
+
+      :else
+      (let [parts (str/split trimmed #"\s+" 2)
+            first-token (first parts)]
+        (if (and (string? first-token)
+                 (str/starts-with? first-token "@")
+                 (= 2 (count parts)))
+          {:agent (subs first-token 1)
+           :task  (str/trim (second parts))}
+          {:task trimmed})))))
 
 (defn- parse-subcont-args [args]
   (let [trimmed (str/trim (or args ""))
@@ -708,13 +753,17 @@
   (let [action (some-> (get args "action") str str/trim str/lower-case)]
     (case action
       "create"
-      (let [task (str/trim (or (get args "task") ""))]
+      (let [task       (str/trim (or (get args "task") ""))
+            agent-name (normalize-agent-name (get args "agent"))]
         (if (str/blank? task)
           {:content "Error: task is required." :is-error true}
-          (let [r (spawn-subagent! task)]
+          (let [r (spawn-subagent! task agent-name)]
             (if-let [e (:error r)]
               {:content (str "Error: " e) :is-error true}
-              {:content (str "Subagent #" (:ok r) " spawned in background.")
+              {:content (str "Subagent #" (:ok r)
+                             " spawned in background"
+                             (when agent-name (str " (@" agent-name ")"))
+                             ".")
                :is-error false}))))
 
       "continue"
@@ -776,6 +825,8 @@
                                                    :description "Operation to run: create, continue, remove, or list"}
                                        "task"   {:type "string"
                                                    :description "Task text for action=create"}
+                                       "agent"  {:type "string"
+                                                   :description "Optional agent profile name from .psi/agents/*.md for action=create"}
                                        "id"     {:type "integer"
                                                    :description "Subagent id for action=continue/remove"}
                                        "prompt" {:type "string"
@@ -786,13 +837,16 @@
 
   ;; Slash commands
   ((:register-command api) "sub"
-                           {:description "Spawn a subagent: /sub <task>"
+                           {:description "Spawn a subagent: /sub [@agent] <task>"
                             :handler     (fn [args]
-                                           (let [task (str/trim (or args ""))
-                                                 r    (spawn-subagent! task)]
-                                             (if-let [e (:error r)]
-                                               (println (str "Error: " e))
-                                               (println (str "Spawned Subagent #" (:ok r))))))})
+                                           (if-let [{:keys [agent task]} (parse-sub-args args)]
+                                             (let [r (spawn-subagent! task agent)]
+                                               (if-let [e (:error r)]
+                                                 (println (str "Error: " e))
+                                                 (println (str "Spawned Subagent #" (:ok r)
+                                                               (when (seq agent)
+                                                                 (str " (@" (normalize-agent-name agent) ")"))))))
+                                             (println "Usage: /sub [@agent] <task>")))})
 
   ((:register-command api) "subcont"
                            {:description "Continue a subagent: /subcont <id> <prompt>"
