@@ -18,10 +18,14 @@
    :psi.agent-session/is-compacting
    :psi.agent-session/is-idle
    :psi.agent-session/phase               — statechart phase keyword
+   :psi.agent-session/base-system-prompt
    :psi.agent-session/system-prompt
    :psi.agent-session/developer-prompt
    :psi.agent-session/developer-prompt-source
    :psi.agent-session/prompt-layers
+   :psi.agent-session/prompt-contributions
+   :psi.extension/prompt-contributions
+   :psi.extension/prompt-contribution-count
    :psi.agent-session/pending-message-count
    :psi.agent-session/has-pending-messages
    :psi.agent-session/retry-attempt
@@ -31,6 +35,7 @@
    :psi.agent-session/skills
    :psi.agent-session/prompt-templates
    :psi.agent-session/extension-summary   — map describing registered extensions
+   :psi.agent-session/prompt-contributions — ordered extension prompt contribution maps
    :psi.agent-session/extension-last-prompt-source
    :psi.agent-session/extension-last-prompt-delivery
    :psi.agent-session/extension-last-prompt-at
@@ -301,30 +306,49 @@
     {:psi.agent-session/model          (:model sd)
      :psi.agent-session/thinking-level (:thinking-level sd)}))
 
+(defn- contribution->attrs
+  [c]
+  {:psi.extension.prompt-contribution/id         (:id c)
+   :psi.extension.prompt-contribution/ext-path   (:ext-path c)
+   :psi.extension.prompt-contribution/section    (:section c)
+   :psi.extension.prompt-contribution/content    (:content c)
+   :psi.extension.prompt-contribution/priority   (:priority c)
+   :psi.extension.prompt-contribution/enabled    (:enabled c)
+   :psi.extension.prompt-contribution/created-at (:created-at c)
+   :psi.extension.prompt-contribution/updated-at (:updated-at c)})
+
 ;; ── Queues and message counts ───────────────────────────
 
 (pco/defresolver agent-session-queues
   "Resolve queue depths and prompt layers."
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
-   ::pco/output [:psi.agent-session/system-prompt
+   ::pco/output [:psi.agent-session/base-system-prompt
+                 :psi.agent-session/system-prompt
                  :psi.agent-session/developer-prompt
                  :psi.agent-session/developer-prompt-source
                  :psi.agent-session/prompt-layers
+                 :psi.agent-session/prompt-contributions
                  :psi.agent-session/pending-message-count
                  :psi.agent-session/has-pending-messages
                  :psi.agent-session/steering-messages
                  :psi.agent-session/follow-up-messages]}
   (let [sd         @(:session-data-atom agent-session-ctx)
+        base       (:base-system-prompt sd)
         sys        (:system-prompt sd)
         dev        (:developer-prompt sd)
-        dev-source (:developer-prompt-source sd)]
-    {:psi.agent-session/system-prompt          sys
+        dev-source (:developer-prompt-source sd)
+        contribs   (vec (:prompt-contributions sd))]
+    {:psi.agent-session/base-system-prompt     base
+     :psi.agent-session/system-prompt          sys
      :psi.agent-session/developer-prompt       dev
      :psi.agent-session/developer-prompt-source dev-source
-     :psi.agent-session/prompt-layers          {:system-prompt sys
+     :psi.agent-session/prompt-layers          {:base-system-prompt base
+                                                :system-prompt sys
                                                 :developer-prompt dev
-                                                :developer-prompt-source dev-source}
+                                                :developer-prompt-source dev-source
+                                                :prompt-contributions (mapv contribution->attrs contribs)}
+     :psi.agent-session/prompt-contributions   (mapv contribution->attrs contribs)
      :psi.agent-session/pending-message-count  (session/pending-message-count sd)
      :psi.agent-session/has-pending-messages   (session/has-pending-messages? sd)
      :psi.agent-session/steering-messages      (:steering-messages sd)
@@ -438,6 +462,22 @@
    ::pco/output [:psi.extension/details]}
   {:psi.extension/details
    (ext/extension-details-in (:extension-registry agent-session-ctx))})
+
+(pco/defresolver extension-prompt-contributions-resolver
+  "Resolve extension-managed prompt contributions in deterministic render order."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.extension/prompt-contributions
+                 :psi.extension/prompt-contribution-count]}
+  (let [contribs (->> (or (:prompt-contributions @(:session-data-atom agent-session-ctx)) [])
+                      (filter map?)
+                      (sort-by (fn [{:keys [priority ext-path id]}]
+                                 [(or priority 1000)
+                                  (or ext-path "")
+                                  (or id "")]))
+                      (mapv contribution->attrs))]
+    {:psi.extension/prompt-contributions contribs
+     :psi.extension/prompt-contribution-count (count contribs)}))
 
 (pco/defresolver extension-detail-by-path-resolver
   "Resolve detail for a single extension by path.
@@ -1647,6 +1687,7 @@
    extension-commands-resolver
    extension-flags-resolver
    extension-details-resolver
+   extension-prompt-contributions-resolver
    extension-detail-by-path-resolver
    extension-workflow-summary-resolver
    agent-chain-discovery-resolver

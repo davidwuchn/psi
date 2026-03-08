@@ -34,6 +34,7 @@
 
 (def ^:private subagent-type :subagent)
 (def ^:private subagent-tool-names #{"read" "bash" "edit" "write"})
+(def ^:private prompt-contribution-id "subagent-widget-capabilities")
 
 (def ^:private workflow-eql
   [{:psi.extension/workflows
@@ -608,6 +609,20 @@
         (when (and n (seq prompt))
           {:id n :prompt prompt})))))
 
+(defn- register-prompt-contribution! [api]
+  (when-let [register! (:register-prompt-contribution api)]
+    (register! prompt-contribution-id
+               {:section  "Extension Capabilities"
+                :priority 250
+                :enabled  true
+                :content  (str
+                           "subagent-widget tools:\n"
+                           "- subagent_create(task): start background subagent run\n"
+                           "- subagent_continue(id,prompt): continue a run\n"
+                           "- subagent_remove(id): remove a run\n"
+                           "- subagent_list(): list run status\n"
+                           "Flow: create → list → continue/remove.")})))
+
 (defn init [api]
   (swap! state assoc
          :api        api
@@ -618,6 +633,7 @@
          :widget-ids #{})
 
   (register-subagent-workflow-type!)
+  (register-prompt-contribution! api)
 
   ;; Tools (for main agent orchestration)
   ((:register-tool api)

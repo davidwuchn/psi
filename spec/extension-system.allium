@@ -14,8 +14,9 @@
 --   Tool wrapping — pre/post call hooks on built-in and extension tools
 --   Event dispatch — named events, handler ordering, cancel semantics
 --   Custom messages — extension-injected messages with LLM trigger options
---   Before-agent-start hook — context injection and system prompt override
+--   Prompt contributions — extension-provided fragments merged into system prompt
 --   Resource discovery trigger — notifies extensions to contribute paths
+--   Prompt contribution render ordering and rebuild triggers
 --
 -- Excludes:
 --   Skill entity, discovery, invocation (see skills.allium)
@@ -187,23 +188,64 @@ rule ExtensionPromptSent {
 }
 
 ------------------------------------------------------------
--- Before-Agent-Start Hook
+-- Prompt Contributions
 ------------------------------------------------------------
 
-rule BeforeAgentStartFired {
-    -- Extensions may prepend custom context messages or override system prompt.
-    -- Fires after system prompt is built, before agent processes the user prompt.
-    when: BeforeAgentStartFired(session, prompt, images)
+entity PromptContribution {
+    id: String
+    extensionPath: String
+    section: String?
+    content: String
+    priority: Integer            -- lower value renders earlier
+    enabled: Boolean
+    createdAt: Timestamp
+    updatedAt: Timestamp
+}
 
-    ensures: BeforeAgentStartDispatched(session, prompt, images, session.systemPrompt)
-    ensures:
-        for msg in ExtensionContextMessages(session):
-            session.agent.messages = session.agent.messages + [msg]
-    ensures:
-        if ExtensionSystemPromptOverride(session) != null:
-            session.agent.systemPrompt = ExtensionSystemPromptOverride(session)
-        else:
-            session.agent.systemPrompt = session.systemPrompt
+rule PromptContributionRegistered {
+    -- Extension registers a reusable fragment to be merged into session.systemPrompt.
+    when: PromptContributionRegistered(session, extensionPath, contribution)
+
+    ensures: exists PromptContribution {
+        id: contribution.id
+        extensionPath: extensionPath
+        section: contribution.section
+        content: contribution.content
+        priority: contribution.priority
+        enabled: true
+    }
+    ensures: SystemPromptRebuilt(session)
+}
+
+rule PromptContributionUpdated {
+    -- Extension updates an existing contribution by id.
+    when: PromptContributionUpdated(session, extensionPath, contributionId, patch)
+
+    requires: exists PromptContribution {id: contributionId, extensionPath: extensionPath}
+
+    ensures: PromptContribution{contributionId}.updatedWith(patch)
+    ensures: PromptContribution{contributionId}.updatedAt = Now()
+    ensures: SystemPromptRebuilt(session)
+}
+
+rule PromptContributionRemoved {
+    -- Extension removes a previously registered contribution.
+    when: PromptContributionRemoved(session, extensionPath, contributionId)
+
+    requires: exists PromptContribution {id: contributionId, extensionPath: extensionPath}
+
+    ensures: not exists PromptContribution {id: contributionId, extensionPath: extensionPath}
+    ensures: SystemPromptRebuilt(session)
+}
+
+rule PromptContributionRenderOrder {
+    -- Rebuild renders enabled contributions deterministically.
+    when: SystemPromptRebuilt(session)
+
+    ensures: session.promptContributionLayers = Render(
+        PromptContribution where enabled = true,
+        order_by: [priority asc, extensionPath asc, id asc]
+    )
 }
 
 ------------------------------------------------------------
@@ -286,11 +328,6 @@ rule ModelSelectDispatched {
 
 -- ── Agent events ────────────────────────────────────────
 
-rule BeforeAgentStartDispatched {
-    when: BeforeAgentStartDispatched(session, prompt, images, systemPrompt)
-    ensures: ExtensionEvent.emitted(session, {type: before_agent_start, prompt: prompt, images: images, systemPrompt: systemPrompt})
-}
-
 rule AutoCompactionStartDispatched {
     when: AutoCompactionStartDispatched(session, reason)
     ensures: AgentSessionEvent.emitted(session, {type: auto_compaction_start, reason: reason})
@@ -372,6 +409,12 @@ surface ExtensionApi {
         registerShortcut(key, options)
         registerFlag(name, options)
 
+        -- Prompt contribution registration
+        registerPromptContribution(id, contribution)
+        updatePromptContribution(id, patch)
+        unregisterPromptContribution(id)
+        listPromptContributions()
+
         -- Message actions
         sendMessage(message, options?)
         sendUserMessage(content, options?)
@@ -405,6 +448,8 @@ surface ExtensionApi {
         -- session_before_* result payloads are last-writer-wins when not cancelled.
         -- session_before_compact may supply a custom CompactionResult to replace
         --   the default LLM-based summarisation.
+        -- Prompt contributions are merged into the system prompt as an ordered
+        --   extension-managed layer (generic mechanism, not domain-specific).
         -- Extension commands shadow prompt templates with the same name.
 }
 

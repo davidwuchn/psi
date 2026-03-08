@@ -13,7 +13,7 @@
 --   Auto-retry          — transient error backoff
 --   Custom messages     — extension-injected messages
 --   Session persistence — entry journal, session file I/O
---   System prompt       — assembly from context files, skills, tools
+--   System prompt       — assembly from context files, skills, tools, and extension prompt contributions
 --
 -- Excludes:
 --   Compaction algorithm (see compaction.allium)
@@ -475,7 +475,8 @@ rule MessagePersisted {
 -- ── System prompt ───────────────────────────────────────
 
 rule SystemPromptBuilt {
-    -- System prompt is assembled from context files, skills, and selected tools.
+    -- System prompt is assembled from context files, skills, selected tools,
+    -- and extension-managed prompt contributions.
     when: SystemPromptBuilt(session, toolNames)
 
     ensures: session.systemPrompt = Assemble(
@@ -484,26 +485,10 @@ rule SystemPromptBuilt {
         skills: session.skills with is_available_to_model,
         customPrompt: session.customSystemPrompt,
         appendPrompt: session.appendSystemPrompt,
-        selectedTools: toolNames
+        selectedTools: toolNames,
+        promptContributions: ext/PromptContribution where enabled = true
     )
     ensures: session.agent.systemPrompt = session.systemPrompt
-}
-
--- ── Before-agent-start hook ─────────────────────────────
-
-rule BeforeAgentStartFired {
-    -- Extensions may prepend custom context messages or override system prompt.
-    when: BeforeAgentStartFired(session, prompt, images)
-
-    ensures: ext/BeforeAgentStartDispatched(session, prompt, images, session.systemPrompt)
-    ensures:
-        for msg in ext/ExtensionContextMessages(session):
-            session.agent.messages = session.agent.messages + [msg]
-    ensures:
-        if ext/ExtensionSystemPromptOverride(session) != null:
-            session.agent.systemPrompt = ext/ExtensionSystemPromptOverride(session)
-        else:
-            session.agent.systemPrompt = session.systemPrompt
 }
 
 ------------------------------------------------------------

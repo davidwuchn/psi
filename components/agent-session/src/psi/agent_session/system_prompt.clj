@@ -91,6 +91,49 @@
 ;; Prompt assembly
 ;; ============================================================
 
+(defn format-prompt-contributions-for-prompt
+  "Render extension-managed prompt contributions as a deterministic prompt layer.
+
+   Input: vector of maps with keys
+   :id :ext-path :section :content :priority :enabled.
+
+   Returns nil when no enabled contributions exist, otherwise a formatted string
+   that can be appended to the base system prompt."
+  [contributions]
+  (let [enabled (->> contributions
+                     (filter map?)
+                     (filter #(not (false? (:enabled %))))
+                     (sort-by (fn [{:keys [priority ext-path id]}]
+                                [(or priority 1000)
+                                 (or ext-path "")
+                                 (or id "")]))
+                     vec)]
+    (when (seq enabled)
+      (str "\n\n# Extension Prompt Contributions\n\n"
+           (str/join
+            "\n\n"
+            (map (fn [{:keys [id ext-path section content]}]
+                   (str "<prompt_contribution"
+                        " id=\"" (or id "") "\""
+                        " ext_path=\"" (or ext-path "") "\""
+                        (when (some? section)
+                          (str " section=\"" section "\""))
+                        ">\n"
+                        (or content "")
+                        "\n</prompt_contribution>"))
+                 enabled))))))
+
+(defn apply-prompt-contributions
+  "Append the rendered extension contribution layer to an already assembled
+   base system prompt.
+
+   Returns `base-prompt` unchanged when no enabled contributions are present."
+  [base-prompt contributions]
+  (let [base (or base-prompt "")]
+    (if-let [section (format-prompt-contributions-for-prompt contributions)]
+      (str base section)
+      base)))
+
 (defn build-system-prompt
   "Build the complete system prompt from all sources.
 
@@ -103,11 +146,13 @@
      :skills             — [Skill] pre-loaded skills
      :graph-capabilities — [{:domain :operation-count :resolver-count :mutation-count}]
                            from :psi.graph/capabilities
+     :prompt-contributions — [{:id :ext-path :section :content :priority :enabled}]
+                             extension-managed prompt layer
 
    The assembled prompt is returned as a string."
   ([] (build-system-prompt {}))
   ([{:keys [cwd custom-prompt append-prompt selected-tools
-            context-files skills graph-capabilities]}]
+            context-files skills graph-capabilities prompt-contributions]}]
    (let [resolved-cwd   (or cwd (System/getProperty "user.dir"))
          tool-names     (or selected-tools ["read" "bash" "edit" "write" "app-query-tool"])
          has-read?      (some #(= "read" %) tool-names)
@@ -115,6 +160,7 @@
          loaded-skills  (or skills [])
          loaded-ctx     (or context-files [])
          loaded-caps    (or graph-capabilities [])
+         loaded-contribs (or prompt-contributions [])
 
          ;; Date/time stamp
          now    (java.time.ZonedDateTime/now)
@@ -192,6 +238,10 @@
          (when (and has-read? (seq loaded-skills))
            (skills/format-skills-for-prompt loaded-skills))
 
+         ;; Extension prompt contributions
+         contributions-section
+         (format-prompt-contributions-for-prompt loaded-contribs)
+
          ;; Main prompt
          base-prompt
          (if custom-prompt
@@ -210,5 +260,6 @@
           (or append-section "")
           (or context-section "")
           (or skills-section "")
+          (or contributions-section "")
           "\nCurrent date and time: " dt-str
           "\nCurrent working directory: " resolved-cwd))))

@@ -479,6 +479,62 @@
      (fn [name]
        (get-flag-in reg name))
 
+     ;; ── Prompt contribution helpers (extension-scoped) ─
+     :register-prompt-contribution
+     (fn [id contribution]
+       (if-let [f (:mutate-fn runtime-fns)]
+         (f 'psi.extension/register-prompt-contribution
+            {:ext-path ext-path
+             :id id
+             :contribution contribution})
+         (throw (ex-info "Extension runtime not initialized" {:action :register-prompt-contribution}))))
+
+     :update-prompt-contribution
+     (fn [id patch]
+       (if-let [f (:mutate-fn runtime-fns)]
+         (f 'psi.extension/update-prompt-contribution
+            {:ext-path ext-path
+             :id id
+             :patch patch})
+         (throw (ex-info "Extension runtime not initialized" {:action :update-prompt-contribution}))))
+
+     :unregister-prompt-contribution
+     (fn [id]
+       (if-let [f (:mutate-fn runtime-fns)]
+         (f 'psi.extension/unregister-prompt-contribution
+            {:ext-path ext-path
+             :id id})
+         (throw (ex-info "Extension runtime not initialized" {:action :unregister-prompt-contribution}))))
+
+     :list-prompt-contributions
+     (fn []
+       (let [all (if-let [qf (:query-fn runtime-fns)]
+                   (:psi.extension/prompt-contributions
+                    (qf [:psi.extension/prompt-contributions]))
+                   [])]
+         (->> all
+              (keep (fn [c]
+                      (let [path (or (:ext-path c)
+                                     (:psi.extension.prompt-contribution/ext-path c))]
+                        (when (= ext-path path)
+                          {:id         (or (:id c)
+                                           (:psi.extension.prompt-contribution/id c))
+                           :ext-path   path
+                           :section    (or (:section c)
+                                           (:psi.extension.prompt-contribution/section c))
+                           :content    (or (:content c)
+                                           (:psi.extension.prompt-contribution/content c))
+                           :priority   (or (:priority c)
+                                           (:psi.extension.prompt-contribution/priority c))
+                           :enabled    (if (contains? c :enabled)
+                                         (:enabled c)
+                                         (:psi.extension.prompt-contribution/enabled c))
+                           :created-at (or (:created-at c)
+                                           (:psi.extension.prompt-contribution/created-at c))
+                           :updated-at (or (:updated-at c)
+                                           (:psi.extension.prompt-contribution/updated-at c))}))))
+              vec)))
+
      ;; ── EQL runtime surface ────────────────────────────
      :query
      (fn [eql-query]

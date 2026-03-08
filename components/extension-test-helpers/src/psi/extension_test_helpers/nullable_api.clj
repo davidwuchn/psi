@@ -26,7 +26,8 @@
          :entries        []
          :messages       []
          :workflow-types {}
-         :workflows      {}}))
+         :workflows      {}
+         :prompt-contributions {}}))
 
 (defn- workflow-seq
   [state ext-path]
@@ -58,6 +59,12 @@
                       (contains? x :psi.extension/workflows)))
                q))
     {:psi.extension/workflows (workflow-seq state path)}
+
+    ;; Extension prompt contributions
+    (= q [:psi.extension/prompt-contributions])
+    {:psi.extension/prompt-contributions (->> (:prompt-contributions @state)
+                                              vals
+                                              vec)}
 
     :else
     {}))
@@ -137,6 +144,40 @@
 
     psi.extension.workflow/abort
     {:psi.extension.workflow/aborted? true}
+
+    ;; Prompt contribution helpers
+    psi.extension/register-prompt-contribution
+    (let [id (str (:id params))
+          value (merge {:id id
+                        :ext-path (:ext-path params)}
+                       (:contribution params))]
+      (swap! state assoc-in [:prompt-contributions [(:ext-path params) id]] value)
+      {:psi.extension.prompt-contribution/registered? true
+       :psi.extension.prompt-contribution/id id
+       :psi.extension.prompt-contribution/count (count (:prompt-contributions @state))})
+
+    psi.extension/update-prompt-contribution
+    (let [id (str (:id params))
+          key [(:ext-path params) id]
+          current (get-in @state [:prompt-contributions key])]
+      (if current
+        (do
+          (swap! state update-in [:prompt-contributions key] merge (:patch params))
+          {:psi.extension.prompt-contribution/updated? true
+           :psi.extension.prompt-contribution/id id
+           :psi.extension.prompt-contribution/count (count (:prompt-contributions @state))})
+        {:psi.extension.prompt-contribution/updated? false
+         :psi.extension.prompt-contribution/id id
+         :psi.extension.prompt-contribution/count (count (:prompt-contributions @state))}))
+
+    psi.extension/unregister-prompt-contribution
+    (let [id (str (:id params))
+          key [(:ext-path params) id]
+          existed? (contains? (:prompt-contributions @state) key)]
+      (swap! state update :prompt-contributions dissoc key)
+      {:psi.extension.prompt-contribution/removed? existed?
+       :psi.extension.prompt-contribution/id id
+       :psi.extension.prompt-contribution/count (count (:prompt-contributions @state))})
 
     ;; Transcript/message convenience used by extensions
     psi.extension/append-entry
@@ -229,6 +270,29 @@
                      :get-flag
                      (fn [name]
                        (get-in @state [:flag-values name]))
+
+                     :register-prompt-contribution
+                     (fn [id contribution]
+                       (mutate* 'psi.extension/register-prompt-contribution
+                                {:id id :contribution contribution}))
+
+                     :update-prompt-contribution
+                     (fn [id patch]
+                       (mutate* 'psi.extension/update-prompt-contribution
+                                {:id id :patch patch}))
+
+                     :unregister-prompt-contribution
+                     (fn [id]
+                       (mutate* 'psi.extension/unregister-prompt-contribution
+                                {:id id}))
+
+                     :list-prompt-contributions
+                     (fn []
+                       (let [all (:psi.extension/prompt-contributions
+                                  (query* [:psi.extension/prompt-contributions]))]
+                         (->> all
+                              (filter #(= path* (:ext-path %)))
+                              vec)))
 
                      :ui {:notify       (fn [text level]
                                           (swap! state update :notifications conj {:text text :level level}))

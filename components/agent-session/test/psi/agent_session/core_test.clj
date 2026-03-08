@@ -358,9 +358,11 @@
                                         :psi.agent-session/prompt-layers])]
       (is (= "dev layer" (:psi.agent-session/developer-prompt result)))
       (is (= :explicit (:psi.agent-session/developer-prompt-source result)))
-      (is (= {:system-prompt ""
+      (is (= {:base-system-prompt ""
+              :system-prompt ""
               :developer-prompt "dev layer"
-              :developer-prompt-source :explicit}
+              :developer-prompt-source :explicit
+              :prompt-contributions []}
              (:psi.agent-session/prompt-layers result)))))
 
   (testing "query-in resolves context fraction"
@@ -374,6 +376,19 @@
       (session/register-extension-in! ctx "/ext/a")
       (let [result (session/query-in ctx [:psi.agent-session/extension-summary])]
         (is (= 1 (get-in result [:psi.agent-session/extension-summary :extension-count]))))))
+
+  (testing "query-in resolves prompt contribution attrs"
+    (let [ctx (session/create-context)]
+      (session/register-prompt-contribution-in! ctx "/ext/a" "c1"
+                                                {:content "Hint"
+                                                 :priority 10
+                                                 :enabled true})
+      (let [result (session/query-in ctx [:psi.agent-session/base-system-prompt
+                                          :psi.agent-session/prompt-contributions
+                                          :psi.extension/prompt-contribution-count])]
+        (is (= "" (:psi.agent-session/base-system-prompt result)))
+        (is (= 1 (count (:psi.agent-session/prompt-contributions result))))
+        (is (= 1 (:psi.extension/prompt-contribution-count result))))))
 
   (testing "query-in resolves stats"
     (let [ctx    (session/create-context)
@@ -921,6 +936,31 @@
         (is (true? (:psi.extension.tool-plan/succeeded? result)))
         (is (= "B:A:hello"
                (get-in result [:psi.extension.tool-plan/result-by-id :s2 :content]))))))
+
+  (testing "register/update/unregister prompt contribution mutations"
+    (let [ctx    (session/create-context)
+          qctx   (query/create-query-context)
+          mutate (fn [op params]
+                   (get (query/query-in qctx
+                                        {:psi/agent-session-ctx ctx}
+                                        [(list op (assoc params :psi/agent-session-ctx ctx))])
+                        op))]
+      (session/register-resolvers-in! qctx false)
+      (session/register-mutations-in! qctx true)
+      (let [r1 (mutate 'psi.extension/register-prompt-contribution
+                       {:ext-path "/ext/a"
+                        :id "c1"
+                        :contribution {:content "A" :priority 10 :enabled true}})
+            r2 (mutate 'psi.extension/update-prompt-contribution
+                       {:ext-path "/ext/a"
+                        :id "c1"
+                        :patch {:content "B"}})
+            r3 (mutate 'psi.extension/unregister-prompt-contribution
+                       {:ext-path "/ext/a"
+                        :id "c1"})]
+        (is (true? (:psi.extension.prompt-contribution/registered? r1)))
+        (is (true? (:psi.extension.prompt-contribution/updated? r2)))
+        (is (true? (:psi.extension.prompt-contribution/removed? r3))))))
 
   (testing "send-prompt mutation stores extension prompt telemetry (no run-fn → follow-up)"
     (let [ctx    (session/create-context)

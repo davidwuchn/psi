@@ -477,7 +477,31 @@
           _           (ext/register-extension-in! reg "/ext/test")
           runtime-fns {:get-api-key-fn (fn [provider] (str "key-for-" provider))}
           api         (ext/create-extension-api reg "/ext/test" runtime-fns)]
-      (is (= "key-for-openai" ((:get-api-key api) "openai"))))))
+      (is (= "key-for-openai" ((:get-api-key api) "openai")))))
+
+  (testing "API prompt contribution helpers delegate to runtime"
+    (let [reg   (ext/create-registry)
+          _     (ext/register-extension-in! reg "/ext/test")
+          calls (atom [])
+          runtime-fns {:mutate-fn (fn [op params]
+                                    (swap! calls conj {:op op :params params})
+                                    {:ok true})
+                       :query-fn  (fn [_]
+                                    {:psi.extension/prompt-contributions
+                                     [{:id "a" :ext-path "/ext/test" :content "x"}
+                                      {:id "b" :ext-path "/ext/other" :content "y"}]})}
+          api   (ext/create-extension-api reg "/ext/test" runtime-fns)]
+      ((:register-prompt-contribution api) "a" {:content "x"})
+      ((:update-prompt-contribution api) "a" {:enabled false})
+      ((:unregister-prompt-contribution api) "a")
+      (is (= [{:id "a" :ext-path "/ext/test" :content "x"
+               :section nil :priority nil :enabled nil
+               :created-at nil :updated-at nil}]
+             ((:list-prompt-contributions api))))
+      (is (= ['psi.extension/register-prompt-contribution
+              'psi.extension/update-prompt-contribution
+              'psi.extension/unregister-prompt-contribution]
+             (mapv :op @calls))))))
 
 ;; ── Extension loading from file ─────────────────────────────────────────────
 

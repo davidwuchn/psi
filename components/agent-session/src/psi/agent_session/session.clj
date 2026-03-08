@@ -12,7 +12,8 @@
      :thinking-level        — :off | :minimal | :low | :medium | :high | :xhigh
      :is-streaming          — true while the agent loop is running
      :is-compacting         — true while a compaction is executing
-     :system-prompt         — assembled system prompt string
+     :base-system-prompt    — assembled base system prompt string (without extension contributions)
+     :system-prompt         — assembled runtime system prompt string (base + extension contributions)
      :developer-prompt      — optional developer instruction layer string
      :developer-prompt-source — :fallback | :env | :explicit
      :steering-messages     — queued steer texts (injected mid-run)
@@ -87,6 +88,17 @@
    [:kind session-entry-kind-schema]
    [:data {:optional true} :map]])
 
+(def prompt-contribution-schema
+  [:map
+   [:id :string]
+   [:ext-path :string]
+   [:section {:optional true} [:maybe :string]]
+   [:content :string]
+   [:priority {:optional true} :int]
+   [:enabled {:optional true} :boolean]
+   [:created-at inst?]
+   [:updated-at inst?]])
+
 (def agent-session-schema
   [:map
    [:session-id :string]
@@ -96,6 +108,7 @@
    [:thinking-level thinking-level-schema]
    [:is-streaming :boolean]
    [:is-compacting :boolean]
+   [:base-system-prompt :string]
    [:system-prompt :string]
    [:developer-prompt {:optional true} [:maybe :string]]
    [:developer-prompt-source {:optional true} [:enum :fallback :env :explicit]]
@@ -107,6 +120,7 @@
    [:scoped-models [:vector scoped-model-schema]]
    [:skills [:vector skill-schema]]
    [:prompt-templates [:vector prompt-template-schema]]
+   [:prompt-contributions {:optional true} [:vector prompt-contribution-schema]]
    [:extensions [:map-of :string extension-schema]]
    [:session-entries [:vector session-entry-schema]]
    [:startup-bootstrap {:optional true}
@@ -177,6 +191,7 @@
      :thinking-level          :off
      :is-streaming            false
      :is-compacting           false
+     :base-system-prompt      ""
      :system-prompt           ""
      :developer-prompt        nil
      :developer-prompt-source :fallback
@@ -188,6 +203,7 @@
      :scoped-models           []
      :skills                  []
      :prompt-templates        []
+     :prompt-contributions    []
      :extensions              {}
      :session-entries         []
      :startup-prompts         []

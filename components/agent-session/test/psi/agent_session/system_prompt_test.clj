@@ -132,6 +132,18 @@
                   {:append-prompt "Extra instructions here."})]
       (is (str/includes? prompt "Extra instructions here."))))
 
+  (testing "includes prompt contributions when provided"
+    (let [prompt (sys-prompt/build-system-prompt
+                  {:prompt-contributions [{:id "x"
+                                           :ext-path "/ext/a"
+                                           :section "Hints"
+                                           :content "Use stable IDs"
+                                           :priority 100
+                                           :enabled true}]})]
+      (is (str/includes? prompt "# Extension Prompt Contributions"))
+      (is (str/includes? prompt "<prompt_contribution"))
+      (is (str/includes? prompt "Use stable IDs"))))
+
   (testing "custom prompt with skills and context"
     (let [skills [{:name "my-skill" :description "My skill"
                    :file-path "/s/SKILL.md" :base-dir "/s"

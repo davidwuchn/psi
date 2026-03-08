@@ -201,6 +201,40 @@ use:
 | `:abort`             | `(fn [])`                                 | Abort the current agent run          |
 | `:compact`           | `(fn [opts?])`                            | Trigger manual compaction            |
 | `:get-system-prompt` | `(fn [])`                                 | Get the current system prompt        |
+| `:register-prompt-contribution` | `(fn [id contribution])`          | Register/update an extension-owned prompt contribution |
+| `:update-prompt-contribution`   | `(fn [id patch])`                  | Patch an extension-owned prompt contribution |
+| `:unregister-prompt-contribution` | `(fn [id])`                      | Remove an extension-owned prompt contribution |
+| `:list-prompt-contributions`    | `(fn [])`                          | List this extension's prompt contributions |
+
+### Prompt Contributions
+
+Extensions can contribute deterministic prompt fragments that are merged into
+system prompt assembly as an extension-managed layer.
+
+```clojure
+;; Register or replace a contribution owned by this extension
+((:register-prompt-contribution api) "domain-hints"
+ {:section  "Domain Hints"
+  :content  "Prefer stable IDs over names when correlating entities."
+  :priority 200
+  :enabled  true})
+
+;; Patch selected fields
+((:update-prompt-contribution api) "domain-hints"
+ {:content "Prefer stable IDs; validate cross-reference integrity."
+  :enabled true})
+
+;; List this extension's contributions
+((:list-prompt-contributions api))
+
+;; Remove when no longer needed
+((:unregister-prompt-contribution api) "domain-hints")
+```
+
+Guidance:
+- Keep contributions concise and task-relevant.
+- Use stable `id` values so reloads update instead of duplicating.
+- This mechanism is domain-agnostic (not specific to any one use case).
 
 ### Inter-Extension Communication
 

@@ -535,9 +535,7 @@
                          :context-files      ctx-files
                          :skills             skills
                          :graph-capabilities graph-caps})
-        _              (do
-                         (swap! (:session-data-atom ctx) assoc :system-prompt system-prompt)
-                         (agent/set-system-prompt-in! (:agent-ctx ctx) system-prompt))
+        _              (session/set-system-prompt-in! ctx system-prompt)
         _              (memory-runtime/sync-memory-layer! (merge {:cwd cwd}
                                                                   (or memory-runtime-opts {})))
         startup-rehydrate (start-new-session-with-startup! ctx nil ai-model)]

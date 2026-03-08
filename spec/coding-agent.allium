@@ -494,7 +494,8 @@ rule MessagePersisted {
 -- ── System prompt ───────────────────────────────────────
 
 rule SystemPromptBuilt {
-    -- System prompt is assembled from context files, skills, and selected tools.
+    -- System prompt is assembled from context files, skills, selected tools,
+    -- and extension-managed prompt contributions.
     when: SystemPromptBuilt(session, toolNames)
 
     ensures: session.systemPrompt = Assemble(
@@ -503,14 +504,11 @@ rule SystemPromptBuilt {
         skills: session.skills with skills/is_available_to_model,
         customPrompt: session.customSystemPrompt,
         appendPrompt: session.appendSystemPrompt,
-        selectedTools: toolNames
+        selectedTools: toolNames,
+        promptContributions: ext/PromptContribution where enabled = true
     )
     ensures: session.agent.systemPrompt = session.systemPrompt
 }
-
--- ── Before-agent-start hook (see extension-system.allium)
-
--- BeforeAgentStartFired rule is specified in ext/BeforeAgentStartFired.
 
 ------------------------------------------------------------
 -- Extension Event Dispatch (see extension-system.allium)
@@ -518,8 +516,8 @@ rule SystemPromptBuilt {
 
 -- All extension event dispatch rules (ResourcesDiscoverDispatched,
 -- SessionBefore*Dispatched, Session*Dispatched, ModelSelectDispatched,
--- AutoCompaction*Dispatched, AutoRetry*Dispatched, ToolCall/ResultDispatched,
--- BeforeAgentStartDispatched) are specified in ext/.
+-- AutoCompaction*Dispatched, AutoRetry*Dispatched, ToolCall/ResultDispatched)
+-- are specified in ext/.
 
 ------------------------------------------------------------
 -- Actor Declarations

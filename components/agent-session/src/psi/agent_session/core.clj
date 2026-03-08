@@ -67,6 +67,7 @@
    [psi.agent-session.project-preferences :as project-prefs]
    [psi.agent-session.resolvers :as resolvers]
    [psi.agent-session.session :as session]
+   [psi.agent-session.system-prompt :as sys-prompt]
    [psi.agent-session.statechart :as sc]
    [psi.memory.runtime :as memory-runtime]
    [psi.query.core :as query]))
@@ -79,6 +80,7 @@
 (declare set-session-name-in!)
 (declare register-resolvers-in!)
 (declare register-mutations-in!)
+(declare refresh-system-prompt-in!)
 
 ;; ============================================================
 ;; Actions dispatcher
@@ -481,6 +483,9 @@
                                                  (rseq (vec entries)))
                            :model          model
                            :thinking-level thinking-level)
+            ;; Legacy sessions may not persist base prompt fields.
+            (when-not (contains? (get-session-data-in ctx) :base-system-prompt)
+              (swap-session! ctx assoc :base-system-prompt (or (:system-prompt (get-session-data-in ctx)) "")))
             (agent/reset-agent-in! (:agent-ctx ctx))
             (when model
               (agent/set-model-in! (:agent-ctx ctx) model))
@@ -600,16 +605,126 @@
     (ext/dispatch-in (:extension-registry ctx) "model_select" {:model model :source :set})
     (get-session-data-in ctx)))
 
-(defn set-system-prompt-in!
-  "Set the active system prompt for this session.
+(defn- normalize-prompt-contribution
+  [ext-path id contribution]
+  (let [now (java.time.Instant/now)
+        c   (or contribution {})]
+    {:id         (str id)
+     :ext-path   (str ext-path)
+     :section    (some-> (:section c) str)
+     :content    (str (or (:content c) ""))
+     :priority   (int (or (:priority c) 1000))
+     :enabled    (if (contains? c :enabled) (boolean (:enabled c)) true)
+     :created-at now
+     :updated-at now}))
 
-   Updates both session data (:system-prompt) and agent-core prompt state
-   so introspection and runtime behavior remain consistent."
-  [ctx prompt]
-  (let [p (or prompt "")]
-    (swap-session! ctx assoc :system-prompt p)
-    (agent/set-system-prompt-in! (:agent-ctx ctx) p)
+(defn- merge-prompt-contribution-patch
+  [existing patch]
+  (let [p (or patch {})
+        now (java.time.Instant/now)]
+    (cond-> (assoc existing :updated-at now)
+      (contains? p :section)  (assoc :section (some-> (:section p) str))
+      (contains? p :content)  (assoc :content (str (or (:content p) "")))
+      (contains? p :priority) (assoc :priority (int (or (:priority p) 1000)))
+      (contains? p :enabled)  (assoc :enabled (boolean (:enabled p))))))
+
+(defn- sorted-prompt-contributions
+  [coll]
+  (->> (or coll [])
+       (filter map?)
+       (sort-by (fn [{:keys [priority ext-path id]}]
+                  [(or priority 1000)
+                   (or ext-path "")
+                   (or id "")]))
+       vec))
+
+(defn list-prompt-contributions-in
+  "Return prompt contributions sorted by deterministic render order."  
+  [ctx]
+  (sorted-prompt-contributions (:prompt-contributions (get-session-data-in ctx))))
+
+(defn refresh-system-prompt-in!
+  "Recompute runtime :system-prompt from :base-system-prompt plus enabled
+   extension prompt contributions, then sync agent-core."  
+  [ctx]
+  (let [sd      (get-session-data-in ctx)
+        base    (or (:base-system-prompt sd) (:system-prompt sd) "")
+        contrib (list-prompt-contributions-in ctx)
+        prompt  (sys-prompt/apply-prompt-contributions base contrib)]
+    (swap-session! ctx assoc :system-prompt prompt)
+    (agent/set-system-prompt-in! (:agent-ctx ctx) prompt)
     (get-session-data-in ctx)))
+
+(defn set-system-prompt-in!
+  "Set the base system prompt for this session and refresh runtime prompt.
+
+   Stores the given prompt in :base-system-prompt, recomputes :system-prompt
+   with extension contributions, and updates agent-core prompt state."  
+  [ctx prompt]
+  (swap-session! ctx assoc :base-system-prompt (or prompt ""))
+  (refresh-system-prompt-in! ctx))
+
+(defn register-prompt-contribution-in!
+  "Register or replace an extension-owned prompt contribution by id.
+   Returns {:registered? bool :contribution map :count int}."
+  [ctx ext-path id contribution]
+  (let [ext-path* (str ext-path)
+        id*       (str id)
+        norm      (normalize-prompt-contribution ext-path* id* contribution)]
+    (swap-session! ctx update :prompt-contributions
+                   (fn [xs]
+                     (let [xs* (vec (remove #(and (= ext-path* (:ext-path %))
+                                                  (= id* (:id %)))
+                                            (or xs [])))]
+                       (conj xs* norm))))
+    (refresh-system-prompt-in! ctx)
+    {:registered? true
+     :contribution norm
+     :count (count (list-prompt-contributions-in ctx))}))
+
+(defn update-prompt-contribution-in!
+  "Patch an existing extension-owned prompt contribution.
+   Returns {:updated? bool :contribution map? :count int}."
+  [ctx ext-path id patch]
+  (let [ext-path* (str ext-path)
+        id*       (str id)
+        updated   (atom nil)
+        found?    (atom false)]
+    (swap-session! ctx update :prompt-contributions
+                   (fn [xs]
+                     (mapv (fn [c]
+                             (if (and (= ext-path* (:ext-path c))
+                                      (= id* (:id c)))
+                               (let [next (merge-prompt-contribution-patch c patch)]
+                                 (reset! found? true)
+                                 (reset! updated next)
+                                 next)
+                               c))
+                           (or xs []))))
+    (when @found?
+      (refresh-system-prompt-in! ctx))
+    {:updated? @found?
+     :contribution @updated
+     :count (count (list-prompt-contributions-in ctx))}))
+
+(defn unregister-prompt-contribution-in!
+  "Remove an extension-owned prompt contribution by id.
+   Returns {:removed? bool :count int}."
+  [ctx ext-path id]
+  (let [ext-path* (str ext-path)
+        id*       (str id)
+        before    (count (or (:prompt-contributions (get-session-data-in ctx)) []))]
+    (swap-session! ctx update :prompt-contributions
+                   (fn [xs]
+                     (vec (remove #(and (= ext-path* (:ext-path %))
+                                        (= id* (:id %)))
+                                  (or xs [])))))
+    (let [after    (count (or (:prompt-contributions (get-session-data-in ctx)) []))
+          removed? (< after before)]
+      (when removed?
+        (refresh-system-prompt-in! ctx))
+      {:removed? removed?
+       :count after})))
 
 (defn cycle-model-in!
   "Cycle to the next available scoped model."
@@ -654,9 +769,10 @@
 ;; ============================================================
 
 (defn set-active-tools-in!
-  "Replace the agent's active tool set."
+  "Replace the agent's active tool set and refresh prompt layers."
   [ctx tool-maps]
   (agent/set-tools-in! (:agent-ctx ctx) tool-maps)
+  (refresh-system-prompt-in! ctx)
   (get-session-data-in ctx))
 
 ;; ============================================================
@@ -787,14 +903,20 @@
                               configured-paths cwd))))
 
 (defn reload-extensions-in!
-  "Unregister all extensions and re-discover/load them."
+  "Unregister all extensions and re-discover/load them.
+
+   Clears extension-owned prompt contributions before reload so stale
+   fragments do not persist when extension composition changes."  
   ([ctx] (reload-extensions-in! ctx []))
   ([ctx configured-paths]
    (reload-extensions-in! ctx configured-paths nil))
   ([ctx configured-paths cwd]
-   (let [runtime-fns (make-extension-runtime-fns ctx)]
-     (ext/reload-extensions-in! (:extension-registry ctx) runtime-fns
-                                configured-paths cwd))))
+   (swap-session! ctx assoc :prompt-contributions [])
+   (let [runtime-fns (make-extension-runtime-fns ctx)
+         result      (ext/reload-extensions-in! (:extension-registry ctx) runtime-fns
+                                                configured-paths cwd)]
+     (refresh-system-prompt-in! ctx)
+     result)))
 
 (defn extension-summary-in
   "Return introspection summary of the extension registry."
@@ -1286,6 +1408,17 @@
   (ext/register-shortcut-in! (:extension-registry ctx) ext-path (assoc opts :key key))
   {:psi.extension/path ext-path})
 
+(defn- prompt-contribution-mutation-view
+  [c]
+  {:psi.extension.prompt-contribution/id         (:id c)
+   :psi.extension.prompt-contribution/ext-path   (:ext-path c)
+   :psi.extension.prompt-contribution/section    (:section c)
+   :psi.extension.prompt-contribution/content    (:content c)
+   :psi.extension.prompt-contribution/priority   (:priority c)
+   :psi.extension.prompt-contribution/enabled    (:enabled c)
+   :psi.extension.prompt-contribution/created-at (:created-at c)
+   :psi.extension.prompt-contribution/updated-at (:updated-at c)})
+
 (pco/defmutation add-prompt-template
   [_ {:keys [psi/agent-session-ctx template]}]
   {::pco/op-name 'psi.extension/add-prompt-template
@@ -1346,7 +1479,7 @@
         current-tools  (:tools (agent/get-data-in agent-ctx))
         by-name        (into {} (map (juxt :name identity)) current-tools)
         selected-tools (vec (keep by-name tool-names))]
-    (agent/set-tools-in! agent-ctx selected-tools)
+    (set-active-tools-in! agent-session-ctx selected-tools)
     {:psi.tool/count (count selected-tools)
      :psi.tool/names (mapv :name selected-tools)}))
 
@@ -1534,6 +1667,68 @@
    ::pco/params  [:psi/agent-session-ctx :ext-path :key :opts]
    ::pco/output  [:psi.extension/path]}
   (register-extension-shortcut-in! agent-session-ctx ext-path key opts))
+
+(pco/defmutation register-prompt-contribution
+  [_ {:keys [psi/agent-session-ctx ext-path id contribution]}]
+  {::pco/op-name 'psi.extension/register-prompt-contribution
+   ::pco/params  [:psi/agent-session-ctx :ext-path :id :contribution]
+   ::pco/output  [:psi.extension/path
+                  :psi.extension.prompt-contribution/id
+                  :psi.extension.prompt-contribution/registered?
+                  :psi.extension.prompt-contribution/count
+                  :psi.extension.prompt-contribution/ext-path
+                  :psi.extension.prompt-contribution/section
+                  :psi.extension.prompt-contribution/content
+                  :psi.extension.prompt-contribution/priority
+                  :psi.extension.prompt-contribution/enabled
+                  :psi.extension.prompt-contribution/created-at
+                  :psi.extension.prompt-contribution/updated-at]}
+  (let [{:keys [registered? contribution count]}
+        (register-prompt-contribution-in! agent-session-ctx ext-path id contribution)]
+    (merge {:psi.extension/path                            (str ext-path)
+            :psi.extension.prompt-contribution/id          (str id)
+            :psi.extension.prompt-contribution/registered? registered?
+            :psi.extension.prompt-contribution/count       count}
+           (prompt-contribution-mutation-view contribution))))
+
+(pco/defmutation update-prompt-contribution
+  [_ {:keys [psi/agent-session-ctx ext-path id patch]}]
+  {::pco/op-name 'psi.extension/update-prompt-contribution
+   ::pco/params  [:psi/agent-session-ctx :ext-path :id :patch]
+   ::pco/output  [:psi.extension/path
+                  :psi.extension.prompt-contribution/id
+                  :psi.extension.prompt-contribution/updated?
+                  :psi.extension.prompt-contribution/count
+                  :psi.extension.prompt-contribution/ext-path
+                  :psi.extension.prompt-contribution/section
+                  :psi.extension.prompt-contribution/content
+                  :psi.extension.prompt-contribution/priority
+                  :psi.extension.prompt-contribution/enabled
+                  :psi.extension.prompt-contribution/created-at
+                  :psi.extension.prompt-contribution/updated-at]}
+  (let [{:keys [updated? contribution count]}
+        (update-prompt-contribution-in! agent-session-ctx ext-path id patch)]
+    (merge {:psi.extension/path                         (str ext-path)
+            :psi.extension.prompt-contribution/id       (str id)
+            :psi.extension.prompt-contribution/updated? updated?
+            :psi.extension.prompt-contribution/count    count}
+           (when contribution
+             (prompt-contribution-mutation-view contribution)))))
+
+(pco/defmutation unregister-prompt-contribution
+  [_ {:keys [psi/agent-session-ctx ext-path id]}]
+  {::pco/op-name 'psi.extension/unregister-prompt-contribution
+   ::pco/params  [:psi/agent-session-ctx :ext-path :id]
+   ::pco/output  [:psi.extension/path
+                  :psi.extension.prompt-contribution/id
+                  :psi.extension.prompt-contribution/removed?
+                  :psi.extension.prompt-contribution/count]}
+  (let [{:keys [removed? count]}
+        (unregister-prompt-contribution-in! agent-session-ctx ext-path id)]
+    {:psi.extension/path                          (str ext-path)
+     :psi.extension.prompt-contribution/id        (str id)
+     :psi.extension.prompt-contribution/removed?  removed?
+     :psi.extension.prompt-contribution/count     count}))
 
 (defn- elapsed-ms
   [created-at finished-at]
@@ -1739,6 +1934,9 @@
    register-handler
    register-flag
    register-shortcut
+   register-prompt-contribution
+   update-prompt-contribution
+   unregister-prompt-contribution
    register-workflow-type
    create-workflow
    send-workflow-event
@@ -1875,10 +2073,11 @@
                           :fallback
                           developer-prompt-source)]
     (swap-session! ctx assoc
+                   :base-system-prompt system-prompt
                    :system-prompt system-prompt
                    :developer-prompt resolved-developer-prompt
                    :developer-prompt-source resolved-source)
-    (agent/set-system-prompt-in! (:agent-ctx ctx) system-prompt))
+    (refresh-system-prompt-in! ctx))
   (let [startup-tools (into (vec base-tools) (vec tools))
         {:keys [prompt-count skill-count tool-count extension-results]}
         (load-startup-resources-via-mutations-in!
@@ -1893,8 +2092,7 @@
                          extension-results)
         ext-tools (ext/all-tools-in (:extension-registry ctx))
         active-tools (:tools (agent/get-data-in (:agent-ctx ctx)))
-        _         (agent/set-tools-in! (:agent-ctx ctx)
-                                       (into (vec active-tools) ext-tools))
+        _         (set-active-tools-in! ctx (into (vec active-tools) ext-tools))
         summary   {:timestamp              (java.time.Instant/now)
                    :prompt-count           prompt-count
                    :skill-count            skill-count

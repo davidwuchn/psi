@@ -23,7 +23,10 @@
              (set (keys (:commands @state)))))
       (is (= 1 (count (get-in @state [:handlers "session_switch"]))))
       (is (= "subagent-widget loaded (workflow runtime)"
-             (-> @state :notifications last :text))))))
+             (-> @state :notifications last :text)))
+      (is (= 1 (count (:prompt-contributions @state))))
+      (is (contains? (:prompt-contributions @state)
+                     ["/test/subagent_widget.clj" "subagent-widget-capabilities"])))))
 
 (deftest tool-validation-test
   (testing "subagent_create validates empty task"
