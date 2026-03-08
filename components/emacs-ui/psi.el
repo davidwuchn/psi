@@ -20,6 +20,9 @@
 (defcustom psi-emacs-command '("clojure" "-M:psi" "--rpc-edn")
   "Command used to start the owned psi rpc-edn subprocess."
   :type '(repeat string)
+  :safe (lambda (value)
+          (and (listp value)
+               (cl-every #'stringp value)))
   :group 'psi-emacs)
 
 (defcustom psi-emacs-buffer-name "*psi*"
