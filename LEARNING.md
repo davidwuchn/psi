@@ -4,6 +4,56 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-08 - All internal transcript mutations need `inhibit-read-only` — including separator refresh
+
+### λ Every path that writes to a read-only buffer region must bind `inhibit-read-only`
+
+`psi-emacs--refresh-input-separator-line` deletes and reinserts the separator
+line — a region inside the read-only transcript — but was missing
+`(inhibit-read-only t)`. The `before-change-functions` guard
+(`psi-emacs--input-read-only-filter`) raised `text-read-only` on every edit
+attempt, producing the user-visible `"if: Text is read-only"` error.
+
+The fix is one binding at the mutation site:
+
+```elisp
+(let ((inhibit-read-only t)
+      (bol (line-beginning-position))
+      (eol (line-end-position)))
+  (delete-region bol ...)
+  (insert line))
+```
+
+### λ A "refresh" path is still a write path — the guard applies
+
+The separator refresh function was added as a width-correction helper and may
+have been treated mentally as a "lightweight read" operation. But any
+`delete-region`/`insert` pair is a write, regardless of intent. The read-only
+guard fires on all writes outside the compose area, with no exemption for
+cosmetic or structural updates.
+
+### λ One missing `inhibit-read-only` can surface far from where it was added
+
+The missing binding in `psi-emacs--refresh-input-separator-line` was only
+triggered on re-entry to an existing buffer (not fresh open), because only then
+does `psi-emacs--ensure-input-area` take the "separator valid, needs refresh"
+branch. The error appeared as a consequence of the prior fix (7b63628), which
+made re-entry reach this path for the first time.
+
+Pattern: when a guard-based error appears after a refactor that changes which
+code paths are taken, look for existing mutation sites that were previously
+unreachable and check each one for the required binding.
+
+### λ Audit all internal mutation sites when adding a new read-only invariant
+
+When `psi-emacs-mode` dropped its global `inhibit-read-only` setting (commit
+`0c6667f`), the contract became: every internal write must carry its own
+binding. New mutation functions added after that point should be audited at
+review time. A checklist grep for `delete-region\|insert\|replace-regexp` in
+the file, filtered for missing `inhibit-read-only`, would have caught this.
+
+---
+
 ## 2026-03-08 - `psi-emacs-open-buffer` must be idempotent for live buffers
 
 ### λ Unconditional mode activation resets buffer-local state on every call
