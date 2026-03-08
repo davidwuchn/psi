@@ -4,6 +4,36 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-08 - Subagent profiles should be explicit tool/session inputs, not implicit prompt assumptions
+
+### λ Normalize agent identity once at the boundary (`@name` → canonical key)
+
+Users type `/sub @planner ...`; tool callers pass `agent: "planner"`; agent files
+may declare mixed case names in frontmatter. A single normalization function
+(trim, remove optional `@`, lowercase, non-empty) at ingress prevents mismatched
+lookups and duplicated normalization logic across slash/tool/workflow paths.
+
+### λ Validate optional profile references before workflow creation
+
+`subagent create` previously accepted any task and only failed later if prompt
+composition couldn't resolve profile context. Early validation (`unknown agent`)
+keeps errors deterministic and avoids spawning unusable background workflows.
+
+### λ Prompt contributions should expose both names and short descriptions
+
+A flat list of agent names is discoverable but weak for model/tool selection.
+Including frontmatter `description` in contribution content (`- planner: plan`)
+improves zero-shot routing quality and reduces tool retries.
+
+### λ Keep selected profile visible in runtime status lines
+
+When subagents run concurrently, operator clarity depends on seeing which profile
+is active per workflow (`#id ... · @planner ...`). Surfacing `agent-name` in
+public workflow data and list rendering makes behavior auditable from UI/tool
+surfaces without opening agent files.
+
+---
+
 ## 2026-03-08 - All internal transcript mutations need `inhibit-read-only` — including separator refresh
 
 ### λ Every path that writes to a read-only buffer region must bind `inhibit-read-only`
