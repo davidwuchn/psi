@@ -2355,3 +2355,50 @@ for TUI/RPC display, but never reach the provider.
 **Pattern**: any message injected into agent-core with `:custom-type` is
 display-only. The conversation-rebuild layer is the correct filter point —
 not the append site — so history fidelity is preserved for all non-LLM consumers.
+
+## 2026-03-08 - Extension Prompt Contributions: Generic, Ordered Prompt Layer
+
+### λ Split base prompt from runtime prompt to keep extension injection deterministic
+
+A robust extension prompt-injection model needs two layers:
+
+- `:base-system-prompt` — canonical runtime-owned prompt assembly
+- `:system-prompt` — effective prompt sent to model (`base + contributions`)
+
+If extensions write directly to `:system-prompt`, ordering and ownership become
+fragile (reloads, tool-set changes, and session bootstrap can stomp content).
+Keeping a stable base plus a recomputed effective layer makes behavior
+predictable and testable.
+
+### λ Prompt contributions should be generic extension capabilities, not domain-specific
+
+The right primitive is a generic `PromptContribution` owned by extension path + id,
+not an agent-specific mechanism.  This supports many use cases (agent catalogs,
+policy hints, workflow instructions, UI affordances) through one consistent API.
+
+Implemented mutation surface:
+
+- `psi.extension/register-prompt-contribution`
+- `psi.extension/update-prompt-contribution`
+- `psi.extension/unregister-prompt-contribution`
+
+with deterministic render order by `(priority, ext-path, id)`.
+
+### λ Extension API should expose high-level prompt contribution helpers
+
+Extensions should not need to craft raw mutation calls for prompt layers.
+Adding API helpers (`:register-prompt-contribution`, `:update-prompt-contribution`,
+`:unregister-prompt-contribution`, `:list-prompt-contributions`) keeps extension
+code concise and preserves extension-path scoping automatically.
+
+### λ Extension reload must clear extension-owned prompt layer before re-init
+
+On reload, stale prompt contributions can survive if the registry clears handlers/tools
+but leaves contribution state untouched. Clearing `:prompt-contributions` before reload,
+then recomputing prompt after extensions re-init, prevents orphaned prompt fragments.
+
+### λ Keep contribution copy concise (token-efficient) and action-oriented
+
+Capability advertisements in system prompt should be compact and operational.
+For subagent-widget, concise tool signatures and flow guidance (`create → list → continue/remove`)
+communicate enough for tool invocation without bloating context.
