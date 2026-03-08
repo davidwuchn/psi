@@ -56,40 +56,61 @@
                                      {:path "/test/agent_chain.clj"})]
             (sut/init api)
             (is (contains? (:workflow-types @state) :agent-chain-run))
-            (is (contains? (:tools @state) "run_chain"))
-            (is (= #{"chain" "chain-list" "chain-reload"}
+            (is (contains? (:tools @state) "agent_chain"))
+            (is (= #{"chain" "chain-reload"}
                    (set (keys (:commands @state)))))
             (is (= 1 (count (get-in @state [:handlers "session_switch"]))))
             (is (contains? (:widgets @state) "agent-chain"))
+            ;; Widget no longer shows "active:" — just the header
             (is (str/includes?
                  (str/join "\n" (get-in @state [:widgets "agent-chain" :lines]))
-                 "active: (none)"))))
+                 "Agent Chain"))))
         (finally
           (.delete tmp))))))
 
-(deftest run-chain-requires-active-chain-test
-  (testing "run_chain returns a helpful error when no chain is active"
+(deftest agent-chain-run-requires-chain-arg-test
+  (testing "agent_chain action=run returns a helpful error when no chain arg given"
     (let [tmp (temp-dir)]
       (try
         (with-user-dir (.getAbsolutePath tmp)
           (let [{:keys [api state]} (nullable/create-nullable-extension-api
                                      {:path "/test/agent_chain.clj"})]
             (sut/init api)
-            (let [execute (get-in @state [:tools "run_chain" :execute])
+            (let [execute (get-in @state [:tools "agent_chain" :execute])
                   updates (atom [])]
-              (is (= {:content "No chain active. Use /chain to select one."
+              (is (= {:content  "chain is required. Use action=\"list\" to see available chains."
                       :is-error true}
-                     (execute {"task" "summarize this"})))
-              (is (= {:content "No chain active. Use /chain to select one."
+                     (execute {"action" "run" "task" "summarize this"})))
+              (is (= {:content  "chain is required. Use action=\"list\" to see available chains."
                       :is-error true}
-                     (execute {"task" "summarize this"}
+                     (execute {"action" "run" "task" "summarize this"}
                               {:on-update #(swap! updates conj %)})))
               (is (empty? @updates)))))
         (finally
           (.delete tmp))))))
 
-(deftest run-chain-starts-in-background-by-default-test
-  (testing "run_chain returns immediately (non-blocking)"
+(deftest agent-chain-run-unknown-chain-test
+  (testing "agent_chain action=run returns error for unknown chain"
+    (let [tmp (temp-dir)]
+      (try
+        (write-chain-config!
+         tmp
+         [{:name "plan-build-review"
+           :description "Plan then build"
+           :steps [{:agent "planner" :prompt "$INPUT"}]}])
+        (with-user-dir (.getAbsolutePath tmp)
+          (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                                     {:path "/test/agent_chain.clj"})]
+            (sut/init api)
+            (let [execute (get-in @state [:tools "agent_chain" :execute])
+                  result  (execute {"action" "run" "chain" "no-such-chain" "task" "do it"})]
+              (is (true? (:is-error result)))
+              (is (str/includes? (:content result) "not found")))))
+        (finally
+          (.delete tmp))))))
+
+(deftest agent-chain-run-starts-in-background-test
+  (testing "agent_chain action=run returns immediately (non-blocking)"
     (let [tmp (temp-dir)]
       (try
         (write-chain-config!
@@ -108,18 +129,86 @@
           (let [{:keys [api state]} (nullable/create-nullable-extension-api
                                      {:path "/test/agent_chain.clj"})]
             (sut/init api)
-            ((get-in @state [:commands "chain" :handler]) "prompt-build")
-            (let [execute (get-in @state [:tools "run_chain" :execute])
-                  result  (execute {"task" "say hello"})]
+            (let [execute (get-in @state [:tools "agent_chain" :execute])
+                  result  (execute {"action" "run" "chain" "prompt-build" "task" "say hello"})]
               (is (false? (:is-error result)))
               (is (str/includes? (:content result) "Chain run started:"))
-              (is (str/includes? (:content result) "Monitor with /chain-list."))
+              (is (str/includes? (:content result) "Monitor with agent_chain"))
               (is (contains? (:workflows @state) "run-1")))))
         (finally
           (.delete tmp))))))
 
-(deftest chain-command-selects-by-name-test
-  (testing "/chain accepts a chain name, case-insensitive"
+(deftest agent-chain-list-test
+  (testing "agent_chain action=list returns chain and agent info"
+    (let [tmp (temp-dir)]
+      (try
+        (write-chain-config!
+         tmp
+         [{:name "plan-build-review"
+           :description "Plan then build"
+           :steps [{:agent "planner" :prompt "$INPUT"}]}])
+        (spit (io/file tmp ".psi" "agents" "planner.md")
+              (str "---\n"
+                   "name: planner\n"
+                   "description: planning agent\n"
+                   "tools: read\n"
+                   "---\n\n"
+                   "You are a planner."))
+        (with-user-dir (.getAbsolutePath tmp)
+          (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                                     {:path "/test/agent_chain.clj"})]
+            (sut/init api)
+            (let [execute (get-in @state [:tools "agent_chain" :execute])
+                  result  (execute {"action" "list"})]
+              (is (false? (:is-error result)))
+              (is (str/includes? (:content result) "plan-build-review"))
+              (is (str/includes? (:content result) "planner")))))
+        (finally
+          (.delete tmp))))))
+
+(deftest agent-chain-reload-test
+  (testing "agent_chain action=reload reloads chains and agents"
+    (let [tmp (temp-dir)]
+      (try
+        (write-chain-config!
+         tmp
+         [{:name "initial-chain"
+           :description "initial"
+           :steps [{:agent "planner" :prompt "$INPUT"}]}])
+        (with-user-dir (.getAbsolutePath tmp)
+          (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                                     {:path "/test/agent_chain.clj"})]
+            (sut/init api)
+            ;; Modify config and reload
+            (write-chain-config!
+             tmp
+             [{:name "initial-chain" :description "initial" :steps [{:agent "planner" :prompt "$INPUT"}]}
+              {:name "new-chain" :description "new" :steps [{:agent "builder" :prompt "$INPUT"}]}])
+            (let [execute (get-in @state [:tools "agent_chain" :execute])
+                  result  (execute {"action" "reload"})]
+              (is (false? (:is-error result)))
+              (is (str/includes? (:content result) "Reloaded"))
+              (is (str/includes? (:content result) "2 chains")))))
+        (finally
+          (.delete tmp))))))
+
+(deftest agent-chain-unknown-action-test
+  (testing "agent_chain returns error for unknown action"
+    (let [tmp (temp-dir)]
+      (try
+        (with-user-dir (.getAbsolutePath tmp)
+          (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                                     {:path "/test/agent_chain.clj"})]
+            (sut/init api)
+            (let [execute (get-in @state [:tools "agent_chain" :execute])
+                  result  (execute {"action" "explode"})]
+              (is (true? (:is-error result)))
+              (is (str/includes? (:content result) "Unknown action")))))
+        (finally
+          (.delete tmp))))))
+
+(deftest chain-command-lists-chains-test
+  (testing "/chain prints available chains"
     (let [tmp (temp-dir)]
       (try
         (write-chain-config!
@@ -134,46 +223,10 @@
           (let [{:keys [api state]} (nullable/create-nullable-extension-api
                                      {:path "/test/agent_chain.clj"})]
             (sut/init api)
-            (let [chain-handler (get-in @state [:commands "chain" :handler])]
-              (is (str/includes? (with-out-str (chain-handler "Prompt-Build"))
-                                 "✓ Active chain: prompt-build"))
-              (is (str/includes?
-                   (str/join "\n" (get-in @state [:widgets "agent-chain" :lines]))
-                   "active: prompt-build")))))
-        (finally
-          (.delete tmp))))))
-
-(deftest run-chain-rejects-wait-arg-test
-  (testing "run_chain returns an error when wait arg is provided"
-    (let [tmp (temp-dir)]
-      (try
-        (write-chain-config!
-         tmp
-         [{:name "prompt-build"
-           :description "Build prompts"
-           :steps [{:agent "prompt-compiler" :prompt "$INPUT"}]}])
-        (spit (io/file tmp ".psi" "agents" "prompt-compiler.md")
-              (str "---\n"
-                   "name: prompt-compiler\n"
-                   "description: test agent\n"
-                   "tools: read,bash\n"
-                   "---\n\n"
-                   "Use prompt-compiler skill."))
-        (with-user-dir (.getAbsolutePath tmp)
-          (let [{:keys [api state]} (nullable/create-nullable-extension-api
-                                     {:path "/test/agent_chain.clj"})]
-            (sut/init api)
-            ((get-in @state [:commands "chain" :handler]) "prompt-build")
-            (let [execute (get-in @state [:tools "run_chain" :execute])
-                  updates (atom [])
-                  result  (execute {"task" "say hello"
-                                    "wait" true}
-                                   {:on-update #(swap! updates conj %)})]
-              (is (= {:content "Unsupported argument: wait. run_chain is always non-blocking; monitor with /chain-list."
-                      :is-error true}
-                     result))
-              (is (empty? @updates))
-              (is (empty? (:workflows @state))))))
+            (let [chain-handler (get-in @state [:commands "chain" :handler])
+                  output        (with-out-str (chain-handler nil))]
+              (is (str/includes? output "plan-build-review"))
+              (is (str/includes? output "prompt-build")))))
         (finally
           (.delete tmp))))))
 

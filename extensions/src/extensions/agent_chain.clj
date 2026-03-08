@@ -14,10 +14,15 @@
 
    Chain runs are executed through the extension workflow runtime.
 
-   Commands:
-     /chain             — switch active chain
-     /chain-list        — list all available chains, agents, and chain runs
-     /chain-reload      — reload chain definitions and agent files
+   Tool:
+     agent_chain(action, ...)
+       action=\"run\"    — run a named chain: requires chain, task args
+       action=\"list\"   — list chains, agents, and recent runs
+       action=\"reload\" — reload chain definitions and agent files
+
+   Commands (human shortcuts, delegate to agent_chain tool):
+     /chain        — list all available chains, agents, and chain runs
+     /chain-reload — reload chain definitions and agent files
 
    Config:  .psi/agents/agent-chain.edn
    Agents:  .psi/agents/*.md (frontmatter + system prompt body)"
@@ -226,15 +231,11 @@
          (str " — " (task-preview last-work 70)))))
 
 (defn- widget-lines []
-  (let [active-name (some-> @state :active-chain deref :name)
-        runs        (->> (tracked-runs)
-                         (sort-by :updated-at >)
-                         (take max-widget-runs))]
+  (let [runs (->> (tracked-runs)
+                  (sort-by :updated-at >)
+                  (take max-widget-runs))]
     (vec (concat
-          [(str "⛓ Agent Chain"
-                (if (seq active-name)
-                  (str " · active: " active-name)
-                  " · active: (none)"))]
+          ["⛓ Agent Chain"]
           (if (seq runs)
             (map widget-run-line runs)
             ["(no recent runs)"])))))
@@ -270,7 +271,7 @@
 
 (defn- progress-line
   [{:keys [run-id chain-name phase step-index step-count step-agent last-work elapsed-ms]}]
-  (str "run_chain " (or run-id "run")
+  (str "agent_chain " (or run-id "run")
        " [" (-> (or phase :running) name str/upper-case) "]"
        " " (or chain-name "chain")
        (when (and (number? step-index) (number? step-count) (pos? step-count))
@@ -694,94 +695,184 @@
     (when-let [e (:psi.extension.workflow/error r)]
       (timbre/warn "agent-chain workflow type registration error:" e))))
 
-;;; run_chain tool implementation
+;;; agent_chain tool actions
 
-(defn- execute-run-chain
-  "Execute the run_chain tool via extension workflows."
+(defn- resolve-chain
+  "Look up a chain by name (case-insensitive) from loaded chains.
+   Returns the chain map or nil."
+  [chain-name]
+  (when (seq chain-name)
+    (let [cs @(:chains @state)
+          target (str/lower-case chain-name)]
+      (some (fn [c]
+              (when (= target (str/lower-case (or (:name c) "")))
+                c))
+            cs))))
+
+(defn- action-run
+  "Run a named chain. Requires :chain and :task in args-map."
+  [args-map opts]
+  (let [{:keys [all-agents query-fn]} @state
+        chain-name       (str/trim (or (get args-map "chain") ""))
+        agents           @all-agents
+        on-update        (:on-update opts)
+        model            (when query-fn
+                           (:psi.agent-session/model
+                            (query-fn [:psi.agent-session/model])))
+        task             (str/trim (or (get args-map "task") ""))]
+    (cond
+      (str/blank? chain-name)
+      {:content  "chain is required. Use action=\"list\" to see available chains."
+       :is-error true}
+
+      (str/blank? task)
+      {:content  "task is required."
+       :is-error true}
+
+      (nil? model)
+      {:content  "No AI model configured."
+       :is-error true}
+
+      :else
+      (let [chain (resolve-chain chain-name)]
+        (cond
+          (nil? chain)
+          {:content  (str "Chain \"" chain-name "\" not found. Use action=\"list\" to see available chains.")
+           :is-error true}
+
+          (active-running-workflow)
+          (let [wf (active-running-workflow)]
+            {:content  (str "A chain run is already in progress ("
+                            (:psi.extension.workflow/id wf)
+                            "). Wait for it to finish.")
+             :is-error true})
+
+          :else
+          (let [run-id     (next-run-id!)
+                started-ms (now-ms)
+                _          (println (str "\n  ── Chain: " (:name chain) " (" run-id ") ──"))
+                _          (upsert-run! run-id
+                                        (fn [r]
+                                          (merge r
+                                                 {:run-id     run-id
+                                                  :chain-name (:name chain)
+                                                  :phase      :running
+                                                  :step-count (count (:steps chain))
+                                                  :step-index nil
+                                                  :step-agent nil
+                                                  :last-work  ""
+                                                  :elapsed-ms 0
+                                                  :started-ms started-ms})))
+                _          (emit-tool-update! on-update
+                                              (progress-line (or (run-by-id run-id)
+                                                                 {:run-id     run-id
+                                                                  :chain-name (:name chain)
+                                                                  :phase      :running}))
+                                              {:run-id run-id
+                                               :phase  :running}
+                                              false)
+                created    (mutate! 'psi.extension.workflow/create
+                                    {:type  chain-workflow-type
+                                     :id    run-id
+                                     :meta  {:chain-name (:name chain)}
+                                     :input {:run-id run-id
+                                             :task   task
+                                             :chain  chain
+                                             :agents agents
+                                             :model  model}})]
+            (if-not (:psi.extension.workflow/created? created)
+              (let [msg (str "Failed to start chain run: "
+                             (or (:psi.extension.workflow/error created)
+                                 "unknown error"))]
+                (upsert-run! run-id
+                             (fn [r]
+                               (assoc r
+                                      :phase :error
+                                      :last-work msg
+                                      :elapsed-ms (- (now-ms) started-ms))))
+                {:content  msg
+                 :is-error true})
+              {:content  (str "Chain run started: " run-id
+                              " (" (:name chain) "). Monitor with agent_chain(action=\"list\").")
+               :is-error false})))))))
+
+(defn- action-list
+  "List chains, agents, and recent runs. Returns content string."
+  []
+  (let [cs     @(:chains @state)
+        agents @(:all-agents @state)
+        runs   (chain-workflows)
+        sb     (StringBuilder.)]
+    (.append sb "\n  ── Chains ──\n")
+    (if (empty? cs)
+      (.append sb "  (none) Define chains in .psi/agents/agent-chain.edn\n")
+      (doseq [[i c] (map-indexed vector cs)]
+        (let [flow (->> (:steps c)
+                        (map #(display-name (:agent %)))
+                        (str/join " → "))]
+          (.append sb (str "  " (inc i) ". " (:name c)
+                           (when (seq (:description c))
+                             (str " — " (:description c)))
+                           "\n     " flow "\n")))))
+
+    (.append sb "\n  ── Agents ──\n")
+    (if (empty? agents)
+      (.append sb "  (none) Define agents in .psi/agents/*.md\n")
+      (doseq [[k v] (sort-by key agents)]
+        (.append sb (str "  • " (display-name k)
+                         (when (seq (:description v))
+                           (str " — " (:description v)))
+                         "\n    tools: " (:tools v) "\n"))))
+
+    (.append sb "\n  ── Runs (workflow runtime) ──\n")
+    (if (empty? runs)
+      (.append sb "  (none)\n")
+      (doseq [wf runs]
+        (let [phase   (workflow-phase wf)
+              icon    (status-icon phase)
+              run-id  (:psi.extension.workflow/id wf)
+              chain-n (or (get-in wf [:psi.extension.workflow/meta :chain-name])
+                          (get-in wf [:psi.extension.workflow/input :chain :name])
+                          "unknown")
+              task    (get-in wf [:psi.extension.workflow/input :task])
+              elapsed (quot (or (:psi.extension.workflow/elapsed-ms wf) 0) 1000)]
+          (.append sb (str "  " icon " " run-id
+                           " [" (phase-label wf) "] "
+                           chain-n " · " elapsed "s\n"))
+          (when (seq task)
+            (.append sb (str "     " (task-preview task 100) "\n"))))))
+    {:content  (str sb)
+     :is-error false}))
+
+(defn- action-reload
+  "Reload chain definitions and agent files."
+  []
+  (let [cwd     (System/getProperty "user.dir")
+        cleared (clear-chain-workflows!)]
+    (reset! (:all-agents @state) (scan-agent-dirs cwd))
+    (reset! (:chains @state) (load-chains cwd))
+    (reset! (:agent-sessions @state) {})
+    (reset! (:runs @state) {})
+    (reset! (:next-run-id @state) 1)
+    (refresh-widget!)
+    {:content  (str "Reloaded: " (count @(:chains @state)) " chains, "
+                    (count @(:all-agents @state)) " agents"
+                    ", cleared " cleared " chain run"
+                    (when (not= 1 cleared) "s"))
+     :is-error false}))
+
+(defn- execute-agent-chain
+  "Execute the agent_chain tool. Dispatches on action."
   ([args-map]
-   (execute-run-chain args-map nil))
+   (execute-agent-chain args-map nil))
   ([args-map opts]
-   (let [{:keys [active-chain all-agents query-fn]} @state
-         chain            @active-chain
-         agents           @all-agents
-         on-update        (:on-update opts)
-         model            (when query-fn
-                            (:psi.agent-session/model
-                             (query-fn [:psi.agent-session/model])))
-         task             (str/trim (or (get args-map "task") ""))]
-     (cond
-       (nil? chain)
-       {:content  "No chain active. Use /chain to select one."
-        :is-error true}
-
-       (or (contains? args-map "wait")
-           (contains? args-map :wait))
-       {:content  "Unsupported argument: wait. run_chain is always non-blocking; monitor with /chain-list."
-        :is-error true}
-
-       (str/blank? task)
-       {:content  "Task is required."
-        :is-error true}
-
-       (nil? model)
-       {:content  "No AI model configured."
-        :is-error true}
-
-       (active-running-workflow)
-       (let [wf (active-running-workflow)]
-         {:content  (str "A chain run is already in progress ("
-                         (:psi.extension.workflow/id wf)
-                         "). Wait for it to finish.")
-          :is-error true})
-
-       :else
-       (let [run-id       (next-run-id!)
-             started-ms   (now-ms)
-             _            (println (str "\n  ── Chain: " (:name chain) " (" run-id ") ──"))
-             _            (upsert-run! run-id
-                                       (fn [r]
-                                         (merge r
-                                                {:run-id     run-id
-                                                 :chain-name (:name chain)
-                                                 :phase      :running
-                                                 :step-count (count (:steps chain))
-                                                 :step-index nil
-                                                 :step-agent nil
-                                                 :last-work  ""
-                                                 :elapsed-ms 0
-                                                 :started-ms started-ms})))
-             _            (emit-tool-update! on-update
-                                             (progress-line (or (run-by-id run-id)
-                                                                {:run-id run-id
-                                                                 :chain-name (:name chain)
-                                                                 :phase :running}))
-                                             {:run-id run-id
-                                              :phase  :running}
-                                             false)
-             created      (mutate! 'psi.extension.workflow/create
-                                   {:type  chain-workflow-type
-                                    :id    run-id
-                                    :meta  {:chain-name (:name chain)}
-                                    :input {:run-id run-id
-                                            :task task
-                                            :chain chain
-                                            :agents agents
-                                            :model model}})]
-         (if-not (:psi.extension.workflow/created? created)
-           (let [msg (str "Failed to start chain run: "
-                          (or (:psi.extension.workflow/error created)
-                              "unknown error"))]
-             (upsert-run! run-id
-                          (fn [r]
-                            (assoc r
-                                   :phase :error
-                                   :last-work msg
-                                   :elapsed-ms (- (now-ms) started-ms))))
-             {:content  msg
-              :is-error true})
-           {:content  (str "Chain run started: " run-id
-                           " (" (:name chain) "). Monitor with /chain-list.")
-            :is-error false}))))))
+   (let [action (str/trim (or (get args-map "action") ""))]
+     (case action
+       "run"    (action-run args-map opts)
+       "list"   (action-list)
+       "reload" (action-reload)
+       {:content  (str "Unknown action: \"" action "\". Valid actions: run, list, reload.")
+        :is-error true}))))
 
 
 ;;; Extension init
@@ -792,7 +883,6 @@
   (let [cwd              (System/getProperty "user.dir")
         all-agents-a     (atom (scan-agent-dirs cwd))
         chains-a         (atom (load-chains cwd))
-        active-chain-a   (atom nil)
         agent-sessions-a (atom {})
         runs-a           (atom {})
         next-run-id-a    (atom 1)
@@ -807,7 +897,6 @@
              :ext-path       (:path api)
              :all-agents     all-agents-a
              :chains         chains-a
-             :active-chain   active-chain-a
              :agent-sessions agent-sessions-a
              :runs           runs-a
              :next-run-id    next-run-id-a
@@ -819,117 +908,35 @@
     (refresh-widget!)
 
     ((:register-tool api)
-     {:name        "run_chain"
-      :label       "Run Chain"
-      :description (str "Execute the active agent chain pipeline. "
-                        "Each step runs sequentially — output from one step feeds into the next. "
-                        "Agents maintain session context across runs. "
-                        "Runs execute via the extension workflow runtime.")
+     {:name        "agent_chain"
+      :label       "Agent Chain"
+      :description (str "Run and manage agent chain pipelines. "
+                        "action=\"run\": execute a named chain (requires chain, task). "
+                        "action=\"list\": show available chains, agents, and recent runs. "
+                        "action=\"reload\": reload chain definitions and agent files from disk.")
       :parameters  (pr-str {:type       "object"
-                            :properties {"task" {:type "string"
-                                                 :description "The task/prompt for the chain to process"}}
-                            :required   ["task"]})
-      :execute     execute-run-chain})
+                            :properties {"action" {:type        "string"
+                                                   :enum        ["run" "list" "reload"]
+                                                   :description "Action to perform: run, list, or reload"}
+                                         "chain"  {:type        "string"
+                                                   :description "Chain name to run (required for action=\"run\")"}
+                                         "task"   {:type        "string"
+                                                   :description "Task/prompt for the chain (required for action=\"run\")"}}
+                            :required   ["action"]})
+      :execute     execute-agent-chain})
 
     ((:register-command api) "chain"
-                             {:description "Switch active chain (usage: /chain <number|name>)"
-                              :handler
-                              (fn [args]
-                                (let [cs @chains-a]
-                                  (if (empty? cs)
-                                    (println "  No chains defined in .psi/agents/agent-chain.edn")
-                                    (let [arg*         (some-> args str/trim not-empty)
-                                          idx          (some-> arg* parse-int dec)
-                                          chain-index  (when (and (number? idx)
-                                                                  (>= idx 0)
-                                                                  (< idx (count cs)))
-                                                         (nth cs idx))
-                                          chain-name   (when (seq arg*)
-                                                         (some (fn [c]
-                                                                 (when (= (str/lower-case arg*)
-                                                                          (str/lower-case (or (:name c) "")))
-                                                                   c))
-                                                               cs))
-                                          target-chain (or chain-index chain-name)]
-                                      (if target-chain
-                                        (do (reset! active-chain-a target-chain)
-                                            (refresh-widget!)
-                                            (println (str "  ✓ Active chain: " (:name @active-chain-a))))
-                                        (do (println "\n  Available chains:")
-                                            (doseq [[i c] (map-indexed vector cs)]
-                                              (let [flow (->> (:steps c)
-                                                              (map #(display-name (:agent %)))
-                                                              (str/join " → "))]
-                                                (println (str "  " (inc i) ". " (:name c)
-                                                              (when (seq (:description c))
-                                                                (str " — " (:description c)))
-                                                              "\n     " flow))))
-                                            (println "\n  Usage: /chain <number|name>")))))))})
-
-    ((:register-command api) "chain-list"
-                             {:description "List all available chains, agents, and chain runs"
+                             {:description "List chains, agents, and recent runs (alias for agent_chain action=list)"
                               :handler
                               (fn [_args]
-                                (let [cs     @chains-a
-                                      agents @all-agents-a
-                                      active @active-chain-a
-                                      runs   (chain-workflows)]
-                                  (println "\n  ── Chains ──")
-                                  (if (empty? cs)
-                                    (println "  (none) Define chains in .psi/agents/agent-chain.edn")
-                                    (doseq [[i c] (map-indexed vector cs)]
-                                      (let [marker (if (= (:name c) (:name active)) " ●" "  ")]
-                                        (println (str marker (inc i) ". " (:name c)
-                                                      (when (seq (:description c))
-                                                        (str " — " (:description c)))))
-                                        (doseq [[j s] (map-indexed vector (:steps c))]
-                                          (println (str "     " (inc j) ". " (display-name (:agent s))))))))
-
-                                  (println "\n  ── Agents ──")
-                                  (if (empty? agents)
-                                    (println "  (none) Define agents in .psi/agents/*.md")
-                                    (doseq [[k v] (sort-by key agents)]
-                                      (println (str "  • " (display-name k)
-                                                    (when (seq (:description v))
-                                                      (str " — " (:description v)))
-                                                    "\n    tools: " (:tools v)))))
-
-                                  (println "\n  ── Runs (workflow runtime) ──")
-                                  (if (empty? runs)
-                                    (println "  (none)")
-                                    (doseq [wf runs]
-                                      (let [phase   (workflow-phase wf)
-                                            icon    (status-icon phase)
-                                            run-id  (:psi.extension.workflow/id wf)
-                                            chain-n (or (get-in wf [:psi.extension.workflow/meta :chain-name])
-                                                        (get-in wf [:psi.extension.workflow/input :chain :name])
-                                                        "unknown")
-                                            task    (get-in wf [:psi.extension.workflow/input :task])
-                                            elapsed (quot (or (:psi.extension.workflow/elapsed-ms wf) 0) 1000)]
-                                        (println (str "  " icon " " run-id
-                                                      " [" (phase-label wf) "] "
-                                                      chain-n " · " elapsed "s"))
-                                        (when (seq task)
-                                          (println (str "     " (task-preview task 100)))))))))})
+                                (println (:content (action-list))))})
 
     ((:register-command api) "chain-reload"
-                             {:description "Reload chain definitions and agent files"
+                             {:description "Reload chain definitions and agent files (alias for agent_chain action=reload)"
                               :handler
                               (fn [_args]
-                                (let [cleared (clear-chain-workflows!)]
-                                  (reset! all-agents-a (scan-agent-dirs cwd))
-                                  (reset! chains-a (load-chains cwd))
-                                  (reset! active-chain-a nil)
-                                  (reset! agent-sessions-a {})
-                                  (reset! runs-a {})
-                                  (reset! next-run-id-a 1)
-                                  (refresh-widget!)
-                                  (println (str "  ✓ Reloaded: " (count @chains-a) " chains, "
-                                                (count @all-agents-a) " agents"
-                                                ", cleared " cleared " chain run"
-                                                (when (not= 1 cleared) "s")
-                                                (when @active-chain-a
-                                                  (str ", active: " (:name @active-chain-a)))))))})
+                                (let [result (action-reload)]
+                                  (println (str "  ✓ " (:content result)))))})
 
     ((:on api) "session_switch"
                (fn [_ev]
@@ -939,8 +946,6 @@
                  (reset! all-agents-a (scan-agent-dirs cwd))
                  (reset! chains-a (load-chains cwd))
                  (reset! next-run-id-a 1)
-                 (reset! active-chain-a nil)
                  (refresh-widget!)))
 
-    (reset! active-chain-a nil)
     (refresh-widget!)))
