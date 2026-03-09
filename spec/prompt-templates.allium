@@ -1,26 +1,7 @@
--- prompt-templates.allium
---
--- Scope: Prompt template discovery, parsing, argument expansion, and invocation.
---
--- Prompt templates are Markdown snippets that expand into full prompts.
--- The user types /name in the editor to invoke a template, where name
--- is the filename without .md.
---
--- Includes:
---   PromptTemplate entity — structure, metadata, source tracking
---   Discovery — loading from global, project, package, CLI paths
---   Parsing — frontmatter extraction, description fallback
---   Argument expansion — positional args, $@, slicing
---   Invocation — /name dispatch, autocomplete surface
---
--- Excludes:
---   Skill expansion (see coding-agent.allium SkillCommandExpanded)
---   System prompt assembly (see coding-agent.allium SystemPromptBuilt)
---   Extension command dispatch (see coding-agent.allium ExtensionCommandExecuted)
+-- allium: 1
 
-------------------------------------------------------------
--- Value Types
-------------------------------------------------------------
+-- prompt-templates.allium
+-- Prompt template discovery, parsing, argument expansion, and invocation.
 
 value TemplateFrontmatter {
     description: String?
@@ -28,198 +9,129 @@ value TemplateFrontmatter {
 
 value ExpandedPrompt {
     content: String
-    source_template: String     -- template name that produced this
+    source_template: String
 }
-
-value ArgumentSlice {
-    start: Integer              -- 1-indexed
-    length: Integer?            -- null = rest of args
-}
-
-------------------------------------------------------------
--- Entity
-------------------------------------------------------------
 
 entity PromptTemplate {
-    name: String                -- derived from filename without .md
-    description: String         -- from frontmatter, or first non-empty line
-    content: String             -- body after frontmatter; contains $1 $2 $@ placeholders
+    name: String
+    description: String
+    content: String
     source: user | project | package | cli | settings
-    filePath: String            -- absolute path to the .md file
+    file_path: String
 
-    -- Derived
-    has_placeholders: content.contains("$")
-    placeholder_count: count of distinct $N references in content
+    has_placeholders: Contains(content, "$")
+    placeholder_count: PlaceholderCount(content)
 }
 
-------------------------------------------------------------
--- Config
-------------------------------------------------------------
-
 config {
-    global_prompts_dir: Path = ~/.psi/agent/prompts
-    project_prompts_dir: Path = .psi/prompts
+    global_prompts_dir: String = "~/.psi/agent/prompts"
+    project_prompts_dir: String = ".psi/prompts"
     discovery_recursive: Boolean = false
 }
 
-------------------------------------------------------------
--- Discovery
-------------------------------------------------------------
-
 rule TemplatesDiscovered {
-    -- At startup and on reload, templates are loaded from all sources.
-    -- Later sources do NOT override earlier ones (first-discovered wins).
-    when: TemplatesDiscovered(sources)
+    when: TemplateDiscoveryRequested(sources)
 
     let paths = OrderedUnion(
         GlobalTemplates(config.global_prompts_dir),
         ProjectTemplates(config.project_prompts_dir),
-        PackageTemplates(),                             -- prompts/ dirs or pi.prompts in package.json
-        SettingsTemplates(),                             -- prompts array in settings
-        CliTemplates()                                   -- --prompt-template <path> flags
+        PackageTemplates(),
+        SettingsTemplates(),
+        CliTemplates()
     )
 
     ensures:
         for path in paths:
-            let name = path.stem                         -- filename without .md
-            if not exists PromptTemplate{name: name}:
-                let parsed = TemplateParsed(path)
+            name = path.stem
+            if not exists PromptTemplate with name = name:
+                parsed = TemplateParsed(path)
                 PromptTemplate.created(
                     name: name,
                     description: parsed.description,
                     content: parsed.content,
                     source: path.source,
-                    filePath: path.absolute
+                    file_path: path.absolute
                 )
 }
 
 rule TemplatesDisabledByFlag {
-    -- --no-prompt-templates suppresses all discovery.
-    when: TemplatesDiscovered(sources)
+    when: TemplateDiscoveryRequested(sources)
+    requires: sources.no_prompt_templates = true
 
-    requires: sources.noPromptTemplates = true
-
-    ensures: no PromptTemplate.created
+    ensures: OnlyCliTemplatesLoaded()
 }
 
-------------------------------------------------------------
--- Parsing
-------------------------------------------------------------
-
 rule TemplateParsed {
-    -- Extracts frontmatter and body from a .md file.
     when: TemplateParsed(path)
 
     let raw = ReadFile(path)
-    let frontmatter = ExtractYamlFrontmatter(raw)       -- between --- fences, or empty
-    let body = raw.afterFrontmatter.trim
+    let frontmatter = ExtractYamlFrontmatter(raw)
+    let body = BodyAfterFrontmatter(raw)
 
-    ensures: result.content = body
-    ensures: result.description =
+    ensures: result.content = Trim(body)
+    ensures:
         if frontmatter.description != null:
-            frontmatter.description
+            result.description = frontmatter.description
         else:
-            body.firstNonEmptyLine
+            result.description = FirstNonEmptyLine(body)
 }
 
-------------------------------------------------------------
--- Argument Expansion
-------------------------------------------------------------
-
 rule ArgumentsParsed {
-    -- User input after the /name is split into positional args.
-    -- Quoted strings are single args; unquoted words are individual args.
-    when: ArgumentsParsed(input)
-
-    -- "Button" "click handler" → ["Button", "click handler"]
-    -- Button click handler     → ["Button", "click", "handler"]
+    when: TemplateArgumentsParsed(input)
 
     ensures: result = ShellLikeTokenize(input)
 }
 
 rule PlaceholdersExpanded {
-    -- Substitutes placeholders in template content with parsed arguments.
     when: PlaceholdersExpanded(template, args)
 
-    ensures: result = template.content
-        .replace($1, args[1])                           -- positional
-        .replace($2, args[2])
-        -- ...for each $N
-        .replace($@, args.joinAll(" "))                  -- all args joined
-        .replace($ARGUMENTS, args.joinAll(" "))          -- alias for $@
-        .replaceSlice(${@:N}, args.from(N).joinAll(" "))          -- from Nth
-        .replaceSlice(${@:N:L}, args.from(N).take(L).joinAll(" ")) -- L args from Nth
-
-    -- Unreferenced placeholders are left as-is (no error).
-    -- Missing args produce empty string for that placeholder.
+    ensures: result = ExpandTemplatePlaceholders(template.content, args)
 }
 
-------------------------------------------------------------
--- Invocation
-------------------------------------------------------------
-
 rule PromptTemplateInvoked {
-    -- /name args → expand template and return as user prompt text.
-    when: PromptTemplateInvoked(text)
+    when: PromptTemplateInvocationRequested(text)
+    requires: StartsWith(text, "/")
+    requires: exists PromptTemplate with name = CommandName(text)
+    requires: not exists RegisteredCommand with name = CommandName(text)
 
-    requires: text.startsWith("/")
-    requires: exists PromptTemplate{name: text.commandName}
-    -- Guard: not a registered extension command (commands take priority)
+    let template = PromptTemplate with name = CommandName(text)
+    let args = TemplateArgumentsParsed(CommandTail(text))
 
-    let template = PromptTemplate{name: text.commandName}
-    let args = ArgumentsParsed(text.afterCommand)
-
-    ensures: result = ExpandedPrompt {
+    ensures: result = ExpandedPrompt{
         content: PlaceholdersExpanded(template, args),
         source_template: template.name
     }
 }
 
 rule PromptTemplateNotFound {
-    -- /name where no template or command matches.
-    when: PromptTemplateInvoked(text)
+    when: PromptTemplateInvocationRequested(text)
+    requires: StartsWith(text, "/")
+    requires: not exists PromptTemplate with name = CommandName(text)
+    requires: not exists RegisteredCommand with name = CommandName(text)
 
-    requires: text.startsWith("/")
-    requires: not exists PromptTemplate{name: text.commandName}
-    requires: not exists RegisteredCommand{name: text.commandName}
-
-    ensures: result = text                              -- pass through unchanged
+    ensures: result = text
 }
 
-------------------------------------------------------------
--- Collision Policy
-------------------------------------------------------------
-
 rule TemplateNameCollision {
-    -- When two files produce the same template name, first-discovered wins.
-    -- No warning is emitted (silent shadow).
-    when: PromptTemplate.created(name: name)
+    when: PromptTemplate.created(name, description, content, source, file_path)
+    requires: exists PromptTemplate with name = name
 
-    requires: exists PromptTemplate{name: name}
-
-    ensures: PromptTemplate.created is rejected          -- first one stands
+    ensures: TemplateCreationRejected(name)
 }
 
 rule CommandTakesPriority {
-    -- Extension commands shadow templates with the same name.
-    when: PromptTemplateInvoked(text)
+    when: PromptTemplateInvocationRequested(text)
+    requires: exists RegisteredCommand with name = CommandName(text)
 
-    requires: exists RegisteredCommand{name: text.commandName}
-
-    ensures: result = CommandDispatched(text)             -- template is bypassed
+    ensures: result = CommandDispatched(text)
 }
 
-------------------------------------------------------------
--- Surface
-------------------------------------------------------------
-
 actor User {
-    identified_by: HumanOperator
+    identified_by: id = "human-operator"
 }
 
 surface PromptTemplateApi {
-    -- Autocomplete and invocation surface for the editor.
-    for caller: User
+    facing caller: User
 
     exposes:
         PromptTemplate.name
@@ -227,30 +139,19 @@ surface PromptTemplateApi {
         PromptTemplate.source
 
     provides:
-        PromptTemplateInvoked(caller, text)
-        TemplatesDiscovered(caller, sources)
+        PromptTemplateInvocationRequested(text)
+        TemplateDiscoveryRequested(sources)
 
-    guidance:
-        -- Autocomplete lists all template names with descriptions.
-        -- Templates are invoked by typing /name followed by arguments.
+    @guidance
+        -- Autocomplete lists template names and descriptions.
+        -- Templates are invoked by /name followed by arguments.
         -- Extension commands with the same name take priority over templates.
-        -- Discovery is non-recursive within prompts/ directories.
-        -- Add subdirectory templates explicitly via settings or package manifest.
+        -- Discovery is non-recursive in prompts directories unless explicitly configured.
 }
 
-------------------------------------------------------------
--- Deferred Specifications
-------------------------------------------------------------
+deferred ShellLikeTokenize.parse
+deferred ExtractYamlFrontmatter.parse
 
-deferred ShellLikeTokenize.parse        -- quoted-string-aware argument splitting
-deferred ExtractYamlFrontmatter.parse   -- YAML frontmatter extraction between --- fences
-
-------------------------------------------------------------
--- Open Questions
-------------------------------------------------------------
-
-open_question "Should template name collisions emit a warning? Currently silent (first-discovered wins)."
-
-open_question "Should templates support conditional sections or loops, or stay purely positional substitution?"
-
-open_question "Should $N for missing args produce empty string, or should it be configurable (empty | error | leave-placeholder)?"
+open question "Should template name collisions emit a warning? Currently first-discovered wins silently."
+open question "Should templates support conditional sections or loops, or remain positional substitution only?"
+open question "Should missing argument placeholders become empty string, error, or preserve placeholder text?"

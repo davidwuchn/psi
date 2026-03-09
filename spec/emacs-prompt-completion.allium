@@ -1,25 +1,10 @@
+-- allium: 1
+
 -- emacs-prompt-completion.allium
---
--- Scope: Emacs-specific completion architecture for prompt input.
---
--- Includes:
---   - CAPF-based completion registration in the emacs-ui prompt buffer
---   - Context dispatch for slash command ('/...') and reference ('@...') tokens
---   - Standard Emacs completion metadata categories for prompt/reference candidates
---   - Compatibility with completion-in-region frontends (built-in, Corfu, Company bridges)
---   - Compatibility linkage to the owning frontend contract (emacs-frontend.allium)
---
--- Excludes:
---   - Prompt autocomplete domain semantics (see prompt-input-autocomplete.allium)
---   - Slash command execution semantics (see prompt-slash-commands.allium)
---   - Transport/session internals
+-- Emacs-specific completion architecture for prompt input.
 
 use "./prompt-input-autocomplete.allium" as prompt
 use "./emacs-frontend.allium" as emacs_frontend
-
-------------------------------------------------------------
--- Value Types
-------------------------------------------------------------
 
 value CapfMetadata {
     category: psi_prompt | psi_reference
@@ -35,21 +20,16 @@ value CompletionContext {
     mode: slash_command | file_reference | none
 }
 
-------------------------------------------------------------
--- Entities
-------------------------------------------------------------
-
 entity EmacsPromptBuffer {
     text: String
     point_col: Integer
-    completion_at_point_functions: List<String>
+    completion_at_point_functions: Set<String>
 
-    has_psi_capf: completion_at_point_functions.contains("psi-emacs-prompt-capf")
+    has_psi_capf: config.capf_symbol in completion_at_point_functions
 }
 
 entity EmacsPromptCompletionState {
     buffer: EmacsPromptBuffer
-
     active_context: CompletionContext?
     active_metadata: CapfMetadata?
 
@@ -57,25 +37,17 @@ entity EmacsPromptCompletionState {
     allows_capf_fallthrough: Boolean
 }
 
-------------------------------------------------------------
--- Config
-------------------------------------------------------------
-
 config {
     capf_symbol: String = "psi-emacs-prompt-capf"
     slash_category: psi_prompt | psi_reference = psi_prompt
     reference_category: psi_prompt | psi_reference = psi_reference
 }
 
-------------------------------------------------------------
--- Rules
-------------------------------------------------------------
-
 rule PromptModeRegistersPsiCapf {
     when: EmacsPromptModeActivated(state)
 
-    ensures: state.buffer.completion_at_point_functions contains config.capf_symbol
-    ensures: state.buffer.has_psi_capf
+    ensures: state.buffer.completion_at_point_functions = state.buffer.completion_at_point_functions + {config.capf_symbol}
+    ensures: state.buffer.has_psi_capf = true
 }
 
 rule PsiCapfUsesDynamicCompletionTable {
@@ -86,41 +58,40 @@ rule PsiCapfUsesDynamicCompletionTable {
 
 rule SlashTokenContextDispatchesToPromptCommands {
     when: CompletionRequestedAtPoint(state)
-
     requires: TokenAtPointStartsWith(state.buffer, "/")
     requires: CursorInSlashCommandNameContext(state.buffer)
 
     ensures: state.active_context.mode = slash_command
     ensures: SuggestionsRequested(state.buffer, context: slash_command, trigger_mode: auto)
-    ensures: prompt/PromptAutocompleteContract governs suggestion behavior
+    ensures: UsesPromptAutocompleteContract(state, prompt/PromptAutocompleteContract)
 }
 
 rule AtTokenContextDispatchesToReferences {
     when: CompletionRequestedAtPoint(state)
-
     requires: TokenAtPointStartsWith(state.buffer, "@")
     requires: CursorInFileReferenceContext(state.buffer)
 
     ensures: state.active_context.mode = file_reference
     ensures: SuggestionsRequested(state.buffer, context: file_reference, trigger_mode: auto)
-    ensures: prompt/PromptAutocompleteContract governs suggestion behavior
+    ensures: UsesPromptAutocompleteContract(state, prompt/PromptAutocompleteContract)
 }
 
 rule SlashContextReturnsPromptCategoryMetadata {
-    when: CapfCandidatesResolved(state, context: slash_command, candidates)
+    when: CapfCandidatesResolved(state, context, candidates)
+    requires: context = slash_command
 
     ensures: state.active_metadata.category = config.slash_category
 }
 
 rule ReferenceContextReturnsReferenceCategoryMetadata {
-    when: CapfCandidatesResolved(state, context: file_reference, candidates)
+    when: CapfCandidatesResolved(state, context, candidates)
+    requires: context = file_reference
 
     ensures: state.active_metadata.category = config.reference_category
 }
 
 rule UnknownContextFallsThroughToOtherCapfs {
     when: CompletionRequestedAtPoint(state)
-
     requires: not TokenAtPointStartsWith(state.buffer, "/")
     requires: not TokenAtPointStartsWith(state.buffer, "@")
 
@@ -131,8 +102,7 @@ rule UnknownContextFallsThroughToOtherCapfs {
 
 rule CompletionInRegionFrontendsConsumeSameCapfContract {
     when: CapfCandidatesResolved(state, context, candidates)
-
-    requires: context in [slash_command, file_reference]
+    requires: context in {slash_command, file_reference}
 
     ensures: CompletionInRegionCanDisplay(state, frontend: built_in)
     ensures: CompletionInRegionCanDisplay(state, frontend: corfu)
@@ -141,24 +111,19 @@ rule CompletionInRegionFrontendsConsumeSameCapfContract {
 
 rule AcceptanceBehaviorDelegatesToSharedPromptContract {
     when: CapfSuggestionAccepted(state, context, suggestion)
+    requires: context in {slash_command, file_reference}
 
-    requires: context in [slash_command, file_reference]
-
-    ensures: prompt/PromptAutocompleteContract governs acceptance behavior
+    ensures: UsesPromptAutocompleteContract(state, prompt/PromptAutocompleteContract)
 }
 
 rule FrontendParityOwnsPromptCompletionArchitecture {
     when: EmacsPromptModeActivated(state)
 
-    ensures: emacs_frontend/ComposeAutocompleteUsesSharedContract references Emacs prompt completion architecture
+    ensures: EmacsFrontendReferencesPromptCompletion(emacs_frontend/EmacsFrontend, EmacsPromptCompletionArchitecture)
 }
 
-------------------------------------------------------------
--- Surface
-------------------------------------------------------------
-
 surface EmacsPromptCompletionArchitecture {
-    for engineer: RuntimeEngineer
+    facing engineer: RuntimeEngineer
 
     context state: EmacsPromptCompletionState
 
@@ -178,9 +143,9 @@ surface EmacsPromptCompletionArchitecture {
     related:
         prompt/PromptAutocompleteContract
 
-    guidance:
+    @guidance
         -- Use one CAPF dispatcher for prompt input.
         -- Route '/...' to slash command completion and '@...' to file-reference completion.
-        -- Return standard metadata categories so completion UIs can style/filter by category.
-        -- Return nil outside recognized token contexts to preserve normal CAPF composition.
+        -- Return metadata categories so UIs can style/filter by category.
+        -- Return nil outside recognized token contexts to preserve CAPF composition.
 }

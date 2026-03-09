@@ -1,135 +1,14 @@
--- AI Package Behavioral Specification
--- Unified multi-provider LLM interface behavior
+-- allium: 1
 
-entity Conversation {
-    id: String
-    systemPrompt: String?
-    status: active | completed | error
-    created_at: Timestamp
-    updated_at: Timestamp
-    
-    -- Relationships
-    messages: Message for this conversation
-    tools: Tool available to this conversation
-    
-    -- Derived
-    token_usage: messages.sum(m => m.usage.totalTokens)
-    cost: messages.sum(m => m.usage.cost.total)
-    has_tools: tools.count > 0
+-- ai-abstract-model.allium
+-- Unified multi-provider AI model behavior.
+
+value Provider {
+    kind: anthropic | openai
 }
 
-entity Message {
-    id: String
-    conversation: Conversation
-    role: user | assistant | toolResult
-    content: MessageContent
-    timestamp: Timestamp
-    
-    -- Provider tracking (assistant messages only)
-    provider: Provider?
-    model_id: String?
-    api: Api?
-    
-    -- Usage tracking
-    usage: Usage?
-    stop_reason: stop | length | toolUse | error | aborted
-    error_message: String?
-    
-    -- Derived
-    is_from_assistant: role = assistant
-    has_error: stop_reason = error
-    requires_tool_response: stop_reason = toolUse
-}
-
-value MessageContent {
-    kind: text | structured    -- discriminator
-}
-
-variant TextContent : MessageContent {
-    text: String
-}
-
-variant StructuredContent : MessageContent {
-    blocks: List<ContentBlock>
-}
-
-entity ContentBlock {
-    message: Message
-    index: Integer
-    kind: text | thinking | image | toolCall    -- discriminator
-}
-
-variant TextBlock : ContentBlock {
-    text: String
-    signature: String?    -- provider-specific identifier
-}
-
-variant ThinkingBlock : ContentBlock {
-    thinking: String
-    signature: String?
-}
-
-variant ImageBlock : ContentBlock {
-    data: String         -- base64 encoded
-    mimeType: String
-}
-
-variant ToolCallBlock : ContentBlock {
-    tool_call_id: String
-    tool_name: String
-    arguments: Map<String, Any>
-    signature: String?   -- for context reuse
-}
-
-entity Tool {
-    name: String
-    description: String
-    parameters: Schema
-    
-    -- Relationships
-    conversations: Conversation using this tool
-    
-    -- Derived
-    usage_count: conversations.count
-}
-
-entity Model {
-    id: String
-    name: String
-    provider: Provider
-    api: Api
-    base_url: String
-    
-    -- Capabilities
-    supports_reasoning: Boolean
-    supports_images: Boolean
-    supports_text: Boolean
-    
-    -- Limits
-    context_window: Integer
-    max_tokens: Integer
-    
-    -- Cost structure ($/million tokens)
-    input_cost: Number
-    output_cost: Number
-    cache_read_cost: Number
-    cache_write_cost: Number
-    
-    -- Derived
-    supports_multimodal: supports_images and supports_text
-}
-
-value Provider: anthropic | openai
-
-value Api: anthropic_messages | openai_completions
-
-value Usage {
-    input_tokens: Integer
-    output_tokens: Integer
-    cache_read_tokens: Integer
-    cache_write_tokens: Integer
-    total_tokens: Integer
-    cost: CostBreakdown
+value Api {
+    kind: anthropic_messages | openai_completions
 }
 
 value CostBreakdown {
@@ -140,148 +19,187 @@ value CostBreakdown {
     total: Number
 }
 
-entity StreamSession {
-    conversation: Conversation
-    model: Model
-    status: starting | streaming | completed | failed
-    started_at: Timestamp
-    completed_at: Timestamp?
-    
-    -- Configuration
+value Usage {
+    input_tokens: Integer
+    output_tokens: Integer
+    cache_read_tokens: Integer
+    cache_write_tokens: Integer
+    total_tokens: Integer
+    cost: CostBreakdown
+}
+
+value StreamOptions {
     temperature: Number?
     max_tokens: Integer?
     cache_retention: none | short | long
-    
-    -- Relationships  
-    events: StreamEvent for this session
-    
-    -- Derived
-    duration: completed_at - started_at if completed_at != null
-    event_count: events.count
-    has_failed: status = failed
+}
+
+entity Conversation {
+    id: String
+    system_prompt: String?
+    status: active | completed | error
+    created_at: Timestamp
+    updated_at: Timestamp
+}
+
+entity Message {
+    id: String
+    conversation_id: String
+    role: user | assistant | tool_result
+    content: String
+    timestamp: Timestamp
+
+    provider: Provider?
+    model_id: String?
+    api: Api?
+    usage: Usage?
+    stop_reason: stop | length | tool_use | error | aborted
+    error_message: String?
+}
+
+entity Tool {
+    name: String
+    description: String
+    parameters: String
+}
+
+entity Model {
+    id: String
+    name: String
+    provider: Provider
+    api: Api
+    base_url: String
+
+    supports_reasoning: Boolean
+    supports_images: Boolean
+    supports_text: Boolean
+
+    context_window: Integer
+    max_tokens: Integer
+
+    input_cost: Number
+    output_cost: Number
+    cache_read_cost: Number
+    cache_write_cost: Number
+}
+
+entity StreamSession {
+    conversation_id: String
+    model_id: String
+    status: starting | streaming | completed | failed
+    started_at: Timestamp
+    completed_at: Timestamp?
+
+    temperature: Number?
+    max_tokens: Integer?
+    cache_retention: none | short | long
 }
 
 entity StreamEvent {
-    session: StreamSession
+    session_id: String
     sequence: Integer
-    event_type: start | text_start | text_delta | text_end | 
-               thinking_start | thinking_delta | thinking_end |
-               toolcall_start | toolcall_delta | toolcall_end |
-               done | error
+    event_type: start | text_start | text_delta | text_end | thinking_start | thinking_delta | thinking_end | toolcall_start | toolcall_delta | toolcall_end | done | error
     timestamp: Timestamp
     content_index: Integer?
     delta_text: String?
     error_message: String?
 }
 
--- Rules for conversation lifecycle
-
 rule StartConversation {
     when: CreateConversation(system_prompt)
-    ensures: exists conversation: Conversation with {
-        systemPrompt = system_prompt,
-        status = active,
-        created_at = now,
-        updated_at = now
+
+    ensures: conversation = Conversation{
+        id: NewConversationId(),
+        system_prompt: system_prompt,
+        status: active,
+        created_at: now,
+        updated_at: now
     }
 }
 
 rule AddUserMessage {
     when: SendMessage(conversation, content)
     requires: conversation.status = active
-    ensures: exists message: Message with {
-        conversation = conversation,
-        role = user,
-        content = TextContent { text = content },
-        timestamp = now
-    }
+
+    ensures: MessageCreated(
+        conversation_id: conversation.id,
+        role: user,
+        content: content,
+        timestamp: now
+    )
     ensures: conversation.updated_at = now
 }
 
-rule StreamResponse {
+rule StreamResponseStarted {
     when: RequestStream(conversation, model, options)
     requires: conversation.status = active
-    requires: model.provider in [anthropic, openai]
-    let session = StreamSession {
-        conversation = conversation,
-        model = model,
-        status = starting,
-        started_at = now,
-        temperature = options.temperature,
-        max_tokens = options.max_tokens,
-        cache_retention = options.cache_retention ?? short
+    requires: model.provider.kind in {anthropic, openai}
+
+    ensures: session = StreamSession{
+        conversation_id: conversation.id,
+        model_id: model.id,
+        status: streaming,
+        started_at: now,
+        completed_at: null,
+        temperature: options.temperature,
+        max_tokens: options.max_tokens,
+        cache_retention: options.cache_retention
     }
-    ensures: session.status = streaming
 }
 
 rule CompleteStream {
-    when: session: StreamSession.status becomes completed  
-    requires: session.events.any(e => e.event_type = done)
-    let response_events = session.events with event_type in [text_delta, thinking_delta, toolcall_delta]
-    let message = Message {
-        conversation = session.conversation,
-        role = assistant,
-        provider = session.model.provider,
-        model_id = session.model.id,
-        api = session.model.api,
-        timestamp = session.completed_at
-    }
-    ensures: session.conversation.updated_at = session.completed_at
+    when: StreamCompleted(session)
+
+    ensures: session.status = completed
+    ensures: MessageCreated(
+        conversation_id: session.conversation_id,
+        role: assistant,
+        content: BuildAssistantContent(session),
+        timestamp: now
+    )
+    ensures: ConversationUpdatedAt(session.conversation_id, now)
 }
 
 rule HandleStreamError {
-    when: session: StreamSession.status becomes failed
-    requires: session.events.any(e => e.event_type = error)
-    let error_event = session.events with event_type = error
-    ensures: exists message: Message with {
-        conversation = session.conversation,
-        role = assistant,
-        stop_reason = error,
-        error_message = error_event.error_message,
-        timestamp = session.completed_at
-    }
+    when: StreamFailed(session, error_message)
+
+    ensures: session.status = failed
+    ensures: MessageCreated(
+        conversation_id: session.conversation_id,
+        role: assistant,
+        content: "",
+        timestamp: now,
+        stop_reason: error,
+        error_message: error_message
+    )
 }
 
-rule RequireToolResponse {
-    when: message: Message.stop_reason = toolUse
-    requires: message.role = assistant
-    requires: message.content.blocks.any(b => b.kind = toolCall)
-    ensures: message.conversation.status = active  -- keep conversation open
+rule ToolUseKeepsConversationActive {
+    when: AssistantStopReasonRecorded(message, tool_use)
+
+    ensures: ConversationStatus(message.conversation_id) = active
 }
 
-rule CompleteConversation {
-    when: message: Message.stop_reason = stop
-    requires: message.role = assistant
-    ensures: message.conversation.status = completed
+rule StopCompletesConversation {
+    when: AssistantStopReasonRecorded(message, stop)
+
+    ensures: ConversationStatus(message.conversation_id) = completed
 }
 
--- Surface for external clients
 surface ConversationAPI {
-    for client: APIClient
-    
-    context conversation: Conversation accessible to client
-    
+    facing client: APIClient
+
     provides:
-        CreateConversation(system_prompt: String?) 
-            -> Conversation
-            
-        SendMessage(conversation: Conversation, content: String)
+        CreateConversation(system_prompt)
+        SendMessage(conversation, content)
             when conversation.status = active
-            
-        StreamResponse(conversation: Conversation, model: Model, options: StreamOptions)
+        RequestStream(conversation, model, options)
             when conversation.status = active
-            when model.provider in [anthropic, openai]
-            
-        AddTool(conversation: Conversation, tool: Tool)
+        AddTool(conversation, tool)
             when conversation.status = active
-    
+
     exposes:
-        conversation.messages
-        conversation.token_usage
-        conversation.cost
-        conversation.status
-    
-    related:
-        ModelCatalog()  -- browse available models
-        UsageMetrics(conversation)  -- detailed usage tracking
+        Conversation
+        Message
+        StreamSession
 }

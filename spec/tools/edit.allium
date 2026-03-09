@@ -1,26 +1,14 @@
+-- allium: 1
+
 -- tools/edit.allium
---
--- Scope: Target behavior for the edit tool.
---
--- Includes:
---   - cwd-aware path resolution
---   - exact-first then fuzzy match fallback
---   - uniqueness checks in normalized space
---   - BOM + line-ending preservation
---   - replacement validation
---   - structured diff metadata with first changed line
---   - pluggable operations support
+-- Target behavior for the edit tool.
 
 use "./path-resolution.allium" as path
 
-------------------------------------------------------------
--- Value Types
-------------------------------------------------------------
-
 value EditArgs {
     path: String
-    oldText: String
-    newText: String
+    old_text: String
+    new_text: String
 }
 
 value EditOptions {
@@ -30,23 +18,19 @@ value EditOptions {
 
 value EditDiff {
     diff: String
-    firstChangedLine: Integer?
+    first_changed_line: Integer?
 }
 
 value EditResult {
     content: String
-    is-error: Boolean
+    is_error: Boolean
     details: EditDiff?
 }
-
-------------------------------------------------------------
--- Rules
-------------------------------------------------------------
 
 rule EditResolvesPathAgainstCwd {
     when: ExecuteEdit(args, opts)
 
-    ensures: resolved = path/ResolveToCwd(args.path, opts.cwd)
+    ensures: resolved = path/ResolveToCwdCalled(args.path, opts.cwd)
 }
 
 rule EditUsesProvidedOperationsWhenPresent {
@@ -58,40 +42,41 @@ rule EditUsesProvidedOperationsWhenPresent {
 
 rule EditFailsWhenFileMissingOrNoAccess {
     when: ExecuteEdit(args, opts)
-    let resolved = path/ResolveToCwd(args.path, opts.cwd)
 
+    let resolved = path/ResolveToCwdCalled(args.path, opts.cwd)
     requires: not File.readWriteAccessible(resolved)
+
     ensures: Error.thrown("File not found: " + args.path)
 }
 
 rule EditNormalizesForMatching {
     when: ExecuteEdit(args, opts)
 
-    let rawContent = File.read(path/ResolveToCwd(args.path, opts.cwd))
-    let bom = Utf8BomPrefix(rawContent)
-    let contentNoBom = StripBom(rawContent)
-    let lineEnding = DetectLineEnding(contentNoBom)
+    let raw_content = File.read(path/ResolveToCwdCalled(args.path, opts.cwd))
+    let bom = Utf8BomPrefix(raw_content)
+    let content_no_bom = StripBom(raw_content)
+    let line_ending = DetectLineEnding(content_no_bom)
 
-    ensures: normalizedContent = NormalizeToLF(contentNoBom)
-    ensures: normalizedOld = NormalizeToLF(args.oldText)
-    ensures: normalizedNew = NormalizeToLF(args.newText)
+    ensures: normalized_content = NormalizeToLF(content_no_bom)
+    ensures: normalized_old = NormalizeToLF(args.old_text)
+    ensures: normalized_new = NormalizeToLF(args.new_text)
+    ensures: original_bom = bom
+    ensures: original_line_ending = line_ending
 }
 
 rule EditExactMatchPreferred {
     when: ExecuteEdit(args, opts)
 
     ensures:
-        if Contains(normalizedContent, normalizedOld):
-            match = ExactMatch(normalizedContent, normalizedOld)
+        if Contains(NormalizedContent(), NormalizedOld()):
+            match = ExactMatch(NormalizedContent(), NormalizedOld())
 }
 
 rule EditFuzzyMatchFallback {
-    -- Fuzzy normalization includes trailing-space trim per line,
-    -- smart-quote normalization, dash normalization, and unicode-space normalization.
     when: ExecuteEdit(args, opts)
-    requires: not Contains(normalizedContent, normalizedOld)
+    requires: not Contains(NormalizedContent(), NormalizedOld())
 
-    ensures: match = FuzzyMatch(normalizedContent, normalizedOld)
+    ensures: match = FuzzyMatch(NormalizedContent(), NormalizedOld())
 }
 
 rule EditFailsWhenNoMatch {
@@ -113,13 +98,12 @@ rule EditPerformsReplacement {
     requires: MatchFound() = true
     requires: MatchOccurrencesInNormalizedSpace() = 1
 
-    ensures: replaced = ReplaceAtMatch(ContentForReplacement(), Match(), normalizedNew)
-    ensures: replaced != ContentForReplacement()
+    ensures: replaced = ReplaceAtMatch(ContentForReplacement(), Match(), NormalizedNew())
 }
 
 rule EditFailsWhenReplacementNoOp {
     when: ExecuteEdit(args, opts)
-    requires: replaced = ContentForReplacement()
+    requires: ReplacedText() = ContentForReplacement()
 
     ensures: Error.thrown("No changes made")
 }
@@ -128,36 +112,35 @@ rule EditRestoresBOMAndLineEndings {
     when: ExecuteEdit(args, opts)
     requires: ReplacementSucceeded()
 
-    ensures: withEndings = RestoreLineEndings(replaced, lineEnding)
-    ensures: final = bom + withEndings
-    ensures: File.write(path/ResolveToCwd(args.path, opts.cwd), final)
+    ensures: with_endings = RestoreLineEndings(ReplacedText(), OriginalLineEnding())
+    ensures: final = OriginalBom() + with_endings
+    ensures: File.write(path/ResolveToCwdCalled(args.path, opts.cwd), final)
 }
 
 rule EditReturnsDiffMetadata {
     when: ExecuteEdit(args, opts)
     requires: ReplacementSucceeded()
 
-    ensures: diff = UnifiedDiff(ContentForReplacement(), replaced)
-    ensures: firstChangedLine = DiffFirstChangedLine(diff)
+    ensures: diff = UnifiedDiff(ContentForReplacement(), ReplacedText())
+    ensures: first_changed_line = DiffFirstChangedLine(diff)
     ensures: result = EditResult{
         content: "Successfully replaced text in " + args.path + ".",
-        is-error: false,
-        details: EditDiff{diff: diff, firstChangedLine: firstChangedLine}
+        is_error: false,
+        details: EditDiff{diff: diff, first_changed_line: first_changed_line}
     }
 }
 
-------------------------------------------------------------
--- Surface
-------------------------------------------------------------
-
 surface EditToolApi {
-    for caller: AgentToolDispatcher
+    facing caller: AgentToolDispatcher
 
     provides:
-        ExecuteEdit(args: EditArgs, opts?: EditOptions): EditResult
+        ExecuteEdit(args, opts)
 
-    guidance:
+    exposes:
+        EditResult
+
+    @guidance
         -- Matching is exact-first, fuzzy-second.
         -- Replacement must be unique and non-noop.
-        -- Preserve original file BOM + dominant line endings.
+        -- Preserve original file BOM and dominant line endings.
 }

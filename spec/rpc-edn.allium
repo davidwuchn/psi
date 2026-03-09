@@ -1,50 +1,27 @@
+-- allium: 1
+
 -- rpc-edn.allium
---
--- Scope: Canonical EDN-lines RPC transport for psi frontends.
---
--- Includes:
---   Canonical request/response/event/error envelopes
---   Handshake and protocol version negotiation
---   Request/response correlation by id
---   Event topic and payload catalog
---   Forward-compatibility behavior for unknown topics/keys
---   Normative versioning policy (MUST/SHOULD)
---
--- Excludes:
---   Emacs UI rendering and buffer layout
---   TUI rendering details
---   Agent/session internals beyond exposed payload fields
+-- Canonical EDN-lines RPC transport for psi frontends.
 
 use "./coding-agent.allium" as coding
 use "./ui-extension-points.allium" as ui
 
-------------------------------------------------------------
--- Value Types
-------------------------------------------------------------
+value RpcClientInfo {
+    name: String
+    version: String
+    protocol_version: String
+    features: Set<String>
+}
 
-value EdnFrame {
-    id: String?
-    kind: request | response | event | error
-
-    -- request/response fields
-    op: String?
-    params: Map<String, Any>?
-    ok: Boolean?
-
-    -- event fields
-    event: String?
-    data: Map<String, Any>?
-    seq: Integer?
-    ts: Timestamp?
-
-    -- error fields
-    errorCode: String?
-    errorMessage: String?
-    retryable: Boolean?
+value RpcServerInfo {
+    protocol_version: String
+    features: Set<String>
+    session_id: String?
+    model_id: String?
+    thinking_level: String?
 }
 
 value RequestFrame {
-    -- Canonical request envelope (stdin).
     id: String
     kind: request
     op: String
@@ -52,7 +29,6 @@ value RequestFrame {
 }
 
 value ResponseFrame {
-    -- Canonical response envelope (stdout).
     id: String
     kind: response
     op: String
@@ -61,7 +37,6 @@ value ResponseFrame {
 }
 
 value EventFrame {
-    -- Canonical event envelope (stdout).
     kind: event
     event: String
     data: Map<String, Any>
@@ -71,223 +46,45 @@ value EventFrame {
 }
 
 value ErrorFrame {
-    -- Canonical error envelope (stdout).
     kind: error
     id: String?
     op: String?
-    errorCode: String
-    errorMessage: String
+    error_code: String
+    error_message: String
     retryable: Boolean?
     data: Map<String, Any>?
 }
 
-value RpcClientInfo {
-    name: String
-    version: String
-    protocolVersion: String
-    features: Set<String>
-}
-
-value RpcServerInfo {
-    protocolVersion: String
-    features: Set<String>
-    sessionId: String?
-    modelId: String?
-    thinkingLevel: String?
-}
-
-value ProtocolChange {
-    -- Used by the normative versioning policy below.
-    changeType: add-topic | add-optional-key | add-optional-envelope-key |
-                remove-topic | remove-required-key | rename-key |
-                change-key-type | change-semantics
-    topic: String?
-    key: String?
-}
-
--- Event payload catalog (canonical :event → :data shape)
-
 value SessionUpdatedPayload {
-    sessionId: String
+    session_id: String
     phase: String
-    isStreaming: Boolean
-    isCompacting: Boolean
-    pendingMessageCount: Integer
-    retryAttempt: Integer
-
-    -- Optional model metadata used by parity frontends (header/status projection).
-    modelProvider: String?
-    modelId: String?
-    modelReasoning: Boolean?
-    thinkingLevel: Any?
-}
-
-value SessionResumedPayload {
-    sessionId: String
-    sessionFile: String?
-    messageCount: Integer
-}
-
-value SessionRehydratedPayload {
-    messages: List<Map<String, Any>>
-    toolCalls: Map<String, Any>
-    toolOrder: List<String>
-}
-
-value AssistantDeltaPayload {
-    text: String
-}
-
-value AssistantThinkingDeltaPayload {
-    text: String
-}
-
-value AssistantMessagePayload {
-    role: String
-    content: List<Map<String, Any>>
-    stopReason: String?
-    errorMessage: String?
-    usage: Map<String, Any>?
-}
-
-value ToolStartPayload {
-    toolId: String
-    toolName: String
-}
-
-value ToolDeltaPayload {
-    toolId: String
-    arguments: String
-}
-
-value ToolExecutingPayload {
-    toolId: String
-    toolName: String
-    parsedArgs: Map<String, Any>?
-}
-
-value ToolUpdatePayload {
-    toolId: String
-    toolName: String
-    content: List<Map<String, Any>>
-    resultText: String
-    details: Map<String, Any>?
-    isError: Boolean
-}
-
-value ToolResultPayload {
-    toolId: String
-    toolName: String
-    content: List<Map<String, Any>>
-    resultText: String
-    details: Map<String, Any>?
-    isError: Boolean
-}
-
-value UiDialogRequestedPayload {
-    dialogId: String
-    kind: confirm | select | input
-    title: String
-    message: String?
-    options: List<ui/DialogOption>?
-    placeholder: String?
-}
-
-value UiWidgetsUpdatedPayload {
-    widgets: List<Map<String, Any>>
-}
-
-value UiStatusUpdatedPayload {
-    statuses: List<Map<String, Any>>
-}
-
-value UiNotificationPayload {
-    id: String
-    extensionId: String?
-    message: String
-    level: info | warning | error
+    is_streaming: Boolean
+    is_compacting: Boolean
+    pending_message_count: Integer
+    retry_attempt: Integer
+    model_provider: String?
+    model_id: String?
+    model_reasoning: Boolean?
+    thinking_level: Any?
 }
 
 value FooterUpdatedPayload {
-    -- Canonical cross-frontend footer view payload.
-    -- Ownership: rpc-edn defines the transport shape; frontend specs consume it:
-    --   default-footer.allium -> footer/FooterView pathLine|statsLine|statusLine?
-    --   emacs-footer.allium   -> deterministic single-line projection flattening
-    --
-    -- Assumption (story D2): this 3-line shape is canonical for footer/updated.
-    -- Trade-off (story D5): protocol contract clarity now, runtime behavior changes deferred.
-    pathLine: String
-    statsLine: String
-    statusLine: String?
+    path_line: String
+    stats_line: String
+    status_line: String?
 }
-
-value ErrorEventPayload {
-    errorCode: String
-    errorMessage: String
-    id: String?
-    op: String?
-}
-
-rule FooterUpdatedPayloadCanonicalAcrossFrontends {
-    -- Canonical relationship for footer parity specs.
-    when: EventSent(endpoint, frame: EdnFrame)
-
-    requires: frame.kind = event
-    requires: frame.event = "footer/updated"
-
-    ensures: EventPayloadType(frame.data) = FooterUpdatedPayload
-    ensures: CanonicalFooterPayloadConsumer("default-footer") = FooterUpdatedPayload
-    ensures: CanonicalFooterPayloadConsumer("emacs-footer") = FooterUpdatedPayload
-}
-
-rule FooterPayloadSpecConsistencyGuard {
-    -- Lightweight cross-spec guard so canonical footer payload fields stay aligned.
-    when: FooterSpecConsistencyCheckRequested()
-
-    ensures: FooterPayloadCanonicalFields() = ["pathLine", "statsLine", "statusLine?"]
-    ensures: EventTopicPayload("footer/updated") = FooterUpdatedPayload
-    ensures: EventPayloadRequiredKeysFor("footer/updated") = ["path-line", "stats-line"]
-
-    ensures: ContractFieldSet("default-footer", "FooterView") = FooterPayloadCanonicalFields()
-    ensures: ContractFieldSet("emacs-footer", "EmacsFooterProjection.canonical") = FooterPayloadCanonicalFields()
-    ensures: ContractUsesPayload("emacs-frontend", "footer/updated", FooterUpdatedPayload)
-}
-
-rule SessionUpdatedPayloadSpecConsistencyGuard {
-    -- Keep model/thinking projection fields aligned across rpc + frontend specs.
-    when: SessionUpdatedSpecConsistencyCheckRequested()
-
-    ensures: EventTopicPayload("session/updated") = SessionUpdatedPayload
-    ensures: EventPayloadRequiredKeysFor("session/updated") =
-        ["session-id", "phase", "is-streaming", "is-compacting", "pending-message-count", "retry-attempt"]
-    ensures: EventPayloadOptionalKeysFor("session/updated") =
-        ["model-provider", "model-id", "model-reasoning", "thinking-level"]
-    ensures: ContractUsesPayload("emacs-frontend", "session/updated", SessionUpdatedPayload)
-}
-
-------------------------------------------------------------
--- Entity
-------------------------------------------------------------
 
 entity RpcEndpoint {
-    -- EDN RPC endpoint bound to one agent session.
-    session: coding/AgentSession
+    session: coding/CodingAgentRuntime
+    process_state: starting | running | stopping | stopped | crashed
+    transport_state: disconnected | handshaking | ready
 
-    processState: starting | running | stopping | stopped | crashed
-    transportState: disconnected | handshaking | ready
+    protocol_version: String
+    pending_requests: Map<String, String>
+    subscribed_topics: Set<String>
 
-    protocolVersion: String
-    pendingRequests: Map<String, String>
-    subscribedTopics: Set<String>
-
-    -- Derived
-    is_ready: processState = running and transportState = ready
-    has_pending_requests: pendingRequests.count > 0
+    is_ready: process_state = running and transport_state = ready
 }
-
-------------------------------------------------------------
--- Config
-------------------------------------------------------------
 
 config {
     wire_encoding: String = "edn-lines"
@@ -297,179 +94,8 @@ config {
     unknown_event_policy: ignore | error = ignore
     unknown_payload_key_policy: ignore | error = ignore
     max_pending_requests: Integer = 256
-}
 
-------------------------------------------------------------
--- Transport Rules
-------------------------------------------------------------
-
-rule WireFramesAreEdnLines {
-    -- One top-level EDN map per newline-delimited frame.
-    when: WireFrameWritten(endpoint, frame: EdnFrame, stream)
-
-    requires: stream in [stdin, stdout]
-
-    ensures: WireEncoding(stream) = config.wire_encoding
-    ensures: FrameHasOneTopLevelMap(frame)
-}
-
-rule WireKeysUseKebabCaseKeywords {
-    when: WireFrameWritten(endpoint, frame: EdnFrame, stream)
-
-    requires: stream in [stdin, stdout]
-
-    ensures: WireKeyStyle(frame) = config.wire_key_style
-}
-
-rule RequestEnvelopeIsCanonical {
-    -- Canonical wire keys: :id :kind :op [:params]
-    when: RequestReceived(endpoint, frame: EdnFrame)
-
-    requires: frame.kind = request
-
-    ensures: FrameRequiredKeys(frame) = ["id", "kind", "op"]
-    ensures: FrameAllowedKeys(frame) = ["id", "kind", "op", "params"]
-    ensures: frame.id != null
-    ensures: frame.op != null
-}
-
-rule ResponseEnvelopeIsCanonical {
-    -- Canonical wire keys: :id :kind :op :ok [:data]
-    when: ResponseSent(endpoint, frame: EdnFrame)
-
-    requires: frame.kind = response
-
-    ensures: FrameRequiredKeys(frame) = ["id", "kind", "op", "ok"]
-    ensures: FrameAllowedKeys(frame) = ["id", "kind", "op", "ok", "data"]
-    ensures: frame.id != null
-    ensures: frame.op != null
-    ensures: frame.ok != null
-}
-
-rule EventEnvelopeIsCanonical {
-    -- Canonical wire keys: :kind :event :data [:id :seq :ts]
-    when: EventSent(endpoint, frame: EdnFrame)
-
-    requires: frame.kind = event
-
-    ensures: FrameRequiredKeys(frame) = ["kind", "event", "data"]
-    ensures: FrameAllowedKeys(frame) = ["kind", "event", "data", "id", "seq", "ts"]
-    ensures: frame.event != null
-    ensures: frame.data != null
-}
-
-rule ErrorEnvelopeIsCanonical {
-    -- Canonical wire keys: :kind :error-code :error-message [:id :op :retryable :data]
-    when: ErrorSent(endpoint, frame: EdnFrame)
-
-    requires: frame.kind = error
-
-    ensures: FrameRequiredKeys(frame) = ["kind", "error-code", "error-message"]
-    ensures: FrameAllowedKeys(frame) = ["kind", "id", "op", "error-code", "error-message", "retryable", "data"]
-    ensures: frame.errorCode != null
-    ensures: frame.errorMessage != null
-}
-
-rule ErrorFieldNamesMapToWireKeys {
-    when: ErrorSent(endpoint, frame: EdnFrame)
-
-    requires: frame.kind = error
-
-    ensures: WireValue(frame, "error-code") = frame.errorCode
-    ensures: WireValue(frame, "error-message") = frame.errorMessage
-}
-
-rule StdoutReservedForProtocolFrames {
-    -- stdout must remain machine-readable; diagnostics go to stderr.
-    when: TransportReady(endpoint)
-
-    ensures:
-        for frame in StdoutFrames(endpoint):
-            frame.kind in [response, event, error]
-    ensures: DiagnosticsStream(endpoint) = stderr
-}
-
-rule HandshakeRequiredBeforeNormalRequests {
-    when: RequestReceived(endpoint, frame: EdnFrame)
-
-    requires: frame.kind = request
-    requires: frame.op != "handshake"
-    requires: endpoint.transportState != ready
-
-    ensures: ErrorFrameSent(frame.id, "transport/not-ready")
-}
-
-rule UnsupportedProtocolMajorRejected {
-    -- MUST reject incompatible major protocol versions.
-    when: HandshakeRequested(endpoint, client: RpcClientInfo)
-
-    requires: MajorOf(client.protocolVersion) not in config.supported_major_versions
-
-    ensures: endpoint.transportState = disconnected
-    ensures: HandshakeRejected(endpoint, "protocol/unsupported-version")
-    ensures: ErrorFrameSent(null, "protocol/unsupported-version")
-}
-
-rule HandshakeNegotiatesCapabilities {
-    -- MUST negotiate only within supported major versions.
-    when: HandshakeRequested(endpoint, client: RpcClientInfo)
-
-    requires: endpoint.transportState in [disconnected, handshaking]
-    requires: MajorOf(client.protocolVersion) in config.supported_major_versions
-
-    let server = RpcServerInfo{
-        protocolVersion: NegotiatedProtocolVersion(client.protocolVersion, config.protocol_version),
-        features: SupportedRpcFeatures(endpoint),
-        sessionId: endpoint.session.sessionId,
-        modelId: endpoint.session.model.id,
-        thinkingLevel: endpoint.session.thinkingLevel
-    }
-
-    ensures: endpoint.transportState = ready
-    ensures: endpoint.protocolVersion = server.protocolVersion
-    ensures: HandshakeSucceeded(endpoint, server)
-}
-
-rule RequestIdTrackedUntilTerminalFrame {
-    when: RequestAccepted(endpoint, frame: EdnFrame)
-
-    requires: frame.id != null
-    requires: frame.kind = request
-    requires: endpoint.pendingRequests.count < config.max_pending_requests
-
-    ensures: endpoint.pendingRequests[frame.id] = frame.op
-}
-
-rule TerminalResponseClearsPendingRequest {
-    when: TerminalFrameSent(endpoint, frame: EdnFrame)
-
-    requires: frame.id != null
-    requires: frame.kind in [response, error]
-
-    ensures: endpoint.pendingRequests[frame.id] = null
-}
-
-rule AsyncEventsMayInterleaveResponses {
-    -- Clients must handle asynchronous events and direct responses in one stream.
-    when: endpoint.session.isStreaming
-
-    ensures: EventStreamIncludes(endpoint, "assistant/delta")
-    ensures: EventStreamIncludes(endpoint, "tool/start")
-    ensures: EventStreamIncludes(endpoint, "tool/update")
-    ensures: EventStreamIncludes(endpoint, "tool/result")
-    ensures: ResponseAndEventInterleaving(endpoint) = true
-}
-
-------------------------------------------------------------
--- Event Catalog Rules
-------------------------------------------------------------
-
-rule EventTopicMustBeFromCatalog {
-    when: EventSent(endpoint, frame: EdnFrame)
-
-    requires: frame.kind = event
-
-    ensures: frame.event in [
+    canonical_event_topics: Set<String> = {
         "session/updated",
         "session/resumed",
         "session/rehydrated",
@@ -487,283 +113,170 @@ rule EventTopicMustBeFromCatalog {
         "ui/notification",
         "footer/updated",
         "error"
-    ]
+    }
 }
 
-rule EventPayloadMatchesCatalog {
-    when: EventSent(endpoint, frame: EdnFrame)
+rule RequestEnvelopeIsCanonical {
+    when: RequestReceived(endpoint, frame)
+    requires: frame.kind = request
 
+    ensures: RequiredFrameKeys(frame) = {"id", "kind", "op"}
+    ensures: AllowedFrameKeys(frame) = {"id", "kind", "op", "params"}
+}
+
+rule ResponseEnvelopeIsCanonical {
+    when: ResponseSent(endpoint, frame)
+    requires: frame.kind = response
+
+    ensures: RequiredFrameKeys(frame) = {"id", "kind", "op", "ok"}
+    ensures: AllowedFrameKeys(frame) = {"id", "kind", "op", "ok", "data"}
+}
+
+rule EventEnvelopeIsCanonical {
+    when: EventSent(endpoint, frame)
     requires: frame.kind = event
 
-    ensures:
-        if frame.event = "session/updated":
-            EventPayloadType(frame.data) = SessionUpdatedPayload
-        if frame.event = "session/resumed":
-            EventPayloadType(frame.data) = SessionResumedPayload
-        if frame.event = "session/rehydrated":
-            EventPayloadType(frame.data) = SessionRehydratedPayload
-        if frame.event = "assistant/delta":
-            EventPayloadType(frame.data) = AssistantDeltaPayload
-        if frame.event = "assistant/thinking-delta":
-            EventPayloadType(frame.data) = AssistantThinkingDeltaPayload
-        if frame.event = "assistant/message":
-            EventPayloadType(frame.data) = AssistantMessagePayload
-        if frame.event = "tool/start":
-            EventPayloadType(frame.data) = ToolStartPayload
-        if frame.event = "tool/delta":
-            EventPayloadType(frame.data) = ToolDeltaPayload
-        if frame.event = "tool/executing":
-            EventPayloadType(frame.data) = ToolExecutingPayload
-        if frame.event = "tool/update":
-            EventPayloadType(frame.data) = ToolUpdatePayload
-        if frame.event = "tool/result":
-            EventPayloadType(frame.data) = ToolResultPayload
-        if frame.event = "ui/dialog-requested":
-            EventPayloadType(frame.data) = UiDialogRequestedPayload
-        if frame.event = "ui/widgets-updated":
-            EventPayloadType(frame.data) = UiWidgetsUpdatedPayload
-        if frame.event = "ui/status-updated":
-            EventPayloadType(frame.data) = UiStatusUpdatedPayload
-        if frame.event = "ui/notification":
-            EventPayloadType(frame.data) = UiNotificationPayload
-        if frame.event = "footer/updated":
-            EventPayloadType(frame.data) = FooterUpdatedPayload
-        if frame.event = "error":
-            EventPayloadType(frame.data) = ErrorEventPayload
+    ensures: RequiredFrameKeys(frame) = {"kind", "event", "data"}
+    ensures: AllowedFrameKeys(frame) = {"kind", "event", "data", "id", "seq", "ts"}
 }
 
-rule EventPayloadKeysUseKebabCase {
-    when: EventSent(endpoint, frame: EdnFrame)
+rule ErrorEnvelopeIsCanonical {
+    when: ErrorSent(endpoint, frame)
+    requires: frame.kind = error
 
+    ensures: RequiredFrameKeys(frame) = {"kind", "error-code", "error-message"}
+    ensures: AllowedFrameKeys(frame) = {"kind", "id", "op", "error-code", "error-message", "retryable", "data"}
+}
+
+rule HandshakeNegotiatesCapabilities {
+    when: HandshakeRequested(endpoint, client)
+    requires: MajorOf(client.protocol_version) in config.supported_major_versions
+
+    ensures: endpoint.transport_state = ready
+    ensures: endpoint.protocol_version = NegotiatedProtocolVersion(client.protocol_version, config.protocol_version)
+    ensures: HandshakeSucceeded(endpoint, RpcServerInfo{
+        protocol_version: endpoint.protocol_version,
+        features: SupportedRpcFeatures(endpoint),
+        session_id: endpoint.session.session.session_id,
+        model_id: endpoint.session.session.model.id,
+        thinking_level: endpoint.session.session.thinking_level
+    })
+}
+
+rule UnsupportedProtocolMajorRejected {
+    when: HandshakeRequested(endpoint, client)
+    requires: MajorOf(client.protocol_version) not in config.supported_major_versions
+
+    ensures: endpoint.transport_state = disconnected
+    ensures: ErrorFrameSent(null, "protocol/unsupported-version")
+}
+
+rule RequestIdTrackedUntilTerminalFrame {
+    when: RequestAccepted(endpoint, frame)
+    requires: frame.kind = request
+    requires: endpoint.pending_requests.count < config.max_pending_requests
+
+    ensures: endpoint.pending_requests = MapAssoc(endpoint.pending_requests, frame.id, frame.op)
+}
+
+rule TerminalResponseClearsPendingRequest {
+    when: TerminalFrameSent(endpoint, frame)
+    requires: frame.kind in {response, error}
+    requires: frame.id != null
+
+    ensures: endpoint.pending_requests = MapDissoc(endpoint.pending_requests, frame.id)
+}
+
+rule EventTopicMustBeFromCatalog {
+    when: EventSent(endpoint, frame)
     requires: frame.kind = event
 
-    ensures: EventPayloadWireKeyStyle(frame) = config.wire_key_style
+    ensures: frame.event in config.canonical_event_topics
 }
 
-rule EventPayloadRequiredKeysByTopic {
-    when: EventSent(endpoint, frame: EdnFrame)
-
+rule FooterUpdatedPayloadCanonicalAcrossFrontends {
+    when: EventSent(endpoint, frame)
     requires: frame.kind = event
+    requires: frame.event = "footer/updated"
 
-    ensures:
-        if frame.event = "session/updated":
-            EventPayloadRequiredKeys(frame) = ["session-id", "phase", "is-streaming", "is-compacting", "pending-message-count", "retry-attempt"]
-        if frame.event = "session/resumed":
-            EventPayloadRequiredKeys(frame) = ["session-id", "session-file", "message-count"]
-        if frame.event = "session/rehydrated":
-            EventPayloadRequiredKeys(frame) = ["messages", "tool-calls", "tool-order"]
-        if frame.event = "assistant/delta":
-            EventPayloadRequiredKeys(frame) = ["text"]
-        if frame.event = "assistant/thinking-delta":
-            EventPayloadRequiredKeys(frame) = ["text"]
-        if frame.event = "assistant/message":
-            EventPayloadRequiredKeys(frame) = ["role", "content"]
-        if frame.event = "tool/start":
-            EventPayloadRequiredKeys(frame) = ["tool-id", "tool-name"]
-        if frame.event = "tool/delta":
-            EventPayloadRequiredKeys(frame) = ["tool-id", "arguments"]
-        if frame.event = "tool/executing":
-            EventPayloadRequiredKeys(frame) = ["tool-id", "tool-name"]
-        if frame.event = "tool/update":
-            EventPayloadRequiredKeys(frame) = ["tool-id", "tool-name", "content", "result-text", "is-error"]
-        if frame.event = "tool/result":
-            EventPayloadRequiredKeys(frame) = ["tool-id", "tool-name", "content", "result-text", "is-error"]
-        if frame.event = "ui/dialog-requested":
-            EventPayloadRequiredKeys(frame) = ["dialog-id", "kind", "title"]
-        if frame.event = "ui/widgets-updated":
-            EventPayloadRequiredKeys(frame) = ["widgets"]
-        if frame.event = "ui/status-updated":
-            EventPayloadRequiredKeys(frame) = ["statuses"]
-        if frame.event = "ui/notification":
-            EventPayloadRequiredKeys(frame) = ["id", "message", "level"]
-        if frame.event = "footer/updated":
-            EventPayloadRequiredKeys(frame) = ["path-line", "stats-line"]
-        if frame.event = "error":
-            EventPayloadRequiredKeys(frame) = ["error-code", "error-message"]
+    ensures: EventPayloadType(frame.data) = FooterUpdatedPayload
+    ensures: CanonicalFooterPayloadConsumer("default-footer") = FooterUpdatedPayload
+    ensures: CanonicalFooterPayloadConsumer("emacs-footer") = FooterUpdatedPayload
 }
 
-rule EventSequenceIsMonotonicWhenProvided {
-    when: EventSent(endpoint, frame: EdnFrame)
-
+rule SessionUpdatedPayloadSpecConsistencyGuard {
+    when: EventSent(endpoint, frame)
     requires: frame.kind = event
-    requires: frame.seq != null
+    requires: frame.event = "session/updated"
 
-    ensures: frame.seq > LastEventSequence(endpoint)
+    ensures: EventPayloadType(frame.data) = SessionUpdatedPayload
+    ensures: RequiredPayloadKeys(frame.data) = {"session-id", "phase", "is-streaming", "is-compacting", "pending-message-count", "retry-attempt"}
 }
-
-------------------------------------------------------------
--- Compatibility + Versioning Policy (Normative)
-------------------------------------------------------------
 
 rule UnknownEventTopicsAreForwardCompatible {
-    -- Clients SHOULD ignore unknown event topics (forward compatibility).
-    when: EventReceivedByClient(frame: EventFrame)
-
+    when: EventReceivedByClient(frame)
     requires: frame.event not in KnownEventTopics()
 
-    ensures: UnknownEventHandlingPolicy() = config.unknown_event_policy
     ensures:
         if config.unknown_event_policy = ignore:
             EventIgnored(frame)
 }
 
 rule UnknownPayloadKeysAreForwardCompatible {
-    -- Clients SHOULD ignore unknown payload keys on known topics.
-    when: EventReceivedByClient(frame: EventFrame)
-
+    when: EventReceivedByClient(frame)
     requires: frame.event in KnownEventTopics()
-    requires: UnknownKeys(frame.data, EventPayloadRequiredKeys(frame)).count > 0
+    requires: UnknownKeys(frame.data, KnownRequiredPayloadKeys(frame.event)).count > 0
 
-    ensures: UnknownPayloadKeyHandlingPolicy() = config.unknown_payload_key_policy
     ensures:
         if config.unknown_payload_key_policy = ignore:
             EventHandledUsingKnownKeys(frame)
 }
 
-rule SameMajorVersionsAreNonBreaking {
-    -- MUST: changes in the same major version are additive-only.
-    when: ProtocolVersionPublished(previousVersion, newVersion, changes: List<ProtocolChange>)
-
-    requires: MajorOf(newVersion) = MajorOf(previousVersion)
-
-    ensures:
-        for ch in changes:
-            ch.changeType in [add-topic, add-optional-key, add-optional-envelope-key]
-}
-
-rule AdditiveChangesBumpMinorVersion {
-    -- MUST: additive protocol changes bump minor (major unchanged).
-    when: ProtocolVersionPublished(previousVersion, newVersion, changes: List<ProtocolChange>)
-
-    requires: exists ch in changes where
-              ch.changeType in [add-topic, add-optional-key, add-optional-envelope-key]
-    requires: MajorOf(newVersion) = MajorOf(previousVersion)
-
-    ensures: MinorOf(newVersion) > MinorOf(previousVersion)
-}
-
-rule BreakingChangesRequireMajorBump {
-    -- MUST: breaking changes require a major version increase.
-    when: ProtocolVersionPublished(previousVersion, newVersion, changes: List<ProtocolChange>)
-
-    requires: exists ch in changes where
-              ch.changeType in [remove-topic, remove-required-key, rename-key, change-key-type, change-semantics]
-
-    ensures: MajorOf(newVersion) > MajorOf(previousVersion)
-}
-
-rule EventTopicRemovalRequiresDeprecationWindow {
-    -- SHOULD: topic removals are announced in at least one prior minor.
-    when: ProtocolVersionPublished(previousVersion, newVersion, changes: List<ProtocolChange>)
-
-    requires: exists ch in changes where ch.changeType = remove-topic
-
-    ensures: DeprecationAnnouncedBeforeRemoval(changes, previousVersion)
-}
-
-------------------------------------------------------------
--- Actor Declarations
-------------------------------------------------------------
-
 actor RpcClient {
-    identified_by: ExternalProcess
+    identified_by: id = "external-process"
 }
-
-------------------------------------------------------------
--- Surfaces
-------------------------------------------------------------
 
 surface RpcTransportApi {
-    -- Low-level process and wire protocol contract.
-    for client: RpcClient
+    facing client: RpcClient
 
     context endpoint: RpcEndpoint
 
     exposes:
-        endpoint.processState
-        endpoint.transportState
-        endpoint.protocolVersion
-        endpoint.has_pending_requests
+        endpoint.process_state
+        endpoint.transport_state
+        endpoint.protocol_version
 
     provides:
-        start(cwd?, model?, sessionPath?)
+        start(cwd, model, session_path)
         stop()
-        handshake(clientInfo: RpcClientInfo)
-        send(id, op, params?)
-        subscribe(topics?)
-        unsubscribe(topics?)
+        handshake(client)
+        send(id, op, params)
+        subscribe(topics)
+        unsubscribe(topics)
         ping()
 
-    guidance:
-        -- stdin/stdout framing uses EDN maps, one frame per line.
-        -- Producers MUST emit canonical envelopes for request/response/event/error.
-        -- Consumers SHOULD ignore unknown keys for forward compatibility.
-        -- Canonical wire keys are EDN keywords:
-        --   request  → :id :kind :op [:params]
-        --   response → :id :kind :op :ok [:data]
-        --   event    → :kind :event :data [:id :seq :ts]
-        --   error    → :kind :error-code :error-message [:id :op :retryable :data]
-        -- Example request frame:
-        --   {:id "42" :kind :request :op "prompt" :params {:message "Summarize this ns"}}
-        -- Example response frame:
-        --   {:id "42" :kind :response :op "prompt" :ok true :data {:message-id "msg_9"}}
-        -- Example query_eql request frame:
-        --   {:id "43" :kind :request :op "query_eql"
-        --    :params {:query "[:psi.graph/domain-coverage :psi.memory/status]"}}
-        -- Example query_eql response frame:
-        --   {:id "43" :kind :response :op "query_eql" :ok true
-        --    :data {:result {:psi.graph/domain-coverage [...]
-        --                    :psi.memory/status :ready}}}
-        -- Example event frame:
-        --   {:kind :event :event "tool/start" :seq 18 :data {:tool-id "tc_1" :tool-name "read"}}
-        -- Example error frame:
-        --   {:kind :error :id "42" :op "prompt" :error-code "transport/not-ready"
-        --    :error-message "handshake required" :retryable true}
-        -- Handshake feature strings are implementation-defined; deployments MAY
-        -- advertise discovery hints such as "eql-graph" and "eql-memory".
-        -- Keep stdout protocol-only; write logs/diagnostics to stderr.
+    @guidance
+        -- One EDN map per line on stdin/stdout.
+        -- stdout is reserved for protocol frames; diagnostics go to stderr.
+        -- Responses correlate to requests via :id.
+        -- Async events can interleave responses.
 }
 
 surface RpcEventStream {
-    -- Async events delivered over the same EDN stdout channel.
-    for client: RpcClient
+    facing client: RpcClient
 
     context endpoint: RpcEndpoint
 
     exposes:
-        EdnFrame
+        EventFrame
 
     provides:
-        subscribe(topics?)
-        unsubscribe(topics?)
+        subscribe(topics)
+        unsubscribe(topics)
 
-    guidance:
-        -- Clients SHOULD ignore unknown topics unless configured for strict mode.
-        -- Minor protocol versions add topics/optional keys; major versions may break.
-        -- Canonical event topics include:
-        --   session/updated       → SessionUpdatedPayload
-        --   session/resumed       → SessionResumedPayload
-        --   session/rehydrated    → SessionRehydratedPayload
-        --   assistant/delta       → AssistantDeltaPayload
-        --   assistant/thinking-delta → AssistantThinkingDeltaPayload
-        --   assistant/message     → AssistantMessagePayload
-        --   tool/start            → ToolStartPayload
-        --   tool/delta            → ToolDeltaPayload
-        --   tool/executing        → ToolExecutingPayload
-        --   tool/update           → ToolUpdatePayload
-        --   tool/result           → ToolResultPayload
-        --   ui/dialog-requested   → UiDialogRequestedPayload
-        --   ui/widgets-updated    → UiWidgetsUpdatedPayload
-        --   ui/status-updated     → UiStatusUpdatedPayload
-        --   ui/notification       → UiNotificationPayload
-        --   footer/updated        → FooterUpdatedPayload
-        --   error                 → ErrorEventPayload
-        -- Event payload keys on the wire are kebab-case EDN keywords.
-        -- Events may interleave with direct responses; clients correlate responses by :id.
+    @guidance
+        -- Clients should ignore unknown topics and unknown optional keys.
+        -- Minor versions add topics/optional keys; major versions may break.
 }
 
-------------------------------------------------------------
--- Open Questions
-------------------------------------------------------------
-
-open_question "Should strict-mode negotiation be explicit in handshake features (e.g. :strict-events), or remain client-local behavior?"
+open question "Should strict-mode negotiation be explicit in handshake features or remain client-local behavior?"

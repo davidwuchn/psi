@@ -1,401 +1,289 @@
+-- allium: 1
+
 -- compaction.allium
---
--- Scope: Context compaction and branch summarisation for AgentSession.
---
--- Includes:
---   Compaction settings and preparation
---   Cut-point selection and split-turn handling
---   Manual compaction and auto-compaction (threshold + overflow recovery)
---   Extension interception points for compaction
---   Context-usage semantics immediately after compaction
---   Branch-abandon summarisation
---
--- Excludes:
---   AgentSession lifecycle outside compaction (session-management.allium)
---   Extension registration/runtime internals (extension-system.allium)
---   LLM provider transport/auth internals (agent.allium / ai-abstract-model.allium)
+-- Context compaction and branch summarisation for AgentSession.
 
 use "./agent.allium" as agent
 use "./extension-system.allium" as ext
-
-------------------------------------------------------------
--- External Entities
-------------------------------------------------------------
 
 external entity Model {
     provider: String
     id: String
     reasoning: Boolean
-    contextWindow: Integer
+    context_window: Integer
 }
 
 external entity Agent {
-    -- The core LLM agent (specified in agent.allium).
     state: agent/AgentState
     is_streaming: Boolean
 }
 
 external entity AgentSession {
-    -- Session fields touched by compaction rules.
     model: Model?
     agent: Agent
-    isCompacting: Boolean
-    autoCompactionEnabled: Boolean
+    is_compacting: Boolean
+    auto_compaction_enabled: Boolean
     is_idle: Boolean
     has_pending_messages: Boolean
 }
 
 external entity SessionEntry {
     id: String
-    parentId: String?
+    parent_id: String?
     timestamp: Timestamp
 }
 
 external entity CompactionEntry {
     summary: String
-    firstKeptEntryId: String
-    tokensBefore: Integer
+    first_kept_entry_id: String
+    tokens_before: Integer
     details: String?
-    fromHook: Boolean
+    from_hook: Boolean
 }
-
-------------------------------------------------------------
--- Value Types
-------------------------------------------------------------
 
 value CompactionSettings {
     enabled: Boolean
-    reserveTokens: Integer
-    keepRecentTokens: Integer
+    reserve_tokens: Integer
+    keep_recent_tokens: Integer
 }
 
 value FileOperationSummary {
-    readFiles: List<String>
-    modifiedFiles: List<String>
+    read_files: Set<String>
+    modified_files: Set<String>
 }
 
 value CompactionPreparation {
-    -- Prepared input for compaction + extension hooks.
-    firstKeptEntryId: String
-    messagesToSummarize: List<agent/AgentMessage>
-    turnPrefixMessages: List<agent/AgentMessage>
-    isSplitTurn: Boolean
-    tokensBefore: Integer
-    previousSummary: String?
-    fileOps: FileOperationSummary
+    first_kept_entry_id: String
+    messages_to_summarize: Set<agent/AgentMessage>
+    turn_prefix_messages: Set<agent/AgentMessage>
+    is_split_turn: Boolean
+    tokens_before: Integer
+    previous_summary: String?
+    file_ops: FileOperationSummary
     settings: CompactionSettings
 }
 
 value CompactionResult {
     summary: String
-    firstKeptEntryId: String
-    tokensBefore: Integer
-    details: String?        -- JSON metadata (often file-operation summary)
+    first_kept_entry_id: String
+    tokens_before: Integer
+    details: String?
 }
 
 value BranchSummaryResult {
     summary: String?
-    details: String?        -- JSON metadata (often file-operation summary)
-    aborted: Boolean = false
+    details: String?
+    aborted: Boolean
     error: String?
 }
 
 value ContextUsage {
-    tokens: Integer?            -- null after compaction until next successful assistant response
-    contextWindow: Integer
+    tokens: Integer?
+    context_window: Integer
     percent: Decimal?
 }
-
-------------------------------------------------------------
--- Config
-------------------------------------------------------------
 
 config {
     auto_compaction_enabled_default: Boolean = true
     auto_compaction_reserve_tokens: Integer = 16384
     auto_compaction_keep_recent_tokens: Integer = 20000
     branch_summary_reserve_tokens: Integer = 16384
-    -- Defaults come from settings; callers may override per-session.
 }
-
-------------------------------------------------------------
--- Rules
-------------------------------------------------------------
 
 rule SetAutoCompaction {
     when: SetAutoCompaction(session, enabled)
-    ensures: session.autoCompactionEnabled = enabled
+    ensures: session.auto_compaction_enabled = enabled
 }
 
--- ── Preparation ─────────────────────────────────────────
-
 rule CompactionPreparationComputed {
-    -- Build CompactionPreparation from the active branch entries.
     when: CompactionPreparationRequested(session)
 
-    let branchEntries = EntriesOnActivePath(session)
+    let branch_entries = EntriesOnActivePath(session)
+    requires: not IsCompactionEntry(LastEntry(branch_entries))
 
-    -- If current leaf is already a compaction entry, no-op (already compacted).
-    requires: LastEntry(branchEntries) is not CompactionEntry
+    let boundary_start = IndexAfterLatestCompaction(branch_entries)
+    let cut = CutPointFound(branch_entries, boundary_start, config.auto_compaction_keep_recent_tokens)
 
-    let boundaryStart = IndexAfterLatestCompaction(branchEntries)
-    let cut = CutPointFound(branchEntries, boundaryStart, config.auto_compaction_keep_recent_tokens)
-
-    ensures: preparation.firstKeptEntryId = EntryAt(branchEntries, cut.firstKeptEntryIndex).id
+    ensures: preparation.first_kept_entry_id = EntryAt(branch_entries, cut.first_kept_entry_index).id
     ensures:
-        if cut.isSplitTurn:
-            preparation.messagesToSummarize = MessagesBetween(branchEntries, boundaryStart, cut.turnStartIndex)
-            preparation.turnPrefixMessages = MessagesBetween(branchEntries, cut.turnStartIndex, cut.firstKeptEntryIndex)
+        if cut.is_split_turn:
+            preparation.messages_to_summarize = MessagesBetween(branch_entries, boundary_start, cut.turn_start_index)
+            preparation.turn_prefix_messages = MessagesBetween(branch_entries, cut.turn_start_index, cut.first_kept_entry_index)
         else:
-            preparation.messagesToSummarize = MessagesBetween(branchEntries, boundaryStart, cut.firstKeptEntryIndex)
-            preparation.turnPrefixMessages = []
-    ensures: preparation.isSplitTurn = cut.isSplitTurn
-    ensures: preparation.tokensBefore = EstimatedContextTokensSinceLatestCompaction(branchEntries)
-    ensures: preparation.previousSummary = LatestCompactionSummary(branchEntries)
-    ensures: preparation.fileOps = FileOperationsMergedFrom(
-        LatestCompactionFileOps(branchEntries),
-        preparation.messagesToSummarize,
-        preparation.turnPrefixMessages
-    )
+            preparation.messages_to_summarize = MessagesBetween(branch_entries, boundary_start, cut.first_kept_entry_index)
+            preparation.turn_prefix_messages = {}
+
+    ensures: preparation.is_split_turn = cut.is_split_turn
+    ensures: preparation.tokens_before = EstimatedContextTokensSinceLatestCompaction(branch_entries)
+    ensures: preparation.previous_summary = LatestCompactionSummary(branch_entries)
+    ensures: preparation.file_ops = FileOperationsMergedFrom(LatestCompactionFileOps(branch_entries), preparation.messages_to_summarize, preparation.turn_prefix_messages)
     ensures: preparation.settings = EffectiveCompactionSettings(session)
 }
 
 rule CutPointSelection {
-    -- Keep approximately keepRecentTokens from newest backward.
-    -- Valid cut points: user/assistant/custom-message/branch-summary message boundaries.
-    -- Invalid cut points: toolResult boundaries.
-    when: CutPointRequested(branchEntries, boundaryStart, keepRecentTokens)
+    when: CutPointRequested(branch_entries, boundary_start, keep_recent_tokens)
 
-    ensures: cut = CutPointFound(branchEntries, boundaryStart, keepRecentTokens)
-    ensures: EntryAt(branchEntries, cut.firstKeptEntryIndex) is not ToolResultBoundary
-    ensures: cut.firstKeptEntryIndex = IncludesLeadingNonMessageEntries(branchEntries, cut.firstKeptEntryIndex, boundaryStart)
+    ensures: cut = CutPointFound(branch_entries, boundary_start, keep_recent_tokens)
+    ensures: not IsToolResultBoundary(EntryAt(branch_entries, cut.first_kept_entry_index))
+    ensures: cut.first_kept_entry_index = IncludesLeadingNonMessageEntries(branch_entries, cut.first_kept_entry_index, boundary_start)
+
     ensures:
-        if EntryAt(branchEntries, cut.firstKeptEntryIndex) starts_mid_turn:
-            cut.isSplitTurn = true
-            cut.turnStartIndex = NearestPriorTurnStart(branchEntries, cut.firstKeptEntryIndex, boundaryStart)
+        if StartsMidTurn(EntryAt(branch_entries, cut.first_kept_entry_index)):
+            cut.is_split_turn = true
+            cut.turn_start_index = NearestPriorTurnStart(branch_entries, cut.first_kept_entry_index, boundary_start)
         else:
-            cut.isSplitTurn = false
+            cut.is_split_turn = false
 }
 
 rule CompactionPreparationUnavailable {
-    -- Manual/auto compaction rejects when there is no valid preparation.
     when: CompactionPreparationRequested(session)
 
-    let branchEntries = EntriesOnActivePath(session)
-
+    let branch_entries = EntriesOnActivePath(session)
     ensures:
-        if branchEntries.count = 0:
+        if branch_entries.count = 0:
             PreparationError(session) = nothing_to_compact
-        else if LastEntry(branchEntries) is CompactionEntry:
+        else if IsCompactionEntry(LastEntry(branch_entries)):
             PreparationError(session) = already_compacted
 }
 
 rule CompactionSummaryGenerated {
-    -- Default (LLM-based) compaction summary generation.
-    when: CompactionSummaryGenerated(session, preparation, customInstructions?)
+    when: CompactionSummaryGenerated(session, preparation, custom_instructions)
 
     ensures:
-        if preparation.isSplitTurn and preparation.turnPrefixMessages.count > 0:
+        if preparation.is_split_turn and preparation.turn_prefix_messages.count > 0:
             result.summary = MergeSummaries(
-                SummarizeHistory(
-                    preparation.messagesToSummarize,
-                    customInstructions,
-                    preparation.previousSummary,
-                    preparation.settings.reserveTokens
-                ),
-                SummarizeTurnPrefix(preparation.turnPrefixMessages, preparation.settings.reserveTokens)
+                SummarizeHistory(preparation.messages_to_summarize, custom_instructions, preparation.previous_summary, preparation.settings.reserve_tokens),
+                SummarizeTurnPrefix(preparation.turn_prefix_messages, preparation.settings.reserve_tokens)
             )
         else:
-            result.summary = SummarizeHistory(
-                preparation.messagesToSummarize,
-                customInstructions,
-                preparation.previousSummary,
-                preparation.settings.reserveTokens
-            )
-    ensures: result.summary = result.summary + FormatFileOperations(preparation.fileOps)
-    ensures: result.firstKeptEntryId = preparation.firstKeptEntryId
-    ensures: result.tokensBefore = preparation.tokensBefore
-    ensures: result.details = Json(preparation.fileOps)
+            result.summary = SummarizeHistory(preparation.messages_to_summarize, custom_instructions, preparation.previous_summary, preparation.settings.reserve_tokens)
+
+    ensures: result.summary = result.summary + FormatFileOperations(preparation.file_ops)
+    ensures: result.first_kept_entry_id = preparation.first_kept_entry_id
+    ensures: result.tokens_before = preparation.tokens_before
+    ensures: result.details = Json(preparation.file_ops)
 }
 
--- ── Manual compaction ───────────────────────────────────
-
 rule ManualCompaction {
-    -- User triggers /compact. Agent is aborted first.
-    when: ManualCompaction(session, customInstructions?)
-
-    requires: exists session.model
+    when: ManualCompaction(session, custom_instructions)
+    requires: session.model != null
 
     let preparation = CompactionPreparationRequested(session)
-    requires: exists preparation
+    requires: preparation != null
     requires: PreparationError(session) = null
 
     ensures: session.agent.abort()
-    ensures: session.isCompacting = true
-    ensures: ext/SessionBeforeCompactDispatched(session, preparation, EntriesOnActivePath(session), customInstructions)
+    ensures: session.is_compacting = true
+    ensures: ext/SessionBeforeCompactDispatched(session, preparation, EntriesOnActivePath(session), custom_instructions)
+
     ensures:
         if SessionBeforeCompactCancelled(session):
-            session.isCompacting = false
+            session.is_compacting = false
             result = null
         else:
-            let result =
-                if SessionBeforeCompactOverride(session) != null:
-                    SessionBeforeCompactOverride(session)
-                else:
-                    CompactionSummaryGenerated(session, preparation, customInstructions)
-            let fromExtension = SessionBeforeCompactOverride(session) != null
-            let saved = CompactionEntry.created(
+            result = SessionBeforeCompactOverride(session) ?? CompactionSummaryGenerated(session, preparation, custom_instructions)
+            from_extension = SessionBeforeCompactOverride(session) != null
+            saved = CompactionEntry{
                 summary: result.summary,
-                firstKeptEntryId: result.firstKeptEntryId,
-                tokensBefore: result.tokensBefore,
+                first_kept_entry_id: result.first_kept_entry_id,
+                tokens_before: result.tokens_before,
                 details: result.details,
-                fromHook: fromExtension
-            )
+                from_hook: from_extension
+            }
             agent/ReplaceMessages(session.agent, RebuildFromEntries(session))
-            session.isCompacting = false
-            ext/SessionCompactDispatched(session, saved, fromExtension)
+            session.is_compacting = false
+            ext/SessionCompactDispatched(session, saved, from_extension)
 }
-
--- ── Auto-compaction: threshold ──────────────────────────
 
 rule AutoCompactionTriggered {
-    -- Fires after successful assistant turns when context exceeds window-reserve.
-    when: _: agent/AgentEndEvent.emitted
+    when: agent/AgentEndEventEmitted(session.agent)
 
-    requires: session.autoCompactionEnabled
-    requires: LastAssistantMessage(session).stopReason != error
-    requires:
-        ContextTokensFrom(LastAssistantMessage(session).usage)
-        > session.model.contextWindow - config.auto_compaction_reserve_tokens
+    requires: session.auto_compaction_enabled
+    requires: LastAssistantStopReason(session) != error
+    requires: ContextTokensFromLastAssistant(session) > session.model.context_window - config.auto_compaction_reserve_tokens
 
-    ensures: AutoCompactionRun(session, reason: threshold, willRetry: false)
+    ensures: AutoCompactionRun(session, reason: threshold, will_retry: false)
 }
 
--- ── Auto-compaction: overflow ───────────────────────────
-
 rule AutoCompactionOnOverflow {
-    -- Fires when the LLM reports context overflow for the active model.
-    when: _: agent/AgentEndEvent.emitted
+    when: agent/AgentEndEventEmitted(session.agent)
 
-    requires: session.autoCompactionEnabled
-    requires: LastAssistantMessage(session).stopReason = error
-    requires: IsContextOverflow(LastAssistantMessage(session), session.model.contextWindow)
+    requires: session.auto_compaction_enabled
+    requires: LastAssistantStopReason(session) = error
+    requires: IsContextOverflow(LastAssistantMessage(session), session.model.context_window)
     requires: MessageModelMatchesCurrentModel(LastAssistantMessage(session), session.model)
     requires: not MessagePredatesLatestCompaction(LastAssistantMessage(session), EntriesOnActivePath(session))
 
     ensures: agent/ReplaceMessages(session.agent, RemoveTrailingOverflowError(session.agent.state.messages))
-    ensures: AutoCompactionRun(session, reason: overflow, willRetry: true)
+    ensures: AutoCompactionRun(session, reason: overflow, will_retry: true)
 }
 
 rule AutoCompactionRun {
-    -- Shared auto-compaction flow (threshold or overflow).
-    when: AutoCompactionRun(session, reason, willRetry)
+    when: AutoCompactionRun(session, reason, will_retry)
 
     ensures: ext/AutoCompactionStartDispatched(session, reason)
+    ensures: result = ManualCompaction(session, custom_instructions: null)
+
     ensures:
-        let result = ManualCompaction(session, customInstructions: null)
         if AutoCompactionError(session) != null:
-            ext/AutoCompactionEndDispatched(
-                session,
-                result: null,
-                aborted: false,
-                willRetry: false,
-                errorMessage: AutoCompactionError(session)
-            )
+            ext/AutoCompactionEndDispatched(session, result: null, aborted: false, will_retry: false, error_message: AutoCompactionError(session))
         else if result = null:
-            ext/AutoCompactionEndDispatched(session, result: null, aborted: true, willRetry: false)
+            ext/AutoCompactionEndDispatched(session, result: null, aborted: true, will_retry: false)
         else:
-            ext/AutoCompactionEndDispatched(session, result: result, aborted: false, willRetry: willRetry)
-            if willRetry:
-                agent/Continue(session.agent)
-            else if session.has_pending_messages or AgentHasQueuedMessages(session.agent):
+            ext/AutoCompactionEndDispatched(session, result: result, aborted: false, will_retry: will_retry)
+            if will_retry or session.has_pending_messages or AgentHasQueuedMessages(session.agent):
                 agent/Continue(session.agent)
 }
 
--- ── Context usage semantics ─────────────────────────────
-
 rule ContextUsageUnknownAfterCompaction {
-    -- After compaction, context token count is unknown until a successful
-    -- assistant response occurs after the latest compaction entry.
     when: ContextUsageRequested(session)
-
-    requires: exists LatestCompactionEntry(EntriesOnActivePath(session))
-    requires: not exists SuccessfulAssistantAfterLatestCompaction(EntriesOnActivePath(session))
+    requires: LatestCompactionEntry(EntriesOnActivePath(session)) != null
+    requires: SuccessfulAssistantAfterLatestCompaction(EntriesOnActivePath(session)) = null
 
     ensures: ContextUsageFor(session).tokens = null
-    ensures: ContextUsageFor(session).contextWindow = session.model.contextWindow
+    ensures: ContextUsageFor(session).context_window = session.model.context_window
     ensures: ContextUsageFor(session).percent = null
 }
 
--- ── Branch summarisation ────────────────────────────────
-
 rule BranchSummarised {
-    -- Called when TreeNavigated with summarize=true.
-    when: BranchSummarised(session, abandonedEntries, customInstructions?)
+    when: BranchSummarised(session, abandoned_entries, custom_instructions)
+    requires: session.model != null
 
-    requires: exists session.model
-
-    let context = PrepareForBranchSummary(abandonedEntries, config.branch_summary_reserve_tokens)
-
-    ensures: result = BranchSummaryExecuted(session, context, customInstructions)
+    let context = PrepareForBranchSummary(abandoned_entries, config.branch_summary_reserve_tokens)
+    ensures: result = BranchSummaryExecuted(session, context, custom_instructions)
     ensures:
         if result.summary != null:
             result.summary = BranchSummaryPreamble() + result.summary
 }
 
-------------------------------------------------------------
--- Actor Declarations
-------------------------------------------------------------
-
 actor User {
-    identified_by: HumanOperator
+    identified_by: id = "human-operator"
 }
 
-------------------------------------------------------------
--- Surfaces
-------------------------------------------------------------
-
 surface CompactionApi {
-    -- Compaction operations exposed to the session orchestrator.
-    for caller: User
+    facing caller: User
 
     context session: AgentSession
 
     exposes:
-        session.isCompacting
-        session.autoCompactionEnabled
+        session.is_compacting
+        session.auto_compaction_enabled
 
     provides:
-        ManualCompaction(caller, session, customInstructions?)
+        ManualCompaction(session, custom_instructions)
             when session.is_idle
+        SetAutoCompaction(session, enabled)
 
-        SetAutoCompaction(caller, session, enabled)
-
-    guidance:
-        -- ManualCompaction aborts any running agent turn before compacting.
-        -- session_before_compact may cancel compaction or supply an explicit CompactionResult.
-        -- Auto-compaction uses the same compaction pipeline, wrapped with start/end events.
-        -- Threshold compaction does not auto-retry the failed turn (there was no failure).
-        -- Overflow compaction retries the turn after successful compaction.
-        -- After compaction, ContextUsage reports tokens = null until a post-compaction
-        --   successful assistant response provides fresh usage.
+    @guidance
+        -- Manual compaction aborts active turns before compaction.
+        -- session_before_compact may cancel or provide explicit CompactionResult.
+        -- Auto-compaction reuses manual pipeline with start/end events.
+        -- Overflow-triggered auto-compaction retries the turn after success.
+        -- Context usage tokens remain unknown until next successful post-compaction assistant response.
 }
 
-------------------------------------------------------------
--- Deferred Specifications
-------------------------------------------------------------
-
 deferred CompactionPromptTemplates
-    -- Exact summarization prompt text, update prompt text, and split-turn
-    -- merge formatting are implementation details.
-
 deferred TokenEstimator.heuristics
-    -- Message token estimation details (usage reconciliation + fallback heuristics).
 
-------------------------------------------------------------
--- Open Questions
-------------------------------------------------------------
-
-open_question "Custom instructions mode: should compaction support replaceInstructions (replace base prompt) in addition to append-only customInstructions?"
-
-open_question "Auto-compaction cancellation UX: when auto-compaction is cancelled, should the session emit a user-visible cancellation entry or remain silent?"
+open question "Should compaction support replace-instructions mode in addition to append-only custom instructions?"
+open question "When auto-compaction is cancelled, should session emit a user-visible cancellation entry or remain silent?"

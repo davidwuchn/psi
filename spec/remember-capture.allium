@@ -1,26 +1,9 @@
+-- allium: 1
+
 -- remember-capture.allium
---
--- Scope: Step 10 — Remember memory capture.
---
--- Remember = human signal to future ψ via memory writeback.
--- output becomes input.
---
--- Includes:
---   - Manual operator-triggered capture only
---   - Memory append with minimal context snapshot
---   - EQL visibility for captured artifacts
---
--- Excludes:
---   - Automated evolution cycles
---   - Observe/Plan/Approve/Execute process control
---   - Event-driven/background triggers
---   - Multi-step controller state machines
+-- Step 10 — remember memory capture.
 
 use "./memory-layer.allium" as memory
-
-------------------------------------------------------------
--- External Entities
-------------------------------------------------------------
 
 external entity SystemState {
     query_ready: Boolean
@@ -29,17 +12,13 @@ external entity SystemState {
 
 external entity MemoryLayer {
     status: initializing | ready | querying | error
-    canRemember: Boolean
-    canRecover: Boolean
+    can_remember: Boolean
+    can_recover: Boolean
 }
 
 external entity RecursionEqlSurface {
     attrs: Set<String>
 }
-
-------------------------------------------------------------
--- Value Types
-------------------------------------------------------------
 
 value RememberSignal {
     type: manual
@@ -51,40 +30,31 @@ value RememberCapture {
     id: String
     signal: RememberSignal
 
-    sessionId: String?
+    session_id: String?
     cwd: String?
-    gitBranch: String?
+    git_branch: String?
 
     summary: String
     evidence: Set<String>
 
-    writtenAt: Timestamp
-    memoryId: String?
+    written_at: Timestamp
+    memory_id: String?
 }
-
-------------------------------------------------------------
--- Entity
-------------------------------------------------------------
 
 entity RememberCaptureStore {
     status: idle | capturing | error
 
-    captures: List<RememberCapture>
+    captures: Set<RememberCapture>
 
-    lastCaptureAt: Timestamp?
-    lastError: String?
+    last_capture_at: Timestamp?
+    last_error: String?
 }
-
-------------------------------------------------------------
--- Config
-------------------------------------------------------------
 
 config {
     accepted_signal_types: Set<String> = {"manual"}
 
     internal_manual_trigger_prompt_name: String = "remember-manual-trigger"
-    internal_manual_trigger_prompt: String =
-        "Capture a remember memory entry from operator reason and current context."
+    internal_manual_trigger_prompt: String = "Capture a remember memory entry from operator reason and current context."
 
     required_recursion_eql_attrs: Set<String> = {
         ":psi.recursion/status",
@@ -93,20 +63,16 @@ config {
     }
 }
 
-------------------------------------------------------------
--- Rules
-------------------------------------------------------------
-
 rule ManualSignalAccepted {
-    when: RememberRequested(capture, signal, state, memoryLayer)
+    when: RememberRequested(capture, signal, state, memory_layer)
 
     requires: signal.type in config.accepted_signal_types
     requires: signal.type = manual
 
     requires: state.query_ready = true
     requires: state.memory_ready = true
-    requires: memoryLayer.status = ready
-    requires: memoryLayer.canRemember = true
+    requires: memory_layer.status = ready
+    requires: memory_layer.can_remember = true
 
     ensures: capture.status = capturing
 }
@@ -117,64 +83,60 @@ rule MemoryCaptureWritten {
     requires: capture.status = capturing
     requires: signal.type = manual
 
-    ensures: exists entry = RememberCapture.created(
+    ensures: entry = RememberCapture{
         id: NewCaptureId(),
         signal: signal,
-        sessionId: context.sessionId,
+        session_id: context.session_id,
         cwd: context.cwd,
-        gitBranch: context.gitBranch,
+        git_branch: context.git_branch,
         summary: context.summary,
         evidence: context.evidence,
-        writtenAt: now,
-        memoryId: RememberEntry(signal, context)
-    )
+        written_at: now,
+        memory_id: RememberEntry(signal, context)
+    }
 
-    ensures: capture.captures = capture.captures + [entry]
-    ensures: capture.lastCaptureAt = now
+    ensures: capture.captures = capture.captures + {entry}
+    ensures: capture.last_capture_at = now
     ensures: capture.status = idle
 }
 
 rule MemoryCaptureBlocked {
-    when: RememberRequested(capture, signal, state, memoryLayer)
+    when: RememberRequested(capture, signal, state, memory_layer)
 
     requires:
         state.query_ready = false or
         state.memory_ready = false or
-        memoryLayer.status != ready or
-        memoryLayer.canRemember = false
+        memory_layer.status != ready or
+        memory_layer.can_remember = false
 
     ensures: capture.status = error
-    ensures: capture.lastError = "memory_capture_prerequisites_not_ready"
+    ensures: capture.last_error = "memory_capture_prerequisites_not_ready"
 }
 
 rule RecursionSurfacedViaEql {
     when: RecursionResolversRegistered(surface)
 
-    ensures: config.required_recursion_eql_attrs.each(a => surface.attrs contains a)
+    ensures: AllAttrsPresent(config.required_recursion_eql_attrs, surface.attrs)
 }
-
-------------------------------------------------------------
--- Surface
-------------------------------------------------------------
 
 actor RememberOperator { identified_by: id = "remember-operator" }
 
 surface RememberMemoryApi {
-    for operator: RememberOperator
+    facing operator: RememberOperator
 
     context capture: RememberCaptureStore
 
     exposes:
         capture.status
         capture.captures
-        capture.lastCaptureAt
-        capture.lastError
+        capture.last_capture_at
+        capture.last_error
 
     provides:
         CaptureRememberMemory(operator, reason)
             when reason != ""
 
-    guidance:
+    @guidance
         -- Emits RememberSignal.type = manual.
         -- Prompt name: config.internal_manual_trigger_prompt_name
         -- Prompt body: config.internal_manual_trigger_prompt

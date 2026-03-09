@@ -1,28 +1,11 @@
--- tui-input-history.allium
---
--- Scope: Observable prompt-history behavior at the prompt-input boundary.
---
--- Distilled from:
---   - ~/src/pi-mono/packages/tui/src/components/editor.ts
---   - ~/src/pi-mono/packages/tui/test/editor.test.ts
---   - ~/src/pi-mono/packages/coding-agent/src/modes/interactive/interactive-mode.ts
---
--- Observable intent:
---   - Submitted prompts become recallable history
---   - Up/Down browse history only at visual boundaries
---   - Typing/editing exits history-browsing mode
+-- allium: 1
 
-------------------------------------------------------------
--- Config
-------------------------------------------------------------
+-- tui-input-history.allium
+-- Observable prompt-history behavior at the prompt-input boundary.
 
 config {
     history_limit: Integer = 100
 }
-
-------------------------------------------------------------
--- Entities
-------------------------------------------------------------
 
 entity PromptInput {
     text: String
@@ -36,10 +19,10 @@ entity PromptHistory {
     entries: List<PromptHistoryEntry>
 
     -- -1 means normal editing mode; >=0 means browsing history
-    browse_index: Integer = -1
+    browse_index: Integer
 
     is_browsing: browse_index >= 0
-    newest_text: if entries.count > 0 then entries.first.text else null
+    newest_text: NewestHistoryText(entries)
 }
 
 entity PromptHistoryEntry {
@@ -49,56 +32,49 @@ entity PromptHistoryEntry {
     created_at: Timestamp
 }
 
-------------------------------------------------------------
--- Rules
-------------------------------------------------------------
-
 rule RecordSubmittedPrompt {
     when: PromptSubmitted(input, text)
 
-    let history = PromptHistory{input}
+    let history = PromptHistory with input = input
     let normalized = NormalizePrompt(text)
 
     requires: history != null
     requires: normalized != ""
     requires: history.newest_text = null or history.newest_text != normalized
 
-    let entry = PromptHistoryEntry.created(
+    ensures: entry = PromptHistoryEntry.created(
         history: history,
         text: normalized,
         source: submitted,
         created_at: now
     )
-
-    ensures: history.entries = [entry] + history.entries
+    ensures: history.entries = Prepend(history.entries, entry)
     ensures: history.browse_index = -1
 }
 
 rule RecordReplayedPrompt {
     when: PromptReplayedIntoView(input, text)
 
-    let history = PromptHistory{input}
+    let history = PromptHistory with input = input
     let normalized = NormalizePrompt(text)
 
     requires: history != null
     requires: normalized != ""
     requires: history.newest_text = null or history.newest_text != normalized
 
-    let entry = PromptHistoryEntry.created(
+    ensures: entry = PromptHistoryEntry.created(
         history: history,
         text: normalized,
         source: replayed,
         created_at: now
     )
-
-    ensures: history.entries = [entry] + history.entries
+    ensures: history.entries = Prepend(history.entries, entry)
 }
 
 rule EnforceHistoryLimit {
     when: PromptHistoryEntry.created(entry)
 
     let history = entry.history
-
     requires: history.entries.count > config.history_limit
 
     ensures: history.entries = KeepMostRecent(history.entries, config.history_limit)
@@ -107,36 +83,32 @@ rule EnforceHistoryLimit {
 rule UpFromEmptyInputEntersHistoryBrowsing {
     when: UserPressesUp(input)
 
-    let history = PromptHistory{input}
-
+    let history = PromptHistory with input = input
     requires: history.entries.count > 0
     requires: not history.is_browsing
     requires: input.is_empty
 
     ensures: history.browse_index = 0
-    ensures: input.text = history.entries[0].text
+    ensures: input.text = EntryTextAt(history.entries, 0)
 }
 
 rule UpAtTopWhileBrowsingShowsOlderPrompt {
     when: UserPressesUp(input)
 
-    let history = PromptHistory{input}
-
+    let history = PromptHistory with input = input
     requires: history.is_browsing
     requires: input.cursor_zone = first_visual_line
     requires: history.browse_index + 1 < history.entries.count
 
     let next_index = history.browse_index + 1
-
     ensures: history.browse_index = next_index
-    ensures: input.text = history.entries[next_index].text
+    ensures: input.text = EntryTextAt(history.entries, next_index)
 }
 
 rule UpAtTopWithoutHistoryBrowsingMovesToLineStart {
     when: UserPressesUp(input)
 
-    let history = PromptHistory{input}
-
+    let history = PromptHistory with input = input
     requires: not history.is_browsing
     requires: not input.is_empty
     requires: input.cursor_zone = first_visual_line
@@ -146,7 +118,6 @@ rule UpAtTopWithoutHistoryBrowsingMovesToLineStart {
 
 rule UpAwayFromTopMovesCursor {
     when: UserPressesUp(input)
-
     requires: input.cursor_zone != first_visual_line
 
     ensures: CursorMovedUp(input)
@@ -155,23 +126,20 @@ rule UpAwayFromTopMovesCursor {
 rule DownAtBottomWhileBrowsingShowsNewerPrompt {
     when: UserPressesDown(input)
 
-    let history = PromptHistory{input}
-
+    let history = PromptHistory with input = input
     requires: history.is_browsing
     requires: input.cursor_zone = last_visual_line
     requires: history.browse_index > 0
 
     let next_index = history.browse_index - 1
-
     ensures: history.browse_index = next_index
-    ensures: input.text = history.entries[next_index].text
+    ensures: input.text = EntryTextAt(history.entries, next_index)
 }
 
 rule DownAtBottomOnNewestExitsHistoryBrowsing {
     when: UserPressesDown(input)
 
-    let history = PromptHistory{input}
-
+    let history = PromptHistory with input = input
     requires: history.is_browsing
     requires: input.cursor_zone = last_visual_line
     requires: history.browse_index = 0
@@ -183,8 +151,7 @@ rule DownAtBottomOnNewestExitsHistoryBrowsing {
 rule DownAtBottomWithoutHistoryBrowsingMovesToLineEnd {
     when: UserPressesDown(input)
 
-    let history = PromptHistory{input}
-
+    let history = PromptHistory with input = input
     requires: not history.is_browsing
     requires: not input.is_empty
     requires: input.cursor_zone = last_visual_line
@@ -194,7 +161,6 @@ rule DownAtBottomWithoutHistoryBrowsingMovesToLineEnd {
 
 rule DownAwayFromBottomMovesCursor {
     when: UserPressesDown(input)
-
     requires: input.cursor_zone != last_visual_line
 
     ensures: CursorMovedDown(input)
@@ -203,27 +169,23 @@ rule DownAwayFromBottomMovesCursor {
 rule TypingExitsHistoryBrowsing {
     when: UserEditsPrompt(input)
 
-    let history = PromptHistory{input}
+    let history = PromptHistory with input = input
     requires: history.is_browsing
 
     ensures: history.browse_index = -1
 }
 
 rule ProgrammaticSetTextExitsHistoryBrowsing {
-    when: PromptSetProgrammatically(input, _)
+    when: PromptSetProgrammatically(input, text)
 
-    let history = PromptHistory{input}
+    let history = PromptHistory with input = input
     requires: history.is_browsing
 
     ensures: history.browse_index = -1
 }
 
-------------------------------------------------------------
--- Surface
-------------------------------------------------------------
-
 surface PromptHistoryContract {
-    for user: PromptInputUser
+    facing user: PromptInputUser
 
     context input: PromptInput
 
@@ -236,17 +198,13 @@ surface PromptHistoryContract {
         PromptSetProgrammatically(input, text)
 
     exposes:
-        PromptHistory{input}
+        PromptHistory with input = input
 
-    guidance:
+    @guidance
         -- History ordering is newest-first.
         -- Blank prompts are not recorded.
         -- Consecutive duplicate prompts are not recorded.
         -- Browsing is anchored to visual line boundaries.
 }
 
-------------------------------------------------------------
--- Open Questions
-------------------------------------------------------------
-
-open_question "Should down-from-newest restore a pre-browse draft instead of clearing to empty?"
+open question "Should down-from-newest restore a pre-browse draft instead of clearing to empty?"

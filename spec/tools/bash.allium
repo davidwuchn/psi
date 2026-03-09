@@ -1,48 +1,35 @@
--- tools/bash.allium
---
--- Scope: Target behavior for the bash tool.
---
--- Includes:
---   - execution via shell + bash -c with cwd support
---   - optional command prefix and spawn hook
---   - merged stdout/stderr output
---   - streaming partial updates with cumulative truncated tail
---   - tail truncation under effective policy
---   - full-output spill file when truncated
---   - timeout and abort semantics
---   - pluggable operations support
+-- allium: 1
 
-------------------------------------------------------------
--- Value Types
-------------------------------------------------------------
+-- tools/bash.allium
+-- Target behavior for the bash tool.
 
 value BashArgs {
     command: String
-    timeout: Integer?             -- seconds
+    timeout: Integer?
 }
 
 value BashOptions {
     cwd: String?
-    commandPrefix: String?
-    spawnHook: Function?          -- (command,cwd,env) -> adjusted context
+    command_prefix: String?
+    spawn_hook: Function?
     operations: ToolOperations?
 }
 
 value BashTruncation {
     truncated: Boolean
-    truncatedBy: lines | bytes | none
-    totalLines: Integer
-    totalBytes: Integer
-    outputLines: Integer
-    outputBytes: Integer
-    maxLines: Integer
-    maxBytes: Integer
-    lastLinePartial: Boolean
+    truncated_by: lines | bytes | none
+    total_lines: Integer
+    total_bytes: Integer
+    output_lines: Integer
+    output_bytes: Integer
+    max_lines: Integer
+    max_bytes: Integer
+    last_line_partial: Boolean
 }
 
 value BashDetails {
     truncation: BashTruncation?
-    fullOutputPath: String?
+    full_output_path: String?
 }
 
 value BashPartialResult {
@@ -52,44 +39,49 @@ value BashPartialResult {
 
 value BashResult {
     content: String
-    is-error: Boolean
+    is_error: Boolean
     details: BashDetails?
 }
 
-------------------------------------------------------------
--- Rules
-------------------------------------------------------------
-
 rule BashCommandPrefixApplied {
     when: ExecuteBash(args, opts)
-    requires: opts.commandPrefix != null
+    requires: opts.command_prefix != null
 
-    ensures: resolvedCommand = opts.commandPrefix + "\n" + args.command
+    ensures: resolved_command = opts.command_prefix + "\n" + args.command
+}
+
+rule BashCommandPrefixDefaultsToRawCommand {
+    when: ExecuteBash(args, opts)
+    requires: opts.command_prefix = null
+
+    ensures: resolved_command = args.command
 }
 
 rule BashSpawnHookApplied {
     when: ExecuteBash(args, opts)
-    requires: opts.spawnHook != null
+    requires: opts.spawn_hook != null
 
-    ensures: spawnContext = opts.spawnHook({
+    ensures: spawn_context = ApplySpawnHook(
+        hook: opts.spawn_hook,
         command: ResolvedCommand(args, opts),
         cwd: opts.cwd,
         env: ShellEnvironment()
-    })
+    )
 }
 
 rule BashExecutesWithShellDashC {
     when: ExecuteBash(args, opts)
 
-    ensures: Process.spawned(shell, shellArgs + [ResolvedCommand(args, opts)])
-    ensures: Process.options.include({out: string, err: string, continue: true, in: "/dev/null"})
+    ensures: ProcessSpawnedWithShellDashC(ResolvedCommand(args, opts))
+    ensures: ProcessUsesMergedStdoutStderr()
+    ensures: ProcessUsesNullStdin()
 }
 
 rule BashRunsInCwdWhenProvided {
-    when: ExecuteBash(args, {cwd: cwd})
-    requires: cwd != null
+    when: ExecuteBash(args, opts)
+    requires: opts.cwd != null
 
-    ensures: Process.options.include({dir: cwd})
+    ensures: ProcessWorkingDirectory() = opts.cwd
 }
 
 rule BashUsesProvidedOperationsWhenPresent {
@@ -100,93 +92,102 @@ rule BashUsesProvidedOperationsWhenPresent {
 }
 
 rule BashStreamingUpdateCarriesCumulativeTail {
-    -- onUpdate receives cumulative output snapshot truncated from tail.
     when: BashOutputChunkReceived(chunk)
 
     let rolling = RollingOutputBuffer()
-    let truncation = TailTruncate(rolling, EffectiveOutputPolicy(bash))
+    let truncation = TailTruncate(rolling, EffectiveOutputPolicy("bash"))
 
-    ensures: OnUpdate(BashPartialResult{
-        content: truncation.content,
-        details: BashDetails{
-            truncation: if truncation.truncated then truncation else null,
-            fullOutputPath: CurrentTempOutputPath()
-        }
-    })
+    ensures: partial.content = truncation.content
+    ensures: partial.details.full_output_path = CurrentTempOutputPath()
+    ensures:
+        if truncation.truncated:
+            partial.details.truncation = truncation
+        else:
+            partial.details.truncation = null
+    ensures: OnUpdate(partial)
 }
 
 rule BashCreatesTempArtifactWhenOutputExceedsByteThreshold {
     when: BashOutputChunkReceived(chunk)
-    requires: TotalOutputBytesSeen() > EffectiveOutputPolicy(bash).maxBytes
+    requires: TotalOutputBytesSeen() > EffectiveOutputPolicy("bash").max_bytes
     requires: CurrentTempOutputPath() = null
 
-    ensures: path = PersistTruncatedFullOutput(toolName: "bash", fullText: OutputSeenSoFar())
+    ensures: path = PersistTruncatedFullOutput(tool_name: "bash", full_text: OutputSeenSoFar())
     ensures: CurrentTempOutputPath() = path
 }
 
 rule BashFinalResultUsesTailTruncation {
-    when: BashProcessFinished(stdout, stderr, exitCode)
+    when: BashProcessFinished(stdout, stderr, exit_code)
 
     let merged = stdout + stderr
-    let truncation = TailTruncate(merged, EffectiveOutputPolicy(bash))
+    let truncation = TailTruncate(merged, EffectiveOutputPolicy("bash"))
 
-    ensures: baseText = if IsBlank(truncation.content) then "(no output)" else truncation.content
-    ensures: result.details.truncation = if truncation.truncated then truncation else null
+    ensures:
+        if IsBlank(truncation.content):
+            result.content = "(no output)"
+        else:
+            result.content = truncation.content
+    ensures: result.is_error = false
+    ensures:
+        if truncation.truncated:
+            result.details.truncation = truncation
+        else:
+            result.details.truncation = null
 }
 
 rule BashFinalResultIncludesFullOutputPathWhenTruncated {
-    when: BashProcessFinished(stdout, stderr, exitCode)
+    when: BashProcessFinished(stdout, stderr, exit_code)
+
     let merged = stdout + stderr
-    let truncation = TailTruncate(merged, EffectiveOutputPolicy(bash))
+    let truncation = TailTruncate(merged, EffectiveOutputPolicy("bash"))
     requires: truncation.truncated
 
-    ensures: path = CurrentTempOutputPath() or PersistTruncatedFullOutput("bash", merged)
-    ensures: result.details.fullOutputPath = path
-    ensures: result.content includes "Full output"
-    ensures: result.content includes path
+    ensures: path = CurrentTempOutputPathOrPersist(tool_name: "bash", full_text: merged)
+    ensures: result.details.full_output_path = path
+    ensures: Contains(result.content, "Full output")
+    ensures: Contains(result.content, path)
 }
 
 rule BashNonZeroExitMarksError {
-    when: BashProcessFinished(stdout, stderr, exitCode)
-    requires: exitCode != 0
+    when: BashProcessFinished(stdout, stderr, exit_code)
+    requires: exit_code != 0
 
-    ensures: result.is-error = true
-    ensures: result.content includes "Command exited with code " + exitCode
+    ensures: result.is_error = true
+    ensures: Contains(result.content, "Command exited with code " + exit_code)
 }
 
 rule BashTimeoutMarksError {
-    when: BashTimeoutReached(timeoutSeconds)
+    when: BashTimeoutReached(timeout_seconds)
 
     ensures: Process.killed()
-    ensures: result.is-error = true
-    ensures: result.content includes "Command timed out after " + timeoutSeconds + " seconds"
+    ensures: result.is_error = true
+    ensures: Contains(result.content, "Command timed out after " + timeout_seconds + " seconds")
 }
 
 rule BashAbortMarksError {
     when: BashAbortRequested()
 
     ensures: Process.killed()
-    ensures: result.is-error = true
-    ensures: result.content includes "Command aborted"
+    ensures: result.is_error = true
+    ensures: Contains(result.content, "Command aborted")
 }
 
 rule BashTempArtifactsStoredInProcessStore {
-    when: PersistTruncatedFullOutput(toolName: "bash", fullText)
+    when: PersistTruncatedFullOutput(tool_name: "bash", full_text)
 
-    ensures: path in ActiveProcessTempStore().rootDir
+    ensures: path in ActiveProcessTempStore().root_dir
 }
 
-------------------------------------------------------------
--- Surface
-------------------------------------------------------------
-
 surface BashToolApi {
-    for caller: AgentToolDispatcher
+    facing caller: AgentToolDispatcher
 
     provides:
-        ExecuteBash(args: BashArgs, opts?: BashOptions, onUpdate?): BashResult
+        ExecuteBash(args, opts, on_update)
 
-    guidance:
-        -- Truncated bash output must provide recoverable fullOutputPath metadata.
-        -- Timeout/abort should preserve best-effort output gathered so far.
+    exposes:
+        BashResult
+
+    @guidance
+        -- Truncated bash output must provide recoverable full_output_path metadata.
+        -- Timeout and abort should preserve best-effort output gathered so far.
 }

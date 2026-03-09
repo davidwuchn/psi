@@ -1,39 +1,16 @@
+-- allium: 1
+
 -- tool-output-rendering.allium
---
--- Scope: Interactive rendering contract for tool-call output.
---
--- Source distillation:
---   - ~/src/pi-mono/packages/coding-agent/src/modes/interactive/components/tool-execution.ts
---   - ~/src/pi-mono/packages/coding-agent/src/modes/interactive/components/visual-truncate.ts
---   - ~/src/pi-mono/packages/coding-agent/src/modes/interactive/components/keybinding-hints.ts
---   - ~/src/pi-mono/packages/coding-agent/src/core/keybindings.ts
---
--- Includes:
---   - Built-in renderer behavior for read/bash/edit/write
---   - Shared tool-call header formatting from streamed arguments (path/command)
---   - Collapsed vs expanded output presentation
---   - Truncation warning display contract
---   - Custom renderer override/fallback behavior
---   - Inline image display and fallback contract
---
--- Excludes:
---   - Tool execution semantics and output truncation algorithms
---     (see tools/*.allium)
---   - User `!bash` command rendering (separate component)
+-- Interactive rendering contract for tool-call output.
 
 use "./tools/runtime.allium" as runtime
 
-------------------------------------------------------------
--- Value Types
-------------------------------------------------------------
-
 value RenderCapabilities {
-    -- Runtime terminal/media capability snapshot.
     images: none | kitty | iterm2 | inline
 }
 
 value ToolImage {
-    mimeType: String
+    mime_type: String
     data: String
     width: Integer?
     height: Integer?
@@ -41,59 +18,45 @@ value ToolImage {
 
 value ToolOutputDisplayDetails {
     truncation: runtime/ToolOutputTruncation?
-    fullOutputPath: String?
-
-    -- Tool-specific optional details used by rendering.
+    full_output_path: String?
     diff: String?
-    firstChangedLine: Integer?
+    first_changed_line: Integer?
 }
 
 value ToolOutputPayload {
     text: String
-    images: List<ToolImage>
-    isError: Boolean
+    images: Set<ToolImage>
+    is_error: Boolean
     details: ToolOutputDisplayDetails?
 }
 
 value ToolRendererRegistration {
-    toolName: String
-    hasRenderCall: Boolean
-    hasRenderResult: Boolean
+    tool_name: String
+    has_render_call: Boolean
+    has_render_result: Boolean
 }
 
-------------------------------------------------------------
--- Entities
-------------------------------------------------------------
-
 entity ToolOutputView {
-    toolCallId: String
-    toolName: String
-
-    -- State
+    tool_call_id: String
+    tool_name: String
     status: pending | running | success | error
-    expanded: Boolean
-    showImages: Boolean
 
-    -- Input
-    args: String?                -- raw JSON tool args (may stream incrementally)
-    parsedArgs: Map?             -- parsed args when available
+    expanded: Boolean
+    show_images: Boolean
+
+    args: String?
+    parsed_args: Map?
     output: ToolOutputPayload?
     capabilities: RenderCapabilities?
 
-    -- Resolved display model
-    header: String = ""
-    visibleTextLines: List<String> = []
-    warningLines: List<String> = []
+    header: String
+    visible_text: String
+    warnings: Set<String>
+    background: pending | success | error
 
-    inlineImages: List<ToolImage> = []
-    imageFallbackLines: List<String> = []
-
-    background: pending | success | error = pending
+    inline_images: Set<ToolImage>
+    image_fallback_count: Integer
 }
-
-------------------------------------------------------------
--- Config
-------------------------------------------------------------
 
 config {
     expand_tools_keybinding: String = "ctrl+o"
@@ -101,30 +64,21 @@ config {
 
     read_preview_lines: Integer = 10
     write_preview_lines: Integer = 10
-
-    -- Bash collapsed mode is visual-line based (wrapping-aware), tail-first.
     bash_preview_visual_lines: Integer = 5
 }
 
-------------------------------------------------------------
--- Renderer Selection
-------------------------------------------------------------
-
 rule BuiltInRendererUsedByDefault {
     when: ToolOutputRenderRequested(view, registration)
-
-    requires: view.toolName in ["read", "bash", "edit", "write"]
-    requires: registration = null
-           or (registration.hasRenderCall = false and registration.hasRenderResult = false)
+    requires: view.tool_name in {"read", "bash", "edit", "write"}
+    requires: registration = null or (registration.has_render_call = false and registration.has_render_result = false)
 
     ensures: BuiltInRendererSelected(view)
 }
 
 rule CustomRendererOverridesBuiltIn {
     when: ToolOutputRenderRequested(view, registration)
-
     requires: registration != null
-    requires: registration.hasRenderCall = true or registration.hasRenderResult = true
+    requires: registration.has_render_call = true or registration.has_render_result = true
 
     ensures: CustomRendererSelected(view, registration)
 }
@@ -134,64 +88,33 @@ rule CustomRendererFailureFallsBackSafely {
     requires: RendererThrows(view, registration)
 
     ensures: FallbackRendererUsed(view)
-    ensures: view.visibleTextLines != [] or view.header != ""
+    ensures: view.header != "" or view.visible_text != ""
 }
 
-------------------------------------------------------------
--- Tool-Call Header Formatting (Shared Across UIs)
-------------------------------------------------------------
+rule HeadersIncludePrimaryArgument {
+    when: ToolOutputRenderRequested(view, registration)
+    requires: view.tool_name in {"read", "bash", "edit", "write"}
 
-rule ReadEditWriteHeadersIncludePathArgument {
-    when: ToolOutputRenderRequested(view, _)
-    requires: view.toolName in ["read", "edit", "write"]
-    requires: PrimaryPathArg(view) != null
-
-    ensures: view.header includes DisplayPathArg(view)
-}
-
-rule ReadEditWriteHeadersPreferProjectRelativePath {
-    when: ToolOutputRenderRequested(view, _)
-    requires: view.toolName in ["read", "edit", "write"]
-    requires: PrimaryPathArg(view) != null
-    requires: ProjectRootKnown(view)
-    requires: PathWithinProject(PrimaryPathArg(view), ProjectRoot(view))
-
-    ensures: DisplayPathArg(view) = RelativePathFromProject(PrimaryPathArg(view), ProjectRoot(view))
-}
-
-rule BashHeadersIncludeCommandArgument {
-    when: ToolOutputRenderRequested(view, _)
-    requires: view.toolName = "bash"
-    requires: PrimaryCommandArg(view) != null
-
-    ensures: view.header includes PrimaryCommandArg(view)
-}
-
-rule MissingPrimaryArgumentUsesPlaceholder {
-    when: ToolOutputRenderRequested(view, _)
-    requires: view.toolName in ["read", "bash", "edit", "write"]
-    requires: PrimaryArgumentValue(view) = null
-
-    ensures: view.header includes config.missing_primary_arg_placeholder
+    ensures:
+        if PrimaryArgumentValue(view) = null:
+            Contains(view.header, config.missing_primary_arg_placeholder)
+        else:
+            Contains(view.header, DisplayPrimaryArgument(view))
 }
 
 rule InvalidArgumentTypeShowsMarker {
-    when: ToolOutputRenderRequested(view, _)
+    when: ToolOutputRenderRequested(view, registration)
     requires: view.args != null
     requires: not ArgumentsParseToObject(view)
 
-    ensures: view.header includes "[invalid arg]"
+    ensures: Contains(view.header, "[invalid arg]")
 }
 
-------------------------------------------------------------
--- Visual State + Expansion
-------------------------------------------------------------
-
 rule BackgroundReflectsExecutionState {
-    when: ToolOutputRenderRequested(view, _)
+    when: ToolOutputRenderRequested(view, registration)
 
     ensures:
-        if view.status in [pending, running]:
+        if view.status in {pending, running}:
             view.background = pending
         else if view.status = error:
             view.background = error
@@ -199,191 +122,89 @@ rule BackgroundReflectsExecutionState {
             view.background = success
 }
 
-rule BuiltInHeaderShowsToolNameForPathTools {
-    when: ToolOutputRenderRequested(view, _)
-    requires: view.toolName in ["read", "edit", "write"]
-
-    ensures: view.header includes view.toolName
-}
-
-rule BashHeaderUsesPromptSigil {
-    when: ToolOutputRenderRequested(view, _)
-    requires: view.toolName = "bash"
-
-    ensures: BashHeaderPrefix(view) = "$"
-}
-
 rule ExpandedShowsCompleteText {
-    when: ToolOutputRenderRequested(view, _)
+    when: ToolOutputRenderRequested(view, registration)
     requires: view.output != null
     requires: view.expanded = true
 
-    ensures: view.visibleTextLines = Lines(view.output.text)
+    ensures: view.visible_text = view.output.text
 }
 
-rule ReadCollapsedPreview {
-    when: ToolOutputRenderRequested(view, _)
-    requires: view.toolName = "read"
+rule CollapsedPreviewsAreBounded {
+    when: ToolOutputRenderRequested(view, registration)
     requires: view.output != null
     requires: view.expanded = false
 
-    ensures: view.visibleTextLines = FirstLines(view.output.text, config.read_preview_lines)
     ensures:
-        if LineCount(view.output.text) > config.read_preview_lines:
-            view.warningLines includes
-                "... (more lines, " + config.expand_tools_keybinding + " to expand)"
-}
-
-rule WriteCollapsedPreview {
-    when: ToolOutputRenderRequested(view, _)
-    requires: view.toolName = "write"
-    requires: view.output != null
-    requires: view.expanded = false
-
-    ensures: view.visibleTextLines = FirstLines(view.output.text, config.write_preview_lines)
-    ensures:
-        if LineCount(view.output.text) > config.write_preview_lines:
-            view.warningLines includes
-                "... (more lines, " + config.expand_tools_keybinding + " to expand)"
-}
-
-rule BashCollapsedPreviewUsesVisualTail {
-    when: ToolOutputRenderRequested(view, _)
-    requires: view.toolName = "bash"
-    requires: view.output != null
-    requires: view.expanded = false
-
-    ensures: view.visibleTextLines = LastVisualLines(view.output.text, config.bash_preview_visual_lines)
-    ensures:
-        if VisualLineCount(view.output.text) > config.bash_preview_visual_lines:
-            view.warningLines includes
-                "... (earlier lines hidden, " + config.expand_tools_keybinding + " to expand)"
-}
-
-------------------------------------------------------------
--- Tool-Specific Presentation Details
-------------------------------------------------------------
-
-rule ReadAndWriteUsePathAwareSyntaxHighlight {
-    when: ToolOutputRenderRequested(view, _)
-    requires: view.toolName in ["read", "write"]
-    requires: PathLanguageKnown(view)
-
-    ensures: SyntaxHighlightApplied(view.visibleTextLines)
-}
-
-rule EditShowsDiffWhenAvailable {
-    when: ToolOutputRenderRequested(view, _)
-    requires: view.toolName = "edit"
-    requires: view.output != null
-    requires: view.output.isError = false
-
-    ensures:
-        if view.output.details != null and view.output.details.diff != null:
-            DiffViewShown(view)
-}
-
-rule HomeDirectoryPathsShownWithTilde {
-    when: ToolOutputRenderRequested(view, _)
-    requires: PathArgumentStartsInHomeDirectory(view)
-
-    ensures: HeaderUsesTildePath(view)
-}
-
-rule BashHeaderShowsTimeoutWhenProvided {
-    when: ToolOutputRenderRequested(view, _)
-    requires: view.toolName = "bash"
-    requires: BashTimeoutProvided(view)
-
-    ensures: view.header includes "timeout"
+        if view.tool_name = "read":
+            view.visible_text = FirstLinesText(view.output.text, config.read_preview_lines)
+        else if view.tool_name = "write":
+            view.visible_text = FirstLinesText(view.output.text, config.write_preview_lines)
+        else if view.tool_name = "bash":
+            view.visible_text = LastVisualLinesText(view.output.text, config.bash_preview_visual_lines)
+        else:
+            view.visible_text = view.output.text
 }
 
 rule ErrorOutputStyledAsError {
-    when: ToolOutputRenderRequested(view, _)
+    when: ToolOutputRenderRequested(view, registration)
     requires: view.output != null
-    requires: view.output.isError = true
+    requires: view.output.is_error = true
 
-    ensures: ErrorStyleApplied(view.visibleTextLines)
-}
-
-rule RawToolAnsiEscapesDoNotLeakToOutput {
-    when: ToolOutputRenderRequested(view, _)
-    requires: view.output != null
-
-    ensures: RawOutputControlSequencesSanitized(view.visibleTextLines)
+    ensures: ErrorStyleApplied(view.visible_text)
 }
 
 rule TruncationWarningsShownWhenPresent {
-    when: ToolOutputRenderRequested(view, _)
+    when: ToolOutputRenderRequested(view, registration)
     requires: view.output != null
     requires: view.output.details != null
     requires: view.output.details.truncation != null
     requires: view.output.details.truncation.truncated = true
 
-    ensures: view.warningLines includes "Truncated"
+    ensures: view.warnings = view.warnings + {"Truncated"}
 }
 
 rule FullOutputPathShownWhenAvailable {
-    when: ToolOutputRenderRequested(view, _)
+    when: ToolOutputRenderRequested(view, registration)
     requires: view.output != null
     requires: view.output.details != null
-    requires: view.output.details.fullOutputPath != null
+    requires: view.output.details.full_output_path != null
 
-    ensures: view.warningLines includes "Full output: " + view.output.details.fullOutputPath
+    ensures: view.warnings = view.warnings + {"Full output: " + view.output.details.full_output_path}
 }
-
-------------------------------------------------------------
--- Images
-------------------------------------------------------------
 
 rule InlineImagesShownWhenEnabledAndSupported {
-    when: ToolOutputRenderRequested(view, _)
+    when: ToolOutputRenderRequested(view, registration)
     requires: view.output != null
     requires: view.output.images.count > 0
-    requires: view.showImages = true
+    requires: view.show_images = true
     requires: view.capabilities.images != none
 
-    ensures: view.inlineImages = view.output.images
-    ensures: view.imageFallbackLines = []
-}
-
-rule KittyRequiresPngBeforeInlineDisplay {
-    when: ToolOutputRenderRequested(view, _)
-    requires: view.output != null
-    requires: view.output.images.count > 0
-    requires: view.showImages = true
-    requires: view.capabilities.images = kitty
-
-    ensures: view.inlineImages = view.output.images.each(i => EnsurePng(i))
+    ensures: view.inline_images = view.output.images
+    ensures: view.image_fallback_count = 0
 }
 
 rule ImageFallbackShownWhenInlineUnavailable {
-    when: ToolOutputRenderRequested(view, _)
+    when: ToolOutputRenderRequested(view, registration)
     requires: view.output != null
     requires: view.output.images.count > 0
-    requires: view.showImages = false or view.capabilities.images = none
+    requires: view.show_images = false or view.capabilities.images = none
 
-    ensures: view.inlineImages = []
-    ensures: view.imageFallbackLines.count = view.output.images.count
+    ensures: view.inline_images = {}
+    ensures: view.image_fallback_count = view.output.images.count
 }
 
-------------------------------------------------------------
--- Surface
-------------------------------------------------------------
-
 surface ToolOutputRenderer {
-    for caller: InteractiveRenderer | ExtensionRenderer
+    facing caller: InteractiveRenderer | ExtensionRenderer
 
     provides:
-        ToolOutputRenderRequested(view, registration?)
+        ToolOutputRenderRequested(view, registration)
 
     exposes:
         ToolOutputView
 
-    guidance:
-        -- This renderer contract is shared by all interactive UIs.
-        -- Expansion is a view concern only; it never changes the underlying
-        -- tool result payload.
-        -- Built-in renderers should remain compact by default and disclose
-        -- hidden output with a keybinding hint.
+    @guidance
+        -- Shared renderer contract for interactive UIs.
+        -- Expansion is presentation-only and does not mutate tool payloads.
+        -- Compact mode should disclose hidden output with an expansion hint.
 }

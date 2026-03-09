@@ -1,3 +1,5 @@
+-- allium: 1
+
 -- Terminal UI specification
 -- Behavioural spec for a Clojure implementation of the pi-tui component.
 -- Source: ~/src/pi-mono/packages/tui
@@ -376,7 +378,7 @@ rule LineResetAfterRender {
 rule ShowOverlay {
     when: ShowOverlay(tui, component, options?)
     let entry = OverlayEntry.created(component: component, hidden: false)
-    ensures: tui.overlays = tui.overlays + [entry]
+    ensures: tui.overlays = Append(tui.overlays, entry)
     ensures: tui.focused = component
     ensures: CursorHidden(tui.terminal)
     ensures: RenderRequested(tui)
@@ -410,7 +412,8 @@ rule OverlayLayoutResolution {
     -- minWidth is applied as a floor after width calculation.
     -- margin clamps final position within terminal bounds.
     when: CompositeOverlays(_, overlays, term_width, term_height)
-    for entry in overlays with hidden = false:
+    for entry in overlays:
+        requires: entry.hidden = false
         let layout = ResolveOverlayLayout(entry, term_width, term_height)
         ensures: OverlayComposited(entry.component, layout)
 }
@@ -440,8 +443,7 @@ rule FocusableFlagSet {
 rule FocusableFlagCleared {
     -- When focus moves away from a Focusable component, its focused flag becomes false.
     when: tui: TUI.focused becomes other
-    for comp in [tui.focused] with comp != other:
-        ensures: comp.focused = false
+    ensures: FocusClearedFromPrevious(tui, other)
 }
 
 -- ── Input routing ─────────────────────────────────────────────────────────
@@ -603,7 +605,7 @@ rule EditorSubmitted {
     requires: not editor.disable_submit
     requires: editor.autocomplete_active = false
     let text = ExpandPastes(editor.lines, editor.pastes)
-    ensures: editor.lines = [""]
+    ensures: editor.lines = SplitLines("")
     ensures: editor.cursor = { line: 0, col: 0 }
     ensures: editor.scroll_offset = 0
     ensures: editor.history_index = -1
@@ -735,7 +737,7 @@ rule EditorLineStart {
 rule EditorLineEnd {
     when: InputReceived(editor: Editor, key: KeyEvent)
     requires: Matches(key, "end") or Matches(key, "ctrl+e")
-    let line = editor.lines[editor.cursor.line]
+    let line = LineAt(editor.lines, editor.cursor.line)
     ensures: editor.cursor = { line: editor.cursor.line, col: line.length }
 }
 
@@ -829,9 +831,9 @@ rule EditorHistoryNavigation {
     ensures: editor.history_index = new_index
     ensures:
         if new_index = -1:
-            editor.lines = [""]
+            editor.lines = SplitLines("")
         else:
-            editor.lines = editor.history[new_index].split("\n")
+            editor.lines = HistoryEntryAt(editor.history, new_index).split("\n")
     ensures: editor.cursor = { line: editor.lines.count - 1,
                                 col: editor.lines.last.length }
 }
@@ -843,7 +845,7 @@ rule EditorHistoryRecorded {
     let trimmed = text.trim()
     requires: trimmed.length > 0
     requires: editor.history.count = 0 or editor.history.first != trimmed
-    ensures: editor.history = [trimmed] + editor.history.slice(0, config.editor_max_history - 1)
+    ensures: editor.history = KeepMostRecent(Prepend(editor.history, trimmed), config.editor_max_history)
 }
 
 -- ── Component: Autocomplete ───────────────────────────────────────────────
@@ -910,7 +912,7 @@ rule SelectListMoveDown {
 rule SelectListConfirm {
     when: InputReceived(list: SelectList, key: KeyEvent)
     requires: Matches(key, "enter")
-    let item = list.filtered_items[list.selected_index]
+    let item = ItemAt(list.filtered_items, list.selected_index)
     requires: item != null
     ensures: SelectListSelected(list, item)
 }
@@ -932,7 +934,7 @@ rule SelectListFiltered {
 rule SettingsListActivate {
     when: InputReceived(settings: SettingsList, key: KeyEvent)
     requires: Matches(key, "enter") or Matches(key, "space")
-    let item = settings.items[settings.selected_index]
+    let item = ItemAt(settings.items, settings.selected_index)
     ensures:
         if item.values.count > 0:
             CycleSettingValue(settings, item)
@@ -992,7 +994,7 @@ rule VisibleWidthIgnoresAnsi {
 rule TruncateToWidthPreservesAnsi {
     -- truncate-to-width cuts a string at exactly `width` visible columns,
     -- appends an ellipsis by default, and closes any open ANSI codes.
-    when: TruncateToWidthCalled(s: AnsiString, width: Integer, ellipsis?: String)
+    when: TruncateToWidthCalled(s: AnsiString, width: Integer, ellipsis: String?)
     let result = Truncate(s, width, ellipsis ?? "…")
     ensures: result.visible_width <= width
     ensures: AnsiCodesProperlyReset(result)
@@ -1036,7 +1038,7 @@ actor User {
 ------------------------------------------------------------
 
 surface TUIApplication {
-    for app: User
+    facing app: User
 
     exposes:
         tui.terminal.columns
@@ -1050,7 +1052,7 @@ surface TUIApplication {
         HideOverlay(tui, entry)
         RenderRequested(tui)
 
-    guidance:
+    @guidance
         -- In Clojure, Component is a protocol (not an interface):
         --   (defprotocol Component
         --     (render [this width])
@@ -1076,7 +1078,7 @@ surface TUIApplication {
 }
 
 surface EditorSurface {
-    for user: User
+    facing user: User
 
     context editor: Editor
 
@@ -1097,7 +1099,7 @@ surface EditorSurface {
 }
 
 surface AutocompleteSurface {
-    for user: User
+    facing user: User
 
     context editor: Editor
 
@@ -1113,7 +1115,7 @@ surface AutocompleteSurface {
 }
 
 surface SelectListSurface {
-    for user: User
+    facing user: User
 
     context list: SelectList
 
@@ -1127,7 +1129,7 @@ surface SelectListSurface {
 }
 
 surface OverlaySurface {
-    for user: User
+    facing user: User
 
     context entry: OverlayEntry
 
@@ -1154,9 +1156,9 @@ deferred InlineImageRendering.render -- see: spec/tui/terminal-image.allium
 -- Open Questions
 ------------------------------------------------------------
 
-open_question "Clojure state model: atoms per component vs single TUI atom vs statechart?  Statechart preferred per project Engine principle."
-open_question "Thread model: should rendering happen on a dedicated thread or rely on core.async?  The JS version defers to nextTick."
-open_question "VirtualTerminal for tests: use a Clojure in-memory byte-buffer or wrap @xterm/headless via GraalVM/nREPL?"
-open_question "Image support (Kitty/iTerm2 protocols): include in initial implementation or defer?"
-open_question "Windows VT input (koffi workaround in TS): skip entirely for the Clojure JVM target?"
-open_question "Keybinding configuration: use EDN map analogous to EditorKeybindingsConfig; which namespace to own it?"
+open question "Clojure state model: atoms per component vs single TUI atom vs statechart?  Statechart preferred per project Engine principle."
+open question "Thread model: should rendering happen on a dedicated thread or rely on core.async?  The JS version defers to nextTick."
+open question "VirtualTerminal for tests: use a Clojure in-memory byte-buffer or wrap @xterm/headless via GraalVM/nREPL?"
+open question "Image support (Kitty/iTerm2 protocols): include in initial implementation or defer?"
+open question "Windows VT input (koffi workaround in TS): skip entirely for the Clojure JVM target?"
+open question "Keybinding configuration: use EDN map analogous to EditorKeybindingsConfig; which namespace to own it?"

@@ -1,3 +1,5 @@
+-- allium: 1
+
 -- extension-system.allium
 --
 -- Scope: Extension system — registration, event dispatch, tool wrapping,
@@ -100,8 +102,8 @@ entity WrappedTool {
 ------------------------------------------------------------
 
 config {
-    global_extension_dirs: List<Path> = [~/.psi/agent/extensions]
-    project_extension_dirs: List<Path> = [.psi/extensions]
+    global_extension_dirs: Set<String> = {"~/.psi/agent/extensions"}
+    project_extension_dirs: Set<String> = {".psi/extensions"}
     extension_event_ordering: registration_order
     -- Handlers fire in registration order.
     -- For session_before_* events, the first handler returning {cancel: true}
@@ -160,7 +162,7 @@ rule ExtensionCommandExecuted {
     requires: text.startsWith("/")
     requires: exists RegisteredCommand{name: text.commandName}
 
-    ensures: RegisteredCommand{text.commandName}.handler.called(text.args)
+    ensures: ExtensionCommandHandlerCalled(command_name: text.commandName, command_args: text.args)
     -- agent is NOT invoked; command handler manages its own LLM interaction
 }
 
@@ -242,9 +244,9 @@ rule PromptContributionRenderOrder {
     -- Rebuild renders enabled contributions deterministically.
     when: SystemPromptRebuilt(session)
 
-    ensures: session.promptContributionLayers = Render(
-        PromptContribution where enabled = true,
-        order_by: [priority asc, extensionPath asc, id asc]
+    ensures: session.promptContributionLayers = RenderPromptContributionsOrdered(
+        contributions: PromptContribution where enabled = true,
+        order: "priority,extensionPath,id"
     )
 }
 
@@ -382,7 +384,7 @@ actor ExtensionModule {
 
 surface ExtensionApi {
     -- API surface for extension modules.
-    for ext: ExtensionModule
+    facing ext: ExtensionModule
 
     context session: AgentSession
 
@@ -440,7 +442,7 @@ surface ExtensionApi {
         events.emit(channel, data)
         events.on(channel, handler)
 
-    guidance:
+    @guidance
         -- Extension handlers receive an ExtensionContext with session state.
         -- Command handlers receive an ExtensionCommandContext with session control.
         -- Handlers fire in registration order (first registered, first called).
@@ -464,8 +466,8 @@ deferred ResourceDiscovery.scan         -- skill/template/theme path scanning
 -- Open Questions
 ------------------------------------------------------------
 
-open_question "Session-before handler composition: beyond last-writer-wins, should the runner support explicit merge strategies for handler results (e.g. deep-merge for options objects)?"
+open question "Session-before handler composition: beyond last-writer-wins, should the runner support explicit merge strategies for handler results (e.g. deep-merge for options objects)?"
 
-open_question "Tool wrapping: should ToolCallDispatched be able to *replace* the tool arguments (not just block), enabling extension-level argument transformation?"
+open question "Tool wrapping: should ToolCallDispatched be able to replace tool arguments (not just block), enabling extension-level argument transformation?"
 
-open_question "Extension reload: should /reload preserve handler state, or is a clean teardown-and-rebuild always correct?"
+open question "Extension reload: should /reload preserve handler state, or is a clean teardown-and-rebuild always correct?"

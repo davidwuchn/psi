@@ -1,21 +1,22 @@
+-- allium: 1
+
 -- tui-input-autocomplete.allium
---
 -- Compatibility index (deprecated as primary source).
---
+
 -- Status:
 --   Superseded by reusable prompt-input-autocomplete.allium.
---
+
 -- Rationale:
 --   Prompt autocomplete semantics (/, @file references, acceptance behavior)
 --   are shared across interactive UIs and should be specified once.
---
+
 -- Canonical reference:
 --   - prompt-input-autocomplete.allium
 
 use "./prompt-input-autocomplete.allium" as prompt
 
 surface TuiPromptAutocompleteCompat {
-    for caller: RuntimeEngineer
+    facing caller: RuntimeEngineer
 
     exposes:
         prompt/PromptAutocompleteContract

@@ -1,34 +1,7 @@
--- oauth-auth.allium
---
--- Scope: OAuth authentication and credential management for AI providers.
---        Login, logout, token lifecycle, credential storage, and API key
---        resolution.
---
--- Includes:
---   OAuth provider registry — register, lookup, list providers
---   Credential types — API key and OAuth token credentials
---   Credential storage — persist, load, lock, resolve API keys
---   Login flow — interactive OAuth login with UI callbacks
---   Token refresh — automatic refresh of expired tokens with concurrency control
---   Logout — remove credentials for a provider
---   API key resolution — priority chain across multiple sources
---
--- Delegates to:
---   coding-agent.allium — session model, /login and /logout commands
---
--- Excludes:
---   PKCE challenge/verifier generation (cryptographic implementation)
---   HTTP transport details (endpoints, headers, client IDs)
---   Device code polling intervals and backoff timing
---   Local callback server implementation
---   JWT parsing and account extraction
---   Wire format of auth.json (serialisation detail)
---   TUI rendering of login dialog (layout, styling, key bindings)
---   File locking mechanism (implementation of ConcurrentRefresh)
+-- allium: 1
 
-------------------------------------------------------------
--- External Entities
-------------------------------------------------------------
+-- oauth-auth.allium
+-- OAuth authentication and credential management for AI providers.
 
 external entity Model {
     provider: String
@@ -40,26 +13,16 @@ external entity AgentSession {
     is_idle: Boolean
 }
 
-------------------------------------------------------------
--- Value Types
-------------------------------------------------------------
-
 value AuthInfo {
-    -- Presented to the user during login (e.g. URL to visit).
-    url: URL
+    url: String
     instructions: String?
 }
 
 value AuthPrompt {
-    -- Request for user input during login (e.g. paste code).
     message: String
     placeholder: String?
     allow_empty: Boolean
 }
-
-------------------------------------------------------------
--- Entities and Variants
-------------------------------------------------------------
 
 entity Credential {
     provider: String
@@ -74,173 +37,108 @@ variant OAuthCredential : Credential {
     refresh_token: String
     access_token: String
     expires_at: Timestamp
-
-    -- Provider-specific metadata (e.g. enterprise domain, project ID, account ID)
     metadata: String?
 
     is_expired: expires_at <= now
 }
 
 entity OAuthProvider {
-    -- A registered OAuth provider that can authenticate users.
     id: String
     name: String
     uses_callback_server: Boolean
 
-    -- Relationships
-    credential: Credential for this provider?
+    credential: Credential?
 }
 
 entity CredentialStore {
-    -- Manages credentials for all providers.
-    -- Priority: runtime overrides > stored credentials > environment > fallback.
-    credentials: Credential for this store
-    runtime_overrides: Set<String>
+    credentials: Set<Credential>
+    runtime_overrides: Map<String, String>
 
-    -- Derived
-    providers_with_credentials: credentials -> provider
+    providers_with_credentials: ProvidersFromCredentials(credentials)
 }
-
-------------------------------------------------------------
--- Config
-------------------------------------------------------------
 
 config {
     token_expiry_buffer: Duration = 5.minutes
     refresh_lock_timeout: Duration = 30.seconds
 }
 
-------------------------------------------------------------
--- Rules
-------------------------------------------------------------
-
--- ── Provider Registry ───────────────────────────────────
-
 rule ProviderRegistered {
-    -- A new OAuth provider is added to the registry.
-    when: ProviderRegistered(provider)
-
-    requires: not exists OAuthProvider{id: provider.id}
+    when: ProviderRegisterRequested(provider)
+    requires: ProviderById(provider.id) = null
 
     ensures: OAuthProvider.created(
         id: provider.id,
         name: provider.name,
-        uses_callback_server: provider.uses_callback_server
+        uses_callback_server: provider.uses_callback_server,
+        credential: null
     )
 }
 
--- ── Login ───────────────────────────────────────────────
-
 rule LoginStarted {
-    -- User initiates OAuth login for a provider.
     when: LoginStarted(store, provider_id, callbacks)
 
-    let provider = OAuthProvider{id: provider_id}
-
-    requires: exists provider
+    let provider = ProviderById(provider_id)
+    requires: provider != null
 
     ensures: LoginFlowExecuted(store, provider, callbacks)
 }
 
 rule LoginFlowExecuted {
-    -- The interactive login flow runs, presenting auth URL and collecting
-    -- user input via callbacks. The specific OAuth protocol (authorization
-    -- code, device code, etc.) is provider-specific and deferred.
     when: LoginFlowExecuted(store, provider, callbacks)
 
-    ensures:
-        let credentials = ProviderLogin(provider, callbacks)
-        OAuthCredential.created(
-            provider: provider.id,
-            refresh_token: credentials.refresh_token,
-            access_token: credentials.access_token,
-            expires_at: credentials.expires_at,
-            metadata: credentials.metadata
-        )
-        store.credentials = store.credentials + [credentials]
-        CredentialsPersisted(store)
+    ensures: credentials = ProviderLogin(provider, callbacks)
+    ensures: store.credentials = UpsertOAuthCredential(store.credentials, provider.id, credentials)
+    ensures: CredentialsPersisted(store)
 }
 
 rule LoginCallbacksInvoked {
-    -- During login, the provider communicates with the user via callbacks.
-    -- This rule documents the callback protocol, not a state transition.
     when: ProviderLogin(provider, callbacks)
 
+    ensures: callbacks.on_auth(AuthInfo{url: ProviderAuthUrl(provider), instructions: null})
     ensures:
-        -- 1. Provider presents auth URL (always)
-        callbacks.on_auth(AuthInfo{url: provider_auth_url})
-
-        -- 2. Provider may prompt for input (e.g. paste authorization code)
-        --    on_prompt blocks until user responds
-        if provider.requires_prompt:
-            callbacks.on_prompt(AuthPrompt{message: prompt_message})
-
-        -- 3. Provider may report progress
-        callbacks.on_progress(progress_message)
-
-        -- 4. For callback-server providers, manual code input races with
-        --    browser callback — whichever completes first wins
+        if ProviderRequiresPrompt(provider):
+            callbacks.on_prompt(AuthPrompt{message: ProviderPromptMessage(provider), placeholder: null, allow_empty: false})
+    ensures: callbacks.on_progress(ProviderProgressMessage(provider))
+    ensures:
         if provider.uses_callback_server:
             callbacks.on_manual_code_input()
 }
 
 rule LoginCancelled {
-    -- User cancels the login flow (e.g. Escape key, Ctrl+C).
     when: LoginCancelled(store, provider_id, signal)
 
-    ensures: signal.aborted
-    -- No credentials stored. Login dialog dismissed.
+    ensures: signal.aborted = true
 }
 
--- ── Logout ──────────────────────────────────────────────
-
 rule LogoutExecuted {
-    -- User logs out of a provider. Credentials are removed.
     when: LogoutExecuted(store, provider_id)
+    requires: OAuthCredentialFor(store.credentials, provider_id) != null
 
-    let credential = Credential{provider: provider_id}
-
-    requires: exists credential
-    requires: credential.kind = OAuthCredential
-
-    ensures: not exists credential
+    ensures: store.credentials = RemoveCredential(store.credentials, provider_id)
     ensures: CredentialsPersisted(store)
 }
 
--- ── Token Refresh ───────────────────────────────────────
-
 rule TokenRefreshed {
-    -- Expired OAuth tokens are automatically refreshed when an API key
-    -- is requested. Refresh is performed under a lock to prevent
-    -- concurrent refresh from multiple processes.
     when: ApiKeyRequested(store, provider_id)
 
-    let credential = Credential{provider: provider_id}
-
-    requires: credential.kind = OAuthCredential
+    let credential = OAuthCredentialFor(store.credentials, provider_id)
+    requires: credential != null
     requires: credential.is_expired
 
     ensures: ConcurrentRefresh(store, provider_id, credential)
 }
 
 rule ConcurrentRefresh {
-    -- Refresh with concurrency control. Multiple processes may try to
-    -- refresh simultaneously when tokens expire.
     when: ConcurrentRefresh(store, provider_id, credential)
 
+    ensures: current = ReloadedOAuthCredential(store, provider_id)
     ensures:
-        -- Acquire exclusive lock on credential store
-        -- Re-read credentials (another process may have refreshed)
-        let current = ReloadedCredential(store, provider_id)
-
-        if not current.is_expired:
-            -- Another process already refreshed; use their result
+        if current != null and not current.is_expired:
             credential.access_token = current.access_token
             credential.refresh_token = current.refresh_token
             credential.expires_at = current.expires_at
         else:
-            -- Perform the refresh
-            let refreshed = ProviderRefreshToken(provider_id, credential)
+            refreshed = ProviderRefreshToken(provider_id, credential)
             credential.access_token = refreshed.access_token
             credential.refresh_token = refreshed.refresh_token
             credential.expires_at = refreshed.expires_at
@@ -248,219 +146,136 @@ rule ConcurrentRefresh {
 }
 
 rule TokenRefreshFailed {
-    -- When refresh fails, re-read the store in case another process succeeded.
-    -- If still expired, return no API key (user must /login again).
-    when: ProviderRefreshToken(provider_id, credential).failed
+    when: ProviderRefreshFailed(provider_id, credential)
 
-    let reloaded = ReloadedCredential(store, provider_id)
-
+    let reloaded = ReloadedOAuthCredential(CurrentStore(), provider_id)
     ensures:
-        if exists reloaded and not reloaded.is_expired:
-            -- Another process succeeded; use their credentials
-            credential.access_token = reloaded.access_token
+        if reloaded != null and not reloaded.is_expired:
+            OAuthCredentialFor(CurrentStore().credentials, provider_id).access_token = reloaded.access_token
         else:
-            -- Refresh truly failed; no API key available
             ApiKeyUnavailable(provider_id)
 }
 
--- ── API Key Resolution ──────────────────────────────────
-
-rule ApiKeyResolved {
-    -- Resolve API key for a provider using a priority chain.
-    -- Highest priority source wins.
+rule ApiKeyResolvedFromPriorityChain {
     when: ApiKeyRequested(store, provider_id)
 
     ensures:
-        -- Priority 1: Runtime override (e.g. --api-key CLI flag)
-        if provider_id in store.runtime_overrides:
-            ApiKeyResult(store.runtime_overrides[provider_id])
-
-        -- Priority 2: Stored API key credential
-        else if exists Credential{provider: provider_id, kind: ApiKeyCredential}:
-            let cred = Credential{provider: provider_id}
-            ApiKeyResult(cred.key)
-
-        -- Priority 3: Stored OAuth credential (auto-refreshed)
-        else if exists Credential{provider: provider_id, kind: OAuthCredential}:
-            let cred = Credential{provider: provider_id}
+        if MapContainsKey(store.runtime_overrides, provider_id):
+            ApiKeyResult(provider_id, MapGet(store.runtime_overrides, provider_id))
+        else if ApiKeyCredentialFor(store.credentials, provider_id) != null:
+            ApiKeyResult(provider_id, ApiKeyCredentialFor(store.credentials, provider_id).key)
+        else if OAuthCredentialFor(store.credentials, provider_id) != null:
+            cred = OAuthCredentialFor(store.credentials, provider_id)
             if cred.is_expired:
                 TokenRefreshed(store, provider_id)
-            ApiKeyResult(cred.access_token)
-
-        -- Priority 4: Environment variable
-        else if exists EnvironmentApiKey(provider_id):
-            ApiKeyResult(EnvironmentApiKey(provider_id))
-
-        -- Priority 5: Fallback resolver (e.g. custom provider keys)
-        else if exists FallbackApiKey(provider_id):
-            ApiKeyResult(FallbackApiKey(provider_id))
-
+            ApiKeyResult(provider_id, OAuthCredentialFor(store.credentials, provider_id).access_token)
+        else if EnvironmentApiKey(provider_id) != null:
+            ApiKeyResult(provider_id, EnvironmentApiKey(provider_id))
+        else if FallbackApiKey(provider_id) != null:
+            ApiKeyResult(provider_id, FallbackApiKey(provider_id))
         else:
             ApiKeyUnavailable(provider_id)
 }
 
 rule HasAuthChecked {
-    -- Quick check: is any form of auth configured for a provider?
-    -- Unlike ApiKeyRequested, this does NOT trigger token refresh.
     when: HasAuthChecked(store, provider_id)
 
     ensures:
-        if provider_id in store.runtime_overrides:
+        if MapContainsKey(store.runtime_overrides, provider_id):
             HasAuthResult(true)
-        else if exists Credential{provider: provider_id}:
+        else if CredentialFor(store.credentials, provider_id) != null:
             HasAuthResult(true)
-        else if exists EnvironmentApiKey(provider_id):
+        else if EnvironmentApiKey(provider_id) != null:
             HasAuthResult(true)
-        else if exists FallbackApiKey(provider_id):
+        else if FallbackApiKey(provider_id) != null:
             HasAuthResult(true)
         else:
             HasAuthResult(false)
 }
 
--- ── Runtime Overrides ───────────────────────────────────
-
 rule RuntimeApiKeySet {
-    -- Set a runtime API key override (not persisted).
-    -- Used for CLI --api-key flag.
     when: RuntimeApiKeySet(store, provider_id, api_key)
 
-    ensures: store.runtime_overrides = store.runtime_overrides + {provider_id}
+    ensures: store.runtime_overrides = MapAssoc(store.runtime_overrides, provider_id, api_key)
 }
 
 rule RuntimeApiKeyRemoved {
     when: RuntimeApiKeyRemoved(store, provider_id)
 
-    ensures: store.runtime_overrides = store.runtime_overrides - {provider_id}
+    ensures: store.runtime_overrides = MapDissoc(store.runtime_overrides, provider_id)
 }
 
--- ── Credential Store Lifecycle ──────────────────────────
-
 rule StoreLoaded {
-    -- Load credentials from persistent storage on startup.
     when: StoreLoaded(store)
 
     ensures: store.credentials = LoadFromStorage(store)
 }
 
 rule StoreReloaded {
-    -- Re-read credentials from storage (e.g. after another process writes).
     when: StoreReloaded(store)
 
     ensures: store.credentials = LoadFromStorage(store)
 }
 
--- ── Model Modification ──────────────────────────────────
-
 rule ModelsModifiedByProvider {
-    -- Some OAuth providers modify model configuration after login
-    -- (e.g. setting a provider-specific base URL).
     when: ModelsModifiedByProvider(provider_id, models, credential)
-
     requires: credential.kind = OAuthCredential
 
     ensures: models = ProviderModifyModels(provider_id, models, credential)
 }
 
-------------------------------------------------------------
--- Actor Declarations
-------------------------------------------------------------
-
 actor User {
-    identified_by: HumanOperator
+    identified_by: id = "human-operator"
 }
 
-------------------------------------------------------------
--- Surfaces
-------------------------------------------------------------
-
 surface CredentialStoreApi {
-    -- Primary API for credential management.
-    for caller: User
+    facing caller: User
 
     context store: CredentialStore
 
     exposes:
         store.providers_with_credentials
-        for provider in OAuthProvider:
-            provider.id
-            provider.name
-            provider.credential
 
     provides:
-        LoginStarted(caller, store, provider_id, callbacks)
-        LogoutExecuted(caller, store, provider_id)
-        ApiKeyRequested(caller, store, provider_id)
-        HasAuthChecked(caller, store, provider_id)
-        RuntimeApiKeySet(caller, store, provider_id, api_key)
-        RuntimeApiKeyRemoved(caller, store, provider_id)
-        StoreReloaded(caller, store)
+        LoginStarted(store, provider_id, callbacks)
+        LogoutExecuted(store, provider_id)
+        ApiKeyRequested(store, provider_id)
+        HasAuthChecked(store, provider_id)
+        RuntimeApiKeySet(store, provider_id, api_key)
+        RuntimeApiKeyRemoved(store, provider_id)
+        StoreReloaded(store)
 
-    guidance:
-        -- LoginStarted requires a callbacks map with: on_auth, on_prompt,
-        --   on_progress, on_manual_code_input, signal.
-        -- on_prompt blocks the caller until the user responds.
-        -- on_manual_code_input is optional; only used by callback-server providers.
-        -- signal enables cooperative cancellation of the login flow.
-        -- ApiKeyRequested may trigger automatic token refresh (blocking).
-        -- HasAuthChecked is non-blocking and does not refresh tokens.
+    @guidance
+        -- Login callbacks include on_auth, on_prompt, on_progress, and optional on_manual_code_input.
+        -- ApiKeyRequested may trigger token refresh.
+        -- HasAuthChecked does not trigger token refresh.
 }
 
 surface OAuthProviderContract {
-    -- Contract that each OAuth provider implementation must satisfy.
-    -- Providers are registered at startup; the registry is extensible.
-    for implementor: OAuthProvider
+    facing implementor: OAuthProvider
 
     context provider: OAuthProvider
 
-    requires:
-        ProviderLogin
-            -- Execute the interactive login flow.
-            -- Must call callbacks.on_auth with a URL.
-            -- May call callbacks.on_prompt for user input.
-            -- Returns OAuthCredential on success.
-
-        ProviderRefreshToken
-            -- Refresh an expired OAuth token.
-            -- Returns updated OAuthCredential.
-            -- Must be idempotent (safe to retry).
-
-        ProviderGetApiKey
-            -- Extract usable API key from OAuth credentials.
-            -- Typically returns the access token.
-
     provides:
-        ProviderModifyModels(provider, models, credential)
-            -- Optional: modify model configuration based on credentials.
+        ProviderLogin(provider, callbacks)
+        ProviderRefreshToken(provider_id, credential)
+        ProviderGetApiKey(provider, credential)
+        ProviderModifyModels(provider_id, models, credential)
 
-    guidance:
-        -- Login flow types vary by provider:
-        --   Authorization code + PKCE (Anthropic, OpenAI, Google)
-        --   Device code flow (GitHub Copilot)
-        -- Callback-server providers race browser callback against manual paste.
-        -- Refresh must handle concurrent calls gracefully.
-        -- Provider-specific metadata (enterprise URL, project ID, account ID)
-        --   is stored in credential.metadata.
+    @guidance
+        -- Provider login flow may be authorization-code or device-code based.
+        -- Callback-server providers race browser callback against manual code entry.
+        -- Token refresh should be safe under concurrent requests.
 }
 
-------------------------------------------------------------
--- Deferred Specifications
-------------------------------------------------------------
+deferred ProviderLogin.execute
+deferred ProviderRefreshToken.execute
+deferred ProviderModifyModels.execute
+deferred ConcurrentRefresh.locking
+deferred CredentialsPersisted.storage
+deferred EnvironmentApiKey.resolve
 
-deferred ProviderLogin.execute          -- provider-specific OAuth flow
-deferred ProviderRefreshToken.execute   -- provider-specific token refresh
-deferred ProviderModifyModels.execute   -- provider-specific model modification
-deferred ConcurrentRefresh.locking      -- file locking / mutex implementation
-deferred CredentialsPersisted.storage   -- JSON file persistence details
-deferred EnvironmentApiKey.resolve      -- env var mapping per provider
-
-------------------------------------------------------------
--- Open Questions
-------------------------------------------------------------
-
-open_question "Should token_expiry_buffer be configurable per provider? Some providers issue short-lived tokens (GitHub Copilot ~30min) vs long-lived (Anthropic ~1hr)."
-
-open_question "Should failed refresh attempts be tracked to avoid repeated refresh storms? e.g. back off after N consecutive failures for a provider."
-
-open_question "Should credential store support multiple credentials per provider? e.g. personal + enterprise accounts for the same provider."
-
-open_question "Should the spec model the provider-specific metadata more precisely (enterprise_url, project_id, account_id) or keep it opaque as metadata: String?"
+open question "Should token_expiry_buffer be configurable per provider?"
+open question "Should failed refresh attempts be tracked to avoid refresh storms?"
+open question "Should credential store support multiple credentials per provider?"
+open question "Should provider metadata remain opaque or be structured?"

@@ -1,3 +1,5 @@
+-- allium: 1
+
 -- prompt-slash-commands.allium
 --
 -- Scope: Reusable slash-command execution contract for interactive prompts.
@@ -29,7 +31,7 @@ config {
         "/login", "/logout", "/model", "/thinking"
     }
 
-    canonical_thinking_levels: List<String> = ["off", "minimal", "low", "medium", "high", "xhigh"]
+    canonical_thinking_levels: Set<String> = {"off", "minimal", "low", "medium", "high", "xhigh"}
 }
 
 ------------------------------------------------------------
@@ -110,7 +112,7 @@ rule SlashSubmissionDispatchesBeforeAgentPrompt {
 
 rule QuitAndExitCommandsRequestTermination {
     when: SlashCommandDispatchRequested(text)
-    requires: text in ["/quit", "/exit"]
+    requires: text in {"/quit", "/exit"}
 
     ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{type: quit})
 }
@@ -132,7 +134,7 @@ rule NewSessionCommandCreatesFreshSession {
 
 rule InspectionCommandsReturnText {
     when: SlashCommandDispatchRequested(text)
-    requires: text in ["/status", "/history", "/help", "/?", "/prompts", "/skills"]
+    requires: text in {"/status", "/history", "/help", "/?", "/prompts", "/skills"}
 
     ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{type: text, message: FormattedCommandText(text)})
 }
@@ -146,7 +148,7 @@ rule RememberCommandSupportsOptionalText {
 
 rule LoginAndLogoutCommandsReturnTypedResults {
     when: SlashCommandDispatchRequested(text)
-    requires: text in ["/login", "/logout"] or StartsWith(text, "/login ")
+    requires: text in {"/login", "/logout"} or StartsWith(text, "/login ")
 
     ensures: SlashCommandDispatchResultProduced(text, LoginLogoutResult(text))
 }
@@ -283,7 +285,7 @@ rule ThinkingSelectorCandidatesOnlyOffWhenReasoningUnsupported {
 
     requires: not runtime.currentModelReasoning
 
-    ensures: ActiveThinkingSelectorCandidates(runtime) = ["off"]
+    ensures: ActiveThinkingSelectorCandidates(runtime) = {"off"}
 }
 
 ------------------------------------------------------------
@@ -384,7 +386,7 @@ rule ThinkingSetResultClampsToOffWhenReasoningUnsupported {
 
 rule TextLikeResultsAppendAssistantMessage {
     when: SlashCommandResultApplied(runtime, result: SlashCommandDispatchResult)
-    requires: result.type in [text, login_error, logout, new_session]
+    requires: result.type in {text, login_error, logout, new_session}
 
     ensures: AssistantMessageAppended(runtime, result.message)
 }
@@ -417,7 +419,7 @@ rule NotCommandFallsThroughToAgentPrompt {
 ------------------------------------------------------------
 
 surface PromptSlashCommandContract {
-    for caller: InteractivePromptRuntime
+    facing caller: InteractivePromptRuntime
 
     context runtime: PromptRuntime
 
@@ -429,7 +431,7 @@ surface PromptSlashCommandContract {
     exposes:
         runtime.phase
 
-    guidance:
+    @guidance
         -- This contract is shared across interactive UIs.
         -- Slash command dispatch runs before normal prompt submission.
         -- /quit and /exit are equivalent.
@@ -444,5 +446,5 @@ surface PromptSlashCommandContract {
 -- Open Questions
 ------------------------------------------------------------
 
-open_question "Should unknown slash commands return immediate user-facing errors, or always fall through for downstream handling?"
-open_question "Should /model selector support free-text filtering by provider, model id, and display name in all runtimes?"
+open question "Should unknown slash commands return immediate user-facing errors, or always fall through for downstream handling?"
+open question "Should /model selector support free-text filtering by provider, model id, and display name in all runtimes?"

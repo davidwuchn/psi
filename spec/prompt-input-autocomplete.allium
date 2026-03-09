@@ -1,32 +1,11 @@
--- prompt-input-autocomplete.allium
---
--- Scope: Reusable autocomplete behavior at the prompt-input boundary.
---
--- Source distillation:
---   - ~/src/pi-mono/packages/tui/src/components/editor.ts
---   - ~/src/pi-mono/packages/tui/src/autocomplete.ts
---
--- Includes:
---   - Typing '/' offers command completion
---   - Typing '@' offers fuzzy file-reference completion
---   - Tab opens path completion when no menu is open
---   - Up/Down move selection, Tab/Enter accept it, Escape cancels it
---
--- Excludes:
---   - Transport-specific keybinding wiring
---   - UI rendering/layout internals
+-- allium: 1
 
-------------------------------------------------------------
--- Config
-------------------------------------------------------------
+-- prompt-input-autocomplete.allium
+-- Reusable autocomplete behavior at the prompt-input boundary.
 
 config {
     max_visible_suggestions: Integer = 5
 }
-
-------------------------------------------------------------
--- Value Types
-------------------------------------------------------------
 
 value Suggestion {
     value: String
@@ -35,10 +14,6 @@ value Suggestion {
     kind: slash_command | file_path | file_reference
     is_directory: Boolean
 }
-
-------------------------------------------------------------
--- Entities
-------------------------------------------------------------
 
 entity PromptInput {
     text: String
@@ -54,19 +29,14 @@ entity AutocompleteMenu {
     trigger_mode: auto | tab
     context: slash_command | file_path | file_reference
     prefix: String
-    suggestions: List<Suggestion>
+    suggestions: Set<Suggestion>
     selected_index: Integer
 
-    selected: suggestions[selected_index]
+    selected: SelectedSuggestion(suggestions, selected_index)
 }
-
-------------------------------------------------------------
--- Rules
-------------------------------------------------------------
 
 rule AutoOpenSlashCommandSuggestions {
     when: UserTypes(input, "/")
-
     requires: input.in_command_name_context
 
     ensures: SuggestionsRequested(input, context: slash_command, trigger_mode: auto)
@@ -74,13 +44,12 @@ rule AutoOpenSlashCommandSuggestions {
 
 rule AutoOpenFileReferenceSuggestions {
     when: UserTypes(input, "@")
-
     requires: input.in_file_reference_context
 
     ensures: SuggestionsRequested(input, context: file_reference, trigger_mode: auto)
     ensures: FileReferenceSearchPolicy(
         include_hidden_paths: true,
-        exclude_path_prefixes: [".git", ".git/"],
+        exclude_path_prefixes: {".git", ".git/"},
         rank_directories_first: true,
         quote_paths_with_spaces: true
     )
@@ -88,8 +57,7 @@ rule AutoOpenFileReferenceSuggestions {
 
 rule TabOpensPathSuggestions {
     when: UserPressesTab(input)
-
-    requires: not exists AutocompleteMenu{input}
+    requires: not exists AutocompleteMenu with input = input
     requires: not input.in_command_name_context
 
     ensures: SuggestionsRequested(input, context: file_path, trigger_mode: tab)
@@ -97,8 +65,7 @@ rule TabOpensPathSuggestions {
 
 rule TabOpensSlashCommandSuggestions {
     when: UserPressesTab(input)
-
-    requires: not exists AutocompleteMenu{input}
+    requires: not exists AutocompleteMenu with input = input
     requires: input.in_command_name_context
 
     ensures: SuggestionsRequested(input, context: slash_command, trigger_mode: tab)
@@ -106,7 +73,6 @@ rule TabOpensSlashCommandSuggestions {
 
 rule MenuShownWhenSuggestionsExist {
     when: SuggestionsResolved(input, context, trigger_mode, prefix, suggestions)
-
     requires: suggestions.count > 0
 
     ensures: AutocompleteMenu.created(
@@ -121,27 +87,24 @@ rule MenuShownWhenSuggestionsExist {
 
 rule MenuHiddenWhenNoSuggestions {
     when: SuggestionsResolved(input, context, trigger_mode, prefix, suggestions)
-
     requires: suggestions.count = 0
 
-    ensures: not exists AutocompleteMenu{input}
+    ensures: not exists AutocompleteMenu with input = input
 }
 
 rule TabAutoAppliesSinglePathSuggestion {
     when: SuggestionsResolved(input, context: file_path, trigger_mode: tab, prefix, suggestions)
-
     requires: suggestions.count = 1
 
-    let only = suggestions.first
-
+    let only = FirstSuggestion(suggestions)
     ensures: input.text = ApplySuggestion(input.text, prefix, only.value)
-    ensures: not exists AutocompleteMenu{input}
+    ensures: not exists AutocompleteMenu with input = input
 }
 
 rule TypingRefreshesOpenMenu {
-    when: UserTypes(input, _)
+    when: UserTypes(input, char)
 
-    let menu = AutocompleteMenu{input}
+    let menu = OpenAutocompleteMenu(input)
     requires: menu != null
 
     ensures: SuggestionsRequested(input, context: menu.context, trigger_mode: menu.trigger_mode)
@@ -150,7 +113,7 @@ rule TypingRefreshesOpenMenu {
 rule BackspaceRefreshesOpenMenu {
     when: UserPressesBackspace(input)
 
-    let menu = AutocompleteMenu{input}
+    let menu = OpenAutocompleteMenu(input)
     requires: menu != null
 
     ensures: SuggestionsRequested(input, context: menu.context, trigger_mode: menu.trigger_mode)
@@ -159,43 +122,40 @@ rule BackspaceRefreshesOpenMenu {
 rule MoveSuggestionSelection {
     when: UserMovesSelection(input, direction)
 
-    let menu = AutocompleteMenu{input}
+    let menu = OpenAutocompleteMenu(input)
     requires: menu != null
-    requires: direction in [up, down]
+    requires: direction in {up, down}
 
     ensures: menu.selected_index = NextIndex(menu.selected_index, menu.suggestions.count, direction)
 }
 
 rule EscapeCancelsMenu {
     when: UserPressesEscape(input)
+    requires: exists AutocompleteMenu with input = input
 
-    requires: exists AutocompleteMenu{input}
-
-    ensures: not exists AutocompleteMenu{input}
+    ensures: not exists AutocompleteMenu with input = input
 }
 
 rule TabAcceptsSelectedSuggestion {
     when: UserPressesTab(input)
 
-    let menu = AutocompleteMenu{input}
+    let menu = OpenAutocompleteMenu(input)
     requires: menu != null
 
     let suggestion = menu.selected
-
     ensures: input.text = ApplySuggestion(input.text, menu.prefix, suggestion.value)
-    ensures: not exists menu
+    ensures: not exists AutocompleteMenu with input = input
 }
 
 rule EnterAcceptsSelectedSuggestion {
     when: UserPressesEnter(input)
 
-    let menu = AutocompleteMenu{input}
+    let menu = OpenAutocompleteMenu(input)
     requires: menu != null
 
     let suggestion = menu.selected
-
     ensures: input.text = ApplySuggestion(input.text, menu.prefix, suggestion.value)
-    ensures: not exists menu
+    ensures: not exists AutocompleteMenu with input = input
 
     ensures:
         if menu.context = slash_command and PrefixStartsWith(menu.prefix, "/"):
@@ -204,7 +164,6 @@ rule EnterAcceptsSelectedSuggestion {
 
 rule FileReferenceAcceptanceAddsSpaceForFiles {
     when: SuggestionAccepted(input, context: file_reference, suggestion)
-
     requires: not suggestion.is_directory
 
     ensures: input.text = EnsureTrailingSpace(input.text)
@@ -212,19 +171,14 @@ rule FileReferenceAcceptanceAddsSpaceForFiles {
 
 rule QuotedAcceptanceAvoidsDuplicateClosingQuote {
     when: SuggestionAccepted(input, context, suggestion)
-
     requires: SuffixEndsWith(suggestion.value, "\"")
     requires: PrefixStartsWith(CursorSuffix(input), "\"")
 
     ensures: DuplicateClosingQuoteRemoved(input)
 }
 
-------------------------------------------------------------
--- Surface
-------------------------------------------------------------
-
 surface PromptAutocompleteContract {
-    for user: PromptInputUser
+    facing user: PromptInputUser
 
     context input: PromptInput
 
@@ -237,9 +191,9 @@ surface PromptAutocompleteContract {
         UserMovesSelection(input, direction)
 
     exposes:
-        AutocompleteMenu{input}
+        AutocompleteMenu with input = input
 
-    guidance:
+    @guidance
         -- This contract is reusable across interactive UIs.
         -- Autocomplete is contextual: slash-command, path, and @file-reference modes.
         -- @ suggestions are fuzzy and include hidden paths except .git.

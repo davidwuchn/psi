@@ -1,150 +1,99 @@
--- skills.allium
---
--- Scope: Skill discovery, validation, progressive disclosure, and invocation.
---
--- Skills are self-contained capability packages the agent loads on-demand.
--- A skill provides specialised workflows, setup instructions, helper scripts,
--- and reference documentation for specific tasks.
---
--- Implements the Agent Skills standard (https://agentskills.io/specification).
---
--- Includes:
---   Skill entity — structure, frontmatter, validation
---   Discovery — loading from global, project, package, settings, CLI paths
---   Validation — name rules, description requirements, frontmatter checks
---   Name collision — first-discovered wins, warning emitted
---   Progressive disclosure — descriptions in system prompt, full content on-demand
---   Invocation — /skill:name command expansion
---
--- Excludes:
---   Prompt template expansion (see prompt-templates.allium)
---   System prompt assembly (see coding-agent.allium SystemPromptBuilt)
---   Extension command dispatch (see coding-agent.allium ExtensionCommandExecuted)
+-- allium: 1
 
-------------------------------------------------------------
--- Value Types
-------------------------------------------------------------
+-- skills.allium
+-- Skill discovery, validation, progressive disclosure, and invocation.
 
 value SkillFrontmatter {
-    name: String                    -- required; max 64 chars
-    description: String             -- required; max 1024 chars
+    name: String
+    description: String
     license: String?
-    compatibility: String?          -- max 500 chars; environment requirements
-    metadata: Map<String, String>?  -- arbitrary key-value pairs
-    allowed_tools: List<String>?    -- space-delimited pre-approved tools (experimental)
-    disable_model_invocation: Boolean?  -- when true, hidden from system prompt
+    compatibility: String?
+    metadata: Map<String, String>?
+    allowed_tools: Set<String>?
+    disable_model_invocation: Boolean?
 }
 
 value SkillValidationResult {
     valid: Boolean
-    warnings: List<String>
-    errors: List<String>            -- only missing description is fatal
+    warnings: Set<String>
+    errors: Set<String>
 }
 
 value SkillExpansion {
-    content: String                 -- full SKILL.md body wrapped in <skill> XML
+    content: String
     skill_name: String
 }
 
-------------------------------------------------------------
--- Entity
-------------------------------------------------------------
-
 entity Skill {
-    name: String                    -- from frontmatter; must match parent directory
-    description: String             -- from frontmatter; drives model matching
-    filePath: String                -- absolute path to SKILL.md
-    baseDir: String                 -- parent directory of SKILL.md
+    name: String
+    description: String
+    file_path: String
+    base_dir: String
     source: user | project | package | settings | cli
-    disableModelInvocation: Boolean -- from frontmatter disable-model-invocation
+    disable_model_invocation: Boolean
 
-    -- Optional frontmatter
     license: String?
     compatibility: String?
-    allowedTools: List<String>?
+    allowed_tools: Set<String>?
 
-    -- Derived
-    is_available_to_model: not disableModelInvocation
+    is_available_to_model: not disable_model_invocation
 }
 
-------------------------------------------------------------
--- Config
-------------------------------------------------------------
-
 config {
-    global_skills_dirs: List<Path> = [~/.psi/agent/skills, ~/.agents/skills]
-    project_skills_dirs: List<Path> = [.psi/skills, .agents/skills]
-    -- .agents/skills is discovered in cwd and ancestor dirs up to git root
+    global_skills_dirs: Set<String> = {"~/.psi/agent/skills", "~/.agents/skills"}
+    project_skills_dirs: Set<String> = {".psi/skills", ".agents/skills"}
     name_max_length: Integer = 64
     description_max_length: Integer = 1024
     compatibility_max_length: Integer = 500
 }
 
-------------------------------------------------------------
--- Discovery
-------------------------------------------------------------
-
 rule SkillsDiscovered {
-    -- At startup and on reload, skills are loaded from all sources.
-    -- Discovery order determines collision winner (first-discovered wins).
-    when: SkillsDiscovered(sources)
+    when: SkillsDiscoveryRequested(sources)
 
     let paths = OrderedUnion(
         GlobalSkills(config.global_skills_dirs),
         ProjectSkills(config.project_skills_dirs),
-        PackageSkills(),                                 -- skills/ dirs or pi.skills in package.json
-        SettingsSkills(),                                 -- skills array in settings
-        CliSkills()                                       -- --skill <path> flags
+        PackageSkills(),
+        SettingsSkills(),
+        CliSkills()
     )
-
-    -- Discovery rules:
-    --   Direct .md files in skills directory root
-    --   Recursive SKILL.md files under subdirectories
 
     ensures:
         for path in paths:
-            let parsed = SkillParsed(path)
-            let validation = SkillValidated(parsed)
+            parsed = SkillParsed(path)
+            validation = SkillValidated(parsed)
             if validation.valid:
-                if not exists Skill{name: parsed.name}:
+                if not exists Skill with name = parsed.name:
                     Skill.created(
                         name: parsed.name,
                         description: parsed.description,
-                        filePath: path.absolute,
-                        baseDir: path.parent,
+                        file_path: path.absolute,
+                        base_dir: path.parent,
                         source: path.source,
-                        disableModelInvocation: parsed.disable_model_invocation or false,
+                        disable_model_invocation: parsed.disable_model_invocation ?? false,
                         license: parsed.license,
                         compatibility: parsed.compatibility,
-                        allowedTools: parsed.allowed_tools
+                        allowed_tools: parsed.allowed_tools
                     )
 }
 
 rule SkillsDisabledByFlag {
-    -- --no-skills suppresses all discovery.
-    -- Explicit --skill <path> flags still load.
-    when: SkillsDiscovered(sources)
+    when: SkillsDiscoveryRequested(sources)
+    requires: sources.no_skills = true
 
-    requires: sources.noSkills = true
-
-    ensures: only CliSkills() are loaded
+    ensures: OnlyCliSkillsLoaded()
 }
 
-------------------------------------------------------------
--- Parsing
-------------------------------------------------------------
-
 rule SkillParsed {
-    -- Extracts YAML frontmatter and body from a SKILL.md file.
-    when: SkillParsed(path)
+    when: SkillParseRequested(path)
 
     let raw = ReadFile(path)
-    let frontmatter = ExtractYamlFrontmatter(raw)        -- between --- fences
+    let frontmatter = ExtractYamlFrontmatter(raw)
 
     requires: frontmatter.name != null
     requires: frontmatter.description != null
 
-    ensures: result = SkillFrontmatter {
+    ensures: result = SkillFrontmatter{
         name: frontmatter.name,
         description: frontmatter.description,
         license: frontmatter.license,
@@ -155,168 +104,117 @@ rule SkillParsed {
     }
 }
 
-------------------------------------------------------------
--- Validation
-------------------------------------------------------------
-
 rule SkillValidated {
-    -- Validates a parsed skill against the Agent Skills standard.
-    -- Most issues produce warnings; only missing description is fatal.
     when: SkillValidated(parsed)
 
-    let warnings = []
-    let errors = []
+    let warnings = {}
+    let errors = {}
 
-    -- Name rules: lowercase a-z, 0-9, hyphens only
-    -- No leading/trailing hyphens, no consecutive hyphens
-    -- Must match parent directory name
     ensures:
         if parsed.name.length > config.name_max_length:
-            warnings = warnings + ["Name exceeds 64 characters"]
-        if not parsed.name.matches(/^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/):
-            warnings = warnings + ["Name contains invalid characters"]
-        if parsed.name.contains("--"):
-            warnings = warnings + ["Name has consecutive hyphens"]
-        if parsed.name != parsed.parentDirName:
-            warnings = warnings + ["Name doesn't match parent directory"]
-        if parsed.description = null:
-            errors = errors + ["Missing description"]
-        if parsed.description != null and parsed.description.length > config.description_max_length:
-            warnings = warnings + ["Description exceeds 1024 characters"]
-        if parsed.compatibility != null and parsed.compatibility.length > config.compatibility_max_length:
-            warnings = warnings + ["Compatibility exceeds 500 characters"]
+            warnings = warnings + {"Name exceeds 64 characters"}
 
-    ensures: result = SkillValidationResult {
+    ensures:
+        if not MatchesRegex(parsed.name, "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"):
+            warnings = warnings + {"Name contains invalid characters"}
+
+    ensures:
+        if Contains(parsed.name, "--"):
+            warnings = warnings + {"Name has consecutive hyphens"}
+
+    ensures:
+        if parsed.name != parsed.parent_dir_name:
+            warnings = warnings + {"Name does not match parent directory"}
+
+    ensures:
+        if parsed.description = null:
+            errors = errors + {"Missing description"}
+
+    ensures:
+        if parsed.description != null and parsed.description.length > config.description_max_length:
+            warnings = warnings + {"Description exceeds 1024 characters"}
+
+    ensures:
+        if parsed.compatibility != null and parsed.compatibility.length > config.compatibility_max_length:
+            warnings = warnings + {"Compatibility exceeds 500 characters"}
+
+    ensures: result = SkillValidationResult{
         valid: errors.count = 0,
         warnings: warnings,
         errors: errors
     }
-
-    -- Unknown frontmatter fields are ignored (no warning).
 }
-
-------------------------------------------------------------
--- Name Collision
-------------------------------------------------------------
 
 rule SkillNameCollision {
-    -- When two skills share the same name, first-discovered wins.
-    -- A warning is emitted (unlike templates which are silent).
-    when: Skill.created(name: name)
+    when: Skill.created(name, description, file_path, base_dir, source, disable_model_invocation, license, compatibility, allowed_tools)
+    requires: exists Skill with name = name
 
-    requires: exists Skill{name: name}
-
-    ensures: Skill.created is rejected
-    ensures: Warning.emitted("Skill name collision: '{name}' already loaded from {existing.filePath}")
+    ensures: SkillCreationRejected(name)
+    ensures: Warning.emitted("Skill name collision: " + name)
 }
-
-------------------------------------------------------------
--- Progressive Disclosure
-------------------------------------------------------------
 
 rule SkillsInSystemPrompt {
-    -- Only name + description appear in the system prompt.
-    -- Full SKILL.md content is loaded on-demand via read tool
-    -- or /skill:name invocation.
     when: SystemPromptSkillsAssembled(skills)
 
-    let visible = skills with is_available_to_model
-
-    ensures: result = visible.map(s =>
-        "<skill name=\"{s.name}\" description=\"{s.description}\" />"
-    )
-
-    -- Skills with disableModelInvocation = true are excluded entirely.
-    -- They remain invocable via /skill:name commands.
+    let visible = skills where is_available_to_model
+    ensures: result = VisibleSkillDescriptors(visible)
 }
 
-------------------------------------------------------------
--- Invocation
-------------------------------------------------------------
-
 rule SkillCommandExpanded {
-    -- /skill:name args → injects SKILL.md content as a <skill> XML block.
-    when: SkillCommandExpanded(text)
+    when: SkillCommandExpansionRequested(text)
+    requires: StartsWith(text, "/skill:")
 
-    requires: text.startsWith("/skill:")
+    let skill_name = SkillNameFromCommand(text)
+    let skill = Skill with name = skill_name
+    requires: skill != null
 
-    let skill_name = text.after("/skill:").before(" ")
-    let skill = Skill{name: skill_name}
+    let content = ReadFile(skill.file_path)
+    let args = CommandTail(text)
 
-    requires: exists skill
-
-    let content = ReadFile(skill.filePath)
-    let args = text.afterCommand
-
-    ensures: result = SkillExpansion {
-        content: "<skill name=\"{skill.name}\" location=\"{skill.filePath}\">\n{content}\n</skill>\n\n{args}",
+    ensures: result = SkillExpansion{
+        content: "<skill name=\"" + skill.name + "\" location=\"" + skill.file_path + "\">\n" + content + "\n</skill>\n\n" + args,
         skill_name: skill.name
     }
-
-    -- The <skill> block includes the filePath so relative path references
-    -- in the skill content resolve correctly in tool calls.
-    -- disableModelInvocation skills are still invocable via /skill:name.
 }
 
 rule SkillNotFound {
-    -- /skill:name where no skill matches.
-    when: SkillCommandExpanded(text)
+    when: SkillCommandExpansionRequested(text)
+    requires: StartsWith(text, "/skill:")
 
-    requires: text.startsWith("/skill:")
+    let skill_name = SkillNameFromCommand(text)
+    requires: not exists Skill with name = skill_name
 
-    let skill_name = text.after("/skill:").before(" ")
-
-    requires: not exists Skill{name: skill_name}
-
-    ensures: Error.emitted("Skill not found: '{skill_name}'")
+    ensures: Error.emitted("Skill not found: " + skill_name)
 }
 
-------------------------------------------------------------
--- Surface
-------------------------------------------------------------
-
 actor User {
-    identified_by: HumanOperator
+    identified_by: id = "human-operator"
 }
 
 surface SkillApi {
-    -- Discovery, listing, and invocation surface.
-    for caller: User
+    facing caller: User
 
     exposes:
         Skill.name
         Skill.description
         Skill.source
         Skill.is_available_to_model
-        Skill.disableModelInvocation
+        Skill.disable_model_invocation
 
     provides:
-        SkillCommandExpanded(caller, text)
-        SkillsDiscovered(caller, sources)
+        SkillCommandExpansionRequested(text)
+        SkillsDiscoveryRequested(sources)
 
-    guidance:
-        -- /skill:name is available in the editor with autocomplete.
-        -- Skills with disableModelInvocation are hidden from the system prompt
-        --   but remain invocable via /skill:name.
-        -- The agent can also load skills on its own by reading the SKILL.md
-        --   file when a task matches the description in the system prompt.
-        -- Discovery: direct .md files in root, recursive SKILL.md in subdirs.
-        -- --no-skills disables discovery; explicit --skill paths still load.
+    @guidance
+        -- /skill:name is available with autocomplete.
+        -- disable_model_invocation hides a skill from system prompt but keeps direct invocation.
+        -- Discovery supports direct .md files at root and recursive SKILL.md files in subdirs.
+        -- --no-skills disables discovery except explicit CLI skill paths.
 }
 
-------------------------------------------------------------
--- Deferred Specifications
-------------------------------------------------------------
+deferred ExtractYamlFrontmatter.parse
+deferred SkillContentReader.read
 
-deferred ExtractYamlFrontmatter.parse   -- shared with prompt-templates.allium
-deferred SkillContentReader.read        -- on-demand SKILL.md loading via read tool
-
-------------------------------------------------------------
--- Open Questions
-------------------------------------------------------------
-
-open_question "Should skill name collisions be configurable (warn / error / last-wins)? Currently first-discovered wins with warning."
-
-open_question "Should allowed-tools in frontmatter auto-activate tools, or just serve as documentation?"
-
-open_question "Cross-harness skill compatibility: when loading skills from ~/.claude/skills or ~/.codex/skills, should validation be relaxed for non-standard frontmatter fields?"
+open question "Should skill name collisions be configurable (warn, error, or last-wins)?"
+open question "Should allowed-tools in frontmatter auto-activate tools, or remain documentation only?"
+open question "Should cross-harness skill loading relax validation for non-standard frontmatter fields?"

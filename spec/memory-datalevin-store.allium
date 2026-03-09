@@ -1,97 +1,67 @@
+-- allium: 1
+
 -- memory-datalevin-store.allium
---
--- Scope: Initial persistent memory backing-store extension implemented with
---        Datalevin.
---
--- Includes:
---   - Datalevin provider registration in memory store registry
---   - Datalevin store lifecycle (path resolution, open, migrate, close)
---   - Persistence of memory records, graph snapshots/deltas, and recoveries
---   - Recovery query support for existing memory filters
---   - Restart durability expectations and fallback behavior
---
--- Excludes:
---   - Datalevin internals (datom layout, LMDB page settings)
---   - Encryption-at-rest implementation
---   - Distributed replication / remote stores
---   - Memory ranking semantics (owned by memory-layer.allium)
+-- Initial persistent memory backing-store extension implemented with Datalevin.
 
 use "./memory-layer.allium" as memory
 use "./memory-backing-stores.allium" as stores
 
-------------------------------------------------------------
--- External Entities
-------------------------------------------------------------
-
 external entity DatalevinRuntime {
     available: Boolean
     version: String
-    cwd: Path
+    cwd: String
 }
 
 external entity DatalevinConnection {
-    path: Path
+    path: String
     open: Boolean
 }
-
-------------------------------------------------------------
--- Value Types
-------------------------------------------------------------
 
 value DatalevinStoreHealth {
     status: healthy | degraded | unavailable
     details: String?
-    checkedAt: Timestamp
+    checked_at: Timestamp
 }
 
 value DatalevinMigration {
-    fromVersion: Integer
-    toVersion: Integer
-    startedAt: Timestamp
-    completedAt: Timestamp?
+    from_version: Integer
+    to_version: Integer
+    started_at: Timestamp
+    completed_at: Timestamp?
     status: pending | running | complete | failed
 }
 
 value DatalevinQueryPlan {
-    queryText: String?
+    query_text: String?
     tags: Set<String>?
-    capabilityIds: Set<String>?
-    contentTypes: Set<String>?
+    capability_ids: Set<String>?
+    content_types: Set<String>?
     since: Timestamp?
     limit: Integer
-    usesIndexes: Set<String>
+    uses_indexes: Set<String>
 }
 
-------------------------------------------------------------
--- Entities
-------------------------------------------------------------
-
 entity DatalevinMemoryStore {
-    providerId: String
-    dbPath: Path
+    provider_id: String
+    db_path: String
     status: opening | migrating | ready | degraded | error | closing | closed
 
-    schemaVersion: Integer
+    schema_version: Integer
     connection: DatalevinConnection?
     health: DatalevinStoreHealth?
 
-    lastError: String?
-    migrations: List<DatalevinMigration>
+    last_error: String?
+    migrations: Set<DatalevinMigration>
 
-    -- Derived
-    isOpen: connection != null and connection.open = true
-    canServeQueries: status in [ready, degraded]
+    is_open: connection != null and connection.open = true
+    can_serve_queries: status in {ready, degraded}
 }
-
-------------------------------------------------------------
--- Config
-------------------------------------------------------------
 
 config {
     datalevin_provider_id: String = "datalevin"
     datalevin_schema_version: Integer = 1
 
-    datalevin_store_root: Path = "~/.psi/agent/memory"
+    datalevin_store_root: String = "~/.psi/agent/memory"
     datalevin_store_file_name: String = "memory.dtlv"
 
     allow_fallback_to_in_memory_on_datalevin_error: Boolean = true
@@ -109,10 +79,6 @@ config {
     }
 }
 
-------------------------------------------------------------
--- Rules
-------------------------------------------------------------
-
 rule DatalevinProviderRegistered {
     when: stores/MemoryStoreBootstrapRequested(registry)
 
@@ -121,216 +87,165 @@ rule DatalevinProviderRegistered {
         stores/MemoryStoreProvider{
             id: config.datalevin_provider_id,
             status: registering,
-            schemaVersion: config.datalevin_schema_version,
+            schema_version: config.datalevin_schema_version,
             capabilities: stores/StoreCapabilities{
                 durability: persistent,
-                supportsRestartRecovery: true,
-                supportsRetentionCompaction: true,
-                supportsCapabilityHistoryQuery: true,
-                queryMode: indexed
+                supports_restart_recovery: true,
+                supports_retention_compaction: true,
+                supports_capability_history_query: true,
+                query_mode: indexed
             },
-            writeCount: 0,
-            readCount: 0,
-            failureCount: 0
+            health: null,
+            last_error: null,
+            write_count: 0,
+            read_count: 0,
+            failure_count: 0
         }
     )
 }
 
 rule DatalevinStorePathResolved {
     when: DatalevinStoreOpenRequested(store, runtime)
-
     requires: runtime.available = true
 
-    ensures: store.dbPath =
-        config.datalevin_store_root /
-        EncodeCwdAsPathSegment(runtime.cwd) /
-        config.datalevin_store_file_name
+    ensures: store.db_path = ResolveDatalevinStorePath(config.datalevin_store_root, runtime.cwd, config.datalevin_store_file_name)
 }
 
 rule DatalevinStoreOpened {
     when: DatalevinStoreOpenRequested(store, runtime)
-
     requires: runtime.available = true
 
     ensures: store.status = opening
-    ensures: store.connection = DatalevinConnection{
-        path: store.dbPath,
-        open: true
-    }
+    ensures: store.connection = DatalevinConnection{path: store.db_path, open: true}
     ensures: store.status = ready
 }
 
 rule DatalevinSchemaMigratedOnOpen {
     when: DatalevinStoreOpenRequested(store, runtime)
-
     requires: runtime.available = true
-    requires: store.schemaVersion < config.datalevin_schema_version
+    requires: store.schema_version < config.datalevin_schema_version
 
-    ensures: exists migration = DatalevinMigration.created(
-        fromVersion: store.schemaVersion,
-        toVersion: config.datalevin_schema_version,
-        startedAt: now,
-        completedAt: now,
+    ensures: migration = DatalevinMigration{
+        from_version: store.schema_version,
+        to_version: config.datalevin_schema_version,
+        started_at: now,
+        completed_at: now,
         status: complete
-    )
-
-    ensures: store.migrations = store.migrations + [migration]
-    ensures: store.schemaVersion = config.datalevin_schema_version
+    }
+    ensures: store.migrations = store.migrations + {migration}
+    ensures: store.schema_version = config.datalevin_schema_version
 }
 
 rule DatalevinStoreSelectedAsActiveProvider {
-    when: stores/MemoryStoreSelectionRequested(registry, requestedProviderId)
+    when: stores/MemoryStoreSelectionRequested(registry, requested_provider_id)
 
-    requires: requestedProviderId = config.datalevin_provider_id
-    requires: exists provider = registry.providers.where(id = config.datalevin_provider_id).first
+    requires: requested_provider_id = config.datalevin_provider_id
+    requires: ProviderById(registry.providers, config.datalevin_provider_id) != null
 
-    ensures: provider.status = ready
-    ensures: registry.activeProviderId = config.datalevin_provider_id
+    ensures: MarkProviderReady(registry, config.datalevin_provider_id)
+    ensures: registry.active_provider_id = config.datalevin_provider_id
 }
 
 rule DatalevinPersistsMemoryRecords {
-    when: stores/StoreWriteRequested(provider, memoryRecord, payload)
-
+    when: stores/StoreWriteRequested(provider, memory_record, payload)
     requires: provider.id = config.datalevin_provider_id
     requires: provider.status = ready
 
-    ensures: DatalevinUpsert(
-        table: "memory-record",
-        key: payload.recordId,
-        data: payload
-    )
-
+    ensures: DatalevinUpsert(table: "memory-record", key: payload.record_id, data: payload)
     ensures:
         if config.require_idempotent_store_writes:
-            DatalevinUpsertIsIdempotent(table: "memory-record", key: payload.recordId)
+            DatalevinUpsertIsIdempotent(table: "memory-record", key: payload.record_id)
 }
 
 rule DatalevinPersistsGraphSnapshots {
-    when: stores/StoreWriteRequested(provider, graphSnapshot, payload)
-
+    when: stores/StoreWriteRequested(provider, graph_snapshot, payload)
     requires: provider.id = config.datalevin_provider_id
     requires: provider.status = ready
 
-    ensures: DatalevinUpsert(
-        table: "graph-snapshot",
-        key: payload.fingerprint,
-        data: payload
-    )
+    ensures: DatalevinUpsert(table: "graph-snapshot", key: payload.fingerprint, data: payload)
 }
 
 rule DatalevinPersistsGraphDeltas {
-    when: stores/StoreWriteRequested(provider, graphDelta, payload)
-
+    when: stores/StoreWriteRequested(provider, graph_delta, payload)
     requires: provider.id = config.datalevin_provider_id
     requires: provider.status = ready
 
-    ensures: DatalevinUpsert(
-        table: "graph-delta",
-        key: payload.deltaId,
-        data: payload
-    )
+    ensures: DatalevinUpsert(table: "graph-delta", key: payload.delta_id, data: payload)
 }
 
 rule DatalevinPersistsRecoveryRuns {
-    when: stores/StoreWriteRequested(provider, recoveryRun, payload)
-
+    when: stores/StoreWriteRequested(provider, recovery_run, payload)
     requires: provider.id = config.datalevin_provider_id
     requires: provider.status = ready
     requires: config.persist_recovery_runs = true
 
-    ensures: DatalevinUpsert(
-        table: "recovery-run",
-        key: payload.recoveryId,
-        data: payload
-    )
+    ensures: DatalevinUpsert(table: "recovery-run", key: payload.recovery_id, data: payload)
 }
 
 rule DatalevinQueriesSupportRecoveryFilters {
     when: stores/StoreQueryRequested(provider, query)
-
     requires: provider.id = config.datalevin_provider_id
-    requires: provider.status in [ready, degraded]
+    requires: provider.status in {ready, degraded}
 
-    ensures: exists plan = DatalevinQueryPlan.created(
-        queryText: query.queryText,
+    ensures: plan = DatalevinQueryPlan{
+        query_text: query.query_text,
         tags: query.tags,
-        capabilityIds: query.capabilityIds,
-        contentTypes: query.contentTypes,
+        capability_ids: query.capability_ids,
+        content_types: query.content_types,
         since: query.since,
         limit: query.limit,
-        usesIndexes: config.datalevin_required_indexes
-    )
-
+        uses_indexes: config.datalevin_required_indexes
+    }
     ensures: DatalevinQueryExecuted(plan)
     ensures: DatalevinQueryResultCount(plan) <= query.limit
 }
 
 rule DatalevinHydratesMemoryStateOnRestart {
-    when: memory/MemoryLayerInitializeRequested(memoryLayer, querySummary, repo, capabilityGraph, state)
+    when: memory/MemoryLayerInitializeRequested(memory_layer, query_summary, repo, capability_graph, state)
 
-    let layer = stores/StoreBackedMemoryLayer{memoryLayer: memoryLayer}
+    let layer = stores/StoreBackedMemoryLayer with memory_layer = memory_layer
+    requires: layer != null
+    requires: layer.store_registry.active_provider.id = config.datalevin_provider_id
+    requires: layer.store_registry.active_provider.can_serve_reads = true
 
-    requires: exists layer
-    requires: layer.storeRegistry.activeProvider.id = config.datalevin_provider_id
-    requires: layer.storeRegistry.activeProvider.canServeReads = true
-
-    ensures: stores/StoreLoadMemorySessions(layer.storeRegistry.activeProvider)
-    ensures: stores/StoreLoadGraphSnapshots(layer.storeRegistry.activeProvider)
-    ensures: stores/StoreLoadGraphDeltas(layer.storeRegistry.activeProvider)
-    ensures: stores/StoreLoadIndexStats(layer.storeRegistry.activeProvider)
-
-    ensures: stores/MemoryStateHydratedFromPersistentStoreOnStart(
-        memoryLayer,
-        querySummary,
-        repo,
-        capabilityGraph,
-        state
-    )
+    ensures: stores/StoreLoadMemorySessions(layer.store_registry.active_provider)
+    ensures: stores/StoreLoadGraphSnapshots(layer.store_registry.active_provider)
+    ensures: stores/StoreLoadGraphDeltas(layer.store_registry.active_provider)
+    ensures: stores/StoreLoadIndexStats(layer.store_registry.active_provider)
 }
 
 rule DatalevinFailureFallsBackToInMemory {
-    when: stores/StoreOperationFailed(registry, providerId, operation, error)
-
-    requires: providerId = config.datalevin_provider_id
+    when: stores/StoreOperationFailed(registry, provider_id, operation, error)
+    requires: provider_id = config.datalevin_provider_id
     requires: config.allow_fallback_to_in_memory_on_datalevin_error = true
 
-    ensures: registry.providers.where(id = config.datalevin_provider_id).first.status = unavailable
+    ensures: MarkProviderUnavailable(registry, config.datalevin_provider_id)
     ensures: stores/MemoryStoreSelectionRequested(registry, "in-memory")
 }
 
 rule DatalevinStoreClosedCleanly {
     when: stores/StoreCloseRequested(provider)
-
     requires: provider.id = config.datalevin_provider_id
-    requires: provider.status in [ready, degraded, error]
+    requires: provider.status in {ready, degraded, error}
 
     ensures: DatalevinCheckpoint(provider)
     ensures: provider.status = closed
 }
 
-------------------------------------------------------------
--- Actor Declarations
-------------------------------------------------------------
-
 actor MemoryStoreRuntime {
     identified_by: id = "memory-store-runtime"
 }
 
-------------------------------------------------------------
--- Surfaces
-------------------------------------------------------------
-
 surface DatalevinMemoryStoreApi {
-    -- Internal integration surface from memory layer into Datalevin provider.
-    for runtime: MemoryStoreRuntime
+    facing runtime: MemoryStoreRuntime
 
     context store: DatalevinMemoryStore
 
     exposes:
-        store.providerId
-        store.dbPath
+        store.provider_id
+        store.db_path
         store.status
-        store.schemaVersion
+        store.schema_version
         store.health
 
     provides:
@@ -339,55 +254,18 @@ surface DatalevinMemoryStoreApi {
         DatalevinStoreCompactRequested(store)
         DatalevinStoreCloseRequested(store)
 
-    guidance:
+    @guidance
         -- Datalevin provider must preserve existing memory-layer behavior.
         -- Recovery ranking and source composition remain in memory-layer logic.
         -- Provider-specific failures should map to StoreOperationFailed so
-        --   registry fallback policy remains centralized.
+        -- registry fallback policy remains centralized.
 }
 
-------------------------------------------------------------
--- Initial Extension Plan (implementation sequence)
-------------------------------------------------------------
-
--- 1) Introduce store protocol + registry wiring in psi.memory.core,
---    keeping current atom-backed implementation as provider "in-memory".
---
--- 2) Add store-aware memory EQL attrs and runtime startup selection:
---      :psi.memory.store/providers
---      :psi.memory.store/active-provider-id
---      :psi.memory.store/selection
---      :psi.memory.store/health
---
--- 3) Implement Datalevin provider adapter:
---      open/migrate/close + put/query/load functions.
---
--- 4) Route remember/recover/graph snapshot-delta writes through provider,
---    preserving current ranking, required sources, and retention semantics.
---
--- 5) Add restart durability tests and fallback tests:
---      - process restart -> prior memories recoverable
---      - datalevin open/write failure -> in-memory fallback selected
---      - query filters parity with current recover-in! semantics
-
-------------------------------------------------------------
--- Deferred Specifications
-------------------------------------------------------------
-
 deferred DatalevinUpsert.storage-schema
-
 deferred DatalevinQueryExecuted.execution-plan
-
 deferred DatalevinCheckpoint.compaction-policy
+deferred ResolveDatalevinStorePath.path-encoding
 
-deferred EncodeCwdAsPathSegment.path-encoding
-
-------------------------------------------------------------
--- Open Questions
-------------------------------------------------------------
-
-open_question "Should Datalevin be the default provider when available, or remain opt-in with in-memory default?"
-
-open_question "Do we need optional encryption-at-rest for Datalevin store files in local developer environments?"
-
-open_question "Should memory recoveries persist full result payloads, or only query + selected record IDs to reduce store size?"
+open question "Should Datalevin be the default provider when available, or remain opt-in with in-memory default?"
+open question "Do we need optional encryption-at-rest for Datalevin store files in local developer environments?"
+open question "Should memory recoveries persist full result payloads, or only query + selected record IDs to reduce store size?"

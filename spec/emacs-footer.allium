@@ -1,138 +1,87 @@
+-- allium: 1
+
 -- emacs-footer.allium
---
--- Scope: Emacs parity handling for `footer/updated` events.
---
--- Source distillation:
---   - components/emacs-ui/psi.el
---   - components/emacs-ui/test/psi-test.el
---
--- Includes:
---   - Canonical `footer/updated` payload mapping (path-line, stats-line, status-line)
---   - Projection text composition for process-buffer rendering
---   - Backward-compatible fallback to legacy single-text payloads
---   - Deterministic projection-block rendering and anchor preservation
---
--- Excludes:
---   - Footer line generation itself (see default-footer.allium)
---   - RPC transport framing/subscription rules (see rpc-edn.allium)
---   - Header-line status rendering (see emacs-frontend.allium)
+-- Emacs parity handling for footer/updated events.
 
 use "./default-footer.allium" as footer
 use "./rpc-edn.allium" as rpc
 
-------------------------------------------------------------
--- Value Types
-------------------------------------------------------------
-
 value EmacsFooterProjection {
-    pathLine: String?
-    statsLine: String?
-    statusLine: String?
+    path_line: String?
+    stats_line: String?
+    status_line: String?
     text: String?
 }
-
-------------------------------------------------------------
--- Entity
-------------------------------------------------------------
 
 entity EmacsFooterState {
     projection: EmacsFooterProjection
 }
 
-------------------------------------------------------------
--- Config
-------------------------------------------------------------
-
 config {
     projection_separator: String = "\n"
 }
 
-------------------------------------------------------------
--- Rules
-------------------------------------------------------------
-
 rule CanonicalFooterPayloadMapsToDefaultFooterView {
-    -- Link contract: canonical RPC payload is the same 3-line shape
-    -- exposed by footer/DefaultFooterView.
-    when: FooterUpdatedReceived(state, payload: rpc/FooterUpdatedPayload)
+    when: FooterUpdatedReceived(state, payload)
 
     let view = footer/FooterView{
-        pathLine: payload.pathLine,
-        statsLine: payload.statsLine,
-        statusLine: payload.statusLine
+        path_line: payload.path_line,
+        stats_line: payload.stats_line,
+        status_line: payload.status_line
     }
 
-    ensures: state.projection.pathLine = view.pathLine
-    ensures: state.projection.statsLine = view.statsLine
-    ensures: state.projection.statusLine = view.statusLine
+    ensures: state.projection.path_line = view.path_line
+    ensures: state.projection.stats_line = view.stats_line
+    ensures: state.projection.status_line = view.status_line
 }
 
 rule CanonicalFooterProjectionTextFunction {
-    -- Pure projection helper used by parity frontends.
-    -- Stats line may receive width-aware provider/model right-alignment.
-    when: CanonicalFooterProjectionTextRequested(payload: rpc/FooterUpdatedPayload)
+    when: CanonicalFooterProjectionTextRequested(payload)
 
-    let alignedStats = EmacsAlignedStatsLine(payload.statsLine,
-                                             ProjectionViewportTextWidth(excludesMargins: true))
-    let lines = NonEmptyStrings([payload.pathLine, alignedStats, payload.statusLine])
+    let aligned_stats = EmacsAlignedStatsLine(payload.stats_line, ProjectionViewportTextWidth())
+    let lines = NonEmptyStringsSet({payload.path_line, aligned_stats, payload.status_line})
 
     ensures:
         if lines.count > 0:
-            CanonicalFooterProjectionText(payload) = Join(lines, config.projection_separator)
+            CanonicalFooterProjectionText(payload) = JoinLines(lines, config.projection_separator)
         else:
             CanonicalFooterProjectionText(payload) = null
 }
 
 rule EmacsStatsLineProviderModelAlignment {
-    -- Heuristic alignment for canonical stats line:
-    -- when a trailing `(provider) ...` segment is detectable and fits in the
-    -- viewport text area (excluding left/right margins), right-align that
-    -- segment with minimum two spaces from the left segment.
-    when: EmacsAlignedStatsLineRequested(statsLine, viewportWidth)
+    when: EmacsAlignedStatsLineRequested(stats_line, viewport_width)
 
     ensures:
-        if DetectProviderModelSegment(statsLine) and
-           FitsWithMinPadding(statsLine, viewportWidth, minPadding: 2):
-            EmacsAlignedStatsLine(statsLine, viewportWidth) =
-                RightAlignProviderSegment(statsLine, viewportWidth, minPadding: 2)
+        if DetectProviderModelSegment(stats_line) and FitsWithMinPadding(stats_line, viewport_width, min_padding: 2):
+            EmacsAlignedStatsLine(stats_line, viewport_width) = RightAlignProviderSegment(stats_line, viewport_width, min_padding: 2)
         else:
-            EmacsAlignedStatsLine(statsLine, viewportWidth) = statsLine
+            EmacsAlignedStatsLine(stats_line, viewport_width) = stats_line
 }
 
 rule CanonicalFooterProjectionTextAppliedToState {
-    -- Emacs renders canonical footer lines as a deterministic multi-line block:
-    --   <path-line>
-    --   <stats-line>
-    --   <status-line?>
-    -- with empty lines removed.
-    when: FooterUpdatedReceived(state, payload: rpc/FooterUpdatedPayload)
+    when: FooterUpdatedReceived(state, payload)
 
     ensures: state.projection.text = CanonicalFooterProjectionText(payload)
 }
 
 rule LegacyFooterPayloadFallback {
-    -- Backward compatibility for older payloads that only provide a single
-    -- text-ish field. Used only when canonical lines are absent/blank.
     when: LegacyFooterUpdatedReceived(state, payload)
 
-    let canonicalLines = NonEmptyStrings([
-        PayloadValue(payload, keys: ["path-line", "pathLine", "path_line"]),
-        PayloadValue(payload, keys: ["stats-line", "statsLine", "stats_line"]),
-        PayloadValue(payload, keys: ["status-line", "statusLine", "status_line"])
-    ])
-
-    let fallback = FirstPresent(payload, keys: ["text", "message", "footer", "content"])
+    let path_line = FirstPresent(payload, {"path-line", "pathLine", "path_line"})
+    let stats_line = FirstPresent(payload, {"stats-line", "statsLine", "stats_line"})
+    let status_line = FirstPresent(payload, {"status-line", "statusLine", "status_line"})
+    let canonical_lines = NonEmptyStringsSet({path_line, stats_line, status_line})
+    let fallback = FirstPresent(payload, {"text", "message", "footer", "content"})
 
     ensures:
-        if canonicalLines.count > 0:
-            state.projection.text = Join(canonicalLines, config.projection_separator)
+        if canonical_lines.count > 0:
+            state.projection.text = JoinLines(canonical_lines, config.projection_separator)
         else:
             state.projection.text = CoerceStringOrNull(fallback)
 }
 
 rule FooterTextRenderedInProjectionBlock {
     when: ProjectionBlockRenderRequested(state)
-
     requires: state.projection.text != null
     requires: Trim(state.projection.text) != ""
 
@@ -141,17 +90,12 @@ rule FooterTextRenderedInProjectionBlock {
 
 rule FooterTextOmittedWhenProjectionBlank {
     when: ProjectionBlockRenderRequested(state)
-
     requires: state.projection.text = null or Trim(state.projection.text) = ""
 
     ensures: ProjectionBlockOmitsFooterText()
 }
 
 rule FooterProjectionUpsertPreservesTranscriptAndAnchor {
-    -- Updating the projection block must not clobber transcript content,
-    -- and the draft anchor stays at end-of-buffer when it was already there.
-    -- Footer/projection block is reinserted at end-of-buffer on each update
-    -- so it tracks transcript growth across new message pairs.
     when: FooterProjectionUpserted(state)
 
     ensures: TranscriptContentPreserved()
@@ -160,10 +104,7 @@ rule FooterProjectionUpsertPreservesTranscriptAndAnchor {
 }
 
 rule FooterProjectionHasVisualSeparator {
-    -- Footer/projection block is visually separated from transcript content
-    -- by one blank line followed by a horizontal separator line.
     when: ProjectionBlockRenderRequested(state)
-
     requires: state.projection.text != null
     requires: Trim(state.projection.text) != ""
 
@@ -171,48 +112,29 @@ rule FooterProjectionHasVisualSeparator {
     ensures: ProjectionBlockPrefixedByHorizontalSeparator()
 }
 
-------------------------------------------------------------
--- Surface
-------------------------------------------------------------
-
 surface EmacsFooterProjectionContract {
-    for client: rpc/RpcClient
+    facing client: rpc/RpcClient
 
     context state: EmacsFooterState
 
     exposes:
-        state.projection.pathLine
-        state.projection.statsLine
-        state.projection.statusLine
+        state.projection.path_line
+        state.projection.stats_line
+        state.projection.status_line
         state.projection.text
 
     provides:
-        FooterUpdatedReceived(state, payload: rpc/FooterUpdatedPayload)
+        FooterUpdatedReceived(state, payload)
         LegacyFooterUpdatedReceived(state, payload)
-        CanonicalFooterProjectionTextRequested(payload: rpc/FooterUpdatedPayload)
+        CanonicalFooterProjectionTextRequested(payload)
         ProjectionBlockRenderRequested(state)
 
     related:
         footer/DefaultFooterView
         rpc/RpcEventStream
 
-    guidance:
-        -- Canonical parity path:
-        --   footer/updated payload (path-line, stats-line, status-line?)
-        --   -> apply stats-line provider/model right-alignment heuristic
-        --      when detectable and width allows
-        --   -> join non-empty lines with "\n"
-        --   -> render as a deterministic multi-line footer text block
-        --      prefixed by one blank line and a horizontal separator.
-        --
-        -- Legacy path remains accepted for compatibility when only
-        -- text/message/footer/content is present.
+    @guidance
+        -- Canonical path maps path/stats/status lines directly to projection text.
+        -- Legacy text/message/footer/content payloads are accepted as fallback.
+        -- Projection rendering keeps transcript content and draft-anchor behavior stable.
 }
-
-------------------------------------------------------------
--- Notes
-------------------------------------------------------------
-
--- Emacs parity renders canonical footer payload lines directly (multi-line)
--- in projection order path -> stats -> status?, preserving transcript anchor
--- behavior while removing the legacy `Footer: ` prefix wrapper.

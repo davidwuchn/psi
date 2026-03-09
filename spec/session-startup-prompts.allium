@@ -1,34 +1,17 @@
+-- allium: 1
+
 -- session-startup-prompts.allium
---
--- Scope: Configurable startup prompts that run at the start of each new
--- AgentSession and remain visible in transcript/UI.
---
--- Includes:
---   Prompt source layering (global + project)
---   Deterministic merge/order
---   One-time execution on new session
---   Visible startup prompt/response transcript behavior
---   EQL resolver discoverability via graph introspection
---
--- Excludes:
---   Session-specific prompt overrides
---   Token/character budget guards
---   Prompt template slash-command expansion (see prompt-templates.allium)
---   Extension command dispatch (see extension-system.allium)
+-- Configurable startup prompts for new AgentSession bootstrap.
 
 use "./coding-agent.allium" as session
-
-------------------------------------------------------------
--- Value Types
-------------------------------------------------------------
 
 value StartupPromptRule {
     id: String
     phase: system_bootstrap | project_bootstrap | mode_bootstrap
     text: String
-    enabled: Boolean = true
-    priority: Integer = 100
-    conditions: Map<String, String>?      -- initial use: {"mode": "debug"}
+    enabled: Boolean
+    priority: Integer
+    conditions: Map<String, String>?
     source: global | project
 }
 
@@ -39,132 +22,91 @@ value StartupPromptApplied {
     priority: Integer
 }
 
-------------------------------------------------------------
--- Entities
-------------------------------------------------------------
-
 entity StartupPromptConfig {
-    globalRules: List<StartupPromptRule>
-    projectRules: List<StartupPromptRule>
+    global_rules: Set<StartupPromptRule>
+    project_rules: Set<StartupPromptRule>
 }
 
 entity SessionStartupBootstrap {
-    sessionId: String
-    promptsApplied: List<StartupPromptApplied>
-    startedAt: Timestamp?
-    completedAt: Timestamp?
-    completed: Boolean = false
-    startupMessageIds: List<String>
+    session_id: String
+    prompts_applied: Set<StartupPromptApplied>
+    started_at: Timestamp?
+    completed_at: Timestamp?
+    completed: Boolean
+    startup_message_ids: Set<String>
 }
-
-------------------------------------------------------------
--- Config
-------------------------------------------------------------
 
 config {
     startup_prompts_enabled: Boolean = true
-    global_startup_prompts_file: Path = ~/.psi/agent/startup-prompts.edn
-    project_startup_prompts_file: Path = .psi/startup-prompts.edn
+    global_startup_prompts_file: String = "~/.psi/agent/startup-prompts.edn"
+    project_startup_prompts_file: String = ".psi/startup-prompts.edn"
 }
-
-------------------------------------------------------------
--- Discovery + Composition
-------------------------------------------------------------
 
 rule StartupPromptConfigLoaded {
     when: SessionCreated(session)
-
     requires: config.startup_prompts_enabled = true
 
-    let globalRules = ReadEdnRules(config.global_startup_prompts_file, source: global)
-    let projectRules = ReadEdnRules(config.project_startup_prompts_file, source: project)
-
     ensures: StartupPromptConfig.created(
-        globalRules: globalRules,
-        projectRules: projectRules
+        global_rules: ReadEdnRules(config.global_startup_prompts_file, source: global),
+        project_rules: ReadEdnRules(config.project_startup_prompts_file, source: project)
     )
 }
 
 rule StartupPromptRulesComposed {
-    -- Precedence: global < project (project wins by id)
-    -- Filter: enabled + condition match
-    -- Order: phase, priority, source precedence, id
-    when: SessionCreated(session)
+    when: StartupPromptRulesComposed(session)
+    requires: CurrentStartupPromptConfig() != null
 
-    requires: exists StartupPromptConfig
-
-    let merged = MergeByIdWithPrecedence(
-        StartupPromptConfig.globalRules,
-        StartupPromptConfig.projectRules
-    )
-
-    let eligible = merged
-        .filter(r => r.enabled = true)
-        .filter(r => ConditionsMatch(r.conditions, SessionMode(session)))
-
-    let ordered = Sort(eligible, by: [phase, priority, sourcePrecedence, id])
-
-    ensures: result = ordered
+    ensures: merged = MergeRulesWithProjectPrecedence(CurrentStartupPromptConfig().global_rules, CurrentStartupPromptConfig().project_rules)
+    ensures: eligible = FilterEnabledAndMatching(merged, SessionMode(session))
+    ensures: result = SortStartupRules(eligible)
 }
-
-------------------------------------------------------------
--- Execution (visible transcript behavior)
-------------------------------------------------------------
 
 rule StartupPromptsRunOnNewSession {
     when: SessionCreated(session)
-
     requires: config.startup_prompts_enabled = true
     requires: not SessionResumed(session)
 
     let ordered = StartupPromptRulesComposed(session)
 
     ensures: SessionStartupBootstrap.created(
-        sessionId: session.sessionId,
-        promptsApplied: ordered.map(p => StartupPromptApplied{
-            id: p.id,
-            source: p.source,
-            phase: p.phase,
-            priority: p.priority
-        }),
-        startedAt: now,
+        session_id: session.sessionId,
+        prompts_applied: ProjectStartupPromptApplied(ordered),
+        started_at: now,
+        completed_at: null,
         completed: false,
-        startupMessageIds: []
+        startup_message_ids: {}
     )
 
     ensures:
         for p in ordered:
-            let msgId = session/UserMessageAppended(
-                session,
-                content: p.text,
-                metadata: {startup: true, startupId: p.id}
-            )
+            msg_id = session/UserMessageAppended(session, content: p.text, metadata: {startup: true, startup_id: p.id})
             session/AgentTurnInvoked(session)
-            SessionStartupBootstrap{sessionId: session.sessionId}.startupMessageIds += [msgId]
+            AppendStartupMessageId(session.sessionId, msg_id)
 
-    ensures: SessionStartupBootstrap{sessionId: session.sessionId}.completed = true
-    ensures: SessionStartupBootstrap{sessionId: session.sessionId}.completedAt = now
+    ensures: MarkStartupBootstrapCompleted(session.sessionId, now)
 }
 
 rule StartupPromptsNotReplayedOnResumeOrSwitch {
-    when: SessionResumed(session) | SessionSwitched(session)
+    when: SessionResumed(session)
 
-    ensures: no session/UserMessageAppended where metadata.startup = true
+    ensures: NoStartupPromptReplay(session)
 }
 
-------------------------------------------------------------
--- EQL surface
-------------------------------------------------------------
+rule StartupPromptsNotReplayedOnSwitch {
+    when: SessionSwitched(session)
+
+    ensures: NoStartupPromptReplay(session)
+}
 
 surface StartupPromptEqlApi {
-    for caller: session/User
+    facing caller: session/User
 
     exposes:
-        SessionStartupBootstrap.promptsApplied
+        SessionStartupBootstrap.prompts_applied
         SessionStartupBootstrap.completed
-        SessionStartupBootstrap.startedAt
-        SessionStartupBootstrap.completedAt
-        SessionStartupBootstrap.startupMessageIds
+        SessionStartupBootstrap.started_at
+        SessionStartupBootstrap.completed_at
+        SessionStartupBootstrap.startup_message_ids
 
     provides:
         StartupPromptRulesComposed(session)
@@ -172,8 +114,7 @@ surface StartupPromptEqlApi {
 }
 
 rule StartupPromptAttrsResolvable {
-    -- Canonical top-level attrs exposed by agent-session resolvers.
-    when: StartupPromptEqlApi
+    when: StartupPromptEqlApiReady()
 
     ensures: EqlAttributeResolvable(":psi.agent-session/startup-prompts")
     ensures: EqlAttributeResolvable(":psi.agent-session/startup-bootstrap-completed?")
@@ -183,8 +124,7 @@ rule StartupPromptAttrsResolvable {
 }
 
 rule StartupPromptAttrsDiscoverableInGraph {
-    -- Startup prompt attrs must be discoverable via graph introspection.
-    when: AgentSessionResolversRegistered
+    when: AgentSessionResolversRegistered()
 
     ensures: GraphResolverSymbolsContain("psi.agent-session.resolvers/startup-prompts")
     ensures: GraphResolverSymbolsContain("psi.agent-session.resolvers/startup-bootstrap-completed")
@@ -192,28 +132,24 @@ rule StartupPromptAttrsDiscoverableInGraph {
     ensures: GraphResolverSymbolsContain("psi.agent-session.resolvers/startup-bootstrap-completed-at")
     ensures: GraphResolverSymbolsContain("psi.agent-session.resolvers/startup-message-ids")
 
-    ensures: GraphNodesContainAttributes([
+    ensures: GraphNodesContainAttributes({
         ":psi.agent-session/startup-prompts",
         ":psi.agent-session/startup-bootstrap-completed?",
         ":psi.agent-session/startup-bootstrap-started-at",
         ":psi.agent-session/startup-bootstrap-completed-at",
         ":psi.agent-session/startup-message-ids"
-    ])
+    })
 
-    ensures: GraphEdgesContainAttributes([
+    ensures: GraphEdgesContainAttributes({
         ":psi.agent-session/startup-prompts",
         ":psi.agent-session/startup-bootstrap-completed?",
         ":psi.agent-session/startup-bootstrap-started-at",
         ":psi.agent-session/startup-bootstrap-completed-at",
         ":psi.agent-session/startup-message-ids"
-    ])
+    })
 
     ensures: GraphDomainCoverageContains("agent-session")
 }
 
-------------------------------------------------------------
--- Open Questions
-------------------------------------------------------------
-
-open_question "Should startup prompts run sequentially as independent turns, or as one concatenated startup turn?"
-open_question "Should forked sessions re-run startup prompts by default, or inherit prior startup transcript only?"
+open question "Should startup prompts run as independent turns or as one concatenated startup turn?"
+open question "Should forked sessions re-run startup prompts by default, or inherit prior startup transcript only?"

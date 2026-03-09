@@ -1,56 +1,36 @@
+-- allium: 1
+
 -- default-footer.allium
---
--- Scope: Built-in footer rendered in the interactive TUI.
---
--- Source distillation:
---   - components/tui/src/psi/tui/app.clj
---   - components/agent-session/src/psi/agent_session/resolvers.clj
---   - components/tui/test/psi/tui/app_test.clj
---
--- Includes:
---   - Query-driven footer snapshot (session + extension-ui attrs)
---   - 2-line base footer: path line + usage/model stats line
---   - Optional 3rd status line from extension statuses
---   - Width-aware truncation/layout fallbacks
---   - Context warning/error coloring thresholds
---
--- Excludes:
---   - Theme/style internals beyond severity levels
---   - RPC event publication (see rpc-edn.allium)
---   - Emacs projection formatting (see emacs-footer.allium)
+-- Built-in interactive footer view.
 
 use "./session-management.allium" as session
 
-------------------------------------------------------------
--- Value Types
-------------------------------------------------------------
-
 value FooterStatus {
-    extensionId: String
+    extension_id: String
     text: String
 }
 
 value FooterInputs {
     cwd: String
-    gitBranch: String?
-    sessionName: String?
+    git_branch: String?
+    session_name: String?
 
-    usageInput: Integer
-    usageOutput: Integer
-    usageCacheRead: Integer
-    usageCacheWrite: Integer
-    usageCostTotal: Decimal
+    usage_input: Integer
+    usage_output: Integer
+    usage_cache_read: Integer
+    usage_cache_write: Integer
+    usage_cost_total: Decimal
 
-    contextFraction: Decimal?
-    contextWindow: Integer?
-    autoCompactionEnabled: Boolean
+    context_fraction: Decimal?
+    context_window: Integer?
+    auto_compaction_enabled: Boolean
 
-    modelProvider: String?
-    modelId: String?
-    modelReasoning: Boolean
-    thinkingLevel: String?
+    model_provider: String?
+    model_id: String?
+    model_reasoning: Boolean
+    thinking_level: String?
 
-    statuses: List<FooterStatus>
+    statuses: Set<FooterStatus>
 }
 
 value FooterContextDisplay {
@@ -59,28 +39,16 @@ value FooterContextDisplay {
 }
 
 value FooterView {
-    pathLine: String
-    statsLine: String
-    statusLine: String?
+    path_line: String
+    stats_line: String
+    status_line: String?
 }
-
-------------------------------------------------------------
--- Entity
-------------------------------------------------------------
 
 entity DefaultFooter {
     session: session/AgentSession
-
-    -- Fallback cwd used when query attrs are unavailable.
-    cwdFallback: String
-
-    -- Last rendered footer projection.
+    cwd_fallback: String
     view: FooterView?
 }
-
-------------------------------------------------------------
--- Config
-------------------------------------------------------------
 
 config {
     stats_min_padding: Integer = 2
@@ -88,14 +56,10 @@ config {
     context_error_fraction: Decimal = 0.9
 }
 
-------------------------------------------------------------
--- Rules
-------------------------------------------------------------
-
 rule FooterReadsCanonicalProjectionAttributes {
-    when: FooterRenderRequested(footer, _)
+    when: FooterRenderRequested(footer, width)
 
-    ensures: FooterQueryAttributes() = [
+    ensures: FooterQueryAttributes() = {
         "psi.agent-session/cwd",
         "psi.agent-session/git-branch",
         "psi.agent-session/session-name",
@@ -112,294 +76,151 @@ rule FooterReadsCanonicalProjectionAttributes {
         "psi.agent-session/model-reasoning",
         "psi.agent-session/thinking-level",
         "psi.ui/statuses"
-    ]
+    }
 }
 
 rule FooterInputsUseSafeFallbacks {
-    -- Query failures are ignored; rendering proceeds with defaults.
-    when: FooterRenderRequested(footer, _)
+    when: FooterRenderRequested(footer, width)
 
-    ensures: FooterInputsFor(footer).cwd =
-        FirstNonNull(QueryValue("psi.agent-session/cwd"), footer.cwdFallback, "")
+    ensures: FooterInputsFor(footer).cwd = FirstNonNull(QueryValue("psi.agent-session/cwd"), footer.cwd_fallback, "")
+    ensures: FooterInputsFor(footer).git_branch = QueryValue("psi.agent-session/git-branch")
+    ensures: FooterInputsFor(footer).session_name = QueryValue("psi.agent-session/session-name")
 
-    ensures: FooterInputsFor(footer).gitBranch = QueryValue("psi.agent-session/git-branch")
-    ensures: FooterInputsFor(footer).sessionName = QueryValue("psi.agent-session/session-name")
+    ensures: FooterInputsFor(footer).usage_input = QueryValueOrDefault("psi.agent-session/usage-input", 0)
+    ensures: FooterInputsFor(footer).usage_output = QueryValueOrDefault("psi.agent-session/usage-output", 0)
+    ensures: FooterInputsFor(footer).usage_cache_read = QueryValueOrDefault("psi.agent-session/usage-cache-read", 0)
+    ensures: FooterInputsFor(footer).usage_cache_write = QueryValueOrDefault("psi.agent-session/usage-cache-write", 0)
+    ensures: FooterInputsFor(footer).usage_cost_total = QueryValueOrDefault("psi.agent-session/usage-cost-total", 0.0)
 
-    ensures: FooterInputsFor(footer).usageInput = QueryValueOrDefault("psi.agent-session/usage-input", 0)
-    ensures: FooterInputsFor(footer).usageOutput = QueryValueOrDefault("psi.agent-session/usage-output", 0)
-    ensures: FooterInputsFor(footer).usageCacheRead = QueryValueOrDefault("psi.agent-session/usage-cache-read", 0)
-    ensures: FooterInputsFor(footer).usageCacheWrite = QueryValueOrDefault("psi.agent-session/usage-cache-write", 0)
-    ensures: FooterInputsFor(footer).usageCostTotal = QueryValueOrDefault("psi.agent-session/usage-cost-total", 0.0)
+    ensures: FooterInputsFor(footer).context_fraction = QueryValue("psi.agent-session/context-fraction")
+    ensures: FooterInputsFor(footer).context_window = QueryValue("psi.agent-session/context-window")
+    ensures: FooterInputsFor(footer).auto_compaction_enabled = Boolean(QueryValue("psi.agent-session/auto-compaction-enabled"))
 
-    ensures: FooterInputsFor(footer).contextFraction = QueryValue("psi.agent-session/context-fraction")
-    ensures: FooterInputsFor(footer).contextWindow = QueryValue("psi.agent-session/context-window")
-    ensures: FooterInputsFor(footer).autoCompactionEnabled =
-        Boolean(QueryValue("psi.agent-session/auto-compaction-enabled"))
+    ensures: FooterInputsFor(footer).model_provider = QueryValue("psi.agent-session/model-provider")
+    ensures: FooterInputsFor(footer).model_id = QueryValue("psi.agent-session/model-id")
+    ensures: FooterInputsFor(footer).model_reasoning = Boolean(QueryValue("psi.agent-session/model-reasoning"))
+    ensures: FooterInputsFor(footer).thinking_level = QueryValue("psi.agent-session/thinking-level")
 
-    ensures: FooterInputsFor(footer).modelProvider = QueryValue("psi.agent-session/model-provider")
-    ensures: FooterInputsFor(footer).modelId = QueryValue("psi.agent-session/model-id")
-    ensures: FooterInputsFor(footer).modelReasoning =
-        Boolean(QueryValue("psi.agent-session/model-reasoning"))
-    ensures: FooterInputsFor(footer).thinkingLevel = QueryValue("psi.agent-session/thinking-level")
-
-    ensures: FooterInputsFor(footer).statuses = QueryValueOrDefault("psi.ui/statuses", [])
+    ensures: FooterInputsFor(footer).statuses = QueryValueOrDefault("psi.ui/statuses", {})
 }
 
 rule FooterRendered {
     when: FooterRenderRequested(footer, width)
 
     let inputs = FooterInputsFor(footer)
-    let context = FooterContextFor(inputs.contextFraction, inputs.contextWindow, inputs.autoCompactionEnabled)
-    let pathLine = FooterPathLine(inputs.cwd, inputs.gitBranch, inputs.sessionName, width)
+    let context = FooterContextFor(inputs.context_fraction, inputs.context_window, inputs.auto_compaction_enabled)
+    let path_line = FooterPathLine(inputs.cwd, inputs.git_branch, inputs.session_name, width)
 
-    let leftStats = LeftStatsLine(inputs, context)
-    let rightStats = RightStatsLine(inputs)
-    let statsLine = ComposeStatsLine(leftStats, rightStats, width, config.stats_min_padding)
+    let left_stats = LeftStatsLine(inputs, context)
+    let right_stats = RightStatsLine(inputs)
+    let stats_line = ComposeStatsLine(left_stats, right_stats, width, config.stats_min_padding)
 
-    let statusLine = FooterStatusLine(inputs.statuses, width)
+    let status_line = FooterStatusLine(inputs.statuses, width)
 
-    ensures: footer.view.pathLine = pathLine
-    ensures: footer.view.statsLine = statsLine
-    ensures: footer.view.statusLine =
-        if statusLine = "":
-            null
+    ensures: footer.view.path_line = path_line
+    ensures: footer.view.stats_line = stats_line
+    ensures:
+        if status_line = "":
+            footer.view.status_line = null
         else:
-            statusLine
+            footer.view.status_line = status_line
 }
 
 rule PathLineComposition {
-    -- Format:
-    --   <cwd-with-~-home> [(branch)] [• session-name]
-    -- then middle-truncated to width.
-    when: FooterPathLineRequested(cwd, gitBranch, sessionName, width)
+    when: FooterPathLineRequested(cwd, git_branch, session_name, width)
 
-    let withHome = ReplaceHomePrefixWithTilde(cwd)
-    let withBranch =
-        if gitBranch != null and gitBranch != "":
-            withHome + " (" + gitBranch + ")"
-        else:
-            withHome
-    let withSession =
-        if sessionName != null and sessionName != "":
-            withBranch + " • " + sessionName
-        else:
-            withBranch
-
-    ensures: FooterPathLine(cwd, gitBranch, sessionName, width) =
-        MiddleTruncate(withSession, max(1, width))
+    ensures: FooterPathLine(cwd, git_branch, session_name, width) = MiddleTruncate(BuildPathLine(cwd, git_branch, session_name), Max(1, width))
 }
 
 rule LeftStatsPartOrder {
-    -- Parts are shown in this order, skipping zero-valued usage counters:
-    --   ↑input ↓output Rcache-read Wcache-write $cost context
     when: LeftStatsLineRequested(inputs, context)
 
-    ensures: LeftStatsLine(inputs, context) = JoinWithSpaces([
-        OptionalPart(inputs.usageInput > 0, "↑" + FormatTokenCount(inputs.usageInput)),
-        OptionalPart(inputs.usageOutput > 0, "↓" + FormatTokenCount(inputs.usageOutput)),
-        OptionalPart(inputs.usageCacheRead > 0, "R" + FormatTokenCount(inputs.usageCacheRead)),
-        OptionalPart(inputs.usageCacheWrite > 0, "W" + FormatTokenCount(inputs.usageCacheWrite)),
-        OptionalPart(inputs.usageCostTotal > 0, "$" + RoundTo3Decimals(inputs.usageCostTotal)),
+    ensures: LeftStatsLine(inputs, context) = JoinWithSpaces(SetOfNonBlank({
+        OptionalTokenPart(inputs.usage_input, "↑"),
+        OptionalTokenPart(inputs.usage_output, "↓"),
+        OptionalTokenPart(inputs.usage_cache_read, "R"),
+        OptionalTokenPart(inputs.usage_cache_write, "W"),
+        OptionalCostPart(inputs.usage_cost_total),
         context.text
-    ])
+    }))
 }
 
 rule ContextDisplayText {
-    when: FooterContextRequested(fraction, contextWindow, autoCompactionEnabled)
+    when: FooterContextRequested(fraction, context_window, auto_compaction_enabled)
 
-    let suffix = if autoCompactionEnabled: " (auto)" else: ""
-    let window = FormatTokenCount(if contextWindow != null: contextWindow else: 0)
-
-    ensures:
-        if fraction = null:
-            FooterContextFor(fraction, contextWindow, autoCompactionEnabled).text = "?/" + window + suffix
-        else:
-            FooterContextFor(fraction, contextWindow, autoCompactionEnabled).text =
-                RoundTo1Decimal(fraction * 100) + "%/" + window + suffix
+    ensures: FooterContextFor(fraction, context_window, auto_compaction_enabled).text = BuildContextDisplayText(fraction, context_window, auto_compaction_enabled)
 }
 
 rule ContextDisplaySeverity {
-    when: FooterContextRequested(fraction, contextWindow, autoCompactionEnabled)
+    when: FooterContextRequested(fraction, context_window, auto_compaction_enabled)
 
     ensures:
         if fraction = null:
-            FooterContextFor(fraction, contextWindow, autoCompactionEnabled).severity = normal
+            FooterContextFor(fraction, context_window, auto_compaction_enabled).severity = normal
         else if fraction > config.context_error_fraction:
-            FooterContextFor(fraction, contextWindow, autoCompactionEnabled).severity = error
+            FooterContextFor(fraction, context_window, auto_compaction_enabled).severity = error
         else if fraction > config.context_warning_fraction:
-            FooterContextFor(fraction, contextWindow, autoCompactionEnabled).severity = warning
+            FooterContextFor(fraction, context_window, auto_compaction_enabled).severity = warning
         else:
-            FooterContextFor(fraction, contextWindow, autoCompactionEnabled).severity = normal
+            FooterContextFor(fraction, context_window, auto_compaction_enabled).severity = normal
 }
 
 rule RightStatsAlwaysIncludesProvider {
-    -- Right side always starts with provider in parentheses.
-    -- Examples:
-    --   (openai) gpt-5.3-codex • xhigh
-    --   (anthropic) claude-3.7-sonnet
-    --   (no-provider) no-model
     when: RightStatsLineRequested(inputs)
 
-    let modelLabel = if inputs.modelId != null: inputs.modelId else: "no-model"
-    let providerLabel = if inputs.modelProvider != null: inputs.modelProvider else: "no-provider"
-
-    let normalizedThinking = NormalizeThinkingLevel(inputs.thinkingLevel)
-    let rightBase =
-        if inputs.modelReasoning:
-            if normalizedThinking = "off":
-                modelLabel + " • thinking off"
-            else:
-                modelLabel + " • " + normalizedThinking
-        else:
-            modelLabel
-
-    ensures: RightStatsLine(inputs) = "(" + providerLabel + ") " + rightBase
-}
-
-rule ThinkingLevelNormalization {
-    -- Query may surface thinking level as keyword or string.
-    -- Runtime uses Clojure name/string conversion without case normalization.
-    when: ThinkingLevelNormalized(level)
-
-    ensures:
-        if level = null:
-            NormalizeThinkingLevel(level) = "off"
-        else:
-            NormalizeThinkingLevel(level) = KeywordNameOrString(level)
+    ensures: RightStatsLine(inputs) = BuildRightStatsLine(inputs.model_provider, inputs.model_id, inputs.model_reasoning, inputs.thinking_level)
 }
 
 rule StatsLineLayoutFallback {
-    -- Layout priority:
-    --   1) left + right with right-alignment and min padding
-    --   2) if too narrow, truncate right side
-    --   3) if still too narrow, left side only
-    when: StatsLineRequested(left, right, width, minPadding)
+    when: StatsLineRequested(left, right, width, min_padding)
 
-    let safeLeft =
-        if VisibleWidth(left) > width:
-            TrimRightVisible(left, width)
-        else:
-            left
-
-    let leftWidth = VisibleWidth(safeLeft)
-    let rightWidth = VisibleWidth(right)
-    let availForRight = width - leftWidth - minPadding
-    let rightTruncated =
-        if availForRight > 3:
-            TrimRightVisible(right, availForRight)
-        else:
-            ""
-
-    ensures:
-        if leftWidth + minPadding + rightWidth <= width:
-            ComposeStatsLine(left, right, width, minPadding) =
-                safeLeft + Spaces(width - leftWidth - rightWidth) + right
-        else if availForRight > 3:
-            ComposeStatsLine(left, right, width, minPadding) =
-                safeLeft
-                + Spaces(max(minPadding, width - leftWidth - VisibleWidth(rightTruncated)))
-                + rightTruncated
-        else:
-            ComposeStatsLine(left, right, width, minPadding) = safeLeft
+    ensures: ComposeStatsLine(left, right, width, min_padding) = ComposeStatsLineWithFallback(left, right, width, min_padding)
 }
 
 rule StatusLineOrderingSanitizationAndTruncation {
-    -- Statuses are sorted by extension id, sanitized to single-line text,
-    -- blank statuses dropped, then joined with spaces.
     when: FooterStatusLineRequested(statuses, width)
 
-    let sorted = SortBy(statuses, extensionId)
-    let sanitized = sorted.map(s => SanitizeSingleLineText(s.text))
-    let nonBlank = sanitized.filter(t => t != "")
-    let joined = JoinWithSpaces(nonBlank)
-
-    ensures:
-        if joined = "":
-            FooterStatusLine(statuses, width) = ""
-        else:
-            FooterStatusLine(statuses, width) = TruncateToWidth(joined, width)
-}
-
-rule StatusTextSanitization {
-    -- Sanitization:
-    --   CR/LF/TAB -> space
-    --   collapse repeated spaces
-    --   trim leading/trailing spaces
-    when: StatusTextSanitized(text)
-
-    ensures: SanitizeSingleLineText(text) =
-        Trim(CollapseSpaces(Replace(text, pattern: "[\\r\\n\\t]", replacement: " ")))
+    ensures: FooterStatusLine(statuses, width) = RenderStatusLine(statuses, width)
 }
 
 rule FooterTokenFormatting {
-    -- Formatter for usage counters and context window display.
     when: FormatTokenCountCalled(count)
 
-    let safeCount = if count != null: count else: 0
-
-    ensures:
-        FormatTokenCount(count) =
-            if safeCount < 1000:
-                safeCount.to_string
-            else if safeCount < 10000:
-                RoundTo1Decimal(safeCount / 1000) + "k"
-            else if safeCount < 1000000:
-                RoundToInteger(safeCount / 1000) + "k"
-            else if safeCount < 10000000:
-                RoundTo1Decimal(safeCount / 1000000) + "M"
-            else:
-                RoundToInteger(safeCount / 1000000) + "M"
+    ensures: FormatTokenCount(count) = CompactTokenCount(count)
 }
 
 rule FooterRenderedLinesClearTrailingCharacters {
-    -- Each rendered footer row clears to end-of-line so shorter re-renders
-    -- do not leave stale trailing characters.
     when: FooterRenderedForTerminal(footer, width)
 
-    ensures: FooterRowClearsToEnd(footer.view.pathLine)
-    ensures: FooterRowClearsToEnd(footer.view.statsLine)
+    ensures: FooterRowClearsToEnd(footer.view.path_line)
+    ensures: FooterRowClearsToEnd(footer.view.stats_line)
     ensures:
-        if footer.view.statusLine != null:
-            FooterRowClearsToEnd(footer.view.statusLine)
+        if footer.view.status_line != null:
+            FooterRowClearsToEnd(footer.view.status_line)
 }
-
-------------------------------------------------------------
--- Actor Declarations
-------------------------------------------------------------
 
 actor User {
-    identified_by: FooterRenderRequested
+    identified_by: id = "footer-render-requester"
 }
 
-------------------------------------------------------------
--- Surface
-------------------------------------------------------------
-
 surface DefaultFooterView {
-    for user: User
+    facing user: User
 
     context footer: DefaultFooter
 
     exposes:
-        footer.view.pathLine
-        footer.view.statsLine
-        footer.view.statusLine
+        footer.view.path_line
+        footer.view.stats_line
+        footer.view.status_line
 
     provides:
         FooterRenderRequested(footer, width)
 
-    guidance:
-        -- Built from EQL query attrs listed in FooterReadsCanonicalProjectionAttributes.
-        -- Path line is always present.
-        -- Stats line is always present.
-        -- Status line is optional (only when non-blank statuses exist).
+    @guidance
+        -- Path and stats lines are always present.
+        -- Status line is optional and omitted when blank.
+        -- Footer is derived from canonical session and ui projection attrs.
 }
 
-------------------------------------------------------------
--- Deferred Specifications
-------------------------------------------------------------
-
-deferred FooterRenderer.ansi_styles        -- dim/warn/error styling choices
-deferred FooterQueryExecution.error_policy -- query-fn exception handling internals
-
--- Distilled as-is from current runtime behavior; no unresolved behavior questions in this contract.
+deferred FooterRenderer.ansi_styles
+deferred FooterQueryExecution.error_policy

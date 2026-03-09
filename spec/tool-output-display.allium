@@ -1,186 +1,153 @@
+-- allium: 1
+
 -- tool-output-display.allium
---
--- Scope: Interactive-mode orchestration for displaying tool output.
---        Shared display lifecycle for any UI (TUI, Emacs, future frontends).
---
--- Source distillation:
---   - ~/src/pi-mono/packages/coding-agent/src/modes/interactive/interactive-mode.ts
---   - ~/src/pi-mono/packages/coding-agent/src/modes/interactive/components/tool-execution.ts
---   - ~/src/pi-mono/packages/coding-agent/src/core/extensions/types.ts
---
--- Includes:
---   - Tool-call component lifecycle during assistant streaming and execution
---   - Matching tool results to tool-call rows by toolCallId
---   - Shared argument propagation into renderer headers
---   - Global collapse/expand state for tool output rows
---   - Extension UI control for get/set tool-output expansion
---   - Image-visibility setting propagation to rendered tool rows
---
--- Excludes:
---   - Tool execution logic (see tools/*.allium)
---   - Renderer internals (see tool-output-rendering.allium)
---   - HTML export rendering
+-- Interactive-mode orchestration for displaying tool output.
 
 use "./tool-output-rendering.allium" as render
 
-------------------------------------------------------------
--- Value Types
-------------------------------------------------------------
-
 value AssistantToolCall {
-    toolCallId: String
-    toolName: String
+    tool_call_id: String
+    tool_name: String
     arguments: String
 }
 
 value AssistantMessageFrame {
-    toolCalls: List<AssistantToolCall>
-    stopReason: streaming | completed | aborted | error
-    errorMessage: String?
+    tool_calls: Set<AssistantToolCall>
+    stop_reason: streaming | completed | aborted | error
+    error_message: String?
 }
 
 value ToolExecutionStartEvent {
-    toolCallId: String
-    toolName: String
+    tool_call_id: String
+    tool_name: String
     args: String
 }
 
 value ToolExecutionUpdateEvent {
-    toolCallId: String
-    partialOutput: render/ToolOutputPayload
+    tool_call_id: String
+    partial_output: render/ToolOutputPayload
 }
 
 value ToolExecutionEndEvent {
-    toolCallId: String
+    tool_call_id: String
     output: render/ToolOutputPayload
-    isError: Boolean
+    is_error: Boolean
 }
 
 entity ToolOutputBinding {
-    toolCallId: String
-    toolName: String
+    tool_call_id: String
+    tool_name: String
     args: String
     view: render/ToolOutputView
 }
 
 entity ToolOutputDisplayState {
-    toolsExpanded: Boolean = false
-    showImages: Boolean = true
+    tools_expanded: Boolean
+    show_images: Boolean
 
-    -- Pending lookup by toolCallId (removed when final result arrives).
-    activeToolBindings: List<ToolOutputBinding>
-
-    -- Full rendered transcript rows (retained after completion).
-    renderedToolViews: List<render/ToolOutputView>
-
-    activeViews: renderedToolViews
+    active_tool_bindings: Set<ToolOutputBinding>
+    rendered_tool_views: Set<render/ToolOutputView>
 }
-
-------------------------------------------------------------
--- Config
-------------------------------------------------------------
 
 config {
     expand_tools_action: String = "expandTools"
 }
 
-------------------------------------------------------------
--- Assistant Streaming Lifecycle
-------------------------------------------------------------
-
 rule AssistantFrameAddsToolRows {
-    when: AssistantMessageUpdated(display, frame: AssistantMessageFrame)
+    when: AssistantMessageUpdated(display, frame)
 
-    for call in frame.toolCalls:
-        requires: not exists ToolOutputBinding{toolCallId: call.toolCallId}
-
-        let view = render/ToolOutputView.created(
-            toolCallId: call.toolCallId,
-            toolName: call.toolName,
-            status: pending,
-            expanded: display.toolsExpanded,
-            showImages: display.showImages,
-            args: call.arguments,
-            output: null
-        )
-
-        let binding = ToolOutputBinding.created(
-            toolCallId: call.toolCallId,
-            toolName: call.toolName,
-            args: call.arguments,
-            view: view
-        )
-
-        ensures: display.activeToolBindings = display.activeToolBindings + [binding]
-        ensures: display.renderedToolViews = display.renderedToolViews + [view]
+    ensures:
+        for call in frame.tool_calls:
+            if not exists ToolOutputBinding with tool_call_id = call.tool_call_id:
+                view = render/ToolOutputView{
+                    tool_call_id: call.tool_call_id,
+                    tool_name: call.tool_name,
+                    status: pending,
+                    expanded: display.tools_expanded,
+                    show_images: display.show_images,
+                    args: call.arguments,
+                    parsed_args: null,
+                    output: null,
+                    capabilities: null,
+                    header: "",
+                    visible_text: "",
+                    warnings: {},
+                    background: pending,
+                    inline_images: {},
+                    image_fallback_count: 0
+                }
+                binding = ToolOutputBinding{
+                    tool_call_id: call.tool_call_id,
+                    tool_name: call.tool_name,
+                    args: call.arguments,
+                    view: view
+                }
+                display.active_tool_bindings = display.active_tool_bindings + {binding}
+                display.rendered_tool_views = display.rendered_tool_views + {view}
 }
 
 rule AssistantFrameUpdatesKnownToolArgs {
-    when: AssistantMessageUpdated(display, frame: AssistantMessageFrame)
+    when: AssistantMessageUpdated(display, frame)
 
-    for call in frame.toolCalls:
-        let binding = ToolOutputBinding{toolCallId: call.toolCallId}
-        requires: binding != null
-
-        ensures: binding.args = call.arguments
-        ensures: binding.view.args = call.arguments
+    ensures:
+        for call in frame.tool_calls:
+            binding = ToolBindingById(display.active_tool_bindings, call.tool_call_id)
+            if binding != null:
+                binding.args = call.arguments
+                binding.view.args = call.arguments
 }
 
 rule AssistantMessageEndWithFailureMarksPendingRowsError {
-    when: AssistantMessageEnded(display, frame: AssistantMessageFrame)
-    requires: frame.stopReason in [aborted, error]
+    when: AssistantMessageEnded(display, frame)
+    requires: frame.stop_reason in {aborted, error}
 
-    for binding in display.activeToolBindings:
-        ensures: binding.view.status = error
-        ensures: binding.view.output = render/ToolOutputPayload{
-            text: frame.errorMessage or "Error",
-            images: [],
-            isError: true
-        }
-
-    ensures: display.activeToolBindings = []
+    ensures:
+        for binding in display.active_tool_bindings:
+            binding.view.status = error
+            binding.view.output = render/ToolOutputPayload{
+                text: frame.error_message ?? "Error",
+                images: {},
+                is_error: true,
+                details: null
+            }
+    ensures: display.active_tool_bindings = {}
 }
-
-rule AssistantMessageEndWithoutFailureFinalizesArgs {
-    when: AssistantMessageEnded(display, frame: AssistantMessageFrame)
-    requires: frame.stopReason = completed
-
-    for binding in display.activeToolBindings:
-        ensures: ToolArgsMarkedComplete(binding)
-}
-
-------------------------------------------------------------
--- Tool Execution Event Lifecycle
-------------------------------------------------------------
 
 rule ToolExecutionStartBackfillsMissingToolRow {
-    when: ToolExecutionStarted(display, event: ToolExecutionStartEvent)
-    requires: not exists ToolOutputBinding{toolCallId: event.toolCallId}
+    when: ToolExecutionStarted(display, event)
+    requires: ToolBindingById(display.active_tool_bindings, event.tool_call_id) = null
 
-    let view = render/ToolOutputView.created(
-        toolCallId: event.toolCallId,
-        toolName: event.toolName,
+    ensures: view = render/ToolOutputView{
+        tool_call_id: event.tool_call_id,
+        tool_name: event.tool_name,
         status: running,
-        expanded: display.toolsExpanded,
-        showImages: display.showImages,
+        expanded: display.tools_expanded,
+        show_images: display.show_images,
         args: event.args,
-        output: null
-    )
-
-    let binding = ToolOutputBinding.created(
-        toolCallId: event.toolCallId,
-        toolName: event.toolName,
+        parsed_args: null,
+        output: null,
+        capabilities: null,
+        header: "",
+        visible_text: "",
+        warnings: {},
+        background: pending,
+        inline_images: {},
+        image_fallback_count: 0
+    }
+    ensures: binding = ToolOutputBinding{
+        tool_call_id: event.tool_call_id,
+        tool_name: event.tool_name,
         args: event.args,
         view: view
-    )
-
-    ensures: display.activeToolBindings = display.activeToolBindings + [binding]
-    ensures: display.renderedToolViews = display.renderedToolViews + [view]
+    }
+    ensures: display.active_tool_bindings = display.active_tool_bindings + {binding}
+    ensures: display.rendered_tool_views = display.rendered_tool_views + {view}
 }
 
 rule ToolExecutionStartPromotesPendingRowToRunning {
-    when: ToolExecutionStarted(display, event: ToolExecutionStartEvent)
-    let binding = ToolOutputBinding{toolCallId: event.toolCallId}
+    when: ToolExecutionStarted(display, event)
+
+    let binding = ToolBindingById(display.active_tool_bindings, event.tool_call_id)
     requires: binding != null
 
     ensures: binding.args = event.args
@@ -189,160 +156,100 @@ rule ToolExecutionStartPromotesPendingRowToRunning {
 }
 
 rule ToolExecutionUpdateStreamsPartialOutput {
-    when: ToolExecutionUpdated(display, event: ToolExecutionUpdateEvent)
-    let binding = ToolOutputBinding{toolCallId: event.toolCallId}
+    when: ToolExecutionUpdated(display, event)
+
+    let binding = ToolBindingById(display.active_tool_bindings, event.tool_call_id)
     requires: binding != null
 
     ensures: binding.view.status = running
-    ensures: binding.view.output = event.partialOutput
+    ensures: binding.view.output = event.partial_output
 }
 
 rule ToolExecutionEndFinalizesRow {
-    when: ToolExecutionEnded(display, event: ToolExecutionEndEvent)
-    let binding = ToolOutputBinding{toolCallId: event.toolCallId}
+    when: ToolExecutionEnded(display, event)
+
+    let binding = ToolBindingById(display.active_tool_bindings, event.tool_call_id)
     requires: binding != null
 
-    ensures: binding.view.status = if event.isError then error else success
+    ensures:
+        if event.is_error:
+            binding.view.status = error
+        else:
+            binding.view.status = success
+
     ensures: binding.view.output = event.output
-    ensures: binding.view.output.isError = event.isError
-
-    ensures: display.activeToolBindings = display.activeToolBindings without binding
+    ensures: binding.view.output.is_error = event.is_error
+    ensures: display.active_tool_bindings = RemoveBinding(display.active_tool_bindings, binding)
 }
-
-------------------------------------------------------------
--- Session Replay / Rehydration
-------------------------------------------------------------
 
 rule SessionHistoryRenderResetsToolDisplayState {
     when: SessionHistoryRenderStarted(display)
 
-    ensures: display.activeToolBindings = []
-    ensures: display.renderedToolViews = []
+    ensures: display.active_tool_bindings = {}
+    ensures: display.rendered_tool_views = {}
 }
-
-rule RehydrateToolRowsFromAssistantHistory {
-    when: SessionHistoryRendered(display, assistantFrame: AssistantMessageFrame)
-
-    for call in assistantFrame.toolCalls:
-        let view = render/ToolOutputView.created(
-            toolCallId: call.toolCallId,
-            toolName: call.toolName,
-            status: pending,
-            expanded: display.toolsExpanded,
-            showImages: display.showImages,
-            args: call.arguments,
-            output: null
-        )
-
-        let binding = ToolOutputBinding.created(
-            toolCallId: call.toolCallId,
-            toolName: call.toolName,
-            args: call.arguments,
-            view: view
-        )
-
-        ensures: display.activeToolBindings = display.activeToolBindings + [binding]
-        ensures: display.renderedToolViews = display.renderedToolViews + [view]
-}
-
-rule RehydrateToolResultMatchesByToolCallId {
-    when: SessionToolResultRendered(display, toolCallId, output, isError)
-    let binding = ToolOutputBinding{toolCallId: toolCallId}
-    requires: binding != null
-
-    ensures: binding.view.output = output
-    ensures: binding.view.status = if isError then error else success
-    ensures: display.activeToolBindings = display.activeToolBindings without binding
-}
-
-------------------------------------------------------------
--- Expansion + Display Controls
-------------------------------------------------------------
 
 rule ToggleToolExpansionViaKeybinding {
     when: KeybindingActionTriggered(display, action)
     requires: action = config.expand_tools_action
 
-    ensures: SetToolsExpanded(display, not display.toolsExpanded)
+    ensures: SetToolsExpanded(display, not display.tools_expanded)
 }
 
 rule SetToolsExpandedAppliesToAllRenderedRows {
     when: SetToolsExpanded(display, expanded)
 
-    ensures: display.toolsExpanded = expanded
+    ensures: display.tools_expanded = expanded
     ensures:
-        for view in display.renderedToolViews:
+        for view in display.rendered_tool_views:
             view.expanded = expanded
     ensures: ChatExpandableComponentsSetExpanded(expanded)
 }
 
-rule ExtensionCanReadExpansionState {
-    when: GetToolsExpanded(display)
-    ensures: result = display.toolsExpanded
-}
-
 rule ShowImagesSettingPropagatesToToolRows {
-    when: SetShowImages(display, showImages)
+    when: SetShowImages(display, show_images)
 
-    ensures: display.showImages = showImages
+    ensures: display.show_images = show_images
     ensures:
-        for view in display.renderedToolViews:
-            view.showImages = showImages
+        for view in display.rendered_tool_views:
+            view.show_images = show_images
 }
-
-------------------------------------------------------------
--- Actors
-------------------------------------------------------------
 
 actor User {
-    identified_by: KeybindingActionTriggered
+    identified_by: id = "human-operator"
 }
 
 actor ExtensionModule {
-    identified_by: SetToolsExpanded
+    identified_by: id = "extension-module"
 }
 
-------------------------------------------------------------
--- Surfaces
-------------------------------------------------------------
-
 surface ToolOutputDisplayApi {
-    for caller: User | ExtensionModule
+    facing caller: User | ExtensionModule
 
     context display: ToolOutputDisplayState
 
     exposes:
-        display.toolsExpanded
-        display.showImages
-        display.activeViews
+        display.tools_expanded
+        display.show_images
+        display.rendered_tool_views
 
     provides:
         AssistantMessageUpdated(display, frame)
         AssistantMessageEnded(display, frame)
-
         ToolExecutionStarted(display, event)
         ToolExecutionUpdated(display, event)
         ToolExecutionEnded(display, event)
-
         SessionHistoryRenderStarted(display)
-        SessionHistoryRendered(display, frame)
-        SessionToolResultRendered(display, toolCallId, output, isError)
-
         KeybindingActionTriggered(display, action)
         SetToolsExpanded(display, expanded)
-        GetToolsExpanded(display)
-        SetShowImages(display, showImages)
+        SetShowImages(display, show_images)
 
-    guidance:
-        -- This lifecycle is shared across UIs (TUI, Emacs, future frontends).
+    @guidance
+        -- Shared lifecycle across UIs (TUI, Emacs, future frontends).
         -- Expansion state is global within a chat view.
-        -- New tool rows inherit current expansion and image-visibility state.
-        -- Tool rows are correlated strictly by toolCallId.
+        -- New rows inherit expansion and image-visibility state.
+        -- Tool rows are correlated strictly by tool_call_id.
 }
 
-------------------------------------------------------------
--- Open Questions
-------------------------------------------------------------
-
-open_question "Should expansion remain a single global toggle, or move to per-tool-row expansion for long mixed transcripts?"
-open_question "Should session replay preserve the exact partial-stream snapshots, or only final tool results?"
+open question "Should expansion remain global, or move to per-tool-row expansion in long transcripts?"
+open question "Should replay preserve partial stream snapshots, or only final tool results?"

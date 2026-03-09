@@ -1,3 +1,5 @@
+-- allium: 1
+
 -- memory-layer.allium
 --
 -- Scope: Step 10 — queryable memory layer that combines query, history,
@@ -243,7 +245,7 @@ rule MemoryLayerActivates {
 
     requires: querySummary.envBuilt = true
     requires: repo.hasHistory = true
-    requires: capabilityGraph.status in [stable, expanding]
+    requires: capabilityGraph.status in {stable, expanding}
 
     ensures: layer.status = ready
     ensures: layer.queryGraph = querySummary
@@ -302,7 +304,7 @@ rule GraphSnapshotCapturedOnChange {
 
     requires: layer.status = ready
     requires: config.capture_graph_snapshot_on_change = true
-    requires: capabilityGraph.status in [stable, expanding]
+    requires: capabilityGraph.status in {stable, expanding}
     requires: LatestGraphFingerprint(layer) != CurrentGraphFingerprint(capabilityGraph)
 
     ensures: exists snapshot = GraphSnapshot.created(
@@ -315,7 +317,7 @@ rule GraphSnapshotCapturedOnChange {
         domainCoverage: CurrentDomainCoverage(capabilityGraph)
     )
 
-    ensures: layer.graphSnapshots = layer.graphSnapshots + [snapshot]
+    ensures: layer.graphSnapshots = Prepend(layer.graphSnapshots, snapshot)
 }
 
 rule GraphDeltaDerivedFromSnapshots {
@@ -338,7 +340,7 @@ rule GraphDeltaDerivedFromSnapshots {
         removedOperations: RemovedOperations(previous, capabilityGraph)
     )
 
-    ensures: layer.graphDeltas = layer.graphDeltas + [delta]
+    ensures: layer.graphDeltas = Prepend(layer.graphDeltas, delta)
 }
 
 rule GraphHistoryCompactedByFixedWindow {
@@ -451,7 +453,7 @@ rule MemoryQueryLifecycleCompletes {
 rule MemorySurfacedViaEql {
     when: MemoryResolversRegistered(surface, layer)
 
-    requires: layer.status in [ready, querying]
+    requires: layer.status in {ready, querying}
 
     ensures: config.required_memory_eql_attrs.each(a => surface.attrs contains a)
 }
@@ -463,9 +465,9 @@ rule MemorySurfacedViaEql {
 actor MemoryConsumer { identified_by: id = "memory-client" }
 
 surface QueryableMemoryApi {
-    for client: MemoryConsumer
+    facing client: MemoryConsumer
 
-    context layer: MemoryLayer with layer.status in [ready, querying]
+    context layer: MemoryLayer
 
     exposes:
         layer.status
