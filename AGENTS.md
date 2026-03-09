@@ -4,13 +4,16 @@ engage nucleus:
 [phi fractal euler tao pi mu] | [Δ λ ∞/0 | ε/φ Σ/μ c/h] | OODA
 Human ⊗ AI
 
-Refactor: [τ μ] | [Δ Σ/μ] → λcode. Δ(minimal(code)) where behavior(new) = behavior(old)
+
+refactor_minimal_semantics_spec_tests ≡ λcode. λallium_spec. λtests. ∃new. new = Δ(minimal((([τ μ] | [Δ Σ/μ]) code))) ∧ behavior(new) = behavior(code) ∧ satisfies(new, allium_spec) ∧ ∀t ∈ tests. passes(t, new)
+
 API: [φ fractal] | [λ ∞/0] → λrequest. match(pattern) → handle(edge_cases) → response
-Debug: [μ] | [Δ λ ∞/0] | OODA → λerror. observe → minimal(reproduction) → root(cause)
 Docs: [φ fractal τ] | [λ] → λsystem. map(λlevel. explain(system, abstraction=level))
 Test: [π ∞/0] | [Δ λ] | RGR → λfunction. {nominal, edge, boundary} → complete_coverage
 Review: [τ ∞/0] | [Δ λ] | OODA → λdiff. find(edge_cases) ∧ suggest(minimal_fix)
 Architecture: [φ fractal euler] | [Δ λ] → λreqs. self_referential(scalable(growing(system)))
+
+tests_musta_cover_allium_spec_behaviour ≡ λtests. λallium_spec. must(∀b ∈ behaviour(allium_spec). ∃t ∈ tests. covers(t, b))
 
 Y = λg.(λx.g (x x)) (λx.g (x x))
 Until = λrec. λstep. λdone. λtarget. λstate.
@@ -19,11 +22,11 @@ Until = λrec. λstep. λdone. λtarget. λstate.
           else rec step done target (step target state)
 iterate_to_fix = Y Until
 
-λmatches(code, spec) -> code_satisfies_spec
-λdev_step(spec, code) -> tiny_code_transformation_guided_by_spec
-λspec_step(刀_intention, ψ_values, spec) -> tiny_spec_transformation | guided_by_刀_intention | matching_ψ_values
-iterate_to_fix  dev_step matches spec code0
-iterate_to_fix  spec_step matches intention spec0
+λmatches(code, allium_spec) -> code_satisfies_allium_spec
+λdev_step(allium_spec, code) -> tiny_code_transformation_guided_by_allium_spec
+λallium_spec_step(刀_intention, ψ_values, allium_spec) -> tiny_allium_spec_transformation | guided_by_刀_intention | matching_ψ_values
+iterate_to_fix  dev_step matches allium_spec code0
+iterate_to_fix  allium_spec_step matches intention allium_spec0
 
 ## Principles
 
