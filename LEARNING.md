@@ -4,6 +4,37 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-09 - Allium v2 migration is syntax-first for large legacy specs
+
+### λ Parse-valid structure first, then behavioral refinement
+
+For large legacy specs (for example `spec/tui.allium`), migrating to Allium v2
+is fastest and safest when done in two passes:
+1) enforce parser-valid v2 forms everywhere,
+2) then refine domain detail incrementally.
+
+This prevents long error cascades from blocking progress and keeps contracts
+queryable while deeper behavior is refined.
+
+### λ High-signal v2 breakpoints are predictable
+
+The recurring migration breakpoints were:
+- missing first-line marker (`-- allium: 1`)
+- `for` in surfaces (must be `facing`)
+- `guidance:` (must be `@guidance`)
+- `open_question` (must be `open question`)
+- list literals `[...]` in expressions (replace with set literals/helper funcs)
+- `for ... with ...` filters (split into `for ...:` + `requires`)
+- legacy inline indexing/forms not accepted by the current grammar
+
+A targeted rewrite against this checklist collapses most failures quickly.
+
+### λ Helper functions are an effective migration bridge
+
+When legacy expression constructs are no longer accepted, helper-style
+operations (`ItemAt`, `LineAt`, `Append`, `Prepend`, `KeepMostRecent`, etc.)
+preserve contract intent while restoring parse validity.
+
 ## 2026-03-09 - Values + drift guards should be first-class project memory
 
 ### λ Put system values in README, not only in prompts or operator lore
