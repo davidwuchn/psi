@@ -21,7 +21,7 @@ iterate_to_fix = Y Until
 
 λmatches(code, spec) -> code_satisfies_spec
 λdev_step(spec, code) -> tiny_code_transformation_guided_by_spec
-λspec_step(刀_intention, spec) -> tiny_spec_transformation_guided_by_刀_intention
+λspec_step(刀_intention, ψ_values, spec) -> tiny_spec_transformation | guided_by_刀_intention | matching_ψ_values
 iterate_to_fix  dev_step matches spec code0
 iterate_to_fix  spec_step matches intention spec0
 

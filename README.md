@@ -4,6 +4,14 @@ A self-evolving AI coding agent built in Clojure. Statechart-driven,
 EQL-queryable, extensible. Inspired by
 [pi-mono](https://github.com/badlogic/pi-mono).
 
+
+## Values
+
+- Extensions can completely customise the agent.
+- Everything is introspectable
+- AI provider agnostic
+- Minimal builtin behaviour
+
 ---
 
 ## Quick Start
@@ -122,6 +130,25 @@ Env vars:
 - `PSI_MEMORY_HISTORY_COMMIT_LIMIT`
 - `PSI_MEMORY_RETENTION_SNAPSHOTS`
 - `PSI_MEMORY_RETENTION_DELTAS`
+
+### Spec drift guard
+
+Use these tasks to keep semantic declaration surfaces stable while iterating specs:
+
+```bash
+bb spec:ci          # changed-file allium check + name-presence guard
+bb spec:check       # allium check for changed .allium files vs HEAD
+bb spec:check:full  # allium check across all spec/
+bb spec:guard       # name-presence guard only
+bb spec:baseline    # refresh baseline from last commit (HEAD)
+```
+
+Baseline file:
+- `.psi/spec-name-presence-baseline.json`
+
+Guard scope:
+- tracks declaration names for `rule`, `surface`, `entity`, `value`
+- prevents accidental removals; additive declarations remain allowed
 
 ### Memory durability operations
 
