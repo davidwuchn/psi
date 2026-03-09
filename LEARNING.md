@@ -4,6 +4,30 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-09 - Write/edit convergence reinforces path-normalization and error-contract discipline
+
+### λ Path semantics drift when specs skip internal normalization steps
+
+Both `execute-write` and `execute-edit` call shared `resolve-path`, which first
+expands raw input (`@` stripping, unicode-space normalization, `~` expansion)
+before cwd resolution. A spec that models only `ResolveToCwd(path, cwd)` misses
+this pre-resolution phase and can diverge on edge-case paths even if "happy-path"
+behavior appears aligned.
+
+### λ Success/error messages should target resolved paths when runtime does
+
+Write/edit runtime messages use resolved path strings (`fpath`), not raw caller
+input. Specs should anchor message contracts to resolved-path output to preserve
+operator debuggability and avoid false mismatches under relative or expanded-path
+inputs.
+
+### λ Remove normative rules not enforced by code (non-noop/uniqueness drift)
+
+Earlier edit spec rules required "text must be unique" and "No changes made".
+Current runtime enforces ambiguity only in fuzzy fallback and does not reject
+exact-match no-op replacements. Convergence quality improves when those stronger
+but unenforced rules are removed rather than treated as implicit guarantees.
+
 ## 2026-03-09 - Read tool convergence highlights shape drift risks between spec and runtime payloads
 
 ### λ Tool result shape drift is most likely around heterogeneous content fields
