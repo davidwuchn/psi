@@ -7,6 +7,8 @@ Current truth about the Psi system.
 ## Operating Frame
 
 - ✓ Nucleus framing is now explicit in `AGENTS.md` via **Core Equation** (`刀 ⊣ ψ → 🐍`) and **The Loop** (Observe → Orient → Decide → Act).
+- ✓ Spec refinement framing now explicitly includes values in `AGENTS.md` (`λspec_step(刀_intention, ψ_values, spec)`), tightening the intention+values contract for future prompt/spec evolution.
+- ✓ Project values and spec-drift guard workflow are now explicit in `README.md` (Values section + `bb spec:*` commands with declaration-name baseline guard).
 - ✓ Remember memory-capture framing clarified: human signal to future ψ via manual remember writeback.
 - ✓ Memory model boundary clarified: session memory (ephemeral working set) ≠ persistent memory (cross-session distilled artifacts) ≠ git history (queried directly, not duplicated into memory store).
 - ✓ Session persistence is a separate concern from memory: session transcripts/state may be partially persisted for `/resume`, but this is distinct from memory-store artifacts used by remember/recover.

@@ -183,6 +183,7 @@ Ordered steps toward PSI COMPLETE.
 - Current status:
   - `allium check spec` passes (47 files, 0 issues)
   - Dependency ordering pass complete (`no-use` roots → dependents)
+  - Spec drift guard workflow is now documented in `README.md` (`bb spec:ci`, `bb spec:check`, `bb spec:check:full`, `bb spec:guard`, `bb spec:baseline`) with baseline file path and declaration-name guard scope.
 - Remaining work:
   - Recover richer behavioral detail where specs were intentionally simplified during parser migration (session/rpc/tui/emacs/memory flows)
   - Align event vocabulary end-to-end (command vs emitted event pairs) and keep surface `provides` lists strictly synchronized with rule triggers
