@@ -4,6 +4,32 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-08 - Tool names should be canonical at registration boundaries
+
+### λ Enforce naming policy at registration time, not during downstream execution
+
+Rejecting invalid tool names (`^[a-z0-9][a-z0-9-]*$`) inside extension
+registration creates one clear failure point. If invalid names are allowed into
+registry state, every downstream surface (tool schema emission, prompt
+contribution text, provider transport, UI rendering) must defensively normalize
+or fail later.
+
+### λ Kebab-case tool names avoid cross-provider edge cases and reduce escaping drift
+
+Underscore and mixed-style naming worked locally but increased drift between tool
+schema text, extension docs, and provider payload expectations. Standardizing on
+kebab-case (`agent-chain`, `hello-upper`, `hello-wrap`) made names consistent
+across extension registry, prompt contributions, tests, and docs.
+
+### λ Spec + runtime guard together prevent regression
+
+A naming rule in `spec/tools/tool-naming.allium` documents the contract; runtime
+validation in `register-tool-in!` enforces it. Either one alone is weaker:
+- spec-only can drift from implementation
+- runtime-only lacks durable design memory
+
+Keeping both aligned turns naming into a stable invariant.
+
 ## 2026-03-08 - Anthropic SSE usage is split across two events; hardcoded zeros are silent
 
 ### λ Anthropic streaming usage arrives in two separate SSE events — not one
