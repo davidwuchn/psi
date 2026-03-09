@@ -13,7 +13,6 @@ value EditArgs {
 
 value EditOptions {
     cwd: String?
-    operations: ToolOperations?
 }
 
 value EditDiff {
@@ -27,32 +26,29 @@ value EditResult {
     details: EditDiff?
 }
 
-rule EditResolvesPathAgainstCwd {
+rule EditExpandsAndResolvesPathAgainstCwd {
     when: ExecuteEdit(args, opts)
 
-    ensures: resolved = path/ResolveToCwdCalled(args.path, opts.cwd)
+    ensures: expanded = path/ExpandPathCalled(args.path)
+    ensures: resolved = path/ResolveToCwdCalled(expanded, opts.cwd)
 }
 
-rule EditUsesProvidedOperationsWhenPresent {
-    when: ExecuteEdit(args, opts)
-    requires: opts.operations != null
-
-    ensures: EditExecutionAdapter = opts.operations
-}
-
-rule EditFailsWhenFileMissingOrNoAccess {
+rule EditFailsWhenFileMissing {
     when: ExecuteEdit(args, opts)
 
-    let resolved = path/ResolveToCwdCalled(args.path, opts.cwd)
-    requires: not File.readWriteAccessible(resolved)
+    let expanded = path/ExpandPathCalled(args.path)
+    let resolved = path/ResolveToCwdCalled(expanded, opts.cwd)
+    requires: not File.exists(resolved)
 
-    ensures: Error.thrown("File not found: " + args.path)
+    ensures: Error.thrown("File not found: " + PathString(resolved))
 }
 
 rule EditNormalizesForMatching {
     when: ExecuteEdit(args, opts)
 
-    let raw_content = File.read(path/ResolveToCwdCalled(args.path, opts.cwd))
+    let expanded = path/ExpandPathCalled(args.path)
+    let resolved = path/ResolveToCwdCalled(expanded, opts.cwd)
+    let raw_content = File.read(resolved)
     let bom = Utf8BomPrefix(raw_content)
     let content_no_bom = StripBom(raw_content)
     let line_ending = DetectLineEnding(content_no_bom)
@@ -69,62 +65,63 @@ rule EditExactMatchPreferred {
 
     ensures:
         if Contains(NormalizedContent(), NormalizedOld()):
-            match = ExactMatch(NormalizedContent(), NormalizedOld())
+            updated_normalized = ReplaceFirst(NormalizedContent(), NormalizedOld(), NormalizedNew())
 }
 
 rule EditFuzzyMatchFallback {
     when: ExecuteEdit(args, opts)
     requires: not Contains(NormalizedContent(), NormalizedOld())
 
-    ensures: match = FuzzyMatch(NormalizedContent(), NormalizedOld())
+    ensures: fuzzy_match = FuzzyLineWindowMatch(
+        content: NormalizedContent(),
+        target: NormalizedOld(),
+        line_normalization: smart_punctuation_and_trailing_whitespace
+    )
 }
 
 rule EditFailsWhenNoMatch {
     when: ExecuteEdit(args, opts)
-    requires: MatchFound() = false
+    requires: not Contains(NormalizedContent(), NormalizedOld())
+    requires: Count(FuzzyLineWindowMatch(NormalizedContent(), NormalizedOld())) = 0
 
-    ensures: Error.thrown("Could not find the exact text")
+    ensures: Error.thrown("oldText not found in file")
 }
 
-rule EditFailsWhenMatchNotUnique {
+rule EditFailsWhenFuzzyMatchNotUnique {
     when: ExecuteEdit(args, opts)
-    requires: MatchOccurrencesInNormalizedSpace() > 1
+    requires: not Contains(NormalizedContent(), NormalizedOld())
+    requires: Count(FuzzyLineWindowMatch(NormalizedContent(), NormalizedOld())) > 1
 
-    ensures: Error.thrown("text must be unique")
+    ensures: Error.thrown("Fuzzy match is ambiguous")
 }
 
-rule EditPerformsReplacement {
+rule EditFuzzyReplacementUsesMatchedWindow {
     when: ExecuteEdit(args, opts)
-    requires: MatchFound() = true
-    requires: MatchOccurrencesInNormalizedSpace() = 1
+    requires: not Contains(NormalizedContent(), NormalizedOld())
+    requires: Count(FuzzyLineWindowMatch(NormalizedContent(), NormalizedOld())) = 1
 
-    ensures: replaced = ReplaceAtMatch(ContentForReplacement(), Match(), NormalizedNew())
-}
-
-rule EditFailsWhenReplacementNoOp {
-    when: ExecuteEdit(args, opts)
-    requires: ReplacedText() = ContentForReplacement()
-
-    ensures: Error.thrown("No changes made")
+    ensures: updated_normalized = ReplaceFuzzyMatchedWindow(
+        NormalizedContent(),
+        NormalizedOld(),
+        NormalizedNew()
+    )
 }
 
 rule EditRestoresBOMAndLineEndings {
     when: ExecuteEdit(args, opts)
-    requires: ReplacementSucceeded()
 
-    ensures: with_endings = RestoreLineEndings(ReplacedText(), OriginalLineEnding())
+    ensures: with_endings = RestoreLineEndings(UpdatedNormalized(), OriginalLineEnding())
     ensures: final = OriginalBom() + with_endings
-    ensures: File.write(path/ResolveToCwdCalled(args.path, opts.cwd), final)
+    ensures: File.write(PathResolvedForEdit(args, opts), final)
 }
 
-rule EditReturnsDiffMetadata {
+rule EditReturnsSimpleDiffMetadata {
     when: ExecuteEdit(args, opts)
-    requires: ReplacementSucceeded()
 
-    ensures: diff = UnifiedDiff(ContentForReplacement(), ReplacedText())
-    ensures: first_changed_line = DiffFirstChangedLine(diff)
+    ensures: diff = SimpleFirstChangedLineDiff(BeforeContent(), AfterContent())
+    ensures: first_changed_line = FirstChangedLine(BeforeContent(), AfterContent())
     ensures: result = EditResult{
-        content: "Successfully replaced text in " + args.path + ".",
+        content: "Successfully replaced text in " + PathString(PathResolvedForEdit(args, opts)) + ".",
         is_error: false,
         details: EditDiff{diff: diff, first_changed_line: first_changed_line}
     }
@@ -141,6 +138,7 @@ surface EditToolApi {
 
     @guidance
         -- Matching is exact-first, fuzzy-second.
-        -- Replacement must be unique and non-noop.
+        -- Exact match path replaces first occurrence only.
+        -- Fuzzy matching normalizes smart punctuation and trailing whitespace.
         -- Preserve original file BOM and dominant line endings.
 }

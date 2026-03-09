@@ -12,7 +12,6 @@ value WriteArgs {
 
 value WriteOptions {
     cwd: String?
-    operations: ToolOperations?
 }
 
 value WriteResult {
@@ -20,34 +19,38 @@ value WriteResult {
     is_error: Boolean
 }
 
-rule WriteResolvesPathAgainstCwd {
+rule WriteExpandsAndResolvesPathAgainstCwd {
     when: ExecuteWrite(args, opts)
 
-    ensures: resolved = path/ResolveToCwdCalled(args.path, opts.cwd)
-}
-
-rule WriteUsesProvidedOperationsWhenPresent {
-    when: ExecuteWrite(args, opts)
-    requires: opts.operations != null
-
-    ensures: WriteExecutionAdapter = opts.operations
+    ensures: expanded = path/ExpandPathCalled(args.path)
+    ensures: resolved = path/ResolveToCwdCalled(expanded, opts.cwd)
 }
 
 rule WriteCreatesParents {
     when: ExecuteWrite(args, opts)
 
-    let resolved = path/ResolveToCwdCalled(args.path, opts.cwd)
+    let expanded = path/ExpandPathCalled(args.path)
+    let resolved = path/ResolveToCwdCalled(expanded, opts.cwd)
     ensures: Directory.makeParents(resolved)
 }
 
 rule WriteOverwritesFile {
     when: ExecuteWrite(args, opts)
 
-    let resolved = path/ResolveToCwdCalled(args.path, opts.cwd)
+    let expanded = path/ExpandPathCalled(args.path)
+    let resolved = path/ResolveToCwdCalled(expanded, opts.cwd)
     ensures: File.writeUtf8(resolved, args.content)
-    ensures: bytes = Utf8Bytes(args.content)
+}
+
+rule WriteReturnsByteCountAndResolvedPath {
+    when: ExecuteWrite(args, opts)
+
+    let expanded = path/ExpandPathCalled(args.path)
+    let resolved = path/ResolveToCwdCalled(expanded, opts.cwd)
+    let bytes = Utf8Bytes(args.content or "")
+
     ensures: result = WriteResult{
-        content: "Successfully wrote " + bytes + " bytes to " + args.path,
+        content: "Successfully wrote " + bytes + " bytes to " + PathString(resolved),
         is_error: false
     }
 }
@@ -63,4 +66,6 @@ surface WriteToolApi {
 
     @guidance
         -- write is create-or-overwrite, never append.
+        -- Relative paths are expanded/normalized then resolved against cwd.
+        -- Success message reports bytes written and resolved target path.
 }
