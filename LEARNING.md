@@ -4,6 +4,29 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-09 - app-query-tool convergence shows factory metadata is part of runtime contract
+
+### λ Factory-produced tool metadata must match base schema text exactly
+
+`make-app-query-tool` does not synthesize a new label/description schema; it
+`assoc`s `:execute` onto the existing `app-query-tool` schema map. A spec that
+redefines metadata (for example a shorter label/description) drifts even if
+execution semantics are correct. For factory tools, metadata parity is part of
+contract convergence, not documentation polish.
+
+### λ Non-truncated results should keep details absent, not partially populated
+
+In runtime, app-query-tool returns `details=nil` when output is within policy
+limits. Convergence should avoid "always-present details with null fields" rules
+because they imply a stable shape the implementation does not provide.
+
+### λ Truncation artifacts need deterministic keying hooks for testability
+
+`tool_call_id` in `make-app-query-tool` options is a practical test seam for
+full-output spill files. When omitted, runtime falls back to random UUID, but
+spec should still model the deterministic override path to support repeatable
+verification and easier operator tracing.
+
 ## 2026-03-09 - Write/edit convergence reinforces path-normalization and error-contract discipline
 
 ### λ Path semantics drift when specs skip internal normalization steps
