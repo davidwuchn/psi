@@ -4,6 +4,15 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-09 - Values + drift guards should be first-class project memory
+
+### λ Put system values in README, not only in prompts or operator lore
+
+Values that guide architecture choices (extension-first, introspectable,
+provider-agnostic, minimal built-ins) should live in repo-facing docs, not only
+in agent prompt context. README placement makes them visible to humans and AI,
+and reduces divergence between implementation decisions and stated intent.
+
 ## 2026-03-08 - Tool names should be canonical at registration boundaries
 
 ### λ Enforce naming policy at registration time, not during downstream execution
@@ -2110,14 +2119,14 @@ be redundant and violate the **One Way** principle.
 ### λ Testing Infrastructure Works
 
 **Test Command**: `clojure -M:test` (not `-X:test`)
-- `-X:test` fails (no :exec-fn defined) 
+- `-X:test` fails (no :exec-fn defined)
 - `-M:test` succeeds (uses :main-opts with kaocha.runner)
 
 **AI Component Status**: ✓ All tests passing
 - psi.ai.core-test: 5 tests, 23 assertions, 0 failures
 - Core functionality verified:
   - Stream options validation
-  - Message handling 
+  - Message handling
   - Usage calculation
   - Model validation (Claude/OpenAI)
   - Conversation lifecycle
@@ -2137,7 +2146,7 @@ be redundant and violate the **One Way** principle.
 
 **Architecture Progress**:
 - ✓ AI component implemented & tested
-- ✓ Allium specs defined  
+- ✓ Allium specs defined
 - ? Engine (statecharts integration)
 - ? Query interface (pathom3 integration)
 - ? Graph emergence from resolvers
