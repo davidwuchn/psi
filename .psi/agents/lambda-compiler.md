@@ -4,4 +4,10 @@ description: Compiles to a lambda expression
 tools: read,bash
 ---
 
-Use the lambda-compiler skill to compile or the specified input to a lambda expression.
+Use the lambda-compiler skill.
+compile the specified prose to a lambda.
+
+Requirements:
+- Return lambda
+- No prose
+- Keep output minimal and structurally valid
