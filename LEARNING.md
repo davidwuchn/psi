@@ -4,6 +4,33 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-09 - Read tool convergence highlights shape drift risks between spec and runtime payloads
+
+### λ Tool result shape drift is most likely around heterogeneous content fields
+
+`execute-read` returns two different content shapes depending on file type:
+- text/binary paths return `content` as string
+- image paths return `content` as a vector of blocks (`{"type":"text" ...}`, `{"type":"image" ...}`)
+
+A spec that models image output as a separate `result.image` field can look
+plausible while being fully wrong at runtime. Convergence should verify the
+actual payload envelope first (`content` shape + `details` presence), then
+field-level semantics.
+
+### λ Error-message paths should be specified at the same path normalization level as code
+
+`execute-read` reports missing/binary file paths using absolute resolved paths,
+not caller-provided raw path text. This is important for operator debugging and
+for test determinism when cwd/path fallback logic is involved. Specs should bind
+messages to `AbsolutePath(resolved)` when code emits resolved absolute paths.
+
+### λ Guidance-string exactness is part of contract quality for interactive tools
+
+For read pagination/truncation, wording and format of continuation hints (`---`
+separator, shown-line range, `Use offset=...`) are operator-facing behavior, not
+incidental formatting. Keeping these strings aligned in spec reduces drift across
+REPL/RPC/Emacs/TUI clients that may depend on recognizable continuation cues.
+
 ## 2026-03-09 - Spec convergence should remove aspirational behavior, not retrofit code to stale contracts
 
 ### λ Convergence pass should target observed runtime semantics as the source of truth
