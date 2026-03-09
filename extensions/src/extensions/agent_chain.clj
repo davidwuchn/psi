@@ -943,8 +943,8 @@
     ((:register-tool api)
      {:name        "agent-chain"
       :label       "Agent Chain"
-      :description (str "Run and manage agent chain pipelines. "
-                        "action=\"run\": execute a named chain (requires chain, task). "
+      :description (str "Run and manage agent chain pipelines. Do not poll unless explicitly asked to. "
+                        "action=\"run\": start a named chain (requires chain, task). "
                         "action=\"list\": show available chains, agents, and recent runs. "
                         "action=\"reload\": reload chain definitions and agent files from disk.")
       :parameters  (pr-str {:type       "object"
