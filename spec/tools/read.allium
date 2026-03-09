@@ -5,21 +5,21 @@
 
 use "./path-resolution.allium" as path
 
-value ReadImageAttachment {
-    mime_type: String
-    data: String
-}
-
 value ReadArgs {
     path: String
     offset: Integer?
     limit: Integer?
 }
 
+value ReadOutputOverride {
+    max_lines: Integer?
+    max_bytes: Integer?
+}
+
 value ReadOptions {
     cwd: String?
+    overrides: Map<String, ReadOutputOverride>?
     auto_resize_images: Boolean?
-    operations: ToolOperations?
 }
 
 value ReadTruncation {
@@ -39,10 +39,20 @@ value ReadDetails {
     binary_file_detected: Boolean
 }
 
+value ReadTextBlock {
+    type: text
+    text: String
+}
+
+value ReadImageBlock {
+    type: image
+    data: String
+    mime_type: String
+}
+
 value ReadResult {
-    content: String
+    content: String | Set<ReadTextBlock | ReadImageBlock>
     is_error: Boolean
-    image: ReadImageAttachment?
     details: ReadDetails?
 }
 
@@ -52,73 +62,69 @@ config {
         "image/jpeg", "image/png", "image/gif", "image/webp"
     }
     read_auto_resize_images_default: Boolean = true
-    read_auto_resize_max_width: Integer = 2000
-    read_auto_resize_max_height: Integer = 2000
+    read_auto_resize_max_dim: Integer = 2000
 }
 
 rule ReadResolvesPathWithReadFallbacks {
     when: ExecuteRead(args, opts)
 
-    ensures: resolved = path/ResolveReadPath(args.path, opts.cwd)
-}
-
-rule ReadUsesProvidedOperationsWhenPresent {
-    when: ExecuteRead(args, opts)
-    requires: opts.operations != null
-
-    ensures: ReadExecutionAdapter = opts.operations
+    ensures: resolved = path/ResolveReadPathCalled(args.path, opts.cwd)
 }
 
 rule ReadFailsWhenFileMissing {
     when: ExecuteRead(args, opts)
-    let resolved = path/ResolveReadPath(args.path, opts.cwd)
+    let resolved = path/ResolveReadPathCalled(args.path, opts.cwd)
     requires: not File.exists(resolved)
 
-    ensures: Error.thrown("File not found: " + resolved)
+    ensures: Error.thrown("File not found: " + AbsolutePath(resolved))
 }
 
 rule ReadDeterminesImageTypeFromMagicBytes {
     when: ExecuteRead(args, opts)
-    let resolved = path/ResolveReadPath(args.path, opts.cwd)
+    let resolved = path/ResolveReadPathCalled(args.path, opts.cwd)
 
     ensures: sniff = File.readPrefix(resolved, config.read_file_type_sniff_bytes)
     ensures: detected_mime = DetectMimeFromMagic(sniff)
 }
 
-rule ReadReturnsSupportedImageAsAttachment {
+rule ReadReturnsSupportedImageAsContentBlocks {
     when: ExecuteRead(args, opts)
-    let resolved = path/ResolveReadPath(args.path, opts.cwd)
+    let resolved = path/ResolveReadPathCalled(args.path, opts.cwd)
     let mime = DetectMimeFromMagic(File.readPrefix(resolved, config.read_file_type_sniff_bytes))
     requires: mime in config.read_supported_image_mime_types
 
     let auto_resize = opts.auto_resize_images or config.read_auto_resize_images_default
-    let base64_data = Base64(File.readBytes(resolved))
+    let raw_bytes = File.readBytes(resolved)
 
     ensures:
         if auto_resize:
-            resized = ResizeImage(base64_data, mime, config.read_auto_resize_max_width, config.read_auto_resize_max_height)
-            result.content = "Read image file [" + resized.mime_type + "]"
-            result.image = ReadImageAttachment{mime_type: resized.mime_type, data: resized.data}
+            resized = ResizeImage(raw_bytes, mime, config.read_auto_resize_max_dim)
+            result.content = {
+                ReadTextBlock{type: text, text: "Read image file [" + resized.mime_type + "]"},
+                ReadImageBlock{type: image, data: resized.data, mime_type: resized.mime_type}
+            }
         else:
-            result.content = "Read image file [" + mime + "]"
-            result.image = ReadImageAttachment{mime_type: mime, data: base64_data}
+            result.content = {
+                ReadTextBlock{type: text, text: "Read image file [" + mime + "]"},
+                ReadImageBlock{type: image, data: Base64(raw_bytes), mime_type: mime}
+            }
 
     ensures: result.is_error = false
-    ensures: result.details = ReadDetails{binary_file_detected: false, truncation: null}
+    ensures: result.details = null
 }
 
 rule ReadReturnsWarningOnlyForNonImageBinaryFiles {
     when: ExecuteRead(args, opts)
-    let resolved = path/ResolveReadPath(args.path, opts.cwd)
-    let mime = DetectMimeFromMagic(File.readPrefix(resolved, config.read_file_type_sniff_bytes))
+    let resolved = path/ResolveReadPathCalled(args.path, opts.cwd)
+    let sniff = File.readPrefix(resolved, config.read_file_type_sniff_bytes)
+    let mime = DetectMimeFromMagic(sniff)
 
     requires: mime not in config.read_supported_image_mime_types
-    requires: IsBinaryFile(resolved)
+    requires: BufferContainsNullByte(sniff)
 
     ensures: result = ReadResult{
-        content: "Binary file detected: " + resolved + ". Content omitted.",
+        content: "Binary file detected: " + AbsolutePath(resolved) + ". Content omitted.",
         is_error: false,
-        image: null,
         details: ReadDetails{binary_file_detected: true, truncation: null}
     }
 }
@@ -132,19 +138,26 @@ rule ReadOffsetIsOneIndexed {
 
 rule ReadFailsWhenOffsetBeyondEnd {
     when: ExecuteRead(args, opts)
-    let resolved = path/ResolveReadPath(args.path, opts.cwd)
+    let resolved = path/ResolveReadPathCalled(args.path, opts.cwd)
     requires: IsTextFile(resolved)
+    requires: args.offset != null
 
     let all_lines = SplitLines(Utf8(File.readBytes(resolved)))
-    let start_line_index = Max(0, (args.offset or 1) - 1)
+    let start_line_index = Max(0, args.offset - 1)
     requires: start_line_index >= Count(all_lines)
 
-    ensures: Error.thrown("Offset " + (args.offset or 1) + " is beyond end of file (" + Count(all_lines) + " lines total)")
+    ensures: Error.thrown("Offset " + args.offset + " is beyond end of file (" + Count(all_lines) + " lines total)")
+}
+
+rule ReadUsesEffectivePolicyWithOverrides {
+    when: ExecuteRead(args, opts)
+
+    ensures: policy = EffectiveOutputPolicy(tool_name: "read", overrides: opts.overrides or {})
 }
 
 rule ReadTextUsesHeadTruncation {
     when: ExecuteRead(args, opts)
-    let resolved = path/ResolveReadPath(args.path, opts.cwd)
+    let resolved = path/ResolveReadPathCalled(args.path, opts.cwd)
     requires: IsTextFile(resolved)
 
     let full_text = Utf8(File.readBytes(resolved))
@@ -152,31 +165,34 @@ rule ReadTextUsesHeadTruncation {
     let total_file_lines = Count(all_lines)
     let start = Max(0, (args.offset or 1) - 1)
     let start_display = start + 1
-
-    let selected_text =
+    let end =
         if args.limit != null:
-            JoinLines(Slice(all_lines, start, Min(start + args.limit, total_file_lines)))
+            Min(start + args.limit, total_file_lines)
         else:
-            JoinLines(Slice(all_lines, start, total_file_lines))
-
+            total_file_lines
+    let selected_text = JoinLines(Slice(all_lines, start, end))
     let truncation = HeadTruncate(selected_text, EffectiveOutputPolicy("read"))
 
     ensures: result.is_error = false
-    ensures: result.image = null
+    ensures: result.details.binary_file_detected = false
+    ensures: result.details.truncation = truncation
 
     ensures:
         if truncation.first_line_exceeds_limit:
             result.content = "[Line " + start_display + " exceeds " + truncation.max_bytes + " bytes. Use bash for a bounded slice.]"
-            result.details = ReadDetails{binary_file_detected: false, truncation: truncation}
         else if truncation.truncated:
-            result.content = truncation.content + "\n[Output truncated. Showing lines starting at " + start_display + ". Use offset= to continue.]"
-            result.details = ReadDetails{binary_file_detected: false, truncation: truncation}
-        else if args.limit != null and (start + args.limit) < total_file_lines:
-            result.content = truncation.content + "\n[There are more lines in file. Use offset=" + (start + args.limit + 1) + " to continue.]"
-            result.details = ReadDetails{binary_file_detected: false, truncation: null}
+            shown_end = start + truncation.output_lines
+            result.content = truncation.content
+                + "\n\n--- Showing lines " + start_display + "-" + shown_end
+                + " of " + total_file_lines + " total. Use offset=" + (shown_end + 1)
+                + " to continue."
+        else if args.limit != null and end < total_file_lines:
+            remaining = total_file_lines - end
+            result.content = truncation.content
+                + "\n\n--- " + remaining + " more lines in file. Use offset=" + (end + 1)
+                + " to continue."
         else:
             result.content = truncation.content
-            result.details = ReadDetails{binary_file_detected: false, truncation: null}
 }
 
 surface ReadToolApi {
@@ -190,10 +206,10 @@ surface ReadToolApi {
 
     @guidance
         -- Missing files and out-of-range offsets are exception-based failures.
-        -- Supported images are returned as image attachments.
-        -- Non-image binary files are warning-only.
+        -- Supported images are returned as text+image content blocks; details is null.
+        -- Non-image binary files are warning-only and set binary_file_detected.
         -- Text outputs are bounded by EffectiveOutputPolicy("read").
         -- offset is 1-indexed and composes with limit.
 }
 
-open question "Should read expose explicit image metadata in details for graph introspection, in addition to content and optional image attachment?"
+open question "Should read expose explicit image metadata in details for graph introspection, in addition to content blocks?"
