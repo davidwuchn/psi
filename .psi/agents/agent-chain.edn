@@ -1,0 +1,36 @@
+;; Agent Chain Definitions
+;; Each chain is a sequence of agent steps.
+;; $INPUT  = output from the previous step (or user prompt for step 1)
+;; $ORIGINAL = the user's original prompt (always available)
+
+[{:name        "plan-build-review"
+  :description "Plan, build, and review code changes"
+  :steps       [{:agent  "planner"
+                 :prompt "$INPUT"}
+                {:agent  "builder"
+                 :prompt "Execute this plan:\n\n$INPUT\n\nOriginal request: $ORIGINAL"}
+                {:agent  "reviewer"
+                 :prompt "Review the following implementation:\n\n$INPUT\n\nOriginal request: $ORIGINAL"}]}
+
+ {:name        "plan-build"
+  :description "Plan and build without review"
+  :steps       [{:agent  "planner"
+                 :prompt "$INPUT"}
+                {:agent  "builder"
+                 :prompt "Execute this plan:\n\n$INPUT\n\nOriginal request: $ORIGINAL"}]}
+ {:name        "prompt-build"
+  :description "Build a new prompt"
+  :steps       [{:agent "prompt-compiler" :prompt "compile the prompt: $INPUT"}
+                {:agent "prompt-decompiler" :prompt "decompile the EDN prompt: $INPUT"}
+                {:agent "prompt-compiler" :prompt "compile the prompt: $INPUT"}]}
+
+ {:name        "lambda-build"
+  :description "Build a lambda expression"
+  :steps       [{:agent "lambda-compiler" :prompt "compile a lambda for: $INPUT"}
+                {:agent "lambda-decompiler" :prompt "decompile the lambda expression: $INPUT"}
+                {:agent "lambda-compiler" :prompt "compile a lambda for: $INPUT"}]}
+
+ {:name        "greet"
+  :description "Riff on a theme and greet the user"
+  :steps       [{:agent  "greeter"
+                 :prompt "Theme: $INPUT"}]}]
