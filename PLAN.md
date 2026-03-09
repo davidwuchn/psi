@@ -182,6 +182,7 @@ Ordered steps toward PSI COMPLETE.
 ### Spec track — Allium contract hardening ◇ in progress
 - Current status:
   - `allium check spec` passes (47 files, 0 issues)
+  - Remaining top-level legacy specs migrated to Allium v2 syntax (`spec/bootstrap-system.allium`, `spec/agent.allium`, `spec/tui.allium`; commit `29dcb18`)
   - Dependency ordering pass complete (`no-use` roots → dependents)
   - Spec drift guard workflow is now documented in `README.md` (`bb spec:ci`, `bb spec:check`, `bb spec:check:full`, `bb spec:guard`, `bb spec:baseline`) with baseline file path and declaration-name guard scope.
 - Remaining work:

@@ -248,14 +248,14 @@ Caught by `jline-terminal-keymap-test` smoke test.
 
 | Spec file                  | Component mapping       | Status                                |
 |----------------------------|-------------------------|---------------------------------------|
-| `bootstrap-system.allium`  | `engine` + `query`      | ✓ implemented                         |
-| `agent.allium`             | `agent-core`            | ✓ implemented                         |
+| `bootstrap-system.allium`  | `engine` + `query`      | ✓ implemented (Allium v2 migrated)    |
+| `agent.allium`             | `agent-core`            | ✓ implemented (Allium v2 migrated)    |
 | `ai-abstract-model.allium` | `ai`                    | ✓ implemented                         |
 | `coding-agent.allium`      | `agent-session`         | ✓ split → 3 sub-specs; ✓ implemented  |
 | `tools.allium`             | `agent-session/tools`   | ◇ target contracts (runtime policy + read/bash/edit/write/ls/find/grep/app-query-tool + path resolution + introspection) |
 | `tool-output-handling.allium` | `agent-session/tools` | ◇ compatibility index (superseded by tools/*.allium) |
 | `skills.allium`            | `agent-session/skills`  | ✓ implemented                         |
-| `tui.allium`               | `tui`                   | ◇ partial — core session loop working; streaming/tool-status UX still open |
+| `tui.allium`               | `tui`                   | ◇ partial — core session loop working; streaming/tool-status UX still open (Allium v2 migrated) |
 | `ui-extension-points.allium` | `tui/extension_ui`    | ✓ implemented                         |
 | `oauth-auth.allium`        | `agent-session/oauth`   | ✓ implemented (Anthropic provider)    |
 | `graph-emergence.allium`   | `query` + `introspection` | ◇ Step 7 spec authored (attribute links implicit; mutation side-effects deferred) |
