@@ -4,6 +4,22 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-09 - AGENTS equations are higher-signal when they bind spec and tests explicitly
+
+### λ Name the convergence target as allium_spec to avoid ambiguous “spec” scope
+
+Renaming iterative helpers from generic `spec` to `allium_spec`
+(`λmatches(code, allium_spec)`, `λdev_step(allium_spec, code)`,
+`λallium_spec_step(...)`) removes ambiguity between product intent docs,
+implementation notes, and executable Allium contracts. Prompt math becomes
+clearer about what artifact must converge with code/tests.
+
+### λ Encode test-coverage expectation as a first-class equation, not prose
+
+Adding `tests_musta_cover_allium_spec_behaviour` as an explicit equation
+improves operator/agent alignment: coverage obligations become queryable prompt
+memory, not a soft narrative guideline.
+
 ## 2026-03-09 - Spec naming conventions are independent from runtime wire-key conventions
 
 ### λ Preserve repository spec style (snake_case) even when runtime/tool inputs use camelCase
