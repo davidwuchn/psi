@@ -4,6 +4,20 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-09 - Async chain-start acknowledgements should be protocol-minimal
+
+### λ Return a stable machine-parseable run id at the async boundary
+
+For `agent-chain(action="run")`, a compact ack (`OK id:<run-id>`) is a better
+contract than conversational prose. It is easier for users, scripts, and UI
+clients to parse and route without brittle string matching.
+
+### λ Monitoring guidance should live in docs/tool help, not in every ack
+
+Embedding monitor instructions in each start response adds transcript noise and
+can nudge over-polling behavior. Keep the start ack minimal; let callers choose
+when/how to query status (`action="list"` or workflow attrs).
+
 ## 2026-03-09 - Agent-chain reproducibility requires committing `.psi/agents` definitions
 
 ### λ Local ignore rules can silently fork runtime behavior across clones
