@@ -4,6 +4,30 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-09 - Spec convergence should remove aspirational behavior, not retrofit code to stale contracts
+
+### λ Convergence pass should target observed runtime semantics as the source of truth
+
+For `spec/tools/bash.allium`, the runtime in `tools.clj` is final-result oriented
+with optional `on_update` callback carrying snapshots, not chunk-level streaming
+partials. Convergence quality improved once rules for `BashOutputChunkReceived`,
+`BashPartialResult`, and speculative `spawn_hook`/`operations` adapters were
+removed and replaced with behavior that actually exists at runtime.
+
+### λ Keep option-surface parity explicit to prevent silent drift
+
+Drift often hides in option maps. The effective parity set for bash is now:
+`cwd`, `overrides`, `command_prefix`, `on_update`, `tool_call_id` (+ `timeout`
+in args with default 30s). Recording this explicitly in spec avoids future
+reintroduction of unsupported fields and makes review diffs immediately legible.
+
+### λ Model abort as a separate API contract when it is not part of execute result flow
+
+`abort-bash!` is a side-channel boolean operation over process state; it does not
+currently produce an "aborted" `BashResult` payload through `execute-bash`.
+Specifying abort as `AbortBashCalled() -> Boolean` matches implementation and
+avoids conflating process-control API with result-shape semantics.
+
 ## 2026-03-09 - Allium v2 migration is syntax-first for large legacy specs
 
 ### λ Parse-valid structure first, then behavioral refinement
