@@ -4,6 +4,21 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-09 - Spec naming conventions are independent from runtime wire-key conventions
+
+### λ Preserve repository spec style (snake_case) even when runtime/tool inputs use camelCase
+
+Tool runtime payloads may be camelCase (for example JSON `oldText`/`newText`),
+but Allium specs in this repo follow snake_case field naming conventions.
+Convergence quality improved by keeping spec args as `old_text`/`new_text` and
+modeling behavior semantically, instead of mirroring transport key style.
+
+### λ Make diff metadata nullability explicit when tests enforce positivity
+
+`execute-edit` always returns `first_changed_line` with fallback `or 1`, and tests
+assert positive integer semantics. Spec should encode this directly as required
+`Integer` plus `>= 1` guarantee, rather than optional/null-allowed metadata.
+
 ## 2026-03-09 - app-query-tool convergence shows factory metadata is part of runtime contract
 
 ### λ Factory-produced tool metadata must match base schema text exactly
