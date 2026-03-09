@@ -4,6 +4,22 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-09 - Agent-chain reproducibility requires committing `.psi/agents` definitions
+
+### λ Local ignore rules can silently fork runtime behavior across clones
+
+When `.psi/agents/*` is excluded via `.git/info/exclude`, chain definitions and
+agent profiles remain local-only. `agent-chain` can appear to work on one machine
+while another clone is missing chains/agents entirely. Treating agent catalog
+files as tracked repository memory prevents this hidden drift.
+
+### λ Chain/profile configuration should be versioned alongside extension code
+
+`agent-chain` runtime behavior depends on `.psi/agents/agent-chain.edn` and
+`.psi/agents/*.md` as much as on `extensions/agent_chain.clj`. Committing all
+three surfaces together keeps workflow semantics reproducible and makes regressions
+bisectable.
+
 ## 2026-03-09 - AGENTS equations are higher-signal when they bind spec and tests explicitly
 
 ### λ Name the convergence target as allium_spec to avoid ambiguous “spec” scope
