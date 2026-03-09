@@ -1,0 +1,50 @@
+-- allium: 1
+
+-- tools/tool-naming.allium
+-- Canonical tool name contract for built-in and extension-registered tools.
+
+value ToolNamePolicy {
+    pattern: String
+    examples_valid: Set<String>
+    examples_invalid: Set<String>
+}
+
+config {
+    tool_name_pattern: String = "^[a-z0-9][a-z0-9-]*$"
+}
+
+rule ToolNameCanonicalKebabCase {
+    when: ToolRegistered(tool)
+
+    ensures: MatchesRegex(tool.name, config.tool_name_pattern)
+}
+
+rule ToolNameRejectsLegacyUnderscoreStyle {
+    when: ToolRegistered(tool)
+    requires: Contains(tool.name, "_")
+
+    ensures: Error.thrown("Invalid tool name: " + tool.name)
+}
+
+rule ToolNamePolicyExposed {
+    when: ToolNamePolicyRequested()
+
+    ensures: result = ToolNamePolicy{
+        pattern: config.tool_name_pattern,
+        examples_valid: {"read", "app-query-tool", "agent-chain", "hello-wrap"},
+        examples_invalid: {"agent_chain", "hello_wrap", "Tool", "a.b"}
+    }
+}
+
+surface ToolNamingApi {
+    facing caller: AgentSessionRuntime | ExtensionRuntime
+
+    provides:
+        ToolRegistered(tool)
+        ToolNamePolicyRequested()
+
+    exposes:
+        ToolNamePolicy
+}
+
+open question "Should tool names reserve prefixes (for example psi- or ext-) to avoid collisions across large extension sets?"

@@ -9,70 +9,114 @@
             [clojure.string :as str]
             [clj-http.client :as http]
             [cheshire.core :as json]
-            [psi.ai.models :as models]))
+            [psi.ai.models :as models])
+  (:import [java.util UUID]))
+
+(def ^:private anthropic-tool-id-pattern
+  "Anthropic requires tool_use.id to match ^[a-zA-Z0-9_-]+$."
+  #"^[a-zA-Z0-9_-]+$")
+
+(defn- valid-anthropic-tool-id?
+  [id]
+  (and (string? id)
+       (boolean (re-matches anthropic-tool-id-pattern id))))
+
+(defn- fallback-anthropic-tool-id
+  []
+  (str "tool_" (UUID/randomUUID)))
+
+(defn- ensure-anthropic-tool-id
+  "Return an Anthropic-safe tool id (alnum, underscore, hyphen only).
+   Uses a deterministic fallback when id is nil/blank/invalid."
+  [id]
+  (let [s (str (or id ""))
+        sanitized (-> s
+                      (str/replace #"[^a-zA-Z0-9_-]" "_")
+                      (str/replace #"_+" "_")
+                      (str/replace #"-+" "-")
+                      (str/replace #"^[_-]+|[_-]+$" ""))]
+    (cond
+      (valid-anthropic-tool-id? s)
+      s
+
+      (valid-anthropic-tool-id? sanitized)
+      sanitized
+
+      :else
+      (fallback-anthropic-tool-id))))
 
 (defn transform-messages
   "Transform conversation messages to Anthropic API format.
    Handles user, assistant (with optional tool_use), and tool-result messages.
    Consecutive tool-result messages are merged into a single user message
-   (Anthropic requires all tool_result blocks in one user message)."
+   (Anthropic requires all tool_result blocks in one user message).
+
+   Also normalizes tool IDs to Anthropic's required pattern.
+   See: messages.*.content.*.tool_use.id must match ^[a-zA-Z0-9_-]+$."
   [conversation]
-  (->> (:messages conversation)
-       (reduce
-        (fn [acc msg]
-          (case (:role msg)
-            :user
-            (conj acc {:role    "user"
-                       :content [{:type "text"
-                                  :text (get-in msg [:content :text]
-                                                (str (:content msg)))}]})
+  (let [tool-id-map (atom {})
+        canonical-id (fn [raw-id]
+                       (let [key (str (or raw-id ""))]
+                         (or (get @tool-id-map key)
+                             (let [cid (ensure-anthropic-tool-id raw-id)]
+                               (swap! tool-id-map assoc key cid)
+                               cid))))]
+    (->> (:messages conversation)
+         (reduce
+          (fn [acc msg]
+            (case (:role msg)
+              :user
+              (conj acc {:role    "user"
+                         :content [{:type "text"
+                                    :text (get-in msg [:content :text]
+                                                  (str (:content msg)))}]})
 
-            :assistant
-            (let [content
-                  (case (get-in msg [:content :kind])
-                    :structured
-                    (mapv (fn [block]
-                            (case (:kind block)
-                              :text
-                              {:type "text" :text (:text block)}
+              :assistant
+              (let [content
+                    (case (get-in msg [:content :kind])
+                      :structured
+                      (mapv (fn [block]
+                              (case (:kind block)
+                                :text
+                                {:type "text" :text (:text block)}
 
-                              :tool-call
-                              {:type  "tool_use"
-                               :id    (:id block)
-                               :name  (:name block)
-                               :input (let [inp (:input block)]
-                                        (if (map? inp) inp {}))}
+                                :tool-call
+                                {:type  "tool_use"
+                                 :id    (canonical-id (:id block))
+                                 :name  (:name block)
+                                 :input (let [inp (:input block)]
+                                          (if (map? inp) inp {}))}
 
-                              ;; fallback
-                              {:type "text" :text (str block)}))
-                          (get-in msg [:content :blocks]))
+                                ;; fallback
+                                {:type "text" :text (str block)}))
+                            (get-in msg [:content :blocks]))
 
-                    ;; :text or default
-                    [{:type "text"
-                      :text (get-in msg [:content :text] "")}])]
-              (conj acc {:role "assistant" :content content}))
+                      ;; :text or default
+                      [{:type "text"
+                        :text (get-in msg [:content :text] "")}])]
+                (conj acc {:role "assistant" :content content}))
 
-            :tool-result
-            (let [text  (if (map? (:content msg))
-                          (get-in msg [:content :text] "")
-                          (str (:content msg)))
-                  block (cond-> {:type        "tool_result"
-                                 :tool_use_id (:tool-call-id msg)
-                                 :content     text}
-                          (:is-error msg) (assoc :is_error true))
-                  last-msg (peek acc)]
-              (if (and last-msg
-                       (= "user" (:role last-msg))
-                       (every? #(= "tool_result" (:type %))
-                               (:content last-msg)))
-                ;; Merge into existing tool-result user message
-                (conj (pop acc) (update last-msg :content conj block))
-                ;; Start new tool-result user message
-                (conj acc {:role "user" :content [block]})))
+              :tool-result
+              (let [text  (if (map? (:content msg))
+                            (get-in msg [:content :text] "")
+                            (str (:content msg)))
+                    block (cond-> {:type        "tool_result"
+                                   :tool_use_id (canonical-id (:tool-call-id msg))
+                                   :content     text}
+                            (:is-error msg) (assoc :is_error true))
+                    last-msg (peek acc)]
+                (if (and last-msg
+                         (= "user" (:role last-msg))
+                         (every? #(= "tool_result" (:type %))
+                                 (:content last-msg)))
+                  ;; Merge into existing tool-result user message
+                  (conj (pop acc) (update last-msg :content conj block))
+                  ;; Start new tool-result user message
+                  (conj acc {:role "user" :content [block]})))
 
-            ;; unknown role — skip
-            acc))
-        [])))
+              ;; unknown role — skip
+              acc))
+          []))))
 
 (def ^:private thinking-level->budget
   "Map thinking-level keyword to Anthropic extended-thinking budget_tokens.

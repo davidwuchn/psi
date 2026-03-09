@@ -586,7 +586,7 @@ and UI-branching logic goes untested. Extending nullable API helpers with
 
 ### λ A tool schema tells the model what arguments to supply; a prompt contribution tells it what values are valid
 
-`agent_chain` tool schema advertises `action`, `chain`, and `task` parameters.
+`agent-chain` tool schema advertises `action`, `chain`, and `task` parameters.
 But the schema alone cannot enumerate valid `chain` values — those come from
 `.psi/agents/agent-chain.edn` at runtime. Without the catalog in the system
 prompt, the model must call `action="list"` as a discovery step before every
@@ -594,7 +594,7 @@ prompt, the model must call `action="list"` as a discovery step before every
 
 The prompt contribution closes this gap:
 ```
-tool: agent_chain
+tool: agent-chain
 available chains:
 - plan-build-review: Plan, build, and review code changes
 - prompt-build: Build prompts
@@ -605,19 +605,19 @@ The model can now select the correct chain name directly from context.
 ### λ Contribution content is runtime state — it must be kept in sync with the underlying data
 
 Registering a static contribution at init is insufficient if the underlying
-data can change. `agent_chain` chains can be reloaded via `action="reload"` or
+data can change. `agent-chain` chains can be reloaded via `action="reload"` or
 on session switch. Every path that mutates chain definitions must call
 `sync-prompt-contribution!` immediately after. Missing one update path leaves
 the model working from a stale catalog.
 
-Sync points for agent_chain:
+Sync points for agent-chain:
 1. `init` — initial registration
 2. `action-reload` — after disk rescan
 3. `session_switch` event — after session-scoped rescan
 
 ### λ Priority and section placement are part of the contribution contract
 
-`priority=200` places agent_chain below subagent-widget (`priority=250`) in
+`priority=200` places agent-chain below subagent-widget (`priority=250`) in
 the `Extension Capabilities` section. Lower number = higher in the composed
 system prompt. For peer tools in the same section, ordering by priority keeps
 the prompt layout deterministic and reviewable.
@@ -644,7 +644,7 @@ is a global mutation. If the session is switched, reloaded, or the agent forgets
 select, the tool silently runs against the wrong chain or returns an error.
 
 Replace: `active-chain` atom + pre-selection requirement
-With: `agent_chain(action="run", chain="<name>", task="...")`
+With: `agent-chain(action="run", chain="<name>", task="...")`
 
 The chain is resolved by name at call time from the loaded chains. No state to
 pre-configure, no selection to remember.
@@ -661,9 +661,9 @@ Before: three separate surfaces for chain interaction — `run_chain` tool, `/ch
 command, `/chain-reload` command. The agent had to know about all three.
 
 After: one tool, three actions:
-- `agent_chain(action="run", chain=..., task=...)` — run
-- `agent_chain(action="list")` — inspect
-- `agent_chain(action="reload")` — reset
+- `agent-chain(action="run", chain=..., task=...)` — run
+- `agent-chain(action="list")` — inspect
+- `agent-chain(action="reload")` — reset
 
 A single tool with an enum `action` field is discoverable from the tool schema alone.
 The agent can introspect all available operations without needing knowledge of the

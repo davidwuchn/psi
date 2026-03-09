@@ -44,7 +44,7 @@
 
   (testing "valid tool passes schema"
     (is (agent/valid-agent-tool?
-         {:name        "list_files"
+         {:name        "list-files"
           :label       "List Files"
           :description "Lists directory contents"
           :parameters  "{}"}))))

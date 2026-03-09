@@ -157,10 +157,10 @@ Example chain (step 2 uses step 1 output):
 (let [result (run-tool-plan!
               api
               [{:id :s1
-                :tool "hello_upper"
+                :tool "hello-upper"
                 :args {:text "hello from plan"}}
                {:id :s2
-                :tool "hello_wrap"
+                :tool "hello-wrap"
                 :args {:text   [:from :s1 :content]
                        :prefix "["
                        :suffix "]"}}])]
@@ -285,7 +285,7 @@ Extensions register tools that become available to the agent:
 
 ```clojure
 ((:register-tool api)
- {:name        "search_docs"
+ {:name        "search-docs"
   :description "Search project documentation"
   :parameters  [{:name "query" :type "string" :required true}]
   :execute     (fn [args]

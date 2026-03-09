@@ -15,12 +15,12 @@
    Chain runs are executed through the extension workflow runtime.
 
    Tool:
-     agent_chain(action, ...)
+     agent-chain(action, ...)
        action=\"run\"    — run a named chain: requires chain, task args
        action=\"list\"   — list chains, agents, and recent runs
        action=\"reload\" — reload chain definitions and agent files
 
-   Commands (human shortcuts, delegate to agent_chain tool):
+   Commands (human shortcuts, delegate to agent-chain tool):
      /chain        — list all available chains, agents, and chain runs
      /chain-reload — reload chain definitions and agent files
 
@@ -242,7 +242,7 @@
 
 (defn- prompt-contribution-content []
   (let [cs @(:chains @state)]
-    (str "tool: agent_chain\n"
+    (str "tool: agent-chain\n"
          "available chains:\n"
          (if (seq cs)
            (->> cs
@@ -302,7 +302,7 @@
 
 (defn- progress-line
   [{:keys [run-id chain-name phase step-index step-count step-agent last-work elapsed-ms]}]
-  (str "agent_chain " (or run-id "run")
+  (str "agent-chain " (or run-id "run")
        " [" (-> (or phase :running) name str/upper-case) "]"
        " " (or chain-name "chain")
        (when (and (number? step-index) (number? step-count) (pos? step-count))
@@ -726,7 +726,7 @@
     (when-let [e (:psi.extension.workflow/error r)]
       (timbre/warn "agent-chain workflow type registration error:" e))))
 
-;;; agent_chain tool actions
+;;; agent-chain tool actions
 
 (defn- resolve-chain
   "Look up a chain by name (case-insensitive) from loaded chains.
@@ -824,7 +824,7 @@
                 {:content  msg
                  :is-error true})
               {:content  (str "Chain run started: " run-id
-                              " (" (:name chain) "). Monitor with agent_chain(action=\"list\").")
+                              " (" (:name chain) "). Monitor with agent-chain(action=\"list\").")
                :is-error false})))))))
 
 (defn- action-list
@@ -894,7 +894,7 @@
      :is-error false}))
 
 (defn- execute-agent-chain
-  "Execute the agent_chain tool. Dispatches on action."
+  "Execute the agent-chain tool. Dispatches on action."
   ([args-map]
    (execute-agent-chain args-map nil))
   ([args-map opts]
@@ -942,7 +942,7 @@
     (refresh-widget!)
 
     ((:register-tool api)
-     {:name        "agent_chain"
+     {:name        "agent-chain"
       :label       "Agent Chain"
       :description (str "Run and manage agent chain pipelines. "
                         "action=\"run\": execute a named chain (requires chain, task). "
@@ -960,13 +960,13 @@
       :execute     execute-agent-chain})
 
     ((:register-command api) "chain"
-                             {:description "List chains, agents, and recent runs (alias for agent_chain action=list)"
+                             {:description "List chains, agents, and recent runs (alias for agent-chain action=list)"
                               :handler
                               (fn [_args]
                                 (println (:content (action-list))))})
 
     ((:register-command api) "chain-reload"
-                             {:description "Reload chain definitions and agent files (alias for agent_chain action=reload)"
+                             {:description "Reload chain definitions and agent files (alias for agent-chain action=reload)"
                               :handler
                               (fn [_args]
                                 (let [result (action-reload)]

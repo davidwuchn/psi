@@ -1,19 +1,7 @@
+-- allium: 1
+
 -- tools.allium
---
--- Scope: Built-in tools suite (target behavior).
---
--- Primary specs:
---   - tools/runtime.allium          (registry, dispatch, limits, temp store, stats, adapters)
---   - tools/path-resolution.allium  (path normalization + read-path fallbacks)
---   - tools/read.allium             (offset/limit + image/binary handling + truncation)
---   - tools/bash.allium             (tail truncation + temp artifacts + timeout/abort)
---   - tools/edit.allium             (exact/fuzzy matching + line-ending/BOM preservation + diff metadata)
---   - tools/write.allium            (overwrite write + bytes-written response)
---   - tools/app-query-tool.allium   (safe EQL query tool + truncation + full-output artifact)
---
--- Notes:
---   - This suite is the normative tools contract.
---   - tool-output-handling.allium is retained as a compatibility index.
+-- Built-in tools suite index.
 
 use "./tools/runtime.allium" as runtime
 use "./tools/path-resolution.allium" as path
@@ -22,9 +10,10 @@ use "./tools/bash.allium" as bash
 use "./tools/edit.allium" as edit
 use "./tools/write.allium" as write
 use "./tools/app-query-tool.allium" as eql
+use "./tools/tool-naming.allium" as naming
 
 surface ToolSuiteIndex {
-    for caller: RuntimeEngineer
+    facing caller: RuntimeEngineer
 
     exposes:
         runtime/BuiltInToolsApi
@@ -34,4 +23,11 @@ surface ToolSuiteIndex {
         edit/EditToolApi
         write/WriteToolApi
         eql/EqlQueryToolApi
+        naming/ToolNamingApi
+
+    @guidance
+        -- This is the top-level reference for built-in tool contracts.
+        -- Runtime dispatch/limits/stats are specified in tools/runtime.allium.
 }
+
+open question "Should future built-in tools be grouped by capability domains (filesystem, shell, graph) in this index?"

@@ -13,8 +13,8 @@
              (get-in @state [:commands "hello" :name])))
       (is (= "hello-plan"
              (get-in @state [:commands "hello-plan" :name])))
-      (is (= "hello_upper"
-             (get-in @state [:tools "hello_upper" :name])))
-      (is (= "hello_wrap"
-             (get-in @state [:tools "hello_wrap" :name])))
+      (is (= "hello-upper"
+             (get-in @state [:tools "hello-upper" :name])))
+      (is (= "hello-wrap"
+             (get-in @state [:tools "hello-wrap" :name])))
       (is (= 1 (count (get-in @state [:handlers "session_switch"])))))))

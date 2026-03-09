@@ -146,3 +146,29 @@
       (is (= 10  (:cache-write-tokens usage)) "cache-write-tokens from message_start")
       (is (= 180 (:total-tokens usage)) "total = input + output + cache-read + cache-write")
       (is (map? (:cost usage)) "cost map present"))))
+
+(deftest transform-messages-normalizes-invalid-tool-ids-test
+  (testing "assistant tool_use ids and tool_result tool_use_id are normalized to Anthropic-safe ids"
+    (let [convo  {:messages [{:role :assistant
+                              :content {:kind :structured
+                                        :blocks [{:kind :tool-call
+                                                  :id "call_abc|fc_123"
+                                                  :name "read"
+                                                  :input {"path" "README.md"}}]}}
+                             {:role :tool-result
+                              :tool-call-id "call_abc|fc_123"
+                              :tool-name "read"
+                              :content {:kind :text :text "ok"}
+                              :is-error false}]}
+          out    (anthropic/transform-messages convo)
+          asst   (first out)
+          user   (second out)
+          use-id (get-in asst [:content 0 :id])
+          res-id (get-in user [:content 0 :tool_use_id])]
+      (is (= "assistant" (:role asst)))
+      (is (= "tool_use" (get-in asst [:content 0 :type])))
+      (is (= "user" (:role user)))
+      (is (= "tool_result" (get-in user [:content 0 :type])))
+      (is (= use-id res-id) "tool_result must reference normalized tool_use id")
+      (is (re-matches #"^[a-zA-Z0-9_-]+$" use-id)
+          "normalized id must satisfy Anthropic regex"))))

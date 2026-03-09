@@ -92,12 +92,32 @@
          {:extension-path ext-path :handler handler-fn})
   reg)
 
+(def ^:private tool-name-pattern
+  "Canonical tool names are kebab-case ASCII.
+   This keeps names portable across model providers and transports."
+  #"^[a-z0-9][a-z0-9-]*$")
+
+(defn valid-tool-name?
+  "Return true when `tool-name` is canonical kebab-case ASCII.
+   Examples: read, app-query-tool, agent-chain."
+  [tool-name]
+  (and (string? tool-name)
+       (boolean (re-matches tool-name-pattern tool-name))))
+
 (defn register-tool-in!
-  "Register `tool` (a map with :name key) for the extension at `ext-path`."
+  "Register `tool` (a map with :name key) for the extension at `ext-path`.
+   Throws when tool name is missing or not canonical kebab-case."
   [reg ext-path tool]
-  (swap! (:state reg)
-         assoc-in [:extensions ext-path :tools (:name tool)] tool)
-  reg)
+  (let [tool-name (:name tool)]
+    (when-not (valid-tool-name? tool-name)
+      (throw (ex-info (str "Invalid tool name: " (pr-str tool-name)
+                           ". Expected kebab-case matching " tool-name-pattern)
+                      {:ext-path  ext-path
+                       :tool-name tool-name
+                       :pattern   (str tool-name-pattern)})))
+    (swap! (:state reg)
+           assoc-in [:extensions ext-path :tools tool-name] tool)
+    reg))
 
 (defn register-command-in!
   "Register `cmd` (a map with :name key) for the extension at `ext-path`."

@@ -53,10 +53,10 @@
            :steps [{:agent "planner" :prompt "$INPUT"}]}])
         (with-user-dir (.getAbsolutePath tmp)
           (let [{:keys [api state]} (nullable/create-nullable-extension-api
-                                     {:path "/test/agent_chain.clj"})]
+                                     {:path "/test/agent-chain.clj"})]
             (sut/init api)
             (is (contains? (:workflow-types @state) :agent-chain-run))
-            (is (contains? (:tools @state) "agent_chain"))
+            (is (contains? (:tools @state) "agent-chain"))
             (is (= #{"chain" "chain-reload"}
                    (set (keys (:commands @state)))))
             (is (= 1 (count (get-in @state [:handlers "session_switch"]))))
@@ -67,24 +67,24 @@
                  (str/join "\n" (get-in @state [:widgets "agent-chain" :lines]))
                  "Agent Chain"))
             ;; Prompt contribution registered with chain catalog
-            (let [contrib-key ["/test/agent_chain.clj" "agent-chain-chains"]
+            (let [contrib-key ["/test/agent-chain.clj" "agent-chain-chains"]
                   contrib     (get-in @state [:prompt-contributions contrib-key])]
               (is (some? contrib) "prompt contribution should be registered")
-              (is (str/includes? (:content contrib) "agent_chain"))
+              (is (str/includes? (:content contrib) "agent-chain"))
               (is (str/includes? (:content contrib) "plan-build-review"))
               (is (str/includes? (:content contrib) "Plan then build")))))
         (finally
           (.delete tmp))))))
 
 (deftest agent-chain-run-requires-chain-arg-test
-  (testing "agent_chain action=run returns a helpful error when no chain arg given"
+  (testing "agent-chain action=run returns a helpful error when no chain arg given"
     (let [tmp (temp-dir)]
       (try
         (with-user-dir (.getAbsolutePath tmp)
           (let [{:keys [api state]} (nullable/create-nullable-extension-api
-                                     {:path "/test/agent_chain.clj"})]
+                                     {:path "/test/agent-chain.clj"})]
             (sut/init api)
-            (let [execute (get-in @state [:tools "agent_chain" :execute])
+            (let [execute (get-in @state [:tools "agent-chain" :execute])
                   updates (atom [])]
               (is (= {:content  "chain is required. Use action=\"list\" to see available chains."
                       :is-error true}
@@ -98,7 +98,7 @@
           (.delete tmp))))))
 
 (deftest agent-chain-run-unknown-chain-test
-  (testing "agent_chain action=run returns error for unknown chain"
+  (testing "agent-chain action=run returns error for unknown chain"
     (let [tmp (temp-dir)]
       (try
         (write-chain-config!
@@ -108,9 +108,9 @@
            :steps [{:agent "planner" :prompt "$INPUT"}]}])
         (with-user-dir (.getAbsolutePath tmp)
           (let [{:keys [api state]} (nullable/create-nullable-extension-api
-                                     {:path "/test/agent_chain.clj"})]
+                                     {:path "/test/agent-chain.clj"})]
             (sut/init api)
-            (let [execute (get-in @state [:tools "agent_chain" :execute])
+            (let [execute (get-in @state [:tools "agent-chain" :execute])
                   result  (execute {"action" "run" "chain" "no-such-chain" "task" "do it"})]
               (is (true? (:is-error result)))
               (is (str/includes? (:content result) "not found")))))
@@ -118,7 +118,7 @@
           (.delete tmp))))))
 
 (deftest agent-chain-run-starts-in-background-test
-  (testing "agent_chain action=run returns immediately (non-blocking)"
+  (testing "agent-chain action=run returns immediately (non-blocking)"
     (let [tmp (temp-dir)]
       (try
         (write-chain-config!
@@ -135,19 +135,19 @@
                    "Use prompt-compiler skill."))
         (with-user-dir (.getAbsolutePath tmp)
           (let [{:keys [api state]} (nullable/create-nullable-extension-api
-                                     {:path "/test/agent_chain.clj"})]
+                                     {:path "/test/agent-chain.clj"})]
             (sut/init api)
-            (let [execute (get-in @state [:tools "agent_chain" :execute])
+            (let [execute (get-in @state [:tools "agent-chain" :execute])
                   result  (execute {"action" "run" "chain" "prompt-build" "task" "say hello"})]
               (is (false? (:is-error result)))
               (is (str/includes? (:content result) "Chain run started:"))
-              (is (str/includes? (:content result) "Monitor with agent_chain"))
+              (is (str/includes? (:content result) "Monitor with agent-chain"))
               (is (contains? (:workflows @state) "run-1")))))
         (finally
           (.delete tmp))))))
 
 (deftest agent-chain-list-test
-  (testing "agent_chain action=list returns chain and agent info"
+  (testing "agent-chain action=list returns chain and agent info"
     (let [tmp (temp-dir)]
       (try
         (write-chain-config!
@@ -164,9 +164,9 @@
                    "You are a planner."))
         (with-user-dir (.getAbsolutePath tmp)
           (let [{:keys [api state]} (nullable/create-nullable-extension-api
-                                     {:path "/test/agent_chain.clj"})]
+                                     {:path "/test/agent-chain.clj"})]
             (sut/init api)
-            (let [execute (get-in @state [:tools "agent_chain" :execute])
+            (let [execute (get-in @state [:tools "agent-chain" :execute])
                   result  (execute {"action" "list"})]
               (is (false? (:is-error result)))
               (is (str/includes? (:content result) "plan-build-review"))
@@ -175,7 +175,7 @@
           (.delete tmp))))))
 
 (deftest agent-chain-reload-test
-  (testing "agent_chain action=reload reloads chains and agents and updates prompt contribution"
+  (testing "agent-chain action=reload reloads chains and agents and updates prompt contribution"
     (let [tmp (temp-dir)]
       (try
         (write-chain-config!
@@ -185,20 +185,20 @@
            :steps [{:agent "planner" :prompt "$INPUT"}]}])
         (with-user-dir (.getAbsolutePath tmp)
           (let [{:keys [api state]} (nullable/create-nullable-extension-api
-                                     {:path "/test/agent_chain.clj"})]
+                                     {:path "/test/agent-chain.clj"})]
             (sut/init api)
             ;; Modify config and reload
             (write-chain-config!
              tmp
              [{:name "initial-chain" :description "initial" :steps [{:agent "planner" :prompt "$INPUT"}]}
               {:name "new-chain" :description "new stuff" :steps [{:agent "builder" :prompt "$INPUT"}]}])
-            (let [execute (get-in @state [:tools "agent_chain" :execute])
+            (let [execute (get-in @state [:tools "agent-chain" :execute])
                   result  (execute {"action" "reload"})]
               (is (false? (:is-error result)))
               (is (str/includes? (:content result) "Reloaded"))
               (is (str/includes? (:content result) "2 chains"))
               ;; Contribution updated to include new chain
-              (let [contrib-key ["/test/agent_chain.clj" "agent-chain-chains"]
+              (let [contrib-key ["/test/agent-chain.clj" "agent-chain-chains"]
                     contrib     (get-in @state [:prompt-contributions contrib-key])]
                 (is (str/includes? (:content contrib) "new-chain"))
                 (is (str/includes? (:content contrib) "new stuff"))))))
@@ -206,14 +206,14 @@
           (.delete tmp))))))
 
 (deftest agent-chain-unknown-action-test
-  (testing "agent_chain returns error for unknown action"
+  (testing "agent-chain returns error for unknown action"
     (let [tmp (temp-dir)]
       (try
         (with-user-dir (.getAbsolutePath tmp)
           (let [{:keys [api state]} (nullable/create-nullable-extension-api
-                                     {:path "/test/agent_chain.clj"})]
+                                     {:path "/test/agent-chain.clj"})]
             (sut/init api)
-            (let [execute (get-in @state [:tools "agent_chain" :execute])
+            (let [execute (get-in @state [:tools "agent-chain" :execute])
                   result  (execute {"action" "explode"})]
               (is (true? (:is-error result)))
               (is (str/includes? (:content result) "Unknown action")))))
@@ -221,7 +221,7 @@
           (.delete tmp))))))
 
 (deftest agent-chain-widget-placement-follows-ui-type-test
-  (testing "agent_chain widget renders below editor in emacs ui"
+  (testing "agent-chain widget renders below editor in emacs ui"
     (let [tmp (temp-dir)]
       (try
         (write-chain-config!
@@ -231,7 +231,7 @@
            :steps [{:agent "prompt-compiler" :prompt "$INPUT"}]}])
         (with-user-dir (.getAbsolutePath tmp)
           (let [{:keys [api state]} (nullable/create-nullable-extension-api
-                                     {:path "/test/agent_chain.clj"
+                                     {:path "/test/agent-chain.clj"
                                       :ui-type :emacs})]
             (sut/init api)
             (is (= :below-editor
@@ -253,7 +253,7 @@
            :steps [{:agent "prompt-compiler" :prompt "$INPUT"}]}])
         (with-user-dir (.getAbsolutePath tmp)
           (let [{:keys [api state]} (nullable/create-nullable-extension-api
-                                     {:path "/test/agent_chain.clj"})]
+                                     {:path "/test/agent-chain.clj"})]
             (sut/init api)
             (let [chain-handler (get-in @state [:commands "chain" :handler])
                   output        (with-out-str (chain-handler nil))]
@@ -270,7 +270,7 @@
              (:registered?
               (wf/register-type-in!
                reg
-               "/test/agent_chain.clj"
+               "/test/agent-chain.clj"
                {:type :smoke
                 :chart invoke-chart
                 :initial-data-fn (fn [input] {:value (:value input)})}))))
@@ -278,10 +278,10 @@
              (:created?
               (wf/create-workflow-in!
                reg
-               "/test/agent_chain.clj"
+               "/test/agent-chain.clj"
                {:type :smoke :id "w1" :input {:value 9}}))))
         (loop [i 0]
-          (let [w (wf/workflow-in reg "/test/agent_chain.clj" "w1")]
+          (let [w (wf/workflow-in reg "/test/agent-chain.clj" "w1")]
             (if (or (>= i 200) (= :done (:phase w)))
               (do
                 (is (= :done (:phase w)))

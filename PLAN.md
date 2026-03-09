@@ -131,7 +131,7 @@ Ordered steps toward PSI COMPLETE.
 - Progress: commit `0c6667f` fixed Emacs startup `*lsp-log*` read-only regression by removing buffer-local `inhibit-read-only` from `psi-emacs-mode`, localizing transcript mutations behind explicit `let ((inhibit-read-only t))` boundaries, tightening separator marker validity checks, and updating ERT transcript-clearing tests for read-only semantics.
 - Progress: commit `7b63628` fixed `psi-emacs-project` re-running all prompts when switching to an existing buffer — `psi-emacs-open-buffer` now only activates modes on a fresh buffer (`unless derived-mode-p`), making the function idempotent and preventing buffer-local state wipe on re-entry.
 - Progress: commit `098cead` fixed "Text is read-only" error on buffer switch — `psi-emacs--refresh-input-separator-line` now binds `inhibit-read-only` around its `delete-region`/`insert` pair, matching all other internal transcript mutation sites.
-- Progress: commit `3cc8a76` made runtime UI surface introspectable (`:psi.agent-session/ui-type`) and exposed `:ui-type` on extension API; extension widgets now branch placement by UI (`:console|:tui|:emacs`) in `subagent_widget`, `agent_chain`, and `mcp_tasks_run`.
+- Progress: commit `3cc8a76` made runtime UI surface introspectable (`:psi.agent-session/ui-type`) and exposed `:ui-type` on extension API; extension widgets now branch placement by UI (`:console|:tui|:emacs`) in `subagent_widget`, `agent-chain`, and `mcp_tasks_run`.
 - Completed in this cycle:
   - [x] Prompt completion architecture added via CAPF (`components/emacs-ui/psi-completion.el`)
   - [x] `/` completion (slash commands) + `@` completion (file references)
@@ -162,8 +162,8 @@ Ordered steps toward PSI COMPLETE.
 - Progress: commit `e2fe3ed` adds a generic extension prompt-contribution layer to agent-session (register/update/unregister/list), deterministic contribution ordering, system-prompt recomposition (`base-system-prompt` + contributions), and EQL introspection attrs for contribution state.
 - Progress: commit `e2fe3ed` wires subagent-widget to publish a compact capability contribution so the assistant can discover/invoke subagent tools directly from system prompt context.
 - Progress: commit `76a07e5` upgrades subagent profile routing: `/sub [@agent] <task>` and `subagent(action="create", task, agent?)` now accept optional agent profiles from `.psi/agents/*.md`, reject unknown profiles early, surface active `@agent` in workflow/status output, and publish agent descriptions in the subagent prompt contribution.
-- Progress: commit `00bd634` eliminates the active-chain selection concept entirely — `run_chain` is replaced by `agent_chain(action, chain, task)`. The tool resolves the chain by name at call time; no prior `/chain` selection step is required. `action="list"` and `action="reload"` consolidate the former `/chain-list` and slash-based reload into the tool API. `/chain` and `/chain-reload` remain as human-facing aliases. Widget `active:` display removed.
-- Progress: commit `27efd76` adds prompt contribution for agent_chain: chain catalog (name + description) advertised in system prompt under `Extension Capabilities`; synced on init, reload, and session_switch so the model always has current chain inventory without a prior `action="list"` call.
+- Progress: commit `00bd634` eliminates the active-chain selection concept entirely — `run_chain` is replaced by `agent-chain(action, chain, task)`. The tool resolves the chain by name at call time; no prior `/chain` selection step is required. `action="list"` and `action="reload"` consolidate the former `/chain-list` and slash-based reload into the tool API. `/chain` and `/chain-reload` remain as human-facing aliases. Widget `active:` display removed.
+- Progress: commit `27efd76` adds prompt contribution for agent-chain: chain catalog (name + description) advertised in system prompt under `Extension Capabilities`; synced on init, reload, and session_switch so the model always has current chain inventory without a prior `action="list"` call.
 - ~~Follow-up queued: align `/chain` command UX with user intent by supporting both index and name selection (`/chain <number|name>`), while keeping no-default-active semantics.~~
 - Follow-up queued: add explicit extension transcript status for deferred PSL prompt delivery (`queued via deferred; will auto-run when idle`) so operator feedback distinguishes queued-follow-up from auto-deferred execution.
 - Progress: commit `a3c9756` hardened extension isolation during bootstrap — `send-extension-message-in!` now guards history append behind `startup-bootstrap-completed?`; PSL startup noise message removed.
@@ -177,6 +177,18 @@ Ordered steps toward PSI COMPLETE.
 ### Step 14 — HTTP API ‖ deferred
 - openapi spec + martian client, surface via Pathom mutations
 - Deferred until memory + recursion stabilization is complete
+
+### Spec track — Allium contract hardening ◇ in progress
+- Current status:
+  - `allium check spec` passes (47 files, 0 issues)
+  - Dependency ordering pass complete (`no-use` roots → dependents)
+- Remaining work:
+  - Recover richer behavioral detail where specs were intentionally simplified during parser migration (session/rpc/tui/emacs/memory flows)
+  - Align event vocabulary end-to-end (command vs emitted event pairs) and keep surface `provides` lists strictly synchronized with rule triggers
+  - Normalize naming/style consistency across all specs (snake_case fields, deterministic event names, guidance coverage)
+  - Add a CI guard for spec validity (`allium check spec`) and a drift check for cross-spec referenced operations
+  - Triage and resolve open questions; promote settled answers into normative rules
+  - Add focused acceptance matrices for critical contracts (rpc-edn, session-management, tools/runtime, tui/emacs boundary)
 
 ### AI COMPLETE
 - System-level milestone reached after Steps 10–14 are complete and stable

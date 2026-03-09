@@ -58,6 +58,20 @@
       (ext/register-tool-in! reg "/ext/a" {:name "my-tool" :label "My Tool"})
       (is (contains? (ext/tool-names-in reg) "my-tool"))))
 
+  (testing "rejects non-canonical tool names"
+    (let [reg (ext/create-registry)]
+      (ext/register-extension-in! reg "/ext/a")
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo
+           #"Invalid tool name"
+           (ext/register-tool-in! reg "/ext/a" {:name "my_tool" :label "My Tool"}))))
+    (let [reg (ext/create-registry)]
+      (ext/register-extension-in! reg "/ext/a")
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo
+           #"Invalid tool name"
+           (ext/register-tool-in! reg "/ext/a" {:name "MyTool" :label "My Tool"})))))
+
   (testing "command names tracked"
     (let [reg (ext/create-registry)]
       (ext/register-extension-in! reg "/ext/a")

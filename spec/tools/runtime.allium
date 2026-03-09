@@ -1,28 +1,14 @@
+-- allium: 1
+
 -- tools/runtime.allium
---
--- Scope: Built-in tools runtime contracts.
---
--- Includes:
---   - Tool schema/runtime registration for read/bash/edit/write/app-query-tool
---   - Built-in dispatcher behavior
---   - CWD-scoped tool wrappers
---   - Shared output-limit policy resolution (defaults + per-tool overrides)
---   - Process-wide temporary output directory lifecycle for truncated full outputs
---   - Pluggable operations contracts for remote/virtualized execution
---   - EQL introspection surface for limit hits and context-byte accretion
---
--- Excludes:
---   - Per-tool execution internals (see read/bash/edit/write/app-query-tool)
+-- Built-in tools runtime: registration, dispatch, policy, temp-store, and stats.
 
 use "./read.allium" as read
 use "./bash.allium" as bash
 use "./edit.allium" as edit
 use "./write.allium" as write
 use "./app-query-tool.allium" as eql
-
-------------------------------------------------------------
--- Value Types
-------------------------------------------------------------
+use "./tool-naming.allium" as naming
 
 value ToolSchema {
     name: String
@@ -40,333 +26,183 @@ value ToolDefinition {
 }
 
 value ToolOutputPolicy {
-    maxLines: Integer
-    maxBytes: Integer
+    max_lines: Integer
+    max_bytes: Integer
 }
 
 value ToolOutputOverride {
-    maxLines: Integer?
-    maxBytes: Integer?
+    max_lines: Integer?
+    max_bytes: Integer?
 }
 
 value ToolOutputTruncation {
     truncated: Boolean
-    truncatedBy: lines | bytes | none
-
-    totalLines: Integer
-    totalBytes: Integer
-
-    outputLines: Integer
-    outputBytes: Integer
-
-    maxLines: Integer
-    maxBytes: Integer
-
-    firstLineExceedsLimit: Boolean = false
-    lastLinePartial: Boolean = false
-}
-
-value ToolResultDetailEnvelope {
-    truncation: ToolOutputTruncation?
-    fullOutputPath: String?
-    binaryFileDetected: Boolean?
+    truncated_by: lines | bytes | none
+    total_lines: Integer
+    total_bytes: Integer
+    output_lines: Integer
+    output_bytes: Integer
+    max_lines: Integer
+    max_bytes: Integer
+    first_line_exceeds_limit: Boolean
+    last_line_partial: Boolean
 }
 
 value ToolCallOutputStat {
-    toolCallId: String
-    toolName: String
+    tool_call_id: String
+    tool_name: String
     timestamp: Timestamp
-
-    limitHit: Boolean
-    truncatedBy: lines | bytes | none
-
-    effectiveMaxLines: Integer
-    effectiveMaxBytes: Integer
-
-    outputBytes: Integer
-    contextBytesAdded: Integer
+    limit_hit: Boolean
+    truncated_by: lines | bytes | none
+    effective_max_lines: Integer
+    effective_max_bytes: Integer
+    output_bytes: Integer
+    context_bytes_added: Integer
 }
 
 value SessionToolOutputStats {
-    totalContextBytes: Integer
-    byTool: Map<String, Integer>
-    limitHitsByTool: Map<String, Integer>
+    total_context_bytes: Integer
+    by_tool: Map<String, Integer>
+    limit_hits_by_tool: Map<String, Integer>
 }
 
 value ProcessTempStore {
-    rootDir: String
-    createdAt: Timestamp
-    cleanedAt: Timestamp?
+    root_dir: String
+    created_at: Timestamp
+    cleaned_at: Timestamp?
 }
 
 value ToolOperations {
-    -- Abstract operation bundle for remote execution adapters.
-    -- Concrete shape is tool-specific (read/bash/edit/write/app-query-tool/etc).
     kind: local | remote | custom
-    adapterName: String?
+    adapter_name: String?
 }
 
-------------------------------------------------------------
--- Config
-------------------------------------------------------------
-
 config {
-    built_in_dispatch_tools: Set<String> = {
-        "read", "bash", "edit", "write"
-    }
-
-    -- Defaults for context growth protection.
+    built_in_dispatch_tools: Set<String> = {"read", "bash", "edit", "write"}
     tool_output_default_max_lines: Integer = 1000
-    tool_output_default_max_bytes: Integer = 25600      -- 25KB
-
-    -- Optional per-tool overrides.
-    -- Example:
-    -- {
-    --   "read": {"maxLines": 500, "maxBytes": 16384},
-    --   "bash": {"maxLines": 1500},
-    --   "app-query-tool": {"maxBytes": 8192}
-    -- }
+    tool_output_default_max_bytes: Integer = 25600
     tool_output_overrides: Map<String, ToolOutputOverride> = {}
 }
 
-------------------------------------------------------------
--- Registry Rules
-------------------------------------------------------------
-
-rule AllToolSchemasIncludeAllBuiltIns {
+rule BuiltInToolSchemasExposed {
     when: ToolSchemasRequested()
 
-    ensures: all-tool-schemas contains ToolSchema{name: "read"}
-    ensures: all-tool-schemas contains ToolSchema{name: "bash"}
-    ensures: all-tool-schemas contains ToolSchema{name: "edit"}
-    ensures: all-tool-schemas contains ToolSchema{name: "write"}
-    ensures: all-tool-schemas contains ToolSchema{name: "app-query-tool"}
+    ensures: ContainsToolSchema("read")
+    ensures: ContainsToolSchema("bash")
+    ensures: ContainsToolSchema("edit")
+    ensures: ContainsToolSchema("write")
+    ensures: ContainsToolSchema("app-query-tool")
 }
 
-rule AllToolsExcludeEqlQueryFactoryOnly {
-    -- app-query-tool requires a live query-fn closure and is created via factory.
+rule RegisteredToolNamesMustBeCanonical {
+    when: ToolSchemasRequested()
+
+    ensures: AllToolSchemaNamesMatchPattern(naming/config.tool_name_pattern)
+}
+
+rule RuntimeToolDefinitionsExcludeFactoryOnlyTools {
     when: RuntimeToolsRequested()
 
-    ensures: all-tools contains ToolDefinition{name: "read"}
-    ensures: all-tools contains ToolDefinition{name: "bash"}
-    ensures: all-tools contains ToolDefinition{name: "edit"}
-    ensures: all-tools contains ToolDefinition{name: "write"}
-    ensures: all-tools does not contain ToolDefinition{name: "app-query-tool"}
+    ensures: ContainsToolDefinition("read")
+    ensures: ContainsToolDefinition("bash")
+    ensures: ContainsToolDefinition("edit")
+    ensures: ContainsToolDefinition("write")
+    ensures: not ContainsToolDefinition("app-query-tool")
 }
 
 rule ExecuteToolDispatchesBuiltIns {
-    when: ExecuteToolCalled(toolName, args)
-    requires: toolName in config.built_in_dispatch_tools
+    when: ExecuteToolCalled(tool_name, args)
+    requires: tool_name in config.built_in_dispatch_tools
 
     ensures:
-        if toolName = "read":  result = read/ExecuteRead(args)
-        if toolName = "bash":  result = bash/ExecuteBash(args)
-        if toolName = "edit":  result = edit/ExecuteEdit(args)
-        if toolName = "write": result = write/ExecuteWrite(args)
+        if tool_name = "read":
+            result = read/ExecuteRead(args)
+        else if tool_name = "bash":
+            result = bash/ExecuteBash(args)
+        else if tool_name = "edit":
+            result = edit/ExecuteEdit(args)
+        else:
+            result = write/ExecuteWrite(args)
 }
 
 rule ExecuteToolRejectsUnknownTool {
-    when: ExecuteToolCalled(toolName, args)
-    requires: toolName not in config.built_in_dispatch_tools
+    when: ExecuteToolCalled(tool_name, args)
+    requires: tool_name not in config.built_in_dispatch_tools
 
-    ensures: Error.thrown("Unknown tool: " + toolName)
+    ensures: Error.thrown("Unknown tool: " + tool_name)
 }
-
-rule MakeToolsWithCwdReturnsCodingSet {
-    -- Backward-compatible coding set helper.
-    when: ToolsWithCwdRequested(cwd)
-
-    ensures: result.names = ["read", "bash", "edit", "write"]
-    ensures:
-        for t in result:
-            t.execute(args) = ExecuteWithOptions(t.name, args, {cwd: cwd})
-}
-
-rule MakeReadOnlyToolsWithCwdReturnsReadSet {
-    when: ReadOnlyToolsWithCwdRequested(cwd)
-
-    ensures: result.names = ["read"]
-    ensures:
-        for t in result:
-            t.execute(args) = ExecuteWithOptions(t.name, args, {cwd: cwd})
-}
-
-------------------------------------------------------------
--- Shared Output Policy Rules
-------------------------------------------------------------
 
 rule EffectiveOutputPolicyResolved {
-    when: EffectiveOutputPolicyRequested(toolName)
-    let override = config.tool_output_overrides[toolName]
+    when: EffectiveOutputPolicyRequested(tool_name)
 
     ensures:
-        if override = null:
-            EffectiveOutputPolicy(toolName) = ToolOutputPolicy{
-                maxLines: config.tool_output_default_max_lines,
-                maxBytes: config.tool_output_default_max_bytes
-            }
+        if HasOverride(tool_name):
+            EffectiveOutputPolicy(tool_name).max_lines = OverrideMaxLinesOrDefault(tool_name)
+            EffectiveOutputPolicy(tool_name).max_bytes = OverrideMaxBytesOrDefault(tool_name)
         else:
-            EffectiveOutputPolicy(toolName) = ToolOutputPolicy{
-                maxLines: override.maxLines or config.tool_output_default_max_lines,
-                maxBytes: override.maxBytes or config.tool_output_default_max_bytes
-            }
+            EffectiveOutputPolicy(tool_name).max_lines = config.tool_output_default_max_lines
+            EffectiveOutputPolicy(tool_name).max_bytes = config.tool_output_default_max_bytes
 }
 
-------------------------------------------------------------
--- Process-wide Temp Store Rules
-------------------------------------------------------------
-
 rule ProcessTempStoreCreatedOnStartup {
-    -- One process-wide temp root for truncated full-output artifacts.
-    when: PsiProcessStarted(processId)
+    when: PsiProcessStarted(process_id)
 
     ensures: ProcessTempStore.created(
-        rootDir: CreateTempDir(prefix: "psi-tool-output-" + processId),
-        createdAt: now,
-        cleanedAt: null
+        root_dir: CreateTempDir(prefix: "psi-tool-output-" + process_id),
+        created_at: now,
+        cleaned_at: null
     )
 }
 
 rule TruncatedArtifactsWrittenUnderProcessStore {
-    when: TruncatedFullOutputPersistRequested(toolCallId, toolName, fullText)
+    when: TruncatedFullOutputPersistRequested(tool_call_id, tool_name, full_text)
 
-    let store = ActiveProcessTempStore()
-
-    ensures: store != null
-    ensures: path = TempFile.write(
-        dir: store.rootDir,
-        name: toolName + "-" + toolCallId + ".log",
-        content: fullText
+    ensures: ReturnedFullOutputPath(tool_call_id) = TempFile.write(
+        dir: ActiveProcessTempStore().root_dir,
+        name: tool_name + "-" + tool_call_id + ".log",
+        content: full_text
     )
-    ensures: ReturnedFullOutputPath(toolCallId) = path
 }
-
-rule ProcessTempStoreCleanedOnExit {
-    -- Cleanup runs on orderly psi shutdown.
-    when: PsiProcessStopping(processId)
-
-    let store = ActiveProcessTempStore()
-
-    ensures:
-        if store != null:
-            Directory.deleteRecursive(store.rootDir)
-    ensures:
-        if store != null:
-            store.cleanedAt = now
-}
-
-rule ProcessTempStoreCleanupFailureIsNonFatal {
-    when: PsiProcessStopping(processId)
-    requires: Directory.deleteRecursive(ActiveProcessTempStore().rootDir) throws e
-
-    ensures: Warning.logged("Failed to clean tool temp dir", error: e)
-    ensures: PsiProcessShutdownContinues()
-}
-
-------------------------------------------------------------
--- Pluggable Operations Rules
-------------------------------------------------------------
-
-rule ToolUsesProvidedOperationsAdapter {
-    when: ToolExecutedWithOptions(toolName, args, opts)
-    requires: opts.operations != null
-
-    ensures: ToolRunner(toolName) uses opts.operations
-}
-
-rule ToolUsesLocalOperationsByDefault {
-    when: ToolExecutedWithOptions(toolName, args, opts)
-    requires: opts.operations = null
-
-    ensures: ToolRunner(toolName) uses LocalOperations(toolName)
-}
-
-------------------------------------------------------------
--- Output Accounting / EQL Introspection Rules
-------------------------------------------------------------
 
 rule ToolCallOutputStatRecorded {
-    when: ToolResultFinalized(toolCallId, toolName, truncation, outputText, projectedContextText)
-
-    let policy = EffectiveOutputPolicy(toolName)
+    when: ToolResultFinalized(tool_call_id, tool_name, truncation, output_text, projected_context_text)
 
     ensures: ToolCallOutputStat.created(
-        toolCallId: toolCallId,
-        toolName: toolName,
+        tool_call_id: tool_call_id,
+        tool_name: tool_name,
         timestamp: now,
-        limitHit: truncation.truncated,
-        truncatedBy: truncation.truncatedBy,
-        effectiveMaxLines: policy.maxLines,
-        effectiveMaxBytes: policy.maxBytes,
-        outputBytes: Utf8Bytes(outputText),
-        contextBytesAdded: Utf8Bytes(projectedContextText)
+        limit_hit: truncation.truncated,
+        truncated_by: truncation.truncated_by,
+        effective_max_lines: EffectiveOutputPolicy(tool_name).max_lines,
+        effective_max_bytes: EffectiveOutputPolicy(tool_name).max_bytes,
+        output_bytes: Utf8Bytes(output_text),
+        context_bytes_added: Utf8Bytes(projected_context_text)
     )
 }
 
-rule ToolOutputSessionAggregatesDerived {
+rule ToolOutputStatsAggregated {
     when: ToolOutputStatsRequested(session)
 
-    ensures: SessionToolOutputStats(session).totalContextBytes = Sum(ToolCallOutputStat.contextBytesAdded)
-    ensures: SessionToolOutputStats(session).byTool = GroupSum(ToolCallOutputStat.contextBytesAdded by toolName)
-    ensures: SessionToolOutputStats(session).limitHitsByTool = GroupCount(ToolCallOutputStat.limitHit = true by toolName)
+    ensures: SessionToolOutputStats(session).total_context_bytes = SumContextBytes(session)
+    ensures: SessionToolOutputStats(session).by_tool = GroupContextBytesByTool(session)
+    ensures: SessionToolOutputStats(session).limit_hits_by_tool = GroupLimitHitsByTool(session)
 }
-
-rule EqlIntrospectionExposesToolOutputStats {
-    -- Canonical EQL attributes for limit + accretion introspection.
-    when: ToolOutputEqlSnapshotRequested(session)
-
-    ensures: EqlAttr(:psi.tool-output/default-max-lines) = config.tool_output_default_max_lines
-    ensures: EqlAttr(:psi.tool-output/default-max-bytes) = config.tool_output_default_max_bytes
-    ensures: EqlAttr(:psi.tool-output/overrides) = config.tool_output_overrides
-    ensures: EqlAttr(:psi.tool-output/calls) = ToolCallOutputStat.list(session)
-    ensures: EqlAttr(:psi.tool-output/stats) = SessionToolOutputStats(session)
-
-    ensures:
-        for c in ToolCallOutputStat.list(session):
-            c exposes [:psi.tool-output.call/tool-call-id
-                       :psi.tool-output.call/tool-name
-                       :psi.tool-output.call/timestamp
-                       :psi.tool-output.call/limit-hit?
-                       :psi.tool-output.call/truncated-by
-                       :psi.tool-output.call/effective-max-lines
-                       :psi.tool-output.call/effective-max-bytes
-                       :psi.tool-output.call/output-bytes
-                       :psi.tool-output.call/context-bytes-added]
-}
-
-------------------------------------------------------------
--- Surface
-------------------------------------------------------------
 
 surface BuiltInToolsApi {
-    for caller: AgentSessionRuntime | ExtensionRuntime
+    facing caller: AgentSessionRuntime | ExtensionRuntime
 
     provides:
-        all-tool-schemas
-        all-tools
-        execute-tool(toolName, args)
-        make-tools-with-cwd(cwd)
-        make-read-only-tools-with-cwd(cwd)
+        ToolSchemasRequested()
+        RuntimeToolsRequested()
+        ExecuteToolCalled(tool_name, args)
+        EffectiveOutputPolicyRequested(tool_name)
 
-        -- shared policy + temp store
-        EffectiveOutputPolicy(toolName)
-        ActiveProcessTempStore()
-
-        -- pluggable operations
-        ExecuteWithOptions(toolName, args, opts)
-
-        -- stats + EQL snapshot
-        ToolCallOutputStats()
-        SessionToolOutputStats()
-        ToolOutputEqlSnapshot()
-
-    guidance:
-        -- Route all truncated full-output artifacts through the process temp store.
-        -- Use contextBytesAdded (not raw output bytes) for context accretion accounting.
+    exposes:
+        ToolSchema
+        ToolDefinition
+        ToolCallOutputStat
+        SessionToolOutputStats
+        ProcessTempStore
 }
 
-------------------------------------------------------------
--- Open Questions
-------------------------------------------------------------
-
-open_question "Should process-temp-store cleanup also run opportunistically on startup for stale psi-tool-output-* dirs from crashed prior runs?"
+open question "Should process temp-store cleanup also run opportunistically on startup for stale directories?"

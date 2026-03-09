@@ -20,7 +20,7 @@
 
 (defn- upper-tool
   []
-  {:name        "hello_upper"
+  {:name        "hello-upper"
    :label       "Hello Upper"
    :description "Upper-case a text value"
    :parameters  (pr-str {:type       "object"
@@ -32,7 +32,7 @@
 
 (defn- wrap-tool
   []
-  {:name        "hello_wrap"
+  {:name        "hello-wrap"
    :label       "Hello Wrap"
    :description "Wrap text with prefix/suffix"
    :parameters  (pr-str {:type       "object"
@@ -67,15 +67,15 @@
     ;; Demonstrate mutation-driven tool chaining from extension code.
     (mutate-fn 'psi.extension/register-command
                {:name "hello-plan"
-                :opts {:description "Run a demo tool plan (hello_upper -> hello_wrap)"
+                :opts {:description "Run a demo tool plan (hello-upper -> hello-wrap)"
                        :handler     (fn [_args]
                                       (let [result (run-tool-plan!
                                                     mutate-fn
                                                     [{:id :s1
-                                                      :tool "hello_upper"
+                                                      :tool "hello-upper"
                                                       :args {:text "hello from plan"}}
                                                      {:id :s2
-                                                      :tool "hello_wrap"
+                                                      :tool "hello-wrap"
                                                       :args {:text   [:from :s1 :content]
                                                              :prefix "["
                                                              :suffix "]"}}])
