@@ -186,6 +186,7 @@ Ordered steps toward PSI COMPLETE.
   - Dependency ordering pass complete (`no-use` roots → dependents)
   - Spec drift guard workflow is now documented in `README.md` (`bb spec:ci`, `bb spec:check`, `bb spec:check:full`, `bb spec:guard`, `bb spec:baseline`) with baseline file path and declaration-name guard scope.
 - Bash tool contract convergence landed (`ad44cb3`): `spec/tools/bash.allium` now matches runtime behavior (`overrides`, `on_update`, `tool_call_id`, timeout default, final-result update semantics, and boolean abort contract).
+- Read tool contract convergence landed (`a88335f`): `spec/tools/read.allium` now matches runtime behavior (content-block image returns, absolute-path missing-file/binary messaging, `overrides`-driven output policy, and implemented offset/limit guidance text).
 - Remaining work:
   - Recover richer behavioral detail where specs were intentionally simplified during parser migration (session/rpc/tui/emacs/memory flows)
   - Align event vocabulary end-to-end (command vs emitted event pairs) and keep surface `provides` lists strictly synchronized with rule triggers
