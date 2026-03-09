@@ -17,7 +17,7 @@ value EditOptions {
 
 value EditDiff {
     diff: String
-    first_changed_line: Integer?
+    first_changed_line: Integer
 }
 
 value EditResult {
@@ -115,16 +115,26 @@ rule EditRestoresBOMAndLineEndings {
     ensures: File.write(PathResolvedForEdit(args, opts), final)
 }
 
-rule EditReturnsSimpleDiffMetadata {
+rule EditReturnsSuccessMessageAndDiffDetails {
     when: ExecuteEdit(args, opts)
 
     ensures: diff = SimpleFirstChangedLineDiff(BeforeContent(), AfterContent())
-    ensures: first_changed_line = FirstChangedLine(BeforeContent(), AfterContent())
+    ensures: first_changed_line = FirstChangedLine(BeforeContent(), AfterContent()) or 1
     ensures: result = EditResult{
         content: "Successfully replaced text in " + PathString(PathResolvedForEdit(args, opts)) + ".",
         is_error: false,
         details: EditDiff{diff: diff, first_changed_line: first_changed_line}
     }
+    ensures: result.details.first_changed_line >= 1
+}
+
+rule EditWithoutCwdAcceptsAbsolutePath {
+    when: ExecuteEdit(args, opts)
+    requires: opts.cwd = null
+    requires: IsAbsolutePath(args.path)
+
+    ensures: resolved = path/ResolveToCwdCalled(path/ExpandPathCalled(args.path), null)
+    ensures: PathString(resolved) = PathString(path/ExpandPathCalled(args.path))
 }
 
 surface EditToolApi {
@@ -137,8 +147,10 @@ surface EditToolApi {
         EditResult
 
     @guidance
+        -- API args use snake_case fields: path, old_text, new_text.
         -- Matching is exact-first, fuzzy-second.
-        -- Exact match path replaces first occurrence only.
+        -- Exact-match path replaces first occurrence only.
         -- Fuzzy matching normalizes smart punctuation and trailing whitespace.
         -- Preserve original file BOM and dominant line endings.
+        -- Success includes diff text and first_changed_line metadata.
 }
