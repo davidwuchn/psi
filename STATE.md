@@ -7,12 +7,13 @@ Current truth about the Psi system.
 ## Operating Frame
 
 - ✓ Nucleus framing is now explicit in `AGENTS.md` via **Core Equation** (`刀 ⊣ ψ → 🐍`) and **The Loop** (Observe → Orient → Decide → Act).
-- ✓ Spec refinement framing now explicitly includes values in `AGENTS.md` (`λspec_step(刀_intention, ψ_values, spec)`), tightening the intention+values contract for future prompt/spec evolution.
+- ✓ Spec refinement framing now explicitly includes values in `AGENTS.md` using allium-specific primitives (`λallium_spec_step(刀_intention, ψ_values, allium_spec)`), tightening the intention+values contract for future prompt/spec evolution.
 - ✓ Project values and spec-drift guard workflow are now explicit in `README.md` (Values section + `bb spec:*` commands with declaration-name baseline guard).
 - ✓ Remember memory-capture framing clarified: human signal to future ψ via manual remember writeback.
 - ✓ Memory model boundary clarified: session memory (ephemeral working set) ≠ persistent memory (cross-session distilled artifacts) ≠ git history (queried directly, not duplicated into memory store).
 - ✓ Session persistence is a separate concern from memory: session transcripts/state may be partially persisted for `/resume`, but this is distinct from memory-store artifacts used by remember/recover.
 - ✓ Working pattern remains atomic: inspect → minimal change → verify → commit.
+- ✓ AGENTS guidance now formalizes spec/test convergence equations (commit `5504fcf`): `refactor_minimal_semantics_spec_tests` and `tests_musta_cover_allium_spec_behaviour` are explicit, and iterative refinement naming has shifted from generic `spec` to explicit `allium_spec` terms for consistency.
 - ✓ 2026-03-06 session boot aligned via nucleus/OODA ritual; current mode is ◈ reflect → ready for · atom execution.
 - ✓ Emacs prompt completion architecture implemented via CAPF: `/` command completion + `@` reference completion, category metadata (`psi_prompt`, `psi_reference`), affixation/annotation/exit hooks, cwd+project-root search, and configurable completion policies.
 - ✓ Emacs completion verification: `components/emacs-ui` ERT suite green at 133/133 after completion work.
