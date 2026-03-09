@@ -171,6 +171,7 @@ Ordered steps toward PSI COMPLETE.
 - Progress: commit `a3c9756` hardened extension isolation during bootstrap — `send-extension-message-in!` now guards history append behind `startup-bootstrap-completed?`; PSL startup noise message removed.
 - Progress: commit `c9af5f0` fixed TUI footer token/context display — Anthropic SSE provider was hardcoding usage to zeros; now reads real `input_tokens`/`output_tokens`/cache tokens from `message_start` and `message_delta` events. Footer now shows actual context fraction (e.g. `12.3%/200k`) instead of `?/0`.
 - Progress: commit `3600486` tightened agent-chain/operator UX: async chain start response is now compact and machine-friendly (`OK id:<run-id>`), with monitor guidance removed from tool output; lambda/prompt compiler agent definitions were also refined for stricter minimal output contracts.
+- Progress: commit `c353189` clarifies `agent-chain` tool contract text for async runs: `action="run"` language now says "start" (not "execute"), and description explicitly states "Do not poll unless explicitly asked to." to discourage default status polling loops.
 - Definition of done:
   - Per-token streaming render is available (not spinner-only)
   - Tool execution status is visible during active turns
