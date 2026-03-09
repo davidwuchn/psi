@@ -8,11 +8,17 @@ value BashArgs {
     timeout: Integer?
 }
 
+value BashOutputOverride {
+    max_lines: Integer?
+    max_bytes: Integer?
+}
+
 value BashOptions {
     cwd: String?
+    overrides: Map<String, BashOutputOverride>?
     command_prefix: String?
-    spawn_hook: Function?
-    operations: ToolOperations?
+    on_update: Function?
+    tool_call_id: String?
 }
 
 value BashTruncation {
@@ -30,11 +36,6 @@ value BashTruncation {
 value BashDetails {
     truncation: BashTruncation?
     full_output_path: String?
-}
-
-value BashPartialResult {
-    content: String
-    details: BashDetails?
 }
 
 value BashResult {
@@ -57,16 +58,16 @@ rule BashCommandPrefixDefaultsToRawCommand {
     ensures: resolved_command = args.command
 }
 
-rule BashSpawnHookApplied {
+rule BashTimeoutDefaultsToThirtySeconds {
     when: ExecuteBash(args, opts)
-    requires: opts.spawn_hook != null
 
-    ensures: spawn_context = ApplySpawnHook(
-        hook: opts.spawn_hook,
-        command: ResolvedCommand(args, opts),
-        cwd: opts.cwd,
-        env: ShellEnvironment()
-    )
+    ensures: timeout_seconds = args.timeout or 30
+}
+
+rule BashUsesEffectivePolicyWithOverrides {
+    when: ExecuteBash(args, opts)
+
+    ensures: policy = EffectiveOutputPolicy(tool_name: "bash", overrides: opts.overrides or {})
 }
 
 rule BashExecutesWithShellDashC {
@@ -84,38 +85,6 @@ rule BashRunsInCwdWhenProvided {
     ensures: ProcessWorkingDirectory() = opts.cwd
 }
 
-rule BashUsesProvidedOperationsWhenPresent {
-    when: ExecuteBash(args, opts)
-    requires: opts.operations != null
-
-    ensures: BashExecutionAdapter = opts.operations
-}
-
-rule BashStreamingUpdateCarriesCumulativeTail {
-    when: BashOutputChunkReceived(chunk)
-
-    let rolling = RollingOutputBuffer()
-    let truncation = TailTruncate(rolling, EffectiveOutputPolicy("bash"))
-
-    ensures: partial.content = truncation.content
-    ensures: partial.details.full_output_path = CurrentTempOutputPath()
-    ensures:
-        if truncation.truncated:
-            partial.details.truncation = truncation
-        else:
-            partial.details.truncation = null
-    ensures: OnUpdate(partial)
-}
-
-rule BashCreatesTempArtifactWhenOutputExceedsByteThreshold {
-    when: BashOutputChunkReceived(chunk)
-    requires: TotalOutputBytesSeen() > EffectiveOutputPolicy("bash").max_bytes
-    requires: CurrentTempOutputPath() = null
-
-    ensures: path = PersistTruncatedFullOutput(tool_name: "bash", full_text: OutputSeenSoFar())
-    ensures: CurrentTempOutputPath() = path
-}
-
 rule BashFinalResultUsesTailTruncation {
     when: BashProcessFinished(stdout, stderr, exit_code)
 
@@ -128,11 +97,16 @@ rule BashFinalResultUsesTailTruncation {
         else:
             result.content = truncation.content
     ensures: result.is_error = false
-    ensures:
-        if truncation.truncated:
-            result.details.truncation = truncation
-        else:
-            result.details.truncation = null
+}
+
+rule BashFinalResultIncludesTruncationDetailsWhenTruncated {
+    when: BashProcessFinished(stdout, stderr, exit_code)
+
+    let merged = stdout + stderr
+    let truncation = TailTruncate(merged, EffectiveOutputPolicy("bash"))
+    requires: truncation.truncated
+
+    ensures: result.details.truncation = truncation
 }
 
 rule BashFinalResultIncludesFullOutputPathWhenTruncated {
@@ -142,10 +116,24 @@ rule BashFinalResultIncludesFullOutputPathWhenTruncated {
     let truncation = TailTruncate(merged, EffectiveOutputPolicy("bash"))
     requires: truncation.truncated
 
-    ensures: path = CurrentTempOutputPathOrPersist(tool_name: "bash", full_text: merged)
+    ensures: path = PersistTruncatedFullOutput(
+        tool_name: "bash",
+        tool_call_id: opts.tool_call_id or RandomUuid(),
+        full_text: merged
+    )
     ensures: result.details.full_output_path = path
     ensures: Contains(result.content, "Full output")
     ensures: Contains(result.content, path)
+}
+
+rule BashFinalResultOmitsDetailsWhenNotTruncated {
+    when: BashProcessFinished(stdout, stderr, exit_code)
+
+    let merged = stdout + stderr
+    let truncation = TailTruncate(merged, EffectiveOutputPolicy("bash"))
+    requires: not truncation.truncated
+
+    ensures: result.details = null
 }
 
 rule BashNonZeroExitMarksError {
@@ -161,15 +149,41 @@ rule BashTimeoutMarksError {
 
     ensures: Process.killed()
     ensures: result.is_error = true
+    ensures: result.details = null
     ensures: Contains(result.content, "Command timed out after " + timeout_seconds + " seconds")
 }
 
-rule BashAbortMarksError {
-    when: BashAbortRequested()
+rule BashOnUpdateReceivesFinalResultWhenProvided {
+    when: BashResultReady(result)
+    requires: opts.on_update != null
 
-    ensures: Process.killed()
-    ensures: result.is_error = true
-    ensures: Contains(result.content, "Command aborted")
+    ensures: OnUpdate(opts.on_update, result)
+}
+
+rule BashExecutionExceptionsReturnErrorPayload {
+    when: ExecuteBash(args, opts)
+    requires: ExceptionThrown(e)
+
+    ensures: result = BashResult{
+        content: "Command execution error: " + Message(e),
+        is_error: true,
+        details: null
+    }
+}
+
+rule AbortBashReturnsTrueWhenProcessRunning {
+    when: AbortBashCalled()
+    requires: CurrentBashProcess() != null
+
+    ensures: Process.killed(force: true)
+    ensures: abort_result = true
+}
+
+rule AbortBashReturnsFalseWhenNoProcessRunning {
+    when: AbortBashCalled()
+    requires: CurrentBashProcess() = null
+
+    ensures: abort_result = false
 }
 
 rule BashTempArtifactsStoredInProcessStore {
@@ -182,12 +196,14 @@ surface BashToolApi {
     facing caller: AgentToolDispatcher
 
     provides:
-        ExecuteBash(args, opts, on_update)
+        ExecuteBash(args, opts)
+        AbortBashCalled()
 
     exposes:
         BashResult
 
     @guidance
         -- Truncated bash output must provide recoverable full_output_path metadata.
-        -- Timeout and abort should preserve best-effort output gathered so far.
+        -- on_update currently receives final-result snapshots (not chunk-stream deltas).
+        -- Timeout errors currently return timeout text without partial captured output.
 }
