@@ -188,6 +188,7 @@ Ordered steps toward PSI COMPLETE.
 - Bash tool contract convergence landed (`ad44cb3`): `spec/tools/bash.allium` now matches runtime behavior (`overrides`, `on_update`, `tool_call_id`, timeout default, final-result update semantics, and boolean abort contract).
 - Read tool contract convergence landed (`a88335f`): `spec/tools/read.allium` now matches runtime behavior (content-block image returns, absolute-path missing-file/binary messaging, `overrides`-driven output policy, and implemented offset/limit guidance text).
 - Write/edit tool contract convergence landed (`f5ba5cd`): `spec/tools/write.allium` and `spec/tools/edit.allium` now match runtime behavior (path expansion before cwd resolution, resolved-path success/error messaging, and exact-first + fuzzy-window edit replacement semantics).
+- Edit spec follow-up convergence landed (`b642b54`): `spec/tools/edit.allium` now aligns with current tests for non-null `first_changed_line` metadata (`>= 1`) and no-cwd absolute-path handling, while preserving repository snake_case spec field conventions (`old_text`, `new_text`).
 - app-query-tool contract convergence landed (`364475a`): `spec/tools/app-query-tool.allium` now matches runtime behavior (factory schema metadata parity, `overrides` + `tool_call_id` options, truncation details only when truncated, and direct-dispatch exclusion).
 - Remaining work:
   - Recover richer behavioral detail where specs were intentionally simplified during parser migration (session/rpc/tui/emacs/memory flows)
