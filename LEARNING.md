@@ -4,6 +4,21 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-09 - Tool metadata wording steers polling behavior in async workflows
+
+### λ Describe async `run` as "start" to preserve non-blocking mental model
+
+When a tool call only launches background work, wording like "execute" implies
+synchronous completion and encourages immediate status loops. Using "start" in
+`agent-chain` description keeps expectations aligned with workflow-runtime
+semantics.
+
+### λ Put anti-polling guidance in the tool contract, not just in code reviews
+
+Adding "Do not poll unless explicitly asked to" to the tool description provides
+an always-present guardrail for model/tool callers. This lowers default polling
+noise and makes operator intent the explicit trigger for status checks.
+
 ## 2026-03-09 - Async chain-start acknowledgements should be protocol-minimal
 
 ### λ Return a stable machine-parseable run id at the async boundary
