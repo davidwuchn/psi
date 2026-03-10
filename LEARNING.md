@@ -46,6 +46,22 @@ When AGENTS changes define behavior policy (not just prose), PSL follow-up shoul
 propagate the delta into `PLAN.md` and `STATE.md`, then capture the rationale in
 `LEARNING.md`, keeping repository memory aligned across now/next/past artifacts.
 
+## 2026-03-10 - PSL status-message fallbacks should tolerate non-keyword delivery values
+
+### λ Fallback formatting in user-facing status paths should coerce unknown values with `str`, not keyword-only formatters
+
+The PSL status fallback originally called `name` on `(or delivery :unknown)`. That is
+safe for keywords/symbols/strings, but can throw for other payload shapes. Using
+`(str (or delivery :unknown))` preserves readable fallback text while removing type
+coupling from a user-facing error-reporting path.
+
+### λ Defensive formatting belongs at extension boundaries where payload shape can drift
+
+Delivery values usually come from a known enum (`:prompt`, `:deferred`, `:follow-up`),
+but extension/runtime boundaries can still carry unexpected values during refactors
+or partial failures. Status text generation should be fail-safe so diagnostics can be
+emitted even when upstream shape contracts are violated.
+
 ## 2026-03-10 - Delivery-mode transcript messages should be derived from prompt-delivery, and spec parse checks need targeted isolation
 
 ### λ Extension operator feedback should branch on `:psi.extension/prompt-delivery`, not generic success
