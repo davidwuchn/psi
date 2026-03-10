@@ -326,10 +326,15 @@ Caught by `jline-terminal-keymap-test` smoke test.
   - completion-time ordered pending terminal queue with at-most-once emit marker
   - payload size policy + temp-file spillover for oversized terminal payloads
   - bounded terminal retention (20/thread) with oldest-terminal eviction
-- ✓ Focused verification:
-  - `psi.agent-session.background-jobs-test`
-  - `psi.agent-session.core-test/workflow-background-job-terminal-injection-test`
-- … Remaining gap: explicit cross-surface parity verification (REPL/TUI/Emacs/RPC transcript projection)
+- ✓ Follow-up landed in commit `6f321af`:
+  - completed remaining matrix IDs `N7`, `E7`, `E10`, `E13`, `B3`
+  - exposed explicit background-job list/inspect/cancel surfaces in RPC
+  - wired slash parity in TUI/Emacs (`/jobs`, `/job`, `/cancel-job`)
+  - added/updated cross-surface tests (`agent-session`, `tui`, `emacs-ui`)
+- ✓ Verification:
+  - `clojure -M:test --focus psi.agent-session.background-jobs-test --focus psi.agent-session.commands-test --focus psi.agent-session.rpc-test --focus psi.tui.app-test`
+  - `bb emacs:check`
+- ✓ Cross-surface parity gap closed (REPL/TUI/Emacs/RPC)
 
 ## Step 10 Decisions (Remember Spec)
 

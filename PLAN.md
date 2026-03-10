@@ -153,13 +153,14 @@ Ordered steps toward PSI COMPLETE.
   - dedicated input area (persistent cursor focus while streaming + multiline compose + history traversal) is stable and tested
   - `bb emacs:test` and `bb emacs:byte-compile` remain green
 
-### Step 12b — Background tool jobs (spec + tests) ◇ in progress
+### Step 12b — Background tool jobs (spec + tests) ✓ complete
 - Spec: `spec/background-tool-jobs.allium`
 - Test matrix: `doc/background-tool-jobs-test-matrix.md`
 - Progress: commit `b7ac6f4` landed in-memory background job runtime + terminal injection plumbing
   - `components/agent-session/src/psi/agent_session/background_jobs.clj`
   - `components/agent-session/src/psi/agent_session/core.clj`
   - focused contract tests in `background_jobs_test.clj` + integration coverage in `core_test.clj`
+- Progress: commit `6f321af` completed remaining matrix TODO slice (`N7`, `E7`, `E10`, `E13`, `B3`) and wired explicit list/inspect/cancel surfaces across RPC/TUI/Emacs for parity.
 - Acceptance checklist:
   - [x] Dual-mode tool behavior is implemented (`sync` result vs `background` start with `job-id`)
   - [x] `job-id` is returned only for async/background starts
@@ -172,7 +173,7 @@ Ordered steps toward PSI COMPLETE.
   - [x] Default `list jobs` returns non-terminal statuses only
   - [x] Manual retry is rejected with canonical error
   - [x] Retention is bounded to 20 terminal jobs/thread with oldest-terminal eviction
-  - [ ] Cross-surface visibility parity holds (REPL/TUI/Emacs/RPC)
+  - [x] Cross-surface visibility parity holds (REPL/TUI/Emacs/RPC)
 
 ### Step 13 — Terminal UI (TUI) ◇ in progress
 - Spec: `spec/tui.allium`
