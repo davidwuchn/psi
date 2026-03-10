@@ -76,6 +76,10 @@ Current truth about the Psi system.
 - ✓ Startup focus targeting is now window-aware: `psi-emacs--focus-input-area` prefers the explicit `pop-to-buffer` window and synchronizes both buffer point + window point (plus additional visible windows for same buffer).
 - ✓ Backend handshake/startup compile regression resolved: `components/agent-session/src/psi/agent_session/core.clj` `all-mutations` now references `interrupt` mutation symbol (stale `abort` reference removed), restoring `--rpc-edn` handshake readiness.
 - ✓ Verification: `bb emacs:test` passing at 172/172 after banner/focus/mutation-registration follow-up.
+- ✓ Allium spec parity now includes these startup/streaming behaviors (commit `b13c4f8`):
+  - `spec/emacs-frontend.allium` models deterministic `ψ` transcript banner + input-area cursor placement on initialization and `/new` reset.
+  - `spec/session-management.allium` models `prompt_while_streaming` steer/queue semantics and interrupt-pending steer coercion to follow-up.
+- ✓ `allium check spec` remains green after spec update (48 files, 0 issues).
 - ✓ `psi-emacs-command` is now marked safe for local variables (`:safe` predicate accepts list-of-strings), so project `.dir-locals.el` command overrides no longer trigger Emacs unsafe-local warnings.
 - ✓ Emacs startup `*lsp-log*` read-only regression fixed (commit `0c6667f`): removed `psi-emacs-mode` buffer-local `inhibit-read-only`; localized transcript/property mutations behind explicit `let ((inhibit-read-only t))`; separator marker validity now requires line-start marker anchoring; Emacs tests updated for intentional read-only transcript clearing.
 - ✓ Verification after read-only regression fix: `bb emacs:test` passing at 168/168 and `bb emacs:byte-compile` clean (pre-existing docstring width warnings only).
