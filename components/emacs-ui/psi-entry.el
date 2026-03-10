@@ -132,7 +132,12 @@ frontend state boundaries."
           (let* ((state psi-emacs--state)
                  (process (psi-emacs-state-process state))
                  (process-live? (process-live-p process))
-                 (client (psi-emacs-state-rpc-client state)))
+                 (client (psi-emacs-state-rpc-client state))
+                 (transport-state (psi-emacs-state-transport-state state))
+                 (client-live-and-connected?
+                  (and client
+                       process-live?
+                       (memq transport-state '(handshaking ready)))))
             (unless (markerp (psi-emacs-state-draft-anchor state))
               (setf (psi-emacs-state-draft-anchor state)
                     (copy-marker (point-max) nil)))
@@ -142,10 +147,13 @@ frontend state boundaries."
                        (null (psi-emacs-state-projection-range state)))
               (psi-emacs--seed-connecting-footer)
               (psi-emacs--focus-input-area))
-            ;; Recover from stale buffer state where a process exists but no
-            ;; rpc client is attached (e.g. after partial code reload).
-            (unless (and client process-live?)
+            ;; Recover from stale/disconnected buffer state (e.g. after code
+            ;; reload or failed startup handshake) by restarting transport.
+            (unless client-live-and-connected?
               (when process-live?
+                ;; This restart is intentional; suppress subprocess-exit error
+                ;; surfacing from the transport sentinel.
+                (process-put process 'psi-rpc-stop-requested t)
                 (delete-process process))
               (psi-emacs--start-rpc-client buffer)))
         (setq psi-emacs--state (psi-emacs--initialize-state nil))

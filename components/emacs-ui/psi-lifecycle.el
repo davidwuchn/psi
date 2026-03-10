@@ -80,24 +80,28 @@
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
       (when psi-emacs--state
-        (setf (psi-emacs-state-rpc-client psi-emacs--state) client)
-        (setf (psi-emacs-state-process-state psi-emacs--state)
-              (psi-rpc-client-process-state client))
-        (setf (psi-emacs-state-transport-state psi-emacs--state)
-              (psi-rpc-client-transport-state client))
-        (setf (psi-emacs-state-process psi-emacs--state)
-              (psi-rpc-client-process client))
-        (when (and (eq (psi-emacs-state-run-state psi-emacs--state) 'reconnecting)
-                   (eq (psi-rpc-client-transport-state client) 'ready))
-          (psi-emacs--set-run-state psi-emacs--state 'idle))
-        (when (eq (psi-rpc-client-transport-state client) 'ready)
-          (let ((hydrated-before (psi-emacs-state-transcript-hydrated? psi-emacs--state)))
-            (psi-emacs--request-initial-transcript-hydration buffer psi-emacs--state)
-            (when (and (not hydrated-before)
-                       (fboundp 'psi-emacs--refresh-extension-command-names))
-              (psi-emacs--refresh-extension-command-names))))
-        (setq psi-emacs--owned-process (psi-rpc-client-process client))
-        (psi-emacs--refresh-header-line)))))
+        (let ((active-client (psi-emacs-state-rpc-client psi-emacs--state)))
+          ;; Ignore late callbacks from stale clients after reconnect/restart.
+          (when (or (null active-client)
+                    (eq active-client client))
+            (setf (psi-emacs-state-rpc-client psi-emacs--state) client)
+            (setf (psi-emacs-state-process-state psi-emacs--state)
+                  (psi-rpc-client-process-state client))
+            (setf (psi-emacs-state-transport-state psi-emacs--state)
+                  (psi-rpc-client-transport-state client))
+            (setf (psi-emacs-state-process psi-emacs--state)
+                  (psi-rpc-client-process client))
+            (when (and (eq (psi-emacs-state-run-state psi-emacs--state) 'reconnecting)
+                       (eq (psi-rpc-client-transport-state client) 'ready))
+              (psi-emacs--set-run-state psi-emacs--state 'idle))
+            (when (eq (psi-rpc-client-transport-state client) 'ready)
+              (let ((hydrated-before (psi-emacs-state-transcript-hydrated? psi-emacs--state)))
+                (psi-emacs--request-initial-transcript-hydration buffer psi-emacs--state)
+                (when (and (not hydrated-before)
+                           (fboundp 'psi-emacs--refresh-extension-command-names))
+                  (psi-emacs--refresh-extension-command-names))))
+            (setq psi-emacs--owned-process (psi-rpc-client-process client))
+            (psi-emacs--refresh-header-line)))))))
 
 (defun psi-emacs--on-rpc-error (buffer code message-text frame)
   "Surface RPC error in minibuffer only for BUFFER."
@@ -149,13 +153,24 @@
         (setq psi-emacs--owned-process (psi-rpc-client-process client))
         (psi-emacs--refresh-header-line)))))
 
+(defun psi-emacs--next-rpc-process-name ()
+  "Return a unique process name for a psi rpc subprocess."
+  (let ((base "psi-rpc-edn")
+        (index 1)
+        candidate)
+    (setq candidate base)
+    (while (get-process candidate)
+      (setq candidate (format "%s<%d>" base index)
+            index (1+ index)))
+    candidate))
+
 (defun psi-emacs--default-spawn-process (command)
   "Spawn psi subprocess from COMMAND.
 
 COMMAND is a list suitable for `make-process'."
   (let* ((stderr-buffer (generate-new-buffer " *psi-rpc-stderr*"))
          (process (make-process
-                   :name "psi-rpc-edn"
+                   :name (psi-emacs--next-rpc-process-name)
                    :command command
                    :buffer nil
                    :stderr stderr-buffer
@@ -177,6 +192,7 @@ COMMAND is a list suitable for `make-process'."
   (psi-emacs--disarm-stream-watchdog psi-emacs--state)
   (psi-emacs--clear-last-error psi-emacs--state)
   (when (process-live-p psi-emacs--owned-process)
+    (process-put psi-emacs--owned-process 'psi-rpc-stop-requested t)
     (delete-process psi-emacs--owned-process))
   (when (and psi-emacs--state
              (markerp (psi-emacs-state-draft-anchor psi-emacs--state)))
@@ -258,6 +274,17 @@ process. In batch/noninteractive usage (for example ERT), always allow kill."
             #'psi-emacs--handle-window-configuration-change
             nil t))
 
+(defun psi-emacs--refresh-buffer-lifecycle-hooks ()
+  "Ensure lifecycle hooks are installed in all live psi mode buffers.
+
+Useful after reloading lifecycle code into an existing Emacs session where
+buffers were created before new hook registrations existed."
+  (dolist (buffer (buffer-list))
+    (when (buffer-live-p buffer)
+      (with-current-buffer buffer
+        (when (derived-mode-p 'psi-emacs-mode)
+          (psi-emacs--install-buffer-lifecycle-hooks))))))
+
 (defun psi-emacs--buffer-modified-p ()
   "Return non-nil when current buffer has pending user edits."
   (buffer-modified-p))
@@ -333,6 +360,7 @@ When PRESERVE-TOOL-OUTPUT-VIEW-MODE is non-nil, keep the current
                  (psi-rpc-client-p (psi-emacs-state-rpc-client psi-emacs--state)))
         (psi-rpc-stop! (psi-emacs-state-rpc-client psi-emacs--state)))
       (when (process-live-p psi-emacs--owned-process)
+        (process-put psi-emacs--owned-process 'psi-rpc-stop-requested t)
         (delete-process psi-emacs--owned-process))
       (psi-emacs--reset-transcript-state)
       (setf (psi-emacs-state-transport-state psi-emacs--state) 'disconnected)

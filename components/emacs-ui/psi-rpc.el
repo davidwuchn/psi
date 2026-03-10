@@ -45,6 +45,12 @@
   (append psi-rpc-core-topics psi-rpc-extension-topics)
   "Default topic subscription set for Emacs frontend.")
 
+(defconst psi-rpc-process-exit-stderr-tail-max-lines 20
+  "Maximum stderr lines included when reporting process exit errors.")
+
+(defconst psi-rpc-process-exit-stderr-tail-max-chars 2000
+  "Maximum stderr characters included when reporting process exit errors.")
+
 (cl-defstruct psi-rpc-client
   process
   process-state
@@ -112,6 +118,46 @@
   "Report transport/protocol error for CLIENT with CODE MESSAGE and FRAME."
   (when-let ((f (psi-rpc-client-on-rpc-error client)))
     (funcall f code message frame)))
+
+(defun psi-rpc--tail-lines (text max-lines)
+  "Return last MAX-LINES from TEXT, preserving line order."
+  (if (<= max-lines 0)
+      ""
+    (let* ((lines (split-string text "\n"))
+           (count (length lines)))
+      (if (<= count max-lines)
+          text
+        (string-join (nthcdr (- count max-lines) lines) "\n")))))
+
+(defun psi-rpc--tail-chars (text max-chars)
+  "Return TEXT limited to last MAX-CHARS characters."
+  (if (or (<= max-chars 0)
+          (<= (length text) max-chars))
+      text
+    (concat "…" (substring text (- (length text) (1- max-chars))))))
+
+(defun psi-rpc--process-stderr-tail (process)
+  "Return trimmed stderr tail for PROCESS, or nil when unavailable."
+  (when-let ((stderr-buffer (and process (process-get process 'psi-rpc-stderr-buffer))))
+    (when (buffer-live-p stderr-buffer)
+      (with-current-buffer stderr-buffer
+        (let ((text (string-trim (buffer-substring-no-properties (point-min) (point-max)))))
+          (unless (string-empty-p text)
+            (psi-rpc--tail-chars
+             (psi-rpc--tail-lines text psi-rpc-process-exit-stderr-tail-max-lines)
+             psi-rpc-process-exit-stderr-tail-max-chars)))))))
+
+(defun psi-rpc--format-process-exit-message (status exit-code stderr-tail)
+  "Build deterministic process-exit message from STATUS EXIT-CODE STDERR-TAIL."
+  (let ((base (format "psi subprocess exited unexpectedly (status=%s%s)."
+                      (or status 'unknown)
+                      (if (numberp exit-code)
+                          (format " code=%d" exit-code)
+                        ""))))
+    (if (and (stringp stderr-tail)
+             (not (string-empty-p stderr-tail)))
+        (format "%s stderr tail:\n%s" base stderr-tail)
+      base)))
 
 (defun psi-rpc--next-id (client)
   "Return next request id string for CLIENT."
@@ -426,11 +472,18 @@ Returns non-nil when a pending callback was found and invoked."
     (setf (psi-rpc-client-process client) process)
     (if (process-live-p process)
         (psi-rpc--set-state client 'running (psi-rpc-client-transport-state client))
-      (let ((status (process-status process)))
+      (let* ((status (process-status process))
+             (process-state (if (eq status 'exit) 'stopped 'crashed))
+             (stop-requested? (process-get process 'psi-rpc-stop-requested))
+             (exit-code (process-exit-status process))
+             (stderr-tail (psi-rpc--process-stderr-tail process)))
         (psi-rpc--cleanup-process-stderr-buffer process)
-        (psi-rpc--set-state client
-                            (if (eq status 'exit) 'stopped 'crashed)
-                            'disconnected)))))
+        (psi-rpc--set-state client process-state 'disconnected)
+        (unless stop-requested?
+          (psi-rpc--signal-error client
+                                 "transport/process-exit"
+                                 (psi-rpc--format-process-exit-message status exit-code stderr-tail)
+                                 nil))))))
 
 (defun psi-rpc-bootstrap! (client &optional topics)
   "Run startup handshake and topic subscription for CLIENT.
@@ -491,6 +544,7 @@ SPAWN-PROCESS-FN receives COMMAND and returns an Emacs process object."
   "Stop CLIENT process if live and clear transport state."
   (let ((process (psi-rpc-client-process client)))
     (when (process-live-p process)
+      (process-put process 'psi-rpc-stop-requested t)
       (delete-process process))
     (psi-rpc--cleanup-process-stderr-buffer process))
   (clrhash (psi-rpc-client-pending-callbacks client))

@@ -42,6 +42,19 @@
    :noquery t
    :connection-type 'pipe))
 
+(defun psi-rpc-test--spawn-stderr-exit (_command)
+  "Spawn short-lived process that writes stderr and exits non-zero."
+  (let* ((stderr-buffer (generate-new-buffer " *psi-rpc-test-stderr*"))
+         (process (make-process
+                   :name (format "psi-rpc-test-exit-%s" (gensym))
+                   :command '("sh" "-c" "echo startup-boom 1>&2; exit 127")
+                   :buffer nil
+                   :stderr stderr-buffer
+                   :noquery t
+                   :connection-type 'pipe)))
+    (process-put process 'psi-rpc-stderr-buffer stderr-buffer)
+    process))
+
 (ert-deftest psi-rpc-parse-line-valid-edn-frame ()
   (pcase (psi-rpc--parse-line "{:id \"1\" :kind :event :event \"assistant/delta\" :data {:text \"hi\"}}")
     (`(:ok ,frame)
@@ -120,6 +133,63 @@
           (should (equal "hi" (alist-get :text (alist-get :data (car events)))))
           (should (null errors))
           (should (string-empty-p (psi-rpc-client-line-buffer client))))
+      (when (process-live-p process)
+        (delete-process process)))))
+
+(ert-deftest psi-rpc-process-sentinel-signals-unexpected-exit-with-stderr-tail ()
+  (let* ((states nil)
+         (errors nil)
+         (client (psi-rpc-make-client
+                  :on-state-change (lambda (c)
+                                     (push (list (psi-rpc-client-process-state c)
+                                                 (psi-rpc-client-transport-state c))
+                                           states))
+                  :on-rpc-error (lambda (code message _frame)
+                                  (push (list code message) errors))))
+         (process (psi-rpc-test--spawn-stderr-exit '("ignored")))
+         (spins 0))
+    (unwind-protect
+        (progn
+          (process-put process 'psi-rpc-client client)
+          (setf (psi-rpc-client-process client) process)
+          (set-process-sentinel process #'psi-rpc-process-sentinel)
+          (while (and (process-live-p process)
+                      (< spins 50))
+            (setq spins (1+ spins))
+            (accept-process-output process 0.02))
+          (sleep-for 0.02)
+          (should (equal '(stopped disconnected)
+                         (list (psi-rpc-client-process-state client)
+                               (psi-rpc-client-transport-state client))))
+          (should (member '(stopped disconnected) states))
+          (should (= 1 (length errors)))
+          (should (equal "transport/process-exit" (caar errors)))
+          (should (string-match-p "code=127" (cadar errors)))
+          (should (string-match-p "startup-boom" (cadar errors)))
+          (should-not (process-get process 'psi-rpc-stderr-buffer)))
+      (when (process-live-p process)
+        (delete-process process))
+      (when-let ((stderr (process-get process 'psi-rpc-stderr-buffer)))
+        (when (buffer-live-p stderr)
+          (kill-buffer stderr))))))
+
+(ert-deftest psi-rpc-stop-does-not-signal-process-exit-error ()
+  (let* ((errors nil)
+         (client (psi-rpc-make-client
+                  :on-rpc-error (lambda (code message _frame)
+                                  (push (list code message) errors))))
+         (process (psi-rpc-test--spawn-cat '("cat"))))
+    (unwind-protect
+        (progn
+          (process-put process 'psi-rpc-client client)
+          (setf (psi-rpc-client-process client) process)
+          (set-process-sentinel process #'psi-rpc-process-sentinel)
+          (psi-rpc-stop! client)
+          (sleep-for 0.02)
+          (should (equal '(stopped disconnected)
+                         (list (psi-rpc-client-process-state client)
+                               (psi-rpc-client-transport-state client))))
+          (should (null errors)))
       (when (process-live-p process)
         (delete-process process)))))
 

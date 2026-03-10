@@ -226,5 +226,7 @@ Renderer registration/query metadata remains read-only via `query_eql`.
 ## Error surface
 
 - RPC errors still emit minibuffer messages.
+- Unexpected psi subprocess exits are surfaced as `transport/process-exit` errors,
+  including a bounded stderr tail in the error text when available.
 - The frontend also keeps a single persistent in-buffer error line (`Error: ...`) that is updated in place.
 - Reconnect/new-session transcript reset clears the persistent error line and `last-error` state.

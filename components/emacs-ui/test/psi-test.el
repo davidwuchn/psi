@@ -339,6 +339,34 @@
         (when (file-directory-p start-dir)
           (delete-directory start-dir t))))))
 
+(ert-deftest psi-open-buffer-restarts-existing-buffer-when-transport-disconnected ()
+  (let* ((buffer-name (format "*psi-test-disconnected-%s*" (gensym)))
+         (psi-emacs-command '("cat"))
+         (psi-emacs--spawn-process-function #'psi-test--spawn-long-lived-process)
+         (buffer nil)
+         (stale-process nil)
+         (restart-called nil))
+    (unwind-protect
+        (progn
+          (setq buffer (psi-emacs-open-buffer buffer-name))
+          (with-current-buffer buffer
+            (setq stale-process (psi-emacs-state-process psi-emacs--state))
+            (should (process-live-p stale-process))
+            (setf (psi-emacs-state-rpc-client psi-emacs--state)
+                  (psi-rpc-make-client :process stale-process
+                                       :process-state 'running
+                                       :transport-state 'disconnected))
+            (setf (psi-emacs-state-process-state psi-emacs--state) 'running)
+            (setf (psi-emacs-state-transport-state psi-emacs--state) 'disconnected))
+          (cl-letf (((symbol-function 'psi-emacs--start-rpc-client)
+                     (lambda (_buffer)
+                       (setq restart-called t))))
+            (psi-emacs-open-buffer buffer-name))
+          (should restart-called)
+          (should-not (process-live-p stale-process)))
+      (when (buffer-live-p buffer)
+        (kill-buffer buffer)))))
+
 (ert-deftest psi-initialize-state-sets-idle-run-state ()
   (let ((state (psi-emacs--initialize-state nil)))
     (should (eq 'idle (psi-emacs-state-run-state state)))))
@@ -490,6 +518,35 @@
         (let ((noninteractive t))
           (should (psi-emacs--confirm-kill-buffer-p))))
       (should-not prompted))))
+
+(ert-deftest psi-refresh-buffer-lifecycle-hooks-adds-kill-query-hook-to-existing-psi-buffers ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local kill-buffer-query-functions nil)
+    (should-not (memq #'psi-emacs--confirm-kill-buffer-p kill-buffer-query-functions))
+    (psi-emacs--refresh-buffer-lifecycle-hooks)
+    (should (memq #'psi-emacs--confirm-kill-buffer-p kill-buffer-query-functions))))
+
+(ert-deftest psi-default-spawn-process-uses-unique-process-name ()
+  (let ((process-1 nil)
+        (process-2 nil))
+    (unwind-protect
+        (progn
+          (setq process-1 (psi-emacs--default-spawn-process '("cat")))
+          (setq process-2 (psi-emacs--default-spawn-process '("cat")))
+          (should (process-live-p process-1))
+          (should (process-live-p process-2))
+          (should-not (equal (process-name process-1)
+                             (process-name process-2))))
+      (when (process-live-p process-1)
+        (delete-process process-1))
+      (when (process-live-p process-2)
+        (delete-process process-2))
+      (dolist (proc (list process-1 process-2))
+        (when proc
+          (when-let ((stderr (process-get proc 'psi-rpc-stderr-buffer)))
+            (when (buffer-live-p stderr)
+              (kill-buffer stderr))))))))
 
 (ert-deftest psi-compose-source-prefers-region-over-tail-draft ()
   (with-temp-buffer
@@ -1957,6 +2014,20 @@
       (setf (psi-rpc-client-transport-state client) 'ready)
       (psi-emacs--on-rpc-state-change (current-buffer) client)
       (should (string= "psi [ready/running/idle] tools:collapsed" header-line-format)))))
+
+(ert-deftest psi-rpc-state-change-ignores-stale-client-updates ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (let ((active-client (psi-rpc-make-client :process-state 'running :transport-state 'ready))
+          (stale-client (psi-rpc-make-client :process-state 'stopped :transport-state 'disconnected)))
+      (setf (psi-emacs-state-rpc-client psi-emacs--state) active-client)
+      (setf (psi-emacs-state-process-state psi-emacs--state) 'running)
+      (setf (psi-emacs-state-transport-state psi-emacs--state) 'ready)
+      (psi-emacs--on-rpc-state-change (current-buffer) stale-client)
+      (should (eq active-client (psi-emacs-state-rpc-client psi-emacs--state)))
+      (should (eq 'running (psi-emacs-state-process-state psi-emacs--state)))
+      (should (eq 'ready (psi-emacs-state-transport-state psi-emacs--state))))))
 
 (ert-deftest psi-reconnecting-run-state-transitions-to-idle-when-ready ()
   (with-temp-buffer
