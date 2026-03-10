@@ -38,6 +38,9 @@
    "steer"
    "follow_up"
    "abort"
+   "list_background_jobs"
+   "inspect_background_job"
+   "cancel_background_job"
    "login_begin"
    "login_complete"
    "new_session"
@@ -400,6 +403,77 @@
       (throw (ex-info "no active dialog"
                       {:error-code "request/no-active-dialog"})))
     (response-frame (:id request) "cancel_dialog" true {:accepted true})))
+
+(defn- request-thread-id
+  [ctx]
+  (:session-id (session/get-session-data-in ctx)))
+
+(defn- normalize-statuses-param
+  [statuses]
+  (cond
+    (nil? statuses) nil
+    (sequential? statuses) (mapv (fn [s]
+                                   (cond
+                                     (keyword? s) s
+                                     (string? s) (keyword s)
+                                     :else s))
+                                 statuses)
+    :else ::invalid))
+
+(defn- background-job->rpc-view
+  [job]
+  (-> job
+      (select-keys [:job-id
+                    :thread-id
+                    :tool-call-id
+                    :tool-name
+                    :job-kind
+                    :workflow-ext-path
+                    :workflow-id
+                    :job-seq
+                    :started-at
+                    :completed-at
+                    :completed-seq
+                    :status
+                    :terminal-payload
+                    :terminal-payload-file
+                    :cancel-requested-at
+                    :terminal-message-emitted
+                    :terminal-message-emitted-at])
+      (update :started-at str)
+      (update :completed-at #(when % (str %)))
+      (update :cancel-requested-at #(when % (str %)))
+      (update :terminal-message-emitted-at #(when % (str %)))))
+
+(defn- handle-list-background-jobs!
+  [ctx request params]
+  (let [statuses* (normalize-statuses-param (:statuses params))]
+    (when (= ::invalid statuses*)
+      (throw (ex-info "invalid request parameter :statuses: sequential of keywords/strings"
+                      {:error-code "request/invalid-params"})))
+    (let [thread-id (request-thread-id ctx)
+          jobs      (if statuses*
+                      (session/list-background-jobs-in! ctx thread-id statuses*)
+                      (session/list-background-jobs-in! ctx thread-id))]
+      (response-frame (:id request) "list_background_jobs" true
+                      {:jobs (mapv background-job->rpc-view jobs)}))))
+
+(defn- handle-inspect-background-job!
+  [ctx request params]
+  (let [job-id    (req-arg! request params :job-id #(and (string? %) (not (str/blank? %))) "non-empty string")
+        thread-id (request-thread-id ctx)
+        job       (session/inspect-background-job-in! ctx thread-id job-id)]
+    (response-frame (:id request) "inspect_background_job" true
+                    {:job (background-job->rpc-view job)})))
+
+(defn- handle-cancel-background-job!
+  [ctx request params]
+  (let [job-id    (req-arg! request params :job-id #(and (string? %) (not (str/blank? %))) "non-empty string")
+        thread-id (request-thread-id ctx)
+        job       (session/cancel-background-job-in! ctx thread-id job-id :user)]
+    (response-frame (:id request) "cancel_background_job" true
+                    {:accepted true
+                     :job (background-job->rpc-view job)})))
 
 (defn- normalize-provider [provider]
   (cond
@@ -1295,6 +1369,15 @@
            (do
              (session/abort-in! ctx)
              (response-frame (:id request) op true {:accepted true}))
+
+           "list_background_jobs"
+           (handle-list-background-jobs! ctx request params)
+
+           "inspect_background_job"
+           (handle-inspect-background-job! ctx request params)
+
+           "cancel_background_job"
+           (handle-cancel-background-job! ctx request params)
 
            "login_begin"
            (handle-login-begin! ctx request params state)

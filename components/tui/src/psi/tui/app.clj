@@ -204,7 +204,8 @@
             :last-escape-ms nil}})
 
 (def ^:private builtin-slash-commands
-  ["/quit" "/exit" "/resume" "/new" "/status" "/help" "/remember"])
+  ["/quit" "/exit" "/resume" "/new" "/status" "/help" "/remember"
+   "/worktree" "/jobs" "/job" "/cancel-job"])
 
 (defn- input-value [state]
   (charm/text-input-value (:input state)))

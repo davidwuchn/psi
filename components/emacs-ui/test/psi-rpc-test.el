@@ -20,6 +20,7 @@
       "tool/update"
       "tool/result"
       "session/updated"
+      "footer/updated"
       "error")
     psi-rpc-core-topics))
   (should
@@ -27,8 +28,7 @@
     '("ui/dialog-requested"
       "ui/widgets-updated"
       "ui/status-updated"
-      "ui/notification"
-      "footer/updated")
+      "ui/notification")
     psi-rpc-extension-topics))
   (should (equal (append psi-rpc-core-topics psi-rpc-extension-topics)
                  psi-rpc-default-topics)))

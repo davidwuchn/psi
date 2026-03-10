@@ -272,6 +272,10 @@ Returns selected MODEL-ENTRY map or nil when cancelled/no selection."
          "/resume [path] Resume a prior session (selector when path omitted)"
          "/new          Start a fresh backend session"
          "/status       Show frontend diagnostics"
+         "/worktree     Show git worktree context"
+         "/jobs [status ...]   List background jobs"
+         "/job <job-id>        Inspect a background job"
+         "/cancel-job <job-id> Request cancellation for a background job"
          "/model [provider model-id]    Open model selector or set directly"
          "/thinking [level]             Open thinking selector or set directly"
          "/help, /?     Show this help")
@@ -714,6 +718,22 @@ normal prompt dispatch."
       ("/status"
        (psi-emacs--append-assistant-message
         (psi-emacs--status-diagnostics-string state))
+       t)
+      ("/worktree"
+       (let ((sent? (psi-emacs--dispatch-request
+                     "prompt"
+                     `((:message . "/worktree")))))
+         (when sent?
+           (psi-emacs--set-run-state state 'streaming)
+           (psi-emacs--reset-stream-watchdog state)))
+       t)
+      ((or "/jobs" "/job" "/cancel-job")
+       (let ((sent? (psi-emacs--dispatch-request
+                     "prompt"
+                     `((:message . ,trimmed)))))
+         (when sent?
+           (psi-emacs--set-run-state state 'streaming)
+           (psi-emacs--reset-stream-watchdog state)))
        t)
       ("/model"
        (psi-emacs--handle-idle-model-command state message)

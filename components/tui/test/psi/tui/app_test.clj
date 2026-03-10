@@ -29,6 +29,10 @@
     "/new"             {:type :new-session :message "[New session started]"}
     "/status"          {:type :text :message "test status"}
     "/help"            {:type :text :message "test help"}
+    "/worktree"        {:type :text :message "test worktree"}
+    "/jobs"            {:type :text :message "test jobs"}
+    "/job"             {:type :text :message "test job"}
+    "/cancel-job"      {:type :text :message "test cancel-job"}
     nil))
 
 (defn- init-state

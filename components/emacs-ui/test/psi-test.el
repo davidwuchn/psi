@@ -1428,6 +1428,9 @@
             (psi-emacs-queue-from-buffer))
           (should (string-match-p "Supported slash commands:" (buffer-string)))
           (should (string-match-p "/help, /\?" (buffer-string)))
+          (should (string-match-p (regexp-quote "/jobs [status ...]") (buffer-string)))
+          (should (string-match-p (regexp-quote "/job <job-id>") (buffer-string)))
+          (should (string-match-p (regexp-quote "/cancel-job <job-id>") (buffer-string)))
           (should (equal '() rpc-calls)))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
@@ -1560,6 +1563,39 @@
             (psi-emacs-send-from-buffer nil))
           (should (string-match-p "Usage: /thinking OR /thinking <level>" (buffer-string)))
           (should (equal '() rpc-calls)))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
+(ert-deftest psi-idle-background-job-slash-commands-forward-to-prompt-op ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (let ((rpc-calls nil))
+          (cl-letf (((symbol-value 'psi-emacs--send-request-function)
+                     (lambda (_state op params &optional _callback)
+                       (push (list op params) rpc-calls))))
+            (insert "/jobs running")
+            (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker 1 nil))
+            (psi-emacs-send-from-buffer nil)
+            (setf (psi-emacs-state-run-state psi-emacs--state) 'idle)
+            (let ((inhibit-read-only t)) (erase-buffer))
+
+            (insert "/job job-1")
+            (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker 1 nil))
+            (psi-emacs-send-from-buffer nil)
+            (setf (psi-emacs-state-run-state psi-emacs--state) 'idle)
+            (let ((inhibit-read-only t)) (erase-buffer))
+
+            (insert "/cancel-job job-1")
+            (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker 1 nil))
+            (psi-emacs-send-from-buffer nil))
+          (setq rpc-calls (nreverse rpc-calls))
+          (should (equal '("prompt" "prompt" "prompt") (mapcar #'car rpc-calls)))
+          (should (equal '((:message . "/jobs running")) (cadr (nth 0 rpc-calls))))
+          (should (equal '((:message . "/job job-1")) (cadr (nth 1 rpc-calls))))
+          (should (equal '((:message . "/cancel-job job-1")) (cadr (nth 2 rpc-calls))))
+          (should (eq 'streaming (psi-emacs-state-run-state psi-emacs--state))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
@@ -3105,6 +3141,17 @@
       (should capf)
       (should (eq category 'psi_prompt))
       (should (member "/resume" cands)))))
+
+(ert-deftest psi-capf-slash-context-includes-background-job-commands ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (insert "/j")
+    (let* ((capf (psi-emacs-prompt-capf))
+           (table (nth 2 capf))
+           (cands (all-completions "/j" table)))
+      (should capf)
+      (should (member "/jobs" cands))
+      (should (member "/job" cands)))))
 
 (ert-deftest psi-capf-slash-includes-extension-commands-from-state ()
   (with-temp-buffer

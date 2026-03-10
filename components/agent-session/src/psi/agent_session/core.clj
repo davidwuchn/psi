@@ -999,41 +999,41 @@
         thread-id (:session-id (get-session-data-in ctx))]
     (when (and store thread-id)
       (doseq [job (bg-jobs/pending-terminal-jobs-in store thread-id)]
-        (let [wf-ext-path (:workflow-ext-path job)
-              wf-id       (:workflow-id job)
-              wf          (when (and wf-ext-path wf-id)
-                            (wf/workflow-in (:workflow-registry ctx) wf-ext-path wf-id))
-              payload     (or (:terminal-payload job)
-                              {:job-id (:job-id job)
-                               :status (:status job)
-                               :result (:result wf)
-                               :error-message (:error-message wf)})
-              payload-edn (pr-str payload)
-              policy      (tool-output/effective-policy
-                           (or (:tool-output-overrides (get-session-data-in ctx)) {})
-                           (or (:tool-name job) "workflow"))
-              truncation  (tool-output/head-truncate payload-edn policy)
-              spill-path  (when (:truncated truncation)
-                           (tool-output/persist-truncated-output!
-                            (or (:tool-name job) "workflow")
-                            (or (:job-id job) "job")
-                            payload-edn))
-              _           (when spill-path
-                            (bg-jobs/set-terminal-payload-file-in!
-                             store
-                             {:job-id (:job-id job)
-                              :path spill-path}))
-              content     (if spill-path
-                            (str (:content truncation)
-                                 "\n\nTerminal payload exceeded output limits. See temp file: "
-                                 spill-path)
-                            payload-edn)]
-          (send-extension-message-in!
-           ctx
-           "assistant"
-           content
-           "background-job-terminal")
-          (bg-jobs/mark-terminal-message-emitted-in! store {:job-id (:job-id job)}))))))
+        (when (bg-jobs/claim-terminal-message-emission-in! store {:job-id (:job-id job)})
+          (let [wf-ext-path (:workflow-ext-path job)
+                wf-id       (:workflow-id job)
+                wf          (when (and wf-ext-path wf-id)
+                              (wf/workflow-in (:workflow-registry ctx) wf-ext-path wf-id))
+                payload     (or (:terminal-payload job)
+                                {:job-id (:job-id job)
+                                 :status (:status job)
+                                 :result (:result wf)
+                                 :error-message (:error-message wf)})
+                payload-edn (pr-str payload)
+                policy      (tool-output/effective-policy
+                             (or (:tool-output-overrides (get-session-data-in ctx)) {})
+                             (or (:tool-name job) "workflow"))
+                truncation  (tool-output/head-truncate payload-edn policy)
+                spill-path  (when (:truncated truncation)
+                             (tool-output/persist-truncated-output!
+                              (or (:tool-name job) "workflow")
+                              (or (:job-id job) "job")
+                              payload-edn))
+                _           (when spill-path
+                              (bg-jobs/set-terminal-payload-file-in!
+                               store
+                               {:job-id (:job-id job)
+                                :path spill-path}))
+                content     (if spill-path
+                              (str (:content truncation)
+                                   "\n\nTerminal payload exceeded output limits. See temp file: "
+                                   spill-path)
+                              payload-edn)]
+            (send-extension-message-in!
+             ctx
+             "assistant"
+             content
+             "background-job-terminal")))))))
 
 (defn- maybe-mark-workflow-jobs-terminal!
   [ctx]
@@ -1066,6 +1066,38 @@
                   :terminal-history-max-per-thread 20
                   :payload {:workflow-id (:id wf)
                             :result (:result wf)}})))))))))
+
+(defn list-background-jobs-in!
+  [ctx thread-id & [statuses]]
+  (let [store (:background-jobs-atom ctx)]
+    (if statuses
+      (bg-jobs/list-jobs-in store thread-id statuses)
+      (bg-jobs/list-jobs-in store thread-id))))
+
+(defn inspect-background-job-in!
+  [ctx thread-id job-id]
+  (bg-jobs/inspect-job-in (:background-jobs-atom ctx)
+                          {:thread-id thread-id
+                           :job-id job-id}))
+
+(defn cancel-background-job-in!
+  [ctx thread-id job-id requested-by]
+  (let [store (:background-jobs-atom ctx)
+        job   (bg-jobs/request-cancel-in!
+               store
+               {:thread-id thread-id
+                :job-id job-id
+                :requested-by requested-by})]
+    (when (= :workflow (:job-kind job))
+      (try
+        (when (and (:workflow-ext-path job) (:workflow-id job))
+          (wf/abort-workflow-in! (:workflow-registry ctx)
+                                 (:workflow-ext-path job)
+                                 (:workflow-id job)
+                                 "cancel requested"))
+        (catch Exception _
+          nil)))
+    job))
 
 (defn- make-extension-runtime-fns
   "Build the runtime-fns map for extension API EQL access.

@@ -18,7 +18,9 @@
 (defn empty-state []
   {:jobs-by-id {}
    :tool-call->job-id {}
-   :tool-call->mode {}})
+   :tool-call->mode {}
+   :next-job-seq 0
+   :next-terminal-seq 0})
 
 (defn create-store []
   (atom (empty-state)))
@@ -30,6 +32,10 @@
 (defn terminal-status?
   [status]
   (contains? terminal-statuses status))
+
+(defn- now
+  []
+  (java.time.Instant/now))
 
 (defn- ensure-thread-id!
   [thread-id]
@@ -74,9 +80,9 @@
   (ensure-tool-call-id! tool-call-id)
   (ensure-thread-id! thread-id)
   (ensure-tool-name! tool-name)
-  (let [job-id (or job-id (str (java.util.UUID/randomUUID)))]
+  (let [job-id-out (atom nil)]
     (swap! store-atom
-           (fn [{:keys [jobs-by-id tool-call->job-id tool-call->mode] :as state}]
+           (fn [{:keys [jobs-by-id tool-call->job-id tool-call->mode next-job-seq] :as state}]
              (when (contains? tool-call->mode tool-call-id)
                (throw (ex-info "Tool invocation already resolved"
                                {:tool-call-id tool-call-id
@@ -85,30 +91,36 @@
                (throw (ex-info "Background job already exists for tool_call_id"
                                {:tool-call-id tool-call-id
                                 :existing-job-id (get tool-call->job-id tool-call-id)})))
-             (when (contains? jobs-by-id job-id)
-               (throw (ex-info "Duplicate job-id"
-                               {:job-id job-id})))
-             (let [job {:job-id job-id
-                        :thread-id (str thread-id)
-                        :tool-call-id (str tool-call-id)
-                        :tool-name (str tool-name)
-                        :job-kind (or job-kind :generic)
-                        :workflow-ext-path workflow-ext-path
-                        :workflow-id workflow-id
-                        :started-at (java.time.Instant/now)
-                        :completed-at nil
-                        :status :running
-                        :terminal-payload nil
-                        :terminal-payload-file nil
-                        :cancel-requested-at nil
-                        :terminal-message-emitted false
-                        :terminal-message-emitted-at nil}]
-               (-> state
-                   (assoc-in [:jobs-by-id job-id] job)
-                   (assoc-in [:tool-call->job-id tool-call-id] job-id)
-                   (assoc-in [:tool-call->mode tool-call-id] :background)))))
+             (let [resolved-job-id (or job-id (str (java.util.UUID/randomUUID)))]
+               (when (contains? jobs-by-id resolved-job-id)
+                 (throw (ex-info "Duplicate job-id"
+                                 {:job-id resolved-job-id})))
+               (let [job-seq (inc (long (or next-job-seq 0)))
+                     _ (reset! job-id-out resolved-job-id)
+                     job {:job-id resolved-job-id
+                          :thread-id (str thread-id)
+                          :tool-call-id (str tool-call-id)
+                          :tool-name (str tool-name)
+                          :job-kind (or job-kind :generic)
+                          :workflow-ext-path workflow-ext-path
+                          :workflow-id workflow-id
+                          :job-seq job-seq
+                          :started-at (now)
+                          :completed-at nil
+                          :completed-seq nil
+                          :status :running
+                          :terminal-payload nil
+                          :terminal-payload-file nil
+                          :cancel-requested-at nil
+                          :terminal-message-emitted false
+                          :terminal-message-emitted-at nil}]
+                 (-> state
+                     (assoc-in [:jobs-by-id resolved-job-id] job)
+                     (assoc-in [:tool-call->job-id tool-call-id] resolved-job-id)
+                     (assoc-in [:tool-call->mode tool-call-id] :background)
+                     (assoc :next-job-seq job-seq))))))
     {:mode :background
-     :job-id job-id
+     :job-id @job-id-out
      :status :running
      :result nil}))
 
@@ -142,12 +154,19 @@
                state))))
   (get-job-in store-atom job-id))
 
+(defn- completion-order-key
+  [job]
+  [(:completed-at job)
+   (or (:completed-seq job) Long/MAX_VALUE)
+   (or (:job-seq job) Long/MAX_VALUE)
+   (:job-id job)])
+
 (defn- enforce-terminal-retention*
   [state thread-id terminal-history-max-per-thread]
   (let [terminal-jobs (->> (vals (:jobs-by-id state))
                            (filter #(= thread-id (:thread-id %)))
                            (filter #(terminal-status? (:status %)))
-                           (sort-by :completed-at)
+                           (sort-by completion-order-key)
                            vec)
         overflow      (- (count terminal-jobs) terminal-history-max-per-thread)]
     (if (pos? overflow)
@@ -178,15 +197,18 @@
                     {:outcome outcome
                      :allowed terminal-statuses})))
   (swap! store-atom
-         (fn [state]
+         (fn [{:keys [next-terminal-seq] :as state}]
            (let [job (get-in state [:jobs-by-id job-id])]
              (when-not job
                (throw (ex-info "Job not found" {:job-id job-id})))
-             (-> state
-                 (assoc-in [:jobs-by-id job-id :status] outcome)
-                 (assoc-in [:jobs-by-id job-id :completed-at] (java.time.Instant/now))
-                 (assoc-in [:jobs-by-id job-id :terminal-payload] payload)
-                 (enforce-terminal-retention* (:thread-id job) terminal-history-max-per-thread)))))
+             (let [completed-seq (inc (long (or next-terminal-seq 0)))]
+               (-> state
+                   (assoc :next-terminal-seq completed-seq)
+                   (assoc-in [:jobs-by-id job-id :status] outcome)
+                   (assoc-in [:jobs-by-id job-id :completed-at] (now))
+                   (assoc-in [:jobs-by-id job-id :completed-seq] completed-seq)
+                   (assoc-in [:jobs-by-id job-id :terminal-payload] payload)
+                   (enforce-terminal-retention* (:thread-id job) terminal-history-max-per-thread))))))
   (get-job-in store-atom job-id))
 
 (defn list-jobs-in
@@ -198,7 +220,7 @@
      (->> (vals (:jobs-by-id @store-atom))
           (filter #(= thread-id (:thread-id %)))
           (filter #(contains? status-set (:status %)))
-          (sort-by :started-at)
+          (sort-by (fn [job] [(:started-at job) (or (:job-seq job) Long/MAX_VALUE) (:job-id job)]))
           vec))))
 
 (defn inspect-job-in
@@ -214,14 +236,14 @@
 
 (defn pending-terminal-jobs-in
   "Return terminal jobs for thread-id that have not yet emitted synthetic messages,
-   ordered by completion time." 
+   ordered by completion time with deterministic tie-breakers." 
   [store-atom thread-id]
   (ensure-thread-id! thread-id)
   (->> (vals (:jobs-by-id @store-atom))
        (filter #(= thread-id (:thread-id %)))
        (filter #(terminal-status? (:status %)))
        (filter #(not (:terminal-message-emitted %)))
-       (sort-by :completed-at)
+       (sort-by completion-order-key)
        vec))
 
 (defn set-terminal-payload-file-in!
@@ -234,16 +256,27 @@
              (assoc-in state [:jobs-by-id job-id :terminal-payload-file] path))))
   (get-job-in store-atom job-id))
 
+(defn claim-terminal-message-emission-in!
+  "Atomically claim terminal message emission for a job.
+   Returns true when this call claimed emission, false when already claimed."
+  [store-atom {:keys [job-id]}]
+  (loop []
+    (let [state @store-atom
+          job   (get-in state [:jobs-by-id job-id])]
+      (when-not job
+        (throw (ex-info "Job not found" {:job-id job-id})))
+      (if (:terminal-message-emitted job)
+        false
+        (let [next-state (-> state
+                             (assoc-in [:jobs-by-id job-id :terminal-message-emitted] true)
+                             (assoc-in [:jobs-by-id job-id :terminal-message-emitted-at] (now)))]
+          (if (compare-and-set! store-atom state next-state)
+            true
+            (recur)))))))
+
 (defn mark-terminal-message-emitted-in!
   [store-atom {:keys [job-id]}]
-  (swap! store-atom
-         (fn [state]
-           (let [job (get-in state [:jobs-by-id job-id])]
-             (when-not job
-               (throw (ex-info "Job not found" {:job-id job-id})))
-             (-> state
-                 (assoc-in [:jobs-by-id job-id :terminal-message-emitted] true)
-                 (assoc-in [:jobs-by-id job-id :terminal-message-emitted-at] (java.time.Instant/now))))))
+  (claim-terminal-message-emission-in! store-atom {:job-id job-id})
   (get-job-in store-atom job-id))
 
 (defn retry-job-in!

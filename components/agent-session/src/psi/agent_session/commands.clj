@@ -83,6 +83,24 @@
                           msgs)))
          "\n───────────────────────────────────────")))
 
+(defn- safe-pr-str
+  [x]
+  (try
+    (pr-str x)
+    (catch Exception _
+      "<unprintable>")))
+
+(def ^:private valid-job-statuses
+  #{:running :pending-cancel :completed :failed :cancelled :timed-out})
+
+(defn- parse-job-statuses
+  [s]
+  (when-let [trimmed (some-> s str/trim not-empty)]
+    (let [tokens   (str/split trimmed #"[\s,]+")
+          statuses (mapv keyword tokens)]
+      (when (every? valid-job-statuses statuses)
+        statuses))))
+
 (defn format-help
   "Return a help string listing all available commands."
   [ctx]
@@ -104,6 +122,9 @@
          "  /thinking [level] — show current thinking level or set level\n"
          "  /remember [text] — capture a memory note for future ψ\n"
          "  /worktree — show git worktree context\n"
+         "  /jobs [status ...] — list background jobs (default: running,pending-cancel)\n"
+         "  /job <job-id> — inspect a background job\n"
+         "  /cancel-job <job-id> — request background job cancellation\n"
          "  /help    — show this help\n"
          "  /skill:name — invoke a skill (loads full content)"
          (when (seq templates)
@@ -378,6 +399,55 @@
       ;; Worktree
       (= trimmed "/worktree")
       {:type :text :message (format-worktree ctx)}
+
+      ;; Background jobs list
+      (or (= trimmed "/jobs")
+          (str/starts-with? trimmed "/jobs "))
+      (let [tail      (-> (str/replace trimmed #"^/jobs\s*" "") str/trim)
+            statuses  (parse-job-statuses tail)
+            invalid?  (and (not (str/blank? tail)) (empty? statuses))
+            thread-id (:session-id (session/get-session-data-in ctx))
+            jobs      (if statuses
+                        (session/list-background-jobs-in! ctx thread-id statuses)
+                        (session/list-background-jobs-in! ctx thread-id))]
+        (if invalid?
+          {:type :text :message "Usage: /jobs [status ...]"}
+          {:type :text
+           :message (str "── Background jobs ─────────────────────\n"
+                         (if (empty? jobs)
+                           "  (none)"
+                           (str/join "\n"
+                                     (map (fn [job]
+                                            (str "  " (:job-id job)
+                                                 "  [" (name (:status job)) "]"
+                                                 "  " (:tool-name job)))
+                                          jobs)))
+                         "\n───────────────────────────────────────")}))
+
+      ;; Background job inspect
+      (or (= trimmed "/job")
+          (str/starts-with? trimmed "/job "))
+      (let [job-id    (-> (str/replace trimmed #"^/job\s*" "") str/trim)
+            thread-id (:session-id (session/get-session-data-in ctx))]
+        (if (str/blank? job-id)
+          {:type :text :message "Usage: /job <job-id>"}
+          (let [job (session/inspect-background-job-in! ctx thread-id job-id)]
+            {:type :text
+             :message (str "── Background job ──────────────────────\n"
+                           (safe-pr-str job)
+                           "\n───────────────────────────────────────")})))
+
+      ;; Background job cancel
+      (or (= trimmed "/cancel-job")
+          (str/starts-with? trimmed "/cancel-job "))
+      (let [job-id    (-> (str/replace trimmed #"^/cancel-job\s*" "") str/trim)
+            thread-id (:session-id (session/get-session-data-in ctx))]
+        (if (str/blank? job-id)
+          {:type :text :message "Usage: /cancel-job <job-id>"}
+          (let [job (session/cancel-background-job-in! ctx thread-id job-id :user)]
+            {:type :text
+             :message (str "Cancellation requested for " job-id
+                           " (status=" (name (:status job)) ")")})))
 
       ;; Remember
       (or (= trimmed "/remember")

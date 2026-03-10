@@ -30,6 +30,7 @@
     "tool/update"
     "tool/result"
     "session/updated"
+    "footer/updated"
     "error")
   "Core topic subscription set for Emacs frontend.")
 
@@ -37,8 +38,7 @@
   '("ui/dialog-requested"
     "ui/widgets-updated"
     "ui/status-updated"
-    "ui/notification"
-    "footer/updated")
+    "ui/notification")
   "Extension UI and footer topics for Emacs frontend.")
 
 (defconst psi-rpc-default-topics

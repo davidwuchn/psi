@@ -3,6 +3,7 @@
    [clojure.edn :as edn]
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
+   [psi.agent-session.background-jobs :as bg-jobs]
    [psi.agent-session.commands :as commands]
    [psi.agent-session.core :as session]
    [psi.agent-session.oauth.core :as oauth]
@@ -270,7 +271,10 @@
       (is (vector? supported))
       (is (some #(= "prompt_while_streaming" %) supported))
       (is (some #(= "resolve_dialog" %) supported))
-      (is (some #(= "cancel_dialog" %) supported))))
+      (is (some #(= "cancel_dialog" %) supported))
+      (is (some #(= "list_background_jobs" %) supported))
+      (is (some #(= "inspect_background_job" %) supported))
+      (is (some #(= "cancel_background_job" %) supported))))
 
   (testing "subscribe/unsubscribe update shared state and return subscribed topics"
     (let [ctx     (session/create-context)
@@ -286,7 +290,38 @@
       (is (= ["assistant/delta" "tool/start"] (get-in f1 [:data :subscribed])))
       (is (= :response (:kind f2)))
       (is (= ["assistant/delta"] (get-in f2 [:data :subscribed])))
-      (is (= #{"assistant/delta"} (:subscribed-topics state))))))
+      (is (= #{"assistant/delta"} (:subscribed-topics state)))))
+
+  (testing "background job list/inspect/cancel ops route through session job store"
+    (let [ctx       (session/create-context)
+          thread-id (:session-id (session/get-session-data-in ctx))
+          _         (bg-jobs/start-background-job-in!
+                     (:background-jobs-atom ctx)
+                     {:tool-call-id "tc-rpc-bg-1"
+                      :thread-id thread-id
+                      :tool-name "agent-chain"
+                      :job-id "job-rpc-1"})
+          state     (atom {:ready? true :pending {}})
+          handler   (rpc/make-session-request-handler ctx)
+          {:keys [out-lines]}
+          (run-loop (str "{:id \"jb1\" :kind :request :op \"list_background_jobs\"}\n"
+                         "{:id \"jb2\" :kind :request :op \"inspect_background_job\" :params {:job-id \"job-rpc-1\"}}\n"
+                         "{:id \"jb3\" :kind :request :op \"cancel_background_job\" :params {:job-id \"job-rpc-1\"}}\n")
+                    handler
+                    state)
+          [f1 f2 f3] (parse-frames out-lines)]
+      (is (= :response (:kind f1)))
+      (is (= "list_background_jobs" (:op f1)))
+      (is (= "job-rpc-1" (get-in f1 [:data :jobs 0 :job-id])))
+
+      (is (= :response (:kind f2)))
+      (is (= "inspect_background_job" (:op f2)))
+      (is (= "job-rpc-1" (get-in f2 [:data :job :job-id])))
+
+      (is (= :response (:kind f3)))
+      (is (= "cancel_background_job" (:op f3)))
+      (is (true? (get-in f3 [:data :accepted])))
+      (is (= :pending-cancel (get-in f3 [:data :job :status]))))))
 
 (deftest progress-event-thinking-delta-maps-to-rpc-thinking-topic-test
   (let [{:keys [event data]}

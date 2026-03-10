@@ -2,6 +2,7 @@
   (:require
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
+   [psi.agent-session.background-jobs :as bg-jobs]
    [psi.agent-session.commands :as commands]
    [psi.agent-session.core :as session]
    [psi.agent-session.extensions :as ext]
@@ -130,6 +131,48 @@
     (is (= :text (:type result)))
     (is (str/includes? (:message result) "Git worktrees"))
     (is (str/includes? (:message result) "worktrees:"))))
+
+(deftest dispatch-background-jobs-commands-test
+  (let [ctx       (make-test-ctx)
+        thread-id (:session-id (session/get-session-data-in ctx))]
+    (bg-jobs/start-background-job-in!
+     (:background-jobs-atom ctx)
+     {:tool-call-id "tc-cmd-j1"
+      :thread-id thread-id
+      :tool-name "agent-chain"
+      :job-id "job-cmd-j1"})
+
+    (let [jobs-result (commands/dispatch ctx "/jobs" cmd-opts)]
+      (is (= :text (:type jobs-result)))
+      (is (str/includes? (:message jobs-result) "Background jobs"))
+      (is (str/includes? (:message jobs-result) "job-cmd-j1")))
+
+    (let [jobs-filtered (commands/dispatch ctx "/jobs running" cmd-opts)]
+      (is (= :text (:type jobs-filtered)))
+      (is (str/includes? (:message jobs-filtered) "job-cmd-j1")))
+
+    (let [jobs-invalid (commands/dispatch ctx "/jobs nope" cmd-opts)]
+      (is (= :text (:type jobs-invalid)))
+      (is (= "Usage: /jobs [status ...]" (:message jobs-invalid))))
+
+    (let [inspect-result (commands/dispatch ctx "/job job-cmd-j1" cmd-opts)]
+      (is (= :text (:type inspect-result)))
+      (is (str/includes? (:message inspect-result) "Background job"))
+      (is (str/includes? (:message inspect-result) "job-cmd-j1")))
+
+    (let [inspect-usage (commands/dispatch ctx "/job" cmd-opts)]
+      (is (= :text (:type inspect-usage)))
+      (is (= "Usage: /job <job-id>" (:message inspect-usage))))
+
+    (let [cancel-result (commands/dispatch ctx "/cancel-job job-cmd-j1" cmd-opts)
+          job           (session/inspect-background-job-in! ctx thread-id "job-cmd-j1")]
+      (is (= :text (:type cancel-result)))
+      (is (str/includes? (:message cancel-result) "Cancellation requested"))
+      (is (= :pending-cancel (:status job))))
+
+    (let [cancel-usage (commands/dispatch ctx "/cancel-job" cmd-opts)]
+      (is (= :text (:type cancel-usage)))
+      (is (= "Usage: /cancel-job <job-id>" (:message cancel-usage))))))
 
 (deftest dispatch-model-no-arg-test
   (let [ctx    (make-test-ctx)
@@ -336,7 +379,9 @@
   (let [ctx (make-test-ctx)
         s   (commands/format-help ctx)]
     (doseq [cmd ["/quit" "/status" "/history" "/new" "/resume"
-                 "/login" "/logout" "/remember" "/worktree" "/help" "/prompts" "/skills"]]
+                 "/login" "/logout" "/remember" "/worktree"
+                 "/jobs" "/job" "/cancel-job"
+                 "/help" "/prompts" "/skills"]]
       (is (str/includes? s cmd) (str "help should mention " cmd)))))
 
 (deftest format-prompts-none-test

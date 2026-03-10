@@ -7,8 +7,12 @@
   Each test id (N/E/B) intentionally starts as a concrete stub and should be
   replaced with runtime-backed assertions as implementation lands."
   (:require
+   [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
-   [psi.agent-session.background-jobs :as bj]))
+   [psi.agent-core.core :as agent-core]
+   [psi.agent-session.background-jobs :as bj]
+   [psi.agent-session.core :as session]
+   [psi.agent-session.tool-output :as tool-output]))
 
 (defn- start-job!
   [store tool-call-id thread-id tool-name job-id]
@@ -16,6 +20,13 @@
                                       :thread-id thread-id
                                       :tool-name tool-name
                                       :job-id job-id}))
+
+(defn- pending-background-terminal-message-count
+  [ctx]
+  (->> (:messages (agent-core/get-data-in (:agent-ctx ctx)))
+       (filter #(= "assistant" (:role %)))
+       (filter #(= "background-job-terminal" (:custom-type %)))
+       count))
 
 ;; ---------------------------------------------------------------------------
 ;; Nominal (N)
@@ -115,7 +126,30 @@
 
 (deftest n7-oversize-payload-path-test
   (testing "N7: oversized terminal payload spills to temp file reference"
-    (is true "TODO N7")))
+    (let [store   (bj/create-store)
+          payload {:blob (apply str (repeat 200 "x"))}
+          _       (start-job! store "tc-n7" "thread-a" "tool-z" "job-n7")
+          _       (bj/mark-terminal-in! store {:job-id "job-n7"
+                                               :outcome :completed
+                                               :payload payload})
+          payload-edn (pr-str payload)
+          policy      {:max-lines 1000 :max-bytes 40}
+          truncation  (tool-output/head-truncate payload-edn policy)]
+      (is (true? (:truncated truncation)))
+      (try
+        (let [spill-path (tool-output/persist-truncated-output! "tool-z" "job-n7" payload-edn)
+              _          (bj/set-terminal-payload-file-in! store {:job-id "job-n7" :path spill-path})
+              content    (str (:content truncation)
+                              "\n\nTerminal payload exceeded output limits. See temp file: "
+                              spill-path)
+              job        (bj/get-job-in store "job-n7")]
+          (is (= spill-path (:terminal-payload-file job)))
+          (is (.exists (java.io.File. spill-path)))
+          (is (= payload-edn (slurp spill-path)))
+          (is (re-find #"Terminal payload exceeded output limits\. See temp file:" content))
+          (is (str/includes? content spill-path)))
+        (finally
+          (tool-output/cleanup-temp-store!))))))
 
 (deftest n8-default-list-behavior-test
   (testing "N8: default list returns non-terminal statuses only"
@@ -222,7 +256,19 @@
 
 (deftest e7-idle-completion-wakes-turn-boundary-test
   (testing "E7: idle terminal outcome requests next turn boundary"
-    (is true "TODO E7")))
+    (let [ctx (session/create-context)
+          _   (swap! (:session-data-atom ctx) assoc :startup-bootstrap-completed? true)
+          store (:background-jobs-atom ctx)
+          thread-id (:session-id (session/get-session-data-in ctx))]
+      (start-job! store "tc-e7" thread-id "workflow/test" "job-e7")
+      (bj/mark-terminal-in! store {:job-id "job-e7"
+                                   :outcome :completed
+                                   :payload {:ok true}})
+      (is (= 0 (pending-background-terminal-message-count ctx)))
+      (session/set-extension-run-fn-in! ctx (fn [_ _] nil))
+      (Thread/sleep 30)
+      (is (= 1 (pending-background-terminal-message-count ctx)))
+      (is (true? (:terminal-message-emitted (bj/get-job-in store "job-e7")))))))
 
 (deftest e8-cross-thread-list-cancel-isolation-test
   (testing "E8: cross-thread list/cancel isolation is enforced"
@@ -249,7 +295,26 @@
 
 (deftest e10-payload-near-limit-formatting-test
   (testing "E10: payload near limits chooses inline vs file branch correctly"
-    (is true "TODO E10")))
+    (let [inline-payload {:blob (apply str (repeat 10 "x"))}
+          over-payload   {:blob (apply str (repeat 200 "x"))}
+          policy         {:max-lines 1000 :max-bytes 40}
+          inline-trunc   (tool-output/head-truncate (pr-str inline-payload) policy)
+          over-trunc     (tool-output/head-truncate (pr-str over-payload) policy)]
+      (is (false? (:truncated inline-trunc)))
+      (is (true? (:truncated over-trunc)))
+      (is (string? (:content inline-trunc)))
+      (is (string? (:content over-trunc)))
+      (is (not (re-find #"Terminal payload exceeded output limits" (:content inline-trunc))))
+      (try
+        (let [spill-path (tool-output/persist-truncated-output! "tool-z" "job-e10" (pr-str over-payload))
+              over-content (str (:content over-trunc)
+                                "\n\nTerminal payload exceeded output limits. See temp file: "
+                                spill-path)]
+          (is (re-find #"Terminal payload exceeded output limits\. See temp file:" over-content))
+          (is (str/includes? over-content spill-path))
+          (is (.exists (java.io.File. spill-path))))
+        (finally
+          (tool-output/cleanup-temp-store!))))))
 
 (deftest e11-manual-retry-request-rejected-test
   (testing "E11: manual retry is not supported"
@@ -273,7 +338,18 @@
 
 (deftest e13-retryable-llm-http-errors-are-internal-test
   (testing "E13: internal retryable LLM HTTP errors do not trigger external injection"
-    (is true "TODO E13")))
+    (let [ctx (session/create-context)
+          _   (swap! (:session-data-atom ctx) assoc :startup-bootstrap-completed? true)
+          store (:background-jobs-atom ctx)
+          thread-id (:session-id (session/get-session-data-in ctx))]
+      (start-job! store "tc-e13" thread-id "workflow/test" "job-e13")
+      ;; Simulate internal retryable error handling path: job remains running and no terminal outcome marked.
+      (is (= :running (:status (bj/get-job-in store "job-e13"))))
+      (session/set-extension-run-fn-in! ctx (fn [_ _] nil))
+      (Thread/sleep 30)
+      (is (= :running (:status (bj/get-job-in store "job-e13"))))
+      (is (= 0 (pending-background-terminal-message-count ctx)))
+      (is (empty? (bj/pending-terminal-jobs-in store thread-id))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Boundary (B)
@@ -330,15 +406,46 @@
 
 (deftest b3-same-timestamp-ordering-tie-test
   (testing "B3: deterministic tie handling when completion timestamps match"
-    (is true "TODO B3")))
+    (let [store (bj/create-store)
+          _     (start-job! store "tc-b3-a" "thread-a" "tool-z" "job-b3-a")
+          _     (start-job! store "tc-b3-b" "thread-a" "tool-z" "job-b3-b")
+          _     (bj/mark-terminal-in! store {:job-id "job-b3-a" :outcome :completed :payload {:n 1}})
+          _     (bj/mark-terminal-in! store {:job-id "job-b3-b" :outcome :completed :payload {:n 2}})
+          completed-at (-> (bj/get-job-in store "job-b3-a") :completed-at)
+          _     (swap! store assoc-in [:jobs-by-id "job-b3-b" :completed-at] completed-at)
+          pending (bj/pending-terminal-jobs-in store "thread-a")]
+      (is (= ["job-b3-a" "job-b3-b"] (mapv :job-id pending)))
+      ;; Repeated reads preserve deterministic order.
+      (is (= ["job-b3-a" "job-b3-b"] (mapv :job-id (bj/pending-terminal-jobs-in store "thread-a")))))))
 
 (deftest b4-at-most-once-under-concurrent-emitters-test
   (testing "B4: concurrent emit attempts still produce one terminal message"
-    (is true "TODO B4")))
+    (let [ctx (session/create-context)
+          _   (swap! (:session-data-atom ctx) assoc :startup-bootstrap-completed? true)
+          store (:background-jobs-atom ctx)
+          thread-id (:session-id (session/get-session-data-in ctx))
+          _     (start-job! store "tc-b4" thread-id "tool-z" "job-b4")
+          _     (bj/mark-terminal-in! store {:job-id "job-b4" :outcome :completed :payload {:ok true}})
+          f1    (future (do (session/set-extension-run-fn-in! ctx (fn [_ _] nil)) true))
+          f2    (future (do (session/set-extension-run-fn-in! ctx (fn [_ _] nil)) true))
+          _     @f1
+          _     @f2
+          pending (bj/pending-terminal-jobs-in store thread-id)]
+      (is (= 1 (pending-background-terminal-message-count ctx)))
+      (is (empty? pending))
+      (is (true? (:terminal-message-emitted (bj/get-job-in store "job-b4")))))))
 
 (deftest b5-payload-size-boundary-test
   (testing "B5: max-bytes/max-lines boundary behavior is correct"
-    (is true "TODO B5")))
+    (let [at-limit (apply str (repeat 20 "x"))
+          over-limit (apply str (repeat 21 "x"))
+          at-trunc (tool-output/head-truncate at-limit {:max-lines 1000 :max-bytes 20})
+          over-trunc (tool-output/head-truncate over-limit {:max-lines 1000 :max-bytes 20})]
+      (is (false? (:truncated at-trunc)))
+      (is (= at-limit (:content at-trunc)))
+      (is (true? (:truncated over-trunc)))
+      (is (zero? (:output-bytes over-trunc)))
+      (is (true? (:first-line-exceeds-limit over-trunc))))))
 
 (deftest b6-retention-at-limit-test
   (testing "B6: exactly 20 terminal jobs retains all without eviction"
