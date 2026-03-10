@@ -156,18 +156,22 @@ Ordered steps toward PSI COMPLETE.
 ### Step 12b — Background tool jobs (spec + tests) ◇ in progress
 - Spec: `spec/background-tool-jobs.allium`
 - Test matrix: `doc/background-tool-jobs-test-matrix.md`
+- Progress: commit `b7ac6f4` landed in-memory background job runtime + terminal injection plumbing
+  - `components/agent-session/src/psi/agent_session/background_jobs.clj`
+  - `components/agent-session/src/psi/agent_session/core.clj`
+  - focused contract tests in `background_jobs_test.clj` + integration coverage in `core_test.clj`
 - Acceptance checklist:
-  - [ ] Dual-mode tool behavior is implemented (`sync` result vs `background` start with `job-id`)
-  - [ ] `job-id` is returned only for async/background starts
-  - [ ] Background jobs are tracked in memory only (no restart recovery)
-  - [ ] Thread-scoped list/inspect/cancel behavior is enforced
-  - [ ] Terminal outcomes inject exactly one synthetic assistant message per job
-  - [ ] Injection occurs at turn boundaries and in completion-time order
-  - [ ] Delivery semantics are at-most-once under concurrent emit attempts
-  - [ ] Oversized terminal payloads spill to temp file with message reference
-  - [ ] Default `list jobs` returns non-terminal statuses only
-  - [ ] Manual retry is rejected with canonical error
-  - [ ] Retention is bounded to 20 terminal jobs/thread with oldest-terminal eviction
+  - [x] Dual-mode tool behavior is implemented (`sync` result vs `background` start with `job-id`)
+  - [x] `job-id` is returned only for async/background starts
+  - [x] Background jobs are tracked in memory only (no restart recovery)
+  - [x] Thread-scoped list/inspect/cancel behavior is enforced
+  - [x] Terminal outcomes inject exactly one synthetic assistant message per job
+  - [x] Injection occurs at turn boundaries and in completion-time order
+  - [x] Delivery semantics are at-most-once under concurrent emit attempts
+  - [x] Oversized terminal payloads spill to temp file with message reference
+  - [x] Default `list jobs` returns non-terminal statuses only
+  - [x] Manual retry is rejected with canonical error
+  - [x] Retention is bounded to 20 terminal jobs/thread with oldest-terminal eviction
   - [ ] Cross-surface visibility parity holds (REPL/TUI/Emacs/RPC)
 
 ### Step 13 — Terminal UI (TUI) ◇ in progress

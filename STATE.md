@@ -317,18 +317,19 @@ Caught by `jline-terminal-keymap-test` smoke test.
 
 ## Step 12b Status (Background Tool Jobs)
 
-- ◇ Spec drafted: `spec/background-tool-jobs.allium`
-- ◇ Test matrix drafted: `doc/background-tool-jobs-test-matrix.md`
-- Captured behavior includes:
-  - dual-mode tool invocation (`sync` result vs `background` job start)
-  - `job-id` only for async/background starts
-  - in-memory-only tracking with process-restart loss
-  - thread-scoped controls with globally unique `job-id`
-  - terminal-only synthetic assistant injection at turn boundaries
-  - one message per terminal job, completion-time ordering, at-most-once delivery
-  - payload size policy parity with tool output constraints + temp-file spillover
-  - default list non-terminal jobs only, manual retry unsupported
+- ✓ Spec landed: `spec/background-tool-jobs.allium`
+- ✓ Test matrix landed: `doc/background-tool-jobs-test-matrix.md`
+- ✓ Runtime slice landed in commit `b7ac6f4`:
+  - in-memory background job store + dual-mode invocation tracking
+  - workflow-backed job tracking via extension workflow create mutation path
+  - terminal detection (`done/error`) and turn-boundary synthetic assistant injection
+  - completion-time ordered pending terminal queue with at-most-once emit marker
+  - payload size policy + temp-file spillover for oversized terminal payloads
   - bounded terminal retention (20/thread) with oldest-terminal eviction
+- ✓ Focused verification:
+  - `psi.agent-session.background-jobs-test`
+  - `psi.agent-session.core-test/workflow-background-job-terminal-injection-test`
+- … Remaining gap: explicit cross-surface parity verification (REPL/TUI/Emacs/RPC transcript projection)
 
 ## Step 10 Decisions (Remember Spec)
 
