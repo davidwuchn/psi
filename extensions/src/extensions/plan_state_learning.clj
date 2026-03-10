@@ -102,10 +102,15 @@
         (let [prompt     (psl-prompt {:source-sha source-sha})
               prompt-res (send-prompt! mutate-fn prompt)
               accepted?  (true? (:psi.extension/prompt-accepted? prompt-res))
-              delivery   (:psi.extension/prompt-delivery prompt-res)]
+              delivery   (:psi.extension/prompt-delivery prompt-res)
+              status-msg (case delivery
+                           :deferred  "PSL prompt queued via deferred; will auto-run when idle"
+                           :follow-up "PSL prompt queued via follow-up"
+                           :prompt    "PSL prompt queued via prompt"
+                           (str "PSL prompt queued via " (name (or delivery :unknown))))]
           (send-message! mutate-fn
                          (if accepted?
-                           "Updating PLAN.md, STATE.md and LEARNING.md …"
+                           status-msg
                            "Failed to update PLAN.md, STATE.md and LEARNING.md"))
           {:status :done :accepted? accepted? :delivery delivery}))
       (catch Exception e

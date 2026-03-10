@@ -115,6 +115,27 @@ rule PlanStateLearningPromptTelemetryVisible {
     ensures: EqlValueEquals(":psi.agent-session/extension-last-prompt-source", "plan-state-learning")
 }
 
+rule PlanStateLearningDeferredDeliveryMessageIsExplicit {
+    when: AgentTurnStartedFromExtensionPrompt("plan-state-learning")
+    requires: EqlValueEquals(":psi.agent-session/extension-last-prompt-delivery", "deferred")
+
+    ensures: ext/ExtensionMessageTextContains("queued via deferred; will auto-run when idle")
+}
+
+rule PlanStateLearningPromptDeliveryMessageIsExplicit {
+    when: AgentTurnStartedFromExtensionPrompt("plan-state-learning")
+    requires: EqlValueEquals(":psi.agent-session/extension-last-prompt-delivery", "prompt")
+
+    ensures: ext/ExtensionMessageTextContains("PSL prompt queued via prompt")
+}
+
+rule PlanStateLearningFollowUpDeliveryMessageIsExplicit {
+    when: AgentTurnStartedFromExtensionPrompt("plan-state-learning")
+    requires: EqlValueEquals(":psi.agent-session/extension-last-prompt-delivery", "follow-up")
+
+    ensures: ext/ExtensionMessageTextContains("PSL prompt queued via follow-up")
+}
+
 rule PlanStateLearningSkipsAreVisible {
     when: PlanStateLearningRunStarted(run)
     requires: run.skipped = true
