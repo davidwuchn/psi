@@ -136,6 +136,26 @@ rule UserPromptsWhileStreaming {
             agent/FollowUp(session.agent, text)
 }
 
+rule PromptWhileStreamingQueueModePersistsFollowUp {
+    when: PromptWhileStreamingRequested(session, text, behavior)
+    requires: session.is_streaming
+    requires: behavior = queue
+
+    ensures: UserPromptsWhileStreaming(session, text, behavior: follow_up)
+}
+
+rule PromptWhileStreamingSteerModePersistsSteering {
+    when: PromptWhileStreamingRequested(session, text, behavior)
+    requires: session.is_streaming
+    requires: behavior = steer
+
+    ensures:
+        if session.interrupt_pending:
+            UserPromptsWhileStreaming(session, text, behavior: follow_up)
+        else:
+            UserPromptsWhileStreaming(session, text, behavior: steer)
+}
+
 rule ExtensionCommandExecuted {
     when: UserPrompts(session, text, images)
 

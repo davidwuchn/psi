@@ -66,10 +66,12 @@ entity EmacsProcessBuffer {
     buffer_name: String
     major_mode: markdown | text
     transcript_editable: Boolean
+    transcript_banner: String?
     draft_text: String
     has_active_region: Boolean
     active_region_text: String?
     has_pending_edits: Boolean
+    cursor_in_input_area: Boolean
 }
 
 entity EmacsFrontend {
@@ -156,6 +158,13 @@ rule SlashExecutionUsesSharedContract {
     ensures: UsesContract(frontend, slash_commands/PromptSlashCommandContract)
 }
 
+rule StartupBufferSeedsBannerAndInputFocus {
+    when: EmacsFrontendInitialized(frontend)
+
+    ensures: frontend.buffer.transcript_banner = "ψ"
+    ensures: frontend.buffer.cursor_in_input_area = true
+}
+
 rule AutoConnectStartsRpc {
     when: EmacsFrontendInitialized(frontend)
     requires: frontend.auto_connect = true
@@ -234,6 +243,13 @@ rule ExtensionUiUsesSharedContract {
 
     ensures: UsesContract(frontend, ui/ExtensionUI)
     ensures: UsesContract(frontend, ui/ExtensionUIQuery)
+}
+
+rule NewSessionResetPreservesBannerBeforeReplay {
+    when: SlashCommandHandled(frontend, command: "/new")
+
+    ensures: frontend.buffer.transcript_banner = "ψ"
+    ensures: frontend.buffer.cursor_in_input_area = true
 }
 
 rule ReconnectKeyRestartsTransport {
