@@ -196,8 +196,7 @@ rule EmitExactlyOneSyntheticAssistantMessagePerTerminalJob {
             if BackgroundJob(job_id).terminal_payload_file = null:
                 payload_text
             else:
-                "Terminal payload exceeded output limits. See temp file: "
-                + BackgroundJob(job_id).terminal_payload_file,
+                "Terminal payload exceeded output limits. See temp file: " + BackgroundJob(job_id).terminal_payload_file
         payload_file: BackgroundJob(job_id).terminal_payload_file,
         created_at: now
     )
