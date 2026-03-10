@@ -95,6 +95,7 @@ Current truth about the Psi system.
 - ✓ PSL extension now emits explicit delivery-status transcript messages (commit `93a517e`): `send-prompt` outcomes are rendered as `queued via deferred; will auto-run when idle`, `queued via prompt`, or `queued via follow-up`, with focused extension tests and spec rules in `spec/plan-state-learning-extension.allium`.
 - ✓ Allium parse regression fixed for background job spec (commit `2c449bc`): `spec/background-tool-jobs.allium` terminal payload `content` expression now uses parser-valid conditional form; full `allium check spec` returns clean.
 - ✓ Workflow mutation background-job tracking now supports both creation and continuation paths (commit `9f55a9f`): core tracking accepts `psi.extension.workflow/send-event` when `track-background-job?` is true, and mutations surface `:psi.extension.background-job/id` for immediate cross-surface job inspection/cancellation workflows.
+- ✓ Background-job EQL introspection attrs are now first-class and graph-discoverable (commit `8185869`): session root resolves `:psi.agent-session/background-job-count`, `:psi.agent-session/background-job-statuses`, and `:psi.agent-session/background-jobs` with nested `:psi.background-job/*` entities; resolver tests assert root-queryable + graph-edge discoverability.
 
 ## Components
 
@@ -341,6 +342,7 @@ Caught by `jline-terminal-keymap-test` smoke test.
   - `clojure -M:test --focus psi.agent-session.background-jobs-test --focus psi.agent-session.commands-test --focus psi.agent-session.rpc-test --focus psi.tui.app-test`
   - `bb emacs:check`
 - ✓ Cross-surface parity gap closed (REPL/TUI/Emacs/RPC)
+- ✓ Query/introspection parity for background jobs is now explicit: EQL root attrs + nested entities are queryable and included in graph introspection surfaces (`:psi.graph/root-queryable-attrs`, `:psi.graph/edges`).
 
 ## Step 10 Decisions (Remember Spec)
 

@@ -161,6 +161,7 @@ Ordered steps toward PSI COMPLETE.
   - `components/agent-session/src/psi/agent_session/core.clj`
   - focused contract tests in `background_jobs_test.clj` + integration coverage in `core_test.clj`
 - Progress: commit `6f321af` completed remaining matrix TODO slice (`N7`, `E7`, `E10`, `E13`, `B3`) and wired explicit list/inspect/cancel surfaces across RPC/TUI/Emacs for parity.
+- Progress: commit `8185869` added session-root background-job EQL attrs (`:psi.agent-session/background-job-count`, `:psi.agent-session/background-job-statuses`, `:psi.agent-session/background-jobs`) plus nested `:psi.background-job/*` entities and graph-introspection coverage tests.
 - Acceptance checklist:
   - [x] Dual-mode tool behavior is implemented (`sync` result vs `background` start with `job-id`)
   - [x] `job-id` is returned only for async/background starts
@@ -174,6 +175,7 @@ Ordered steps toward PSI COMPLETE.
   - [x] Manual retry is rejected with canonical error
   - [x] Retention is bounded to 20 terminal jobs/thread with oldest-terminal eviction
   - [x] Cross-surface visibility parity holds (REPL/TUI/Emacs/RPC)
+  - [x] Session-root EQL background-job introspection attrs are available and graph-discoverable (`:psi.agent-session/background-job-count`, `:psi.agent-session/background-job-statuses`, `:psi.agent-session/background-jobs`, nested `:psi.background-job/*`)
 
 ### Step 13 — Terminal UI (TUI) ◇ in progress
 - Spec: `spec/tui.allium`
