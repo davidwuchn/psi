@@ -4,6 +4,34 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-10 - Subagent dual-mode create and workflow send-event tracking need explicit gating + surfaced job ids
+
+### λ Background-job tracking on workflow mutations should be opt-in outside create
+
+`psi.extension.workflow/create` previously implied job tracking. Extending tracking to
+`psi.extension.workflow/send-event` is useful for async continuation flows, but must be
+gated by explicit intent (`track-background-job? true`) to avoid over-counting generic
+workflow events as jobs.
+
+### λ Mutation payloads should return job-id at creation boundary for immediate operator workflows
+
+Returning `:psi.extension.background-job/id` directly from workflow create/send-event
+mutations removes an extra lookup round-trip and enables immediate `/job` / `/cancel-job`
+flows across REPL/TUI/Emacs/RPC surfaces.
+
+### λ Sync-create tool UX is clearer when timeout semantics are explicit and validated at input edge
+
+For `subagent(action=create, mode=sync)`, a bounded wait with explicit `timeout_ms`
+(default 300000) plus strict positive-integer validation provides deterministic
+operator behavior. Timeout should surface as a direct terminal error string while still
+preserving workflow id for introspection/continue.
+
+### λ Arity-compatible extension tool execute fns should consume opts for tool-call-id propagation
+
+When tool handlers accept both `[args]` and `[args opts]`, they can preserve backward
+compatibility while still propagating `tool-call-id` into workflow mutation inputs/data.
+This is required for reliable background-job identity correlation.
+
 ## 2026-03-10 - Normative prompt invariants belong in AGENTS as explicit equations
 
 ### λ Encode global policy as a minimal lambda so future ψ can enforce it uniformly
