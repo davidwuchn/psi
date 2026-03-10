@@ -60,6 +60,9 @@ entity AgentSession {
     is_streaming: Boolean
     is_compacting: Boolean
 
+    interrupt_pending: Boolean
+    interrupt_requested_at: Timestamp?
+
     steering_messages: Set<String>
     follow_up_messages: Set<String>
 
@@ -92,6 +95,8 @@ rule NewSessionStarted {
 
     ensures: session.is_streaming = false
     ensures: session.is_compacting = false
+    ensures: session.interrupt_pending = false
+    ensures: session.interrupt_requested_at = null
     ensures: session.steering_messages = {}
     ensures: session.follow_up_messages = {}
     ensures: session.retry_attempt = 0

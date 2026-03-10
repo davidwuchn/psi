@@ -4,6 +4,7 @@
 -- Emacs process-buffer frontend behavior over EDN RPC.
 
 use "./coding-agent.allium" as coding
+use "./agent-turn-interrupts.allium" as turn_interrupts
 use "./ui-extension-points.allium" as ui
 use "./rpc-edn.allium" as rpc
 use "./tool-output-display.allium" as tool_display
@@ -29,7 +30,7 @@ value FrontendCapabilities {
 value EmacsKeymap {
     send: String
     queue: String
-    abort: String
+    interrupt: String
     reconnect: String
     toggle_tool_output: String
     set_model: String
@@ -42,7 +43,7 @@ value EmacsKeymap {
 
 value HeaderLineView {
     transport: disconnected | connecting | ready
-    run_state: idle | streaming | reconnecting | error
+    run_state: idle | streaming | interrupt_pending | reconnecting | error
     tool_output_view: collapsed | expanded
     model_label: String?
 }
@@ -84,7 +85,7 @@ entity EmacsFrontend {
     tool_output_view: collapsed | expanded
     footer_projection: String?
 
-    run_state: idle | streaming | reconnecting | error
+    run_state: idle | streaming | interrupt_pending | reconnecting | error
     last_error: String?
 
     auto_connect: Boolean
@@ -99,7 +100,7 @@ entity EmacsFrontend {
 config {
     send_key: String = "C-c RET"
     queue_key: String = "C-c C-q"
-    abort_key: String = "C-c C-k"
+    interrupt_key: String = "C-c C-c"
     reconnect_key: String = "C-c C-r"
     toggle_tool_output_key: String = "C-c C-t"
 
@@ -178,11 +179,12 @@ rule SendKeySubmitsPrompt {
     ensures: PromptSubmissionRequested(frontend, ComposedText(frontend))
 }
 
-rule AbortKeyRequestsAbort {
+rule InterruptKeyRequestsDeferredInterrupt {
     when: KeyPressed(frontend, source_key)
-    requires: source_key = config.abort_key
+    requires: source_key = config.interrupt_key
 
-    ensures: AbortRequested(frontend.session.session)
+    ensures: turn_interrupts/InterruptRequested(frontend.session.session)
+    ensures: frontend.run_state = interrupt_pending
 }
 
 rule ToggleToolOutputView {

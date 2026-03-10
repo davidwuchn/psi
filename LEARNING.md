@@ -4,6 +4,29 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-09 - Startup banners and mutation lists are cross-surface startup contracts
+
+### λ Banner-first startup requires reset-path insertion, not only initial open-buffer insertion
+
+Adding a startup banner only in entry/open-buffer paths misses `/new` and other
+transcript reset flows. To guarantee "banner before anything else," banner
+insertion must also run in the reset lifecycle (`psi-emacs--reset-transcript-state`)
+that powers fresh-session rehydration.
+
+### λ Window-aware cursor placement should use the exact `pop-to-buffer` target
+
+For deterministic "cursor is ready to type" behavior, focus helpers should accept
+and prefer the specific window returned by `pop-to-buffer`, not just "any window
+showing this buffer". This removes ambiguity in multi-window setups and matches
+what the user actually sees.
+
+### λ `all-mutations` is a startup-critical compile surface
+
+A stale symbol in `all-mutations` (`abort` after mutation rename to `interrupt`)
+can break backend startup and make handshake appear to fail even when transport
+code is correct. Mutation-list drift should be treated as startup-contract drift,
+with compile/startup smoke checks catching it early.
+
 ## 2026-03-09 - Emacs startup focus should bind buffer point and window point
 
 ### λ Input focus invariants in UI buffers require syncing both point surfaces

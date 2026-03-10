@@ -93,6 +93,7 @@
         last-m (last (:messages event))]
     (and (agent-end-event? data)
          (:auto-retry-enabled sd)
+         (not (:interrupt-pending sd))
          (< (:retry-attempt sd) max-r)
          (not (session/context-overflow-error? (:error-message last-m)))
          (session/retry-error? (:stop-reason last-m)

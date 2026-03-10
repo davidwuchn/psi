@@ -1,0 +1,116 @@
+-- allium: 1
+
+-- agent-turn-interrupts.allium
+-- Shared deferred interrupt contract for agent turns across UI frontends.
+
+use "./session-management.allium" as session
+
+rule InterruptRequestedDuringActiveTurn {
+    when: InterruptRequested(session)
+    requires: session.is_streaming
+    requires: not session.interrupt_pending
+
+    let queued_follow_ups = session.follow_up_messages
+    let dropped_steering = session.steering_messages
+
+    ensures: session.interrupt_pending = true
+    ensures: session.interrupt_requested_at = now
+
+    ensures: session.steering_messages = {}
+    ensures: session.follow_up_messages = queued_follow_ups
+    ensures: SteeringMessagesDropped(session, dropped_steering)
+    ensures: DroppedSteeringRestoredToDraft(session, dropped_steering)
+
+    ensures: InterruptPendingVisible(session)
+}
+
+rule InterruptRequestedWhileAlreadyPendingIsIdempotent {
+    when: InterruptRequested(session)
+    requires: session.is_streaming
+    requires: session.interrupt_pending
+
+    let requested_at = session.interrupt_requested_at
+    let queued_follow_ups = session.follow_up_messages
+
+    ensures: session.interrupt_pending = true
+    ensures: session.interrupt_requested_at = requested_at
+    ensures: session.steering_messages = {}
+    ensures: session.follow_up_messages = queued_follow_ups
+}
+
+rule InterruptRequestedWhileIdleIsSilentNoop {
+    when: InterruptRequested(session)
+    requires: session.is_idle
+
+    ensures: session.interrupt_pending = session.interrupt_pending
+    ensures: session.interrupt_requested_at = session.interrupt_requested_at
+    ensures: NoStatusMessageAdded(session)
+}
+
+rule SteeringInputWhileInterruptPendingCoercesToFollowUp {
+    when: StreamingPromptSubmitted(session, text, behavior)
+    requires: session.interrupt_pending
+    requires: behavior = steer
+
+    ensures: session/UserPromptsWhileStreaming(session, text, behavior: follow_up)
+}
+
+rule FollowUpInputWhileInterruptPendingRemainsFollowUp {
+    when: StreamingPromptSubmitted(session, text, behavior)
+    requires: session.interrupt_pending
+    requires: behavior = follow_up
+
+    ensures: session/UserPromptsWhileStreaming(session, text, behavior: follow_up)
+}
+
+rule InterruptPendingSuppressesAutoRetryForCurrentAttempt {
+    when: CurrentAttemptErrored(session, error)
+    requires: session.interrupt_pending
+    requires: session.auto_retry_enabled
+
+    ensures: AutoRetrySuppressed(session, reason: interrupt_pending)
+    ensures: AttemptTerminalOutcome(session, outcome: error)
+}
+
+rule InterruptAppliesAtFirstTerminalOutcome {
+    when: AttemptTerminalOutcome(session, outcome)
+    requires: session.interrupt_pending
+    requires: outcome in {success, error, aborted}
+
+    ensures: session.interrupt_pending = false
+    ensures: session.interrupt_requested_at = null
+    ensures: InterruptApplied(session)
+}
+
+rule FollowUpsContinueAfterInterruptApplied {
+    when: InterruptApplied(session)
+    requires: session.follow_up_messages.count > 0
+
+    ensures: FollowUpTurnMayStart(session)
+}
+
+surface AgentTurnInterruptContract {
+    facing caller: session/User
+
+    context session: session/AgentSession
+
+    exposes:
+        session.interrupt_pending
+        session.interrupt_requested_at
+
+    provides:
+        InterruptRequested(session)
+        StreamingPromptSubmitted(session, text, behavior)
+        CurrentAttemptErrored(session, error)
+        AttemptTerminalOutcome(session, outcome)
+
+    related:
+        session/AgentSessionApi
+
+    @guidance
+        -- Interrupt is deferred: it never aborts the active turn mid-stream.
+        -- Interrupt becomes effective at the first terminal outcome of the active attempt.
+        -- Interrupt request drops queued steering only; follow-ups are preserved.
+        -- While interrupt is pending, steering input is coerced to follow-up.
+        -- Interrupt while idle is a silent no-op.
+}

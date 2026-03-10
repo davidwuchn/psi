@@ -12,6 +12,8 @@
      :thinking-level        — :off | :minimal | :low | :medium | :high | :xhigh
      :is-streaming          — true while the agent loop is running
      :is-compacting         — true while a compaction is executing
+     :interrupt-pending     — true when interrupt is scheduled for current turn boundary
+     :interrupt-requested-at — timestamp when deferred interrupt was requested
      :base-system-prompt    — assembled base system prompt string (without extension contributions)
      :system-prompt         — assembled runtime system prompt string (base + extension contributions)
      :developer-prompt      — optional developer instruction layer string
@@ -112,6 +114,8 @@
    [:thinking-level thinking-level-schema]
    [:is-streaming :boolean]
    [:is-compacting :boolean]
+   [:interrupt-pending :boolean]
+   [:interrupt-requested-at {:optional true} [:maybe inst?]]
    [:base-system-prompt :string]
    [:system-prompt :string]
    [:developer-prompt {:optional true} [:maybe :string]]
@@ -196,6 +200,8 @@
      :thinking-level          :off
      :is-streaming            false
      :is-compacting           false
+     :interrupt-pending       false
+     :interrupt-requested-at  nil
      :base-system-prompt      ""
      :system-prompt           ""
      :developer-prompt        nil

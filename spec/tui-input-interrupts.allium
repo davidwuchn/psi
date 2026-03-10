@@ -3,6 +3,8 @@
 -- tui-input-interrupts.allium
 -- Observable interrupt/clear/exit behavior at the prompt-input boundary.
 
+use "./agent-turn-interrupts.allium" as turn_interrupts
+
 config {
     double_press_window_ms: Integer = 500
 }
@@ -14,11 +16,16 @@ entity PromptInput {
     is_empty: IsBlank(text)
 }
 
+value QueuedMessage {
+    text: String
+    delivery: steering | follow_up
+}
+
 entity SessionControl {
     input: PromptInput
     lifecycle: running | exiting
 
-    run_state: idle | agent_working | bash_running | compacting | retry_wait
+    run_state: idle | agent_working | interrupt_pending | bash_running | compacting | retry_wait
     double_escape_action: tree | fork | none
 
     last_escape_at: Timestamp?
@@ -30,19 +37,27 @@ entity SessionControl {
     queued_messages: Set<QueuedMessage>
 }
 
-value QueuedMessage {
-    text: String
-    delivery: steering | follow_up
-}
-
-rule EscapeCancelsAgentWorkAndRestoresQueuedMessages {
+rule EscapeRequestsDeferredInterruptForAgentTurn {
     when: UserPressesEscape(control)
     requires: control.run_state = agent_working
 
-    let queued_text = JoinQueuedMessages(control.queued_messages)
-    ensures: control.input.text = MergeQueuedAndDraft(queued_text, control.input.text)
-    ensures: control.queued_messages = {}
-    ensures: WorkCancellationRequested(control, target: agent_run)
+    let dropped_steering = Filter(control.queued_messages, where: delivery = steering)
+    let kept_follow_ups = Filter(control.queued_messages, where: delivery = follow_up)
+    let dropped_text = JoinQueuedMessages(dropped_steering)
+
+    ensures: control.queued_messages = kept_follow_ups
+    ensures: control.input.text = MergeQueuedAndDraft(dropped_text, control.input.text)
+
+    ensures: turn_interrupts/InterruptRequested(control.session)
+    ensures: control.run_state = interrupt_pending
+}
+
+rule EscapeWhileInterruptPendingIsIdempotent {
+    when: UserPressesEscape(control)
+    requires: control.run_state = interrupt_pending
+
+    ensures: turn_interrupts/InterruptRequested(control.session)
+    ensures: control.run_state = interrupt_pending
 }
 
 rule EscapeCancelsBashExecution {
@@ -101,6 +116,39 @@ rule SecondEscapeExecutesDoubleEscapeAction {
     ensures: control.last_escape_at = null
 }
 
+rule EscapeWhileIdleWithoutBindingIsSilentNoop {
+    when: UserPressesEscape(control)
+    requires: control.run_state = idle
+    requires: control.input.is_empty
+    requires: control.double_escape_action = none
+
+    ensures: NoStatusMessageAdded(control)
+}
+
+rule SteeringSubmissionWhileInterruptPendingCoercesToFollowUp {
+    when: StreamingSubmissionRequested(control, text, delivery)
+    requires: control.run_state = interrupt_pending
+    requires: delivery = steering
+
+    ensures: control.queued_messages = control.queued_messages + {QueuedMessage{text: text, delivery: follow_up}}
+}
+
+rule FollowUpSubmissionWhileInterruptPendingRemainsFollowUp {
+    when: StreamingSubmissionRequested(control, text, delivery)
+    requires: control.run_state = interrupt_pending
+    requires: delivery = follow_up
+
+    ensures: control.queued_messages = control.queued_messages + {QueuedMessage{text: text, delivery: follow_up}}
+}
+
+rule TerminalOutcomeClearsInterruptPending {
+    when: AgentAttemptTerminalOutcome(control, outcome)
+    requires: control.run_state = interrupt_pending
+    requires: outcome in {success, error, aborted}
+
+    ensures: control.run_state = idle
+}
+
 rule CtrlCFirstPressClearsInput {
     when: UserPressesClear(control)
     requires: not control.clear_armed
@@ -143,15 +191,20 @@ surface PromptInterruptContract {
         UserPressesEscape(control)
         UserPressesClear(control)
         UserPressesExit(control)
+        StreamingSubmissionRequested(control, text, delivery)
+        AgentAttemptTerminalOutcome(control, outcome)
 
     exposes:
         control.run_state
         control.double_escape_action
         control.lifecycle
 
+    related:
+        turn_interrupts/AgentTurnInterruptContract
+
     @guidance
         -- Default keybindings map actions to:
-        --   Escape => interrupt
+        --   Escape => interrupt (deferred between turns for agent work)
         --   Ctrl+C => clear
         --   Ctrl+D => exit-when-empty
         -- Users may remap keys, but action semantics remain stable.
