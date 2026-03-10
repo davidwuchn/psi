@@ -88,6 +88,7 @@ Current truth about the Psi system.
 - ✓ psi buffer close now confirms before terminating a live process (commit `d90880d`): Emacs lifecycle installs `psi-emacs--confirm-kill-buffer-p` on `kill-buffer-query-functions`; interactive close prompts when owned process is live, decline cancels kill and preserves process, noninteractive paths (ERT/batch) auto-allow. Verification: `bb emacs:test` green at 174/174 with new close-confirmation regressions.
 - ✓ AI resolver list duplication eliminated (commit `f8727db`): `ai/all-resolvers` made public; `introspection/core.clj` `register-resolvers!` and `register-resolvers-in!` now use `(doseq [r ai/all-resolvers] ...)` instead of hand-listing all four AI resolvers. Adding a new AI resolver now requires only one change site.
 - ✓ Anthropic provider usage tracking fixed (commit `c9af5f0`): `message_start` SSE event now captures `input_tokens`, `cache_read_input_tokens`, and `cache_creation_input_tokens`; `message_delta` captures `output_tokens`; `:done` event carries real usage map + calculated cost. Previously all usage was hardcoded to zero, causing the TUI footer to show `?/0` instead of actual token/context counts.
+- ✓ Emacs footer now refreshes token/context usage after every tool call (commit `3786e39`): both progress poll loops in `rpc.clj` emit `footer/updated` immediately after each `:tool-result` event, so the stats-line (↑↓R W cost context%) updates live during multi-tool turns rather than only at the end of the agent loop.
 
 ## Components
 
@@ -313,6 +314,21 @@ Caught by `jline-terminal-keymap-test` smoke test.
 ## Step 10 Status
 
 - ✓ Step 10 acceptance checklist is complete (manual remember capture semantics, telemetry, blocked/fallback paths, cross-surface parity, end-to-end visibility).
+
+## Step 12b Status (Background Tool Jobs)
+
+- ◇ Spec drafted: `spec/background-tool-jobs.allium`
+- ◇ Test matrix drafted: `doc/background-tool-jobs-test-matrix.md`
+- Captured behavior includes:
+  - dual-mode tool invocation (`sync` result vs `background` job start)
+  - `job-id` only for async/background starts
+  - in-memory-only tracking with process-restart loss
+  - thread-scoped controls with globally unique `job-id`
+  - terminal-only synthetic assistant injection at turn boundaries
+  - one message per terminal job, completion-time ordering, at-most-once delivery
+  - payload size policy parity with tool output constraints + temp-file spillover
+  - default list non-terminal jobs only, manual retry unsupported
+  - bounded terminal retention (20/thread) with oldest-terminal eviction
 
 ## Step 10 Decisions (Remember Spec)
 

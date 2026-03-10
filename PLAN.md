@@ -153,6 +153,23 @@ Ordered steps toward PSI COMPLETE.
   - dedicated input area (persistent cursor focus while streaming + multiline compose + history traversal) is stable and tested
   - `bb emacs:test` and `bb emacs:byte-compile` remain green
 
+### Step 12b — Background tool jobs (spec + tests) ◇ in progress
+- Spec: `spec/background-tool-jobs.allium`
+- Test matrix: `doc/background-tool-jobs-test-matrix.md`
+- Acceptance checklist:
+  - [ ] Dual-mode tool behavior is implemented (`sync` result vs `background` start with `job-id`)
+  - [ ] `job-id` is returned only for async/background starts
+  - [ ] Background jobs are tracked in memory only (no restart recovery)
+  - [ ] Thread-scoped list/inspect/cancel behavior is enforced
+  - [ ] Terminal outcomes inject exactly one synthetic assistant message per job
+  - [ ] Injection occurs at turn boundaries and in completion-time order
+  - [ ] Delivery semantics are at-most-once under concurrent emit attempts
+  - [ ] Oversized terminal payloads spill to temp file with message reference
+  - [ ] Default `list jobs` returns non-terminal statuses only
+  - [ ] Manual retry is rejected with canonical error
+  - [ ] Retention is bounded to 20 terminal jobs/thread with oldest-terminal eviction
+  - [ ] Cross-surface visibility parity holds (REPL/TUI/Emacs/RPC)
+
 ### Step 13 — Terminal UI (TUI) ◇ in progress
 - Spec: `spec/tui.allium`
 - Current: charm.clj/JLine3 session loop is operational
@@ -227,3 +244,4 @@ Ordered steps toward PSI COMPLETE.
 
 - Δ psl source=53082d2cb72c2dbd354c790256f1e48b5663f717 at=2026-03-06T20:57:20.413334Z :: ⚒ Δ Simplify PSL to agent-prompt flow with extension prompt telemetry λ
 - Δ psl source=93632bc at=2026-03-08T12:19:31Z :: ⚒ Mark `psi-emacs-command` safe for `.dir-locals.el` local customization λ
+- Δ psl source=3786e39 at=2026-03-10T16:35:00Z :: ⚒ · Emit footer/updated after each tool/result in progress poll loops λ
