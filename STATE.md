@@ -79,7 +79,7 @@ Current truth about the Psi system.
 - ✓ Allium spec parity now includes these startup/streaming behaviors (commit `b13c4f8`):
   - `spec/emacs-frontend.allium` models deterministic `ψ` transcript banner + input-area cursor placement on initialization and `/new` reset.
   - `spec/session-management.allium` models `prompt_while_streaming` steer/queue semantics and interrupt-pending steer coercion to follow-up.
-- ✓ `allium check spec` remains green after spec update (48 files, 0 issues).
+- ✓ `allium check spec` remains green after spec update (49 files, 0 issues).
 - ✓ `psi-emacs-command` is now marked safe for local variables (`:safe` predicate accepts list-of-strings), so project `.dir-locals.el` command overrides no longer trigger Emacs unsafe-local warnings.
 - ✓ Emacs startup `*lsp-log*` read-only regression fixed (commit `0c6667f`): removed `psi-emacs-mode` buffer-local `inhibit-read-only`; localized transcript/property mutations behind explicit `let ((inhibit-read-only t))`; separator marker validity now requires line-start marker anchoring; Emacs tests updated for intentional read-only transcript clearing.
 - ✓ Verification after read-only regression fix: `bb emacs:test` passing at 168/168 and `bb emacs:byte-compile` clean (pre-existing docstring width warnings only).
@@ -89,6 +89,8 @@ Current truth about the Psi system.
 - ✓ AI resolver list duplication eliminated (commit `f8727db`): `ai/all-resolvers` made public; `introspection/core.clj` `register-resolvers!` and `register-resolvers-in!` now use `(doseq [r ai/all-resolvers] ...)` instead of hand-listing all four AI resolvers. Adding a new AI resolver now requires only one change site.
 - ✓ Anthropic provider usage tracking fixed (commit `c9af5f0`): `message_start` SSE event now captures `input_tokens`, `cache_read_input_tokens`, and `cache_creation_input_tokens`; `message_delta` captures `output_tokens`; `:done` event carries real usage map + calculated cost. Previously all usage was hardcoded to zero, causing the TUI footer to show `?/0` instead of actual token/context counts.
 - ✓ Emacs footer now refreshes token/context usage after every tool call (commit `3786e39`): both progress poll loops in `rpc.clj` emit `footer/updated` immediately after each `:tool-result` event, so the stats-line (↑↓R W cost context%) updates live during multi-tool turns rather than only at the end of the agent loop.
+- ✓ PSL extension now emits explicit delivery-status transcript messages (commit `93a517e`): `send-prompt` outcomes are rendered as `queued via deferred; will auto-run when idle`, `queued via prompt`, or `queued via follow-up`, with focused extension tests and spec rules in `spec/plan-state-learning-extension.allium`.
+- ✓ Allium parse regression fixed for background job spec (commit `2c449bc`): `spec/background-tool-jobs.allium` terminal payload `content` expression now uses parser-valid conditional form; full `allium check spec` returns clean.
 
 ## Components
 

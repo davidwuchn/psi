@@ -194,7 +194,7 @@ Ordered steps toward PSI COMPLETE.
 - Progress: commit `27efd76` adds prompt contribution for agent-chain: chain catalog (name + description) advertised in system prompt under `Extension Capabilities`; synced on init, reload, and session_switch so the model always has current chain inventory without a prior `action="list"` call.
 - Progress: commit `050e29d` canonically enforces kebab-case tool names at extension registration (`^[a-z0-9][a-z0-9-]*$`), adds `spec/tools/tool-naming.allium`, and renames extension tool identifiers from underscore style to kebab-case (`agent-chain`, `hello-upper`, `hello-wrap`).
 - ~~Follow-up queued: align `/chain` command UX with user intent by supporting both index and name selection (`/chain <number|name>`), while keeping no-default-active semantics.~~
-- Follow-up queued: add explicit extension transcript status for deferred PSL prompt delivery (`queued via deferred; will auto-run when idle`) so operator feedback distinguishes queued-follow-up from auto-deferred execution.
+- Progress: commit `93a517e` adds explicit delivery-specific PSL transcript status messaging (`queued via deferred; will auto-run when idle` / `queued via prompt` / `queued via follow-up`) with extension tests and spec updates.
 - Progress: commit `a3c9756` hardened extension isolation during bootstrap — `send-extension-message-in!` now guards history append behind `startup-bootstrap-completed?`; PSL startup noise message removed.
 - Progress: commit `c9af5f0` fixed TUI footer token/context display — Anthropic SSE provider was hardcoding usage to zeros; now reads real `input_tokens`/`output_tokens`/cache tokens from `message_start` and `message_delta` events. Footer now shows actual context fraction (e.g. `12.3%/200k`) instead of `?/0`.
 - Progress: commit `3600486` tightened agent-chain/operator UX: async chain start response is now compact and machine-friendly (`OK id:<run-id>`), with monitor guidance removed from tool output; lambda/prompt compiler agent definitions were also refined for stricter minimal output contracts.
@@ -211,7 +211,7 @@ Ordered steps toward PSI COMPLETE.
 
 ### Spec track — Allium contract hardening ◇ in progress
 - Current status:
-  - `allium check spec` passes (47 files, 0 issues)
+  - `allium check spec` passes (49 files, 0 issues)
   - Remaining top-level legacy specs migrated to Allium v2 syntax (`spec/bootstrap-system.allium`, `spec/agent.allium`, `spec/tui.allium`; commit `29dcb18`)
   - Dependency ordering pass complete (`no-use` roots → dependents)
   - Spec drift guard workflow is now documented in `README.md` (`bb spec:ci`, `bb spec:check`, `bb spec:check:full`, `bb spec:guard`, `bb spec:baseline`) with baseline file path and declaration-name guard scope.
