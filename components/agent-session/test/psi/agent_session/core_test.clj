@@ -742,6 +742,62 @@
       (is (vector? (:psi.recursion/hooks result)))
       (is (pos? (count (:psi.recursion/hooks result)))))))
 
+(deftest workflow-background-job-terminal-injection-test
+  (testing "workflow completion emits background-job-terminal assistant message"
+    (let [ctx    (session/create-context)
+          qctx   (query/create-query-context)
+          chart  (chart/statechart {:id :wf-bg-test}
+                                   (ele/state {:id :idle}
+                                              (ele/transition {:event :workflow/start :target :running}))
+                                   (ele/state {:id :running}
+                                              (ele/transition {:event :workflow/finish :target :done}
+                                                              (ele/script {:expr (fn [_ data]
+                                                                                   [{:op :assign
+                                                                                     :data {:result (get-in data [:_event :data :result])}}])})))
+                                   (ele/final {:id :done}))
+          mutate (fn [op params]
+                   (get (query/query-in qctx
+                                        {:psi/agent-session-ctx ctx}
+                                        [(list op (assoc params :psi/agent-session-ctx ctx))])
+                        op))]
+      (session/register-resolvers-in! qctx false)
+      (session/register-mutations-in! qctx true)
+
+      (mutate 'psi.extension.workflow/register-type
+              {:ext-path "/ext/bg"
+               :type     :bg-simple
+               :chart    chart})
+      (mutate 'psi.extension.workflow/create
+              {:ext-path "/ext/bg"
+               :type     :bg-simple
+               :id       "wf-bg-1"
+               :auto-start? false})
+      (mutate 'psi.extension.workflow/send-event
+              {:ext-path "/ext/bg"
+               :id       "wf-bg-1"
+               :event    :workflow/start})
+      (mutate 'psi.extension.workflow/send-event
+              {:ext-path "/ext/bg"
+               :id       "wf-bg-1"
+               :event    :workflow/finish
+               :data     {:result {:ok true}}})
+
+      ;; Ensure extension-injected messages are persisted into transcript in this test.
+      (swap! (:session-data-atom ctx) assoc :startup-bootstrap-completed? true)
+
+      ;; Turn boundary / idle checkpoint triggers background terminal injection path.
+      (session/set-extension-run-fn-in! ctx (fn [_text _source] nil))
+      (Thread/sleep 30)
+
+      (let [assistant-msgs (->> (:messages (agent-core/get-data-in (:agent-ctx ctx)))
+                                (filter #(= "assistant" (:role %)))
+                                vec)
+            injected (some #(when (= "background-job-terminal" (:custom-type %)) %) assistant-msgs)
+            injected-text (get-in injected [:content 0 :text])]
+        (is (map? injected) (str "assistant messages: " assistant-msgs))
+        (is (string? injected-text))
+        (is (re-find #"workflow-id" injected-text))))))
+
 (deftest workflow-mutations-and-resolvers-test
   (testing "workflow mutation ops and resolver attrs are wired"
     (let [ctx    (session/create-context)

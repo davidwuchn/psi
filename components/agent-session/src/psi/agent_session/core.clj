@@ -57,10 +57,12 @@
    [clojure.walk :as walk]
    [com.wsscode.pathom3.connect.operation :as pco]
    [psi.agent-core.core :as agent]
+   [psi.agent-session.background-jobs :as bg-jobs]
    [psi.agent-session.compaction :as compaction]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.tools :as tools]
+   [psi.agent-session.tool-output :as tool-output]
    [psi.agent-session.workflows :as wf]
    [psi.tui.extension-ui :as ext-ui]
    [psi.agent-session.persistence :as persist]
@@ -81,6 +83,9 @@
 (declare register-resolvers-in!)
 (declare register-mutations-in!)
 (declare refresh-system-prompt-in!)
+(declare send-extension-message-in!)
+(declare maybe-mark-workflow-jobs-terminal!)
+(declare maybe-emit-background-job-terminal-messages!)
 
 ;; ============================================================
 ;; Actions dispatcher
@@ -152,11 +157,14 @@
               (swap! (:session-data-atom ctx) assoc :is-streaming true)
 
               :on-agent-done
-              (swap! (:session-data-atom ctx) assoc
-                     :is-streaming false
-                     :retry-attempt 0
-                     :interrupt-pending false
-                     :interrupt-requested-at nil)
+              (do
+                (swap! (:session-data-atom ctx) assoc
+                       :is-streaming false
+                       :retry-attempt 0
+                       :interrupt-pending false
+                       :interrupt-requested-at nil)
+                (maybe-mark-workflow-jobs-terminal! ctx)
+                (maybe-emit-background-job-terminal-messages! ctx))
 
               :on-abort
               (do (agent/abort-in! (:agent-ctx ctx))
@@ -294,7 +302,8 @@
                             ;; Atom holding (fn [text source]) that actually runs the agent loop.
                             ;; Set by the runtime layer (main/RPC) after bootstrap.
                             ;; Extensions use this to submit prompts that trigger real LLM calls.
-                            :extension-run-fn-atom (atom nil)}
+                            :extension-run-fn-atom (atom nil)
+                            :background-jobs-atom  (bg-jobs/create-store)}
          actions-fn        (make-actions-fn ctx)]
 
      ;; Watch agent-core events atom — forward new events to session statechart
@@ -542,7 +551,9 @@
                    :timestamp (java.time.Instant/now)}]
      (journal-append! ctx (persist/message-entry user-msg))
      (sc/send-event! (:sc-env ctx) (:sc-session-id ctx) :session/prompt)
-     (agent/start-loop-in! (:agent-ctx ctx) [user-msg]))))
+     (agent/start-loop-in! (:agent-ctx ctx) [user-msg])
+     (maybe-mark-workflow-jobs-terminal! ctx)
+     (maybe-emit-background-job-terminal-messages! ctx))))
 
 (defn steer-in!
   "Inject a steering message while the agent is streaming."
@@ -934,16 +945,127 @@
   [ctx event-name event-data]
   (ext/dispatch-in (:extension-registry ctx) event-name event-data))
 
+
+(defn- maybe-track-background-workflow-job!
+  [ctx op-sym full-params payload]
+  (when (and (= op-sym 'psi.extension.workflow/create)
+             (map? payload)
+             (:psi.extension.workflow/created? payload)
+             (:background-jobs-atom ctx))
+    (let [wf-type  (:type full-params)
+          wf-id    (:id full-params)
+          ext-path (:ext-path full-params)
+          tool-call-id (or (get-in full-params [:input :tool-call-id])
+                           (str "workflow-create-" (or ext-path "ext") "-" (or wf-id (java.util.UUID/randomUUID))))
+          thread-id (:session-id (get-session-data-in ctx))
+          job-kind  (when wf-type :workflow)
+          tool-name (if wf-type
+                      (str "workflow/" (name wf-type))
+                      "workflow/create")]
+      (try
+        (let [job (bg-jobs/find-job-by-workflow-in
+                   (:background-jobs-atom ctx)
+                   {:workflow-ext-path ext-path
+                    :workflow-id       wf-id})]
+          (when-not job
+            (bg-jobs/start-background-job-in!
+             (:background-jobs-atom ctx)
+             {:tool-call-id       (str tool-call-id)
+              :thread-id          (str thread-id)
+              :tool-name          tool-name
+              :job-id             (str "job-" (or wf-id (java.util.UUID/randomUUID)))
+              :job-kind           job-kind
+              :workflow-ext-path  ext-path
+              :workflow-id        (some-> wf-id str)})))
+        (catch Exception _
+          nil)))))
+
 (defn- run-extension-mutation-in!
   "Execute a single EQL mutation op against `ctx` and return its payload.
-   `op-sym` must be a qualified mutation symbol."
+   `op-sym` must be a qualified mutation symbol." 
   [ctx op-sym params]
   (let [qctx (query/create-query-context)
         _    (register-resolvers-in! qctx false)
         _    (register-mutations-in! qctx true)
         seed {:psi/agent-session-ctx ctx}
-        full-params (assoc params :psi/agent-session-ctx ctx)]
-    (get (query/query-in qctx seed [(list op-sym full-params)]) op-sym)))
+        full-params (assoc params :psi/agent-session-ctx ctx)
+        payload (get (query/query-in qctx seed [(list op-sym full-params)]) op-sym)]
+    (maybe-track-background-workflow-job! ctx op-sym full-params payload)
+    payload))
+
+(defn- maybe-emit-background-job-terminal-messages!
+  [ctx]
+  (let [store (:background-jobs-atom ctx)
+        thread-id (:session-id (get-session-data-in ctx))]
+    (when (and store thread-id)
+      (doseq [job (bg-jobs/pending-terminal-jobs-in store thread-id)]
+        (let [wf-ext-path (:workflow-ext-path job)
+              wf-id       (:workflow-id job)
+              wf          (when (and wf-ext-path wf-id)
+                            (wf/workflow-in (:workflow-registry ctx) wf-ext-path wf-id))
+              payload     (or (:terminal-payload job)
+                              {:job-id (:job-id job)
+                               :status (:status job)
+                               :result (:result wf)
+                               :error-message (:error-message wf)})
+              payload-edn (pr-str payload)
+              policy      (tool-output/effective-policy
+                           (or (:tool-output-overrides (get-session-data-in ctx)) {})
+                           (or (:tool-name job) "workflow"))
+              truncation  (tool-output/head-truncate payload-edn policy)
+              spill-path  (when (:truncated truncation)
+                           (tool-output/persist-truncated-output!
+                            (or (:tool-name job) "workflow")
+                            (or (:job-id job) "job")
+                            payload-edn))
+              _           (when spill-path
+                            (bg-jobs/set-terminal-payload-file-in!
+                             store
+                             {:job-id (:job-id job)
+                              :path spill-path}))
+              content     (if spill-path
+                            (str (:content truncation)
+                                 "\n\nTerminal payload exceeded output limits. See temp file: "
+                                 spill-path)
+                            payload-edn)]
+          (send-extension-message-in!
+           ctx
+           "assistant"
+           content
+           "background-job-terminal")
+          (bg-jobs/mark-terminal-message-emitted-in! store {:job-id (:job-id job)}))))))
+
+(defn- maybe-mark-workflow-jobs-terminal!
+  [ctx]
+  (let [store (:background-jobs-atom ctx)]
+    (when store
+      (doseq [job (vals (:jobs-by-id @store))]
+        (when (and (= :workflow (:job-kind job))
+                   (not (bg-jobs/terminal-status? (:status job))))
+          (let [wf (when (and (:workflow-ext-path job) (:workflow-id job))
+                     (wf/workflow-in (:workflow-registry ctx)
+                                     (:workflow-ext-path job)
+                                     (:workflow-id job)))]
+            (when wf
+              (cond
+                (:error? wf)
+                (bg-jobs/mark-terminal-in!
+                 store
+                 {:job-id (:job-id job)
+                  :outcome :failed
+                  :terminal-history-max-per-thread 20
+                  :payload {:workflow-id (:id wf)
+                            :result (:result wf)
+                            :error-message (:error-message wf)}})
+
+                (:done? wf)
+                (bg-jobs/mark-terminal-in!
+                 store
+                 {:job-id (:job-id job)
+                  :outcome :completed
+                  :terminal-history-max-per-thread 20
+                  :payload {:workflow-id (:id wf)
+                            :result (:result wf)}})))))))))
 
 (defn- make-extension-runtime-fns
   "Build the runtime-fns map for extension API EQL access.
@@ -1164,7 +1286,10 @@
    the full agent loop (LLM call included) in a background thread.
    Called by the runtime layer (main/RPC) after bootstrap."
   [ctx run-fn]
-  (reset! (:extension-run-fn-atom ctx) run-fn))
+  (reset! (:extension-run-fn-atom ctx) run-fn)
+  (when (idle-in? ctx)
+    (maybe-mark-workflow-jobs-terminal! ctx)
+    (maybe-emit-background-job-terminal-messages! ctx)))
 
 (defn send-extension-prompt-in!
   "Submit extension-authored text to the agent as a user prompt.
@@ -1202,6 +1327,9 @@
                    :extension-last-prompt-source (some-> source str)
                    :extension-last-prompt-delivery delivery
                    :extension-last-prompt-at (java.time.Instant/now))
+    (when idle?
+      (maybe-mark-workflow-jobs-terminal! ctx)
+      (maybe-emit-background-job-terminal-messages! ctx))
     {:accepted true :delivery delivery}))
 
 (defn add-extension-in!
@@ -1906,7 +2034,7 @@
                   :psi.extension.workflow/event-count
                   :psi.extension.workflow/last-event
                   :psi.extension.workflow/events]}
-  (let [{:keys [created? workflow error]}
+  (let [{:keys [created? workflow error] :as result}
         (create-workflow-in!
          agent-session-ctx
          ext-path
@@ -1915,10 +2043,18 @@
           :input       input
           :meta        meta
           :auto-start? auto-start?
-          :start-event start-event})]
-    (merge {:psi.extension.workflow/created? created?
-            :psi.extension.workflow/error    error}
-           (workflow->attrs workflow))))
+          :start-event start-event})
+        payload (merge {:psi.extension.workflow/created? created?
+                        :psi.extension.workflow/error    error}
+                       (workflow->attrs workflow))]
+    (when created?
+      (maybe-track-background-workflow-job!
+       agent-session-ctx
+       'psi.extension.workflow/create
+       {:ext-path ext-path :type type :id id :input input :meta meta
+        :auto-start? auto-start? :start-event start-event}
+       payload))
+    payload))
 
 (pco/defmutation send-workflow-event
   [_ {:keys [psi/agent-session-ctx ext-path id event data]}]

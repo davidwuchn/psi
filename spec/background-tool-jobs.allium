@@ -1,0 +1,302 @@
+-- allium: 1
+
+-- background-tool-jobs.allium
+-- Background jobs started by tools, with terminal chat injection and thread-scoped controls.
+
+use "./tools/runtime.allium" as runtime
+use "./session-management.allium" as session
+
+value JobStartResponse {
+    mode: synchronous | background
+    job_id: String?
+    status: running?
+    result: Map<String, Any>?
+}
+
+value TerminalInjectionMessage {
+    role: assistant
+    thread_id: String
+    job_id: String
+    tool_name: String
+    terminal_status: completed | failed | cancelled | timed_out
+    content: String
+    payload_file: String?
+    created_at: Timestamp
+}
+
+entity BackgroundJob {
+    job_id: String
+    thread_id: String
+    tool_call_id: String
+    tool_name: String
+
+    started_at: Timestamp
+    completed_at: Timestamp?
+
+    status: running | pending_cancel | completed | failed | cancelled | timed_out
+
+    terminal_payload: Map<String, Any>?
+    terminal_payload_file: String?
+
+    cancel_requested_at: Timestamp?
+
+    terminal_message_emitted: Boolean
+    terminal_message_emitted_at: Timestamp?
+
+    is_terminal: status in {completed, failed, cancelled, timed_out}
+    is_non_terminal: status in {running, pending_cancel}
+}
+
+config {
+    default_list_statuses: Set<String> = {"running", "pending_cancel"}
+    terminal_history_max_per_thread: Integer = 20
+}
+
+rule JobTrackingIsProcessMemoryOnly {
+    when: PsiProcessRestarted(process_id)
+
+    ensures: BackgroundJobRegistryReinitialized(process_id)
+    ensures: PriorProcessJobsNotRecovered(process_id)
+}
+
+rule TerminalOutcomeRequestsNextTurnBoundaryWhenIdle {
+    when: JobTerminalOutcomeObserved(job_id, outcome, payload)
+    requires: outcome in {completed, failed, cancelled, timed_out}
+    requires: ThreadIsIdle(BackgroundJob(job_id).thread_id)
+
+    ensures: TurnBoundaryReached(BackgroundJob(job_id).thread_id)
+}
+
+rule ToolInvocationCompletesSynchronously {
+    when: ToolInvocationCompleted(tool_call_id, thread_id, tool_name, result)
+    requires: ToolInvocationDidNotStartBackgroundJob(tool_call_id)
+
+    ensures: JobStartResponseFor(tool_call_id) = JobStartResponse{
+        mode: synchronous,
+        job_id: null,
+        status: null,
+        result: result
+    }
+    ensures: CountBackgroundJobsForToolCall(tool_call_id) = 0
+}
+
+rule ToolInvocationStartsBackgroundJob {
+    when: ToolInvocationStartedBackgroundJob(tool_call_id, thread_id, tool_name, job_id)
+
+    ensures: BackgroundJob.created(
+        job_id: job_id,
+        thread_id: thread_id,
+        tool_call_id: tool_call_id,
+        tool_name: tool_name,
+        started_at: now,
+        completed_at: null,
+        status: running,
+        terminal_payload: null,
+        terminal_payload_file: null,
+        cancel_requested_at: null,
+        terminal_message_emitted: false,
+        terminal_message_emitted_at: null
+    )
+
+    ensures: CountBackgroundJobsForToolCall(tool_call_id) = 1
+    ensures: JobIdIsGloballyUnique(job_id)
+
+    ensures: JobStartResponseFor(tool_call_id) = JobStartResponse{
+        mode: background,
+        job_id: job_id,
+        status: running,
+        result: null
+    }
+}
+
+rule UserOrAgentCanCancelRunningJob {
+    when: CancelJobRequested(thread_id, job_id, requested_by)
+    requires: requested_by in {"user", "agent"}
+    requires: BackgroundJob(job_id).thread_id = thread_id
+    requires: BackgroundJob(job_id).status = running
+
+    ensures: BackgroundJob(job_id).status = pending_cancel
+    ensures: BackgroundJob(job_id).cancel_requested_at = now
+}
+
+rule CancellationIsBestEffort {
+    when: CancelJobRequested(thread_id, job_id, requested_by)
+    requires: BackgroundJob(job_id).thread_id = thread_id
+    requires: BackgroundJob(job_id).status = pending_cancel
+
+    ensures: ToolCancellationRequested(job_id)
+    ensures: JobMayStillReach(job_id, completed)
+}
+
+rule CompletionWinsCancelRaceWhenAlreadyFinished {
+    when: CancelJobRequested(thread_id, job_id, requested_by)
+    requires: BackgroundJob(job_id).thread_id = thread_id
+    requires: JobExecutionAlreadyFinished(job_id)
+
+    ensures: BackgroundJob(job_id).status = completed
+}
+
+rule JobTransitionsToTerminal {
+    when: JobTerminalOutcomeObserved(job_id, outcome, payload)
+    requires: outcome in {completed, failed, cancelled, timed_out}
+
+    ensures: BackgroundJob(job_id).status = outcome
+    ensures: BackgroundJob(job_id).completed_at = now
+    ensures: BackgroundJob(job_id).terminal_payload = payload
+}
+
+rule TerminalPayloadUsesToolOutputConstraints {
+    when: JobTerminalOutcomeObserved(job_id, outcome, payload)
+    requires: outcome in {completed, failed, cancelled, timed_out}
+
+    let serialized = Serialize(payload)
+    let policy = runtime/EffectiveOutputPolicyRequested(BackgroundJob(job_id).tool_name)
+
+    ensures:
+        if FitsWithinLimits(serialized, policy.max_lines, policy.max_bytes):
+            BackgroundJob(job_id).terminal_payload_file = null
+        else:
+            BackgroundJob(job_id).terminal_payload_file = TempFile.write(
+                dir: runtime/ActiveProcessTempStore().root_dir,
+                name: "job-" + job_id + "-terminal.json",
+                content: serialized
+            )
+}
+
+rule TerminalInjectionIsDeferredToTurnBoundary {
+    when: JobTerminalOutcomeObserved(job_id, outcome, payload)
+    requires: outcome in {completed, failed, cancelled, timed_out}
+
+    ensures: PendingTerminalInjection(BackgroundJob(job_id).thread_id, job_id)
+}
+
+rule TerminalInjectionsEmittedAtTurnBoundaryInCompletionOrder {
+    when: TurnBoundaryReached(thread_id)
+
+    let pending = PendingTerminalInjectionsOrderedByCompletionTime(thread_id)
+
+    ensures: ForEach(pending, job_id => EmitTerminalInjectionMessage(thread_id, job_id))
+}
+
+rule EmitExactlyOneSyntheticAssistantMessagePerTerminalJob {
+    when: EmitTerminalInjectionMessage(thread_id, job_id)
+    requires: BackgroundJob(job_id).thread_id = thread_id
+    requires: BackgroundJob(job_id).is_terminal
+    requires: not BackgroundJob(job_id).terminal_message_emitted
+
+    let payload_text = Serialize(BackgroundJob(job_id).terminal_payload)
+
+    ensures: TerminalInjectionMessage.created(
+        role: assistant,
+        thread_id: thread_id,
+        job_id: job_id,
+        tool_name: BackgroundJob(job_id).tool_name,
+        terminal_status: BackgroundJob(job_id).status,
+        content:
+            if BackgroundJob(job_id).terminal_payload_file = null:
+                payload_text
+            else:
+                "Terminal payload exceeded output limits. See temp file: "
+                + BackgroundJob(job_id).terminal_payload_file,
+        payload_file: BackgroundJob(job_id).terminal_payload_file,
+        created_at: now
+    )
+
+    ensures: SyntheticAssistantMessageAppendedToThread(thread_id, job_id)
+    ensures: AgentTurnTriggered(thread_id, reason: "background-job-terminal")
+
+    ensures: BackgroundJob(job_id).terminal_message_emitted = true
+    ensures: BackgroundJob(job_id).terminal_message_emitted_at = now
+}
+
+rule TerminalInjectionIsAtMostOnce {
+    when: EmitTerminalInjectionMessage(thread_id, job_id)
+    requires: BackgroundJob(job_id).terminal_message_emitted
+
+    ensures: NoAdditionalTerminalInjectionMessage(thread_id, job_id)
+}
+
+rule ListJobsDefaultsToNonTerminal {
+    when: ListJobsRequested(thread_id, statuses: null)
+
+    ensures: ListJobsResult(thread_id) = JobsWhere(
+        thread_id: thread_id,
+        statuses: config.default_list_statuses
+    )
+}
+
+rule ListJobsSupportsExplicitStatusFilter {
+    when: ListJobsRequested(thread_id, statuses)
+    requires: statuses != null
+
+    ensures: ListJobsResult(thread_id) = JobsWhere(
+        thread_id: thread_id,
+        statuses: statuses
+    )
+}
+
+rule InspectJobIsThreadScoped {
+    when: InspectJobRequested(thread_id, job_id)
+    requires: BackgroundJob(job_id).thread_id = thread_id
+
+    ensures: InspectJobResult(thread_id, job_id) = BackgroundJob(job_id)
+}
+
+rule InspectJobOutsideThreadIsRejected {
+    when: InspectJobRequested(thread_id, job_id)
+    requires: BackgroundJob(job_id).thread_id != thread_id
+
+    ensures: Error.thrown("Job not found in this thread: " + job_id)
+}
+
+rule ManualRetryIsNotSupported {
+    when: RetryJobRequested(thread_id, job_id)
+
+    ensures: Error.thrown("Manual retry is not supported for background jobs")
+}
+
+rule RetryableLlmHttpErrorsAreInternalExecutionBehavior {
+    when: InternalRetryableLlmHttpErrorObserved(job_id, error)
+    requires: BackgroundJob(job_id).status in {running, pending_cancel}
+
+    ensures: NoTerminalInjectionQueuedBy(error)
+    ensures: ExternalJobStatusUnchanged(job_id)
+}
+
+rule TerminalHistoryBoundedByCountPerThread {
+    when: TerminalJobRetentionEvaluated(thread_id)
+    requires: TerminalJobs(thread_id).count > config.terminal_history_max_per_thread
+
+    ensures: EvictOldestTerminalJobsByCompletionTime(
+        thread_id: thread_id,
+        keep: config.terminal_history_max_per_thread
+    )
+    ensures: NonTerminalJobsPreserved(thread_id)
+}
+
+surface BackgroundToolJobsApi {
+    facing caller: ToolRuntime | session/User
+
+    exposes:
+        BackgroundJob
+        TerminalInjectionMessage
+
+    provides:
+        ToolInvocationCompleted(tool_call_id, thread_id, tool_name, result)
+        ToolInvocationStartedBackgroundJob(tool_call_id, thread_id, tool_name, job_id)
+
+        JobTerminalOutcomeObserved(job_id, outcome, payload)
+        TurnBoundaryReached(thread_id)
+
+        ListJobsRequested(thread_id, statuses)
+        InspectJobRequested(thread_id, job_id)
+        CancelJobRequested(thread_id, job_id, requested_by)
+        RetryJobRequested(thread_id, job_id)
+
+    @guidance
+        -- A tool invocation is dual-mode: synchronous result OR one background job.
+        -- job_id is returned only for asynchronous/background starts.
+        -- Terminal outcomes inject one synthetic assistant message per job at turn boundaries.
+        -- Injection is completion-time ordered and at-most-once.
+        -- Job records are thread-scoped; ids are globally unique.
+}

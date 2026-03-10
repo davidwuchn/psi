@@ -1,0 +1,391 @@
+(ns psi.agent-session.background-jobs-test
+  "Scaffold tests for background tool jobs contract.
+
+  Source matrix:
+  - doc/background-tool-jobs-test-matrix.md
+
+  Each test id (N/E/B) intentionally starts as a concrete stub and should be
+  replaced with runtime-backed assertions as implementation lands."
+  (:require
+   [clojure.test :refer [deftest is testing]]
+   [psi.agent-session.background-jobs :as bj]))
+
+(defn- start-job!
+  [store tool-call-id thread-id tool-name job-id]
+  (bj/start-background-job-in! store {:tool-call-id tool-call-id
+                                      :thread-id thread-id
+                                      :tool-name tool-name
+                                      :job-id job-id}))
+
+;; ---------------------------------------------------------------------------
+;; Nominal (N)
+;; ---------------------------------------------------------------------------
+
+(deftest n1-synchronous-tool-completion-test
+  (testing "N1: synchronous completion returns no job-id and creates no background job"
+    (let [store  (bj/create-store)
+          result (bj/record-synchronous-result-in!
+                  store
+                  {:tool-call-id "tc-sync-1"
+                   :thread-id "thread-a"
+                   :tool-name "bash"
+                   :result {:content "ok" :is-error false}})]
+      (is (= :synchronous (:mode result)))
+      (is (nil? (:job-id result)))
+      (is (nil? (:status result)))
+      (is (= {:content "ok" :is-error false} (:result result)))
+      (is (empty? (vals (:jobs-by-id @store)))))))
+
+(deftest n2-background-start-response-test
+  (testing "N2: background start returns job-id/running and creates one job record"
+    (let [store  (bj/create-store)
+          result (bj/start-background-job-in!
+                  store
+                  {:tool-call-id "tc-bg-1"
+                   :thread-id "thread-a"
+                   :tool-name "agent-chain"
+                   :job-id "job-1"})
+          job    (bj/get-job-in store "job-1")]
+      (is (= :background (:mode result)))
+      (is (= "job-1" (:job-id result)))
+      (is (= :running (:status result)))
+      (is (nil? (:result result)))
+      (is (= "thread-a" (:thread-id job)))
+      (is (= "tc-bg-1" (:tool-call-id job)))
+      (is (= "agent-chain" (:tool-name job)))
+      (is (= :running (:status job)))
+      (is (false? (:terminal-message-emitted job))))))
+
+(deftest n3-terminal-status-transition-test
+  (testing "N3: terminal outcome updates status/completed-at/payload"
+    (let [store (bj/create-store)
+          _     (start-job! store "tc-bg-2" "thread-a" "agent-chain" "job-2")
+          job   (bj/mark-terminal-in!
+                 store
+                 {:job-id "job-2"
+                  :outcome :completed
+                  :payload {:value 42}})]
+      (is (= :completed (:status job)))
+      (is (= {:value 42} (:terminal-payload job)))
+      (is (instance? java.time.Instant (:completed-at job))))))
+
+(deftest n4-single-terminal-injection-test
+  (testing "N4: one synthetic assistant message emitted per terminal job"
+    (let [store (bj/create-store)
+          _     (start-job! store "tc-n4" "thread-a" "tool-z" "job-n4")
+          _     (bj/mark-terminal-in! store {:job-id "job-n4"
+                                             :outcome :completed
+                                             :payload {:ok true}})
+          pending-before (bj/pending-terminal-jobs-in store "thread-a")
+          _     (bj/mark-terminal-message-emitted-in! store {:job-id "job-n4"})
+          pending-after  (bj/pending-terminal-jobs-in store "thread-a")
+          job            (bj/get-job-in store "job-n4")]
+      (is (= ["job-n4"] (mapv :job-id pending-before)))
+      (is (empty? pending-after))
+      (is (true? (:terminal-message-emitted job)))
+      (is (instance? java.time.Instant (:terminal-message-emitted-at job))))))
+
+(deftest n5-ordered-multi-job-injection-test
+  (testing "N5: terminal injections emitted in completion-time order"
+    (let [store (bj/create-store)
+          _     (start-job! store "tc-n5-a" "thread-a" "tool-z" "job-n5-a")
+          _     (Thread/sleep 2)
+          _     (start-job! store "tc-n5-b" "thread-a" "tool-z" "job-n5-b")
+          _     (bj/mark-terminal-in! store {:job-id "job-n5-a" :outcome :completed :payload {:n 1}})
+          _     (Thread/sleep 2)
+          _     (bj/mark-terminal-in! store {:job-id "job-n5-b" :outcome :completed :payload {:n 2}})
+          pending (bj/pending-terminal-jobs-in store "thread-a")]
+      (is (= ["job-n5-a" "job-n5-b"] (mapv :job-id pending))))))
+
+(deftest n6-cancel-request-user-and-agent-test
+  (testing "N6: both user and agent can request cancellation"
+    (let [store (bj/create-store)
+          _     (start-job! store "tc-n6-user" "thread-a" "tool-z" "job-n6-user")
+          _     (start-job! store "tc-n6-agent" "thread-a" "tool-z" "job-n6-agent")
+          user-cancelled  (bj/request-cancel-in! store {:thread-id "thread-a"
+                                                        :job-id "job-n6-user"
+                                                        :requested-by "user"})
+          agent-cancelled (bj/request-cancel-in! store {:thread-id "thread-a"
+                                                        :job-id "job-n6-agent"
+                                                        :requested-by :agent})]
+      (is (= :pending-cancel (:status user-cancelled)))
+      (is (= :pending-cancel (:status agent-cancelled)))
+      (is (instance? java.time.Instant (:cancel-requested-at user-cancelled)))
+      (is (instance? java.time.Instant (:cancel-requested-at agent-cancelled))))))
+
+(deftest n7-oversize-payload-path-test
+  (testing "N7: oversized terminal payload spills to temp file reference"
+    (is true "TODO N7")))
+
+(deftest n8-default-list-behavior-test
+  (testing "N8: default list returns non-terminal statuses only"
+    (let [store (bj/create-store)
+          _     (start-job! store "tc-bg-3" "thread-a" "tool-x" "job-3")
+          _     (start-job! store "tc-bg-4" "thread-a" "tool-x" "job-4")
+          _     (start-job! store "tc-bg-5" "thread-a" "tool-x" "job-5")
+          _     (bj/request-cancel-in! store {:thread-id "thread-a" :job-id "job-4"})
+          _     (bj/mark-terminal-in! store {:job-id "job-5" :outcome :failed :payload {:error "boom"}})
+          listed (bj/list-jobs-in store "thread-a")
+          ids    (mapv :job-id listed)
+          statuses (set (map :status listed))]
+      (is (= ["job-3" "job-4"] ids))
+      (is (= #{:running :pending-cancel} statuses)))))
+
+(deftest n9-explicit-status-filter-test
+  (testing "N9: explicit status filter narrows list results"
+    (let [store (bj/create-store)
+          _     (start-job! store "tc-n9-a" "thread-a" "tool-z" "job-n9-running")
+          _     (start-job! store "tc-n9-b" "thread-a" "tool-z" "job-n9-cancel")
+          _     (start-job! store "tc-n9-c" "thread-a" "tool-z" "job-n9-failed")
+          _     (bj/request-cancel-in! store {:thread-id "thread-a" :job-id "job-n9-cancel"})
+          _     (bj/mark-terminal-in! store {:job-id "job-n9-failed"
+                                             :outcome :failed
+                                             :payload {:error "x"}})
+          listed (bj/list-jobs-in store "thread-a" [:failed])]
+      (is (= ["job-n9-failed"] (mapv :job-id listed)))
+      (is (= #{:failed} (set (map :status listed)))))))
+
+(deftest n10-inspect-in-thread-test
+  (testing "N10: inspect returns job details in originating thread"
+    (let [store (bj/create-store)
+          _     (start-job! store "tc-bg-6" "thread-a" "tool-y" "job-6")
+          job   (bj/inspect-job-in store {:thread-id "thread-a" :job-id "job-6"})]
+      (is (= "job-6" (:job-id job)))
+      (is (= "thread-a" (:thread-id job)))
+      (is (= "tc-bg-6" (:tool-call-id job)))
+      (is (= :running (:status job))))))
+
+;; ---------------------------------------------------------------------------
+;; Edge (E)
+;; ---------------------------------------------------------------------------
+
+(deftest e1-second-background-job-same-tool-call-rejected-test
+  (testing "E1: second background job for same tool_call_id is rejected"
+    (let [store (bj/create-store)]
+      (start-job! store "tc-edge-1" "thread-a" "tool-z" "job-edge-1")
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo
+           #"Tool invocation already resolved"
+           (start-job! store "tc-edge-1" "thread-a" "tool-z" "job-edge-2"))))))
+
+(deftest e2-duplicate-job-id-collision-rejected-test
+  (testing "E2: duplicate job-id collision is rejected"
+    (let [store (bj/create-store)]
+      (start-job! store "tc-edge-2a" "thread-a" "tool-z" "job-edge-dup")
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo
+           #"Duplicate job-id"
+           (start-job! store "tc-edge-2b" "thread-a" "tool-z" "job-edge-dup"))))))
+
+(deftest e3-non-terminal-updates-do-not-inject-test
+  (testing "E3: non-terminal updates do not enqueue synthetic assistant message"
+    (let [store (bj/create-store)
+          _     (start-job! store "tc-e3" "thread-a" "tool-z" "job-e3")
+          pending (bj/pending-terminal-jobs-in store "thread-a")]
+      (is (empty? pending))
+      (is (= :running (:status (bj/get-job-in store "job-e3")))))))
+
+(deftest e4-duplicate-emit-attempt-idempotent-test
+  (testing "E4: duplicate terminal emit attempt does not create second message"
+    (let [store (bj/create-store)
+          _     (start-job! store "tc-e4" "thread-a" "tool-z" "job-e4")
+          _     (bj/mark-terminal-in! store {:job-id "job-e4" :outcome :completed :payload {:ok true}})
+          _     (bj/mark-terminal-message-emitted-in! store {:job-id "job-e4"})
+          _     (bj/mark-terminal-message-emitted-in! store {:job-id "job-e4"})
+          pending (bj/pending-terminal-jobs-in store "thread-a")]
+      (is (empty? pending))
+      (is (true? (:terminal-message-emitted (bj/get-job-in store "job-e4")))))))
+
+(deftest e5-best-effort-cancel-may-still-complete-test
+  (testing "E5: cancellation remains best-effort and job may still complete"
+    (let [store (bj/create-store)
+          _     (start-job! store "tc-e5" "thread-a" "tool-z" "job-e5")
+          _     (bj/request-cancel-in! store {:thread-id "thread-a" :job-id "job-e5"})
+          done  (bj/mark-terminal-in! store {:job-id "job-e5"
+                                             :outcome :completed
+                                             :payload {:ok true}})]
+      (is (= :completed (:status done)))
+      (is (= {:ok true} (:terminal-payload done)))
+      (is (instance? java.time.Instant (:cancel-requested-at done))))))
+
+(deftest e6-completion-wins-cancel-race-test
+  (testing "E6: completion wins if execution already finished"
+    (let [store (bj/create-store)
+          _     (start-job! store "tc-e6" "thread-a" "tool-z" "job-e6")
+          _     (bj/mark-terminal-in! store {:job-id "job-e6"
+                                             :outcome :completed
+                                             :payload {:ok true}})
+          after-cancel (bj/request-cancel-in! store {:thread-id "thread-a" :job-id "job-e6"})]
+      (is (= :completed (:status after-cancel)))
+      (is (= {:ok true} (:terminal-payload after-cancel)))
+      (is (nil? (:cancel-requested-at after-cancel))))))
+
+(deftest e7-idle-completion-wakes-turn-boundary-test
+  (testing "E7: idle terminal outcome requests next turn boundary"
+    (is true "TODO E7")))
+
+(deftest e8-cross-thread-list-cancel-isolation-test
+  (testing "E8: cross-thread list/cancel isolation is enforced"
+    (let [store (bj/create-store)
+          _     (start-job! store "tc-e8-a" "thread-a" "tool-z" "job-e8-a")
+          _     (start-job! store "tc-e8-b" "thread-b" "tool-z" "job-e8-b")
+          list-a (bj/list-jobs-in store "thread-a")
+          list-b (bj/list-jobs-in store "thread-b")]
+      (is (= ["job-e8-a"] (mapv :job-id list-a)))
+      (is (= ["job-e8-b"] (mapv :job-id list-b)))
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo
+           #"Job not found in this thread"
+           (bj/request-cancel-in! store {:thread-id "thread-b" :job-id "job-e8-a"}))))))
+
+(deftest e9-inspect-outside-thread-rejected-test
+  (testing "E9: inspect outside origin thread returns canonical not-found error"
+    (let [store (bj/create-store)]
+      (start-job! store "tc-edge-9" "thread-a" "tool-z" "job-edge-9")
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo
+           #"Job not found in this thread"
+           (bj/inspect-job-in store {:thread-id "thread-b" :job-id "job-edge-9"}))))))
+
+(deftest e10-payload-near-limit-formatting-test
+  (testing "E10: payload near limits chooses inline vs file branch correctly"
+    (is true "TODO E10")))
+
+(deftest e11-manual-retry-request-rejected-test
+  (testing "E11: manual retry is not supported"
+    (let [store (bj/create-store)]
+      (start-job! store "tc-edge-11" "thread-a" "tool-z" "job-edge-11")
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo
+           #"Manual retry is not supported for background jobs"
+           (bj/retry-job-in! store {:thread-id "thread-a" :job-id "job-edge-11"}))))))
+
+(deftest e12-process-restart-drops-jobs-test
+  (testing "E12: process restart reinitializes in-memory registry"
+    (let [store (bj/create-store)
+          _     (start-job! store "tc-e12-a" "thread-a" "tool-z" "job-e12-a")
+          _     (start-job! store "tc-e12-b" "thread-b" "tool-z" "job-e12-b")]
+      (is (= 2 (count (:jobs-by-id @store))))
+      (is (= true (:reinitialized? (bj/process-restarted-in! store))))
+      (is (empty? (:jobs-by-id @store)))
+      (is (empty? (:tool-call->job-id @store)))
+      (is (empty? (:tool-call->mode @store))))))
+
+(deftest e13-retryable-llm-http-errors-are-internal-test
+  (testing "E13: internal retryable LLM HTTP errors do not trigger external injection"
+    (is true "TODO E13")))
+
+;; ---------------------------------------------------------------------------
+;; Boundary (B)
+;; ---------------------------------------------------------------------------
+
+(deftest b1-sync-async-boundary-exclusive-mode-test
+  (testing "B1: invocation chooses exactly one mode (sync or background)"
+    (let [store (bj/create-store)
+          sync-result (bj/record-synchronous-result-in!
+                       store
+                       {:tool-call-id "tc-b1-sync"
+                        :thread-id "thread-a"
+                        :tool-name "tool-z"
+                        :result {:ok true}})]
+      (is (= :synchronous (:mode sync-result)))
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo
+           #"Tool invocation already resolved"
+           (start-job! store "tc-b1-sync" "thread-a" "tool-z" "job-b1-sync"))))
+
+    (let [store2 (bj/create-store)
+          bg-result (start-job! store2 "tc-b1-bg" "thread-a" "tool-z" "job-b1-bg")]
+      (is (= :background (:mode bg-result)))
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo
+           #"Tool invocation already resolved"
+           (bj/record-synchronous-result-in!
+            store2
+            {:tool-call-id "tc-b1-bg"
+             :thread-id "thread-a"
+             :tool-name "tool-z"
+             :result {:ok true}}))))))
+
+(deftest b2-global-job-id-uniqueness-at-scale-test
+  (testing "B2: high-volume creation preserves global job-id uniqueness"
+    (let [store (bj/create-store)
+          n     200]
+      (doseq [i (range n)]
+        (bj/start-background-job-in!
+         store
+         {:tool-call-id (str "tc-b2-" i)
+          :thread-id "thread-scale"
+          :tool-name "agent-chain"
+          :job-id nil}))
+      (let [jobs (vals (:jobs-by-id @store))
+            ids  (map :job-id jobs)]
+        (is (= n (count jobs)))
+        (is (= n (count (set ids)))))
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo
+           #"Duplicate job-id"
+           (start-job! store "tc-b2-collision" "thread-scale" "agent-chain"
+                       (-> (vals (:jobs-by-id @store)) first :job-id)))))))
+
+(deftest b3-same-timestamp-ordering-tie-test
+  (testing "B3: deterministic tie handling when completion timestamps match"
+    (is true "TODO B3")))
+
+(deftest b4-at-most-once-under-concurrent-emitters-test
+  (testing "B4: concurrent emit attempts still produce one terminal message"
+    (is true "TODO B4")))
+
+(deftest b5-payload-size-boundary-test
+  (testing "B5: max-bytes/max-lines boundary behavior is correct"
+    (is true "TODO B5")))
+
+(deftest b6-retention-at-limit-test
+  (testing "B6: exactly 20 terminal jobs retains all without eviction"
+    (let [store (bj/create-store)]
+      (doseq [i (range 20)]
+        (let [job-id (str "job-b6-" i)]
+          (start-job! store (str "tc-b6-" i) "thread-a" "tool-z" job-id)
+          (bj/mark-terminal-in! store {:job-id job-id
+                                       :outcome :completed
+                                       :terminal-history-max-per-thread 20
+                                       :payload {:i i}})))
+      (let [terminal (->> (vals (:jobs-by-id @store))
+                          (filter #(= "thread-a" (:thread-id %)))
+                          (filter #(bj/terminal-status? (:status %))))]
+        (is (= 20 (count terminal)))))))
+
+(deftest b7-retention-overflow-evicts-oldest-terminal-test
+  (testing "B7: overflow evicts oldest terminal by completion time"
+    (let [store (bj/create-store)]
+      (doseq [i (range 21)]
+        (let [job-id (str "job-b7-" i)]
+          (start-job! store (str "tc-b7-" i) "thread-a" "tool-z" job-id)
+          (bj/mark-terminal-in! store {:job-id job-id
+                                       :outcome :completed
+                                       :terminal-history-max-per-thread 20
+                                       :payload {:i i}})
+          (Thread/sleep 1)))
+      (let [ids (set (keys (:jobs-by-id @store)))]
+        (is (= 20 (count ids)))
+        (is (not (contains? ids "job-b7-0")))
+        (is (contains? ids "job-b7-20"))))))
+
+(deftest b8-retention-preserves-non-terminal-test
+  (testing "B8: non-terminal jobs are preserved during terminal eviction"
+    (let [store (bj/create-store)
+          _     (start-job! store "tc-b8-running" "thread-a" "tool-z" "job-b8-running")]
+      (doseq [i (range 21)]
+        (let [job-id (str "job-b8-term-" i)]
+          (start-job! store (str "tc-b8-term-" i) "thread-a" "tool-z" job-id)
+          (bj/mark-terminal-in! store {:job-id job-id
+                                       :outcome :completed
+                                       :terminal-history-max-per-thread 20
+                                       :payload {:i i}})
+          (Thread/sleep 1)))
+      (let [running (bj/get-job-in store "job-b8-running")
+            terminal (->> (vals (:jobs-by-id @store))
+                          (filter #(= "thread-a" (:thread-id %)))
+                          (filter #(bj/terminal-status? (:status %))))]
+        (is (= :running (:status running)))
+        (is (= 20 (count terminal)))))))

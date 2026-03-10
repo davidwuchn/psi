@@ -11,6 +11,7 @@ use "./tools/edit.allium" as edit
 use "./tools/write.allium" as write
 use "./tools/app-query-tool.allium" as eql
 use "./tools/tool-naming.allium" as naming
+use "./background-tool-jobs.allium" as background_jobs
 
 surface ToolSuiteIndex {
     facing caller: RuntimeEngineer
@@ -24,6 +25,7 @@ surface ToolSuiteIndex {
         write/WriteToolApi
         eql/EqlQueryToolApi
         naming/ToolNamingApi
+        background_jobs/BackgroundToolJobsApi
 
     @guidance
         -- This is the top-level reference for built-in tool contracts.
