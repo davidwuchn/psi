@@ -8,6 +8,28 @@
 (require 'subr-x)
 (require 'psi-globals)
 
+(defconst psi-emacs--startup-banner-line "ψ"
+  "Deterministic startup banner line rendered before transcript content.")
+
+(defun psi-emacs--ensure-startup-banner ()
+  "Ensure the transcript starts with the deterministic psi startup banner.
+
+Banner is rendered as a standalone first line (`ψ`)."
+  (let ((inhibit-read-only t))
+    (save-excursion
+      (goto-char (point-min))
+      (cond
+       ((= (point-min) (point-max))
+        (insert psi-emacs--startup-banner-line "\n")
+        (psi-emacs--mark-region-read-only (point-min) (point)))
+       ((save-excursion
+          (goto-char (point-min))
+          (looking-at-p (concat (regexp-quote psi-emacs--startup-banner-line) "\\n")))
+        nil)
+       (t
+        (insert psi-emacs--startup-banner-line "\n")
+        (psi-emacs--mark-region-read-only (point-min) (point)))))))
+
 (defun psi-emacs--mark-region-read-only (start end)
   "Mark transcript/output region START..END as read-only."
   (when (< start end)

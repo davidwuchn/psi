@@ -18,16 +18,34 @@
     (when (fboundp 'psi-emacs--upsert-projection-block)
       (psi-emacs--upsert-projection-block))))
 
-(defun psi-emacs--focus-input-area (&optional buffer)
-  "Move point to compose input area for BUFFER and sync visible window point."
+(defun psi-emacs--focus-input-area (&optional buffer window)
+  "Move point to compose input area for BUFFER and sync visible window point.
+
+When WINDOW is provided and displays BUFFER, it is preferred as the primary
+window-point target."
   (let ((buffer* (or buffer (current-buffer))))
     (when (buffer-live-p buffer*)
       (with-current-buffer buffer*
         (when psi-emacs--state
           (psi-emacs--ensure-input-area)
           (goto-char (psi-emacs--draft-end-position))
-          (when-let ((win (get-buffer-window buffer* t)))
-            (set-window-point win (point))))))))
+          (let* ((pos (point))
+                 (primary-window
+                  (cond
+                   ((and (window-live-p window)
+                         (eq (window-buffer window) buffer*))
+                    window)
+                   ((and (window-live-p (selected-window))
+                         (eq (window-buffer (selected-window)) buffer*))
+                    (selected-window))
+                   (t
+                    (get-buffer-window buffer* t)))))
+            (when (window-live-p primary-window)
+              (set-window-point primary-window pos))
+            ;; Keep any additional visible windows on this frame aligned.
+            (dolist (win (get-buffer-window-list buffer* nil nil))
+              (when (window-live-p win)
+                (set-window-point win pos)))))))))
 
 (defun psi-emacs--normalize-directory (dir)
   "Return DIR as absolute directory path, or nil when unavailable."
@@ -118,6 +136,7 @@ frontend state boundaries."
             (unless (markerp (psi-emacs-state-draft-anchor state))
               (setf (psi-emacs-state-draft-anchor state)
                     (copy-marker (point-max) nil)))
+            (psi-emacs--ensure-startup-banner)
             (psi-emacs--focus-input-area)
             (when (and (null (psi-emacs-state-projection-footer state))
                        (null (psi-emacs-state-projection-range state)))
@@ -130,6 +149,7 @@ frontend state boundaries."
                 (delete-process process))
               (psi-emacs--start-rpc-client buffer)))
         (setq psi-emacs--state (psi-emacs--initialize-state nil))
+        (psi-emacs--ensure-startup-banner)
         (setf (psi-emacs-state-draft-anchor psi-emacs--state)
               (copy-marker (point-max) nil))
         (psi-emacs--focus-input-area)
@@ -148,9 +168,9 @@ With PREFIX, create and switch to a fresh dedicated buffer name."
   (interactive "P")
   (let* ((buffer-name (when prefix
                         (generate-new-buffer-name psi-emacs-buffer-name)))
-         (buffer (psi-emacs-open-buffer buffer-name default-directory)))
-    (pop-to-buffer buffer)
-    (psi-emacs--focus-input-area buffer)
+         (buffer (psi-emacs-open-buffer buffer-name default-directory))
+         (window (pop-to-buffer buffer)))
+    (psi-emacs--focus-input-area buffer window)
     buffer))
 
 ;;;###autoload
@@ -170,9 +190,9 @@ Numeric prefix (`C-u N') opens project buffer slot N."
            (psi-emacs--project-buffer-name-for-prefix
             (psi-emacs--project-buffer-base-name project-root)
             prefix)
-           project-root)))
-    (pop-to-buffer buffer)
-    (psi-emacs--focus-input-area buffer)
+           project-root))
+         (window (pop-to-buffer buffer)))
+    (psi-emacs--focus-input-area buffer window)
     buffer))
 
 (defun psi-emacs-state-for-buffer (buffer)

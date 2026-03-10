@@ -154,11 +154,16 @@
               :on-agent-done
               (swap! (:session-data-atom ctx) assoc
                      :is-streaming false
-                     :retry-attempt 0)
+                     :retry-attempt 0
+                     :interrupt-pending false
+                     :interrupt-requested-at nil)
 
               :on-abort
               (do (agent/abort-in! (:agent-ctx ctx))
-                  (swap! (:session-data-atom ctx) assoc :is-streaming false))
+                  (swap! (:session-data-atom ctx) assoc
+                         :is-streaming false
+                         :interrupt-pending false
+                         :interrupt-requested-at nil))
 
               :on-auto-compact-triggered
               (let [reason      (or (some-> data auto-compaction-reason) :threshold)
@@ -413,6 +418,8 @@
                         :session-id        new-session-id
                         :session-file      nil
                         :session-name      nil
+                        :interrupt-pending false
+                        :interrupt-requested-at nil
                         :steering-messages []
                         :follow-up-messages []
                         :retry-attempt     0
@@ -484,6 +491,8 @@
                            :session-name   (some #(when (= :session-info (:kind %))
                                                     (get-in % [:data :name]))
                                                  (rseq (vec entries)))
+                           :interrupt-pending false
+                           :interrupt-requested-at nil
                            :model          model
                            :thinking-level thinking-level)
             ;; Legacy sessions may not persist base prompt fields.
@@ -553,14 +562,80 @@
                               :content   [{:type :text :text text}]
                               :timestamp (java.time.Instant/now)}))
 
+(defn queue-while-streaming-in!
+  "Queue prompt text while streaming.
+
+   Behavior:
+   - when interrupt is pending, both steer/queue inputs are coerced to follow-up
+   - otherwise steer remains steering and queue remains follow-up
+
+   Returns {:accepted? bool :behavior keyword} where behavior is
+   :steer | :queue | :coerced-follow-up."
+  [ctx text behavior]
+  (let [sd                (get-session-data-in ctx)
+        interrupt-pending? (boolean (:interrupt-pending sd))
+        mode              (cond
+                            interrupt-pending? :coerced-follow-up
+                            (= behavior :steer) :steer
+                            :else :queue)]
+    (case mode
+      :steer
+      (do (steer-in! ctx text)
+          {:accepted? true :behavior :steer})
+
+      (:queue :coerced-follow-up)
+      (do (follow-up-in! ctx text)
+          {:accepted? true :behavior (if interrupt-pending? :coerced-follow-up :queue)}))))
+
+(defn request-interrupt-in!
+  "Request a deferred interrupt at the next turn boundary.
+
+   Behavior:
+   - while streaming: mark :interrupt-pending and drop queued steering only
+   - while idle: silent no-op
+
+   Returns {:accepted? bool :pending? bool :dropped-steering-text string}."
+  [ctx]
+  (let [phase (sc-phase-in ctx)
+        sd    (get-session-data-in ctx)]
+    (if (= :streaming phase)
+      (let [agent-data           (agent/get-data-in (:agent-ctx ctx))
+            queued-steering-msgs (:steering-queue agent-data)
+            queued-steering-texts (keep (fn [msg]
+                                          (some (fn [block]
+                                                  (when (= :text (:type block))
+                                                    (:text block)))
+                                                (:content msg)))
+                                        queued-steering-msgs)
+            session-steering-texts (:steering-messages sd)
+            dropped-texts         (->> (concat queued-steering-texts session-steering-texts)
+                                       (keep #(when (string? %) (str/trim %)))
+                                       (remove str/blank?)
+                                       distinct)
+            dropped-text          (str/join "\n" dropped-texts)]
+        (swap-session! ctx assoc
+                       :interrupt-pending true
+                       :interrupt-requested-at (java.time.Instant/now)
+                       :steering-messages [])
+        (agent/clear-steering-queue-in! (:agent-ctx ctx))
+        {:accepted? true
+         :pending? true
+         :dropped-steering-text dropped-text})
+      {:accepted? false
+       :pending? (boolean (:interrupt-pending sd))
+       :dropped-steering-text ""})))
+
 (defn abort-in!
-  "Abort the current agent run."
+  "Abort the current agent run immediately. Prefer `request-interrupt-in!` for deferred semantics."
   [ctx]
   (sc/send-event! (:sc-env ctx) (:sc-session-id ctx) :session/abort))
 
 (defn consume-queued-input-text-in!
   "Return queued steering/follow-up text (joined by newlines) and clear queues.
-   This is used by TUI interrupt flows to restore deferred input into the editor."
+   This is used by legacy immediate-abort TUI interrupt flows.
+
+   For deferred interrupt semantics, prefer `request-interrupt-in!` which only
+   drops steering and preserves follow-ups."
   [ctx]
   (let [agent-data       (agent/get-data-in (:agent-ctx ctx))
         queued-agent-msgs (concat (:steering-queue agent-data)
@@ -1506,13 +1581,15 @@
     {:psi.agent-session/model          (:model sd)
      :psi.agent-session/thinking-level (:thinking-level sd)}))
 
-(pco/defmutation abort
+(pco/defmutation interrupt
   [_ {:keys [psi/agent-session-ctx]}]
-  {::pco/op-name 'psi.extension/abort
+  {::pco/op-name 'psi.extension/interrupt
    ::pco/params  [:psi/agent-session-ctx]
-   ::pco/output  [:psi.agent-session/is-idle]}
-  (abort-in! agent-session-ctx)
-  {:psi.agent-session/is-idle (idle-in? agent-session-ctx)})
+   ::pco/output  [:psi.agent-session/interrupt-pending
+                  :psi.agent-session/is-idle]}
+  (let [{:keys [pending?]} (request-interrupt-in! agent-session-ctx)]
+    {:psi.agent-session/interrupt-pending (boolean pending?)
+     :psi.agent-session/is-idle           (idle-in? agent-session-ctx)}))
 
 (pco/defmutation compact
   [_ {:keys [psi/agent-session-ctx instructions]}]
@@ -1931,7 +2008,7 @@
    set-session-name
    set-active-tools
    set-model
-   abort
+   interrupt
    compact
    append-entry
    send-message

@@ -252,6 +252,8 @@ When PRESERVE-TOOL-OUTPUT-VIEW-MODE is non-nil, keep the current
 `collapsed' (used by reconnect)."
   (let ((inhibit-read-only t))
     (erase-buffer))
+  (when (fboundp 'psi-emacs--ensure-startup-banner)
+    (psi-emacs--ensure-startup-banner))
   (when psi-emacs--state
     (psi-emacs--disarm-stream-watchdog psi-emacs--state)
     (psi-emacs--clear-last-error psi-emacs--state)
