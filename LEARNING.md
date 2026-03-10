@@ -4,6 +4,30 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-10 - Cross-surface background-job parity needs run-state-aware frontend tests and literal help assertions
+
+### λ Idle slash parity tests must account for send-state transitions between commands
+
+In Emacs, `/jobs`, `/job`, and `/cancel-job` intentionally dispatch through the
+normal `prompt` op only while idle. After a successful send, frontend state
+moves to `streaming`; a second send without resetting state correctly routes to
+`prompt_while_streaming`. Multi-command parity tests should either simulate
+assistant completion (back to idle) or explicitly reset run-state between
+assertions.
+
+### λ Help-text tests should prefer literal matching for bracketed usage strings
+
+Regex assertions like `"/jobs [status ...]"` are brittle because `[`/`]` are
+character-class delimiters. Using `regexp-quote` for command help snippets keeps
+usage-contract checks stable and intent-revealing.
+
+### λ Step-level parity closure should be recorded in both plan and state artifacts
+
+When a slice closes a previously explicit acceptance gap (here: Step 12b
+cross-surface REPL/TUI/Emacs/RPC parity), update `PLAN.md` (step/checklist
+status) and `STATE.md` (runtime truth + verification commands) in the same PSL
+follow-up cycle so future ψ sees a single coherent contract boundary.
+
 ## 2026-03-10 - Background-job terminal injection must hook both mutation and idle-boundary paths
 
 ### λ Workflow creation can bypass extension runtime wrappers; tracking must exist at core mutation boundary
