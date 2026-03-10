@@ -14,6 +14,7 @@ Current truth about the Psi system.
 - ✓ Session persistence is a separate concern from memory: session transcripts/state may be partially persisted for `/resume`, but this is distinct from memory-store artifacts used by remember/recover.
 - ✓ Working pattern remains atomic: inspect → minimal change → verify → commit.
 - ✓ AGENTS guidance now formalizes spec/test convergence equations (commit `5504fcf`): `refactor_minimal_semantics_spec_tests` and `tests_musta_cover_allium_spec_behaviour` are explicit, and iterative refinement naming has shifted from generic `spec` to explicit `allium_spec` terms for consistency.
+- ✓ Global code↔spec invariant added to AGENTS (commit `af2282f`): `λcode. ∃spec. describes(spec, code)` is now explicit prompt-memory policy.
 - ✓ 2026-03-06 session boot aligned via nucleus/OODA ritual; current mode is ◈ reflect → ready for · atom execution.
 - ✓ Emacs prompt completion architecture implemented via CAPF: `/` command completion + `@` reference completion, category metadata (`psi_prompt`, `psi_reference`), affixation/annotation/exit hooks, cwd+project-root search, and configurable completion policies.
 - ✓ Emacs completion verification: `components/emacs-ui` ERT suite green at 133/133 after completion work.

@@ -250,3 +250,4 @@ Ordered steps toward PSI COMPLETE.
 - Δ psl source=53082d2cb72c2dbd354c790256f1e48b5663f717 at=2026-03-06T20:57:20.413334Z :: ⚒ Δ Simplify PSL to agent-prompt flow with extension prompt telemetry λ
 - Δ psl source=93632bc at=2026-03-08T12:19:31Z :: ⚒ Mark `psi-emacs-command` safe for `.dir-locals.el` local customization λ
 - Δ psl source=3786e39 at=2026-03-10T16:35:00Z :: ⚒ · Emit footer/updated after each tool/result in progress poll loops λ
+- Δ psl source=af2282f at=2026-03-10T23:58:00-04:00 :: ⚒ λ Add global code→spec invariant equation to AGENTS.md
