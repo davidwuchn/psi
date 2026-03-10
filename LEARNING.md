@@ -4,6 +4,41 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-10 - Live footer updates require emitting after each tool result, not only at loop end
+
+### λ Progress poll loops control event timing — emit side-effects alongside forwarded events
+
+The progress poll loop in `rpc.clj` is the only place where tool-level events are
+emitted to the RPC client during an agent loop. `footer/updated` was only emitted
+after the loop completed (alongside `assistant/message`). To get live updates, the
+poll loop must emit `footer/updated` immediately after each `:tool-result` event:
+
+```clojure
+(when-let [{:keys [event data]} (progress-event->rpc-event evt)]
+  (emit! event data)
+  (when (= :tool-result (:event-kind evt))
+    (emit! "footer/updated" (footer-updated-payload ctx))))
+```
+
+The raw `evt` map retains `:event-kind`, so the original progress event kind
+remains checkable even after conversion to RPC wire form.
+
+### λ `footer-updated-payload` reads live session state — safe to call mid-loop
+
+`footer-updated-payload` calls `session/query-in` to read token usage, context
+fraction, model info, and status lines from the running session atom. After each
+tool result is recorded in `agent-core`, the usage stats reflect the latest
+completed tool call, making mid-loop footer emission accurate.
+
+### λ Multiple poll loops need the same fix — grep for the pattern, not the symptom
+
+There are two independent poll loops in `rpc.clj`: one in the extension run-fn
+path (guarded by `:rpc-run-fn-registered`) and one in `run-prompt-async!`. Both
+needed the same `:tool-result` → `footer/updated` emission. Searching for the poll
+pattern (`progress-event->rpc-event evt`) found both sites.
+
+---
+
 ## 2026-03-09 - Buffer-close confirmation should use `kill-buffer-query-functions`, not teardown hooks
 
 ### λ `kill-buffer-hook` is too late for cancellation semantics
