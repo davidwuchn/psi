@@ -4,6 +4,22 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-09 - Spec parity should encode UX invariants, not only transport events
+
+### λ Banner-first UX needs explicit spec rules at both init and reset boundaries
+
+When startup UX guarantees a first-line banner (`ψ`) and immediate input focus,
+those guarantees should be captured in frontend spec rules for both initial load
+and `/new` reset paths. Encoding only transport handshake events misses the user-
+visible invariant that appears before backend events arrive.
+
+### λ Streaming behavior names differ by surface; specs should normalize semantics
+
+RPC uses `prompt_while_streaming` with `behavior` values (`steer`/`queue`), while
+session internals speak in steering/follow-up queues. Spec parity improves when
+rules map these surfaces directly and explicitly encode interrupt-pending coercion
+(`steer` → follow-up) instead of leaving it implied by implementation details.
+
 ## 2026-03-09 - Startup banners and mutation lists are cross-surface startup contracts
 
 ### λ Banner-first startup requires reset-path insertion, not only initial open-buffer insertion
