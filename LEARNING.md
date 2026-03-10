@@ -72,6 +72,28 @@ the extension runtime surface unchanged.
 confirmed local correctness, then fixing the global parse issue restored full
 repository spec health.
 
+## 2026-03-10 - Background-job EQL introspection should expose root list + nested entity shape together
+
+### λ Background-job operations need a canonical session-root query surface, not only command/RPC paths
+
+Even with `/jobs` + RPC handlers in place, operators and tools need stable EQL attrs for
+query-time introspection. Exposing `:psi.agent-session/background-job-count`,
+`:psi.agent-session/background-job-statuses`, and `:psi.agent-session/background-jobs`
+on session root gives a deterministic read model for UI and automation.
+
+### λ Nested entity attrs should carry terminal/non-terminal derivations to avoid repeated client logic
+
+Including `:psi.background-job/is-terminal` and `:psi.background-job/is-non-terminal`
+in resolver output keeps status semantics centralized in runtime (`bg-jobs/terminal-status?`
+/ `non-terminal-status?`) and avoids duplicated client-side status-set interpretation.
+
+### λ New root attrs should be validated against graph discoverability, not just direct query success
+
+Resolver tests should assert both direct query shape and introspection visibility via
+`:psi.graph/root-queryable-attrs` + `:psi.graph/edges` attribute metadata.
+This catches registration/graph-bridge drift where attrs resolve locally but are not
+advertised through discovery surfaces.
+
 ## 2026-03-10 - Cross-surface background-job parity needs run-state-aware frontend tests and literal help assertions
 
 ### λ Idle slash parity tests must account for send-state transitions between commands
