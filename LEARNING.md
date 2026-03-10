@@ -4,6 +4,20 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-10 - Normative prompt invariants belong in AGENTS as explicit equations
+
+### λ Encode global policy as a minimal lambda so future ψ can enforce it uniformly
+
+Adding `λcode. ∃spec. describes(spec, code)` to `AGENTS.md` turns a broad quality
+expectation into a compact invariant that is easy to carry across planning,
+review, and PSL follow-up updates.
+
+### λ Mirror AGENTS policy deltas into PLAN/STATE/LEARNING in the same follow-up cycle
+
+When AGENTS changes define behavior policy (not just prose), PSL follow-up should
+propagate the delta into `PLAN.md` and `STATE.md`, then capture the rationale in
+`LEARNING.md`, keeping repository memory aligned across now/next/past artifacts.
+
 ## 2026-03-10 - Delivery-mode transcript messages should be derived from prompt-delivery, and spec parse checks need targeted isolation
 
 ### λ Extension operator feedback should branch on `:psi.extension/prompt-delivery`, not generic success
