@@ -171,15 +171,15 @@
                            :params psl-invoke-params
                            :src  psl-job-fn})
               (ele/transition {:event :done.invoke.psl-runner
-                               :target :done
+                               :target :completed
                                :cond   result-done?}
                               (ele/script {:expr psl-done-script}))
               (ele/transition {:event :done.invoke.psl-runner
-                               :target :error}
+                               :target :failed}
                               (ele/script {:expr psl-error-script})))
 
-   (ele/final {:id :done})
-   (ele/final {:id :error})))
+   (ele/final {:id :completed})
+   (ele/final {:id :failed})))
 
 ;; ---------------------------------------------------------------------------
 ;; Workflow registration

@@ -1,0 +1,171 @@
+-- allium: 1
+
+-- subagent-widget-extension.allium
+-- Subagent widget/tool behavior with dual-mode create semantics.
+
+use "./extension-system.allium" as ext
+use "./background-tool-jobs.allium" as background_jobs
+
+value SubagentCreateArgs {
+    task: String
+    agent: String?
+    mode: sync | async?
+}
+
+value SubagentContinueArgs {
+    id: Integer
+    prompt: String
+}
+
+value SubagentCreateResponse {
+    workflow_id: String
+    mode: sync | async
+    job_id: String?
+    is_error: Boolean
+    content: String
+}
+
+value SubagentContinueResponse {
+    workflow_id: String
+    job_id: String
+    is_error: Boolean
+    content: String
+}
+
+rule SubagentCreateDefaultsToAsync {
+    when: SubagentToolCalled(action: create, args)
+    requires: args.mode = null
+
+    ensures: EffectiveCreateMode(args) = async
+}
+
+rule SubagentCreateModeMustBeKnownWhenProvided {
+    when: SubagentToolCalled(action: create, args)
+    requires: args.mode != null
+    requires: args.mode not in {sync, async}
+
+    ensures: Error.thrown("mode must be one of sync, async")
+}
+
+rule SubagentModeIsOnlySupportedForCreate {
+    when: SubagentToolCalled(action, args)
+    requires: action in {continue, remove, list}
+    requires: args.mode != null
+
+    ensures: Error.thrown("mode is only supported for action=create")
+}
+
+rule SubagentCreateSyncPersistsWorkflowAndRunsToTerminal {
+    when: SubagentToolCalled(action: create, args, tool_call_id, thread_id)
+    requires: EffectiveCreateMode(args) = sync
+
+    ensures: SubagentWorkflowCreated(workflow_id, thread_id)
+    ensures: SubagentWorkflowStarted(workflow_id)
+    ensures: SubagentWorkflowReachedTerminalPhase(workflow_id, phase)
+    ensures: phase in {done, error}
+
+    ensures: ToolResponse(tool_call_id) = SubagentCreateResponse{
+        workflow_id: workflow_id,
+        mode: sync,
+        job_id: null,
+        is_error: phase = error,
+        content: SubagentTerminalText(workflow_id)
+    }
+
+    ensures: background_jobs/CountBackgroundJobsForToolCall(tool_call_id) = 0
+    ensures: SubagentWorkflow(workflow_id).phase = phase
+}
+
+rule SubagentCreateSyncFailurePersistsErrorWorkflow {
+    when: SubagentToolCalled(action: create, args, tool_call_id, thread_id)
+    requires: EffectiveCreateMode(args) = sync
+    requires: SubagentWorkflowReachedTerminalPhase(workflow_id, error)
+
+    ensures: ToolResponse(tool_call_id).is_error = true
+    ensures: SubagentWorkflow(workflow_id).phase = error
+    ensures: SubagentWorkflowInspectable(workflow_id)
+    ensures: SubagentWorkflowContinuable(workflow_id)
+}
+
+rule SubagentCreateSyncEmitsResultMessage {
+    when: SubagentToolCalled(action: create, args, tool_call_id, thread_id)
+    requires: EffectiveCreateMode(args) = sync
+    requires: SubagentWorkflowReachedTerminalPhase(workflow_id, phase)
+
+    ensures: ext/CustomMessageSent(session, message)
+    ensures: message.customType = "subagent-result"
+    ensures: message.role = "assistant"
+    ensures: message.content != ""
+}
+
+rule SubagentCreateAsyncCreatesWorkflowAndBackgroundJob {
+    when: SubagentToolCalled(action: create, args, tool_call_id, thread_id)
+    requires: EffectiveCreateMode(args) = async
+
+    ensures: SubagentWorkflowCreated(workflow_id, thread_id)
+    ensures: background_jobs/ToolInvocationStartedBackgroundJob(
+        tool_call_id,
+        thread_id,
+        "workflow/subagent",
+        job_id
+    )
+
+    ensures: ToolResponse(tool_call_id) = SubagentCreateResponse{
+        workflow_id: workflow_id,
+        mode: async,
+        job_id: job_id,
+        is_error: false,
+        content: Contains("spawned in background")
+    }
+}
+
+rule SubagentContinueRemainsBackgroundOnly {
+    when: SubagentToolCalled(action: continue, args, tool_call_id, thread_id)
+    requires: args.mode = null
+
+    ensures: SubagentWorkflowEventAccepted(args.id, event: "subagent/continue")
+    ensures: background_jobs/ToolInvocationStartedBackgroundJob(
+        tool_call_id,
+        thread_id,
+        "workflow/subagent",
+        job_id
+    )
+
+    ensures: ToolResponse(tool_call_id) = SubagentContinueResponse{
+        workflow_id: ToString(args.id),
+        job_id: job_id,
+        is_error: false,
+        content: Contains("continuing in background")
+    }
+}
+
+rule SubagentContinueRejectsWhenWorkflowRunning {
+    when: SubagentToolCalled(action: continue, args)
+    requires: SubagentWorkflow(args.id).phase = running
+
+    ensures: Error.thrown("Subagent #" + ToString(args.id) + " is still running.")
+}
+
+surface SubagentWidgetApi {
+    facing caller: ext/ExtensionModule
+
+    provides:
+        SubagentToolCalled(action, args)
+        SubagentToolCalled(action, args, tool_call_id, thread_id)
+
+    exposes:
+        EffectiveCreateMode(args)
+        SubagentCreateResponse
+        SubagentContinueResponse
+
+    related:
+        ext/ExtensionApi
+        background_jobs/BackgroundToolJobsApi
+
+    @guidance
+        -- create supports mode=sync|async; default mode is async.
+        -- mode is rejected for continue/remove/list.
+        -- create mode=sync persists a workflow id and returns terminal output with no job_id.
+        -- create mode=async returns both workflow id and background job_id.
+        -- continue remains background-only and returns a background job_id.
+}

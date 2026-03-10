@@ -775,7 +775,9 @@
       (mutate 'psi.extension.workflow/send-event
               {:ext-path "/ext/bg"
                :id       "wf-bg-1"
-               :event    :workflow/start})
+               :event    :workflow/start
+               :track-background-job? true
+               :data     {:tool-call-id "tc-wf-bg-1"}})
       (mutate 'psi.extension.workflow/send-event
               {:ext-path "/ext/bg"
                :id       "wf-bg-1"
@@ -856,6 +858,57 @@
                  :psi.extension.workflow/phase :done
                  :psi.extension.workflow/result 99}]
                (:psi.extension/workflows q)))))))
+
+(deftest send-workflow-event-track-background-job-gated-test
+  (testing "send-event tracks background jobs only when track-background-job? is true"
+    (let [ctx    (session/create-context)
+          qctx   (query/create-query-context)
+          chart  (chart/statechart {:id :wf-track-gate}
+                                   (ele/state {:id :idle}
+                                              (ele/transition {:event :workflow/start :target :running}))
+                                   (ele/state {:id :running}
+                                              (ele/transition {:event :workflow/finish :target :done}))
+                                   (ele/final {:id :done}))
+          mutate (fn [op params]
+                   (get (query/query-in qctx
+                                        {:psi/agent-session-ctx ctx}
+                                        [(list op (assoc params :psi/agent-session-ctx ctx))])
+                        op))
+          thread-id (:session-id (session/get-session-data-in ctx))]
+      (session/register-resolvers-in! qctx false)
+      (session/register-mutations-in! qctx true)
+
+      (mutate 'psi.extension.workflow/register-type
+              {:ext-path "/ext/gate"
+               :type     :gate
+               :chart    chart})
+      (mutate 'psi.extension.workflow/create
+              {:ext-path "/ext/gate"
+               :type     :gate
+               :id       "wg"
+               :auto-start? false})
+
+      (let [jobs-before (session/list-background-jobs-in! ctx thread-id)
+            no-track    (mutate 'psi.extension.workflow/send-event
+                                {:ext-path "/ext/gate"
+                                 :id       "wg"
+                                 :event    :workflow/start
+                                 :data     {:tool-call-id "tc-gate-1"}})
+            jobs-a      (session/list-background-jobs-in! ctx thread-id)]
+        (is (true? (:psi.extension.workflow/event-accepted? no-track)))
+        (is (nil? (:psi.extension.background-job/id no-track)))
+        (is (= (count jobs-before) (count jobs-a))))
+
+      (let [tracked (mutate 'psi.extension.workflow/send-event
+                            {:ext-path "/ext/gate"
+                             :id       "wg"
+                             :event    :workflow/finish
+                             :track-background-job? true
+                             :data     {:tool-call-id "tc-gate-2"}})
+            jobs-b  (session/list-background-jobs-in! ctx thread-id)]
+        (is (true? (:psi.extension.workflow/event-accepted? tracked)))
+        (is (string? (:psi.extension.background-job/id tracked)))
+        (is (some #(= (:psi.extension.background-job/id tracked) (:job-id %)) jobs-b))))))
 
 (deftest tool-plan-mutation-test
   (testing "run-tool-plan chains step outputs into later step args"

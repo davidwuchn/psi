@@ -109,6 +109,40 @@ rule ToolInvocationStartsBackgroundJob {
     }
 }
 
+rule WorkflowCreateCanStartBackgroundJob {
+    when: ToolInvocationStartedBackgroundJob(tool_call_id, thread_id, tool_name, job_id)
+    requires: tool_name.startsWith("workflow/")
+
+    ensures: CountBackgroundJobsForToolCall(tool_call_id) = 1
+    ensures: BackgroundJob(job_id).tool_name = tool_name
+}
+
+rule WorkflowSendEventCanStartBackgroundJob {
+    when: ToolInvocationStartedBackgroundJob(tool_call_id, thread_id, tool_name, job_id)
+    requires: tool_name.startsWith("workflow/")
+    requires: ToolInvocationOrigin(tool_call_id) = workflow_send_event
+
+    ensures: CountBackgroundJobsForToolCall(tool_call_id) = 1
+    ensures: BackgroundJob(job_id).status = running
+    ensures: JobStartResponseFor(tool_call_id).job_id = job_id
+}
+
+rule SubagentAsyncCreateMapsToExactlyOneBackgroundJob {
+    when: ToolInvocationStartedBackgroundJob(tool_call_id, thread_id, tool_name, job_id)
+    requires: tool_name = "workflow/subagent"
+    requires: ToolInvocationOrigin(tool_call_id) = subagent_create_async
+
+    ensures: CountBackgroundJobsForToolCall(tool_call_id) = 1
+}
+
+rule SubagentAsyncContinueMapsToExactlyOneBackgroundJob {
+    when: ToolInvocationStartedBackgroundJob(tool_call_id, thread_id, tool_name, job_id)
+    requires: tool_name = "workflow/subagent"
+    requires: ToolInvocationOrigin(tool_call_id) = subagent_continue
+
+    ensures: CountBackgroundJobsForToolCall(tool_call_id) = 1
+}
+
 rule UserOrAgentCanCancelRunningJob {
     when: CancelJobRequested(thread_id, job_id, requested_by)
     requires: requested_by in {"user", "agent"}

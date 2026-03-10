@@ -55,11 +55,34 @@
 
 (defn- now-ms [] (System/currentTimeMillis))
 
+(def ^:private default-sync-timeout-ms 300000)
+
 (defn- parse-int [x]
   (cond
     (number? x) (long x)
     (string? x) (try (Long/parseLong (str/trim x)) (catch Exception _ nil))
     :else nil))
+
+(defn- parse-timeout-ms [x]
+  (if (nil? x)
+    default-sync-timeout-ms
+    (let [n (parse-int x)]
+      (if (and (number? n) (pos? n))
+        (long n)
+        ::invalid))))
+
+(defn- parse-create-mode [x]
+  (let [m (some-> x str str/trim str/lower-case not-empty)]
+    (case m
+      nil :async
+      "async" :async
+      "sync" :sync
+      ::invalid)))
+
+(defn- tool-call-id-from-opts [opts]
+  (or (:tool-call-id opts)
+      (get opts "tool-call-id")
+      (str "subagent-" (java.util.UUID/randomUUID))))
 
 (defn- task-preview [s n]
   (let [s (or s "")]
@@ -626,10 +649,33 @@
     (when-let [e (:psi.extension.workflow/error r)]
       (notify! (str "Failed to register subagent workflow type: " e) :error))))
 
+(defn- await-terminal-workflow
+  [id timeout-ms]
+  (let [deadline (+ (now-ms) (long timeout-ms))]
+    (loop []
+      (let [wf (workflow-by-id id)]
+        (cond
+          (nil? wf)
+          {:error (str "No subagent #" id " found.")}
+
+          (or (:psi.extension.workflow/done? wf)
+              (:psi.extension.workflow/error? wf))
+          {:workflow wf}
+
+          (>= (now-ms) deadline)
+          {:timeout true :workflow wf}
+
+          :else
+          (do
+            (Thread/sleep 25)
+            (recur)))))))
+
 (defn- spawn-subagent!
-  [task agent-name]
+  [task agent-name {:keys [mode tool-call-id timeout-ms]
+                    :or   {timeout-ms 300000}}]
   (let [task       (str/trim (or task ""))
-        agent-name (normalize-agent-name agent-name)]
+        agent-name (normalize-agent-name agent-name)
+        mode*      (or mode :async)]
     (cond
       (str/blank? task)
       {:error "task is required"}
@@ -637,44 +683,94 @@
       (and agent-name (nil? (selected-agent-def (:query-fn @state) agent-name)))
       {:error (str "Unknown agent '" agent-name "'.")}
 
+      (= mode* ::invalid)
+      {:error "mode must be one of sync, async"}
+
       :else
-      (let [id (:next-id @state)
-            r  (mutate! 'psi.extension.workflow/create
-                        {:type  subagent-type
-                         :id    (str id)
-                         :input (cond-> {:task task}
-                                  agent-name (assoc :agent agent-name))})]
-        (if (:psi.extension.workflow/created? r)
+      (let [id            (:next-id @state)
+            tool-call-id* (or tool-call-id (str "subagent-create-" id "-" (java.util.UUID/randomUUID)))
+            r             (mutate! 'psi.extension.workflow/create
+                                   {:type                   subagent-type
+                                    :id                     (str id)
+                                    :track-background-job?  (not= :sync mode*)
+                                    :input                  (cond-> {:task task
+                                                                     :tool-call-id tool-call-id*}
+                                                              agent-name (assoc :agent agent-name))})]
+        (if-not (:psi.extension.workflow/created? r)
+          {:error (or (:psi.extension.workflow/error r)
+                      "Failed to create workflow")}
           (do
             (swap! state update :next-id inc)
-            (refresh-widgets!)
-            {:ok id})
-          {:error (or (:psi.extension.workflow/error r)
-                      "Failed to create workflow")})))))
+            (if (= :sync mode*)
+              (let [{:keys [timeout workflow error]} (await-terminal-workflow id timeout-ms)
+                    wf       (or workflow (workflow-by-id id))
+                    text     (or (get-in wf [:psi.extension.workflow/data :subagent/last-text])
+                                 (:psi.extension.workflow/result wf)
+                                 (:psi.extension.workflow/error-message wf)
+                                 "")
+                    elapsed  (or (get-in wf [:psi.extension.workflow/data :subagent/elapsed-ms])
+                                 (:psi.extension.workflow/elapsed-ms wf)
+                                 0)
+                    ok?      (and wf
+                                  (not timeout)
+                                  (not error)
+                                  (not (true? (:psi.extension.workflow/error? wf))))
+                    text*    (cond
+                               timeout
+                               (str "Error: Timed out waiting for Subagent #" id " to finish.")
+
+                               error
+                               (str "Error: " error)
+
+                               :else
+                               text)]
+                (refresh-widgets!)
+                (emit-result-message! {:id          id
+                                       :prompt      task
+                                       :turn-count  1
+                                       :ok?         ok?
+                                       :elapsed-ms  elapsed
+                                       :result-text text*})
+                {:ok id
+                 :mode :sync
+                 :is-error (not ok?)
+                 :content text*})
+              (do
+                (refresh-widgets!)
+                {:ok id
+                 :mode :async
+                 :job-id (:psi.extension.background-job/id r)}))))))))
 
 (defn- continue-subagent!
-  [id prompt]
-  (let [wf (workflow-by-id id)
-        prompt (str/trim (or prompt ""))]
-    (cond
-      (nil? wf)
-      {:error (str "No subagent #" id " found.")}
+  ([id prompt]
+   (continue-subagent! id prompt nil))
+  ([id prompt {:keys [tool-call-id]}]
+   (let [wf            (workflow-by-id id)
+         prompt        (str/trim (or prompt ""))
+         tool-call-id* (or tool-call-id (str "subagent-continue-" id "-" (java.util.UUID/randomUUID)))]
+     (cond
+       (nil? wf)
+       {:error (str "No subagent #" id " found.")}
 
-      (:psi.extension.workflow/running? wf)
-      {:error (str "Subagent #" id " is still running.")}
+       (:psi.extension.workflow/running? wf)
+       {:error (str "Subagent #" id " is still running.")}
 
-      (str/blank? prompt)
-      {:error "prompt is required"}
+       (str/blank? prompt)
+       {:error "prompt is required"}
 
-      :else
-      (let [r (mutate! 'psi.extension.workflow/send-event
-                       {:id    (str id)
-                        :event :subagent/continue
-                        :data  {:prompt prompt}})]
-        (if (:psi.extension.workflow/event-accepted? r)
-          (do (refresh-widgets!) {:ok true})
-          {:error (or (:psi.extension.workflow/error r)
-                      (str "Failed to continue subagent #" id))})))))
+       :else
+       (let [r (mutate! 'psi.extension.workflow/send-event
+                        {:id                    (str id)
+                         :event                 :subagent/continue
+                         :track-background-job? true
+                         :data                  {:prompt prompt
+                                                 :tool-call-id tool-call-id*}})]
+         (if (:psi.extension.workflow/event-accepted? r)
+           (do (refresh-widgets!)
+               {:ok true
+                :job-id (:psi.extension.background-job/id r)})
+           {:error (or (:psi.extension.workflow/error r)
+                       (str "Failed to continue subagent #" id))}))))))
 
 (defn- remove-subagent!
   [id]
@@ -758,58 +854,87 @@
                 :enabled  true
                 :content  (prompt-contribution-content)})))
 
-(defn- execute-subagent-tool [args]
-  (let [action (some-> (get args "action") str str/trim str/lower-case)]
-    (case action
-      "create"
-      (let [task       (str/trim (or (get args "task") ""))
-            agent-name (normalize-agent-name (get args "agent"))]
-        (if (str/blank? task)
-          {:content "Error: task is required." :is-error true}
-          (let [r (spawn-subagent! task agent-name)]
-            (if-let [e (:error r)]
-              {:content (str "Error: " e) :is-error true}
-              {:content (str "Subagent #" (:ok r)
-                             " spawned in background"
-                             (when agent-name (str " (@" agent-name ")"))
-                             ".")
-               :is-error false}))))
+(defn- execute-subagent-tool
+  ([args]
+   (execute-subagent-tool args nil))
+  ([args opts]
+   (let [action     (some-> (get args "action") str str/trim str/lower-case)
+         mode       (parse-create-mode (get args "mode"))
+         timeout-ms (parse-timeout-ms (get args "timeout_ms"))]
+     (case action
+       "create"
+       (let [task         (str/trim (or (get args "task") ""))
+             agent-name   (normalize-agent-name (get args "agent"))
+             tool-call-id (tool-call-id-from-opts opts)]
+         (cond
+           (= timeout-ms ::invalid)
+           {:content "Error: timeout_ms must be a positive integer." :is-error true}
 
-      "continue"
-      (let [id     (parse-int (get args "id"))
-            prompt (str/trim (or (get args "prompt") ""))]
-        (cond
-          (nil? id)
-          {:content "Error: id is required." :is-error true}
+           (str/blank? task)
+           {:content "Error: task is required." :is-error true}
 
-          (str/blank? prompt)
-          {:content "Error: prompt is required." :is-error true}
+           :else
+           (let [r (spawn-subagent! task agent-name {:mode mode
+                                                     :tool-call-id tool-call-id
+                                                     :timeout-ms timeout-ms})]
+             (if-let [e (:error r)]
+               {:content (str "Error: " e) :is-error true}
+               (if (= :sync (:mode r))
+                 {:content (str "Subagent #" (:ok r)
+                                (when agent-name (str " (@" agent-name ")"))
+                                " finished.\n\n"
+                                (:content r))
+                  :is-error (boolean (:is-error r))}
+                 {:content (str "Subagent #" (:ok r)
+                                " spawned in background"
+                                (when agent-name (str " (@" agent-name ")"))
+                                (when-let [jid (:job-id r)]
+                                  (str " (job " jid ")"))
+                                ".")
+                  :is-error false})))))
 
-          :else
-          (let [result (continue-subagent! id prompt)]
-            (if-let [e (:error result)]
-              {:content e :is-error true}
-              {:content (str "Subagent #" id " continuing in background.")
-               :is-error false}))))
+       "continue"
+       (let [id           (parse-int (get args "id"))
+             prompt       (str/trim (or (get args "prompt") ""))
+             tool-call-id (tool-call-id-from-opts opts)]
+         (cond
+           (not (nil? (get args "mode")))
+           {:content "Error: mode is only supported for action=create" :is-error true}
 
-      "remove"
-      (let [id (parse-int (get args "id"))]
-        (if (nil? id)
-          {:content "Error: id is required." :is-error true}
-          (let [result (remove-subagent! id)]
-            (if-let [e (:error result)]
-              {:content e :is-error true}
-              {:content (str "Subagent #" id " removed.")
-               :is-error false}))))
+           (nil? id)
+           {:content "Error: id is required." :is-error true}
 
-      "list"
-      {:content  (list-subagents-text)
-       :is-error false}
+           (str/blank? prompt)
+           {:content "Error: prompt is required." :is-error true}
 
-      {:content (str "Error: action must be one of "
-                     (str/join ", " subagent-actions)
-                     ".")
-       :is-error true})))
+           :else
+           (let [result (continue-subagent! id prompt {:tool-call-id tool-call-id})]
+             (if-let [e (:error result)]
+               {:content e :is-error true}
+               {:content (str "Subagent #" id " continuing in background"
+                              (when-let [jid (:job-id result)]
+                                (str " (job " jid ")"))
+                              ".")
+                :is-error false}))))
+
+       "remove"
+       (let [id (parse-int (get args "id"))]
+         (if (nil? id)
+           {:content "Error: id is required." :is-error true}
+           (let [result (remove-subagent! id)]
+             (if-let [e (:error result)]
+               {:content e :is-error true}
+               {:content (str "Subagent #" id " removed.")
+                :is-error false}))))
+
+       "list"
+       {:content  (list-subagents-text)
+        :is-error false}
+
+       {:content (str "Error: action must be one of "
+                      (str/join ", " subagent-actions)
+                      ".")
+        :is-error true}))))
 
 (defn init [api]
   (swap! state assoc
@@ -836,25 +961,35 @@
                                                  :description "Task text for action=create"}
                                        "agent"  {:type "string"
                                                  :description "Optional agent profile name from .psi/agents/*.md for action=create"}
+                                       "mode"   {:type "string"
+                                                 :enum ["sync" "async"]
+                                                 :description "Optional execution mode for action=create (default async)"}
+                                       "timeout_ms" {:type "integer"
+                                                     :description "Optional sync timeout in milliseconds for action=create, mode=sync (default 300000)"}
                                        "id"     {:type "integer"
                                                  :description "Subagent id for action=continue/remove"}
                                        "prompt" {:type "string"
                                                  :description "Prompt text for action=continue"}}
                           :required   ["action"]})
-    :execute     (fn [args]
-                   (execute-subagent-tool args))})
+    :execute     (fn
+                   ([args]
+                    (execute-subagent-tool args nil))
+                   ([args opts]
+                    (execute-subagent-tool args opts)))})
 
   ;; Slash commands
   ((:register-command api) "sub"
                            {:description "Spawn a subagent: /sub [@agent] <task>"
                             :handler     (fn [args]
                                            (if-let [{:keys [agent task]} (parse-sub-args args)]
-                                             (let [r (spawn-subagent! task agent)]
+                                             (let [r (spawn-subagent! task agent {:mode :async})]
                                                (if-let [e (:error r)]
                                                  (println (str "Error: " e))
                                                  (println (str "Spawned Subagent #" (:ok r)
                                                                (when (seq agent)
-                                                                 (str " (@" (normalize-agent-name agent) ")"))))))
+                                                                 (str " (@" (normalize-agent-name agent) ")"))
+                                                               (when-let [jid (:job-id r)]
+                                                                 (str " (job " jid ")"))))))
                                              (println "Usage: /sub [@agent] <task>")))})
 
   ((:register-command api) "subcont"
@@ -864,7 +999,9 @@
                                              (let [result (continue-subagent! id prompt)]
                                                (if-let [e (:error result)]
                                                  (println e)
-                                                 (println (str "Continuing Subagent #" id "..."))))
+                                                 (println (str "Continuing Subagent #" id "..."
+                                                               (when-let [jid (:job-id result)]
+                                                                 (str " (job " jid ")"))))))
                                              (println "Usage: /subcont <id> <prompt>")))})
 
   ((:register-command api) "subrm"

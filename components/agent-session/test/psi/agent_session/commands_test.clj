@@ -2,13 +2,16 @@
   (:require
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
+   [com.fulcrologic.statecharts.chart :as chart]
+   [com.fulcrologic.statecharts.elements :as ele]
    [psi.agent-session.background-jobs :as bg-jobs]
    [psi.agent-session.commands :as commands]
    [psi.agent-session.core :as session]
    [psi.agent-session.extensions :as ext]
    [psi.agent-core.core :as agent]
    [psi.memory.core :as memory]
-   [psi.memory.store :as store]))
+   [psi.memory.store :as store]
+   [psi.query.core :as query]))
 
 ;; ── Test helper ─────────────────────────────────────────────
 
@@ -179,6 +182,55 @@
         result (commands/dispatch ctx "/model" cmd-opts)]
     (is (= :text (:type result)))
     (is (str/includes? (:message result) "Current model:"))))
+
+(deftest workflow-send-event-tracked-job-visible-via-commands-test
+  (testing "workflow send-event tracked job is visible via /jobs and /job"
+    (let [ctx       (make-test-ctx)
+          thread-id (:session-id (session/get-session-data-in ctx))
+          qctx      (query/create-query-context)
+          chart     (chart/statechart {:id :cmd-wf}
+                                      (ele/state {:id :idle}
+                                                 (ele/transition {:event :workflow/start :target :running}))
+                                      (ele/state {:id :running})
+                                      (ele/final {:id :done}))
+          mutate    (fn [op params]
+                      (get (query/query-in qctx
+                                           {:psi/agent-session-ctx ctx}
+                                           [(list op (assoc params :psi/agent-session-ctx ctx))])
+                           op))]
+      (session/register-resolvers-in! qctx false)
+      (session/register-mutations-in! qctx true)
+
+      (mutate 'psi.extension.workflow/register-type
+              {:ext-path "/ext/cmd"
+               :type     :cmdwf
+               :chart    chart})
+
+      (mutate 'psi.extension.workflow/create
+              {:ext-path "/ext/cmd"
+               :type     :cmdwf
+               :id       "wf-cmd"
+               :auto-start? false})
+
+      (let [send-r (mutate 'psi.extension.workflow/send-event
+                           {:ext-path "/ext/cmd"
+                            :id       "wf-cmd"
+                            :event    :workflow/start
+                            :track-background-job? true
+                            :data     {:tool-call-id "tc-cmd-send-1"}})
+            job-id (:psi.extension.background-job/id send-r)]
+        (is (string? job-id))
+
+        (let [jobs-result (commands/dispatch ctx "/jobs running" cmd-opts)]
+          (is (= :text (:type jobs-result)))
+          (is (str/includes? (:message jobs-result) job-id)))
+
+        (let [inspect-result (commands/dispatch ctx (str "/job " job-id) cmd-opts)]
+          (is (= :text (:type inspect-result)))
+          (is (str/includes? (:message inspect-result) job-id)))
+
+        (let [listed (session/list-background-jobs-in! ctx thread-id)]
+          (is (some #(= job-id (:job-id %)) listed)))))))
 
 (deftest dispatch-model-set-test
   (let [ctx    (make-test-ctx)

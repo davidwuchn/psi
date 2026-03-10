@@ -132,13 +132,19 @@
                    :psi.extension.workflow/data          {}
                    :psi.extension.workflow/result        nil
                    :psi.extension.workflow/elapsed-ms    0
-                   :psi.extension.workflow/started-at    nil}]
+                   :psi.extension.workflow/started-at    nil}
+          job-id  (when (true? (:track-background-job? params))
+                    (str "job-" id))]
       (swap! state assoc-in [:workflows id] wf)
-      {:psi.extension.workflow/created? true
-       :psi.extension.workflow/id id})
+      (cond-> {:psi.extension.workflow/created? true
+               :psi.extension.workflow/id id}
+        job-id (assoc :psi.extension.background-job/id job-id)))
 
     psi.extension.workflow/send-event
-    {:psi.extension.workflow/event-accepted? true}
+    (let [job-id (when (true? (:track-background-job? params))
+                   (str "job-" (:id params) "-cont"))]
+      (cond-> {:psi.extension.workflow/event-accepted? true}
+        job-id (assoc :psi.extension.background-job/id job-id)))
 
     psi.extension.workflow/remove
     (let [id      (str (:id params))

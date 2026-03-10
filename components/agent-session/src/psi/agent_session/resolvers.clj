@@ -1307,22 +1307,24 @@
 
 (defn- session-usage-totals
   [agent-session-ctx]
-  (reduce
-   (fn [acc entry]
-     (let [msg (get-in entry [:data :message])]
-       (if (and (= :message (:kind entry))
-                (= "assistant" (:role msg))
-                (map? (:usage msg)))
-         (let [u (:usage msg)]
-           (-> acc
-               (update :input + (usage-number u :input-tokens :input))
-               (update :output + (usage-number u :output-tokens :output))
-               (update :cache-read + (usage-number u :cache-read-tokens :cache-read))
-               (update :cache-write + (usage-number u :cache-write-tokens :cache-write))
-               (update :cost + (usage-cost-total u))))
-         acc)))
-   {:input 0 :output 0 :cache-read 0 :cache-write 0 :cost 0.0}
-   @(:journal-atom agent-session-ctx)))
+  (let [current-session-id (:session-id @(:session-data-atom agent-session-ctx))]
+    (reduce
+     (fn [acc entry]
+       (let [msg (get-in entry [:data :message])]
+         (if (and (= :message (:kind entry))
+                  (= current-session-id (:session-id entry))
+                  (= "assistant" (:role msg))
+                  (map? (:usage msg)))
+           (let [u (:usage msg)]
+             (-> acc
+                 (update :input + (usage-number u :input-tokens :input))
+                 (update :output + (usage-number u :output-tokens :output))
+                 (update :cache-read + (usage-number u :cache-read-tokens :cache-read))
+                 (update :cache-write + (usage-number u :cache-write-tokens :cache-write))
+                 (update :cost + (usage-cost-total u))))
+           acc)))
+     {:input 0 :output 0 :cache-read 0 :cache-write 0 :cost 0.0}
+     @(:journal-atom agent-session-ctx))))
 
 (defn- find-git-head-path
   [cwd]

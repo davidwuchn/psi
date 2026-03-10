@@ -833,6 +833,29 @@
       (is (= ["call-1"]
              (get-in rehydrate-event [:data :tool-order]))))))
 
+(deftest rpc-new-session-footer-usage-is-session-scoped-test
+  (testing "new_session footer/updated does not carry usage totals from previous session"
+    (let [ctx     (session/create-context)
+          state   (atom {:ready? true
+                         :pending {}
+                         :subscribed-topics #{"footer/updated"}})
+          handler (rpc/make-session-request-handler ctx)
+          _       (session/journal-append! ctx {:kind :message
+                                                :session-id (:session-id (session/get-session-data-in ctx))
+                                                :data {:message {:role "assistant"
+                                                                 :usage {:input-tokens 111
+                                                                         :output-tokens 22}}}})
+          input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                       "{:id \"n1\" :kind :request :op \"new_session\"}\n")
+          {:keys [out-lines]} (run-loop input handler state)
+          frames (parse-frames out-lines)
+          footer-event (some #(when (= "footer/updated" (:event %)) %) frames)
+          stats-line (get-in footer-event [:data :stats-line] "")]
+      (is (some? footer-event))
+      (is (string? stats-line))
+      (is (not (str/includes? stats-line "↑111")))
+      (is (not (str/includes? stats-line "↓22"))))))
+
 (deftest rpc-e2e-handshake-query-and-streaming-test
   (testing "handshake -> query_eql -> prompt with interleaved events"
     (let [ctx (session/create-context)

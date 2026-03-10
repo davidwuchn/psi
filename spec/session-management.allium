@@ -228,6 +228,12 @@ rule SessionStatsComputed {
     ensures: SessionStatsFor(session).total_messages = CountMessageEntries(session.journal)
 }
 
+rule SessionUsageTotalsAreSessionScoped {
+    when: SessionStatsRequested(session)
+
+    ensures: SessionTokenUsageTotals(session) aggregates only entries where entry.session_id = session.session_id
+}
+
 actor User {
     identified_by: id = "human-operator"
 }

@@ -948,37 +948,58 @@
 
 (defn- maybe-track-background-workflow-job!
   [ctx op-sym full-params payload]
-  (when (and (= op-sym 'psi.extension.workflow/create)
+  (when (and (contains? #{'psi.extension.workflow/create
+                          'psi.extension.workflow/send-event}
+                        op-sym)
              (map? payload)
-             (:psi.extension.workflow/created? payload)
              (:background-jobs-atom ctx))
-    (let [wf-type  (:type full-params)
-          wf-id    (:id full-params)
-          ext-path (:ext-path full-params)
-          tool-call-id (or (get-in full-params [:input :tool-call-id])
-                           (str "workflow-create-" (or ext-path "ext") "-" (or wf-id (java.util.UUID/randomUUID))))
-          thread-id (:session-id (get-session-data-in ctx))
-          job-kind  (when wf-type :workflow)
-          tool-name (if wf-type
-                      (str "workflow/" (name wf-type))
-                      "workflow/create")]
-      (try
-        (let [job (bg-jobs/find-job-by-workflow-in
-                   (:background-jobs-atom ctx)
-                   {:workflow-ext-path ext-path
-                    :workflow-id       wf-id})]
-          (when-not job
-            (bg-jobs/start-background-job-in!
-             (:background-jobs-atom ctx)
-             {:tool-call-id       (str tool-call-id)
-              :thread-id          (str thread-id)
-              :tool-name          tool-name
-              :job-id             (str "job-" (or wf-id (java.util.UUID/randomUUID)))
-              :job-kind           job-kind
-              :workflow-ext-path  ext-path
-              :workflow-id        (some-> wf-id str)})))
-        (catch Exception _
-          nil)))))
+    (let [created-op? (= op-sym 'psi.extension.workflow/create)
+          accepted?   (if created-op?
+                        (:psi.extension.workflow/created? payload)
+                        (:psi.extension.workflow/event-accepted? payload))
+          track?      (if (contains? full-params :track-background-job?)
+                        (true? (:track-background-job? full-params))
+                        created-op?)]
+      (when (and accepted? track?)
+        (let [wf-type  (or (:type full-params)
+                           (:psi.extension.workflow/type payload))
+              wf-id    (or (:id full-params)
+                           (:psi.extension.workflow/id payload))
+              ext-path (:ext-path full-params)
+              tool-call-id (or (get-in full-params [:input :tool-call-id])
+                               (get-in full-params [:data :tool-call-id])
+                               (:tool-call-id full-params)
+                               (str (if created-op? "workflow-create-" "workflow-send-event-")
+                                    (or ext-path "ext") "-" (or wf-id (java.util.UUID/randomUUID))))
+              thread-id (:session-id (get-session-data-in ctx))
+              job-kind  (when wf-type :workflow)
+              tool-name (if wf-type
+                          (str "workflow/" (name wf-type))
+                          "workflow/create")]
+          (try
+            (let [store (:background-jobs-atom ctx)
+                  job-by-call (bg-jobs/find-job-by-tool-call-in store tool-call-id)
+                  job-by-wf   (when created-op?
+                                (bg-jobs/find-job-by-workflow-in
+                                 store
+                                 {:workflow-ext-path ext-path
+                                  :workflow-id       wf-id}))
+                  started     (when-not (or job-by-call job-by-wf)
+                                (bg-jobs/start-background-job-in!
+                                 store
+                                 {:tool-call-id       (str tool-call-id)
+                                  :thread-id          (str thread-id)
+                                  :tool-name          tool-name
+                                  :job-id             (str "job-" (java.util.UUID/randomUUID))
+                                  :job-kind           job-kind
+                                  :workflow-ext-path  ext-path
+                                  :workflow-id        (some-> wf-id str)}))]
+              (or (when-let [jid (:job-id started)]
+                    (bg-jobs/get-job-in store jid))
+                  job-by-call
+                  job-by-wf))
+            (catch Exception _
+              nil)))))))
 
 (defn- run-extension-mutation-in!
   "Execute a single EQL mutation op against `ctx` and return its payload.
@@ -2040,7 +2061,8 @@
      :psi.extension.workflow/error                  error}))
 
 (pco/defmutation create-workflow
-  [_ {:keys [psi/agent-session-ctx ext-path type id input meta auto-start? start-event]}]
+  [_ {:keys [psi/agent-session-ctx ext-path type id input meta auto-start? start-event
+              track-background-job?]}]
   {::pco/op-name 'psi.extension.workflow/create
    ::pco/params  [:psi/agent-session-ctx :ext-path :type]
    ::pco/output  [:psi.extension.workflow/created?
@@ -2065,8 +2087,9 @@
                   :psi.extension.workflow/elapsed-ms
                   :psi.extension.workflow/event-count
                   :psi.extension.workflow/last-event
-                  :psi.extension.workflow/events]}
-  (let [{:keys [created? workflow error] :as result}
+                  :psi.extension.workflow/events
+                  :psi.extension.background-job/id]}
+  (let [{:keys [created? workflow error]}
         (create-workflow-in!
          agent-session-ctx
          ext-path
@@ -2078,18 +2101,21 @@
           :start-event start-event})
         payload (merge {:psi.extension.workflow/created? created?
                         :psi.extension.workflow/error    error}
-                       (workflow->attrs workflow))]
-    (when created?
-      (maybe-track-background-workflow-job!
-       agent-session-ctx
-       'psi.extension.workflow/create
-       {:ext-path ext-path :type type :id id :input input :meta meta
-        :auto-start? auto-start? :start-event start-event}
-       payload))
-    payload))
+                       (workflow->attrs workflow))
+        job     (when created?
+                  (maybe-track-background-workflow-job!
+                   agent-session-ctx
+                   'psi.extension.workflow/create
+                   (cond-> {:ext-path ext-path :type type :id id :input input :meta meta
+                            :auto-start? auto-start? :start-event start-event}
+                     (some? track-background-job?)
+                     (assoc :track-background-job? track-background-job?))
+                   payload))]
+    (cond-> payload
+      (:job-id job) (assoc :psi.extension.background-job/id (:job-id job)))))
 
 (pco/defmutation send-workflow-event
-  [_ {:keys [psi/agent-session-ctx ext-path id event data]}]
+  [_ {:keys [psi/agent-session-ctx ext-path id event data track-background-job?]}]
   {::pco/op-name 'psi.extension.workflow/send-event
    ::pco/params  [:psi/agent-session-ctx :ext-path :id :event]
    ::pco/output  [:psi.extension.workflow/event-accepted?
@@ -2114,12 +2140,26 @@
                   :psi.extension.workflow/elapsed-ms
                   :psi.extension.workflow/event-count
                   :psi.extension.workflow/last-event
-                  :psi.extension.workflow/events]}
+                  :psi.extension.workflow/events
+                  :psi.extension.background-job/id]}
   (let [{:keys [event-accepted? workflow error]}
-        (send-workflow-event-in! agent-session-ctx ext-path id event data)]
-    (merge {:psi.extension.workflow/event-accepted? event-accepted?
-            :psi.extension.workflow/error           error}
-           (workflow->attrs workflow))))
+        (send-workflow-event-in! agent-session-ctx ext-path id event data)
+        payload (merge {:psi.extension.workflow/event-accepted? event-accepted?
+                        :psi.extension.workflow/error           error}
+                       (workflow->attrs workflow))
+        job     (when event-accepted?
+                  (maybe-track-background-workflow-job!
+                   agent-session-ctx
+                   'psi.extension.workflow/send-event
+                   (cond-> {:ext-path ext-path
+                            :id id
+                            :event event
+                            :data data}
+                     (some? track-background-job?)
+                     (assoc :track-background-job? track-background-job?))
+                   payload))]
+    (cond-> payload
+      (:job-id job) (assoc :psi.extension.background-job/id (:job-id job)))))
 
 (pco/defmutation abort-workflow
   [_ {:keys [psi/agent-session-ctx ext-path id reason]}]

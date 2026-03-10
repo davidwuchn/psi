@@ -82,6 +82,8 @@ rule FooterReadsCanonicalProjectionAttributes {
 rule FooterInputsUseSafeFallbacks {
     when: FooterRenderRequested(footer, width)
 
+    ensures: FooterInputsFor(footer) is derived from the active session only
+
     ensures: FooterInputsFor(footer).cwd = FirstNonNull(QueryValue("psi.agent-session/cwd"), footer.cwd_fallback, "")
     ensures: FooterInputsFor(footer).git_branch = QueryValue("psi.agent-session/git-branch")
     ensures: FooterInputsFor(footer).session_name = QueryValue("psi.agent-session/session-name")

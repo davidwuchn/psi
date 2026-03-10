@@ -128,6 +128,11 @@
   [store-atom job-id]
   (get-in @store-atom [:jobs-by-id job-id]))
 
+(defn find-job-by-tool-call-in
+  [store-atom tool-call-id]
+  (when-let [job-id (get-in @store-atom [:tool-call->job-id (str tool-call-id)])]
+    (get-job-in store-atom job-id)))
+
 (defn find-job-by-workflow-in
   [store-atom {:keys [workflow-ext-path workflow-id]}]
   (some (fn [job]

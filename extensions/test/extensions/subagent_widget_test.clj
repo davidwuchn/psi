@@ -80,7 +80,39 @@
         (is (= {:content "Error: Unknown agent 'not-real'." :is-error true}
                (execute {"action" "create"
                          "task" "do thing"
-                         "agent" "not-real"})))))))
+                         "agent" "not-real"}))))))
+
+  (testing "subagent continue rejects mode parameter"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/subagent_widget.clj"})]
+      (sut/init api)
+      (let [execute (get-in @state [:tools "subagent" :execute])]
+        (is (= {:content "Error: mode is only supported for action=create" :is-error true}
+               (execute {"action" "continue"
+                         "id" 1
+                         "prompt" "next"
+                         "mode" "async"}))))))
+
+  (testing "subagent create validates mode value"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/subagent_widget.clj"})]
+      (sut/init api)
+      (let [execute (get-in @state [:tools "subagent" :execute])]
+        (is (= {:content "Error: mode must be one of sync, async" :is-error true}
+               (execute {"action" "create"
+                         "task" "do thing"
+                         "mode" "bogus"}))))))
+
+  (testing "subagent create validates timeout_ms"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/subagent_widget.clj"})]
+      (sut/init api)
+      (let [execute (get-in @state [:tools "subagent" :execute])]
+        (is (= {:content "Error: timeout_ms must be a positive integer." :is-error true}
+               (execute {"action" "create"
+                         "task" "do thing"
+                         "mode" "sync"
+                         "timeout_ms" 0})))))))
 
 (deftest prompt-contribution-lists-available-agents-test
   (testing "prompt contribution lists names discovered from .psi/agents"
@@ -113,6 +145,94 @@
             (is (str/includes? contrib "available agents:"))
             (is (str/includes? contrib "- planner: plan"))
             (is (str/includes? contrib "- builder: build"))))))))
+
+(deftest create-mode-behavior-test
+  (testing "create defaults to async and returns background job id"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/subagent_widget.clj"})]
+      (sut/init api)
+      (let [execute (get-in @state [:tools "subagent" :execute])
+            result  (execute {"action" "create" "task" "test task"} {:tool-call-id "tc-create-1"})]
+        (is (false? (:is-error result)))
+        (is (str/includes? (:content result) "spawned in background"))
+        (is (str/includes? (:content result) "job job-1")))))
+
+  (testing "create sync returns terminal output without job id"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/subagent_widget.clj"})]
+      (sut/init api)
+      (with-redefs [sut/await-terminal-workflow (fn [_id _timeout]
+                                                  {:workflow {:psi.extension.workflow/error? false
+                                                              :psi.extension.workflow/result "sync ok"
+                                                              :psi.extension.workflow/data {:subagent/elapsed-ms 12}}})]
+        (let [execute (get-in @state [:tools "subagent" :execute])
+              result  (execute {"action" "create" "task" "sync task" "mode" "sync"}
+                               {:tool-call-id "tc-create-sync"})]
+          (is (false? (:is-error result)))
+          (is (str/includes? (:content result) "Subagent #1 finished"))
+          (is (str/includes? (:content result) "sync ok"))
+          (is (not (str/includes? (:content result) "job ")))))))
+
+  (testing "create sync error returns is-error true and terminal text"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/subagent_widget.clj"})]
+      (sut/init api)
+      (with-redefs [sut/await-terminal-workflow (fn [_id _timeout]
+                                                  {:workflow {:psi.extension.workflow/error? true
+                                                              :psi.extension.workflow/error-message "boom"
+                                                              :psi.extension.workflow/data {:subagent/elapsed-ms 20}}})]
+        (let [execute (get-in @state [:tools "subagent" :execute])
+              result  (execute {"action" "create" "task" "sync task" "mode" "sync"}
+                               {:tool-call-id "tc-create-sync-err"})]
+          (is (true? (:is-error result)))
+          (is (str/includes? (:content result) "boom")))))))
+
+(deftest execute-subagent-tool-timeout-test
+  (testing "create passes parsed timeout_ms through to spawn-subagent"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/subagent_widget.clj"})
+          captured (atom nil)]
+      (sut/init api)
+      (with-redefs [sut/spawn-subagent! (fn [_task _agent opts]
+                                          (reset! captured opts)
+                                          {:ok 1 :mode :async :job-id "job-x"})]
+        (let [execute (get-in @state [:tools "subagent" :execute])
+              _       (execute {"action" "create"
+                                "task" "x"
+                                "timeout_ms" "1234"}
+                               {:tool-call-id "tc-timeout-1"})]
+          (is (= 1234 (:timeout-ms @captured)))
+          (is (= :async (:mode @captured)))
+          (is (= "tc-timeout-1" (:tool-call-id @captured)))))))
+
+  (testing "create uses default timeout when timeout_ms omitted"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/subagent_widget.clj"})
+          captured (atom nil)]
+      (sut/init api)
+      (with-redefs [sut/spawn-subagent! (fn [_task _agent opts]
+                                          (reset! captured opts)
+                                          {:ok 1 :mode :async :job-id "job-x"})]
+        (let [execute (get-in @state [:tools "subagent" :execute])
+              _       (execute {"action" "create"
+                                "task" "x"}
+                               {:tool-call-id "tc-timeout-default"})]
+          (is (= 300000 (:timeout-ms @captured)))
+          (is (= :async (:mode @captured)))))))
+
+  (testing "create rejects non-numeric timeout_ms"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/subagent_widget.clj"})]
+      (sut/init api)
+      (let [execute (get-in @state [:tools "subagent" :execute])
+            result  (execute {"action" "create"
+                              "task" "x"
+                              "mode" "sync"
+                              "timeout_ms" "abc"}
+                             {:tool-call-id "tc-timeout-invalid"})]
+        (is (= {:content "Error: timeout_ms must be a positive integer."
+                :is-error true}
+               result))))))
 
 (deftest run-subagent-job-executor-arg-order-test
   (testing "run-subagent-job passes executor args in run-agent-loop order"
