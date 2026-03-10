@@ -917,7 +917,9 @@
                                                      (when-let [evt (.poll progress-q 50
                                                                           java.util.concurrent.TimeUnit/MILLISECONDS)]
                                                        (when-let [{:keys [event data]} (progress-event->rpc-event evt)]
-                                                         (emit! event data)))
+                                                         (emit! event data)
+                                                         (when (= :tool-result (:event-kind evt))
+                                                           (emit! "footer/updated" (footer-updated-payload ctx)))))
                                                      (recur))))
                                     result    (runtime/run-agent-loop-in!
                                                ctx nil ai-model [user-message]
@@ -1131,7 +1133,9 @@
                                                  (when-not @progress-stop?
                                                    (when-let [evt (.poll progress-q 50 java.util.concurrent.TimeUnit/MILLISECONDS)]
                                                      (when-let [{:keys [event data]} (progress-event->rpc-event evt)]
-                                                       (emit! event data)))
+                                                       (emit! event data)
+                                                       (when (= :tool-result (:event-kind evt))
+                                                         (emit! "footer/updated" (footer-updated-payload ctx)))))
                                                    (recur))))]
                            (try
                              (let [ai-model      (current-ai-model ctx state)
