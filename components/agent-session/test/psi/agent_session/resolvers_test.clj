@@ -6,6 +6,7 @@
   (:require
    [clojure.java.io :as io]
    [clojure.test :refer [deftest is testing]]
+   [psi.agent-session.background-jobs :as bg-jobs]
    [psi.agent-session.core :as session]
    [psi.agent-session.oauth.core :as oauth]))
 
@@ -202,6 +203,62 @@
       (is (integer? (:psi.agent-session/git-worktree-count result)))
       (when (pos? (:psi.agent-session/git-worktree-count result))
         (is (map? (:psi.agent-session/git-worktree-current result)))))))
+
+;; ── Background jobs introspection ───────────────────────
+
+(deftest background-jobs-resolver-test
+  (testing "background job attrs resolve from session root and include nested job entities"
+    (let [ctx       (session/create-context {:persist? false})
+          thread-id (:session-id (session/get-session-data-in ctx))
+          store     (:background-jobs-atom ctx)
+          _         (bg-jobs/start-background-job-in!
+                     store
+                     {:tool-call-id "tc-bg-1"
+                      :thread-id    thread-id
+                      :tool-name    "workflow/subagent"
+                      :job-id       "job-bg-1"
+                      :job-kind     :workflow
+                      :workflow-ext-path "extensions/subagent_widget.clj"
+                      :workflow-id  "wf-1"})
+          result    (q-in ctx [:psi.agent-session/background-job-count
+                               :psi.agent-session/background-job-statuses
+                               {:psi.agent-session/background-jobs
+                                [:psi.background-job/id
+                                 :psi.background-job/thread-id
+                                 :psi.background-job/tool-call-id
+                                 :psi.background-job/tool-name
+                                 :psi.background-job/job-kind
+                                 :psi.background-job/status
+                                 :psi.background-job/is-terminal
+                                 :psi.background-job/is-non-terminal]}])
+          jobs      (:psi.agent-session/background-jobs result)
+          job       (first jobs)]
+      (is (= 1 (:psi.agent-session/background-job-count result)))
+      (is (= [:running :pending-cancel :completed :failed :cancelled :timed-out]
+             (:psi.agent-session/background-job-statuses result)))
+      (is (vector? jobs))
+      (is (= 1 (count jobs)))
+      (is (= "job-bg-1" (:psi.background-job/id job)))
+      (is (= thread-id (:psi.background-job/thread-id job)))
+      (is (= "tc-bg-1" (:psi.background-job/tool-call-id job)))
+      (is (= "workflow/subagent" (:psi.background-job/tool-name job)))
+      (is (= :workflow (:psi.background-job/job-kind job)))
+      (is (= :running (:psi.background-job/status job)))
+      (is (false? (:psi.background-job/is-terminal job)))
+      (is (true? (:psi.background-job/is-non-terminal job))))))
+
+(deftest background-jobs-graph-introspection-test
+  (testing "background job attrs are discoverable in graph introspection"
+    (let [result (q [:psi.graph/root-queryable-attrs
+                     :psi.graph/edges])
+          root-attrs (set (:psi.graph/root-queryable-attrs result))
+          edge-attrs (set (keep :attribute (:psi.graph/edges result)))]
+      (is (contains? root-attrs :psi.agent-session/background-job-count))
+      (is (contains? root-attrs :psi.agent-session/background-job-statuses))
+      (is (contains? root-attrs :psi.agent-session/background-jobs))
+      (is (contains? edge-attrs :psi.agent-session/background-job-count))
+      (is (contains? edge-attrs :psi.agent-session/background-job-statuses))
+      (is (contains? edge-attrs :psi.agent-session/background-jobs)))))
 
 ;; ── Step 7 graph bridge — :psi.graph/* ───────────────────
 

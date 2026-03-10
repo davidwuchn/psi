@@ -53,6 +53,9 @@
    :psi.agent-session/stats               — SessionStats snapshot
    :psi.agent-session/tool-call-history   — [{:psi.tool-call/*}], nested tool call entities
    :psi.agent-session/tool-call-history-count — number of tool calls
+   :psi.agent-session/background-job-count — number of tracked background jobs in current thread
+   :psi.agent-session/background-job-statuses — ordered status vocabulary for background jobs
+   :psi.agent-session/background-jobs     — [{:psi.background-job/*}], current-thread background jobs
 
    Tool-output policy and telemetry
    ────────────────────────────────
@@ -104,6 +107,28 @@
    :psi.tool-call/arguments               — raw argument string (from list resolver)
    :psi.tool-call/result                  — result text (from detail resolver, lazy)
    :psi.tool-call/is-error                — error flag (from detail resolver, lazy)
+
+   Background job entities (nested under :psi.agent-session/background-jobs)
+   ─────────────────────────────────────────────────────────────────────────
+   :psi.background-job/id
+   :psi.background-job/thread-id
+   :psi.background-job/tool-call-id
+   :psi.background-job/tool-name
+   :psi.background-job/job-kind
+   :psi.background-job/workflow-ext-path
+   :psi.background-job/workflow-id
+   :psi.background-job/job-seq
+   :psi.background-job/started-at
+   :psi.background-job/completed-at
+   :psi.background-job/completed-seq
+   :psi.background-job/status
+   :psi.background-job/terminal-payload
+   :psi.background-job/terminal-payload-file
+   :psi.background-job/cancel-requested-at
+   :psi.background-job/terminal-message-emitted
+   :psi.background-job/terminal-message-emitted-at
+   :psi.background-job/is-terminal
+   :psi.background-job/is-non-terminal
 
    API error diagnostics (hierarchical)
    ────────────────────────────────────
@@ -252,6 +277,7 @@
    [psi.recursion.resolvers :as recursion-resolvers]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.session :as session]
+   [psi.agent-session.background-jobs :as bg-jobs]
    [psi.agent-session.tool-output :as tool-output]
    [psi.agent-session.prompt-templates :as pt]
    [psi.agent-session.skills :as skills]
@@ -641,6 +667,76 @@
   (let [reg (:workflow-registry agent-session-ctx)]
     {:psi.extension.workflow/detail
      (some-> (wf/workflow-in reg path id) workflow->eql)}))
+
+;; ── Background jobs introspection ───────────────────────
+
+(def ^:private background-job-status-order
+  [:running :pending-cancel :completed :failed :cancelled :timed-out])
+
+(def ^:private background-job-output
+  [:psi.background-job/id
+   :psi.background-job/thread-id
+   :psi.background-job/tool-call-id
+   :psi.background-job/tool-name
+   :psi.background-job/job-kind
+   :psi.background-job/workflow-ext-path
+   :psi.background-job/workflow-id
+   :psi.background-job/job-seq
+   :psi.background-job/started-at
+   :psi.background-job/completed-at
+   :psi.background-job/completed-seq
+   :psi.background-job/status
+   :psi.background-job/terminal-payload
+   :psi.background-job/terminal-payload-file
+   :psi.background-job/cancel-requested-at
+   :psi.background-job/terminal-message-emitted
+   :psi.background-job/terminal-message-emitted-at
+   :psi.background-job/is-terminal
+   :psi.background-job/is-non-terminal])
+
+(defn- background-job->eql
+  [job]
+  {:psi.background-job/id                          (:job-id job)
+   :psi.background-job/thread-id                   (:thread-id job)
+   :psi.background-job/tool-call-id                (:tool-call-id job)
+   :psi.background-job/tool-name                   (:tool-name job)
+   :psi.background-job/job-kind                    (:job-kind job)
+   :psi.background-job/workflow-ext-path           (:workflow-ext-path job)
+   :psi.background-job/workflow-id                 (:workflow-id job)
+   :psi.background-job/job-seq                     (:job-seq job)
+   :psi.background-job/started-at                  (:started-at job)
+   :psi.background-job/completed-at                (:completed-at job)
+   :psi.background-job/completed-seq               (:completed-seq job)
+   :psi.background-job/status                      (:status job)
+   :psi.background-job/terminal-payload            (:terminal-payload job)
+   :psi.background-job/terminal-payload-file       (:terminal-payload-file job)
+   :psi.background-job/cancel-requested-at         (:cancel-requested-at job)
+   :psi.background-job/terminal-message-emitted    (boolean (:terminal-message-emitted job))
+   :psi.background-job/terminal-message-emitted-at (:terminal-message-emitted-at job)
+   :psi.background-job/is-terminal                 (bg-jobs/terminal-status? (:status job))
+   :psi.background-job/is-non-terminal             (bg-jobs/non-terminal-status? (:status job))})
+
+(defn- session-thread-id
+  [agent-session-ctx]
+  (:session-id @(:session-data-atom agent-session-ctx)))
+
+(pco/defresolver agent-session-background-jobs
+  "Resolve background jobs for the active session thread.
+   Includes counts and status vocabulary for UI/query clients."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.agent-session/background-job-count
+                 :psi.agent-session/background-job-statuses
+                 :psi.agent-session/background-jobs
+                 {:psi.agent-session/background-jobs background-job-output}]}
+  (let [thread-id (session-thread-id agent-session-ctx)
+        store     (:background-jobs-atom agent-session-ctx)
+        jobs      (if (and store thread-id)
+                    (bg-jobs/list-jobs-in store thread-id background-job-status-order)
+                    [])]
+    {:psi.agent-session/background-job-count    (count jobs)
+     :psi.agent-session/background-job-statuses background-job-status-order
+     :psi.agent-session/background-jobs         (mapv background-job->eql jobs)}))
 
 ;; ── Context usage ───────────────────────────────────────
 
@@ -1698,6 +1794,8 @@
    agent-chain-discovery-resolver
    extension-workflows-resolver
    extension-workflow-detail-resolver
+   ;; Background jobs
+   agent-session-background-jobs
    ;; Extension UI
    extension-ui-resolver
    ;; Session listing
