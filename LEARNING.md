@@ -4,6 +4,27 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-09 - Buffer-close confirmation should use `kill-buffer-query-functions`, not teardown hooks
+
+### λ `kill-buffer-hook` is too late for cancellation semantics
+
+If close confirmation is implemented in teardown (`kill-buffer-hook`), the
+buffer/process is already on the destruction path and user cancellation cannot
+be expressed cleanly. `kill-buffer-query-functions` is the right interception
+point for "ask then maybe cancel" behavior.
+
+### λ Keep interactive safety, but bypass prompts in noninteractive test runs
+
+Lifecycle confirmations should protect operators in interactive sessions while
+remaining deterministic under ERT/batch execution. Guarding the prompt with
+`noninteractive` preserves UX safety without introducing test hangs.
+
+### λ Regression tests should assert both branches of the close decision
+
+For process-owning buffers, tests should verify: (1) declining confirmation
+returns nil from `kill-buffer`, keeps the buffer live, and preserves the process;
+(2) noninteractive query path auto-allows without invoking prompt functions.
+
 ## 2026-03-09 - Spec parity should encode UX invariants, not only transport events
 
 ### λ Banner-first UX needs explicit spec rules at both init and reset boundaries
