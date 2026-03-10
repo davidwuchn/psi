@@ -107,7 +107,7 @@
                            :deferred  "PSL prompt queued via deferred; will auto-run when idle"
                            :follow-up "PSL prompt queued via follow-up"
                            :prompt    "PSL prompt queued via prompt"
-                           (str "PSL prompt queued via " (name (or delivery :unknown))))]
+                           (str "PSL prompt queued via " (str (or delivery :unknown))))]
           (send-message! mutate-fn
                          (if accepted?
                            status-msg
