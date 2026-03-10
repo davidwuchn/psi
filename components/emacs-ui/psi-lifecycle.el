@@ -228,8 +228,31 @@ COMMAND is a list suitable for `make-process'."
                (consp (psi-emacs-state-projection-range psi-emacs--state)))
       (psi-emacs--upsert-projection-block))))
 
+(defun psi-emacs--live-owned-process ()
+  "Return live psi process for current buffer, or nil."
+  (let ((process (or psi-emacs--owned-process
+                     (and psi-emacs--state
+                          (psi-emacs-state-process psi-emacs--state)))))
+    (and (processp process)
+         (process-live-p process)
+         process)))
+
+(defun psi-emacs--confirm-kill-buffer-p ()
+  "Return non-nil when killing the current psi buffer may proceed.
+
+In interactive sessions, prompt before killing a buffer that owns a live psi
+process. In batch/noninteractive usage (for example ERT), always allow kill."
+  (if noninteractive
+      t
+    (if-let ((process (psi-emacs--live-owned-process)))
+        (yes-or-no-p
+         (format "psi has a running process (%s). Kill buffer and stop it? "
+                 (process-name process)))
+      t)))
+
 (defun psi-emacs--install-buffer-lifecycle-hooks ()
   "Install local lifecycle hooks for dedicated psi buffer."
+  (add-hook 'kill-buffer-query-functions #'psi-emacs--confirm-kill-buffer-p nil t)
   (add-hook 'kill-buffer-hook #'psi-emacs--teardown-buffer nil t)
   (add-hook 'window-configuration-change-hook
             #'psi-emacs--handle-window-configuration-change

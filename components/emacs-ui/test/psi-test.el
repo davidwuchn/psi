@@ -452,6 +452,45 @@
       (when (buffer-live-p buffer)
         (kill-buffer buffer)))))
 
+(ert-deftest psi-kill-buffer-cancels-when-user-declines-process-confirmation ()
+  (let ((psi-emacs-command '("cat"))
+        (psi-emacs--spawn-process-function #'psi-test--spawn-long-lived-process)
+        (buffer nil)
+        (owned nil)
+        (prompted nil))
+    (unwind-protect
+        (progn
+          (setq buffer (psi-emacs-open-buffer "*psi-test-kill-confirm*"))
+          (with-current-buffer buffer
+            (setq owned psi-emacs--owned-process)
+            (should (process-live-p owned)))
+          (cl-letf (((symbol-function 'yes-or-no-p)
+                     (lambda (_prompt)
+                       (setq prompted t)
+                       nil)))
+            (let ((noninteractive nil))
+              (should-not (kill-buffer buffer))))
+          (should prompted)
+          (should (buffer-live-p buffer))
+          (should (process-live-p owned)))
+      (when (buffer-live-p buffer)
+        (cl-letf (((symbol-function 'yes-or-no-p) (lambda (_prompt) t)))
+          (let ((noninteractive nil))
+            (kill-buffer buffer)))))))
+
+(ert-deftest psi-kill-buffer-allows-without-prompt-in-noninteractive-tests ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (let ((prompted nil))
+      (cl-letf (((symbol-function 'yes-or-no-p)
+                 (lambda (_prompt)
+                   (setq prompted t)
+                   t)))
+        (let ((noninteractive t))
+          (should (psi-emacs--confirm-kill-buffer-p))))
+      (should-not prompted))))
+
 (ert-deftest psi-compose-source-prefers-region-over-tail-draft ()
   (with-temp-buffer
     (psi-emacs-mode)
