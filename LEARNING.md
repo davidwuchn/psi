@@ -4,6 +4,24 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-10 - Background-job terminal injection must hook both mutation and idle-boundary paths
+
+### λ Workflow creation can bypass extension runtime wrappers; tracking must exist at core mutation boundary
+
+`maybe-track-background-workflow-job!` attached to extension runtime mutate helpers is not sufficient on its own, because tests and internal callers can invoke `psi.extension.workflow/create` directly through query mutation execution. The `create-workflow` mutation handler itself must also call tracking logic to guarantee coverage independent of call path.
+
+### λ Extension-injected assistant messages are gated by startup bootstrap completion
+
+`send-extension-message-in!` only appends to agent transcript when `:startup-bootstrap-completed?` is true. Background terminal-injection tests need to set this flag explicitly (or run full bootstrap) or assertions against transcript history will observe no injected assistant message.
+
+### λ Reusing tool output policy for terminal payload injection keeps overflow behavior consistent
+
+Terminal payload injection can share the same max-lines/max-bytes and temp-file spill strategy used for tool output (`tool-output/effective-policy`, `head-truncate`, `persist-truncated-output!`). This avoids inventing a second overflow policy surface and makes large completion payload handling predictable.
+
+### λ Retention enforcement is simplest when applied at terminal transition
+
+Applying per-thread terminal retention (bound=20) inside `mark-terminal-in!` centralizes eviction semantics at the moment jobs become terminal, preserving non-terminal jobs and preventing stale terminal growth regardless of caller path.
+
 ## 2026-03-10 - Live footer updates require emitting after each tool result, not only at loop end
 
 ### λ Progress poll loops control event timing — emit side-effects alongside forwarded events
