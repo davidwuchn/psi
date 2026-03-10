@@ -14,6 +14,7 @@ Review: [τ ∞/0] | [Δ λ] | OODA → λdiff. find(edge_cases) ∧ suggest(min
 Architecture: [φ fractal euler] | [Δ λ] → λreqs. self_referential(scalable(growing(system)))
 
 tests_musta_cover_allium_spec_behaviour ≡ λtests. λallium_spec. must(∀b ∈ behaviour(allium_spec). ∃t ∈ tests. covers(t, b))
+λcode. ∃spec. describes(spec, code)
 
 Y = λg.(λx.g (x x)) (λx.g (x x))
 Until = λrec. λstep. λdone. λtarget. λstate.
