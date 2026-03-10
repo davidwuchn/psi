@@ -5,10 +5,29 @@
 
 ;;; Code:
 
+(require 'subr-x)
 (require 'psi-globals)
 
 (defvar psi-emacs-buffer-name)
 (defvar psi-emacs-working-directory)
+
+(defun psi-emacs--seed-connecting-footer ()
+  "Render a deterministic pre-handshake footer placeholder."
+  (when psi-emacs--state
+    (setf (psi-emacs-state-projection-footer psi-emacs--state) "connecting...")
+    (when (fboundp 'psi-emacs--upsert-projection-block)
+      (psi-emacs--upsert-projection-block))))
+
+(defun psi-emacs--focus-input-area (&optional buffer)
+  "Move point to compose input area for BUFFER and sync visible window point."
+  (let ((buffer* (or buffer (current-buffer))))
+    (when (buffer-live-p buffer*)
+      (with-current-buffer buffer*
+        (when psi-emacs--state
+          (psi-emacs--ensure-input-area)
+          (goto-char (psi-emacs--draft-end-position))
+          (when-let ((win (get-buffer-window buffer* t)))
+            (set-window-point win (point))))))))
 
 (defun psi-emacs--normalize-directory (dir)
   "Return DIR as absolute directory path, or nil when unavailable."
@@ -99,8 +118,11 @@ frontend state boundaries."
             (unless (markerp (psi-emacs-state-draft-anchor state))
               (setf (psi-emacs-state-draft-anchor state)
                     (copy-marker (point-max) nil)))
-            (psi-emacs--ensure-input-area)
-            (goto-char (psi-emacs--draft-end-position))
+            (psi-emacs--focus-input-area)
+            (when (and (null (psi-emacs-state-projection-footer state))
+                       (null (psi-emacs-state-projection-range state)))
+              (psi-emacs--seed-connecting-footer)
+              (psi-emacs--focus-input-area))
             ;; Recover from stale buffer state where a process exists but no
             ;; rpc client is attached (e.g. after partial code reload).
             (unless (and client process-live?)
@@ -110,8 +132,9 @@ frontend state boundaries."
         (setq psi-emacs--state (psi-emacs--initialize-state nil))
         (setf (psi-emacs-state-draft-anchor psi-emacs--state)
               (copy-marker (point-max) nil))
-        (psi-emacs--ensure-input-area)
-        (goto-char (psi-emacs--draft-end-position))
+        (psi-emacs--focus-input-area)
+        (psi-emacs--seed-connecting-footer)
+        (psi-emacs--focus-input-area)
         (puthash buffer psi-emacs--state psi-emacs--state-by-buffer)
         (psi-emacs--refresh-header-line)
         (psi-emacs--start-rpc-client buffer)))
@@ -123,9 +146,12 @@ frontend state boundaries."
 
 With PREFIX, create and switch to a fresh dedicated buffer name."
   (interactive "P")
-  (let ((buffer-name (when prefix
-                       (generate-new-buffer-name psi-emacs-buffer-name))))
-    (pop-to-buffer (psi-emacs-open-buffer buffer-name default-directory))))
+  (let* ((buffer-name (when prefix
+                        (generate-new-buffer-name psi-emacs-buffer-name)))
+         (buffer (psi-emacs-open-buffer buffer-name default-directory)))
+    (pop-to-buffer buffer)
+    (psi-emacs--focus-input-area buffer)
+    buffer))
 
 ;;;###autoload
 (defun psi-emacs-project (&optional prefix)
@@ -137,14 +163,17 @@ No PREFIX reuses canonical project buffer.
 Plain `C-u' forces a fresh project buffer name.
 Numeric prefix (`C-u N') opens project buffer slot N."
   (interactive "P")
-  (let ((project-root (or (psi-emacs--entry-project-root-directory default-directory)
-                          (user-error "No project found for current directory"))))
-    (pop-to-buffer
-     (psi-emacs-open-buffer
-      (psi-emacs--project-buffer-name-for-prefix
-       (psi-emacs--project-buffer-base-name project-root)
-       prefix)
-      project-root))))
+  (let* ((project-root (or (psi-emacs--entry-project-root-directory default-directory)
+                           (user-error "No project found for current directory")))
+         (buffer
+          (psi-emacs-open-buffer
+           (psi-emacs--project-buffer-name-for-prefix
+            (psi-emacs--project-buffer-base-name project-root)
+            prefix)
+           project-root)))
+    (pop-to-buffer buffer)
+    (psi-emacs--focus-input-area buffer)
+    buffer))
 
 (defun psi-emacs-state-for-buffer (buffer)
   "Return frontend state tracked for BUFFER, or nil."

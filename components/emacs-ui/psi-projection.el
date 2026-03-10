@@ -337,32 +337,33 @@ tracks transcript growth like a terminal footer."
            (start (and (consp range) (car range)))
            (end (and (consp range) (cdr range)))
            (rendered (psi-emacs--projection-render-block psi-emacs--state)))
-      ;; Remove previous projection block first.
-      (when (and (markerp start)
-                 (markerp end)
-                 (marker-buffer start)
-                 (marker-buffer end))
-        (save-excursion
-          (delete-region start end))
-        (set-marker start nil)
-        (set-marker end nil)
-        (setf (psi-emacs-state-projection-range psi-emacs--state) nil))
+      (let ((inhibit-read-only t))
+        ;; Remove previous projection block first.
+        (when (and (markerp start)
+                   (markerp end)
+                   (marker-buffer start)
+                   (marker-buffer end))
+          (save-excursion
+            (delete-region start end))
+          (set-marker start nil)
+          (set-marker end nil)
+          (setf (psi-emacs-state-projection-range psi-emacs--state) nil))
 
-      ;; Reinsert at current end-of-buffer.
-      (unless (string-empty-p rendered)
-        (save-excursion
-          (psi-emacs--ensure-newline-before-projection-append)
-          (let ((new-start (copy-marker (point) nil))
-                ;; Keep insertion-type nil on end marker so appends at the
-                ;; projection tail stay outside the projection range.
-                (new-end (copy-marker (point) nil)))
-            (insert rendered)
-            ;; After insertion, make start marker advance when user inserts at
-            ;; draft/projection boundary so draft text stays outside range.
-            (set-marker-insertion-type new-start t)
-            (set-marker new-end (point))
-            (setf (psi-emacs-state-projection-range psi-emacs--state)
-                  (cons new-start new-end)))))
+        ;; Reinsert at current end-of-buffer.
+        (unless (string-empty-p rendered)
+          (save-excursion
+            (psi-emacs--ensure-newline-before-projection-append)
+            (let ((new-start (copy-marker (point) nil))
+                  ;; Keep insertion-type nil on end marker so appends at the
+                  ;; projection tail stay outside the projection range.
+                  (new-end (copy-marker (point) nil)))
+              (insert rendered)
+              ;; After insertion, make start marker advance when user inserts at
+              ;; draft/projection boundary so draft text stays outside range.
+              (set-marker-insertion-type new-start t)
+              (set-marker new-end (point))
+              (setf (psi-emacs-state-projection-range psi-emacs--state)
+                    (cons new-start new-end))))))
 
       (when follow-anchor
         (psi-emacs--set-draft-anchor-to-end)))))

@@ -61,6 +61,42 @@
       (when (buffer-live-p buffer)
         (kill-buffer buffer)))))
 
+(ert-deftest psi-open-buffer-seeds-connecting-footer-before-handshake ()
+  (let ((psi-emacs-command '("cat"))
+        (psi-emacs--spawn-process-function #'psi-test--spawn-long-lived-process)
+        (buffer nil))
+    (cl-letf (((symbol-function 'psi-emacs--start-rpc-client)
+               (lambda (_buffer) nil)))
+      (unwind-protect
+          (progn
+            (setq buffer (psi-emacs-open-buffer "*psi-test-connecting-footer*"))
+            (with-current-buffer buffer
+              (should (psi-emacs--input-separator-marker-valid-p))
+              (should (equal "connecting..." (psi-emacs-state-projection-footer psi-emacs--state)))
+              (should (string-match-p "connecting\.\.\." (buffer-string)))
+              (should (= (point) (psi-emacs--draft-end-position)))))
+        (when (buffer-live-p buffer)
+          (kill-buffer buffer))))))
+
+(ert-deftest psi-start-focuses-window-point-in-input-area-before-handshake ()
+  (let* ((psi-emacs-buffer-name (format "*psi-test-focus-%s*" (gensym)))
+         (psi-emacs-command '("cat"))
+         (psi-emacs--spawn-process-function #'psi-test--spawn-long-lived-process)
+         (buffer nil)
+         (window nil))
+    (cl-letf (((symbol-function 'psi-emacs--start-rpc-client)
+               (lambda (_buffer) nil)))
+      (unwind-protect
+          (progn
+            (setq buffer (psi-emacs-start nil))
+            (setq window (get-buffer-window buffer t))
+            (with-current-buffer buffer
+              (should (window-live-p window))
+              (should (= (point) (psi-emacs--draft-end-position)))
+              (should (= (window-point window) (psi-emacs--draft-end-position)))))
+        (when (buffer-live-p buffer)
+          (kill-buffer buffer))))))
+
 (ert-deftest psi-open-buffer-respects-explicit-working-directory ()
   (let* ((psi-emacs-command '("cat"))
          (psi-emacs--spawn-process-function #'psi-test--spawn-long-lived-process)
@@ -1902,8 +1938,8 @@
                      (mapcar #'car (nreverse rpc-calls))))
       (should (= 1 (how-many "^ψ: boot ok$" (point-min) (point-max)))))))
 
-(ert-deftest psi-initial-transcript-hydration-scrolls-to-point-min-when-messages ()
-  "AC: initial hydration with messages moves point to point-min so startup output is visible."
+(ert-deftest psi-initial-transcript-hydration-keeps-point-in-input-area-when-messages ()
+  "AC: initial hydration keeps point in the compose input area when messages are replayed."
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
@@ -1920,8 +1956,7 @@
                                 (:ok . t)
                                 (:data . ((:messages . [((:role . :assistant) (:text . "engage nucleus"))])))))))))
         (psi-emacs--on-rpc-state-change (current-buffer) client)))
-    ;; Point should be at point-min so startup messages are visible
-    (should (= (point) (point-min)))
+    (should (= (point) (psi-emacs--draft-end-position)))
     (should (= 1 (how-many "engage nucleus" (point-min) (point-max))))))
 
 (ert-deftest psi-initial-transcript-hydration-no-scroll-when-no-messages ()
@@ -2400,6 +2435,7 @@
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
     (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker (point-max) nil))
+    (psi-emacs--ensure-input-area)
     (cl-letf (((symbol-function 'psi-emacs--projection-window-width)
                (lambda () 20)))
       (psi-emacs--handle-rpc-event
@@ -2414,6 +2450,19 @@
                    (:stats-line . "latency 12ms")))))
       (let ((buf (buffer-string)))
         (should (string-match-p "Widget line\n────────────────────\n~/psi-main" buf))))))
+
+(ert-deftest psi-extension-ui-status-updated-with-input-area-preserves-separator ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker (point-max) nil))
+    (psi-emacs--ensure-input-area)
+    (psi-emacs--handle-rpc-event
+     '((:event . "ui/status-updated")
+       (:data . ((:statuses . [((:extension-id . "ext-b") (:text . "ok"))])))))
+    (should (string-match-p "Extension Statuses:" (buffer-string)))
+    (should (string-match-p "\\[ext-b\\] ok" (buffer-string)))
+    (should (psi-emacs--input-separator-marker-valid-p))))
 
 (ert-deftest psi-extension-ui-footer-updated-updates-projection-and-preserves-transcript ()
   (with-temp-buffer

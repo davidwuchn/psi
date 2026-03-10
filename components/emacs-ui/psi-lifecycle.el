@@ -71,14 +71,9 @@
            (when (eq state psi-emacs--state)
              (let ((messages (psi-emacs--frame-messages-list frame)))
                (psi-emacs--replay-session-messages messages)
-               ;; Scroll to show replayed startup messages.  replay uses
-               ;; save-excursion so point stays in the input area, leaving
-               ;; the messages above the separator invisible.  When there
-               ;; are messages, move point to the top of the transcript so
-               ;; the user can see them; the input area remains accessible
-               ;; via normal navigation.
-               (when messages
-                 (goto-char (point-min)))))))))))
+               ;; Keep point in compose input area after startup hydration so
+               ;; users can type immediately even when replayed messages exist.
+               (goto-char (psi-emacs--draft-end-position))))))))))
 
 (defun psi-emacs--on-rpc-state-change (buffer client)
   "Apply CLIENT state changes to BUFFER-local frontend state."
