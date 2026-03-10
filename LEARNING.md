@@ -4,6 +4,32 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-10 - Delivery-mode transcript messages should be derived from prompt-delivery, and spec parse checks need targeted isolation
+
+### λ Extension operator feedback should branch on `:psi.extension/prompt-delivery`, not generic success
+
+For extension-driven prompts (PSL), a generic success line hides execution mode.
+Deriving transcript status text from `:psi.extension/prompt-delivery` yields
+clear operator semantics:
+- `:deferred` → queued now, auto-run on idle
+- `:prompt` → immediate prompt path
+- `:follow-up` → queued follow-up path
+
+### λ Focused private-function tests can stabilize extension behavior without full workflow harness coupling
+
+`plan_state_learning` end-to-end handler tests were brittle against evolving
+workflow plumbing. Testing `psl-job` directly (via resolved private var in test
+ns) provided stable assertions over delivery-mode message contracts while keeping
+the extension runtime surface unchanged.
+
+### λ When full-spec check fails, isolate to touched spec first, then restore global green
+
+`allium check spec` surfaced a pre-existing parse error in
+`spec/background-tool-jobs.allium` unrelated to the PSL slice. Running
+`allium check` on the touched spec (`spec/plan-state-learning-extension.allium`)
+confirmed local correctness, then fixing the global parse issue restored full
+repository spec health.
+
 ## 2026-03-10 - Cross-surface background-job parity needs run-state-aware frontend tests and literal help assertions
 
 ### λ Idle slash parity tests must account for send-state transitions between commands
