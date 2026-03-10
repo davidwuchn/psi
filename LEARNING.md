@@ -4,6 +4,27 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-09 - Emacs startup focus should bind buffer point and window point
+
+### λ Input focus invariants in UI buffers require syncing both point surfaces
+
+Setting `(goto-char ...)` in the startup buffer is not always enough to place the
+visible cursor where the user can type immediately. On startup paths that use
+`pop-to-buffer`, deterministic compose focus requires both buffer point and window
+point alignment (`set-window-point`) against the input-area boundary.
+
+### λ Pre-handshake placeholder footer reduces "single divider" ambiguity
+
+Seeding a minimal deterministic `connecting...` projection before handshake makes
+startup state legible while preserving the input-first interaction model. The
+placeholder should be overwritten by the first canonical `footer/updated` event.
+
+### λ Read-only guards require explicit write windows for projection maintenance
+
+When transcript edits are constrained to input-range, projection upsert/delete
+must run under explicit `inhibit-read-only` boundaries. Otherwise startup/event
+renders can silently drop footer/status updates behind `text-read-only` failures.
+
 ## 2026-03-09 - Tool metadata wording steers polling behavior in async workflows
 
 ### λ Describe async `run` as "start" to preserve non-blocking mental model
