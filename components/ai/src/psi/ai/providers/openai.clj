@@ -598,6 +598,7 @@
         next-tool-index      (atom 0)
         tool-by-item-id      (atom {})
         tool-by-output-index (atom {})
+        tool-args-by-index   (atom {})
         open-tool-indexes    (atom #{})]
 
     (letfn [(emit-start! []
@@ -640,6 +641,13 @@
                  (when (string? item-id)
                    (get @tool-by-item-id item-id)))))
 
+            (emit-tool-delta! [idx args]
+              (when (and (number? idx) (seq args))
+                (swap! tool-args-by-index update idx (fnil str "") args)
+                (consume-fn {:type          :toolcall-delta
+                             :content-index idx
+                             :delta         args})))
+
             (emit-done! [event]
               (when-not @done?
                 (reset! done? true)
@@ -647,6 +655,7 @@
                 (doseq [idx @open-tool-indexes]
                   (consume-fn {:type :toolcall-end :content-index idx}))
                 (reset! open-tool-indexes #{})
+                (reset! tool-args-by-index {})
                 (let [resp      (:response event)
                       status    (:status resp)
                       usage     (:usage resp)
@@ -701,10 +710,7 @@
                                        :id            tool-id
                                        :name          tool-name})
                           (when-let [args (:arguments item)]
-                            (when (seq args)
-                              (consume-fn {:type          :toolcall-delta
-                                           :content-index idx
-                                           :delta         args}))))
+                            (emit-tool-delta! idx args)))
 
                         nil))
 
@@ -713,9 +719,7 @@
                           delta (:delta event)]
                       (when (and (number? idx) (seq delta))
                         (emit-start!)
-                        (consume-fn {:type          :toolcall-delta
-                                     :content-index idx
-                                     :delta         delta})))
+                        (emit-tool-delta! idx delta)))
 
                     "response.output_item.done"
                     (let [item      (:item event)
@@ -724,6 +728,19 @@
                         (let [idx (or (resolve-tool-index event)
                                       (register-tool-index! event item))]
                           (when (number? idx)
+                            (let [final-args (:arguments item)
+                                  seen       (get @tool-args-by-index idx "")]
+                              (when (seq final-args)
+                                (cond
+                                  (and (seq seen)
+                                       (str/starts-with? final-args seen))
+                                  (let [remaining (subs final-args (count seen))]
+                                    (when (seq remaining)
+                                      (emit-tool-delta! idx remaining)))
+
+                                  (not= final-args seen)
+                                  (emit-tool-delta! idx final-args)))
+                              (swap! tool-args-by-index dissoc idx))
                             (when (contains? @open-tool-indexes idx)
                               (swap! open-tool-indexes disj idx)
                               (consume-fn {:type :toolcall-end

@@ -823,7 +823,8 @@
                                       :elapsed-ms (- (now-ms) started-ms))))
                 {:content  msg
                  :is-error true})
-              {:content  (str "OK id:" run-id)
+              {:content  (str "Chain run started: " run-id
+                               "\nMonitor with agent-chain action=\"list\" (or /chain).")
                :is-error false})))))))
 
 (defn- action-list
