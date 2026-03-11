@@ -4,6 +4,27 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-11 - Interrupt-spec verification is strongest when anchored to explicit rule→surface evidence
+
+### λ Cross-spec interrupt behavior should be verified as a rule matrix over backend + frontend surfaces
+
+For deferred interrupt behavior, verification quality improves when each allium rule
+is checked against concrete implementation points in both agent-session and Emacs UI
+surfaces (request op, session state fields, run-state projection, and draft restore flow)
+instead of relying on changed-file intent.
+
+### λ Frontend interrupt-pending UX must be validated as an event-projected state, not only keybinding wiring
+
+`C-c C-c` binding correctness is necessary but insufficient. The critical contract is
+session/updated projection of `interrupt_pending` into header/run-state while preserving
+silent-idle behavior and terminal-boundary reset semantics.
+
+### λ PSL follow-up should persist verification outcomes into repository memory artifacts immediately
+
+After code/spec verification, the durable memory path is: update `PLAN.md` and `STATE.md`
+with the verified contract boundary, then add a focused `LEARNING.md` entry capturing the
+verification method (rule-by-rule evidence) so future ψ can repeat the process deterministically.
+
 ## 2026-03-11 - bb task aliases should mirror Kaocha suite IDs to make test scope discoverable
 
 ### λ Task names that encode suite intent reduce verification friction
