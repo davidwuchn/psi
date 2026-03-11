@@ -4,6 +4,24 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-11 - bb task aliases should mirror Kaocha suite IDs to make test scope discoverable
+
+### λ Task names that encode suite intent reduce verification friction
+
+Adding explicit bb entrypoints (`clojure:test:unit`, `clojure:test:extensions`) removes the
+need to remember `clojure -M:test --focus ...` flags and makes available verification scopes
+self-describing via `bb tasks`.
+
+### λ A composed parent task keeps one obvious way to run both Clojure suites
+
+`clojure:test` as a depends-only wrapper over unit + extension tasks preserves an atomic,
+repeatable “run both” path while still allowing targeted suite runs when iterating.
+
+### λ Task-level test workflow should align directly with Kaocha test IDs
+
+Using `--focus unit` and `--focus extensions` keeps bb wrappers thin and resilient because they
+bind directly to `tests.edn` suite ids (`:unit`, `:extensions`) instead of duplicating path logic.
+
 ## 2026-03-11 - Session usage aggregation should enforce session boundaries while preserving legacy journal compatibility
 
 ### λ Footer token/cost totals must filter by current session id, or new-session stats leak prior history
