@@ -840,7 +840,7 @@
                          :pending {}
                          :subscribed-topics #{"footer/updated"}})
           handler (rpc/make-session-request-handler ctx)
-          _       (session/journal-append! ctx {:kind :message
+          _       (session/journal-append-in! ctx {:kind :message
                                                 :session-id (:session-id (session/get-session-data-in ctx))
                                                 :data {:message {:role "assistant"
                                                                  :usage {:input-tokens 111

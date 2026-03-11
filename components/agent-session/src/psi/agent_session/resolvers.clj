@@ -1406,9 +1406,11 @@
   (let [current-session-id (:session-id @(:session-data-atom agent-session-ctx))]
     (reduce
      (fn [acc entry]
-       (let [msg (get-in entry [:data :message])]
+       (let [msg       (get-in entry [:data :message])
+             entry-sid (:session-id entry)]
          (if (and (= :message (:kind entry))
-                  (= current-session-id (:session-id entry))
+                  (or (nil? entry-sid)
+                      (= current-session-id entry-sid))
                   (= "assistant" (:role msg))
                   (map? (:usage msg)))
            (let [u (:usage msg)]
