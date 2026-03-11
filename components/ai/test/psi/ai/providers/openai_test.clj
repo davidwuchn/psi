@@ -305,6 +305,75 @@
       (is (= 1 (count (filter #(= :toolcall-start (:type %)) @events))))
       (is (= 1 (count (filter #(= :toolcall-end (:type %)) @events)))))))
 
+(deftest completions-tool-call-from-message-fallback-test
+  (testing "chat completions message.tool_calls fallback is processed"
+    (let [model  (models/get-model :gpt-5)
+          convo  (-> (conv/create "sys")
+                     (conv/add-user-message "run read"))
+          events (atom [])
+          sse    (str
+                  "data: " (json/generate-string
+                             {:choices [{:delta {:role "assistant"}}]}) "\n\n"
+                  "data: " (json/generate-string
+                             {:choices [{:delta {:tool_calls [{:index 0 :id "call_1"}]}}]}) "\n\n"
+                  "data: " (json/generate-string
+                             {:choices [{:delta {}
+                                         :message {:tool_calls [{:index 0
+                                                                 :id "call_1"
+                                                                 :type "function"
+                                                                 :function {:name "read"
+                                                                            :arguments "{\"path\":\"README.md\"}"}}]}
+                                         :finish_reason "tool_calls"}]
+                              :usage {:prompt_tokens 1 :completion_tokens 1 :total_tokens 2}}) "\n\n")]
+      (with-redefs [http/post (fn [_url _req]
+                                {:body (stream-body sse)})]
+        ((:stream openai/provider)
+         convo model {:api-key "sk-test"}
+         (fn [ev] (swap! events conj ev))))
+
+      (is (some #(and (= :toolcall-start (:type %))
+                      (= "call_1" (:id %))
+                      (= "read" (:name %)))
+                @events))
+      (is (some #(and (= :toolcall-delta (:type %))
+                      (= "{\"path\":\"README.md\"}" (:delta %)))
+                @events))
+      (is (some #(= :toolcall-end (:type %)) @events))
+      (is (some #(and (= :done (:type %))
+                      (= :tool_calls (:reason %))) @events)))))
+
+(deftest completions-legacy-function-call-stream-shape-test
+  (testing "chat completions legacy delta.function_call shape is bridged"
+    (let [model  (models/get-model :gpt-4o)
+          convo  (-> (conv/create "sys")
+                     (conv/add-user-message "run read"))
+          events (atom [])
+          sse    (str
+                  "data: " (json/generate-string
+                             {:choices [{:delta {:role "assistant"}}]}) "\n\n"
+                  "data: " (json/generate-string
+                             {:choices [{:delta {:function_call {:name "read"}}}]}) "\n\n"
+                  "data: " (json/generate-string
+                             {:choices [{:delta {:function_call {:arguments "{\"path\":\"README.md\"}"}}}]}) "\n\n"
+                  "data: " (json/generate-string
+                             {:choices [{:finish_reason "function_call"}]
+                              :usage {:prompt_tokens 1 :completion_tokens 1 :total_tokens 2}}) "\n\n")]
+      (with-redefs [http/post (fn [_url _req]
+                                {:body (stream-body sse)})]
+        ((:stream openai/provider)
+         convo model {:api-key "sk-test"}
+         (fn [ev] (swap! events conj ev))))
+
+      (is (some #(and (= :toolcall-start (:type %))
+                      (= "read" (:name %)))
+                @events))
+      (is (some #(and (= :toolcall-delta (:type %))
+                      (= "{\"path\":\"README.md\"}" (:delta %)))
+                @events))
+      (is (some #(= :toolcall-end (:type %)) @events))
+      (is (some #(and (= :done (:type %))
+                      (= :function_call (:reason %))) @events)))))
+
 (deftest completions-thinking-level-maps-to-reasoning-effort-test
   (let [model (models/get-model :gpt-5)
         convo (-> (conv/create "sys") (conv/add-user-message "hi"))]

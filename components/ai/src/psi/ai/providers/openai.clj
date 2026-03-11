@@ -181,6 +181,33 @@
       {:buffer (str cur inc)
        :delta  inc})))
 
+(defn- extract-tool-call-fragments
+  "Extract tool-call fragments from a chat completions choice.
+
+   Supports:
+   - delta.tool_calls (current format)
+   - delta.function_call (legacy format)
+   - message.tool_calls (final fallback)
+   - message.function_call (legacy final fallback)"
+  [choice delta]
+  (let [delta-tool-calls   (or (:tool_calls delta) [])
+        delta-function     (:function_call delta)
+        message-tool-calls (or (get-in choice [:message :tool_calls]) [])
+        message-function   (get-in choice [:message :function_call])]
+    (vec
+     (concat
+      delta-tool-calls
+
+      (when (map? delta-function)
+        [{:index 0
+          :function delta-function}])
+
+      message-tool-calls
+
+      (when (map? message-function)
+        [{:index 0
+          :function message-function}])))))
+
 (defn transform-messages
   "Transform conversation messages to OpenAI chat completions format.
    Handles user, assistant (with optional tool_calls), and tool-result messages."
@@ -459,10 +486,11 @@
                                  :content-index 0
                                  :delta reasoning-delta}))
 
-                  ;; Tool calls
-                  (doseq [[fallback-idx tool-call] (map-indexed vector (:tool_calls delta))]
-                    (let [idx (resolve-tool-index tool-call fallback-idx)]
-                      (process-tool-call! idx tool-call)))
+                  ;; Tool calls (delta + message fallbacks, including legacy function_call)
+                  (let [tool-fragments (extract-tool-call-fragments choice delta)]
+                    (doseq [[fallback-idx tool-call] (map-indexed vector tool-fragments)]
+                      (let [idx (resolve-tool-index tool-call fallback-idx)]
+                        (process-tool-call! idx tool-call))))
 
                   (cond
                     ;; Completion with usage (final chunk)
