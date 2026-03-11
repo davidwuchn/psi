@@ -156,6 +156,31 @@
                            (str args))
     :else (str args)))
 
+(defn- accumulate-tool-arguments
+  "Merge incoming tool-argument chunk into current buffer.
+
+   Handles both streaming styles:
+   - true deltas (append incoming)
+   - cumulative snapshots (emit only unseen suffix)."
+  [current incoming]
+  (let [cur (or current "")
+        inc (or incoming "")]
+    (cond
+      (not (seq inc))
+      {:buffer cur :delta nil}
+
+      (str/starts-with? inc cur)
+      (let [delta (subs inc (count cur))]
+        {:buffer inc
+         :delta  (when (seq delta) delta)})
+
+      (str/starts-with? cur inc)
+      {:buffer cur :delta nil}
+
+      :else
+      {:buffer (str cur inc)
+       :delta  inc})))
+
 (defn transform-messages
   "Transform conversation messages to OpenAI chat completions format.
    Handles user, assistant (with optional tool_calls), and tool-result messages."
@@ -346,27 +371,27 @@
                        (merge {:id nil
                                :name nil
                                :started? false
-                               :pending-args ""}
+                               :args-buffer ""}
                               s))))
 
             (start-tool-if-ready! [idx force?]
-              (let [{:keys [id name started? pending-args]} (get @tool-state idx)
+              (let [{:keys [id name started? args-buffer]} (get @tool-state idx)
                     id* (or id (when force? (str "call_" (UUID/randomUUID))))]
                 (when (and (not started?) (seq name) (seq id*))
                   (swap! tool-state assoc idx
                          {:id id*
                           :name name
                           :started? true
-                          :pending-args ""})
+                          :args-buffer (or args-buffer "")})
                   (emit-start!)
                   (consume-fn {:type :toolcall-start
                                :content-index idx
                                :id id*
                                :name name})
-                  (when (seq pending-args)
+                  (when (seq args-buffer)
                     (consume-fn {:type :toolcall-delta
                                  :content-index idx
-                                 :delta pending-args})))))
+                                 :delta args-buffer})))))
 
             (process-tool-call! [idx tool-call]
               (let [call-id   (:id tool-call)
@@ -383,13 +408,15 @@
                 (start-tool-if-ready! idx false)
 
                 (when (seq args)
-                  (if (get-in @tool-state [idx :started?])
-                    (do
+                  (let [current-buffer (get-in @tool-state [idx :args-buffer] "")
+                        {:keys [buffer delta]} (accumulate-tool-arguments current-buffer args)]
+                    (swap! tool-state assoc-in [idx :args-buffer] buffer)
+                    (when (and (get-in @tool-state [idx :started?])
+                               (seq delta))
                       (emit-start!)
                       (consume-fn {:type :toolcall-delta
                                    :content-index idx
-                                   :delta args}))
-                    (swap! tool-state update-in [idx :pending-args] str args)))
+                                   :delta delta}))))
 
                 (start-tool-if-ready! idx false)))
 

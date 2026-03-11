@@ -271,6 +271,40 @@
                       (= :tool_calls (:reason %)))
                 @events)))))
 
+(deftest completions-tool-call-cumulative-arguments-emit-only-unseen-suffix-test
+  (testing "chat completions cumulative tool args do not duplicate emitted deltas"
+    (let [model  (models/get-model :gpt-5)
+          convo  (-> (conv/create "sys")
+                     (conv/add-user-message "run pwd"))
+          events (atom [])
+          sse    (str
+                  "data: " (json/generate-string
+                             {:choices [{:delta {:role "assistant"}}]}) "\n\n"
+                  "data: " (json/generate-string
+                             {:choices [{:delta {:tool_calls [{:index 0
+                                                               :id "call_1"
+                                                               :function {:name "bash"
+                                                                          :arguments "{\"command\""}}]}}]}) "\n\n"
+                  "data: " (json/generate-string
+                             {:choices [{:delta {:tool_calls [{:index 0
+                                                               :function {:arguments "{\"command\":\"pwd\"}"}}]}}]}) "\n\n"
+                  "data: " (json/generate-string
+                             {:choices [{:finish_reason "tool_calls"}]
+                              :usage {:prompt_tokens 1 :completion_tokens 1 :total_tokens 2}}) "\n\n")]
+      (with-redefs [http/post (fn [_url _req]
+                                {:body (stream-body sse)})]
+        ((:stream openai/provider)
+         convo model {:api-key "sk-test"}
+         (fn [ev] (swap! events conj ev))))
+
+      (let [deltas (->> @events
+                        (filter #(= :toolcall-delta (:type %)))
+                        (map :delta)
+                        (apply str))]
+        (is (= "{\"command\":\"pwd\"}" deltas)))
+      (is (= 1 (count (filter #(= :toolcall-start (:type %)) @events))))
+      (is (= 1 (count (filter #(= :toolcall-end (:type %)) @events)))))))
+
 (deftest completions-thinking-level-maps-to-reasoning-effort-test
   (let [model (models/get-model :gpt-5)
         convo (-> (conv/create "sys") (conv/add-user-message "hi"))]
