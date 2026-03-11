@@ -4,6 +4,26 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-11 - Session usage aggregation should enforce session boundaries while preserving legacy journal compatibility
+
+### λ Footer token/cost totals must filter by current session id, or new-session stats leak prior history
+
+`session-usage-totals` was summing assistant usage across the full journal. After `new_session`,
+footer stats could still include token counts from the previous session. Filtering journal entries
+by current `:session-id` restores session-local usage semantics.
+
+### λ Backward-compatible filters should accept legacy entries without session-id
+
+Older or compatibility-path journal rows may not carry `:session-id`. A strict equality check drops
+those rows and undercounts usage in existing sessions. Using `(or (nil? entry-sid) (= current-session-id entry-sid))`
+keeps historical compatibility while preventing cross-session leakage.
+
+### λ Session-scoped footer regressions are best tested through `new_session` RPC flow and session-aware journal append
+
+The robust regression path is: seed usage in current session, call `new_session`, assert `footer/updated`
+no longer contains prior tokens. Tests should append with `session/journal-append-in!` so journal rows include
+explicit session context at write time.
+
 ## 2026-03-10 - Subagent dual-mode create and workflow send-event tracking need explicit gating + surfaced job ids
 
 ### λ Background-job tracking on workflow mutations should be opt-in outside create
