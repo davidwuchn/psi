@@ -1,29 +1,47 @@
--- allium: 1
+-- allium: 2
 
 -- tools/bash.allium
 -- Target behavior for the bash tool.
+
+------------------------------------------------------------
+-- External Entities
+------------------------------------------------------------
+
+external entity OutputPolicy { max_lines: Integer, max_bytes: Integer }
+external entity ToolCaller { caller_id: String }
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
 
 value BashArgs {
     command: String
     timeout: Integer?
 }
 
-value BashOutputOverride {
+value BashNamedOutputOverride {
+    name: String
     max_lines: Integer?
     max_bytes: Integer?
 }
 
 value BashOptions {
     cwd: String?
-    overrides: Map<String, BashOutputOverride>?
+    overrides: Set<BashNamedOutputOverride>?
     command_prefix: String?
-    on_update: Function?
     tool_call_id: String?
+}
+
+-- Opaque caller-provided function handle.
+-- Receives a BashResult snapshot when the result is ready.
+value BashUpdateCallback {
+    handle: String
 }
 
 value BashTruncation {
     truncated: Boolean
-    truncated_by: lines | bytes | none
+    truncated_by: lines | bytes | not_truncated
+    content: String
     total_lines: Integer
     total_bytes: Integer
     output_lines: Integer
@@ -44,166 +62,252 @@ value BashResult {
     details: BashDetails?
 }
 
-rule BashCommandPrefixApplied {
-    when: ExecuteBash(args, opts)
-    requires: opts.command_prefix != null
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
 
-    ensures: resolved_command = opts.command_prefix + "\n" + args.command
+config {
+    default_timeout: Integer = 30
 }
 
-rule BashCommandPrefixDefaultsToRawCommand {
-    when: ExecuteBash(args, opts)
-    requires: opts.command_prefix = null
+------------------------------------------------------------
+-- Entities and Variants
+------------------------------------------------------------
 
-    ensures: resolved_command = args.command
+entity BashExecution {
+    args: BashArgs
+    opts: BashOptions?
+    on_update: BashUpdateCallback?
+    resolved_command: String
+    timeout_seconds: Integer
+    policy: OutputPolicy
+    status: pending | running | completed | timed_out | failed | killed
+    output: String?
+    exit_code: Integer?
+    error_message: String?
+    result: BashResult?
+    abort_result: Boolean?
+
+    -- Derived
+    has_result: result != null
 }
 
-rule BashTimeoutDefaultsToThirtySeconds {
-    when: ExecuteBash(args, opts)
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
 
-    ensures: timeout_seconds = args.timeout or 30
-}
+-- Lifecycle
+--
+-- All rules triggered by ExecuteBash fire together as a batch:
+-- they resolve command, timeout, policy, set status, and spawn
+-- the process. The process lifecycle (running → completed/timed_out/failed)
+-- is handled by the deferred ProcessLifecycle spec.
 
-rule BashUsesEffectivePolicyWithOverrides {
-    when: ExecuteBash(args, opts)
+rule BashExecutionStarted {
+    when: ExecuteBash(execution)
 
-    ensures: policy = EffectiveOutputPolicy(tool_name: "bash", overrides: opts.overrides or {})
-}
-
-rule BashExecutesWithShellDashC {
-    when: ExecuteBash(args, opts)
-
-    ensures: ProcessSpawnedWithShellDashC(ResolvedCommand(args, opts))
-    ensures: ProcessUsesMergedStdoutStderr()
-    ensures: ProcessUsesNullStdin()
-}
-
-rule BashRunsInCwdWhenProvided {
-    when: ExecuteBash(args, opts)
-    requires: opts.cwd != null
-
-    ensures: ProcessWorkingDirectory() = opts.cwd
-}
-
-rule BashFinalResultUsesTailTruncation {
-    when: BashProcessFinished(stdout, stderr, exit_code)
-
-    let merged = stdout + stderr
-    let truncation = TailTruncate(merged, EffectiveOutputPolicy("bash"))
-
-    ensures:
-        if IsBlank(truncation.content):
-            result.content = "(no output)"
+    ensures: execution.status = running
+    ensures: execution.resolved_command =
+        if execution.opts?.command_prefix != null:
+            execution.opts.command_prefix + "\n" + execution.args.command
         else:
-            result.content = truncation.content
-    ensures: result.is_error = false
-}
-
-rule BashFinalResultIncludesTruncationDetailsWhenTruncated {
-    when: BashProcessFinished(stdout, stderr, exit_code)
-
-    let merged = stdout + stderr
-    let truncation = TailTruncate(merged, EffectiveOutputPolicy("bash"))
-    requires: truncation.truncated
-
-    ensures: result.details.truncation = truncation
-}
-
-rule BashFinalResultIncludesFullOutputPathWhenTruncated {
-    when: BashProcessFinished(stdout, stderr, exit_code)
-
-    let merged = stdout + stderr
-    let truncation = TailTruncate(merged, EffectiveOutputPolicy("bash"))
-    requires: truncation.truncated
-
-    ensures: path = PersistTruncatedFullOutput(
-        tool_name: "bash",
-        tool_call_id: opts.tool_call_id or RandomUuid(),
-        full_text: merged
+            execution.args.command
+    ensures: execution.timeout_seconds = execution.args.timeout ?? config.default_timeout
+    ensures: execution.policy = effective_output_policy(
+        "bash", execution.opts?.overrides ?? {}
     )
-    ensures: result.details.full_output_path = path
-    ensures: Contains(result.content, "Full output")
-    ensures: Contains(result.content, path)
+    ensures: BashProcessSpawned(execution: execution)
+
+    @guidance
+        -- Process is spawned via shell -c with the resolved command.
+        -- Stdout and stderr are merged into a single output stream.
+        -- Stdin is bound to /dev/null.
+        -- Working directory is opts.cwd when provided,
+        -- otherwise the agent's inherited working directory.
 }
 
-rule BashFinalResultOmitsDetailsWhenNotTruncated {
-    when: BashProcessFinished(stdout, stderr, exit_code)
+-- Process completion transitions (chained from BashProcessSpawned)
 
-    let merged = stdout + stderr
-    let truncation = TailTruncate(merged, EffectiveOutputPolicy("bash"))
-    requires: not truncation.truncated
+rule BashProcessCompleted {
+    when: BashProcessFinished(execution, output, exit_code)
 
-    ensures: result.details = null
+    ensures: execution.status = completed
+    ensures: execution.output = output
+    ensures: execution.exit_code = exit_code
 }
 
-rule BashNonZeroExitMarksError {
-    when: BashProcessFinished(stdout, stderr, exit_code)
-    requires: exit_code != 0
+rule BashProcessTimedOut {
+    when: BashProcessTimeout(execution)
 
-    ensures: result.is_error = true
-    ensures: Contains(result.content, "Command exited with code " + exit_code)
+    ensures: execution.status = timed_out
 }
 
-rule BashTimeoutMarksError {
-    when: BashTimeoutReached(timeout_seconds)
+rule BashProcessFailed {
+    when: BashProcessError(execution, error_message)
 
-    ensures: Process.killed()
-    ensures: result.is_error = true
-    ensures: result.details = null
-    ensures: Contains(result.content, "Command timed out after " + timeout_seconds + " seconds")
+    ensures: execution.status = failed
+    ensures: execution.error_message = error_message
 }
 
-rule BashOnUpdateReceivesFinalResultWhenProvided {
-    when: BashResultReady(result)
-    requires: opts.on_update != null
+-- Result assembly
+--
+-- When a bash process finishes normally, the result is assembled from
+-- the merged output, exit code, and truncation state. Content is built
+-- by composing: optional exit code prefix, truncated output text, and
+-- optional truncation annotation with spill path.
 
-    ensures: OnUpdate(opts.on_update, result)
-}
+rule BashFinalResult {
+    when: execution: BashExecution.status becomes completed
 
-rule BashExecutionExceptionsReturnErrorPayload {
-    when: ExecuteBash(args, opts)
-    requires: ExceptionThrown(e)
+    let output = execution.output
+    let exit_code = execution.exit_code
+    let truncation = tail_truncate(output, execution.policy)
+    let base_text =
+        if truncation.content = "" or truncation.content = null:
+            "(no output)"
+        else:
+            truncation.content
+    let spill_path =
+        if truncation.truncated:
+            persist_truncated_output(execution)
+        else:
+            null
 
-    ensures: result = BashResult{
-        content: "Command execution error: " + Message(e),
-        is_error: true,
-        details: null
+    ensures: execution.result = BashResult{
+        content:
+            if exit_code != 0 and truncation.truncated:
+                "Command exited with code " + exit_code + "\n"
+                    + base_text + "\n\n"
+                    + "... [truncated, " + truncation.total_lines + " total lines] "
+                    + "Full output: " + spill_path
+            else if exit_code != 0 and not truncation.truncated:
+                "Command exited with code " + exit_code + "\n" + base_text
+            else if exit_code = 0 and truncation.truncated:
+                base_text + "\n\n"
+                    + "... [truncated, " + truncation.total_lines + " total lines] "
+                    + "Full output: " + spill_path
+            else:
+                base_text
+        is_error: exit_code != 0
+        details:
+            if truncation.truncated:
+                BashDetails{
+                    truncation: truncation
+                    full_output_path: spill_path
+                }
+            else:
+                null
     }
 }
 
-rule AbortBashReturnsTrueWhenProcessRunning {
-    when: AbortBashCalled()
-    requires: CurrentBashProcess() != null
+-- Timeout result
 
-    ensures: Process.killed(force: true)
-    ensures: abort_result = true
+rule BashTimeoutMarksError {
+    when: execution: BashExecution.status becomes timed_out
+
+    ensures: execution.result = BashResult{
+        content: "Command timed out after " + execution.timeout_seconds + " seconds"
+        is_error: true
+        details: null
+    }
+
+    @guidance
+        -- The process is killed when timeout is reached.
+        -- Partial captured output is currently discarded.
 }
 
-rule AbortBashReturnsFalseWhenNoProcessRunning {
-    when: AbortBashCalled()
-    requires: CurrentBashProcess() = null
+-- Update callback
 
-    ensures: abort_result = false
+rule BashOnUpdateReceivesFinalResult {
+    when: execution: BashExecution.has_result
+    requires: execution.on_update != null
+
+    ensures: BashUpdateSent(on_update: execution.on_update, result: execution.result)
 }
 
-rule BashTempArtifactsStoredInProcessStore {
-    when: PersistTruncatedFullOutput(tool_name: "bash", full_text)
+-- Exception handling
 
-    ensures: path in ActiveProcessTempStore().root_dir
+rule BashExecutionFailed {
+    when: execution: BashExecution.status becomes failed
+
+    ensures: execution.result = BashResult{
+        content: "Command execution error: " + execution.error_message
+        is_error: true
+        details: null
+    }
+
+    @guidance
+        -- Exceptions during process spawning or execution
+        -- produce an error result with the exception message.
 }
+
+-- Abort
+
+rule AbortBashKillsRunningProcess {
+    when: AbortBashCalled(execution)
+    requires: execution.status = running
+
+    ensures: execution.status = killed
+    ensures: execution.abort_result = true
+
+    @guidance
+        -- The process is force-killed.
+}
+
+rule AbortBashNoOpWhenNotRunning {
+    when: AbortBashCalled(execution)
+    requires: execution.status != running
+
+    ensures: execution.abort_result = false
+}
+
+------------------------------------------------------------
+-- Actor Declarations
+------------------------------------------------------------
+
+actor AgentToolDispatcher {
+    identified_by: ToolCaller where caller_id != null
+}
+
+------------------------------------------------------------
+-- Surfaces
+------------------------------------------------------------
 
 surface BashToolApi {
     facing caller: AgentToolDispatcher
 
+    context execution: BashExecution
+
     provides:
-        ExecuteBash(args, opts)
-        AbortBashCalled()
+        ExecuteBash(execution)
+        AbortBashCalled(execution)
 
     exposes:
-        BashResult
+        execution.result.content
+        execution.result.is_error
+        execution.result.details
 
     @guidance
+        -- ExecuteBash creates a new BashExecution and triggers the
+        -- command resolution, policy resolution, and process spawn rules.
+        -- The context binds to the resulting execution for result exposure.
         -- Truncated bash output must provide recoverable full_output_path metadata.
         -- on_update currently receives final-result snapshots (not chunk-stream deltas).
         -- Timeout errors currently return timeout text without partial captured output.
+        -- Non-zero exit prepends "Command exited with code N" before truncated output.
 }
+
+------------------------------------------------------------
+-- Deferred Specifications
+------------------------------------------------------------
+
+deferred ProcessLifecycle.manage     -- see: tool_output.allium
+    -- Manages BashProcessSpawned → BashProcessFinished/BashProcessTimeout/BashProcessError
+    -- transitions. Handles process spawning, waiting, and timeout detection.
+
+------------------------------------------------------------
+-- Open Questions
+------------------------------------------------------------
+
+open question "Should timeout errors include partial captured output?"
+open question "Should on_update support streaming chunk deltas in addition to final snapshots?"
