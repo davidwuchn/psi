@@ -56,6 +56,12 @@
    :psi.agent-session/tool-call-attempt-count — streamed provider tool-call attempts
    :psi.agent-session/tool-call-attempt-unmatched-count — attempts without matching toolResult
    :psi.agent-session/tool-call-attempts — [{:psi.tool-call-attempt/*}], attempt-level stream entities
+   :psi.agent-session/provider-request-count — captured outbound provider requests
+   :psi.agent-session/provider-reply-count — captured inbound provider reply events
+   :psi.agent-session/provider-last-request — latest provider request entity
+   :psi.agent-session/provider-last-reply — latest provider reply entity
+   :psi.agent-session/provider-requests — [{:psi.provider-request/*}], recent provider requests
+   :psi.agent-session/provider-replies — [{:psi.provider-reply/*}], recent provider reply events
    :psi.agent-session/background-job-count — number of tracked background jobs in current thread
    :psi.agent-session/background-job-statuses — ordered status vocabulary for background jobs
    :psi.agent-session/background-jobs     — [{:psi.background-job/*}], current-thread background jobs
@@ -124,6 +130,25 @@
    :psi.tool-call-attempt/argument-bytes
    :psi.tool-call-attempt/executed?
    :psi.tool-call-attempt/result-recorded?
+
+   Provider request entities (nested under :psi.agent-session/provider-requests)
+   ─────────────────────────────────────────────────────────────────────────
+   :psi.provider-request/provider
+   :psi.provider-request/api
+   :psi.provider-request/url
+   :psi.provider-request/turn-id
+   :psi.provider-request/timestamp
+   :psi.provider-request/headers
+   :psi.provider-request/body
+
+   Provider reply entities (nested under :psi.agent-session/provider-replies)
+   ───────────────────────────────────────────────────────────────────────
+   :psi.provider-reply/provider
+   :psi.provider-reply/api
+   :psi.provider-reply/url
+   :psi.provider-reply/turn-id
+   :psi.provider-reply/timestamp
+   :psi.provider-reply/event
 
    Background job entities (nested under :psi.agent-session/background-jobs)
    ─────────────────────────────────────────────────────────────────────────
@@ -243,6 +268,9 @@
    ───────────────────────────────────────────────
    :psi.agent-session/cwd
    :psi.agent-session/git-branch          — nil when outside git, \"detached\" on detached HEAD
+   :psi.runtime/nrepl-host                — runtime nREPL host, or nil when disabled
+   :psi.runtime/nrepl-port                — runtime nREPL port, or nil when disabled
+   :psi.runtime/nrepl-endpoint            — runtime nREPL endpoint host:port, or nil when disabled
    :psi.agent-session/usage-input
    :psi.agent-session/usage-output
    :psi.agent-session/usage-cache-read
@@ -1076,6 +1104,82 @@
      :psi.agent-session/tool-call-attempt-unmatched-count unmatched
      :psi.agent-session/tool-call-attempts                attempts*}))
 
+(defn- provider-requests
+  [agent-session-ctx]
+  (vec (or (some-> (:provider-requests-atom agent-session-ctx) deref)
+           (some-> (:session-data-atom agent-session-ctx) deref :provider-requests)
+           [])))
+
+(defn- provider-replies
+  [agent-session-ctx]
+  (vec (or (some-> (:provider-replies-atom agent-session-ctx) deref)
+           (some-> (:session-data-atom agent-session-ctx) deref :provider-replies)
+           [])))
+
+(defn- provider-request->eql
+  [capture]
+  {:psi.provider-request/provider  (:provider capture)
+   :psi.provider-request/api       (:api capture)
+   :psi.provider-request/url       (:url capture)
+   :psi.provider-request/turn-id   (:turn-id capture)
+   :psi.provider-request/timestamp (:timestamp capture)
+   :psi.provider-request/headers   (get-in capture [:request :headers])
+   :psi.provider-request/body      (get-in capture [:request :body])})
+
+(defn- provider-reply->eql
+  [capture]
+  {:psi.provider-reply/provider  (:provider capture)
+   :psi.provider-reply/api       (:api capture)
+   :psi.provider-reply/url       (:url capture)
+   :psi.provider-reply/turn-id   (:turn-id capture)
+   :psi.provider-reply/timestamp (:timestamp capture)
+   :psi.provider-reply/event     (:event capture)})
+
+(pco/defresolver agent-session-provider-captures
+  "Resolve captured outbound provider requests and inbound provider reply events."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.agent-session/provider-request-count
+                 :psi.agent-session/provider-reply-count
+                 {:psi.agent-session/provider-last-request
+                  [:psi.provider-request/provider
+                   :psi.provider-request/api
+                   :psi.provider-request/url
+                   :psi.provider-request/turn-id
+                   :psi.provider-request/timestamp
+                   :psi.provider-request/headers
+                   :psi.provider-request/body]}
+                 {:psi.agent-session/provider-last-reply
+                  [:psi.provider-reply/provider
+                   :psi.provider-reply/api
+                   :psi.provider-reply/url
+                   :psi.provider-reply/turn-id
+                   :psi.provider-reply/timestamp
+                   :psi.provider-reply/event]}
+                 {:psi.agent-session/provider-requests
+                  [:psi.provider-request/provider
+                   :psi.provider-request/api
+                   :psi.provider-request/url
+                   :psi.provider-request/turn-id
+                   :psi.provider-request/timestamp
+                   :psi.provider-request/headers
+                   :psi.provider-request/body]}
+                 {:psi.agent-session/provider-replies
+                  [:psi.provider-reply/provider
+                   :psi.provider-reply/api
+                   :psi.provider-reply/url
+                   :psi.provider-reply/turn-id
+                   :psi.provider-reply/timestamp
+                   :psi.provider-reply/event]}]}
+  (let [requests* (mapv provider-request->eql (provider-requests agent-session-ctx))
+        replies*  (mapv provider-reply->eql (provider-replies agent-session-ctx))]
+    {:psi.agent-session/provider-request-count (count requests*)
+     :psi.agent-session/provider-reply-count   (count replies*)
+     :psi.agent-session/provider-last-request  (last requests*)
+     :psi.agent-session/provider-last-reply    (last replies*)
+     :psi.agent-session/provider-requests      requests*
+     :psi.agent-session/provider-replies       replies*}))
+
 ;; ── API error diagnostics (helpers) ─────────────────────
 
 (defn- error-message-text
@@ -1601,6 +1705,24 @@
    ::pco/output [:psi.agent-session/git-branch]}
   {:psi.agent-session/git-branch (git-branch-from-cwd cwd)})
 
+(pco/defresolver runtime-nrepl-info
+  "Expose runtime nREPL endpoint information from :nrepl-runtime-atom on session context.
+   Returns nil attrs when nREPL is not running/registered."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.runtime/nrepl-host
+                 :psi.runtime/nrepl-port
+                 :psi.runtime/nrepl-endpoint]}
+  (let [runtime* (some-> (:nrepl-runtime-atom agent-session-ctx) deref)
+        host     (:host runtime*)
+        port     (:port runtime*)
+        endpoint (or (:endpoint runtime*)
+                     (when (and (string? host) (integer? port))
+                       (str host ":" port)))]
+    {:psi.runtime/nrepl-host host
+     :psi.runtime/nrepl-port port
+     :psi.runtime/nrepl-endpoint endpoint}))
+
 (pco/defresolver agent-session-git-context
   "Bridge resolver: derive :git/context from :psi.agent-session/cwd so
    history resolvers can be queried from in-session app-query-tool roots."
@@ -1879,6 +2001,7 @@
    ;; Session-derived usage/git attrs
    agent-session-cwd
    agent-session-git-branch
+   runtime-nrepl-info
    agent-session-git-context
    agent-session-git-worktrees
    agent-session-git-worktree-current
@@ -1899,6 +2022,7 @@
    agent-session-tool-calls
    tool-call-result
    agent-session-tool-call-attempts
+   agent-session-provider-captures
    ;; API error diagnostics (hierarchical)
    api-error-list
    api-error-detail

@@ -141,6 +141,42 @@
       (is (= (sort-by (juxt :provider :id) catalog) catalog)
           "catalog should be sorted by provider then model id"))))
 
+(deftest nrepl-runtime-resolver-test
+  (testing "runtime nREPL attrs resolve nil when runtime has no nREPL server"
+    (let [result (q [:psi.runtime/nrepl-host
+                     :psi.runtime/nrepl-port
+                     :psi.runtime/nrepl-endpoint])]
+      (is (contains? result :psi.runtime/nrepl-host))
+      (is (contains? result :psi.runtime/nrepl-port))
+      (is (contains? result :psi.runtime/nrepl-endpoint))
+      (is (nil? (:psi.runtime/nrepl-host result)))
+      (is (nil? (:psi.runtime/nrepl-port result)))
+      (is (nil? (:psi.runtime/nrepl-endpoint result)))))
+
+  (testing "runtime nREPL attrs reflect effective runtime atom values"
+    (let [runtime-atom (atom {:host "localhost"
+                              :port 7888
+                              :endpoint "localhost:7888"})
+          ctx          (session/create-context {:persist? false
+                                                :nrepl-runtime-atom runtime-atom})
+          result       (q-in ctx [:psi.runtime/nrepl-host
+                                  :psi.runtime/nrepl-port
+                                  :psi.runtime/nrepl-endpoint])]
+      (is (= "localhost" (:psi.runtime/nrepl-host result)))
+      (is (= 7888 (:psi.runtime/nrepl-port result)))
+      (is (= "localhost:7888" (:psi.runtime/nrepl-endpoint result)))))
+
+  (testing "runtime nREPL attrs are discoverable in graph root-queryable attrs and edges"
+    (let [result    (q [:psi.graph/root-queryable-attrs :psi.graph/edges])
+          root-attrs (set (:psi.graph/root-queryable-attrs result))
+          edge-attrs (set (keep :attribute (:psi.graph/edges result)))]
+      (is (contains? root-attrs :psi.runtime/nrepl-host))
+      (is (contains? root-attrs :psi.runtime/nrepl-port))
+      (is (contains? root-attrs :psi.runtime/nrepl-endpoint))
+      (is (contains? edge-attrs :psi.runtime/nrepl-host))
+      (is (contains? edge-attrs :psi.runtime/nrepl-port))
+      (is (contains? edge-attrs :psi.runtime/nrepl-endpoint)))))
+
 (deftest authenticated-providers-resolver-test
   (testing "resolver returns empty vector when oauth context is absent"
     (let [result (q [:psi.agent-session/authenticated-providers])]

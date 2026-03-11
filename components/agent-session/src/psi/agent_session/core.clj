@@ -41,6 +41,9 @@
    :journal-atom        — atom of [SessionEntry]
    :flush-state-atom    — atom {:flushed? bool :session-file File?}
    :tool-call-attempts-atom — atom of streamed provider tool-call attempt events
+   :provider-requests-atom — atom of outbound provider request captures (redacted)
+   :provider-replies-atom — atom of inbound provider reply-event captures
+   :nrepl-runtime-atom — atom {:host string :port int :endpoint string} or nil
    :cwd                 — working directory string (used for session dir layout)
    :compaction-fn       — (fn [session-data preparation instructions]) → CompactionResult
    :branch-summary-fn   — (fn [session-data entries instructions]) → BranchSummaryResult
@@ -259,9 +262,10 @@
     :cwd               — working directory for session file layout (default: process cwd)
     :persist?          — if false, disable all disk I/O (default: true)
     :oauth-ctx         — optional OAuth context for extension auth helpers
+    :nrepl-runtime-atom — optional atom holding {:host :port :endpoint} runtime info
     :ui-type           — runtime UI type hint (:console | :tui | :emacs)"
   ([] (create-context {}))
-  ([{:keys [initial-session compaction-fn branch-summary-fn agent-initial config cwd persist? event-queue oauth-ctx recursion-ctx ui-type]
+  ([{:keys [initial-session compaction-fn branch-summary-fn agent-initial config cwd persist? event-queue oauth-ctx recursion-ctx nrepl-runtime-atom ui-type]
      :or   {persist? true}}]
    (let [sc-env            (sc/create-sc-env)
          sc-session-id     (java.util.UUID/randomUUID)
@@ -281,12 +285,15 @@
                             :sc-session-id         sc-session-id
                             :started-at            (java.time.Instant/now)
                             :session-data-atom      session-data-atom
-                            :tool-output-stats-atom (atom {:calls []
-                                                           :aggregates {:total-context-bytes 0
-                                                                        :by-tool {}
-                                                                        :limit-hits-by-tool {}}})
+                            :tool-output-stats-atom  (atom {:calls []
+                                                            :aggregates {:total-context-bytes 0
+                                                                         :by-tool {}
+                                                                         :limit-hits-by-tool {}}})
                             :tool-call-attempts-atom (atom [])
-                            :agent-ctx              agent-ctx
+                            :provider-requests-atom  (atom [])
+                            :provider-replies-atom   (atom [])
+                            :nrepl-runtime-atom      (or nrepl-runtime-atom (atom nil))
+                            :agent-ctx               agent-ctx
                             :extension-registry    ext-reg
                             :workflow-registry     wf-reg
                             :journal-atom          journal-atom
@@ -954,7 +961,6 @@
   [ctx event-name event-data]
   (ext/dispatch-in (:extension-registry ctx) event-name event-data))
 
-
 (defn- maybe-track-background-workflow-job!
   [ctx op-sym full-params payload]
   (when (and (contains? #{'psi.extension.workflow/create
@@ -1012,7 +1018,7 @@
 
 (defn- run-extension-mutation-in!
   "Execute a single EQL mutation op against `ctx` and return its payload.
-   `op-sym` must be a qualified mutation symbol." 
+   `op-sym` must be a qualified mutation symbol."
   [ctx op-sym params]
   (let [qctx (query/create-query-context)
         _    (register-resolvers-in! qctx false)
@@ -1045,10 +1051,10 @@
                              (or (:tool-name job) "workflow"))
                 truncation  (tool-output/head-truncate payload-edn policy)
                 spill-path  (when (:truncated truncation)
-                             (tool-output/persist-truncated-output!
-                              (or (:tool-name job) "workflow")
-                              (or (:job-id job) "job")
-                              payload-edn))
+                              (tool-output/persist-truncated-output!
+                               (or (:tool-name job) "workflow")
+                               (or (:job-id job) "job")
+                               payload-edn))
                 _           (when spill-path
                               (bg-jobs/set-terminal-payload-file-in!
                                store
@@ -2071,7 +2077,7 @@
 
 (pco/defmutation create-workflow
   [_ {:keys [psi/agent-session-ctx ext-path type id input meta auto-start? start-event
-              track-background-job?]}]
+             track-background-job?]}]
   {::pco/op-name 'psi.extension.workflow/create
    ::pco/params  [:psi/agent-session-ctx :ext-path :type]
    ::pco/output  [:psi.extension.workflow/created?

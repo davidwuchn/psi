@@ -297,6 +297,39 @@
       (is (str/includes? prompt "Current capabilities (from :psi.graph/capabilities):"))
       (is (str/includes? prompt "- agent-session (ops=")))))
 
+(deftest bootstrap-runtime-session-wires-nrepl-runtime-atom-test
+  (let [orig @main/nrepl-runtime]
+    (try
+      (reset! main/nrepl-runtime {:host "localhost"
+                                  :port 8999
+                                  :endpoint "localhost:8999"})
+      (with-redefs [oauth/create-context (fn [] nil)
+                    pt/discover-templates (fn [] [])
+                    skills/discover-skills (fn [] {:skills [] :diagnostics []})
+                    sys-prompt/discover-context-files (fn [_] [])
+                    sys-prompt/build-system-prompt (fn [_] "")
+                    ext/discover-extension-paths (fn [& _] [])
+                    introspection/register-resolvers! (fn [] nil)
+                    memory-runtime/sync-memory-layer! (fn [_] {:ok? true})
+                    session/bootstrap-session-in!
+                    (fn [ctx _]
+                      (session/new-session-in! ctx)
+                      {:extension-errors [] :extension-loaded-count 0})]
+        (let [{:keys [ctx]} (#'main/bootstrap-runtime-session!
+                             {:provider :anthropic
+                              :id "test-model"
+                              :name "Test Model"
+                              :supports-reasoning false}
+                             {})
+              result (session/query-in ctx [:psi.runtime/nrepl-host
+                                            :psi.runtime/nrepl-port
+                                            :psi.runtime/nrepl-endpoint])]
+          (is (= "localhost" (:psi.runtime/nrepl-host result)))
+          (is (= 8999 (:psi.runtime/nrepl-port result)))
+          (is (= "localhost:8999" (:psi.runtime/nrepl-endpoint result)))))
+      (finally
+        (reset! main/nrepl-runtime orig)))))
+
 (deftest bootstrap-runtime-session-applies-project-preferences-test
   (let [cwd (str (System/getProperty "java.io.tmpdir") "/psi-main-project-prefs-" (java.util.UUID/randomUUID))
         _   (.mkdirs (java.io.File. cwd))]

@@ -77,6 +77,9 @@
 (defonce session-state
   (atom nil))
 
+(defonce nrepl-runtime
+  (atom nil))
+
 ;; ============================================================
 ;; nREPL server (started conditionally via --nrepl)
 ;; ============================================================
@@ -87,10 +90,14 @@
   [port]
   (let [start-server (requiring-resolve 'nrepl.server/start-server)
         server       (start-server :port port)
+        host         "localhost"
         port-file    (java.io.File. ".nrepl-port")]
+    (reset! nrepl-runtime {:host host
+                           :port (:port server)
+                           :endpoint (str host ":" (:port server))})
     (spit port-file (str (:port server)))
     (.deleteOnExit port-file)
-    (println (str "  nREPL : localhost:" (:port server)
+    (println (str "  nREPL : " host ":" (:port server)
                   " (connect with your editor)"))
     server))
 
@@ -98,6 +105,7 @@
   (when server
     (let [stop-server (requiring-resolve 'nrepl.server/stop-server)
           port-file   (java.io.File. ".nrepl-port")]
+      (reset! nrepl-runtime nil)
       (stop-server server)
       (when (.exists port-file)
         (when (= (str/trim (slurp port-file)) (str (:port server)))
@@ -519,6 +527,7 @@
                          :event-queue event-queue
                          :oauth-ctx oauth-ctx
                          :recursion-ctx recursion-ctx
+                         :nrepl-runtime-atom nrepl-runtime
                          :ui-type ui-type})
         ext-paths      (ext/discover-extension-paths [] cwd)
         app-query-tool (tools/make-app-query-tool (fn [q] (session/query-in ctx q)))
@@ -578,7 +587,8 @@
                                                :ui-type :console})]
      ;; Expose state for nREPL introspection
      (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model
-                            :oauth-ctx oauth-ctx})
+                            :oauth-ctx oauth-ctx
+                            :nrepl-runtime-atom nrepl-runtime})
      (print-banner ai-model templates skills ctx)
      (print-initial-transcript! startup-rehydrate)
      (let [cmd-opts {:oauth-ctx oauth-ctx
@@ -688,7 +698,8 @@
 
          ;; Expose state for nREPL introspection
          _         (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model
-                                          :oauth-ctx oauth-ctx})
+                                          :oauth-ctx oauth-ctx
+                                          :nrepl-runtime-atom nrepl-runtime})
 
          ;; Helper: put an immediate assistant message on the TUI queue.
          reply!    (fn [^java.util.concurrent.LinkedBlockingQueue queue text]
@@ -845,7 +856,10 @@
                                   :on-new-session! (fn []
                                                      (start-new-session-with-startup! ctx nil ai-model))})
                request-handler (rpc/make-session-request-handler ctx)]
-           (reset! session-state {:ctx ctx :ai-model ai-model :oauth-ctx oauth-ctx})
+           (reset! session-state {:ctx ctx
+                                  :ai-model ai-model
+                                  :oauth-ctx oauth-ctx
+                                  :nrepl-runtime-atom nrepl-runtime})
            (rpc/run-stdio-loop! {:request-handler request-handler
                                  :state state
                                  :out protocol-out})))
