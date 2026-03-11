@@ -890,6 +890,84 @@
       (is (some #(= "Final response" (:text %))
                 (get-in assistant-evt [:data :content]))))))
 
+(deftest rpc-openai-chat-completions-tool-id-late-still-executes-test
+  (testing "openai chat completions executes tool calls when streamed id arrives late"
+    (let [ctx       (session/create-context)
+          _         (session/set-active-tools-in! ctx [tools/bash-tool])
+          state     (atom {:ready? true
+                           :pending {}
+                           :sync-on-git-head-change? false
+                           :rpc-ai-model (ai-models/get-model :gpt-5)})
+          handler   (rpc/make-session-request-handler ctx)
+          requests  (atom [])
+          call-n    (atom 0)
+          first-sse (str
+                     "data: " (json/generate-string
+                                {:choices [{:delta {:role "assistant"}}]}) "\n\n"
+                     "data: " (json/generate-string
+                                {:choices [{:delta {:tool_calls [{:index 0
+                                                                  :function {:name "bash"
+                                                                             :arguments "{\"command\":\"pwd\"}"}}]}}]}) "\n\n"
+                     "data: " (json/generate-string
+                                {:choices [{:delta {:tool_calls [{:index 0
+                                                                  :id "call_late"
+                                                                  :function {:name "bash"}}]}}]}) "\n\n"
+                     "data: " (json/generate-string
+                                {:choices [{:finish_reason "tool_calls"}]
+                                 :usage {:prompt_tokens 2
+                                         :completion_tokens 2
+                                         :total_tokens 4}}) "\n\n")
+          second-sse (str
+                      "data: " (json/generate-string
+                                 {:choices [{:delta {:role "assistant"}}]}) "\n\n"
+                      "data: " (json/generate-string
+                                 {:choices [{:delta {:content "Final response"}}]}) "\n\n"
+                      "data: " (json/generate-string
+                                 {:choices [{:finish_reason "stop"}]
+                                  :usage {:prompt_tokens 2
+                                          :completion_tokens 2
+                                          :total_tokens 4}}) "\n\n")
+          input     (str
+                     "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                     "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"tool/start\" \"tool/delta\" \"tool/executing\" \"tool/result\" \"assistant/message\"]}}\n"
+                     "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"run pwd\"}}\n")
+          {:keys [out-lines]}
+          (with-redefs [runtime/resolve-api-key-in (fn [_ctx _model] "sk-test")
+                        http/post (fn [url req]
+                                    (swap! requests conj {:url url :req req})
+                                    (let [n (swap! call-n inc)]
+                                      {:body (stream-body (if (= 1 n) first-sse second-sse))}))]
+            (run-loop input handler state 900))
+          frames          (parse-frames out-lines)
+          events          (filter #(= :event (:kind %)) frames)
+          prompt-frame    (some #(when (and (= :response (:kind %))
+                                            (= "prompt" (:op %))) %) frames)
+          tool-start-evt  (some #(when (= "tool/start" (:event %)) %) events)
+          tool-delta-evt  (some #(when (= "tool/delta" (:event %)) %) events)
+          tool-exec-evt   (some #(when (= "tool/executing" (:event %)) %) events)
+          tool-result-evt (some #(when (= "tool/result" (:event %)) %) events)
+          assistant-evt   (some #(when (= "assistant/message" (:event %)) %) events)]
+      (is (some? prompt-frame))
+      (is (true? (get-in prompt-frame [:data :accepted])))
+
+      (is (= 2 (count @requests)))
+      (is (= "https://api.openai.com/v1/chat/completions"
+             (:url (first @requests))))
+      (let [body (json/parse-string (get-in (first @requests) [:req :body]) true)]
+        (is (= "gpt-5" (:model body)))
+        (is (= true (:stream body)))
+        (is (= "bash" (get-in body [:tools 0 :function :name]))))
+
+      (is (= "call_late" (get-in tool-start-evt [:data :tool-id])))
+      (is (= "bash" (get-in tool-start-evt [:data :tool-name])))
+      (is (= "{\"command\":\"pwd\"}" (get-in tool-delta-evt [:data :arguments])))
+      (is (= {"command" "pwd"}
+             (get-in tool-exec-evt [:data :parsed-args])))
+      (is (false? (get-in tool-result-evt [:data :is-error])))
+      (is (= "assistant" (get-in assistant-evt [:data :role])))
+      (is (some #(= "Final response" (:text %))
+                (get-in assistant-evt [:data :content]))))))
+
 (deftest rpc-session-resume-and-rehydrate-events-test
   (testing "new_session emits session/resumed and session/rehydrated canonical events"
     (let [ctx (session/create-context)

@@ -145,6 +145,17 @@
 
     :else nil))
 
+(defn- normalize-tool-arguments
+  "Normalize streamed function arguments into a string payload."
+  [args]
+  (cond
+    (nil? args) nil
+    (string? args) args
+    (map? args) (json/generate-string args)
+    (sequential? args) (or (join-parts (keep string-fragment args))
+                           (str args))
+    :else (str args)))
+
 (defn transform-messages
   "Transform conversation messages to OpenAI chat completions format.
    Handles user, assistant (with optional tool_calls), and tool-result messages."
@@ -297,84 +308,168 @@
      {:type :error            :error-message ...}
    "
   [conversation model options consume-fn]
-  (let [request       (build-request conversation model options)
-        started-tools (atom #{})
-        done?         (atom false)]
-    (try
-      (let [response (http/post (str (:base-url model) "/chat/completions")
-                                (merge request {:as :stream :cookie-policy :none}))]
-        (with-open [reader (io/reader (:body response))]
-          (doseq [line (line-seq reader)]
-            (when-let [chunk (parse-sse-line line)]
-              (let [choice (first (:choices chunk))
-                    delta  (:delta choice)
-                    text-delta (extract-text-delta delta)
-                    reasoning-delta (extract-reasoning-delta delta)]
+  (let [request          (build-request conversation model options)
+        stream-started?  (atom false)
+        done?            (atom false)
+        next-tool-index  (atom 0)
+        tool-index-by-id (atom {})
+        tool-state       (atom {})]
+    (letfn [(emit-start! []
+              (when (compare-and-set! stream-started? false true)
+                (consume-fn {:type :start})))
 
-                ;; Start of response — fires once, does NOT gate other fields.
-                (when (and choice (= (:role delta) "assistant"))
-                  (consume-fn {:type :start}))
-
-                ;; Non-terminal deltas can co-exist in one chunk.
-                (when (seq text-delta)
-                  (consume-fn {:type :text-delta
-                               :content-index 0
-                               :delta text-delta}))
-
-                (when (seq reasoning-delta)
-                  (consume-fn {:type :thinking-delta
-                               :content-index 0
-                               :delta reasoning-delta}))
-
-                ;; Tool calls
-                (doseq [tool-call (:tool_calls delta)]
-                  (let [idx (:index tool-call)]
-                    (when (and (:id tool-call)
-                               (not (contains? @started-tools idx)))
-                      (swap! started-tools conj idx)
-                      (consume-fn {:type :toolcall-start
-                                   :content-index idx
-                                   :id (:id tool-call)
-                                   :name (get-in tool-call [:function :name])}))
-                    (when-let [args (get-in tool-call [:function :arguments])]
-                      (when (seq args)
-                        (consume-fn {:type :toolcall-delta
-                                     :content-index idx
-                                     :delta args})))))
-
+            (resolve-tool-index [tool-call fallback-idx]
+              (let [idx    (:index tool-call)
+                    call-id (:id tool-call)]
                 (cond
-                  ;; Completion with usage (final chunk)
-                  (:usage chunk)
-                  (let [usage (:usage chunk)
-                        usage-map {:input-tokens       (or (:prompt_tokens usage) 0)
-                                   :output-tokens      (or (:completion_tokens usage) 0)
-                                   :cache-read-tokens  0
-                                   :cache-write-tokens 0
-                                   :total-tokens       (or (:total_tokens usage)
-                                                           (+ (or (:prompt_tokens usage) 0)
-                                                              (or (:completion_tokens usage) 0)))}]
-                    (doseq [idx @started-tools]
-                      (consume-fn {:type :toolcall-end :content-index idx}))
-                    (reset! started-tools #{})
-                    (when-not @done?
-                      (reset! done? true)
-                      (consume-fn {:type :done
-                                   :reason (keyword (get-in choice [:finish_reason] "stop"))
-                                   :usage (assoc usage-map
-                                                 :cost (models/calculate-cost model usage-map))})))
-
-                  ;; Finish without usage
-                  (:finish_reason choice)
+                  (number? idx)
                   (do
-                    (doseq [idx @started-tools]
-                      (consume-fn {:type :toolcall-end :content-index idx}))
-                    (reset! started-tools #{})
-                    (when-not @done?
-                      (reset! done? true)
-                      (consume-fn {:type :done
-                                   :reason (keyword (:finish_reason choice))})))))))))
-      (catch Exception e
-        (consume-fn (exception->error e))))))
+                    (when (seq call-id)
+                      (swap! tool-index-by-id assoc call-id idx))
+                    (swap! next-tool-index #(max % (inc idx)))
+                    idx)
+
+                  (and (seq call-id)
+                       (contains? @tool-index-by-id call-id))
+                  (get @tool-index-by-id call-id)
+
+                  :else
+                  (let [allocated (or fallback-idx @next-tool-index)]
+                    (swap! next-tool-index #(max % (inc allocated)))
+                    (when (seq call-id)
+                      (swap! tool-index-by-id assoc call-id allocated))
+                    allocated))))
+
+            (ensure-tool-entry! [idx]
+              (swap! tool-state update idx
+                     (fn [s]
+                       (merge {:id nil
+                               :name nil
+                               :started? false
+                               :pending-args ""}
+                              s))))
+
+            (start-tool-if-ready! [idx force?]
+              (let [{:keys [id name started? pending-args]} (get @tool-state idx)
+                    id* (or id (when force? (str "call_" (UUID/randomUUID))))]
+                (when (and (not started?) (seq name) (seq id*))
+                  (swap! tool-state assoc idx
+                         {:id id*
+                          :name name
+                          :started? true
+                          :pending-args ""})
+                  (emit-start!)
+                  (consume-fn {:type :toolcall-start
+                               :content-index idx
+                               :id id*
+                               :name name})
+                  (when (seq pending-args)
+                    (consume-fn {:type :toolcall-delta
+                                 :content-index idx
+                                 :delta pending-args})))))
+
+            (process-tool-call! [idx tool-call]
+              (let [call-id   (:id tool-call)
+                    call-name (get-in tool-call [:function :name])
+                    args      (normalize-tool-arguments
+                               (get-in tool-call [:function :arguments]))]
+                (ensure-tool-entry! idx)
+                (when (seq call-id)
+                  (swap! tool-state assoc-in [idx :id] call-id)
+                  (swap! tool-index-by-id assoc call-id idx))
+                (when (seq call-name)
+                  (swap! tool-state assoc-in [idx :name] call-name))
+
+                (start-tool-if-ready! idx false)
+
+                (when (seq args)
+                  (if (get-in @tool-state [idx :started?])
+                    (do
+                      (emit-start!)
+                      (consume-fn {:type :toolcall-delta
+                                   :content-index idx
+                                   :delta args}))
+                    (swap! tool-state update-in [idx :pending-args] str args)))
+
+                (start-tool-if-ready! idx false)))
+
+            (force-start-pending-tools! []
+              (doseq [idx (sort (keys @tool-state))]
+                (start-tool-if-ready! idx true)))
+
+            (emit-tool-ends! []
+              (doseq [[idx {:keys [started?]}] (sort-by key @tool-state)]
+                (when started?
+                  (consume-fn {:type :toolcall-end
+                               :content-index idx})))
+              (reset! tool-state {}))]
+
+      (try
+        (let [response (http/post (str (:base-url model) "/chat/completions")
+                                  (merge request {:as :stream :cookie-policy :none}))]
+          (with-open [reader (io/reader (:body response))]
+            (doseq [line (line-seq reader)]
+              (when-let [chunk (parse-sse-line line)]
+                (let [choice          (first (:choices chunk))
+                      delta           (:delta choice)
+                      text-delta      (extract-text-delta delta)
+                      reasoning-delta (extract-reasoning-delta delta)]
+
+                  ;; Start of response — fires once, does NOT gate other fields.
+                  (when (and choice (= (:role delta) "assistant"))
+                    (emit-start!))
+
+                  ;; Non-terminal deltas can co-exist in one chunk.
+                  (when (seq text-delta)
+                    (emit-start!)
+                    (consume-fn {:type :text-delta
+                                 :content-index 0
+                                 :delta text-delta}))
+
+                  (when (seq reasoning-delta)
+                    (emit-start!)
+                    (consume-fn {:type :thinking-delta
+                                 :content-index 0
+                                 :delta reasoning-delta}))
+
+                  ;; Tool calls
+                  (doseq [[fallback-idx tool-call] (map-indexed vector (:tool_calls delta))]
+                    (let [idx (resolve-tool-index tool-call fallback-idx)]
+                      (process-tool-call! idx tool-call)))
+
+                  (cond
+                    ;; Completion with usage (final chunk)
+                    (:usage chunk)
+                    (let [usage (:usage chunk)
+                          usage-map {:input-tokens       (or (:prompt_tokens usage) 0)
+                                     :output-tokens      (or (:completion_tokens usage) 0)
+                                     :cache-read-tokens  0
+                                     :cache-write-tokens 0
+                                     :total-tokens       (or (:total_tokens usage)
+                                                             (+ (or (:prompt_tokens usage) 0)
+                                                                (or (:completion_tokens usage) 0)))}]
+                      (force-start-pending-tools!)
+                      (emit-tool-ends!)
+                      (when-not @done?
+                        (reset! done? true)
+                        (emit-start!)
+                        (consume-fn {:type :done
+                                     :reason (keyword (get-in choice [:finish_reason] "stop"))
+                                     :usage (assoc usage-map
+                                                   :cost (models/calculate-cost model usage-map))})))
+
+                    ;; Finish without usage
+                    (:finish_reason choice)
+                    (do
+                      (force-start-pending-tools!)
+                      (emit-tool-ends!)
+                      (when-not @done?
+                        (reset! done? true)
+                        (emit-start!)
+                        (consume-fn {:type :done
+                                     :reason (keyword (:finish_reason choice))})))))))))
+        (catch Exception e
+          (consume-fn (exception->error e)))))))
 
 ;; ───────────────────────────────────────────────────────────────────────────
 ;; OpenAI Codex Responses API (ChatGPT backend)

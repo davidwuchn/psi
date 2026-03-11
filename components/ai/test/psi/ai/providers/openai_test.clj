@@ -228,6 +228,49 @@
       (is (some #(= :toolcall-end (:type %)) @events))
       (is (some #(= :done (:type %)) @events)))))
 
+(deftest completions-tool-call-starts-when-id-arrives-late-test
+  (testing "chat completions buffers tool args until call id is available"
+    (let [model  (models/get-model :gpt-5)
+          convo  (-> (conv/create "sys")
+                     (conv/add-user-message "run pwd"))
+          events (atom [])
+          sse    (str
+                  "data: " (json/generate-string
+                             {:choices [{:delta {:role "assistant"}}]}) "\n\n"
+                  "data: " (json/generate-string
+                             {:choices [{:delta {:tool_calls [{:index 0
+                                                               :function {:name "bash"
+                                                                          :arguments "{\"command\":\"pwd\"}"}}]}}]}) "\n\n"
+                  "data: " (json/generate-string
+                             {:choices [{:delta {:tool_calls [{:index 0
+                                                               :id "call_late"
+                                                               :function {:name "bash"}}]}}]}) "\n\n"
+                  "data: " (json/generate-string
+                             {:choices [{:finish_reason "tool_calls"}]
+                              :usage {:prompt_tokens 1 :completion_tokens 1 :total_tokens 2}}) "\n\n")]
+      (with-redefs [http/post (fn [_url _req]
+                                {:body (stream-body sse)})]
+        ((:stream openai/provider)
+         convo model {:api-key "sk-test"}
+         (fn [ev] (swap! events conj ev))))
+
+      (is (some #(= :start (:type %)) @events))
+      (is (some #(and (= :toolcall-start (:type %))
+                      (= 0 (:content-index %))
+                      (= "call_late" (:id %))
+                      (= "bash" (:name %)))
+                @events))
+      (is (some #(and (= :toolcall-delta (:type %))
+                      (= 0 (:content-index %))
+                      (= "{\"command\":\"pwd\"}" (:delta %)))
+                @events))
+      (is (some #(and (= :toolcall-end (:type %))
+                      (= 0 (:content-index %)))
+                @events))
+      (is (some #(and (= :done (:type %))
+                      (= :tool_calls (:reason %)))
+                @events)))))
+
 (deftest completions-thinking-level-maps-to-reasoning-effort-test
   (let [model (models/get-model :gpt-5)
         convo (-> (conv/create "sys") (conv/add-user-message "hi"))]
