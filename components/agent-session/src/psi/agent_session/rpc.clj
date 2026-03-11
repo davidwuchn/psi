@@ -38,6 +38,7 @@
    "steer"
    "follow_up"
    "abort"
+   "interrupt"
    "list_background_jobs"
    "inspect_background_job"
    "cancel_background_job"
@@ -608,7 +609,7 @@
     "error"})
 
 (def ^:private required-event-payload-keys
-  {"session/updated" #{:session-id :phase :is-streaming :is-compacting :pending-message-count :retry-attempt}
+  {"session/updated" #{:session-id :phase :is-streaming :is-compacting :pending-message-count :retry-attempt :interrupt-pending}
    "session/resumed" #{:session-id :session-file :message-count}
    "session/rehydrated" #{:messages :tool-calls :tool-order}
    "assistant/delta" #{:text}
@@ -693,6 +694,7 @@
      :pending-message-count       (+ (count (:steering-messages sd))
                                      (count (:follow-up-messages sd)))
      :retry-attempt               (or (:retry-attempt sd) 0)
+     :interrupt-pending           (boolean (:interrupt-pending sd))
      :model-provider              (:provider model)
      :model-id                    (:id model)
      :model-reasoning             (boolean (:reasoning model))
@@ -1369,6 +1371,14 @@
            (do
              (session/abort-in! ctx)
              (response-frame (:id request) op true {:accepted true}))
+
+           "interrupt"
+           (let [{:keys [accepted? pending? dropped-steering-text]}
+                 (session/request-interrupt-in! ctx)]
+             (response-frame (:id request) op true
+                             {:accepted accepted?
+                              :pending  pending?
+                              :dropped-steering-text (or dropped-steering-text "")}))
 
            "list_background_jobs"
            (handle-list-background-jobs! ctx request params)

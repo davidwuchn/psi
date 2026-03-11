@@ -290,6 +290,12 @@ Also tolerates cumulative snapshots that differ near previous tail
 (defn- now-ms []
   (System/currentTimeMillis))
 
+(defn- append-tool-call-attempt!
+  [agent-session-ctx attempt]
+  (when-let [attempts-atom (:tool-call-attempts-atom agent-session-ctx)]
+    (swap! attempts-atom conj
+           (assoc attempt :timestamp (java.time.Instant/now)))))
+
 (defn- wait-for-turn-result
   "Wait for `done-p` with an idle timeout.
 
@@ -326,8 +332,9 @@ Also tolerates cumulative snapshots that differ near previous tail
 
    `extra-ai-options` — merged into the ai-options map sent to the provider
                         (e.g. {:api-key \"...\"})"
-  [ai-ctx agent-ctx ai-model turn-ctx-atom extra-ai-options progress-queue]
+  [ai-ctx agent-session-ctx agent-ctx ai-model turn-ctx-atom extra-ai-options progress-queue]
   (let [data             (agent/get-data-in agent-ctx)
+        turn-id          (str (java.util.UUID/randomUUID))
         system-prompt    (:system-prompt data)
         messages         (:messages data)
         agent-tools      (:tools data)
@@ -362,19 +369,40 @@ Also tolerates cumulative snapshots that differ near previous tail
                                                      (str (or d ""))))})
 
                     :toolcall-start
-                    (turn-sc/send-event! turn-ctx :turn/toolcall-start
-                                         {:content-index (:content-index event)
-                                          :tool-id       (:id event)
-                                          :tool-name     (:name event)})
+                    (do
+                      (append-tool-call-attempt!
+                       agent-session-ctx
+                       {:turn-id       turn-id
+                        :event-kind    :toolcall-start
+                        :content-index (:content-index event)
+                        :id            (:id event)
+                        :name          (:name event)})
+                      (turn-sc/send-event! turn-ctx :turn/toolcall-start
+                                           {:content-index (:content-index event)
+                                            :tool-id       (:id event)
+                                            :tool-name     (:name event)}))
 
                     :toolcall-delta
-                    (turn-sc/send-event! turn-ctx :turn/toolcall-delta
-                                         {:content-index (:content-index event)
-                                          :delta         (:delta event)})
+                    (do
+                      (append-tool-call-attempt!
+                       agent-session-ctx
+                       {:turn-id       turn-id
+                        :event-kind    :toolcall-delta
+                        :content-index (:content-index event)
+                        :delta         (:delta event)})
+                      (turn-sc/send-event! turn-ctx :turn/toolcall-delta
+                                           {:content-index (:content-index event)
+                                            :delta         (:delta event)}))
 
                     :toolcall-end
-                    (turn-sc/send-event! turn-ctx :turn/toolcall-end
-                                         {:content-index (:content-index event)})
+                    (do
+                      (append-tool-call-attempt!
+                       agent-session-ctx
+                       {:turn-id       turn-id
+                        :event-kind    :toolcall-end
+                        :content-index (:content-index event)})
+                      (turn-sc/send-event! turn-ctx :turn/toolcall-end
+                                           {:content-index (:content-index event)}))
 
                     :done
                     (turn-sc/send-event! turn-ctx :turn/done
@@ -589,7 +617,7 @@ Also tolerates cumulative snapshots that differ near previous tail
    (run-turn! ai-ctx agent-session-ctx agent-ctx ai-model turn-ctx-atom extra-ai-options nil))
   ([ai-ctx agent-session-ctx agent-ctx ai-model turn-ctx-atom extra-ai-options progress-queue]
    (agent/emit-in! agent-ctx {:type :turn-start})
-   (let [assistant-msg (stream-turn! ai-ctx agent-ctx ai-model turn-ctx-atom
+   (let [assistant-msg (stream-turn! ai-ctx agent-session-ctx agent-ctx ai-model turn-ctx-atom
                                      extra-ai-options progress-queue)
          tool-calls    (extract-tool-calls assistant-msg)]
      (agent/emit-turn-end-in! agent-ctx assistant-msg [])

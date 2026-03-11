@@ -40,6 +40,7 @@
    :workflow-registry   — WorkflowRegistry record (extension workflows)
    :journal-atom        — atom of [SessionEntry]
    :flush-state-atom    — atom {:flushed? bool :session-file File?}
+   :tool-call-attempts-atom — atom of streamed provider tool-call attempt events
    :cwd                 — working directory string (used for session dir layout)
    :compaction-fn       — (fn [session-data preparation instructions]) → CompactionResult
    :branch-summary-fn   — (fn [session-data entries instructions]) → BranchSummaryResult
@@ -279,12 +280,13 @@
          ctx               {:sc-env                sc-env
                             :sc-session-id         sc-session-id
                             :started-at            (java.time.Instant/now)
-                            :session-data-atom     session-data-atom
+                            :session-data-atom      session-data-atom
                             :tool-output-stats-atom (atom {:calls []
                                                            :aggregates {:total-context-bytes 0
                                                                         :by-tool {}
                                                                         :limit-hits-by-tool {}}})
-                            :agent-ctx             agent-ctx
+                            :tool-call-attempts-atom (atom [])
+                            :agent-ctx              agent-ctx
                             :extension-registry    ext-reg
                             :workflow-registry     wf-reg
                             :journal-atom          journal-atom
@@ -602,7 +604,9 @@
   "Request a deferred interrupt at the next turn boundary.
 
    Behavior:
-   - while streaming: mark :interrupt-pending and drop queued steering only
+   - while streaming, not yet pending: mark :interrupt-pending, drop steering
+   - while streaming, already pending: idempotent — preserve original timestamp,
+     still drop any newly queued steering
    - while idle: silent no-op
 
    Returns {:accepted? bool :pending? bool :dropped-steering-text string}."
@@ -610,7 +614,8 @@
   (let [phase (sc-phase-in ctx)
         sd    (get-session-data-in ctx)]
     (if (= :streaming phase)
-      (let [agent-data           (agent/get-data-in (:agent-ctx ctx))
+      (let [already-pending?     (boolean (:interrupt-pending sd))
+            agent-data           (agent/get-data-in (:agent-ctx ctx))
             queued-steering-msgs (:steering-queue agent-data)
             queued-steering-texts (keep (fn [msg]
                                           (some (fn [block]
@@ -624,12 +629,16 @@
                                        (remove str/blank?)
                                        distinct)
             dropped-text          (str/join "\n" dropped-texts)]
-        (swap-session! ctx assoc
-                       :interrupt-pending true
-                       :interrupt-requested-at (java.time.Instant/now)
-                       :steering-messages [])
+        (swap-session! ctx
+                       (fn [sd]
+                         (cond-> (assoc sd
+                                        :interrupt-pending true
+                                        :steering-messages [])
+                           ;; Only set timestamp on first interrupt request
+                           (not already-pending?)
+                           (assoc :interrupt-requested-at (java.time.Instant/now)))))
         (agent/clear-steering-queue-in! (:agent-ctx ctx))
-        {:accepted? true
+        {:accepted? (not already-pending?)
          :pending? true
          :dropped-steering-text dropped-text})
       {:accepted? false

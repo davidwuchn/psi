@@ -880,8 +880,12 @@
         tui?                 (some #(= "--tui" %) args)
         rpc-edn?             (some #(= "--rpc-edn" %) args)
         nrepl-port           (nrepl-port-from-args args)
-        nrepl-srv            (when (and nrepl-port (not rpc-edn?))
-                               (start-nrepl! nrepl-port))]
+        nrepl-srv            (when nrepl-port
+                               (if rpc-edn?
+                                 ;; Keep rpc stdout protocol-clean.
+                                 (binding [*out* *err*]
+                                   (start-nrepl! nrepl-port))
+                                 (start-nrepl! nrepl-port)))]
     (try
       (cond
         rpc-edn?

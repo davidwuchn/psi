@@ -53,6 +53,9 @@
    :psi.agent-session/stats               — SessionStats snapshot
    :psi.agent-session/tool-call-history   — [{:psi.tool-call/*}], nested tool call entities
    :psi.agent-session/tool-call-history-count — number of tool calls
+   :psi.agent-session/tool-call-attempt-count — streamed provider tool-call attempts
+   :psi.agent-session/tool-call-attempt-unmatched-count — attempts without matching toolResult
+   :psi.agent-session/tool-call-attempts — [{:psi.tool-call-attempt/*}], attempt-level stream entities
    :psi.agent-session/background-job-count — number of tracked background jobs in current thread
    :psi.agent-session/background-job-statuses — ordered status vocabulary for background jobs
    :psi.agent-session/background-jobs     — [{:psi.background-job/*}], current-thread background jobs
@@ -107,6 +110,20 @@
    :psi.tool-call/arguments               — raw argument string (from list resolver)
    :psi.tool-call/result                  — result text (from detail resolver, lazy)
    :psi.tool-call/is-error                — error flag (from detail resolver, lazy)
+
+   Tool call attempt entities (nested under tool-call-attempts)
+   ───────────────────────────────────────────────────────────
+   :psi.tool-call-attempt/id
+   :psi.tool-call-attempt/name
+   :psi.tool-call-attempt/content-index
+   :psi.tool-call-attempt/turn-id
+   :psi.tool-call-attempt/status            — :started | :ended | :result-recorded | :partial
+   :psi.tool-call-attempt/started-at
+   :psi.tool-call-attempt/ended-at
+   :psi.tool-call-attempt/delta-count
+   :psi.tool-call-attempt/argument-bytes
+   :psi.tool-call-attempt/executed?
+   :psi.tool-call-attempt/result-recorded?
 
    Background job entities (nested under :psi.agent-session/background-jobs)
    ─────────────────────────────────────────────────────────────────────────
@@ -949,6 +966,116 @@
                                    (:content result-msg))
      :psi.tool-call/is-error (:is-error result-msg)}))
 
+(defn- utf8-byte-count
+  [s]
+  (count (.getBytes (str (or s "")) "UTF-8")))
+
+(defn- tool-call-attempt-events
+  [agent-session-ctx]
+  (vec (or (some-> (:tool-call-attempts-atom agent-session-ctx) deref)
+           [])))
+
+(defn- tool-result-ids
+  [agent-session-ctx]
+  (->> (agent-core-messages agent-session-ctx)
+       (filter #(= "toolResult" (:role %)))
+       (keep :tool-call-id)
+       set))
+
+(pco/defresolver agent-session-tool-call-attempts
+  "Resolve streamed provider tool-call attempts.
+
+   Attempts are captured during provider streaming (:toolcall-start/:delta/:end),
+   then correlated with committed toolResult messages to identify unmatched calls."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input
+   [:psi/agent-session-ctx]
+   ::pco/output
+   [:psi.agent-session/tool-call-attempt-count
+    :psi.agent-session/tool-call-attempt-unmatched-count
+    {:psi.agent-session/tool-call-attempts
+     [:psi.tool-call-attempt/id
+      :psi.tool-call-attempt/name
+      :psi.tool-call-attempt/content-index
+      :psi.tool-call-attempt/turn-id
+      :psi.tool-call-attempt/status
+      :psi.tool-call-attempt/started-at
+      :psi.tool-call-attempt/ended-at
+      :psi.tool-call-attempt/delta-count
+      :psi.tool-call-attempt/argument-bytes
+      :psi.tool-call-attempt/executed?
+      :psi.tool-call-attempt/result-recorded?]}]}
+  (let [events      (tool-call-attempt-events agent-session-ctx)
+        result-ids  (tool-result-ids agent-session-ctx)
+        attempts    (->> events
+                         (reduce (fn [acc {:keys [event-kind turn-id content-index id name delta timestamp]}]
+                                   (let [k   [turn-id content-index]
+                                         cur (get acc k
+                                                  {:psi.tool-call-attempt/id            nil
+                                                   :psi.tool-call-attempt/name          nil
+                                                   :psi.tool-call-attempt/content-index content-index
+                                                   :psi.tool-call-attempt/turn-id       turn-id
+                                                   :psi.tool-call-attempt/started-at    nil
+                                                   :psi.tool-call-attempt/ended-at      nil
+                                                   :psi.tool-call-attempt/delta-count   0
+                                                   :psi.tool-call-attempt/argument-bytes 0})]
+                                     (case event-kind
+                                       :toolcall-start
+                                       (assoc acc k
+                                              (-> cur
+                                                  (assoc :psi.tool-call-attempt/id (or id (:psi.tool-call-attempt/id cur)))
+                                                  (assoc :psi.tool-call-attempt/name (or name (:psi.tool-call-attempt/name cur)))
+                                                  (assoc :psi.tool-call-attempt/content-index content-index)
+                                                  (assoc :psi.tool-call-attempt/turn-id turn-id)
+                                                  (assoc :psi.tool-call-attempt/started-at
+                                                         (or (:psi.tool-call-attempt/started-at cur) timestamp))))
+
+                                       :toolcall-delta
+                                       (assoc acc k
+                                              (-> cur
+                                                  (assoc :psi.tool-call-attempt/content-index content-index)
+                                                  (assoc :psi.tool-call-attempt/turn-id turn-id)
+                                                  (update :psi.tool-call-attempt/delta-count (fnil inc 0))
+                                                  (update :psi.tool-call-attempt/argument-bytes (fnil + 0)
+                                                          (utf8-byte-count delta))))
+
+                                       :toolcall-end
+                                       (assoc acc k
+                                              (-> cur
+                                                  (assoc :psi.tool-call-attempt/id (or id (:psi.tool-call-attempt/id cur)))
+                                                  (assoc :psi.tool-call-attempt/name (or name (:psi.tool-call-attempt/name cur)))
+                                                  (assoc :psi.tool-call-attempt/content-index content-index)
+                                                  (assoc :psi.tool-call-attempt/turn-id turn-id)
+                                                  (assoc :psi.tool-call-attempt/ended-at
+                                                         (or (:psi.tool-call-attempt/ended-at cur) timestamp))))
+
+                                       acc)))
+                                 {})
+                         vals
+                         (sort-by (juxt :psi.tool-call-attempt/started-at
+                                        :psi.tool-call-attempt/turn-id
+                                        :psi.tool-call-attempt/content-index))
+                         vec)
+        attempts*   (mapv (fn [attempt]
+                            (let [id       (:psi.tool-call-attempt/id attempt)
+                                  recorded? (and (string? id)
+                                                 (contains? result-ids id))
+                                  status   (cond
+                                             recorded? :result-recorded
+                                             (:psi.tool-call-attempt/ended-at attempt) :ended
+                                             (:psi.tool-call-attempt/started-at attempt) :started
+                                             :else :partial)]
+                              (assoc attempt
+                                     :psi.tool-call-attempt/status status
+                                     :psi.tool-call-attempt/executed? recorded?
+                                     :psi.tool-call-attempt/result-recorded? recorded?)))
+                          attempts)
+        unmatched   (count (filter (complement :psi.tool-call-attempt/result-recorded?)
+                                   attempts*))]
+    {:psi.agent-session/tool-call-attempt-count           (count attempts*)
+     :psi.agent-session/tool-call-attempt-unmatched-count unmatched
+     :psi.agent-session/tool-call-attempts                attempts*}))
+
 ;; ── API error diagnostics (helpers) ─────────────────────
 
 (defn- error-message-text
@@ -1771,6 +1898,7 @@
    query-graph-bridge
    agent-session-tool-calls
    tool-call-result
+   agent-session-tool-call-attempts
    ;; API error diagnostics (hierarchical)
    api-error-list
    api-error-detail

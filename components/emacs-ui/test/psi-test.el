@@ -1667,6 +1667,37 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
+(ert-deftest psi-interrupt-sends-rpc-when-streaming ()
+  "C-c C-c dispatches interrupt RPC and transitions to interrupt_pending."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (let ((calls (psi-test--capture-request-sends
+                      (lambda ()
+                        (setf (psi-emacs-state-run-state psi-emacs--state) 'streaming)
+                        (psi-emacs-interrupt)))))
+          (should (equal '(("interrupt" nil)) calls))
+          ;; run-state transitions to interrupt_pending immediately
+          (should (eq 'interrupt_pending (psi-emacs-state-run-state psi-emacs--state))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
+(ert-deftest psi-interrupt-noop-when-idle ()
+  "C-c C-c is a no-op when not streaming."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (let ((calls (psi-test--capture-request-sends
+                      (lambda ()
+                        (setf (psi-emacs-state-run-state psi-emacs--state) 'idle)
+                        (psi-emacs-interrupt)))))
+          (should (null calls))
+          (should (eq 'idle (psi-emacs-state-run-state psi-emacs--state))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
 (ert-deftest psi-assistant-streaming-single-block-aggregates-and-finalizes ()
   (with-temp-buffer
     (psi-emacs-mode)

@@ -460,6 +460,42 @@ When idle, routes through slash interception then normal prompt fallback."
     (when dispatched?
       (psi-emacs--consume-dispatched-input used-region-p message local-only))))
 
+(defun psi-emacs--restore-dropped-steering-to-draft (dropped-text)
+  "Prepend DROPPED-TEXT to the current input draft area."
+  (when (and dropped-text (not (string-empty-p dropped-text)))
+    (let ((inhibit-read-only t))
+      (save-excursion
+        (goto-char (psi-emacs--input-start-position))
+        (insert dropped-text "\n")))))
+
+(defun psi-emacs-interrupt ()
+  "Request deferred interrupt at the next turn boundary.
+
+When streaming, marks the interrupt as pending and transitions run-state
+to `interrupt_pending'.  The agent finishes its current turn then stops.
+When idle, this is a silent no-op."
+  (interactive)
+  (when (and psi-emacs--state
+             (eq (psi-emacs-state-run-state psi-emacs--state) 'streaming))
+    (let ((buffer (current-buffer))
+          (state psi-emacs--state))
+      ;; Optimistically transition to interrupt_pending immediately
+      (psi-emacs--set-run-state state 'interrupt_pending)
+      (psi-emacs--dispatch-request
+       "interrupt" nil
+       (lambda (frame)
+         (when (buffer-live-p buffer)
+           (with-current-buffer buffer
+             (when (eq state psi-emacs--state)
+               (when (and (eq (alist-get :kind frame) :response)
+                          (eq (alist-get :ok frame) t))
+                 (let* ((data (alist-get :data frame))
+                        (pending (alist-get :pending data))
+                        (dropped (alist-get :dropped-steering-text data)))
+                   (when pending
+                     (psi-emacs--restore-dropped-steering-to-draft dropped)))))))))))
+
+
 (defun psi-emacs-abort ()
   "Abort active streaming request via RPC and transition to non-streaming UI state."
   (interactive)

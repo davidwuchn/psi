@@ -66,6 +66,8 @@ When MODEL-REASONING is non-nil, append an explicit thinking/effort suffix."
            (retry (or (psi-emacs--event-data-get data
                                                  '(:retry-attempt retry-attempt :retryAttempt retryAttempt))
                       0))
+           (interrupt-pending (not (null (psi-emacs--event-data-get data
+                                                                     '(:interrupt-pending interrupt-pending :interruptPending interruptPending)))))
            (model-provider (psi-emacs--session-normalize-text
                             (psi-emacs--event-data-get data
                                                        '(:model-provider model-provider :modelProvider modelProvider))))
@@ -92,6 +94,7 @@ When MODEL-REASONING is non-nil, append an explicit thinking/effort suffix."
       (setf (psi-emacs-state-session-is-compacting psi-emacs--state) is-compacting)
       (setf (psi-emacs-state-session-pending-message-count psi-emacs--state) pending)
       (setf (psi-emacs-state-session-retry-attempt psi-emacs--state) retry)
+      (setf (psi-emacs-state-session-interrupt-pending psi-emacs--state) interrupt-pending)
       (setf (psi-emacs-state-session-model-provider psi-emacs--state) model-provider)
       (setf (psi-emacs-state-session-model-id psi-emacs--state) model-id)
       (setf (psi-emacs-state-session-model-reasoning psi-emacs--state) model-reasoning)
@@ -100,7 +103,12 @@ When MODEL-REASONING is non-nil, append an explicit thinking/effort suffix."
             effective-reasoning-effort)
       (setf (psi-emacs-state-header-model-label psi-emacs--state) header-model-label)
       (unless (memq (psi-emacs-state-run-state psi-emacs--state) '(error reconnecting))
-        (psi-emacs--set-run-state psi-emacs--state (if is-streaming 'streaming 'idle)))
+        (psi-emacs--set-run-state
+         psi-emacs--state
+         (cond
+          ((and is-streaming interrupt-pending) 'interrupt_pending)
+          (is-streaming                         'streaming)
+          (t                                    'idle))))
       (psi-emacs--refresh-header-line))))
 
 (defun psi-emacs--handle-rpc-event (frame)

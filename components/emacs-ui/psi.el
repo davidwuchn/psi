@@ -86,6 +86,7 @@ Used to detect stalled streaming runs and transition to deterministic recovery."
   session-is-compacting
   session-pending-message-count
   session-retry-attempt
+  session-interrupt-pending
   session-model-provider
   session-model-id
   session-model-reasoning

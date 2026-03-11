@@ -121,6 +121,7 @@ finalized assistant content only."
   (define-key map (kbd "M-n") #'psi-emacs-next-input)
   (define-key map (kbd "C-c RET") #'psi-emacs-send-from-buffer)
   (define-key map (kbd "C-c C-q") #'psi-emacs-queue-from-buffer)
+  (define-key map (kbd "C-c C-c") #'psi-emacs-interrupt)
   (define-key map (kbd "C-c C-k") #'psi-emacs-abort)
   (define-key map (kbd "C-c C-r") #'psi-emacs-reconnect)
   (define-key map (kbd "C-c C-t") #'psi-emacs-toggle-tool-output-view)

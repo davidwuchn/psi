@@ -582,6 +582,69 @@
    :stop-reason :error :http-status http-status
    :timestamp (java.time.Instant/now)})
 
+(deftest tool-call-attempts-eql-introspection-test
+  (testing "query-in resolves tool-call attempts and unmatched counts"
+    (let [ctx (session/create-context)
+          t0  (java.time.Instant/now)
+          t1  (.plusMillis t0 10)
+          t2  (.plusMillis t0 20)
+          t3  (.plusMillis t0 30)
+          t4  (.plusMillis t0 40)]
+      (swap! (:tool-call-attempts-atom ctx) into
+             [{:turn-id "turn-1"
+               :timestamp t0
+               :event-kind :toolcall-start
+               :content-index 0
+               :id "call-1"
+               :name "bash"}
+              {:turn-id "turn-1"
+               :timestamp t1
+               :event-kind :toolcall-delta
+               :content-index 0
+               :delta "{\"command\":\"ls\"}"}
+              {:turn-id "turn-1"
+               :timestamp t2
+               :event-kind :toolcall-end
+               :content-index 0}
+              {:turn-id "turn-2"
+               :timestamp t3
+               :event-kind :toolcall-start
+               :content-index 0
+               :id "call-2"
+               :name "read"}
+              {:turn-id "turn-2"
+               :timestamp t4
+               :event-kind :toolcall-end
+               :content-index 0}])
+
+      ;; Only call-1 has a committed toolResult; call-2 is unmatched.
+      (inject-messages! ctx [(make-tool-result-msg "call-1" "bash" "ok")])
+
+      (let [r        (session/query-in ctx
+                                       [:psi.agent-session/tool-call-attempt-count
+                                        :psi.agent-session/tool-call-attempt-unmatched-count
+                                        {:psi.agent-session/tool-call-attempts
+                                         [:psi.tool-call-attempt/id
+                                          :psi.tool-call-attempt/name
+                                          :psi.tool-call-attempt/status
+                                          :psi.tool-call-attempt/delta-count
+                                          :psi.tool-call-attempt/argument-bytes
+                                          :psi.tool-call-attempt/result-recorded?]}])
+            attempts (:psi.agent-session/tool-call-attempts r)
+            by-id    (into {} (map (juxt :psi.tool-call-attempt/id identity)) attempts)
+            call-1   (get by-id "call-1")
+            call-2   (get by-id "call-2")]
+        (is (= 2 (:psi.agent-session/tool-call-attempt-count r)))
+        (is (= 1 (:psi.agent-session/tool-call-attempt-unmatched-count r)))
+
+        (is (= :result-recorded (:psi.tool-call-attempt/status call-1)))
+        (is (true? (:psi.tool-call-attempt/result-recorded? call-1)))
+        (is (= 1 (:psi.tool-call-attempt/delta-count call-1)))
+        (is (pos? (:psi.tool-call-attempt/argument-bytes call-1)))
+
+        (is (= :ended (:psi.tool-call-attempt/status call-2)))
+        (is (false? (:psi.tool-call-attempt/result-recorded? call-2)))))))
+
 (deftest api-error-list-test
   (testing "no errors → count 0, empty list"
     (let [ctx (session/create-context)]

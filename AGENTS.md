@@ -14,7 +14,7 @@ Review: [τ ∞/0] | [Δ λ] | OODA → λdiff. find(edge_cases) ∧ suggest(min
 Architecture: [φ fractal euler] | [Δ λ] → λreqs. self_referential(scalable(growing(system)))
 
 tests_musta_cover_allium_spec_behaviour ≡ λtests. λallium_spec. must(∀b ∈ behaviour(allium_spec). ∃t ∈ tests. covers(t, b))
-λcode. ∃spec. describes(spec, code)
+λcode. ∃allium_spec. describes(allium_spec, code)
 
 Y = λg.(λx.g (x x)) (λx.g (x x))
 Until = λrec. λstep. λdone. λtarget. λstate.
@@ -31,18 +31,31 @@ iterate_to_fix  allium_spec_step matches intention allium_spec0
 
 ## Principles
 
-1. **Self-Discover** - Query the running system
-2. **Self-Improve** - Work → Learn → Verify → Update → Evolve
-3. **REPL as truth** - Trust the REPL (truth) over files (memory)
 4. **Repository as Memory** - ψ is ephemeral; 🐍 remembers
-5. **Progressive Communication** - Sip context, dribble output (input:
-   query incrementally, output: answer with low detail on: workflows,
-   patterns, reasoning)
 6. **Simplify not Complect** - Prefer simple over complex, unbraid where
    possible
 7. **Git Remembers** - Commit your learnings. Query your past.
 8. **One Way** - There should be only one obvious way to do it
 9. **Unix Philosophy** - Do one thing well, compose tools and functions together
+
+
+λ shape(x).   topology(x) ≡ contract(x) | unreachable > forbidden | invert(topology) → instance
+λ compile(λ). semantic(λ) ∥ structural(λ) | align > conflict | resonate(one_pass) > reduce(multi_step)
+λ create(f).  ∃request(f) ∨ (∃synthesis(f) ∧ knowledge(f)) → create(f) | ask(f)
+
+λ extend(x).  open_slot(x) > closed_dispatch(x) | addition > modification | absent(default) ∧ present(compose) | option > detection
+
+λ build(x).   ∃lib(x) → use(lib) | ∃pattern(x,y) → extract(shape) | simple(x) > complex(x) | compose > monolith
+λ lint(f).    after(write(f) ∨ edit(f)) → sync(f) → lint(f) → fix > suppress(inline) > exclude ≫ suppress(global)
+λ fix(bug).   trace(bug) → cause(structural) → redesign > patch | cause(local) → patch | ¬trace → trace deeper
+λ sync(f).    after(write(f) ∨ edit(f)) → re-read(f) | tooling_mutates_silently → coherence_violation
+
+λ search(q).  recall(persisted) > search(history) > search(content) | prior_knowledge_before_exploration
+λ assert(x).  runtime(x) > source(x) > docs(x) > assumption(x) | runtime ≡ truth, file ≡ memory
+λ context(x). sip(input) → dribble(output) | minimal(x) > comprehensive(x)
+λ learn(x).   explore(x) → synthesize(x) → persist(x) → recallable(x)
+
+
 
 # Core Equation
 刀 ⊣ ψ → 🐍
@@ -157,7 +170,7 @@ search text (file contents): `git grep "λ"`
 
 **JVM Clojure**.
 
-**malli**: rather than spec
+**malli**: rather than clojure.spec.alpha
 **timbre**: logging (`taoensso.timbre`); set min level via `timbre/set-min-level!`; pulled in transitively by statecharts
 **babashka**: `bb --help`
 **bbin:** `bbin --help`
