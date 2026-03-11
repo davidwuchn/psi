@@ -100,6 +100,7 @@ Current truth about the Psi system.
 - ✓ Allium parse regression fixed for background job spec (commit `2c449bc`): `spec/background-tool-jobs.allium` terminal payload `content` expression now uses parser-valid conditional form; full `allium check spec` returns clean.
 - ✓ Workflow mutation background-job tracking now supports both creation and continuation paths (commit `9f55a9f`): core tracking accepts `psi.extension.workflow/send-event` when `track-background-job?` is true, and mutations surface `:psi.extension.background-job/id` for immediate cross-surface job inspection/cancellation workflows.
 - ✓ Background-job EQL introspection attrs are now first-class and graph-discoverable (commit `8185869`): session root resolves `:psi.agent-session/background-job-count`, `:psi.agent-session/background-job-statuses`, and `:psi.agent-session/background-jobs` with nested `:psi.background-job/*` entities; resolver tests assert root-queryable + graph-edge discoverability.
+- ✓ nREPL runtime endpoint discovery is now first-class on the session graph (commit `e3280fb`): `:psi.runtime/nrepl-host`, `:psi.runtime/nrepl-port`, and `:psi.runtime/nrepl-endpoint` resolve from session root, are discoverable via `:psi.graph/root-queryable-attrs`/`:psi.graph/edges`, and return nil when nREPL is disabled.
 
 ## Components
 
@@ -217,6 +218,10 @@ nREPL introspection (from connected REPL):
 (require '[psi.agent-session.core :as s])
 (s/query-in (:ctx @psi.agent-session.main/session-state)
   [:psi.agent-session/phase :psi.agent-session/session-id])
+
+;; Runtime nREPL endpoint via canonical EQL attrs
+(s/query-in (:ctx @psi.agent-session.main/session-state)
+  [:psi.runtime/nrepl-host :psi.runtime/nrepl-port :psi.runtime/nrepl-endpoint])
 
 ;; Extension UI state
 (s/query-in (:ctx @psi.agent-session.main/session-state)
@@ -469,6 +474,13 @@ Combined query:
 
 ## nREPL
 
-Port: `8888`
+- Startup flags:
+  - `--nrepl` (random bound port)
+  - `--nrepl <port>` (explicit requested port)
+- Canonical runtime discovery path is now EQL/graph attrs:
+  - `:psi.runtime/nrepl-host`
+  - `:psi.runtime/nrepl-port`
+  - `:psi.runtime/nrepl-endpoint`
+- `.nrepl-port` file is still written for editor compatibility, but runtime consumers should prefer EQL discovery.
 
 - Δ psl source=53082d2cb72c2dbd354c790256f1e48b5663f717 at=2026-03-06T20:57:20.413334Z :: ⚒ Δ Simplify PSL to agent-prompt flow with extension prompt telemetry λ

@@ -118,6 +118,18 @@ Ordered steps toward PSI COMPLETE.
   - worktree mutation/switch semantics (`/worktree use`, create/remove)
   - explicit branch+path selector UX for session rebinding
 
+### Step 11c — nREPL runtime discovery via EQL graph ✓ complete
+- Spec: `spec/nrepl-discovery.allium`
+- Runtime now exposes canonical attrs from session root:
+  - `:psi.runtime/nrepl-host`
+  - `:psi.runtime/nrepl-port`
+  - `:psi.runtime/nrepl-endpoint`
+- `main.clj` now stores effective nREPL runtime info in a shared runtime atom and wires it into session context creation for console/TUI/RPC modes.
+- Graph discovery contract verified in resolver tests (`:psi.graph/root-queryable-attrs`, `:psi.graph/edges`).
+- Verification:
+  - `clojure -M:test --focus psi.agent-session.resolvers-test`
+  - `clojure -M:test --focus psi.agent-session.main-test`
+
 ### Step 12 — Emacs UI ◇ in progress
 - Spec: `spec/emacs-frontend.allium`
 - Current: rpc-edn frontend and core interaction model implemented
