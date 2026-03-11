@@ -4,6 +4,28 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-11 - nREPL runtime discovery should be modeled as session-root attrs, not port-file parsing
+
+### λ Canonical nREPL endpoint discovery belongs in EQL root attrs for cross-client parity
+
+Adding `:psi.runtime/nrepl-host`, `:psi.runtime/nrepl-port`, and
+`:psi.runtime/nrepl-endpoint` to session-root resolvers creates one stable discovery
+path for Emacs/TUI/console/rpc clients. This avoids duplicated local parsing logic
+around `.nrepl-port` and keeps runtime endpoint truth inside the graph.
+
+### λ Runtime endpoint resolvers should degrade to nil when nREPL is disabled
+
+Resolver contracts are easiest to compose when attrs always resolve and indicate
+absence via `nil`, rather than throwing or disappearing from graph discovery.
+This preserves deterministic root-queryable surfaces for clients that probe once
+and branch on values.
+
+### λ Graph discoverability must be tested alongside direct attr resolution
+
+For new root attrs, tests should assert both direct query success and visibility in
+`:psi.graph/root-queryable-attrs` + `:psi.graph/edges`. This catches registration drift
+where an attr works in isolation but is missing from discovery workflows.
+
 ## 2026-03-11 - Interrupt-spec verification is strongest when anchored to explicit rule→surface evidence
 
 ### λ Cross-spec interrupt behavior should be verified as a rule matrix over backend + frontend surfaces
