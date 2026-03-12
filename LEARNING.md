@@ -4,6 +4,37 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-12 - Spec distillation should trace the full pipeline, not only the provider boundary
+
+### λ Thinking deltas bypass the turn statechart — this must be explicit in spec
+
+`text-delta` events flow through `turn/text-delta` in the turn statechart. `thinking-delta`
+events skip the statechart entirely and go straight to `emit-progress!`. Without a spec rule
+capturing this bypass, the divergence is invisible and future code changes could inadvertently
+route thinking deltas through the statechart, breaking mid-stream UI visibility.
+
+### λ Multi-shape extraction fan-in is spec-worthy behavior, not just implementation detail
+
+The completions provider probes 7 different delta shapes for reasoning text (nested map,
+flat key, bare string, map fields, sequential list, content list). This is a deliberate
+compatibility shim across OpenAI model versions. Spec rules should capture both the priority
+order and the `string-fragment` normalization contract (recursive leaf extraction, nil on miss)
+so future maintainers know which shapes are intentional vs incidental.
+
+### λ Allium `config` blocks do not support string-keyed map literals — move to `@guidance`
+
+The parser accepts `Set<String> = {"a", "b"}` set literals but rejects `Map<String,V> = {"k": v}`
+map literals (colon inside braces triggers a parse error). Pre-existing broken config entries
+(`thinking_level_to_effort`, request header maps) were silently checked-in as parse errors.
+Pattern: when a config value requires string-keyed maps, express the mapping as a `@guidance`
+comment block and store only the set of valid keys in config if needed.
+
+### λ Pre-existing parse errors should be fixed as part of any distillation pass on a file
+
+Distillation commits touch a spec file in full. Any pre-existing parse errors in that file
+should be resolved in the same commit rather than deferred, because a broken spec file cannot
+be checked by `allium check` and its rules are effectively invisible to future spec audits.
+
 ## 2026-03-12 - Tri-artifact agreement invariant belongs in AGENTS as a propagation law
 
 ### λ A single propagation rule over {spec, tests, code} is stronger than per-pair convergence equations
