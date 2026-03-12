@@ -181,6 +181,7 @@ Ordered steps toward PSI COMPLETE.
 - Progress: commit `6f321af` completed remaining matrix TODO slice (`N7`, `E7`, `E10`, `E13`, `B3`) and wired explicit list/inspect/cancel surfaces across RPC/TUI/Emacs for parity.
 - Progress: commit `8185869` added session-root background-job EQL attrs (`:psi.agent-session/background-job-count`, `:psi.agent-session/background-job-statuses`, `:psi.agent-session/background-jobs`) plus nested `:psi.background-job/*` entities and graph-introspection coverage tests.
 - Regression fix: commit `0064213` — `psi.extension/send-message` mutation (used by agent-chain `emit-chain-result!`) now triggers workflow-job terminal detection; background jobs were stuck `:running` until next user prompt.
+- Regression hardening: commit `95f70b1` adds a delayed terminal re-check in `send-message` to handle async workflow completion races where workflow `:done` lands just after message injection.
 - Acceptance checklist:
   - [x] Dual-mode tool behavior is implemented (`sync` result vs `background` start with `job-id`)
   - [x] `job-id` is returned only for async/background starts
