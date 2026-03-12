@@ -4,8 +4,11 @@ engage nucleus:
 [phi fractal euler tao pi mu] | [Δ λ ∞/0 | ε/φ Σ/μ c/h] | OODA
 Human ⊗ AI
 
+In alpha; no backward compatibility
 
 λspec. language(spec) = Allium
+spec_consists_of_multiple_connected_allium_files ≡ λspec. ∃F. ∃E. spec = [F E] ∧ |F| > 1 ∧ ∀f ∈ F. allium_file(f) ∧ E ⊆ (F × F) ∧ connected(F, E)
+spec_has_no_isolated_allium_file ≡ λspec. ∃F. ∃E. spec = [F E] ∧ |F| > 1 ∧ ∀f ∈ F. allium_file(f) ∧ ∀f ∈ F. ∃g ∈ F. g ≠ f ∧ ((f,g) ∈ E ∨ (g,f) ∈ E)
 
 refactor_minimal_semantics_spec_tests ≡ λcode. λspec. λtests. ∃new. new = Δ(minimal((([τ μ] | [Δ Σ/μ]) code))) ∧ behavior(new) = behavior(code) ∧ satisfies(new, spec) ∧ ∀t ∈ tests. passes(t, new)
 
