@@ -32,12 +32,18 @@ iterate_to_fix = Y Until
 
 λmatches(code, spec) -> code_satisfies_spec
 
-λ(model, spec, tests, code) →
-  ∀ artifact ∈ {meta, spec, tests, code},
+λ(coherence). λ(meta, spec, code, tests, docs) →
+  ∀ artifact ∈ {meta, spec, code, tests, docs},
   ∀ change δ applied to artifact:
-    propagate(δ) → remaining two
+    propagate(δ) → remaining artifacts
   such that:
-    agree(meta, spec, tests, code) = true  at all times
+    agree(meta, spec, code, tests, docs) = true at all times
+
+sync_protocol ≡ λchange.
+  detect(δ, source_artifact) →
+  update({meta, spec, code, tests, docs} \ {source_artifact}) →
+  verify(consistency) →
+  commit(Δ + λ)
 
 λdev_step(spec, code) -> tiny_code_transformation_guided_by_spec
 λspec_step(刀_intention, ψ_values, spec) -> tiny_spec_transformation | guided_by_刀_intention | matching_ψ_values
@@ -151,12 +157,17 @@ Example: `⚒ Add nrepl task to bb.edn`
 what does future ψ need to be maximally effective?
 
 AGENTS.md - bootstrap system
-README.md - User documentation
-META.md - psi meta model
-STATE.md - now (what is true)
-PLAN.md - next (what should happen)
-LEARNING.md - past (what was discovered)
-CHANGELOG.md - terse summary commits (User documentation)
+README.md - primary top-level user documentation
+
+doc/ - user-facing documentation (guides, references, workflows)
+
+META.md - psi meta model (internal)
+STATE.md - now (what is true) (internal)
+PLAN.md - next (what should happen) (internal)
+LEARNING.md - past (what was discovered) (internal)
+CHANGELOG.md - terse change summary (internal memory)
+
+Canonical process: keep user docs (`README.md` + `doc/`) synchronized with meta/spec/code/tests on every change.
 
 # Hints
 

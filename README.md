@@ -17,357 +17,47 @@ EQL-queryable, extensible. Inspired by
 ## Quick Start
 
 ```bash
-# With Anthropic (env var)
-ANTHROPIC_API_KEY=sk-... clojure -M:run
-
-# Choose a model
-clojure -M:run --model claude-3-5-sonnet
+# Bare console
+clojure -M:run
 
 # Terminal UI
 clojure -M:run --tui
-
-# EDN-lines RPC mode (protocol frames on stdout)
-clojure -M:run --rpc-edn
-
-# OpenAI
-clojure -M:run --model gpt-4o --tui
-
-# Opt-in persistent memory store (Datalevin)
-PSI_MEMORY_STORE=datalevin clojure -M:run
-
-# Datalevin with explicit DB path + retention overrides
-clojure -M:run --memory-store datalevin \
-  --memory-store-db-dir /tmp/psi-memory.dtlv \
-  --memory-retention-snapshots 500 \
-  --memory-retention-deltas 2000
-
-# Disable automatic fallback to in-memory
-clojure -M:run --memory-store datalevin --memory-store-fallback off
-
-# With live nREPL introspection
-clojure -M:run --tui --nrepl 8888
 ```
 
-### OAuth Login (no env var needed)
+For CLI flags, environment variables, and switch behavior, see:
+- [`doc/cli.md`](doc/cli.md)
 
-```
-/login    # browser-based OAuth flow
-/logout
-```
+### Emacs UI usage
 
-### In-session commands
+For keybindings, rendering behavior, reconnect semantics, and developer checks, see:
+- [`doc/emacs-ui.md`](doc/emacs-ui.md)
 
-`/status` `/history` `/new` `/help` `/quit` `/skills` `/prompts` `/remember [text]`
-`/skill:<name>` plus any extension commands
+### TUI usage
 
-`/remember` performs a single manual memory capture from the runtime command surface.
-It writes one memory artifact with the provided text (or a default note when blank).
-
-If provider write-through fails but in-memory fallback succeeds, `/remember` returns a
-visible warning (not silent success):
-- `⚠ Remembered with store fallback`
-- includes `provider` when available
-- includes `store-error` and `detail` when available
-
-Example warning output:
-
-```text
-⚠ Remembered with store fallback
-  record-id: 3b31b4d2-4a4b-4fb9-87e2-5f66a8f8f0b1
-  provider: failing-store
-  store-error: boom
-  detail: write failed
-```
-
-### Session startup prompts (planned)
-
-Startup prompt capability spec: `spec/session-startup-prompts.allium`.
-
-Repo-level config file:
-- `.psi/startup-prompts.edn`
-
-Current repo prompt set:
-
-```clojure
-[{:id "engage-nucleus"
-  :phase :system-bootstrap
-  :enabled? true
-  :priority 100
-  :text "engage nucleus:\n[phi fractal euler tao pi mu] | [Δ λ ∞/0 | ε/φ Σ/μ c/h] | OODA\nHuman ⊗ AI"}]
-```
-
-Planned behavior:
-- sources: `~/.psi/agent/startup-prompts.edn` + `.psi/startup-prompts.edn`
-- precedence: `global < project`
-- run at new session start only
-- startup prompts and assistant responses remain visible in transcript/UI
-- startup EQL attrs must be discoverable via `:psi.graph/*` introspection
-
-Recursion hook telemetry is queryable via EQL:
-
-```clojure
-[:psi.recursion/recent-trigger-events
- :psi.recursion/last-trigger-event
- :psi.recursion/hook-fire-count]
-```
-
-### Memory runtime config (CLI + env)
-
-CLI flags:
-- `--memory-store <datalevin|in-memory>`
-- `--memory-store-root <path>`
-- `--memory-store-db-dir <path>`
-- `--memory-store-fallback <on|off>`
-- `--memory-history-limit <n>`
-- `--memory-retention-snapshots <n>`
-- `--memory-retention-deltas <n>`
-
-Env vars:
-- `PSI_MEMORY_STORE`
-- `PSI_MEMORY_STORE_ROOT`
-- `PSI_MEMORY_STORE_DB_DIR`
-- `PSI_MEMORY_STORE_AUTO_FALLBACK`
-- `PSI_MEMORY_HISTORY_COMMIT_LIMIT`
-- `PSI_MEMORY_RETENTION_SNAPSHOTS`
-- `PSI_MEMORY_RETENTION_DELTAS`
-
-### Spec drift guard
-
-Use these tasks to keep semantic declaration surfaces stable while iterating specs:
-
-```bash
-bb spec:ci          # changed-file allium check + name-presence guard
-bb spec:check       # allium check for changed .allium files vs HEAD
-bb spec:check:full  # allium check across all spec/
-bb spec:guard       # name-presence guard only
-bb spec:baseline    # refresh baseline from last commit (HEAD)
-```
-
-Baseline file:
-- `.psi/spec-name-presence-baseline.json`
-
-Guard scope:
-- tracks declaration names for `rule`, `surface`, `entity`, `value`
-- prevents accidental removals; additive declarations remain allowed
-
-### Memory durability operations
-
-Inspect provider selection/fallback + failure telemetry via EQL:
-
-```clojure
-[:psi.memory.store/active-provider-id
- :psi.memory.store/selection
- :psi.memory.store/health
- :psi.memory.store/active-provider-telemetry
- :psi.memory.store/last-failure
- :psi.memory.store/providers]
-```
-
-Telemetry fields (per provider map):
-- `:telemetry :write-count`
-- `:telemetry :read-count`
-- `:telemetry :failure-count`
-- `:telemetry :last-error`
-
-Operational notes:
-- Fallback decisions are visible at `:psi.memory.store/selection` (`:used-fallback`, `:reason`).
-- Graph history retention is fixed-window (`snapshots`, `deltas`): newest N kept, oldest trimmed.
-- Datalevin schema upgrades require explicit migration hooks when target version increases.
-
-Example migration hook wiring (runtime API):
-
-```clojure
-(require '[psi.memory.runtime :as mr])
-
-(mr/sync-memory-layer!
-  {:store-provider :datalevin
-   :store-db-dir "/tmp/psi-memory.dtlv"
-   :store-migration-hooks
-   {1 (fn [{:keys [from-version to-version]}]
-        (println "migrate" from-version "->" to-version))}})
-```
-
----
-
-## Architecture
-
-```
-Engine (statecharts) → substrate
-Query  (EQL/Pathom3) → capability surface
-AI     (providers)   → streaming LLM layer
-Agent  (statechart)  → per-turn lifecycle
-TUI    (charm.clj)   → Elm Architecture terminal UI
-```
-
-### Components
-
-| Component       | Role                                              |
-|-----------------|---------------------------------------------------|
-| `engine`        | Statechart infrastructure, system state           |
-| `query`         | Pathom3 EQL registry, `query-in`                  |
-| `ai`            | Provider streaming, model registry (Anthropic, OpenAI) |
-| `agent-core`    | LLM agent lifecycle statechart + EQL resolvers    |
-| `agent-session` | Full coding-agent session: tools, extensions, OAuth, TUI |
-| `history`       | Git log resolvers                                 |
-| `introspection` | Engine queries itself — self-describing graph     |
-| `tui`           | JLine3 + charm.clj terminal UI, extension UI points |
+For TUI login flow, in-session commands, and runtime behavior, see:
+- [`doc/tui.md`](doc/tui.md)
 
 ### Built-in Tools
 
-`read` `bash` `edit` `write` `app-query-tool`
+`read` `bash` `edit` `write`
 
-### EQL Introspection Tips
+### Extension API
 
-- Query only attributes that exist in the graph; unknown attrs can cause the whole `app-query-tool` request to fail.
-- For the active system prompt, use:
-  - `[:psi.agent-session/system-prompt]`
-- For runtime UI surface detection (extension/UI branching), use:
-  - `[:psi.agent-session/ui-type]`  ; `:console` | `:tui` | `:emacs`
-- For prompt sizing (chars + estimated tokens), use:
-  - `[{:psi.agent-session/request-shape [:psi.request-shape/system-prompt-chars :psi.request-shape/estimated-tokens :psi.request-shape/total-chars]}]`
-- Avoid non-existent attrs like `:psi.agent-session/prompt`, `:psi.agent-session/instructions`, `:psi.agent-session/messages` unless resolvers are added for them.
+For extension-facing runtime/query details (including memory durability operations), see:
+- [`doc/extension-api.md`](doc/extension-api.md)
 
----
+For built-in extension docs (`extensions/src`), see:
+- [`doc/extensions.md`](doc/extensions.md)
 
-## Extension System
+## Architecture
 
-Extensions are Clojure namespaces loaded at runtime. Each extension
-receives an API map with:
+For architecture overview, components, EQL introspection guidance, and roadmap, see:
+- [`doc/architecture.md`](doc/architecture.md)
 
-- Tool registration (`register-tool!`)
-- EQL query access (`query`)
-- UI hooks (`dialogs`, `widgets`, `status`, `notifications`, `renderers`)
+## ψ Psi project config
 
----
-
-## Roadmap
-
-- ✓ Engine + Query substrate
-- ✓ AI provider layer (Anthropic, OpenAI)
-- ✓ Agent core loop
-- ✓ Coding-agent session
-- ✓ TUI (charm.clj / JLine3)
-- ✓ Extension system + Extension UI
-- ✓ OAuth (PKCE, Anthropic, OpenAI)
-- ✓ Git history resolvers
-- ✓ Session persistence
-- ◇ HTTP API (openapi + martian)
-
----
-
-## Emacs frontend (rpc-edn)
-
-The repository includes an Emacs frontend at `components/emacs-ui/` that runs
-psi in a dedicated process buffer over rpc-edn.
-
-### Start
-
-1. Ensure this repository is available locally.
-2. In Emacs, add `components/emacs-ui` to `load-path` and load `psi.el`.
-3. Run one of:
-   - `M-x psi-emacs-start` for the default/global buffer.
-     - Use `C-u M-x psi-emacs-start` to force a fresh buffer name (`*psi*<2>`, etc.).
-   - `M-x psi-emacs-project` for a project-scoped buffer in the current project.
-     - Buffer naming style: `*psi:<project>*` (for example `*psi:psi-main*`).
-     - `C-u M-x psi-emacs-project` forces a fresh generated project buffer name.
-     - `C-u N M-x psi-emacs-project` opens/uses slot `N`
-       (`N<=1` => `*psi:<project>*`, `N>=2` => `*psi:<project>*<N>`).
-
-This opens a dedicated psi buffer (default `*psi*`, or project-scoped `*psi:<project>*`) and starts one
-owned subprocess per dedicated buffer using:
-
-- `clojure -M:psi --rpc-edn`
-
-By default, the subprocess runs in the directory where `psi-emacs-start` is
-invoked. Override explicitly via `psi-emacs-working-directory` if needed.
-
-### Developer checks
-
-From repo root:
-
-- `bb emacs:test`
-- `bb emacs:byte-compile`
-- `bb emacs:check`
-
-### Compose and keybindings
-
-In `psi-emacs-mode`:
-
-- `RET` inserts newline (never sends)
-- `C-c RET` send prompt
-  - while streaming: steer (`prompt_while_streaming` with `behavior=steer`)
-- `C-u C-c RET` queue override while streaming
-- `C-c C-q` queue while streaming; fallback to normal send when idle
-- `C-c C-k` abort active streaming (`abort`)
-- `C-c C-r` reconnect (prompts before clearing edited buffer)
-- `C-c C-t` toggle tool-output view mode (collapsed ↔ expanded); also available as `M-x psi-emacs-toggle-tool-output-view`
-- `C-c m m` set model (`M-x psi-emacs-set-model`)
-- `C-c m n` cycle model next (`M-x psi-emacs-cycle-model-next`)
-- `C-c m p` cycle model previous (`M-x psi-emacs-cycle-model-prev`)
-- `C-c m t` set thinking level (`M-x psi-emacs-set-thinking-level`)
-- `C-c m c` cycle thinking level (`M-x psi-emacs-cycle-thinking-level`)
-
-Compose source rules:
-
-- Active region sends region text (for both `C-c RET` and `C-c C-q`).
-- Without a region, psi sends the tail draft block from the draft anchor marker to end-of-buffer.
-- Normal editing keeps the anchor at the start of the current draft tail, so transcript text above the anchor is not resent unless you explicitly select it as a region.
-- Reconnect clear (`C-c C-r` after confirmation) resets the buffer and repositions the draft anchor at the new buffer end; after reconnect, sends come only from text typed after that reset point.
-
-### Rendering, status, and errors
-
-- Assistant streaming uses a single in-progress block updated by
-  `assistant/delta` and finalized by `assistant/message`.
-- Tool lifecycle rows render inline for
-  `tool/start|delta|executing|update|result`.
-- ANSI tool output is rendered with faces (no raw escape noise).
-- Header line shows minimal transport + process state + run-state and tool mode:
-  `psi [transport/process/run-state] tools:<mode>`.
-  When `session/updated` includes model metadata, header appends
-  `model:(<provider>) <model-id>`.
-- `session/updated` is projected into frontend state for `/status`
-  diagnostics (session id/phase, streaming+compacting flags, pending, retry).
-- RPC errors are surfaced in minibuffer **and** mirrored as one persistent
-  in-buffer `Error: ...` line.
-
-When a rpc client exists but transport is not `ready`, send/queue requests are
-rejected immediately with deterministic error text and draft text is preserved.
-
-### Tool output view mode
-
-Tool rows have two rendering modes:
-
-- **collapsed** (default): one summary line per row (`<tool summary> <status>`),
-  with live status updates and hidden body output.
-- **expanded**: full tool body output is visible.
-
-Header summaries are normalized for readability:
-
-- `bash` uses `$` in headers.
-- `read`/`edit`/`write` path arguments are shown relative to project root when possible.
-
-Toggle between modes with `C-c C-t` (or `M-x psi-emacs-toggle-tool-output-view`).
-The toggle applies immediately to all existing rows and to future rows.
-Reconnect (`C-c C-r`) resets mode to collapsed; `/new` preserves current mode.
-
-### Topic subscription
-
-Emacs subscribes to the full default topic set (core + extension/footer topics):
-
-- core: `assistant/*`, `tool/*`, `session/updated`, `error`
-- extension/footer: `ui/*`, `footer/updated`
-
-### Reconnect semantics
-
-- Reconnect is manual only (`C-c C-r`), no auto-restart.
-- Confirmed reconnect clears buffer and starts a fresh session.
-- No automatic resume/rehydrate occurs during reconnect.
-
-### Still deferred in Emacs frontend
-
-- compaction/auto-compact/auto-retry controls in-buffer UX
-- richer multi-session/fork/tree command discoverability UI
-- reconnect-time resume picker / auto-resume
+Project query/config tool details:
+- [`doc/psi-project-config.md`](doc/psi-project-config.md)
 
 ## References
 
@@ -375,3 +65,4 @@ Emacs subscribes to the full default topic set (core + extension/footer topics):
 - [charm.clj](https://codeberg.org/timokramer/charm.clj) — TUI framework
 - [Fulcrologic statecharts](https://github.com/fulcrologic/statecharts)
 - [Pathom3](https://pathom3.wsscode.com/)
+- [nucleus](https://github.com/michaelwhitford/nucleus)

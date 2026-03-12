@@ -122,6 +122,9 @@ not fall through to normal prompt dispatch.")
 (defvar-local psi-emacs--owned-process nil
   "Buffer-local owned subprocess for this dedicated psi buffer.")
 
+;;;###autoload (autoload 'psi-emacs-start "psi-entry" "Start a dedicated psi buffer/session." t)
+;;;###autoload (autoload 'psi-emacs-project "psi-entry" "Start or switch to a project-scoped psi buffer/session." t)
+
 (require 'psi-run-state)
 (require 'psi-assistant-render)
 (require 'psi-tool-rows)

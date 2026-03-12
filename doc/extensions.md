@@ -81,6 +81,70 @@ For cwd-sensitive extensions (e.g. reading `.psi/agents`), wrap with
   ...)
 ```
 
+## Built-in extensions in this repo (`extensions/src`)
+
+These extensions ship with the project and are loaded via extension discovery.
+
+### `extensions/agent_chain.clj` (`extensions.agent-chain`)
+
+Purpose: run repeatable multi-agent pipelines.
+
+- Tool: `agent-chain`
+  - actions: `run`, `list`, `reload`
+- Commands:
+  - `/chain` — list chains, agents, recent runs
+  - `/chain-reload` — reload chain + agent definitions
+- Config:
+  - `.psi/agents/agent-chain.edn`
+  - `.psi/agents/*.md` (agent profiles)
+
+### `extensions/subagent_widget.clj` (`extensions.subagent-widget`)
+
+Purpose: create/continue/remove/list subagents with workflow-backed UI widgets.
+
+- Tool: `subagent`
+  - actions: `create`, `continue`, `remove`, `list`
+  - create options include `agent`, `mode` (`sync|async`), `fork_session`, `timeout_ms`
+- Commands:
+  - `/sub [--fork|-f] [@agent] <task>`
+  - `/subcont <id> <prompt>`
+  - `/subrm <id>`
+  - `/subclear`
+  - `/sublist`
+
+### `extensions/mcp_tasks_run.clj` (`extensions.mcp-tasks-run`)
+
+Purpose: run mcp-tasks task/story workflows with sub-agent execution per step.
+
+- Command:
+  - `/mcp-tasks-run <task-id>`
+  - `/mcp-tasks-run list`
+  - `/mcp-tasks-run pause <run-id>`
+  - `/mcp-tasks-run resume <run-id> [merge|<answer>]`
+  - `/mcp-tasks-run cancel <run-id>`
+  - `/mcp-tasks-run retry <run-id>`
+
+### `extensions/plan_state_learning.clj` (`extensions.plan-state-learning`)
+
+Purpose: automate PLAN/STATE/LEARNING follow-up after non-PSL commits.
+
+- Trigger: `git_head_changed` event
+- Behavior:
+  - skips self-commits with marker `[psi:psl-auto]`
+  - creates PSL workflow
+  - runs subagent to update/commit `PLAN.md`, `STATE.md`, `LEARNING.md`
+
+### `extensions/hello_ext.clj` (`extensions.hello-ext`)
+
+Purpose: minimal example extension used in docs/tests.
+
+- Commands:
+  - `/hello`
+  - `/hello-plan` (demo tool chaining)
+- Tools:
+  - `hello-upper`
+  - `hello-wrap`
+
 ## Discovery
 
 Extensions are discovered from three locations, in order:
