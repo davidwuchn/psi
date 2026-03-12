@@ -16,12 +16,22 @@ EQL-queryable, extensible. Inspired by
 
 ## Quick Start
 
+Define a user alias in `~/.clojure/deps.edn` that points to your local psi clone:
+
+```clojure
+{:aliases
+ {:psi {:replace-deps {psi/psi {:local/root "/path/to/your/psi-main"}}
+        :main-opts ["-m" "psi.agent-session.main"]}}}
+```
+
+Then run psi with that alias:
+
 ```bash
 # Bare console
-clojure -M:run
+clojure -M:psi
 
 # Terminal UI
-clojure -M:run --tui
+clojure -M:psi --tui
 ```
 
 For CLI flags, environment variables, and switch behavior, see:

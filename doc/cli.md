@@ -1,11 +1,11 @@
 # CLI Reference
 
-Command line switches for starting psi (`clojure -M:run ...`).
+Command line switches for starting psi (`clojure -M:psi ...`).
 
 ## Basic usage
 
 ```bash
-clojure -M:run [flags]
+clojure -M:psi [flags]
 ```
 
 ## Mode and session flags
@@ -73,32 +73,32 @@ Session/runtime tuning:
 
 ```bash
 # Console
-clojure -M:run
+clojure -M:psi
 
 # TUI
-clojure -M:run --tui
+clojure -M:psi --tui
 
 # RPC mode
-clojure -M:run --rpc-edn
+clojure -M:psi --rpc-edn
 
 # nREPL on random port
-clojure -M:run --nrepl
+clojure -M:psi --nrepl
 
 # nREPL on fixed port
-clojure -M:run --nrepl 7888
+clojure -M:psi --nrepl 7888
 
 # TUI + nREPL
-clojure -M:run --tui --nrepl
+clojure -M:psi --tui --nrepl
 
 # Pick model key
-clojure -M:run --model sonnet-4.6
+clojure -M:psi --model sonnet-4.6
 
 # Memory store selection + retention
-clojure -M:run --memory-store datalevin \
+clojure -M:psi --memory-store datalevin \
   --memory-store-db-dir /tmp/psi-memory.dtlv \
   --memory-retention-snapshots 500 \
   --memory-retention-deltas 2000
 
 # Disable auto fallback to in-memory
-clojure -M:run --memory-store-fallback off
+clojure -M:psi --memory-store-fallback off
 ```
