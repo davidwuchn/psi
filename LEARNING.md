@@ -4,6 +4,20 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-12 - PSL follow-up memory is strongest when PLAN/STATE cite canonical verification commands
+
+### λ PLAN/STATE entries should record the exact verification entrypoint and outcome count
+
+When a fix is already landed, PSL follow-up should still normalize verification memory
+around one canonical command (`bb emacs:test`) plus observed result (`186/186`).
+This keeps "now" and "next" artifacts aligned with reproducible operator workflows.
+
+### λ Spec-distillation progress lines should mention runtime wiring, not only spec-file creation
+
+For contract distillation commits (for example `spec/openai-provider.allium`), PLAN
+memory is more actionable when it also names the runtime hook points that realize the
+contract (provider callbacks + executor capture persistence), not just that a spec file exists.
+
 ## 2026-03-12 - OpenAI capture callbacks and Emacs separator-anchor drift need explicit boundary contracts
 
 ### λ Provider capture telemetry should be callback-chained and bounded at session edge
