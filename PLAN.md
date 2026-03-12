@@ -248,6 +248,7 @@ Ordered steps toward PSI COMPLETE.
 - app-query-tool contract convergence landed (`364475a`): `spec/tools/app-query-tool.allium` now matches runtime behavior (factory schema metadata parity, `overrides` + `tool_call_id` options, truncation details only when truncated, and direct-dispatch exclusion).
 - OpenAI provider contract distillation landed (`6e39269`): `spec/openai-provider.allium` now captures provider dispatch, request/auth requirements, SSE normalization, tool-call streaming edge cases, and request/reply capture callbacks. Runtime is now aligned via request/reply capture hooks in `openai.clj` + executor callback chaining/bounded capture persistence; next slice should add `traces:` coverage and tighten canonical reason mapping against `ai-abstract-model.allium` if needed.
 - OpenAI provider thinking pipeline distillation landed (`905aac5`): 9 new rules added covering completions/codex delta extraction, statechart-bypass progress routing, RPC wire translation, TUI accumulation, and Emacs live-region/archive/clear lifecycle. Pre-existing string-keyed map literal parse errors in `CompletionsRequestBuilt`, `CodexRequestBuilt`, and `thinking_level_to_effort` config resolved by moving to `@guidance`.
+- Anthropic provider spec distilled and verified (`f8523cb`): `spec/anthropic-provider.allium` covers tool ID normalisation, message transformation (user/assistant/tool-result, consecutive-merge), OAuth vs API-key auth, extended thinking (level→budget, beta headers, temperature exclusion), SSE event normalisation, usage accumulation, URL construction, and HTTP error extraction. 6 gaps corrected vs code/tests during verification pass.
 - Remaining work:
   - Recover richer behavioral detail where specs were intentionally simplified during parser migration (session/rpc/tui/emacs/memory flows)
   - Align event vocabulary end-to-end (command vs emitted event pairs) and keep surface `provides` lists strictly synchronized with rule triggers
@@ -279,3 +280,4 @@ Ordered steps toward PSI COMPLETE.
 - Δ psl source=3786e39 at=2026-03-10T16:35:00Z :: ⚒ · Emit footer/updated after each tool/result in progress poll loops λ
 - Δ psl source=af2282f at=2026-03-10T23:58:00-04:00 :: ⚒ λ Add global code→spec invariant equation to AGENTS.md
 - Δ psl source=c98e310 at=2026-03-12T23:18:00-04:00 :: ⚒ λ Add tri-artifact agreement invariant to AGENTS.md
+- Δ psl source=f8523cb at=2026-03-12T23:18:00-04:00 :: ⊨ λ Distil anthropic-provider.allium spec from code and tests
