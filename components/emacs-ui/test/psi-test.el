@@ -1364,6 +1364,39 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
+(ert-deftest psi-idle-new-slash-restores-input-area-and-footer-after-reset ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (let ((rpc-calls nil))
+          (insert "stale transcript\n/new")
+          (setf (psi-emacs-state-draft-anchor psi-emacs--state)
+                (copy-marker (+ (length "stale transcript\n") 1) nil))
+          (setf (psi-emacs-state-projection-footer psi-emacs--state) "stale footer")
+          (cl-letf (((symbol-value 'psi-emacs--send-request-function)
+                     (lambda (_state op params &optional callback)
+                       (push (list op params) rpc-calls)
+                       (cond
+                        ((and callback (equal op "new_session"))
+                         (funcall callback
+                                  '((:kind . :response)
+                                    (:ok . t)
+                                    (:data . ((:session-id . "s-2"))))))
+                        ((and callback (equal op "get_messages"))
+                         (funcall callback
+                                  '((:kind . :response)
+                                    (:ok . t)
+                                    (:data . ((:messages . []))))))))))
+            (psi-emacs-send-from-buffer nil))
+          (setq rpc-calls (nreverse rpc-calls))
+          (should (equal '("new_session" "get_messages") (mapcar #'car rpc-calls)))
+          (should (psi-emacs--input-separator-marker-valid-p))
+          (should (equal "connecting..." (psi-emacs-state-projection-footer psi-emacs--state)))
+          (should (string-match-p "connecting\\.\\.\\." (buffer-string))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
 (ert-deftest psi-idle-new-slash-appends-deterministic-error-on-failure ()
   (with-temp-buffer
     (psi-emacs-mode)
