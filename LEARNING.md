@@ -4,6 +4,21 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-12 - Emacs mode keybindings should self-heal on every activation
+
+### λ Long-lived Emacs sessions can drift keymap state; mode activation should reapply canonical bindings
+
+Installing keybindings only once at load time is brittle when maps are mutated by reloads,
+mode transitions, or local overrides during development. Moving bindings into an explicit
+installer function and calling it on each `psi-emacs-mode` activation makes keymap state
+idempotent and repairable without restarting Emacs.
+
+### λ Keybinding regressions should assert concrete interactive affordances, not only map setup code
+
+A focused ERT (`psi-interrupt-keybinding-is-installed`) that enters `psi-emacs-mode` and
+checks `C-c C-c` resolves to `psi-emacs-interrupt` catches real operator breakage directly.
+This is stronger than relying on structural tests that only inspect initialization paths.
+
 ## 2026-03-12 - Startup, `/new`, and `/resume` should share one connecting-affordance policy
 
 ### λ One transient UX policy should serve all reset/rehydrate entry points
