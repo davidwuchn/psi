@@ -6,6 +6,17 @@ Ordered steps toward PSI COMPLETE.
 
 ## Done
 
+### Step 11c — Session spec consolidation + naming normalization ✓ complete
+- Added core session domain spec: `spec/session-core.allium` (Allium 2)
+- Added session forking API/contract spec: `spec/session-forking.allium` (Allium 2)
+- Aligned session specs to Allium 2 and core naming:
+  - `spec/session-management.allium`
+  - `spec/session-persistence.allium`
+  - `spec/session-startup-prompts.allium`
+- Normalized naming across `spec/*.allium`: `sessionId/session_id -> id`, `cwd -> worktree_path`
+- Follow-up semantic repair pass completed for high-risk specs (`session-core`, `session-management`, `git-worktrees`, `remember-capture`)
+- Outcome: session/worktree vocabulary is now consistently query-surface oriented in specs
+
 ### Step 1 — Split allium specs  ✓
 - `spec/session-management.allium`
 - `spec/extension-system.allium`

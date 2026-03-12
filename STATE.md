@@ -5,6 +5,10 @@ Current truth about the Psi system.
 ---
 
 ## Operating Frame
+- ✓ Session spec consolidation completed (commit `14b9411`): new `spec/session-core.allium` and `spec/session-forking.allium` establish explicit core identity, lineage, and EQL contract surfaces for create/fork/subagent/message flows.
+- ✓ Session-related specs now converged on Allium 2 where actively evolved (`session-core`, `session-forking`, `session-management`, `session-persistence`, `session-startup-prompts`).
+- ✓ Naming normalization pass applied across `spec/*.allium`: legacy `sessionId`/`session_id` and `cwd` terms were replaced with `id` and `worktree_path`, then semantically repaired in high-risk specs to avoid blind-rename drift.
+- ✓ Post-normalization integrity checks completed: duplicate-field scan clean; targeted repairs landed for `SessionMessage` identity fields, session usage scoping predicate, worktree-current naming, and remember-capture duplicate id field.
 
 - ✓ Nucleus framing is now explicit in `AGENTS.md` via **Core Equation** (`刀 ⊣ ψ → 🐍`) and **The Loop** (Observe → Orient → Decide → Act).
 - ✓ Spec refinement framing now explicitly includes values in `AGENTS.md` using allium-specific primitives (`λallium_spec_step(刀_intention, ψ_values, allium_spec)`), tightening the intention+values contract for future prompt/spec evolution.
