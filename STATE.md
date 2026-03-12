@@ -19,6 +19,7 @@ Current truth about the Psi system.
 - ✓ Nucleus framing is now explicit in `AGENTS.md` via **Core Equation** (`刀 ⊣ ψ → 🐍`) and **The Loop** (Observe → Orient → Decide → Act).
 - ✓ Spec refinement framing now explicitly includes values in `AGENTS.md` using allium-specific primitives (`λallium_spec_step(刀_intention, ψ_values, allium_spec)`), tightening the intention+values contract for future prompt/spec evolution.
 - ✓ Project values and spec-drift guard workflow are now explicit in `README.md` (Values section + `bb spec:*` commands with declaration-name baseline guard).
+- ✓ User-facing documentation surface is now split and consolidated under `doc/` (commit `9c95e4d` + follow-ups): `README.md` is concise entrypoint-only; detailed docs moved to `doc/cli.md`, `doc/tui.md`, `doc/emacs-ui.md`, `doc/architecture.md`, `doc/extension-api.md`, `doc/extensions.md`, and `doc/psi-project-config.md`; path usage is unified on `doc/`.
 - ✓ Remember memory-capture framing clarified: human signal to future ψ via manual remember writeback.
 - ✓ Memory model boundary clarified: session memory (ephemeral working set) ≠ persistent memory (cross-session distilled artifacts) ≠ git history (queried directly, not duplicated into memory store).
 - ✓ Session persistence is a separate concern from memory: session transcripts/state may be partially persisted for `/resume`, but this is distinct from memory-store artifacts used by remember/recover.

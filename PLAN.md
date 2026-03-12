@@ -93,6 +93,12 @@ Ordered steps toward PSI COMPLETE.
 
 ---
 
+### Step 13 — User-doc surface split from README to `doc/` ✓ complete
+- `README.md` now acts as a concise entry surface (quick start + links), while detailed user docs moved into `doc/` (`cli.md`, `tui.md`, `emacs-ui.md`, `architecture.md`, `extension-api.md`, `extensions.md`, `psi-project-config.md`).
+- Built-in tools list remains in `README.md`; `app-query-tool` details moved to `doc/psi-project-config.md`.
+- Architecture and roadmap now live together in `doc/architecture.md`.
+- Docs path is now unified on `doc/` (not mixed `doc/` + `docs/`).
+
 ## Next
 
 ### Step 10 — Remember memory capture ✓ complete
