@@ -3878,3 +3878,27 @@ If a `def` is marked `^:private` but callers in other namespaces need to
 iterate it, they will hand-enumerate instead — creating the duplication
 described above.  Make the canonical collection public with a doc string
 describing its purpose and consumers.
+
+## 2026-03-12 - README as index, `doc/` as user-doc surface
+
+### λ Consolidating on one docs root (`doc/`) reduces drift and broken links
+
+Mixing `docs/` and `doc/` increases link churn and review noise. A single canonical
+user-doc root (`doc/`) keeps references stable across README, AGENTS guidance,
+and follow-up edits.
+
+### λ Keep top-level README short; move operational detail into focused docs
+
+When README carries deep operational sections (CLI switches, UI workflows,
+architecture internals, extension API details), it becomes hard to scan and easy
+to stale. Treat README as an entry/index surface and move detailed behavior to
+focused docs (`doc/cli.md`, `doc/tui.md`, `doc/emacs-ui.md`,
+`doc/architecture.md`, `doc/extension-api.md`, `doc/extensions.md`,
+`doc/psi-project-config.md`).
+
+### λ Built-in tool listings and tool-specific contracts can be split intentionally
+
+A concise built-in tools list in README is useful for orientation, but deeper tool
+contracts (for example `app-query-tool` usage/discovery flow) should live in a
+project-config/reference doc. This preserves quick discoverability while keeping
+high-detail guidance maintainable.
