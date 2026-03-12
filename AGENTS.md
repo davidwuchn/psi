@@ -5,7 +5,9 @@ engage nucleus:
 Human ⊗ AI
 
 
-refactor_minimal_semantics_spec_tests ≡ λcode. λallium_spec. λtests. ∃new. new = Δ(minimal((([τ μ] | [Δ Σ/μ]) code))) ∧ behavior(new) = behavior(code) ∧ satisfies(new, allium_spec) ∧ ∀t ∈ tests. passes(t, new)
+λspec. language(spec) = Allium
+
+refactor_minimal_semantics_spec_tests ≡ λcode. λspec. λtests. ∃new. new = Δ(minimal((([τ μ] | [Δ Σ/μ]) code))) ∧ behavior(new) = behavior(code) ∧ satisfies(new, spec) ∧ ∀t ∈ tests. passes(t, new)
 
 API: [φ fractal] | [λ ∞/0] → λrequest. match(pattern) → handle(edge_cases) → response
 Docs: [φ fractal τ] | [λ] → λsystem. map(λlevel. explain(system, abstraction=level))
@@ -13,8 +15,8 @@ Test: [π ∞/0] | [Δ λ] | RGR → λfunction. {nominal, edge, boundary} → c
 Review: [τ ∞/0] | [Δ λ] | OODA → λdiff. find(edge_cases) ∧ suggest(minimal_fix)
 Architecture: [φ fractal euler] | [Δ λ] → λreqs. self_referential(scalable(growing(system)))
 
-tests_musta_cover_allium_spec_behaviour ≡ λtests. λallium_spec. must(∀b ∈ behaviour(allium_spec). ∃t ∈ tests. covers(t, b))
-λcode. ∃allium_spec. describes(allium_spec, code)
+tests_musta_cover_spec_behaviour ≡ λtests. λspec. must(∀b ∈ behaviour(spec). ∃t ∈ tests. covers(t, b))
+λcode. ∃spec. describes(spec, code)
 λreq. λspec. localized_change(add_or_refine(rules(req) ∪ examples(req)), spec) ∧ ¬broad_restructure(spec)
 λcode. ∃spec. (∧ (corresponds spec code) (implements code spec))
 
@@ -25,19 +27,19 @@ Until = λrec. λstep. λdone. λtarget. λstate.
           else rec step done target (step target state)
 iterate_to_fix = Y Until
 
-λmatches(code, allium_spec) -> code_satisfies_allium_spec
+λmatches(code, spec) -> code_satisfies_spec
 
-λ(spec, tests, code) →
-  ∀ artifact ∈ {spec, tests, code},
+λ(model, spec, tests, code) →
+  ∀ artifact ∈ {meta, spec, tests, code},
   ∀ change δ applied to artifact:
     propagate(δ) → remaining two
   such that:
-    agree(spec, tests, code) = true  at all times
+    agree(meta, spec, tests, code) = true  at all times
 
-λdev_step(allium_spec, code) -> tiny_code_transformation_guided_by_allium_spec
-λallium_spec_step(刀_intention, ψ_values, allium_spec) -> tiny_allium_spec_transformation | guided_by_刀_intention | matching_ψ_values
-iterate_to_fix  dev_step matches allium_spec code0
-iterate_to_fix  allium_spec_step matches intention allium_spec0
+λdev_step(spec, code) -> tiny_code_transformation_guided_by_spec
+λspec_step(刀_intention, ψ_values, spec) -> tiny_spec_transformation | guided_by_刀_intention | matching_ψ_values
+iterate_to_fix  dev_step matches spec code0
+iterate_to_fix  spec_step matches intention spec0
 
 ## Principles
 
@@ -147,6 +149,7 @@ what does future ψ need to be maximally effective?
 
 AGENTS.md - bootstrap system
 README.md - User documentation
+META.md - psi meta model
 STATE.md - now (what is true)
 PLAN.md - next (what should happen)
 LEARNING.md - past (what was discovered)
