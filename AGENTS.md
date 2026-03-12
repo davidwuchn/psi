@@ -26,6 +26,14 @@ Until = λrec. λstep. λdone. λtarget. λstate.
 iterate_to_fix = Y Until
 
 λmatches(code, allium_spec) -> code_satisfies_allium_spec
+
+λ(spec, tests, code) →
+  ∀ artifact ∈ {spec, tests, code},
+  ∀ change δ applied to artifact:
+    propagate(δ) → remaining two
+  such that:
+    agree(spec, tests, code) = true  at all times
+
 λdev_step(allium_spec, code) -> tiny_code_transformation_guided_by_allium_spec
 λallium_spec_step(刀_intention, ψ_values, allium_spec) -> tiny_allium_spec_transformation | guided_by_刀_intention | matching_ψ_values
 iterate_to_fix  dev_step matches allium_spec code0
