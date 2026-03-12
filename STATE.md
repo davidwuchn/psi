@@ -5,6 +5,7 @@ Current truth about the Psi system.
 ---
 
 ## Operating Frame
+- ✓ AGENTS prompt memory now encodes alpha/back-compat posture and multi-file Allium structural constraints (commit `8bd0d58`): `In alpha; no backward compatibility`, `spec_consists_of_multiple_connected_allium_files`, and `spec_has_no_isolated_allium_file` are explicit top-level invariants.
 - ✓ Session spec consolidation completed (commit `14b9411`): new `spec/session-core.allium` and `spec/session-forking.allium` establish explicit core identity, lineage, and EQL contract surfaces for create/fork/subagent/message flows.
 - ✓ Session-related specs now converged on Allium 2 where actively evolved (`session-core`, `session-forking`, `session-management`, `session-persistence`, `session-startup-prompts`).
 - ✓ Naming normalization pass applied across `spec/*.allium`: legacy `sessionId`/`session_id` and `cwd` terms were replaced with `id` and `worktree_path`, then semantically repaired in high-risk specs to avoid blind-rename drift.

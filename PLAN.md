@@ -6,6 +6,13 @@ Ordered steps toward PSI COMPLETE.
 
 ## Done
 
+### Step 11e — AGENTS alpha + multi-file Allium constraints ✓ complete
+- Prompt-memory contract in `AGENTS.md` now explicitly states alpha posture: `In alpha; no backward compatibility`.
+- Added explicit structural Allium invariants for specs:
+  - `spec_consists_of_multiple_connected_allium_files`
+  - `spec_has_no_isolated_allium_file`
+- Captured in commit `8bd0d58` to anchor future spec-shape decisions in prompt memory.
+
 ### Step 11c — Session spec consolidation + naming normalization ✓ complete
 - Added core session domain spec: `spec/session-core.allium` (Allium 2)
 - Added session forking API/contract spec: `spec/session-forking.allium` (Allium 2)
