@@ -272,6 +272,7 @@ Ordered steps toward PSI COMPLETE.
 - Progress: commit `3600486` tightened agent-chain/operator UX: async chain start response is now compact and machine-friendly (`OK id:<run-id>`), with monitor guidance removed from tool output; lambda/prompt compiler agent definitions were also refined for stricter minimal output contracts.
 - Progress: commit `c353189` clarifies `agent-chain` tool contract text for async runs: `action="run"` language now says "start" (not "execute"), and description explicitly states "Do not poll unless explicitly asked to." to discourage default status polling loops.
 - Progress: commit `2629a73` normalizes runtime model resolution in `agent-chain`: provider aliases/strings are canonicalized, `:id` and `:model-id` are both accepted, fallback can resolve from `:psi.agent-session/model-provider` + `:psi.agent-session/model-id`, and unresolved cases warn before defaulting to `:sonnet-4.6`.
+- Progress: commit `8bc8eda` adds chain-run removal controls to `agent-chain`: new tool action `action="remove"` (with `id`) and slash command `/chain-rm <run-id>` remove workflow runs and refresh widget state; extension tests now cover both tool and command removal paths.
 - Progress: commit `8a48c7a` adds explicit bb task entrypoints for Clojure test scopes (`clojure:test:unit`, `clojure:test:extensions`) plus composed `clojure:test`, reducing command-discovery friction for unit/extension verification.
 - Definition of done:
   - Per-token streaming render is available (not spinner-only)
