@@ -4,6 +4,47 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-12 - Background job terminal detection must fire on every message injection path
+
+### λ `send-message` is a turn-bypass — terminal checks must cover it explicitly
+
+The session's background-job terminal detection (`maybe-mark-workflow-jobs-terminal!` +
+`maybe-emit-background-job-terminal-messages!`) was wired at four canonical turn
+boundaries: `:on-agent-done`, `prompt-in!`, `set-extension-run-fn-in!` (when idle), and
+`send-extension-prompt-in!` (when idle). However, `psi.extension/send-message` — used by
+agent-chain's `emit-chain-result!` — injects messages directly via
+`send-extension-message-in!`, bypassing all of those boundaries.
+
+Consequence: workflow-backed background jobs created by `agent-chain(action="run")` stayed
+`:running` until the **next user prompt**, never completing on their own.
+
+Fix: add the terminal-check pair to the `send-message` mutation body, after the message
+is injected. No recursion risk because `maybe-emit-background-job-terminal-messages!` calls
+`send-extension-message-in!` directly, not through the mutation.
+
+### λ Any new message-injection path needs its own terminal-check invocation
+
+The general principle: **every path that injects content into agent history must also
+trigger the workflow-job terminal check** if it does not already go through a known turn
+boundary. This includes:
+- extension-initiated `send-message`
+- any future direct-inject helpers added to `core.clj`
+
+Search pattern: grep for calls to `send-extension-message-in!` and verify each call site
+either (a) is already inside a function that calls `maybe-mark-workflow-jobs-terminal!`
+downstream, or (b) explicitly adds the check after injection.
+
+### λ Test the real Pathom mutation surface, not just the internal helper
+
+The regression test (`send-message-triggers-workflow-job-terminal-detection-test`) was
+written to invoke `psi.extension/send-message` through the full Pathom mutation path
+(via `query/query-in` with `register-mutations-in!`), not by calling
+`send-extension-message-in!` directly. This matters because the bug was in the mutation
+wrapper — a test at the helper level would have passed even before the fix.
+
+**Pattern**: when a bug lives in a mutation wrapper, the regression test must invoke the
+mutation through the Pathom surface, not the private helper it delegates to.
+
 ## 2026-03-12 - Spec language identity should be a first-class axiom, not assumed from convention
 
 ### λ `λspec. language(spec) = Allium` belongs at the top of AGENTS.md as a grounding axiom
