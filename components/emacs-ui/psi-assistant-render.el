@@ -296,6 +296,11 @@ so the next thinking delta still starts a fresh block."
       (when has-thinking-text
         (if range-live
             (psi-emacs--archive-thinking-line)
+          (let ((range (psi-emacs-state-thinking-range psi-emacs--state)))
+            (when (and (consp range) (markerp (car range)))
+              (set-marker (car range) nil))
+            (when (and (consp range) (markerp (cdr range)))
+              (set-marker (cdr range) nil)))
           (setf (psi-emacs-state-thinking-range psi-emacs--state) nil)
           (setf (psi-emacs-state-thinking-in-progress psi-emacs--state) nil))))))
 

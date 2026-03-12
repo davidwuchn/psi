@@ -1738,6 +1738,27 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
+(ert-deftest psi-thinking-streaming-multiple-deltas-update-in-place ()
+  "Multiple thinking deltas must accumulate in a single line, not produce multiple lines."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (progn
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/thinking-delta") (:data . ((:text . "I")))))
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/thinking-delta") (:data . ((:text . " think")))))
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/thinking-delta") (:data . ((:text . " more")))))
+          (should (equal "I think more" (psi-emacs-state-thinking-in-progress psi-emacs--state)))
+          ;; Exactly one thinking line in the buffer — not one per delta
+          (should (equal 1 (cl-count-if (lambda (line) (string-prefix-p "ψ⋯ " line))
+                                        (split-string (buffer-string) "\n" t))))
+          (should (string-match-p "ψ⋯ I think more" (buffer-string))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
 (ert-deftest psi-thinking-streaming-uses-thinking-face-on-prefix ()
   (with-temp-buffer
     (psi-emacs-mode)
