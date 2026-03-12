@@ -565,3 +565,59 @@
             "background job should be terminal after send-message")
         (is (= :completed (:status job))))
       (wf/shutdown-in! reg))))
+
+(def ^:private delayed-done-chart
+  "Statechart that reaches :done asynchronously shortly after start."
+  (chart/statechart {:id :delayed-done-chart}
+                    (ele/state {:id :idle}
+                               (ele/transition {:event :workflow/start :target :running}))
+                    (ele/state {:id :running}
+                               (ele/invoke {:id :finish
+                                            :type :future
+                                            :params (fn [_ _] {})
+                                            :src (fn [_]
+                                                   (Thread/sleep 40)
+                                                   {:ok true})})
+                               (ele/transition {:event :done.invoke.finish :target :done}))
+                    (ele/final {:id :done})))
+
+(deftest send-message-terminal-detection-handles-workflow-completion-race-test
+  (testing "send-message eventually marks job terminal when workflow completes just after message"
+    (let [ctx       (session/create-context)
+          _         (swap! (:session-data-atom ctx) assoc :startup-bootstrap-completed? true)
+          ext-path  "/test/send-message-race.clj"
+          wf-id     "wf-sm-race"
+          store     (:background-jobs-atom ctx)
+          thread-id (:session-id (session/get-session-data-in ctx))
+          reg       (:workflow-registry ctx)
+          qctx      (query/create-query-context)
+          _         (session/register-resolvers-in! qctx false)
+          _         (session/register-mutations-in! qctx true)
+          mutate    (fn [op params]
+                      (get (query/query-in qctx
+                                           {:psi/agent-session-ctx ctx}
+                                           [(list op (assoc params :psi/agent-session-ctx ctx))])
+                           op))]
+      (wf/register-type-in! reg ext-path {:type :delayed-done :chart delayed-done-chart})
+      (wf/ensure-pump! reg)
+      (wf/create-workflow-in! reg ext-path {:type :delayed-done :id wf-id :auto-start? true})
+      (bj/start-background-job-in! store
+                                   {:tool-call-id      "tc-sm-race"
+                                    :thread-id         thread-id
+                                    :tool-name         "workflow/delayed-done"
+                                    :job-id            "job-sm-race"
+                                    :job-kind          :workflow
+                                    :workflow-ext-path ext-path
+                                    :workflow-id       wf-id})
+      ;; Fire send-message before workflow reaches :done.
+      (mutate 'psi.extension/send-message
+              {:role "assistant" :content "chain result" :custom-type "chain-result"})
+      ;; Poll for eventual terminal transition (covers race between message inject and wf completion).
+      (loop [i 0]
+        (let [job (bj/get-job-in store "job-sm-race")]
+          (if (or (>= i 80) (bj/terminal-status? (:status job)))
+            (is (= :completed (:status job)))
+            (do
+              (Thread/sleep 10)
+              (recur (inc i))))))
+      (wf/shutdown-in! reg))))

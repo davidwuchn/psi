@@ -1818,11 +1818,20 @@
     ;; After injecting an extension message, check whether any workflow-backed
     ;; background jobs have reached a terminal state.  This covers the case
     ;; where a workflow (e.g. agent-chain) completes and emits its result via
-    ;; send-message rather than through the normal agent turn boundary, which
-    ;; is the only other place the terminal check runs.
+    ;; send-message rather than through the normal agent turn boundary.
+    ;;
+    ;; We run one immediate pass plus one short delayed pass to avoid a race
+    ;; where send-message is emitted just before workflow runtime state is
+    ;; snapshotted as :done/:error.
     (when agent-session-ctx
       (maybe-mark-workflow-jobs-terminal! agent-session-ctx)
-      (maybe-emit-background-job-terminal-messages! agent-session-ctx))
+      (maybe-emit-background-job-terminal-messages! agent-session-ctx)
+      (future
+        (Thread/sleep 75)
+        (try
+          (maybe-mark-workflow-jobs-terminal! agent-session-ctx)
+          (maybe-emit-background-job-terminal-messages! agent-session-ctx)
+          (catch Exception _ nil))))
     {:psi.extension/message msg}))
 
 (pco/defmutation send-prompt
