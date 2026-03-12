@@ -104,13 +104,20 @@ config {
     codex_completed_event_types: Set<String> = {"response.completed", "response.done"}
     codex_failed_event_types: Set<String> = {"response.failed", "error"}
 
-    thinking_level_to_effort: Map<String, String?> = {
-        "off": null,
-        "minimal": "minimal",
-        "low": "low",
-        "medium": "medium",
-        "high": "high",
-        "xhigh": "high"
+    -- thinking_level_to_effort: off->null, minimal->"minimal", low->"low",
+    --   medium->"medium", high->"high", xhigh->"high"
+    -- (Map<String,String?> literal syntax not supported by parser; expressed as guidance)
+
+    completions_reasoning_part_types: Set<String> = {
+        "reasoning", "reasoning_text", "reasoning_content",
+        "reasoning_summary", "summary", "summary_text"
+    }
+
+    codex_reasoning_event_types: Set<String> = {
+        "response.reasoning_summary_text.delta",
+        "response.reasoning_text.delta",
+        "response.reasoning_summary.delta",
+        "response.reasoning.delta"
     }
 }
 
@@ -215,6 +222,177 @@ rule ReasoningEffortMappedFromThinkingLevel {
             ReasoningEffortResult(MapGetOrDefault(config.thinking_level_to_effort, options.thinking_level, config.default_reasoning_effort))
 }
 
+------------------------------------------------------------
+-- Thinking/Reasoning Delta Reconstruction
+------------------------------------------------------------
+
+rule CompletionsReasoningDeltaExtractedFromChunk {
+    when: CompletionsChunkReceived(stream, chunk)
+    requires: stream.request_api = openai_completions
+
+    -- delta = first choice delta from chunk
+    -- Fan-in priority order (first match wins):
+    --   1. delta.reasoning.content  (nested map, :content key)
+    --   2. delta.reasoning.summary  (nested map, :summary key)
+    --   3. delta.reasoning_content  (flat key)
+    --   4. delta.reasoning as bare String
+    --   5. delta.reasoning as Map   -> .content / .summary / .text / .delta
+    --   6. delta.reasoning as List<Map> where part type ∈ reasoning_part_types
+    --      -> part.text / part.content / part.delta / part.reasoning / part.summary
+    --   7. delta.content as List<Map> where part type ∈ reasoning_part_types
+    --      -> part.text / part.content / part.delta / part.summary
+
+    ensures:
+        if ExtractReasoningDelta(delta) != null:
+            Emit(StreamEvent{
+                event_type: thinking_delta,
+                content_index: 0,
+                delta_text: ExtractReasoningDelta(delta)
+            })
+
+    @guidance
+        -- String fragments inside nested maps/vectors are normalized by a recursive
+        -- helper (string-fragment) that resolves .text / .content / .delta / .summary /
+        -- .value leaves. Non-string scalars (numbers, keywords) are coerced to string.
+        -- Sequential fragments are joined without separator.
+        -- nil is returned when no textual content is found at any probe site.
+}
+
+rule CodexReasoningDeltaExtractedFromEvent {
+    when: CodexEventReceived(stream, event)
+    requires: stream.request_api = openai_codex_responses
+
+    -- Four Codex SSE event types carry reasoning text:
+    --   "response.reasoning_summary_text.delta"
+    --   "response.reasoning_text.delta"
+    --   "response.reasoning_summary.delta"
+    --   "response.reasoning.delta"
+    -- All four are normalized to the same thinking_delta shape.
+
+    ensures:
+        if EventType(event) in {
+            "response.reasoning_summary_text.delta",
+            "response.reasoning_text.delta",
+            "response.reasoning_summary.delta",
+            "response.reasoning.delta"
+        } and StringFragment(event.delta) != null:
+            Emit(StreamEvent{
+                event_type: thinking_delta,
+                content_index: 0,
+                delta_text: StringFragment(event.delta)
+            })
+}
+
+rule ThinkingDeltaEmittedOnlyWhenNonEmpty {
+    when: ThinkingDeltaReady(stream, text)
+    requires: IsBlank(text)
+
+    ensures: ThinkingDeltaSuppressed(stream)
+}
+
+-- Thinking deltas bypass the turn statechart entirely.
+-- They are forwarded directly to the progress queue so they can reach
+-- the UI layer without waiting for text/tool accumulation to complete.
+rule ThinkingDeltaBypassesTurnStatechart {
+    when: ThinkingDeltaEmitted(stream, event)
+
+    ensures: ProgressQueueReceives(ThinkingDeltaProgressEvent{
+        event_kind: thinking_delta,
+        text: CoerceToString(event.delta_text)
+    })
+    ensures: TurnStatechartNotNotified(stream, event)
+
+    @guidance
+        -- text-delta events feed into the turn statechart (turn/text-delta).
+        -- thinking-delta events skip the statechart and go straight to
+        -- emit-progress! so they appear in the UI mid-stream independently
+        -- of text accumulation state.
+        -- delta_text is always coerced to String (str) before enqueue.
+}
+
+-- RPC wire translation for thinking deltas.
+rule ThinkingDeltaTranslatedToWireEvent {
+    when: ProgressQueueDrained(thinking_delta_event)
+
+    ensures: WireEventEmitted("assistant/thinking-delta", {text: thinking_delta_event.text})
+
+    @guidance
+        -- "assistant/thinking-delta" is a first-class wire event topic with
+        -- required payload key #{:text}. It is validated by the RPC layer
+        -- alongside all other progress event types.
+}
+
+------------------------------------------------------------
+-- UI Accumulation and Lifecycle
+------------------------------------------------------------
+
+-- TUI accumulates thinking deltas into a single string state slot.
+-- The slot is initialized to nil at turn start and rendered inline above
+-- the assistant text block as a dim "ψ⋯ <text>" line.
+rule TuiThinkingDeltaAccumulated {
+    when: WireEventReceived(tui, "assistant/thinking-delta", payload)
+
+    ensures: tui.stream_thinking = Concat(tui.stream_thinking ?? "", payload.text)
+    ensures: ViewRendered(tui, render_stream_thinking(tui.stream_thinking))
+
+    @guidance
+        -- render_stream_thinking wraps non-blank text as dim-styled "ψ⋯ <text>\n".
+        -- Blank/nil thinking is suppressed entirely from view.
+        -- stream_thinking is reset to nil on turn start, tool-start, and turn end.
+}
+
+-- Emacs accumulates thinking deltas with pure concat (not snapshot-merge).
+-- The live thinking block is a single buffer region, upserted on every delta.
+rule EmacsThinkingDeltaAccumulated {
+    when: WireEventReceived(emacs, "assistant/thinking-delta", payload)
+
+    ensures: emacs.thinking_in_progress = Concat(emacs.thinking_in_progress ?? "", payload.text)
+    ensures: ThinkingLineUpserted(emacs, emacs.thinking_in_progress)
+
+    @guidance
+        -- The live thinking region is keyed by marker range (thinking-range).
+        -- If no region exists, one is created and inserted above the assistant text.
+        -- If a region exists, it is replaced in-place via delete-region/insert.
+        -- The region is styled with psi-emacs-assistant-thinking-face and
+        -- prefixed "ψ⋯ ".
+}
+
+-- When a tool event arrives during an active thinking block, the live thinking
+-- line is split/archived before tool output is inserted.
+rule EmacsThinkingArchivedBeforeToolEvent {
+    when: ToolEventPending(emacs)
+    requires: emacs.thinking_in_progress != null and not IsBlank(emacs.thinking_in_progress)
+
+    ensures:
+        if ThinkingRangeLive(emacs):
+            ThinkingLineArchived(emacs)
+        else:
+            ThinkingInProgressCleared(emacs)
+
+    @guidance
+        -- Archiving freezes the thinking-range marker pair into
+        -- thinking-archived-ranges so it persists in transcript history.
+        -- Clearing drops stale in-progress text when marker state drifted.
+        -- After archive/clear, the next thinking delta starts a fresh block
+        -- after the tool output.
+}
+
+-- At turn end (finalize), all in-progress thinking state is cleared.
+-- Archived thinking ranges remain in transcript history.
+rule EmacsThinkingClearedOnTurnFinalize {
+    when: AssistantTurnFinalized(emacs)
+
+    ensures: ThinkingInProgressCleared(emacs)
+    ensures: ThinkingRangeCleared(emacs)
+    ensures: ThinkingArchivedRangesPreserved(emacs)
+
+    @guidance
+        -- psi-emacs--clear-thinking-line removes the live buffer region and
+        -- resets thinking-range + thinking-in-progress to nil.
+        -- Previously archived ranges are not touched; they remain readable
+        -- in the transcript as historical thinking context.
+}
+
 rule CompletionsRequestBuilt {
     when: OpenAIStreamRequested(stream)
     requires: stream.request_api = openai_completions
@@ -222,15 +400,13 @@ rule CompletionsRequestBuilt {
 
     ensures: ProviderRequestBuilt(stream, ProviderRequest{
         url: stream.request_url,
-        headers: {
-            "Content-Type": "application/json",
-            "Authorization": "Bearer " + stream.resolved_api_key
-        },
         body: JsonEncode(CompletionsRequestBody(stream.conversation, stream.model, stream.options))
     })
 
     @guidance
-        -- For completions, request body includes:
+        -- headers: {"Content-Type": "application/json",
+        --           "Authorization": "Bearer " + resolved_api_key}
+        -- Request body includes:
         --   model, messages, stream=true, stream_options.include_usage=true,
         --   temperature default 0, optional max_tokens/tools/reasoning_effort.
 }
@@ -243,21 +419,19 @@ rule CodexRequestBuilt {
 
     ensures: ProviderRequestBuilt(stream, ProviderRequest{
         url: stream.request_url,
-        headers: {
-            "Content-Type": "application/json",
-            "Authorization": "Bearer " + stream.resolved_api_key,
-            "accept": "text/event-stream",
-            "OpenAI-Beta": config.codex_beta_header,
-            "originator": "psi",
-            "chatgpt-account-id": stream.chatgpt_account_id,
-            "session_id": Optional(stream.options.session_id),
-            "conversation_id": Optional(stream.options.session_id)
-        },
         body: JsonEncode(CodexRequestBody(stream.conversation, stream.model, stream.options))
     })
     ensures: RequestBodyDoesNotContain(stream, "temperature")
 
     @guidance
+        -- headers: {"Content-Type": "application/json",
+        --           "Authorization": "Bearer " + resolved_api_key,
+        --           "accept": "text/event-stream",
+        --           "OpenAI-Beta": config.codex_beta_header,
+        --           "originator": "psi",
+        --           "chatgpt-account-id": stream.chatgpt_account_id,
+        --           "session_id": stream.options.session_id,
+        --           "conversation_id": stream.options.session_id}
         -- Codex backend rejects top-level temperature; omit even when provided.
 }
 
