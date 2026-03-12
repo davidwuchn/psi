@@ -57,11 +57,17 @@
               :content text
               :custom-type custom-type}))
 
-(defn- send-prompt!
-  [mutate-fn text]
-  (mutate-fn 'psi.extension/send-prompt
-             {:content text
-              :source custom-type}))
+(defn- run-subagent-psl!
+  [mutate-fn task]
+  (mutate-fn 'psi.extension.tool/chain
+             {:steps [{:id "psl-subagent"
+                       :tool "subagent"
+                       :args {"action" "create"
+                              "task" task
+                              "mode" "sync"
+                              "fork_session" true
+                              "timeout_ms" 600000}}]
+              :stop-on-error? true}))
 
 (defn- latest-commit
   [mutate-fn]
@@ -99,20 +105,24 @@
     (try
       (if (str/includes? subject marker)
         {:status :done :skipped? true}
-        (let [prompt     (psl-prompt {:source-sha source-sha})
-              prompt-res (send-prompt! mutate-fn prompt)
-              accepted?  (true? (:psi.extension/prompt-accepted? prompt-res))
-              delivery   (:psi.extension/prompt-delivery prompt-res)
-              status-msg (case delivery
-                           :deferred  "PSL prompt queued via deferred; will auto-run when idle"
-                           :follow-up "PSL prompt queued via follow-up"
-                           :prompt    "PSL prompt queued via prompt"
-                           (str "PSL prompt queued via " (str (or delivery :unknown))))]
-          (send-message! mutate-fn
-                         (if accepted?
-                           status-msg
-                           "Failed to update PLAN.md, STATE.md and LEARNING.md"))
-          {:status :done :accepted? accepted? :delivery delivery}))
+        (let [prompt         (psl-prompt {:source-sha source-sha})
+              subagent-res   (run-subagent-psl! mutate-fn prompt)
+              plan-succeeded? (true? (:psi.extension.tool-plan/succeeded? subagent-res))
+              first-result   (first (:psi.extension.tool-plan/results subagent-res))
+              tool-result    (:result first-result)
+              content        (str (or (:content tool-result) ""))
+              is-error?      (or (false? plan-succeeded?)
+                                 (true? (:is-error tool-result)))
+              status-msg     (if is-error?
+                               (str "PSL subagent run failed"
+                                    (when (seq content)
+                                      (str ": " content)))
+                               "PSL subagent run completed (forked context).")]
+          (send-message! mutate-fn status-msg)
+          {:status :done
+           :accepted? (not is-error?)
+           :delivery :subagent
+           :subagent-result subagent-res}))
       (catch Exception e
         (send-message! mutate-fn (str "PSL error: " (ex-message e)))
         {:status :error :error (ex-message e)}))))

@@ -48,32 +48,43 @@
           (is (some #(re-find #"PSL skipped" (str %)) texts))
           (is (= ["git log -1 --pretty=format:%H%n%s"] @calls)))))))
 
-(deftest psl-job-emits-delivery-specific-status-message-test
-  (testing "psl job emits explicit deferred status guidance"
-    (let [sent (atom [])
+(deftest psl-job-runs-subagent-in-forked-sync-mode-test
+  (testing "psl job uses subagent tool-plan chain with fork_session=true"
+    (let [sent     (atom [])
+          captured (atom nil)
           mutate-fn (fn [op params]
                       (case op
-                        psi.extension/send-prompt
-                        {:psi.extension/prompt-accepted? true
-                         :psi.extension/prompt-delivery :deferred}
+                        psi.extension.tool/chain
+                        (do
+                          (reset! captured params)
+                          {:psi.extension.tool-plan/succeeded? true
+                           :psi.extension.tool-plan/results [{:id "psl-subagent"
+                                                              :result {:content "ok" :is-error false}}]})
                         psi.extension/send-message
                         (do (swap! sent conj (:content params))
                             {:psi.extension/message-sent? true})
                         {}))]
       (set-psl-state! {:mutate-fn mutate-fn :query-fn (fn [_] {})})
-      (let [result (invoke-private 'psl-job {:source-sha "feedbeef" :subject "⚒ Add feature"})]
+      (let [result (invoke-private 'psl-job {:source-sha "feedbeef" :subject "⚒ Add feature"})
+            step   (first (:steps @captured))
+            args   (:args step)]
         (is (= :done (:status result)))
         (is (true? (:accepted? result)))
-        (is (= :deferred (:delivery result)))
-        (is (some #(re-find #"queued via deferred; will auto-run when idle" (str %)) @sent)))))
+        (is (= :subagent (:delivery result)))
+        (is (= "subagent" (:tool step)))
+        (is (= "create" (get args "action")))
+        (is (= "sync" (get args "mode")))
+        (is (= true (get args "fork_session")))
+        (is (some #(re-find #"PSL subagent run completed" (str %)) @sent)))))
 
-  (testing "psl job emits prompt-path status when immediate"
-    (let [sent (atom [])
+  (testing "psl job emits failure message when subagent plan fails"
+    (let [sent      (atom [])
           mutate-fn (fn [op params]
                       (case op
-                        psi.extension/send-prompt
-                        {:psi.extension/prompt-accepted? true
-                         :psi.extension/prompt-delivery :prompt}
+                        psi.extension.tool/chain
+                        {:psi.extension.tool-plan/succeeded? false
+                         :psi.extension.tool-plan/results [{:id "psl-subagent"
+                                                            :result {:content "boom" :is-error true}}]}
                         psi.extension/send-message
                         (do (swap! sent conj (:content params))
                             {:psi.extension/message-sent? true})
@@ -81,22 +92,6 @@
       (set-psl-state! {:mutate-fn mutate-fn :query-fn (fn [_] {})})
       (let [result (invoke-private 'psl-job {:source-sha "feedbeef" :subject "⚒ Add feature"})]
         (is (= :done (:status result)))
-        (is (= :prompt (:delivery result)))
-        (is (some #(re-find #"PSL prompt queued via prompt" (str %)) @sent)))))
-
-  (testing "psl job emits follow-up status when queued without run-fn"
-    (let [sent (atom [])
-          mutate-fn (fn [op params]
-                      (case op
-                        psi.extension/send-prompt
-                        {:psi.extension/prompt-accepted? true
-                         :psi.extension/prompt-delivery :follow-up}
-                        psi.extension/send-message
-                        (do (swap! sent conj (:content params))
-                            {:psi.extension/message-sent? true})
-                        {}))]
-      (set-psl-state! {:mutate-fn mutate-fn :query-fn (fn [_] {})})
-      (let [result (invoke-private 'psl-job {:source-sha "feedbeef" :subject "⚒ Add feature"})]
-        (is (= :done (:status result)))
-        (is (= :follow-up (:delivery result)))
-        (is (some #(re-find #"PSL prompt queued via follow-up" (str %)) @sent))))))
+        (is (false? (:accepted? result)))
+        (is (= :subagent (:delivery result)))
+        (is (some #(re-find #"PSL subagent run failed" (str %)) @sent))))))
