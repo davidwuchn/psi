@@ -4,6 +4,32 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-12 - Large naming normalization requires semantic repair passes after mechanical refactors
+
+### λ Global lexical normalization can silently alter domain meaning
+
+A broad rename (`sessionId/session_id -> id`, `cwd -> worktree_path`) improves vocabulary
+coherence but can also introduce semantic breakage in specs where `id` already has local
+meaning (for example message-id vs session-id). Mechanical replacement must be followed by
+a semantic audit focused on identity fields, lineage links, and scoping predicates.
+
+### λ High-risk files need targeted post-rename review, not just grep cleanliness
+
+`session-core`, `session-management`, `git-worktrees`, and `remember-capture` required
+manual repair after normalization:
+- duplicate identity fields in entities after collapsing names,
+- incorrect session-usage scoping predicate (`entry.id = session.id`),
+- stale worktree-current naming (`is_current_cwd`),
+- duplicate capture identifiers in remember artifacts.
+
+A two-phase approach worked: (1) mechanical normalization, (2) semantic repair + invariants.
+
+### λ Repository-wide invariant checks should include duplicate-field detection for specs
+
+A lightweight parser pass over `.allium` entity/value/external-entity blocks caught duplicate
+field declarations that textual grep misses. This check should remain part of post-refactor
+verification for spec-wide renames.
+
 ## 2026-03-12 - For eventually-consistent workflow state, read surfaces must reconcile stale background-job status
 
 ### λ Event-driven terminalization needs a read-time backstop
