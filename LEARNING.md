@@ -4,6 +4,26 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-12 - Model resolution should canonicalize provider/id before fallback defaults
+
+### λ Runtime model maps are integration boundaries, not trusted canonical values
+
+Extension/runtime callsites often receive model maps with provider as string/alias and id at
+alternate keys (`:id` vs `:model-id`). Resolving directly against canonical catalogs without
+normalization causes avoidable misses and silent default-model drift.
+
+### λ Resolve by strongest identity first, then degrade deterministically
+
+A robust model resolver should prefer `(provider,id)` matches after provider normalization,
+then degrade to id-only matching, then to explicit fallback with warning telemetry. This
+preserves intent when provider aliases differ but model identity is unambiguous.
+
+### λ Session query fallback should accept split attrs to survive surface drift
+
+When primary `:psi.agent-session/model` shape is absent or variant, resolver fallback should
+also read split attrs (`:psi.agent-session/model-provider`, `:psi.agent-session/model-id`).
+This keeps agent-chain execution resilient across query-surface evolution.
+
 ## 2026-03-12 - Subagent forkability should preserve tool/slash/spec parity as one contract
 
 ### λ Add new subagent behavior once, project it through both invocation surfaces
