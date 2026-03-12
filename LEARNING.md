@@ -4,6 +4,53 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-12 - Verification pass on a distilled spec reliably uncovers implicit fallback contracts
+
+### λ Code fallbacks that are not explicit in spec become invisible to future maintainers
+
+During distillation of `spec/anthropic-provider.allium`, the initial spec captured the
+"happy path" of each message transformation but missed three implicit fallbacks present in
+the code: user message content as a bare string (`str(content)` fallback), unknown assistant
+block kinds serialised as `{type: "text", text: str(block)}`, and `nil` thinking_level
+treated identically to `:off`. These were only found by a systematic line-by-line comparison
+of spec rules against code branches.
+
+**Pattern**: after distillation, walk every `cond`/`case`/`or`/`??` in the implementation
+and verify each branch appears in a spec rule or `@guidance` block.
+
+### λ Temperature overrideability is distinct from temperature defaulting — both need spec coverage
+
+The spec initially said `temperature: config.default_temperature`, implying the value is
+always the constant `0.7`. The code is `(or (:temperature options) 0.7)` — a caller override
+is explicitly supported. The distinction matters: spec consumers could wrongly assume
+temperature is non-configurable. The corrected rule names both the default and the override
+mechanism.
+
+### λ URL construction details belong in config + a dedicated rule, not buried in guidance prose
+
+The Anthropic request URL (`model.base_url + "/v1/messages"`) was unspecified in the initial
+spec. Adding `messages_path` to `config` and a `AnthropicRequestUrlBuilt` rule makes the
+construction explicit and traceable, rather than leaving it as an undocumented implementation
+assumption. Provider URL rules belong in the spec surface alongside auth and body rules.
+
+### λ Convergence verification is most efficient when structured as embodied / gaps / extras
+
+Following the `converge-allium-spec-and-code` skill pattern (S ⊆ I, S ⊖ I, I ⊖ S) gives
+a systematic frame: (1) confirmed embodied behaviors anchor confidence, (2) spec gaps drive
+targeted corrections, (3) code extras are triaged for domain relevance. For this pass: 23+
+behaviors confirmed embodied, 6 spec gaps corrected, 2 code extras deemed outside spec scope
+(`parse-sse-line` as implementation detail, `provider` registry shape delegated to `ai-abstract-model.allium`).
+
+### λ Tests provide a second verification surface independent of the source code
+
+Mapping each test case to spec rules confirmed test-to-rule coverage and caught one additional
+gap not visible from code alone: `build-request-no-thinking-test` implicitly exercises the `nil`
+thinking_level path (model without reasoning flag), which was missing from the spec's enum.
+Reading tests alongside code during a verification pass catches contracts that code embodies
+implicitly but tests assert explicitly.
+
+---
+
 ## 2026-03-12 - Spec distillation should trace the full pipeline, not only the provider boundary
 
 ### λ Thinking deltas bypass the turn statechart — this must be explicit in spec
