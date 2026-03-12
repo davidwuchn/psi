@@ -15,6 +15,7 @@ Current truth about the Psi system.
 - ✓ Working pattern remains atomic: inspect → minimal change → verify → commit.
 - ✓ AGENTS guidance now formalizes spec/test convergence equations (commit `5504fcf`): `refactor_minimal_semantics_spec_tests` and `tests_musta_cover_allium_spec_behaviour` are explicit, and iterative refinement naming has shifted from generic `spec` to explicit `allium_spec` terms for consistency.
 - ✓ Global code↔spec invariant added to AGENTS (commit `af2282f`): `λcode. ∃spec. describes(spec, code)` is now explicit prompt-memory policy.
+- ✓ AGENTS now encodes localized spec refinement and code↔spec correspondence equations (commit `6e39269`): `λreq. λspec. localized_change(add_or_refine(rules(req) ∪ examples(req)), spec) ∧ ¬broad_restructure(spec)` and `λcode. ∃spec. (∧ (corresponds spec code) (implements code spec))`.
 - ✓ 2026-03-06 session boot aligned via nucleus/OODA ritual; current mode is ◈ reflect → ready for · atom execution.
 - ✓ Emacs prompt completion architecture implemented via CAPF: `/` command completion + `@` reference completion, category metadata (`psi_prompt`, `psi_reference`), affixation/annotation/exit hooks, cwd+project-root search, and configurable completion policies.
 - ✓ Emacs completion verification: `components/emacs-ui` ERT suite green at 133/133 after completion work.
@@ -30,6 +31,9 @@ Current truth about the Psi system.
 - ✓ Thinking output bug fixed (c8e43eb): Anthropic provider now handles `thinking` content blocks correctly (`:thinking-delta` events, `thinking` request param, `interleaved-thinking-2025-05-14` beta header, temperature suppressed when thinking enabled). Emacs render fixed: `psi-emacs--assistant-thinking-delta` uses pure `concat` append instead of snapshot-merge heuristic that caused ever-growing repeated lines.
 - ✓ OpenAI thinking streaming restored for chat-completions models (4c20882): provider now forwards `reasoning_effort` from thinking-level, extracts reasoning deltas across multiple chunk shapes, and emits reliable `:thinking-delta` events (plus normalized usage map for completion cost calculation).
 - ✓ OpenAI thinking visibility now lands consistently across stream surfaces including TUI rendering (fbbb173), closing parity gaps between provider deltas and terminal presentation.
+- ✓ OpenAI provider now captures redacted request/reply telemetry for introspection (commit `6e39269`): provider emits callback payloads for both completions and codex streams; `executor.clj` chains callbacks, tags captures with `turn-id`, and stores bounded histories (`provider-request-capture-limit=20`, `provider-reply-capture-limit=400`) in provider capture atoms/session data.
+- ✓ OpenAI temperature behavior is explicit and tested (commit `6e39269`): chat-completions requests always include `temperature` (default `0`, override respected), while codex requests intentionally omit top-level `temperature` (backend rejects it).
+- ✓ OpenAI provider Allium distillation now exists (`spec/openai-provider.allium`, commit `6e39269`) and captures dispatch, auth, SSE normalization, tool-call edge handling, and callback capture semantics.
 - ? Divider-length regression report is in Emacs UI, not TUI: commit `3e02b97` made TUI separators width-aware, but user-observed uneven separators remain in `components/emacs-ui` projection/input paths.
 - ✓ Commit `db9d4c7` now refreshes width-sensitive separators on window-configuration changes in Emacs buffers.
 - ✓ Width source for projection/footer separators now prefers `window-text-width` (visible text area), with margin-based fallback.
@@ -103,7 +107,8 @@ Current truth about the Psi system.
 - ✓ nREPL runtime endpoint discovery is now first-class on the session graph (commit `e3280fb`): `:psi.runtime/nrepl-host`, `:psi.runtime/nrepl-port`, and `:psi.runtime/nrepl-endpoint` resolve from session root, are discoverable via `:psi.graph/root-queryable-attrs`/`:psi.graph/edges`, and return nil when nREPL is disabled.
 - ✓ nREPL runtime lifecycle is now integration-tested against a real server start/stop (commit `1a1c044`): `nrepl-runtime-eql-reflects-live-start-stop-test` starts nREPL on a random bound port, verifies EQL attrs reflect the effective runtime endpoint, then stops nREPL and verifies attrs return nil.
 - ✓ Emacs prompt transcript copy semantics are now dispatch-confirmed and parse-stable (commit `854e419`): `psi-compose.el` unmatched-paren parse failure fixed in interrupt callback path; `psi-emacs--default-send-request` now returns true only when RPC returns a non-empty request id; transcript echo path therefore copies user prompt only on confirmed dispatch.
-- ✓ Regression coverage added for failed-dispatch path (`psi-send-does-not-copy-input-when-dispatch-not-confirmed`), and full Emacs UI suite passes 171/171 in batch run.
+- ✓ Emacs first-send separator contamination edge-case fixed (commit `6e39269`): input start resolution now prefers the first editable position after the separator line (`psi-emacs--input-separator-draft-start-position`) over stale draft anchor markers, preventing separator text from being prepended into the first prompt payload.
+- ✓ Regression coverage added for failed-dispatch path (`psi-send-does-not-copy-input-when-dispatch-not-confirmed`) and stale-anchor separator path (`psi-send-omits-input-separator-from-first-prompt-when-anchor-drifts`); Emacs UI suite remains green in batch runs after compose follow-up updates.
 
 ## Components
 
