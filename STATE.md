@@ -102,6 +102,8 @@ Current truth about the Psi system.
 - ✓ Background-job EQL introspection attrs are now first-class and graph-discoverable (commit `8185869`): session root resolves `:psi.agent-session/background-job-count`, `:psi.agent-session/background-job-statuses`, and `:psi.agent-session/background-jobs` with nested `:psi.background-job/*` entities; resolver tests assert root-queryable + graph-edge discoverability.
 - ✓ nREPL runtime endpoint discovery is now first-class on the session graph (commit `e3280fb`): `:psi.runtime/nrepl-host`, `:psi.runtime/nrepl-port`, and `:psi.runtime/nrepl-endpoint` resolve from session root, are discoverable via `:psi.graph/root-queryable-attrs`/`:psi.graph/edges`, and return nil when nREPL is disabled.
 - ✓ nREPL runtime lifecycle is now integration-tested against a real server start/stop (commit `1a1c044`): `nrepl-runtime-eql-reflects-live-start-stop-test` starts nREPL on a random bound port, verifies EQL attrs reflect the effective runtime endpoint, then stops nREPL and verifies attrs return nil.
+- ✓ Emacs prompt transcript copy semantics are now dispatch-confirmed and parse-stable (commit `854e419`): `psi-compose.el` unmatched-paren parse failure fixed in interrupt callback path; `psi-emacs--default-send-request` now returns true only when RPC returns a non-empty request id; transcript echo path therefore copies user prompt only on confirmed dispatch.
+- ✓ Regression coverage added for failed-dispatch path (`psi-send-does-not-copy-input-when-dispatch-not-confirmed`), and full Emacs UI suite passes 171/171 in batch run.
 
 ## Components
 
