@@ -12,7 +12,7 @@
 --   - API dispatch between OpenAI chat completions and Codex responses
 --   - Request construction, auth requirements, and URL resolution
 --   - Streaming event normalization to executor-facing event types
---   - Tool-call streaming behavior (late ids, cumulative args, fallback shapes)
+--   - Tool-call terminal assembly behavior (buffer by index, validate at boundary, visible errors)
 --   - Reasoning/thinking mapping and usage normalization
 --   - Provider request/response capture callbacks with header redaction
 --
@@ -70,7 +70,7 @@ value StreamUsage {
 }
 
 value StreamEvent {
-    event_type: start | text_delta | thinking_delta | toolcall_start | toolcall_delta | toolcall_end | done | error
+    event_type: start | text_delta | thinking_delta | toolcall_start | done | error
     content_index: Integer?
     id: String?
     name: String?
@@ -131,6 +131,9 @@ entity OpenAIStream {
 
     resolved_api_key: String?
     chatgpt_account_id: String?
+
+    -- Buffered raw tool-call fragments keyed by provider index (or arrival order fallback).
+    buffered_tool_calls: Map<Integer, String>
 }
 
 ------------------------------------------------------------
@@ -339,9 +342,8 @@ rule CompletionsChunksNormalizeToExecutorEvents {
     ensures: StartEmittedOnce(stream)
     ensures: CompletionsTextDeltasEmitted(stream, chunk)
     ensures: CompletionsReasoningDeltasEmitted(stream, chunk)
-    ensures: CompletionsToolCallsMergedFromSupportedShapes(stream, chunk)
-    ensures: CompletionsToolCallsStartWhenIdAndNameKnown(stream, chunk)
-    ensures: CompletionsToolArgumentsEmitOnlyUnseenSuffix(stream, chunk)
+    ensures: CompletionsToolCallFragmentsBufferedByIndex(stream, chunk)
+    ensures: NoToolCallUiEventsEmittedBeforeTerminalBoundary(stream, chunk)
 
     ensures:
         if chunk.usage != null:
@@ -357,13 +359,54 @@ rule CodexEventsNormalizeToExecutorEvents {
     ensures: StartEmittedOnce(stream)
     ensures: CodexTextDeltaEventsEmitted(stream, event)
     ensures: CodexReasoningDeltaEventsEmitted(stream, event)
-    ensures: CodexToolCallStartDeltaEndEventsEmitted(stream, event)
+    ensures: CodexToolCallFragmentsBufferedByIndex(stream, event)
 
     ensures:
         if EventType(event) in config.codex_completed_event_types:
             CodexDoneEventEmitted(stream, event)
         else if EventType(event) in config.codex_failed_event_types:
             CodexErrorEventEmitted(stream, event)
+}
+
+rule ToolCallsAssembledAtTerminalBoundary {
+    when: TerminalBoundaryReached(stream)
+
+    ensures: AssembleBufferedToolCalls(stream)
+    ensures: BufferedToolCallsCleared(stream)
+}
+
+rule AssembledToolCallRequiresCallId {
+    when: ToolCallAssembled(stream, assembled_call)
+    requires: IsBlank(assembled_call.call_id)
+
+    ensures: ToolCallAssemblyFailed(stream, assembled_call, "missing_call_id")
+    ensures: Emit(StreamEvent{event_type: error, error_message: "Tool call missing call_id; cannot execute reliably"})
+}
+
+rule AssembledToolCallValidationFailureIsVisible {
+    when: ToolCallAssembled(stream, assembled_call)
+    requires: not IsBlank(assembled_call.call_id)
+    requires: not ToolCallArgumentsValidMap(assembled_call)
+
+    ensures: ToolCallAssemblyFailed(stream, assembled_call, "invalid_arguments")
+    ensures: Emit(StreamEvent{event_type: error, error_message: "Tool call arguments invalid; expected JSON object"})
+}
+
+rule AssembledValidToolCallEmitsSingleLogicalStart {
+    when: ToolCallAssembled(stream, assembled_call)
+    requires: not IsBlank(assembled_call.call_id)
+    requires: ToolCallArgumentsValidMap(assembled_call)
+
+    ensures: Emit(StreamEvent{
+        event_type: toolcall_start,
+        content_index: assembled_call.content_index,
+        id: assembled_call.call_id,
+        name: assembled_call.tool_name
+    })
+
+    @guidance
+        -- UI collapses tool-call streaming to one logical readiness event.
+        -- Detailed tool execution progress/result is emitted by executor events.
 }
 
 rule CompletionsUsageNormalized {

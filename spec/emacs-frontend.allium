@@ -225,10 +225,17 @@ rule AssistantStreamingUpdatesTranscript {
 
 rule ToolLifecycleRendersViaSharedContracts {
     when: RpcEventReceived(frontend.rpc, event_name, payload)
-    requires: event_name in {"tool/start", "tool/delta", "tool/executing", "tool/update", "tool/result"}
+    requires: event_name in {"tool/start", "tool/executing", "tool/update", "tool/result"}
 
     ensures: UsesContract(frontend, tool_display/ToolOutputDisplayApi)
     ensures: UsesContract(frontend, tool_render/ToolOutputRenderer)
+}
+
+rule ToolStartCanProjectTerminalAssemblyContext {
+    when: RpcEventReceived(frontend.rpc, "tool/start", payload)
+
+    ensures: ToolStartAlwaysHasIdentity(payload, required: {"tool-id", "tool-name"})
+    ensures: ToolStartMayIncludeArguments(payload, optional: {"arguments", "parsed-args"})
 }
 
 rule FooterProjectionUsesSharedContract {

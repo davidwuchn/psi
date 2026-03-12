@@ -182,11 +182,99 @@ Also tolerates cumulative snapshots that differ near previous tail
           incoming*
           (str current* incoming*))))))
 
+(defn- complete-tool-calls
+  [tool-calls]
+  (->> tool-calls
+       (sort-by key)
+       (mapv (fn [[idx tc]]
+               (cond-> tc
+                 (nil? (:content-index tc)) (assoc :content-index idx))))))
+
+(defn- parse-args-strict
+  "Parse tool args strictly, preserving parse validity.
+   Returns {:ok? true :value <map>} when JSON parses to a map,
+   otherwise {:ok? false :value nil}."
+  [arguments]
+  (try
+    (let [parsed (json/parse-string arguments)]
+      (if (map? parsed)
+        {:ok? true :value parsed}
+        {:ok? false :value nil}))
+    (catch Exception _
+      {:ok? false :value nil})))
+
+(defn- invalid-tool-call
+  [tc]
+  (let [id  (:id tc)
+        nm  (:name tc)
+        raw (:arguments tc)
+        {:keys [ok?]} (parse-args-strict raw)]
+    (cond
+      (or (nil? id) (str/blank? (str id)))
+      {:reason :missing-call-id
+       :message "Tool call missing call_id; cannot execute reliably"
+       :tool-call tc}
+
+      (or (nil? nm) (str/blank? (str nm)))
+      {:reason :missing-tool-name
+       :message "Tool call missing name; cannot execute reliably"
+       :tool-call tc}
+
+      (not ok?)
+      {:reason :invalid-arguments
+       :message "Tool call arguments invalid; expected JSON object"
+       :tool-call tc}
+
+      :else nil)))
+
+(defn- build-final-content
+  [text-buffer tool-calls]
+  (let [invalids     (keep invalid-tool-call tool-calls)
+        valid-calls  (->> tool-calls (remove invalid-tool-call))
+        text-blocks  (cond-> []
+                       (seq text-buffer) (conj {:type :text :text text-buffer}))
+        error-blocks (mapv (fn [invalid]
+                             {:type :error :text (:message invalid)})
+                           invalids)
+        tool-blocks  (mapv (fn [tc]
+                             {:type      :tool-call
+                              :id        (:id tc)
+                              :name      (:name tc)
+                              :arguments (:arguments tc)})
+                           valid-calls)]
+    (-> text-blocks
+        (into error-blocks)
+        (into tool-blocks))))
+
+(defn- emit-tool-ready-progress!
+  [progress-queue tool-calls]
+  (doseq [tc (->> tool-calls (remove invalid-tool-call))]
+    (emit-progress! progress-queue
+                    {:event-kind :tool-start
+                     :tool-id    (:id tc)
+                     :tool-name  (:name tc)
+                     :arguments  (:arguments tc)
+                     :parsed-args (:value (parse-args-strict (:arguments tc)))})))
+
+(defn- emit-tool-assembly-errors!
+  [progress-queue tool-calls]
+  (doseq [invalid (keep invalid-tool-call tool-calls)]
+    (emit-progress! progress-queue
+                    {:event-kind :error
+                     :error      (:message invalid)
+                     :detail     (:reason invalid)
+                     :error-code "tool-call/assembly-failed"})))
+
 (defn- make-turn-actions
   "Create the actions-fn for the per-turn statechart.
    Handles both data accumulation (in turn-data atom) and agent-core
    lifecycle calls (begin-stream, update-stream, end-stream).
-   When progress-queue is non-nil, emits :agent-event messages for TUI."
+   When progress-queue is non-nil, emits :agent-event messages for TUI.
+
+   Tool-call UI semantics are terminal-boundary only:
+   - stream-time toolcall deltas/ends are accumulated but not emitted
+   - when :on-done fires, validated calls emit a single logical :tool-start
+   - invalid assembled tool-calls surface visible :error progress events"
   [agent-ctx done-p progress-queue]
   (fn [action-key data]
     (let [td (:turn-data data)]
@@ -211,42 +299,39 @@ Also tolerates cumulative snapshots that differ near previous tail
         (let [idx     (:content-index data)
               tc-id   (:tool-id data)
               tc-name (:tool-name data)]
-          (swap! td assoc-in [:tool-calls idx]
-                 {:id tc-id :name tc-name :arguments ""})
-          (emit-progress! progress-queue
-                          {:event-kind :tool-start
-                           :tool-id    tc-id
-                           :tool-name  tc-name}))
+          (swap! td update-in [:tool-calls idx]
+                 (fn [cur]
+                   (merge {:id nil :name nil :arguments "" :content-index idx}
+                          cur
+                          {:id (or tc-id (:id cur))
+                           :name (or tc-name (:name cur))
+                           :content-index idx}))))
 
         :on-toolcall-delta
         (let [idx   (:content-index data)
               delta (:delta data)]
-          (swap! td update-in [:tool-calls idx :arguments] str delta)
-          (emit-progress! progress-queue
-                          {:event-kind :tool-delta
-                           :tool-id    (get-in @td [:tool-calls idx :id])
-                           :arguments  (get-in @td [:tool-calls idx :arguments])}))
+          (swap! td update-in [:tool-calls idx]
+                 (fn [cur]
+                   (let [current-args (or (:arguments cur) "")]
+                     (merge {:id nil :name nil :arguments "" :content-index idx}
+                            cur
+                            {:arguments (str current-args (or delta ""))
+                             :content-index idx})))))
 
         :on-toolcall-end nil
 
         :on-done
         (let [{:keys [text-buffer tool-calls]} @td
-              tc-blocks (->> tool-calls
-                             (sort-by key)
-                             (mapv (fn [[_ tc]]
-                                     {:type      :tool-call
-                                      :id        (:id tc)
-                                      :name      (:name tc)
-                                      :arguments (:arguments tc)})))
-              content (cond-> []
-                        (seq text-buffer) (conj {:type :text :text text-buffer})
-                        :always           (into tc-blocks))
-              usage   (:usage data)
-              final   (cond-> {:role        "assistant"
-                               :content     content
-                               :stop-reason (or (:reason data) :stop)
-                               :timestamp   (java.time.Instant/now)}
-                        (map? usage) (assoc :usage usage))]
+              completed (complete-tool-calls tool-calls)
+              content   (build-final-content text-buffer completed)
+              usage     (:usage data)
+              final     (cond-> {:role        "assistant"
+                                 :content     content
+                                 :stop-reason (or (:reason data) :stop)
+                                 :timestamp   (java.time.Instant/now)}
+                          (map? usage) (assoc :usage usage))]
+          (emit-tool-ready-progress! progress-queue completed)
+          (emit-tool-assembly-errors! progress-queue completed)
           (swap! td assoc :final-message final)
           (agent/end-stream-in! agent-ctx final)
           (deliver done-p final))
@@ -623,6 +708,7 @@ Also tolerates cumulative snapshots that differ near previous tail
                     {:event-kind  :tool-executing
                      :tool-id     call-id
                      :tool-name   name
+                     :arguments   (:arguments tool-call)
                      :parsed-args args})
     (let [{:keys [content is-error details] :as tool-result}
           (try

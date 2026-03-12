@@ -1963,8 +1963,6 @@
           (psi-emacs--handle-rpc-event
            '((:event . "tool/start") (:data . ((:tool-id . "t-1") (:text . "start")))))
           (psi-emacs--handle-rpc-event
-           '((:event . "tool/delta") (:data . ((:tool-id . "t-1") (:text . "working")))))
-          (psi-emacs--handle-rpc-event
            '((:event . "tool/result") (:data . ((:tool-id . "t-1") (:result-text . "done")))))
           ;; Default mode is collapsed: buffer shows header-only
           (should (equal "t-1 success\n" (buffer-string)))
@@ -2008,8 +2006,9 @@
              (:data . ((:tool-id . "call_W5XOPzQT1u0FPRzsJpCfWUQD|fc_063b06d34d4e6ce20169a83b21a4c481928a7f6a9bd4572dc6")
                        (:tool-name . "bash")))))
           (psi-emacs--handle-rpc-event
-           '((:event . "tool/delta")
+           '((:event . "tool/executing")
              (:data . ((:tool-id . "call_W5XOPzQT1u0FPRzsJpCfWUQD|fc_063b06d34d4e6ce20169a83b21a4c481928a7f6a9bd4572dc6")
+                       (:tool-name . "bash")
                        (:arguments . "{\"command\":\"echo hi\"}")))))
           (psi-emacs--handle-rpc-event
            '((:event . "tool/result")
@@ -2475,11 +2474,11 @@
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
-    ;; Inject deltas in collapsed mode
+    ;; Inject start/executing/result events in collapsed mode
     (psi-emacs--handle-rpc-event
      '((:event . "tool/start") (:data . ((:tool-id . "t-acc") (:text . "first")))))
     (psi-emacs--handle-rpc-event
-     '((:event . "tool/delta") (:data . ((:tool-id . "t-acc") (:text . "second")))))
+     '((:event . "tool/executing") (:data . ((:tool-id . "t-acc") (:text . "second")))))
     (psi-emacs--handle-rpc-event
      '((:event . "tool/result") (:data . ((:tool-id . "t-acc") (:result-text . "final")))))
     ;; Collapsed: body text not visible

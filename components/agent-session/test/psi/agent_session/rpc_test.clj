@@ -846,7 +846,7 @@
                                   :response {:status "completed"}}) "\n\n")
           input     (str
                      "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
-                     "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"tool/start\" \"tool/delta\" \"tool/executing\" \"tool/result\" \"assistant/message\"]}}\n"
+                     "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"tool/start\" \"tool/executing\" \"tool/result\" \"assistant/message\"]}}\n"
                      "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"run pwd\"}}\n")
           {:keys [out-lines]}
           (with-redefs [runtime/resolve-api-key-in (fn [_ctx _model] openai-chatgpt-test-token)
@@ -860,7 +860,6 @@
           prompt-frame   (some #(when (and (= :response (:kind %))
                                            (= "prompt" (:op %))) %) frames)
           tool-start-evt (some #(when (= "tool/start" (:event %)) %) events)
-          tool-delta-evt (some #(when (= "tool/delta" (:event %)) %) events)
           tool-exec-evt  (some #(when (= "tool/executing" (:event %)) %) events)
           tool-result-evt (some #(when (= "tool/result" (:event %)) %) events)
           assistant-evt  (some #(when (= "assistant/message" (:event %)) %) events)]
@@ -880,7 +879,6 @@
 
       (is (= "call_1|fc_1" (get-in tool-start-evt [:data :tool-id])))
       (is (= "bash" (get-in tool-start-evt [:data :tool-name])))
-      (is (= "{\"command\":\"pwd\"}" (get-in tool-delta-evt [:data :arguments])))
       (is (= {"command" "pwd"}
              (get-in tool-exec-evt [:data :parsed-args])))
       (is (false? (get-in tool-result-evt [:data :is-error])))
@@ -929,7 +927,7 @@
                                           :total_tokens 4}}) "\n\n")
           input     (str
                      "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
-                     "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"tool/start\" \"tool/delta\" \"tool/executing\" \"tool/result\" \"assistant/message\"]}}\n"
+                     "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"tool/start\" \"tool/executing\" \"tool/result\" \"assistant/message\"]}}\n"
                      "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"run pwd\"}}\n")
           {:keys [out-lines]}
           (with-redefs [runtime/resolve-api-key-in (fn [_ctx _model] "sk-test")
@@ -943,7 +941,6 @@
           prompt-frame    (some #(when (and (= :response (:kind %))
                                             (= "prompt" (:op %))) %) frames)
           tool-start-evt  (some #(when (= "tool/start" (:event %)) %) events)
-          tool-delta-evt  (some #(when (= "tool/delta" (:event %)) %) events)
           tool-exec-evt   (some #(when (= "tool/executing" (:event %)) %) events)
           tool-result-evt (some #(when (= "tool/result" (:event %)) %) events)
           assistant-evt   (some #(when (= "assistant/message" (:event %)) %) events)]
@@ -960,7 +957,6 @@
 
       (is (= "call_late" (get-in tool-start-evt [:data :tool-id])))
       (is (= "bash" (get-in tool-start-evt [:data :tool-name])))
-      (is (= "{\"command\":\"pwd\"}" (get-in tool-delta-evt [:data :arguments])))
       (is (= {"command" "pwd"}
              (get-in tool-exec-evt [:data :parsed-args])))
       (is (false? (get-in tool-result-evt [:data :is-error])))
@@ -1006,7 +1002,7 @@
                                           :total_tokens 4}}) "\n\n")
           input     (str
                      "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
-                     "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"tool/start\" \"tool/delta\" \"tool/executing\" \"tool/result\" \"assistant/message\"]}}\n"
+                     "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"tool/start\" \"tool/executing\" \"tool/result\" \"assistant/message\"]}}\n"
                      "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"run pwd\"}}\n")
           {:keys [out-lines]}
           (with-redefs [runtime/resolve-api-key-in (fn [_ctx _model] "sk-test")

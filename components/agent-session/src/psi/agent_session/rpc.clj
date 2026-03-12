@@ -597,7 +597,6 @@
     "assistant/thinking-delta"
     "assistant/message"
     "tool/start"
-    "tool/delta"
     "tool/executing"
     "tool/update"
     "tool/result"
@@ -616,7 +615,6 @@
    "assistant/thinking-delta" #{:text}
    "assistant/message" #{:role :content}
    "tool/start" #{:tool-id :tool-name}
-   "tool/delta" #{:tool-id :arguments}
    "tool/executing" #{:tool-id :tool-name}
    "tool/update" #{:tool-id :tool-name :content :result-text :is-error}
    "tool/result" #{:tool-id :tool-name :content :result-text :is-error}
@@ -870,18 +868,17 @@
 
       :tool-start
       {:event "tool/start"
-       :data  {:tool-id   (:tool-id progress-event)
-               :tool-name (:tool-name progress-event)}}
+       :data  (cond-> {:tool-id   (:tool-id progress-event)
+                       :tool-name (:tool-name progress-event)}
+                (some? (:arguments progress-event))  (assoc :arguments (:arguments progress-event))
+                (some? (:parsed-args progress-event)) (assoc :parsed-args (:parsed-args progress-event))) }
 
-      :tool-delta
-      {:event "tool/delta"
-       :data  {:tool-id   (:tool-id progress-event)
-               :arguments (or (:arguments progress-event) "")}}
 
       :tool-executing
       {:event "tool/executing"
        :data  (cond-> {:tool-id   (:tool-id progress-event)
                        :tool-name (:tool-name progress-event)}
+                (some? (:arguments progress-event)) (assoc :arguments (:arguments progress-event))
                 (some? (:parsed-args progress-event)) (assoc :parsed-args (:parsed-args progress-event)))}
 
       :tool-execution-update

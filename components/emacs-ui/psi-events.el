@@ -129,7 +129,7 @@ When MODEL-REASONING is non-nil, append an explicit thinking/effort suffix."
         (or (psi-emacs--event-data-get data '(:text text :delta delta)) "")))
       ("session/updated"
        (psi-emacs--handle-session-updated-event data))
-      ((or "tool/start" "tool/delta" "tool/executing" "tool/update" "tool/result")
+      ((or "tool/start" "tool/executing" "tool/update" "tool/result")
        (psi-emacs--assistant-before-tool-event)
        (let* ((tool-id (psi-emacs--event-data-get data
                                                   '(:tool-id tool-id :toolCallId toolCallId :tool-call-id tool-call-id :id id)))
@@ -143,12 +143,7 @@ When MODEL-REASONING is non-nil, append an explicit thinking/effort suffix."
               (raw-text (or (psi-emacs--event-data-get data
                                                        '(:result-text result-text :text text :output output :delta delta :message message))
                             ""))
-              ;; tool/delta carries argument-stream snapshots in :arguments.
-              ;; Keep body output focused on execution/update/result text.
-              (body-text (if (and (equal stage "delta")
-                                  (stringp arguments))
-                             ""
-                           raw-text)))
+              (body-text raw-text))
          (psi-emacs--reset-stream-watchdog psi-emacs--state)
          (psi-emacs--upsert-tool-row tool-id stage body-text tool-name arguments parsed-args is-error details)))
       ("ui/dialog-requested"

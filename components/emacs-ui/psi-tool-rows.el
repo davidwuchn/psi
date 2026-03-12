@@ -268,7 +268,7 @@ TOOL-ID remains fallback-only when tool name is absent."
 (defun psi-emacs--tool-next-accumulated-text (row stage text arguments)
   "Return next accumulated body text from ROW and event payload.
 
-`tool/delta` arguments updates mutate header metadata, not body output,
+`tool/executing` updates mutate header metadata and may update body output,
 when ARGUMENTS is present. `tool/update` and `tool/result` replace body text
 with latest snapshot semantics."
   (let* ((previous (or (plist-get row :accumulated-text) ""))

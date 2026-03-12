@@ -15,7 +15,6 @@
       "assistant/thinking-delta"
       "assistant/message"
       "tool/start"
-      "tool/delta"
       "tool/executing"
       "tool/update"
       "tool/result"

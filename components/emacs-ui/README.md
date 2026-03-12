@@ -43,7 +43,7 @@ Emacs subscribes to the default topic set (`psi-rpc-default-topics`):
   - `assistant/delta`
   - `assistant/message`
   - `tool/start`
-  - `tool/delta`
+  - `tool/executing`
   - `tool/executing`
   - `tool/update`
   - `tool/result`

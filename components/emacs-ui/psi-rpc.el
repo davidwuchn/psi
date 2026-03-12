@@ -25,14 +25,15 @@
     "assistant/thinking-delta"
     "assistant/message"
     "tool/start"
-    "tool/delta"
     "tool/executing"
     "tool/update"
     "tool/result"
     "session/updated"
     "footer/updated"
     "error")
-  "Core topic subscription set for Emacs frontend.")
+  "Core topic subscription set for Emacs frontend.
+
+Includes only terminal-boundary tool lifecycle topics (no tool/delta).")
 
 (defconst psi-rpc-extension-topics
   '("ui/dialog-requested"

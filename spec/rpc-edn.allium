@@ -103,7 +103,6 @@ config {
         "assistant/thinking-delta",
         "assistant/message",
         "tool/start",
-        "tool/delta",
         "tool/executing",
         "tool/update",
         "tool/result",
@@ -192,6 +191,21 @@ rule EventTopicMustBeFromCatalog {
     requires: frame.kind = event
 
     ensures: frame.event in config.canonical_event_topics
+}
+
+rule ToolStartPayloadMayCarryTerminalAssemblyArguments {
+    when: EventSent(endpoint, frame)
+    requires: frame.kind = event
+    requires: frame.event = "tool/start"
+
+    ensures: RequiredPayloadKeys(frame.data) = {"tool-id", "tool-name"}
+    ensures: OptionalPayloadKeys(frame.data) includes "arguments"
+    ensures: OptionalPayloadKeys(frame.data) includes "parsed-args"
+
+    @guidance
+        -- tool/start is emitted after terminal-boundary tool-call assembly.
+        -- When available, arguments/parsed-args provide immediate tool call context
+        -- without requiring a tool/delta stream.
 }
 
 rule FooterUpdatedPayloadCanonicalAcrossFrontends {
