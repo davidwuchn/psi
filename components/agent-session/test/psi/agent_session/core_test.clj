@@ -645,6 +645,74 @@
         (is (= :ended (:psi.tool-call-attempt/status call-2)))
         (is (false? (:psi.tool-call-attempt/result-recorded? call-2)))))))
 
+(deftest provider-capture-eql-introspection-test
+  (testing "query-in resolves provider request/reply captures"
+    (let [ctx (session/create-context)
+          t0  (java.time.Instant/now)
+          t1  (.plusMillis t0 25)]
+      (swap! (:provider-requests-atom ctx)
+             conj
+             {:provider :openai
+              :api :openai-codex-responses
+              :url "https://chatgpt.com/backend-api/codex/responses"
+              :turn-id "turn-123"
+              :timestamp t0
+              :request {:headers {"Authorization" "Bearer ***REDACTED*** (len=99)"}
+                        :body {:model "gpt-5.3-codex" :tool_choice "auto"}}})
+      (swap! (:provider-replies-atom ctx)
+             conj
+             {:provider :openai
+              :api :openai-codex-responses
+              :url "https://chatgpt.com/backend-api/codex/responses"
+              :turn-id "turn-123"
+              :timestamp t1
+              :event {:type "response.completed"
+                      :response {:status "completed"}}})
+
+      (let [r (session/query-in ctx
+                                [:psi.agent-session/provider-request-count
+                                 :psi.agent-session/provider-reply-count
+                                 {:psi.agent-session/provider-last-request
+                                  [:psi.provider-request/provider
+                                   :psi.provider-request/api
+                                   :psi.provider-request/turn-id
+                                   :psi.provider-request/body]}
+                                 {:psi.agent-session/provider-last-reply
+                                  [:psi.provider-reply/provider
+                                   :psi.provider-reply/api
+                                   :psi.provider-reply/turn-id
+                                   :psi.provider-reply/event]}])]
+        (is (= 1 (:psi.agent-session/provider-request-count r)))
+        (is (= 1 (:psi.agent-session/provider-reply-count r)))
+
+        (is (= :openai
+               (get-in r [:psi.agent-session/provider-last-request
+                          :psi.provider-request/provider])))
+        (is (= :openai-codex-responses
+               (get-in r [:psi.agent-session/provider-last-request
+                          :psi.provider-request/api])))
+        (is (= "turn-123"
+               (get-in r [:psi.agent-session/provider-last-request
+                          :psi.provider-request/turn-id])))
+        (is (= "gpt-5.3-codex"
+               (get-in r [:psi.agent-session/provider-last-request
+                          :psi.provider-request/body
+                          :model])))
+
+        (is (= :openai
+               (get-in r [:psi.agent-session/provider-last-reply
+                          :psi.provider-reply/provider])))
+        (is (= :openai-codex-responses
+               (get-in r [:psi.agent-session/provider-last-reply
+                          :psi.provider-reply/api])))
+        (is (= "turn-123"
+               (get-in r [:psi.agent-session/provider-last-reply
+                          :psi.provider-reply/turn-id])))
+        (is (= "response.completed"
+               (get-in r [:psi.agent-session/provider-last-reply
+                          :psi.provider-reply/event
+                          :type])))))))
+
 (deftest api-error-list-test
   (testing "no errors → count 0, empty list"
     (let [ctx (session/create-context)]

@@ -275,11 +275,12 @@
                                             :parameters  (:parameters t)}})
                               (:tools conversation)))
         effort        (reasoning-effort model options)
+        temperature   (or (:temperature options) 0)
         body          (cond-> {:model          (:id model)
                                :messages       (vec messages)
                                :stream         true
-                               :stream_options {:include_usage true}}
-                        (:temperature options) (assoc :temperature (:temperature options))
+                               :stream_options {:include_usage true}
+                               :temperature    temperature}
                         (:max-tokens options)  (assoc :max_tokens  (:max-tokens options))
                         (seq tool-defs)        (assoc :tools tool-defs)
                         effort                 (assoc :reasoning_effort effort))]
@@ -287,6 +288,61 @@
                "Authorization" (str "Bearer " (:api-key options
                                                     (System/getenv "OPENAI_API_KEY")))}
      :body    (json/generate-string body)}))
+
+(defn- safe-call!
+  [f payload]
+  (when (fn? f)
+    (try
+      (f payload)
+      (catch Exception _
+        nil))))
+
+(defn- redact-authorization
+  [value]
+  (when (string? value)
+    (str "Bearer ***REDACTED***"
+         (when (> (count value) 20)
+           (str " (len=" (count value) ")")))))
+
+(defn- mask-chatgpt-account-id
+  [value]
+  (when (string? value)
+    (str (subs value 0 (min 6 (count value))) "...")))
+
+(defn- redact-request-headers
+  [headers]
+  (cond-> headers
+    (contains? headers "Authorization")
+    (assoc "Authorization"
+           (redact-authorization (get headers "Authorization")))
+
+    (contains? headers "chatgpt-account-id")
+    (assoc "chatgpt-account-id"
+           (mask-chatgpt-account-id (get headers "chatgpt-account-id")))))
+
+(defn- parse-json-body-safe
+  [body]
+  (try
+    (json/parse-string (str (or body "")) true)
+    (catch Exception _
+      (str (or body "")))))
+
+(defn- capture-request!
+  [options api url request]
+  (safe-call! (:on-provider-request options)
+              {:provider :openai
+               :api api
+               :url url
+               :request {:headers (redact-request-headers (:headers request))
+                         :body (parse-json-body-safe (:body request))}}))
+
+(defn- capture-response!
+  [options api url event]
+  (safe-call! (:on-provider-response options)
+              {:provider :openai
+               :api api
+               :url url
+               :event event}))
 
 (defn parse-sse-line
   "Parse a Server-Sent Events `data:` line; returns nil for non-data lines."
@@ -360,7 +416,8 @@
      {:type :error            :error-message ...}
    "
   [conversation model options consume-fn]
-  (let [request          (build-request conversation model options)
+  (let [url              (str (:base-url model) "/chat/completions")
+        request          (build-request conversation model options)
         stream-started?  (atom false)
         done?            (atom false)
         next-tool-index  (atom 0)
@@ -459,11 +516,13 @@
               (reset! tool-state {}))]
 
       (try
-        (let [response (http/post (str (:base-url model) "/chat/completions")
+        (capture-request! options :openai-completions url request)
+        (let [response (http/post url
                                   (merge request {:as :stream :cookie-policy :none}))]
           (with-open [reader (io/reader (:body response))]
             (doseq [line (line-seq reader)]
               (when-let [chunk (parse-sse-line line)]
+                (capture-response! options :openai-completions url chunk)
                 (let [choice          (first (:choices chunk))
                       delta           (:delta choice)
                       text-delta      (extract-text-delta delta)
@@ -524,7 +583,9 @@
                         (consume-fn {:type :done
                                      :reason (keyword (:finish_reason choice))})))))))))
         (catch Exception e
-          (consume-fn (exception->error e)))))))
+          (let [err (exception->error e)]
+            (capture-response! options :openai-completions url err)
+            (consume-fn err)))))))
 
 ;; ───────────────────────────────────────────────────────────────────────────
 ;; OpenAI Codex Responses API (ChatGPT backend)
@@ -714,6 +775,8 @@
                     (:session-id options)
                     (assoc "session_id"      (:session-id options)
                            "conversation_id" (:session-id options)))
+          ;; ChatGPT Codex backend currently rejects top-level `temperature`
+          ;; with 400 unsupported parameter, so we intentionally omit it.
           body    (cond-> {"model"               (:id model)
                            "store"               false
                            "stream"              true
@@ -723,7 +786,6 @@
                            "include"             ["reasoning.encrypted_content"]
                            "tool_choice"         "auto"
                            "parallel_tool_calls" true}
-                    (:temperature options) (assoc "temperature" (:temperature options))
                     (:session-id options)  (assoc "prompt_cache_key" (:session-id options))
                     (seq (codex-tools conversation))
                     (assoc "tools" (codex-tools conversation))
@@ -743,7 +805,8 @@
      :toolcall-start, :toolcall-delta, :toolcall-end,
      :done, :error"
   [conversation model options consume-fn]
-  (let [started?             (atom false)
+  (let [url                  (resolve-codex-url (:base-url model))
+        started?             (atom false)
         done?                (atom false)
         next-tool-index      (atom 0)
         tool-by-item-id      (atom {})
@@ -822,16 +885,20 @@
               ([msg http-status]
                (when-not @done?
                  (reset! done? true)
-                 (consume-fn (cond-> {:type :error :error-message msg}
-                               http-status (assoc :http-status http-status))))))]
+                 (let [err (cond-> {:type :error :error-message msg}
+                             http-status (assoc :http-status http-status))]
+                   (capture-response! options :openai-codex-responses url err)
+                   (consume-fn err)))))]
 
       (try
         (let [request  (build-codex-request conversation model options)
-              response (http/post (resolve-codex-url (:base-url model))
+              _        (capture-request! options :openai-codex-responses url request)
+              response (http/post url
                                   (merge request {:as :stream :cookie-policy :none}))]
           (with-open [reader (io/reader (:body response))]
             (doseq [line (line-seq reader)]
               (when-let [event (parse-sse-line line)]
+                (capture-response! options :openai-codex-responses url event)
                 (let [etype (:type event)]
                   (case etype
                     "response.output_item.added"

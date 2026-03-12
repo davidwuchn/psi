@@ -290,11 +290,65 @@ Also tolerates cumulative snapshots that differ near previous tail
 (defn- now-ms []
   (System/currentTimeMillis))
 
+(def ^:private provider-request-capture-limit 20)
+(def ^:private provider-reply-capture-limit 400)
+
+(defn- append-capped!
+  [target-atom entry limit]
+  (swap! target-atom
+         (fn [entries]
+           (let [entries* (conj (vec (or entries [])) entry)
+                 n        (count entries*)]
+             (if (> n limit)
+               (subvec entries* (- n limit))
+               entries*)))))
+
 (defn- append-tool-call-attempt!
   [agent-session-ctx attempt]
   (when-let [attempts-atom (:tool-call-attempts-atom agent-session-ctx)]
     (swap! attempts-atom conj
            (assoc attempt :timestamp (java.time.Instant/now)))))
+
+(defn- append-provider-request-capture!
+  [agent-session-ctx capture]
+  (let [entry (assoc capture :timestamp (java.time.Instant/now))]
+    (if-let [requests-atom (:provider-requests-atom agent-session-ctx)]
+      (append-capped! requests-atom entry provider-request-capture-limit)
+      (when-let [session-data-atom (:session-data-atom agent-session-ctx)]
+        (swap! session-data-atom
+               update :provider-requests
+               (fn [entries]
+                 (let [entries* (conj (vec (or entries [])) entry)
+                       n        (count entries*)]
+                   (if (> n provider-request-capture-limit)
+                     (subvec entries* (- n provider-request-capture-limit))
+                     entries*))))))))
+
+(defn- append-provider-reply-capture!
+  [agent-session-ctx capture]
+  (let [entry (assoc capture :timestamp (java.time.Instant/now))]
+    (if-let [replies-atom (:provider-replies-atom agent-session-ctx)]
+      (append-capped! replies-atom entry provider-reply-capture-limit)
+      (when-let [session-data-atom (:session-data-atom agent-session-ctx)]
+        (swap! session-data-atom
+               update :provider-replies
+               (fn [entries]
+                 (let [entries* (conj (vec (or entries [])) entry)
+                       n        (count entries*)]
+                   (if (> n provider-reply-capture-limit)
+                     (subvec entries* (- n provider-reply-capture-limit))
+                     entries*))))))))
+
+(defn- chain-callbacks
+  [& callbacks]
+  (let [callbacks* (vec (keep #(when (fn? %) %) callbacks))]
+    (when (seq callbacks*)
+      (fn [payload]
+        (doseq [cb callbacks*]
+          (try
+            (cb payload)
+            (catch Exception _
+              nil)))))))
 
 (defn- wait-for-turn-result
   "Wait for `done-p` with an idle timeout.
@@ -339,7 +393,22 @@ Also tolerates cumulative snapshots that differ near previous tail
         messages         (:messages data)
         agent-tools      (:tools data)
         ai-conv          (agent-messages->ai-conversation system-prompt messages agent-tools)
-        ai-options       (or extra-ai-options {})
+        base-ai-options  (or extra-ai-options {})
+        ai-options       (-> base-ai-options
+                             (assoc :on-provider-request
+                                    (chain-callbacks
+                                     (:on-provider-request base-ai-options)
+                                     (fn [capture]
+                                       (append-provider-request-capture!
+                                        agent-session-ctx
+                                        (assoc capture :turn-id turn-id)))))
+                             (assoc :on-provider-response
+                                    (chain-callbacks
+                                     (:on-provider-response base-ai-options)
+                                     (fn [capture]
+                                       (append-provider-reply-capture!
+                                        agent-session-ctx
+                                        (assoc capture :turn-id turn-id))))))
         done-p           (promise)
         actions-fn       (make-turn-actions agent-ctx done-p progress-queue)
         turn-ctx         (turn-sc/create-turn-context actions-fn)

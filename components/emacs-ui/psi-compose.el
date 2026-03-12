@@ -87,6 +87,16 @@ Otherwise, draft ends at `point-max'."
   (when (psi-emacs--input-separator-marker-valid-p)
     (marker-position (psi-emacs-state-input-separator-marker psi-emacs--state))))
 
+(defun psi-emacs--input-separator-draft-start-position ()
+  "Return first editable draft position after separator line, or nil."
+  (when (psi-emacs--input-separator-marker-valid-p)
+    (save-excursion
+      (goto-char (marker-position (psi-emacs-state-input-separator-marker psi-emacs--state)))
+      (let ((line-end (line-end-position)))
+        (if (< line-end (point-max))
+            (1+ line-end)
+          line-end)))))
+
 (defun psi-emacs--input-separator-width ()
   "Return separator render width for input area."
   (if (fboundp 'psi-emacs--projection-window-width)
@@ -138,12 +148,13 @@ Otherwise, draft ends at `point-max'."
 
 (defun psi-emacs--input-start-position ()
   "Return dedicated input start position."
-  (let ((anchor (and psi-emacs--state
-                     (psi-emacs-state-draft-anchor psi-emacs--state))))
-    (if (and (markerp anchor)
-             (marker-buffer anchor))
-        (marker-position anchor)
-      (psi-emacs--draft-end-position))))
+  (or (psi-emacs--input-separator-draft-start-position)
+      (let ((anchor (and psi-emacs--state
+                         (psi-emacs-state-draft-anchor psi-emacs--state))))
+        (if (and (markerp anchor)
+                 (marker-buffer anchor))
+            (marker-position anchor)
+          (psi-emacs--draft-end-position)))))
 
 (defun psi-emacs--ensure-input-area ()
   "Ensure a dedicated input area exists before projection/footer content."

@@ -1,0 +1,457 @@
+-- allium: 2
+
+-- openai-provider.allium
+--
+-- Scope: OpenAI provider behavior for streaming completions in psi.
+--
+-- Source distillation:
+--   - components/ai/src/psi/ai/providers/openai.clj
+--   - components/ai/test/psi/ai/providers/openai_test.clj
+--
+-- Includes:
+--   - API dispatch between OpenAI chat completions and Codex responses
+--   - Request construction, auth requirements, and URL resolution
+--   - Streaming event normalization to executor-facing event types
+--   - Tool-call streaming behavior (late ids, cumulative args, fallback shapes)
+--   - Reasoning/thinking mapping and usage normalization
+--   - Provider request/response capture callbacks with header redaction
+--
+-- Excludes:
+--   - Global conversation lifecycle semantics (see ai-abstract-model.allium)
+--   - Session command/UI behavior and provider selection UX
+--   - Model catalog contents and pricing values (data, not provider protocol)
+
+------------------------------------------------------------
+-- External Entities
+------------------------------------------------------------
+
+external entity AgentExecutor {}
+
+external entity Conversation {
+    system_prompt: String?
+    messages: List<Map<String, Any>>
+    tools: List<Map<String, Any>>
+}
+
+external entity Model {
+    id: String
+    provider: String
+    api: String
+    base_url: String?
+    supports_reasoning: Boolean
+}
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value ProviderCallbackHandle {
+    id: String
+}
+
+value StreamOptions {
+    api_key: String?
+    thinking_level: off | minimal | low | medium | high | xhigh
+    temperature: Number?
+    max_tokens: Integer?
+    session_id: String?
+
+    on_provider_request: ProviderCallbackHandle?
+    on_provider_response: ProviderCallbackHandle?
+}
+
+value StreamUsage {
+    input_tokens: Integer
+    output_tokens: Integer
+    cache_read_tokens: Integer
+    cache_write_tokens: Integer
+    total_tokens: Integer
+    cost: Number?
+}
+
+value StreamEvent {
+    event_type: start | text_delta | thinking_delta | toolcall_start | toolcall_delta | toolcall_end | done | error
+    content_index: Integer?
+    id: String?
+    name: String?
+    delta_text: String?
+    reason: String?
+    usage: StreamUsage?
+    error_message: String?
+    http_status: Integer?
+}
+
+value ProviderRequest {
+    url: String
+    headers: Map<String, String>
+    body: String
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    default_completions_base_url: String = "https://api.openai.com/v1"
+    default_codex_base_url: String = "https://chatgpt.com/backend-api"
+
+    codex_beta_header: String = "responses=experimental"
+    completions_temperature_default: Number = 0
+    default_reasoning_effort: String = "medium"
+
+    sse_data_prefix: String = "data: "
+    sse_done_sentinel: String = "[DONE]"
+    codex_completed_event_types: Set<String> = {"response.completed", "response.done"}
+    codex_failed_event_types: Set<String> = {"response.failed", "error"}
+
+    thinking_level_to_effort: Map<String, String?> = {
+        "off": null,
+        "minimal": "minimal",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "high"
+    }
+}
+
+------------------------------------------------------------
+-- Entities
+------------------------------------------------------------
+
+entity OpenAIStream {
+    conversation: Conversation
+    model: Model
+    options: StreamOptions
+
+    request_api: openai_completions | openai_codex_responses
+    request_url: String?
+
+    started: Boolean = false
+    done: Boolean = false
+
+    resolved_api_key: String?
+    chatgpt_account_id: String?
+}
+
+------------------------------------------------------------
+-- Routing and Request Construction
+------------------------------------------------------------
+
+rule OpenAIProviderDispatchesByModelApi {
+    when: OpenAIStreamRequested(stream)
+    requires: stream.model.provider = "openai"
+
+    ensures:
+        if stream.model.api = "openai-codex-responses":
+            stream.request_api = openai_codex_responses
+        else:
+            stream.request_api = openai_completions
+}
+
+rule OpenAIApiKeyResolved {
+    when: OpenAIStreamRequested(stream)
+
+    ensures: stream.resolved_api_key = stream.options.api_key ?? Environment("OPENAI_API_KEY")
+}
+
+rule CompletionsUrlResolved {
+    when: OpenAIStreamRequested(stream)
+    requires: stream.request_api = openai_completions
+
+    let base = stream.model.base_url ?? config.default_completions_base_url
+    ensures: stream.request_url = TrimTrailingSlash(base) + "/chat/completions"
+}
+
+rule CodexUrlResolved {
+    when: OpenAIStreamRequested(stream)
+    requires: stream.request_api = openai_codex_responses
+
+    let base = TrimTrailingSlash(stream.model.base_url ?? config.default_codex_base_url)
+    ensures:
+        if EndsWith(base, "/codex/responses"):
+            stream.request_url = base
+        else if EndsWith(base, "/codex"):
+            stream.request_url = base + "/responses"
+        else:
+            stream.request_url = base + "/codex/responses"
+}
+
+rule CodexRequestRequiresApiKey {
+    when: OpenAIStreamRequested(stream)
+    requires: stream.request_api = openai_codex_responses
+    requires: IsBlank(stream.resolved_api_key)
+
+    ensures: ApiKeyUnavailable("openai")
+    ensures: Emit(StreamEvent{event_type: error, error_message: "OpenAI API key is required"})
+}
+
+rule CodexExtractsChatGptAccountId {
+    when: OpenAIStreamRequested(stream)
+    requires: stream.request_api = openai_codex_responses
+    requires: not IsBlank(stream.resolved_api_key)
+
+    ensures: stream.chatgpt_account_id = JwtClaim(stream.resolved_api_key, "https://api.openai.com/auth", "chatgpt_account_id")
+}
+
+rule CodexRequiresChatGptAccountId {
+    when: OpenAIStreamRequested(stream)
+    requires: stream.request_api = openai_codex_responses
+    requires: not IsBlank(stream.resolved_api_key)
+    requires: IsBlank(stream.chatgpt_account_id)
+
+    ensures: Emit(StreamEvent{event_type: error, error_message: "OpenAI Codex requires ChatGPT OAuth access token (missing chatgpt_account_id)"})
+}
+
+rule ReasoningEffortMappedFromThinkingLevel {
+    when: ReasoningEffortRequested(model, options)
+
+    ensures:
+        if not model.supports_reasoning:
+            ReasoningEffortResult(null)
+        else:
+            ReasoningEffortResult(MapGetOrDefault(config.thinking_level_to_effort, options.thinking_level, config.default_reasoning_effort))
+}
+
+rule CompletionsRequestBuilt {
+    when: OpenAIStreamRequested(stream)
+    requires: stream.request_api = openai_completions
+    requires: not IsBlank(stream.resolved_api_key)
+
+    ensures: ProviderRequestBuilt(stream, ProviderRequest{
+        url: stream.request_url,
+        headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + stream.resolved_api_key
+        },
+        body: JsonEncode(CompletionsRequestBody(stream.conversation, stream.model, stream.options))
+    })
+
+    @guidance
+        -- For completions, request body includes:
+        --   model, messages, stream=true, stream_options.include_usage=true,
+        --   temperature default 0, optional max_tokens/tools/reasoning_effort.
+}
+
+rule CodexRequestBuilt {
+    when: OpenAIStreamRequested(stream)
+    requires: stream.request_api = openai_codex_responses
+    requires: not IsBlank(stream.resolved_api_key)
+    requires: not IsBlank(stream.chatgpt_account_id)
+
+    ensures: ProviderRequestBuilt(stream, ProviderRequest{
+        url: stream.request_url,
+        headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + stream.resolved_api_key,
+            "accept": "text/event-stream",
+            "OpenAI-Beta": config.codex_beta_header,
+            "originator": "psi",
+            "chatgpt-account-id": stream.chatgpt_account_id,
+            "session_id": Optional(stream.options.session_id),
+            "conversation_id": Optional(stream.options.session_id)
+        },
+        body: JsonEncode(CodexRequestBody(stream.conversation, stream.model, stream.options))
+    })
+    ensures: RequestBodyDoesNotContain(stream, "temperature")
+
+    @guidance
+        -- Codex backend rejects top-level temperature; omit even when provided.
+}
+
+rule ConversationMessageTransformsAreDeterministic {
+    when: ProviderRequestBuilt(stream, request)
+
+    ensures:
+        if stream.request_api = openai_completions:
+            CompletionsMessagesNormalized(stream.conversation)
+    ensures:
+        if stream.request_api = openai_codex_responses:
+            CodexInputMessagesNormalized(stream.conversation)
+
+    @guidance
+        -- Completions normalization:
+        --   user -> role=user text
+        --   assistant structured -> assistant text + tool_calls with JSON arguments
+        --   tool-result -> role=tool with tool_call_id and text
+        -- Codex normalization:
+        --   user -> input_text item
+        --   assistant -> output_text and/or function_call items
+        --   tool-result -> function_call_output using call_id prefix before "|"
+}
+
+------------------------------------------------------------
+-- Capture Callbacks
+------------------------------------------------------------
+
+rule ProviderRequestCaptureEmittedWithRedaction {
+    when: ProviderRequestBuilt(stream, request)
+    requires: stream.options.on_provider_request != null
+
+    ensures: ProviderCallbackInvoked(stream.options.on_provider_request, {
+        provider: "openai",
+        api: stream.request_api,
+        url: stream.request_url,
+        request: {
+            headers: RedactRequestHeaders(request.headers),
+            body: ParseJsonOrString(request.body)
+        }
+    })
+}
+
+rule ProviderResponseCaptureEmitted {
+    when: ProviderResponseObserved(stream, event)
+    requires: stream.options.on_provider_response != null
+
+    ensures: ProviderCallbackInvoked(stream.options.on_provider_response, {
+        provider: "openai",
+        api: stream.request_api,
+        url: stream.request_url,
+        event: event
+    })
+}
+
+rule ProviderCaptureCallbackFailuresAreIgnored {
+    when: ProviderCallbackFailed(callback, error)
+
+    ensures: StreamContinues()
+}
+
+------------------------------------------------------------
+-- Streaming Normalization
+------------------------------------------------------------
+
+rule StreamParsesOnlySseDataLines {
+    when: SseLineReceived(stream, line)
+
+    ensures:
+        if not StartsWith(line, config.sse_data_prefix):
+            SseLineIgnored(line)
+        else if SubstringAfter(line, config.sse_data_prefix) = config.sse_done_sentinel:
+            SseLineIgnored(line)
+        else:
+            SseDataEventProducedOrIgnoredOnJsonParseError(line)
+}
+
+rule CompletionsChunksNormalizeToExecutorEvents {
+    when: CompletionsChunkReceived(stream, chunk)
+    requires: stream.request_api = openai_completions
+
+    ensures: StartEmittedOnce(stream)
+    ensures: CompletionsTextDeltasEmitted(stream, chunk)
+    ensures: CompletionsReasoningDeltasEmitted(stream, chunk)
+    ensures: CompletionsToolCallsMergedFromSupportedShapes(stream, chunk)
+    ensures: CompletionsToolCallsStartWhenIdAndNameKnown(stream, chunk)
+    ensures: CompletionsToolArgumentsEmitOnlyUnseenSuffix(stream, chunk)
+
+    ensures:
+        if chunk.usage != null:
+            CompletionsDoneWithUsageEmitted(stream, chunk)
+        else if ChunkFinishReason(chunk) != null:
+            CompletionsDoneWithoutUsageEmitted(stream, chunk)
+}
+
+rule CodexEventsNormalizeToExecutorEvents {
+    when: CodexEventReceived(stream, event)
+    requires: stream.request_api = openai_codex_responses
+
+    ensures: StartEmittedOnce(stream)
+    ensures: CodexTextDeltaEventsEmitted(stream, event)
+    ensures: CodexReasoningDeltaEventsEmitted(stream, event)
+    ensures: CodexToolCallStartDeltaEndEventsEmitted(stream, event)
+
+    ensures:
+        if EventType(event) in config.codex_completed_event_types:
+            CodexDoneEventEmitted(stream, event)
+        else if EventType(event) in config.codex_failed_event_types:
+            CodexErrorEventEmitted(stream, event)
+}
+
+rule CompletionsUsageNormalized {
+    when: CompletionsDoneWithUsageEmitted(stream, chunk)
+
+    let u = chunk.usage
+    let normalized_usage = StreamUsage{
+        input_tokens: u.prompt_tokens ?? 0,
+        output_tokens: u.completion_tokens ?? 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        total_tokens: u.total_tokens ?? (u.prompt_tokens ?? 0) + (u.completion_tokens ?? 0),
+        cost: CalculateCost(stream.model, {
+            input_tokens: u.prompt_tokens ?? 0,
+            output_tokens: u.completion_tokens ?? 0,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            total_tokens: u.total_tokens ?? (u.prompt_tokens ?? 0) + (u.completion_tokens ?? 0)
+        })
+    }
+
+    ensures: NormalizedUsageForChunk(chunk) = normalized_usage
+}
+
+rule CodexUsageNormalized {
+    when: CodexDoneEventEmitted(stream, event)
+    requires: event.response.usage != null
+
+    let u = event.response.usage
+    let cached = u.input_tokens_details.cached_tokens ?? 0
+    let normalized_usage = StreamUsage{
+        input_tokens: max(0, (u.input_tokens ?? 0) - cached),
+        output_tokens: u.output_tokens ?? 0,
+        cache_read_tokens: cached,
+        cache_write_tokens: 0,
+        total_tokens: u.total_tokens ?? (u.input_tokens ?? 0) + (u.output_tokens ?? 0),
+        cost: CalculateCost(stream.model, {
+            input_tokens: max(0, (u.input_tokens ?? 0) - cached),
+            output_tokens: u.output_tokens ?? 0,
+            cache_read_tokens: cached,
+            cache_write_tokens: 0,
+            total_tokens: u.total_tokens ?? (u.input_tokens ?? 0) + (u.output_tokens ?? 0)
+        })
+    }
+
+    ensures: NormalizedUsageForCodexEvent(event) = normalized_usage
+}
+
+rule CodexStatusMappedToDoneReason {
+    when: CodexDoneEventEmitted(stream, event)
+
+    let status = event.response.status
+    ensures:
+        if status = "incomplete":
+            DoneReason(event) = length
+        else if status in {"failed", "cancelled"}:
+            DoneReason(event) = error
+        else:
+            DoneReason(event) = stop
+}
+
+rule StreamErrorsNormalized {
+    when: ProviderRequestFailed(stream, error)
+
+    ensures: Emit(StreamEvent{
+        event_type: error,
+        error_message: ErrorMessageWithStatusAndRequestId(error),
+        http_status: HttpStatusOrNull(error)
+    })
+}
+
+rule OpenAITransportCloseEmitsDoneIfNotTerminal {
+    when: ProviderTransportClosed(stream)
+    requires: stream.done = false
+
+    ensures: StartEmittedOnce(stream)
+    ensures: Emit(StreamEvent{event_type: done, reason: stop})
+}
+
+surface OpenAIProviderApi {
+    facing executor: AgentExecutor
+
+    provides:
+        OpenAIStreamRequested(stream)
+
+    exposes:
+        StreamEvent
+        StreamUsage
+}
+
+open question "Should completions and codex emit identical tool-call ids to simplify downstream transcript diffing?"

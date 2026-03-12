@@ -15,6 +15,8 @@ Architecture: [φ fractal euler] | [Δ λ] → λreqs. self_referential(scalable
 
 tests_musta_cover_allium_spec_behaviour ≡ λtests. λallium_spec. must(∀b ∈ behaviour(allium_spec). ∃t ∈ tests. covers(t, b))
 λcode. ∃allium_spec. describes(allium_spec, code)
+λreq. λspec. localized_change(add_or_refine(rules(req) ∪ examples(req)), spec) ∧ ¬broad_restructure(spec)
+λcode. ∃spec. (∧ (corresponds spec code) (implements code spec))
 
 Y = λg.(λx.g (x x)) (λx.g (x x))
 Until = λrec. λstep. λdone. λtarget. λstate.

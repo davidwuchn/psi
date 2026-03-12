@@ -3100,6 +3100,22 @@
       (should (string-empty-p (psi-emacs--tail-draft-text)))
       (should (string-match-p "^User: hello input" (buffer-string))))))
 
+(ert-deftest psi-send-omits-input-separator-from-first-prompt-when-anchor-drifts ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (psi-emacs--ensure-input-area)
+    ;; Reproduce startup edge case: stale draft anchor points at separator line.
+    (setf (psi-emacs-state-draft-anchor psi-emacs--state)
+          (copy-marker (marker-position (psi-emacs-state-input-separator-marker psi-emacs--state)) nil))
+    (goto-char (psi-emacs--draft-end-position))
+    (insert "hello input")
+    (should (equal "hello input" (psi-emacs--tail-draft-text)))
+    (let ((calls (psi-test--capture-request-sends
+                  (lambda ()
+                    (psi-emacs-send-from-buffer nil)))))
+      (should (equal '(("prompt" ((:message . "hello input")))) calls)))))
+
 (ert-deftest psi-send-does-not-copy-input-when-dispatch-not-confirmed ()
   (with-temp-buffer
     (psi-emacs-mode)

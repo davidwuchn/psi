@@ -83,6 +83,46 @@
       (is (some #(and (= :text-delta (:type %)) (= "Hello" (:delta %))) @events))
       (is (some #(= :done (:type %)) @events)))))
 
+(deftest codex-request-and-reply-capture-callbacks-test
+  (testing "captures redacted request payload and reply events via callbacks"
+    (let [model            (models/get-model :gpt-5.3-codex)
+          token            (jwt-with-account-id "acc_test")
+          convo            (-> (conv/create "sys")
+                               (conv/add-user-message "hello"))
+          request-capture  (atom nil)
+          reply-captures   (atom [])
+          sse              (str
+                            "data: " (json/generate-string
+                                       {:type "response.output_item.added"
+                                        :item {:type "message"
+                                               :id "msg_1"
+                                               :role "assistant"
+                                               :status "in_progress"
+                                               :content []}}) "\n\n"
+                            "data: " (json/generate-string
+                                       {:type "response.completed"
+                                        :response {:status "completed"}}) "\n\n")]
+      (with-redefs [http/post (fn [_url _req]
+                                {:body (stream-body sse)})]
+        ((:stream openai/provider)
+         convo model {:api-key token
+                      :on-provider-request  #(reset! request-capture %)
+                      :on-provider-response #(swap! reply-captures conj %)}
+         (fn [_ev] nil)))
+
+      (is (= :openai (:provider @request-capture)))
+      (is (= :openai-codex-responses (:api @request-capture)))
+      (is (= "gpt-5.3-codex"
+             (get-in @request-capture [:request :body :model])))
+      (is (re-find #"\*\*\*REDACTED\*\*\*"
+                   (or (get-in @request-capture [:request :headers "Authorization"])
+                       "")))
+
+      (is (pos? (count @reply-captures)))
+      (is (some #(= "response.completed"
+                    (get-in % [:event :type]))
+                @reply-captures)))))
+
 (deftest codex-requires-chatgpt-token-test
   (testing "non-ChatGPT token emits an error event (missing chatgpt_account_id)"
     (let [model  (models/get-model :gpt-5.3-codex)
@@ -380,7 +420,8 @@
     (testing "default reasoning effort is medium for reasoning-capable models"
       (let [req  (#'openai/build-request convo model {:api-key "sk-test"})
             body (json/parse-string (:body req) true)]
-        (is (= "medium" (:reasoning_effort body)))))
+        (is (= "medium" (:reasoning_effort body)))
+        (is (= 0 (:temperature body)))))
 
     (testing "explicit thinking level maps to expected reasoning effort"
       (let [req  (#'openai/build-request convo model {:api-key "sk-test"
@@ -393,6 +434,32 @@
                                                       :thinking-level :off})
             body (json/parse-string (:body req) true)]
         (is (nil? (:reasoning_effort body)))))))
+
+(deftest openai-temperature-defaults-to-zero-test
+  (testing "chat completions respects explicit temperature override"
+    (let [model (models/get-model :gpt-5)
+          convo (-> (conv/create "sys") (conv/add-user-message "hi"))
+          req  (#'openai/build-request convo model {:api-key "sk-test"
+                                                    :temperature 0.2})
+          body (json/parse-string (:body req) true)]
+      (is (= 0.2 (:temperature body)))))
+
+  (testing "codex omits temperature by default"
+    (let [model (models/get-model :gpt-5.3-codex)
+          token (jwt-with-account-id "acc_test")
+          convo (-> (conv/create "sys") (conv/add-user-message "hi"))
+          req   (#'openai/build-codex-request convo model {:api-key token})
+          body  (json/parse-string (:body req) true)]
+      (is (not (contains? body :temperature)))))
+
+  (testing "codex ignores explicit temperature override"
+    (let [model (models/get-model :gpt-5.3-codex)
+          token (jwt-with-account-id "acc_test")
+          convo (-> (conv/create "sys") (conv/add-user-message "hi"))
+          req   (#'openai/build-codex-request convo model {:api-key token
+                                                           :temperature 0.3})
+          body  (json/parse-string (:body req) true)]
+      (is (not (contains? body :temperature))))))
 
 (deftest completions-reasoning-delta-shapes-map-to-thinking-delta-test
   (testing "chat completions reasoning delta variants are emitted as :thinking-delta"
