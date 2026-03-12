@@ -262,6 +262,25 @@
         (finally
           (.delete tmp))))))
 
+(deftest resolve-runtime-model-normalizes-provider-and-id-test
+  (testing "resolves canonical runtime model for string provider"
+    (let [m (#'sut/resolve-runtime-model {:provider "openai"
+                                          :id "gpt-5.3-codex"})]
+      (is (= :openai (:provider m)))
+      (is (= "gpt-5.3-codex" (:id m)))))
+
+  (testing "falls back by model id when provider alias is non-canonical"
+    (let [m (#'sut/resolve-runtime-model {:provider "openai-codex"
+                                          :id "gpt-5.3-codex"})]
+      (is (= :openai (:provider m)))
+      (is (= "gpt-5.3-codex" (:id m)))))
+
+  (testing "accepts :model-id as input key"
+    (let [m (#'sut/resolve-runtime-model {:provider :openai
+                                          :model-id "gpt-5.3-codex"})]
+      (is (= :openai (:provider m)))
+      (is (= "gpt-5.3-codex" (:id m))))))
+
 (deftest workflow-runtime-future-invoke-smoke-test
   (testing "workflow runtime handles :future invoke completion"
     (let [reg (wf/create-registry)]

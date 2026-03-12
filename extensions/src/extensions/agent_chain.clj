@@ -542,6 +542,36 @@
    :ai-model       (:chain/model data)
    :task           (:chain/task data)})
 
+(defn- normalize-provider
+  [provider]
+  (cond
+    (keyword? provider) provider
+    (string? provider) (some-> provider str/trim not-empty str/lower-case keyword)
+    :else nil))
+
+(defn- resolve-runtime-model
+  "Resolve to a canonical runtime model map from models/all-models.
+
+   Accepts model maps where :provider may be keyword/string and id may be at
+   :id or :model-id. Falls back to id-only resolution when provider is absent
+   or non-canonical."
+  [model]
+  (let [provider (normalize-provider (:provider model))
+        model-id (some-> (or (:id model) (:model-id model)) str/trim not-empty)
+        by-provider-id
+        (when (and provider model-id)
+          (some (fn [m]
+                  (when (and (= provider (:provider m))
+                             (= model-id (:id m)))
+                    m))
+                (vals models/all-models)))]
+    (or by-provider-id
+        (when model-id
+          (some (fn [m]
+                  (when (= model-id (:id m))
+                    m))
+                (vals models/all-models))))))
+
 (defn- run-chain-workflow-job
   [{:keys [run-id chain agents agent-sessions ai-model task]}]
   (let [run-id*         (str (or run-id (str "run-" (java.util.UUID/randomUUID))))
@@ -549,20 +579,18 @@
         steps           (:steps chain)
         step-count      (count steps)
         get-api-key-fn  (:get-api-key-fn @state)
-        ai-model*       (or (when ai-model
-                              (some (fn [m]
-                                      (when (and (= (:provider m) (:provider ai-model))
-                                                 (= (:id m) (:id ai-model)))
-                                        m))
-                                    (vals models/all-models)))
+        ai-model*       (or (resolve-runtime-model ai-model)
                             (when-let [qf (:query-fn @state)]
-                              (let [m (:psi.agent-session/model (qf [:psi.agent-session/model]))]
-                                (some (fn [mm]
-                                        (when (and (= (:provider mm) (:provider m))
-                                                   (= (:id mm) (:id m)))
-                                          mm))
-                                      (vals models/all-models))))
-                            (get models/all-models :sonnet-4.6))
+                              (or (resolve-runtime-model
+                                   (:psi.agent-session/model (qf [:psi.agent-session/model])))
+                                  (let [mq (qf [:psi.agent-session/model-provider
+                                                :psi.agent-session/model-id])]
+                                    (resolve-runtime-model
+                                     {:provider (:psi.agent-session/model-provider mq)
+                                      :id (:psi.agent-session/model-id mq)}))))
+                            (do
+                              (timbre/warn "agent-chain: unable to resolve session model; defaulting to :sonnet-4.6")
+                              (get models/all-models :sonnet-4.6)))
         on-step         (fn [idx status elapsed last-work]
                           (let [step-agent (:agent (nth steps idx nil))
                                 elapsed*   (- (now-ms) started-ms)]
