@@ -4,6 +4,27 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-12 - Emacs transcript echo should be gated by confirmed request ids, and parse/load checks should precede ERT runs
+
+### λ Frontend transcript copy contracts should key off transport-confirmed dispatch, not callback presence
+
+In Emacs compose flow, copying `User: ...` into transcript must happen only when request
+send is actually accepted by transport. Treating callback presence as implicit success can
+cause false-positive local echoes. Returning a strict boolean from send dispatch
+(non-empty RPC request id) makes transcript behavior deterministic.
+
+### λ Parse/load verification of edited Elisp files catches broken suites earlier than test-level failures
+
+A single unmatched paren in `psi-compose.el` blocked the entire ERT suite with
+`End of file during parsing`. Running a direct batch load (`load-file`) immediately after
+edits isolates syntax breakage before broader test execution.
+
+### λ Add negative-path regression tests for failed dispatch to lock prompt-echo semantics
+
+`psi-send-does-not-copy-input-when-dispatch-not-confirmed` protects the contract:
+when send returns nil, draft stays in input and no `User:` transcript line is added.
+This prevents future regressions toward optimistic local echo.
+
 ## 2026-03-12 - nREPL EQL discovery should be verified with a real server lifecycle test
 
 ### λ Runtime endpoint attrs need one live start/stop test in addition to atom-injection tests
