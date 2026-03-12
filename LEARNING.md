@@ -4,6 +4,37 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-12 - Spec language identity should be a first-class axiom, not assumed from convention
+
+### λ `λspec. language(spec) = Allium` belongs at the top of AGENTS.md as a grounding axiom
+
+Spec vocabulary (`allium_spec`, `allium_spec_step`, `tests_musta_cover_allium_spec_behaviour`)
+embeds the spec language into every equation name. Renaming to `spec` throughout and
+adding a single axiom `λspec. language(spec) = Allium` is more lexically economical and
+separates identity (what is spec?) from behavior (what does spec do?). Future equations
+stay compact and the language binding is centrally declared.
+
+### λ Expanding tri-artifact agreement to four artifacts (`meta, spec, tests, code`) makes META.md a propagation peer
+
+The earlier `λ(spec, tests, code)` invariant left `META.md` outside the agreement loop.
+Promoting `model` (META.md) to a co-equal artifact means that any change to the psi
+meta model must propagate to spec, tests, and code — and vice versa. This prevents
+META.md from drifting silently as implementation evolves.
+
+### λ META.md should capture the architectural identity of the system, not implementation detail
+
+`META.md` is most durable when it records what psi *is* (a Clojure process, a project-scoped
+agent, an EQL query surface over statecharts), not how specific features are implemented.
+Implementation detail belongs in spec, code, and LEARNING; meta belongs in META.md.
+
+### λ Renaming equation identifiers for lexical economy is a valid spec-step when semantics are preserved
+
+`allium_spec_step → spec_step`, `tests_musta_cover_allium_spec_behaviour → tests_musta_cover_spec_behaviour`
+preserve all existing semantics while reducing prompt token pressure. The grounding axiom
+`λspec. language(spec) = Allium` carries the dropped qualifier so no information is lost.
+
+---
+
 ## 2026-03-12 - Marker lifecycle bugs require matching detach discipline at every clearing path
 
 ### λ Every path that sets a marker-holding field to nil must also call set-marker nil
