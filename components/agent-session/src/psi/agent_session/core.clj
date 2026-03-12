@@ -1105,6 +1105,8 @@
 
 (defn list-background-jobs-in!
   [ctx thread-id & [statuses]]
+  ;; Self-heal stale workflow-backed job statuses before listing.
+  (maybe-mark-workflow-jobs-terminal! ctx)
   (let [store (:background-jobs-atom ctx)]
     (if statuses
       (bg-jobs/list-jobs-in store thread-id statuses)
@@ -1112,6 +1114,8 @@
 
 (defn inspect-background-job-in!
   [ctx thread-id job-id]
+  ;; Self-heal stale workflow-backed job statuses before inspect.
+  (maybe-mark-workflow-jobs-terminal! ctx)
   (bg-jobs/inspect-job-in (:background-jobs-atom ctx)
                           {:thread-id thread-id
                            :job-id job-id}))
@@ -1820,18 +1824,19 @@
     ;; where a workflow (e.g. agent-chain) completes and emits its result via
     ;; send-message rather than through the normal agent turn boundary.
     ;;
-    ;; We run one immediate pass plus one short delayed pass to avoid a race
-    ;; where send-message is emitted just before workflow runtime state is
-    ;; snapshotted as :done/:error.
+    ;; We run one immediate pass plus a bounded retry loop to absorb async
+    ;; workflow completion races (workflow flips to :done/:error shortly after
+    ;; message injection).
     (when agent-session-ctx
       (maybe-mark-workflow-jobs-terminal! agent-session-ctx)
       (maybe-emit-background-job-terminal-messages! agent-session-ctx)
       (future
-        (Thread/sleep 75)
-        (try
-          (maybe-mark-workflow-jobs-terminal! agent-session-ctx)
-          (maybe-emit-background-job-terminal-messages! agent-session-ctx)
-          (catch Exception _ nil))))
+        (dotimes [_ 12]
+          (Thread/sleep 100)
+          (try
+            (maybe-mark-workflow-jobs-terminal! agent-session-ctx)
+            (maybe-emit-background-job-terminal-messages! agent-session-ctx)
+            (catch Exception _ nil)))))
     {:psi.extension/message msg}))
 
 (pco/defmutation send-prompt

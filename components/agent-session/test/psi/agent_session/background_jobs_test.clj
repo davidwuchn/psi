@@ -621,3 +621,38 @@
               (Thread/sleep 10)
               (recur (inc i))))))
       (wf/shutdown-in! reg))))
+
+(deftest background-job-resolver-self-heals-stale-workflow-status-test
+  (testing "background-job resolver reconciles stale workflow-backed running jobs"
+    (let [ctx       (session/create-context)
+          _         (swap! (:session-data-atom ctx) assoc :startup-bootstrap-completed? true)
+          ext-path  "/test/resolver-reconcile.clj"
+          wf-id     "wf-resolve-1"
+          store     (:background-jobs-atom ctx)
+          thread-id (:session-id (session/get-session-data-in ctx))
+          reg       (:workflow-registry ctx)]
+      (wf/register-type-in! reg ext-path {:type :instant-done :chart instant-done-chart})
+      (wf/ensure-pump! reg)
+      (wf/create-workflow-in! reg ext-path {:type :instant-done :id wf-id :auto-start? true})
+      ;; Wait workflow done
+      (loop [i 0]
+        (let [w (wf/workflow-in reg ext-path wf-id)]
+          (when (and (< i 200) (not (:done? w)))
+            (Thread/sleep 10)
+            (recur (inc i)))))
+      ;; Seed stale running job linked to done workflow
+      (bj/start-background-job-in! store
+                                   {:tool-call-id      "tc-resolve-1"
+                                    :thread-id         thread-id
+                                    :tool-name         "workflow/instant-done"
+                                    :job-id            "job-resolve-1"
+                                    :job-kind          :workflow
+                                    :workflow-ext-path ext-path
+                                    :workflow-id       wf-id})
+      (is (= :running (:status (bj/get-job-in store "job-resolve-1"))))
+      ;; Querying background-jobs should reconcile and expose terminal status.
+      (let [resp (session/query-in ctx [:psi.agent-session/background-jobs])
+            jobs (:psi.agent-session/background-jobs resp)
+            job  (first (filter #(= "job-resolve-1" (:psi.background-job/id %)) jobs))]
+        (is (= :completed (:psi.background-job/status job))))
+      (wf/shutdown-in! reg))))

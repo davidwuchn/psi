@@ -765,6 +765,38 @@
   [agent-session-ctx]
   (:session-id @(:session-data-atom agent-session-ctx)))
 
+(defn- reconcile-workflow-background-jobs!
+  [agent-session-ctx]
+  (let [store (:background-jobs-atom agent-session-ctx)]
+    (when store
+      (doseq [job (vals (:jobs-by-id @store))]
+        (when (and (= :workflow (:job-kind job))
+                   (not (bg-jobs/terminal-status? (:status job))))
+          (let [wf-inst (when (and (:workflow-ext-path job) (:workflow-id job))
+                          (wf/workflow-in (:workflow-registry agent-session-ctx)
+                                          (:workflow-ext-path job)
+                                          (:workflow-id job)))]
+            (when wf-inst
+              (cond
+                (:error? wf-inst)
+                (bg-jobs/mark-terminal-in!
+                 store
+                 {:job-id (:job-id job)
+                  :outcome :failed
+                  :terminal-history-max-per-thread 20
+                  :payload {:workflow-id (:id wf-inst)
+                            :result (:result wf-inst)
+                            :error-message (:error-message wf-inst)}})
+
+                (:done? wf-inst)
+                (bg-jobs/mark-terminal-in!
+                 store
+                 {:job-id (:job-id job)
+                  :outcome :completed
+                  :terminal-history-max-per-thread 20
+                  :payload {:workflow-id (:id wf-inst)
+                            :result (:result wf-inst)}})))))))))
+
 (pco/defresolver agent-session-background-jobs
   "Resolve background jobs for the active session thread.
    Includes counts and status vocabulary for UI/query clients."
@@ -774,6 +806,7 @@
                  :psi.agent-session/background-job-statuses
                  :psi.agent-session/background-jobs
                  {:psi.agent-session/background-jobs background-job-output}]}
+  (reconcile-workflow-background-jobs! agent-session-ctx)
   (let [thread-id (session-thread-id agent-session-ctx)
         store     (:background-jobs-atom agent-session-ctx)
         jobs      (if (and store thread-id)
