@@ -17,6 +17,15 @@ Ordered steps toward PSI COMPLETE.
 - Follow-up semantic repair pass completed for high-risk specs (`session-core`, `session-management`, `git-worktrees`, `remember-capture`)
 - Outcome: session/worktree vocabulary is now consistently query-surface oriented in specs
 
+### Step 11d — Fork persistence semantics stabilization ✓ complete
+- Runtime fork behavior in `components/agent-session/src/psi/agent_session/core.clj` now converges with `spec/session-persistence.allium` and `spec/session-forking.allium`.
+- `fork-session-in!` now eagerly creates/writes the child session file, persists branched entries up to `entry-id`, and records lineage via header `:parent-session` when parent file exists.
+- Added regression in `components/agent-session/test/psi/agent_session/core_test.clj`:
+  - `fork-session-persists-child-file-with-parent-lineage-test`
+- Added explicit spec guarantee in `spec/session-forking.allium`:
+  - `ForkPersistsChildLineageEagerly`
+- Implementation commit: `8e36668`
+
 ### Step 1 — Split allium specs  ✓
 - `spec/session-management.allium`
 - `spec/extension-system.allium`
