@@ -4,6 +4,55 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-12 - Marker lifecycle bugs require matching detach discipline at every clearing path
+
+### λ Every path that sets a marker-holding field to nil must also call set-marker nil
+
+In `psi-emacs--assistant-before-tool-event`, the drift branch set `thinking-range`
+to `nil` without first calling `(set-marker (car range) nil)` and
+`(set-marker (cdr range) nil)`. The live markers remained in the buffer, pointing
+at stale text. Every other thinking-range clearing path (`psi-emacs--clear-thinking-line`,
+`psi-emacs--archive-thinking-line`, `psi-emacs--reset-transcript-state`) correctly
+detaches markers before clearing the field. The drift branch was an exception that
+slipped through.
+
+**Pattern**: any time a marker-holding cons cell field is set to `nil`, search for
+all other clearing sites and verify they all detach — then audit the new site for
+the same discipline.
+
+### λ Static analysis of marker bugs hits a ceiling; batch instrumentation confirms the happy path but not async triggers
+
+Exhaustive static tracing of `psi-emacs--set-thinking-line` confirmed the update
+path (live range → delete-region + insert + set-marker) is structurally correct.
+Batch eval confirmed multi-delta accumulation works in isolation, with and without
+an input separator, and with interleaved `session/updated` events. The runtime
+symptom ("sometimes repeated lines") was not reproduced. This means the trigger
+involves async event ordering in the live RPC loop — something that cannot be
+observed by tracing call paths alone.
+
+**Next step if the symptom persists**: add `(message "thinking: %s path, range=%s"
+(if live "update" "append") range)` at the branch point in `psi-emacs--set-thinking-line`
+and reproduce under real streaming conditions to observe which path fires unexpectedly.
+
+### λ Missing tests for the multi-delta in-place update scenario allowed this class of bug to go undetected
+
+The existing thinking tests covered: one delta then finalize, face applied to prefix,
+tool-event archive, and stale-range drift. None sent multiple sequential deltas and
+asserted a single accumulated line. Adding `psi-thinking-streaming-multiple-deltas-update-in-place`
+locks the core invariant: N deltas → 1 `ψ⋯` line in the buffer, not N lines.
+
+### λ Marker insertion-type nil vs t is semantically load-bearing for range containment
+
+The thinking-range `end` marker uses insertion-type `nil` (stays before text
+inserted at its position). Changing it to `t` caused `psi-emacs--clear-thinking-line`
+to over-delete: the `end` marker advanced past subsequently inserted assistant text,
+so `delete-region start end` swept both the thinking line and the assistant reply.
+The `nil` type is correct — the thinking range must not expand to absorb text
+written after it. Always verify insertion-type semantics before changing marker
+creation in rendering code.
+
+---
+
 ## 2026-03-12 - Verification pass on a distilled spec reliably uncovers implicit fallback contracts
 
 ### λ Code fallbacks that are not explicit in spec become invisible to future maintainers
