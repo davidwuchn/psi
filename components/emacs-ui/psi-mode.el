@@ -106,6 +106,26 @@ Uses `text-mode' so markdown fontification can be scoped to assistant replies
 instead of the entire buffer."
   'text-mode)
 
+(defun psi-emacs--install-mode-keybindings (&optional map)
+  "Install canonical psi compose/navigation keybindings into MAP."
+  (let ((map* (or map psi-emacs-mode-map)))
+    (define-key map* (kbd "RET") #'newline)
+    (define-key map* (kbd "M-p") #'psi-emacs-previous-input)
+    (define-key map* (kbd "M-n") #'psi-emacs-next-input)
+    (define-key map* (kbd "C-c RET") #'psi-emacs-send-from-buffer)
+    (define-key map* (kbd "C-c C-q") #'psi-emacs-queue-from-buffer)
+    (define-key map* (kbd "C-c C-c") #'psi-emacs-interrupt)
+    (define-key map* (kbd "C-c C-k") #'psi-emacs-abort)
+    (define-key map* (kbd "C-c C-r") #'psi-emacs-reconnect)
+    (define-key map* (kbd "C-c C-t") #'psi-emacs-toggle-tool-output-view)
+
+    ;; Model/thinking controls.
+    (define-key map* (kbd "C-c m m") #'psi-emacs-set-model)
+    (define-key map* (kbd "C-c m n") #'psi-emacs-cycle-model-next)
+    (define-key map* (kbd "C-c m p") #'psi-emacs-cycle-model-prev)
+    (define-key map* (kbd "C-c m t") #'psi-emacs-set-thinking-level)
+    (define-key map* (kbd "C-c m c") #'psi-emacs-cycle-thinking-level)))
+
 (define-derived-mode psi-emacs-mode text-mode "psi"
   "Major mode for dedicated psi chat buffer.
 
@@ -113,25 +133,12 @@ Uses `text-mode' so markdown fontification can be applied selectively to
 finalized assistant content only."
   (setq-local buffer-read-only nil)
   (setq-local read-only-inhibit-point-motion t)
+  ;; Reinstall keybindings on every mode activation to self-heal stale map
+  ;; mutations in long-lived Emacs sessions.
+  (psi-emacs--install-mode-keybindings)
   (psi-emacs--install-prompt-capf))
 
-(let ((map psi-emacs-mode-map))
-  (define-key map (kbd "RET") #'newline)
-  (define-key map (kbd "M-p") #'psi-emacs-previous-input)
-  (define-key map (kbd "M-n") #'psi-emacs-next-input)
-  (define-key map (kbd "C-c RET") #'psi-emacs-send-from-buffer)
-  (define-key map (kbd "C-c C-q") #'psi-emacs-queue-from-buffer)
-  (define-key map (kbd "C-c C-c") #'psi-emacs-interrupt)
-  (define-key map (kbd "C-c C-k") #'psi-emacs-abort)
-  (define-key map (kbd "C-c C-r") #'psi-emacs-reconnect)
-  (define-key map (kbd "C-c C-t") #'psi-emacs-toggle-tool-output-view)
-
-  ;; Model/thinking controls.
-  (define-key map (kbd "C-c m m") #'psi-emacs-set-model)
-  (define-key map (kbd "C-c m n") #'psi-emacs-cycle-model-next)
-  (define-key map (kbd "C-c m p") #'psi-emacs-cycle-model-prev)
-  (define-key map (kbd "C-c m t") #'psi-emacs-set-thinking-level)
-  (define-key map (kbd "C-c m c") #'psi-emacs-cycle-thinking-level))
+(psi-emacs--install-mode-keybindings)
 
 (provide 'psi-mode)
 

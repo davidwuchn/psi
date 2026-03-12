@@ -608,6 +608,11 @@
     (should (eq #'psi-emacs-set-thinking-level (key-binding (kbd "C-c m t"))))
     (should (eq #'psi-emacs-cycle-thinking-level (key-binding (kbd "C-c m c"))))))
 
+(ert-deftest psi-interrupt-keybinding-is-installed ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (should (eq #'psi-emacs-interrupt (key-binding (kbd "C-c C-c"))))))
+
 (ert-deftest psi-streaming-p-uses-explicit-run-state ()
   (with-temp-buffer
     (psi-emacs-mode)
