@@ -4,6 +4,28 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-12 - `/new` reset UX needs local placeholder rehydration before backend replay
+
+### λ `/new` creates a visible rehydrate gap unless footer/input are reseeded immediately
+
+A successful `/new` clears transcript state before `get_messages` replay. If UI affordances depend
+only on later backend events, users can briefly see a blank tail without compose/footer anchors.
+Re-seeding deterministic local affordances (`connecting...` footer + input focus) right after reset
+keeps the UI stable during that gap.
+
+### λ Keep mode-preserving resets and local UX repair as separate concerns
+
+`psi-emacs--reset-transcript-state` with preserved tool-output mode is still the right lifecycle
+primitive for `/new`. The fix belongs in post-reset UI repair (seed projection + focus input), not
+in collapsing `/new` into reconnect-style reset semantics.
+
+### λ Regression tests should assert transient UI invariants, not only final replay output
+
+A `/new` regression test that checks only RPC call order or replay text can miss UI holes. Assert:
+- input separator marker remains valid,
+- projection footer is present during rehydrate (`connecting...`),
+- canonical `new_session -> get_messages` ordering still holds.
+
 ## 2026-03-12 - Model resolution should canonicalize provider/id before fallback defaults
 
 ### λ Runtime model maps are integration boundaries, not trusted canonical values
