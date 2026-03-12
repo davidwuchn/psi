@@ -101,8 +101,9 @@ Current truth about the Psi system.
 - ✓ Verification: `bb emacs:test` passing at 172/172 after banner/focus/mutation-registration follow-up.
 - ✓ `/new` clear/replay input/footer visibility regression fixed (commit `a533fa8`): `psi-emacs--handle-new-session-response` now reseeds `connecting...` projection and refocuses compose input immediately after reset and before `get_messages` replay, preventing transient missing input-area/footer after `/new`.
 - ✓ `/resume` switch/replay input/footer visibility regression fixed (commit `dd99d2e`): `psi-emacs--handle-switch-session-response` now applies the same post-reset UX repair (`connecting...` reseed + compose refocus) before `get_messages` replay, preventing transient missing input-area/footer after `/resume`.
+- ✓ Shared connecting-affordance policy now unifies startup + `/new` + `/resume` (commit `1421b46`): `psi-emacs--show-connecting-affordances` centralizes transient footer seeding (`connecting...`) and compose-input refocus during pre-handshake/rehydrate gaps.
 - ✓ Focused regression coverage added for `/new` visibility path: `psi-idle-new-slash-restores-input-area-and-footer-after-reset` (`components/emacs-ui/test/psi-test.el`), and `/resume` success-path regression now asserts `connecting...` footer presence during rehydrate.
-- ✓ Verification after `/new` + `/resume` visibility fixes: `bb emacs:test` green at 188/188.
+- ✓ Verification after `/new` + `/resume` visibility fixes and startup/rehydrate affordance unification: `bb emacs:test` green at 188/188.
 - ✓ Allium spec parity now includes these startup/streaming behaviors (commit `b13c4f8`):
   - `spec/emacs-frontend.allium` models deterministic `ψ` transcript banner + input-area cursor placement on initialization and `/new` reset.
   - `spec/session-management.allium` models `prompt_while_streaming` steer/queue semantics and interrupt-pending steer coercion to follow-up.
