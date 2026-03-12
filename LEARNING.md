@@ -4,6 +4,35 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-12 - Fork semantics must converge across runtime state, on-disk lineage, and spec guarantees
+
+### λ Forking is not only session-id rotation; it is a persistence boundary
+
+A runtime-only fork (new `:session-id` + in-memory message replacement) is semantically incomplete
+when the spec models lineage as persisted session-file headers. Fork behavior must include immediate
+child-file creation and lineage capture (`:parent-session`) at fork time, not deferred until later writes.
+
+### λ Eager child flush avoids lineage gaps caused by lazy-first-assistant persistence
+
+Psi session persistence is lazy until first assistant message. Without an eager write on fork, a child
+session can exist in memory with no durable lineage edge, violating `session-persistence` expectations.
+Writing header + branched entries immediately at fork closes this gap and keeps lineage queryable even
+before any child assistant response.
+
+### λ Branch parity requires both journal and agent message graph to fork from the same cut point
+
+Fork correctness depends on using the same `entry-id` cut for both:
+- journal entries (`entries-up-to`), and
+- agent messages (`messages-up-to`).
+
+If only messages are forked, subsequent persistence can drift from runtime branch history. Resetting
+journal to branch entries at fork keeps runtime + disk + spec aligned.
+
+### λ Regression tests for lineage should assert file header edges, not only in-memory state
+
+A durable fork regression must verify child session file existence and `:parent-session` header equality
+with the parent file path. In-memory assertions alone cannot catch missing lineage persistence.
+
 ## 2026-03-12 - Large naming normalization requires semantic repair passes after mechanical refactors
 
 ### λ Global lexical normalization can silently alter domain meaning
