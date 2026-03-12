@@ -4,6 +4,26 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-12 - Startup, `/new`, and `/resume` should share one connecting-affordance policy
+
+### λ One transient UX policy should serve all reset/rehydrate entry points
+
+Startup pre-handshake, `/new` success, and `/resume` success all pass through a brief
+"state cleared but backend replay not yet arrived" window. Duplicating footer/input repair logic
+across these flows invites drift. A shared helper (`psi-emacs--show-connecting-affordances`)
+keeps behavior identical and reduces future bug surface.
+
+### λ Keep affordance composition atomic: seed footer + focus input together
+
+The local UX contract in this gap is twofold: show deterministic footer (`connecting...`) and
+preserve compose focus. Treating these as one helper-level operation prevents partial fixes where
+one appears without the other.
+
+### λ Refactors that remove duplicated bug-fix code should still be validated end-to-end
+
+After unifying to one helper, full Emacs suite verification (`bb emacs:test`) confirmed parity
+across startup, `/new`, and `/resume` behaviors and protected existing regressions.
+
 ## 2026-03-12 - `/resume` rehydrate should mirror `/new` local UX repair before replay
 
 ### λ Session-switch reset gaps are the same class as new-session reset gaps
