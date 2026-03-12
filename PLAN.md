@@ -277,3 +277,4 @@ Ordered steps toward PSI COMPLETE.
 - Δ psl source=93632bc at=2026-03-08T12:19:31Z :: ⚒ Mark `psi-emacs-command` safe for `.dir-locals.el` local customization λ
 - Δ psl source=3786e39 at=2026-03-10T16:35:00Z :: ⚒ · Emit footer/updated after each tool/result in progress poll loops λ
 - Δ psl source=af2282f at=2026-03-10T23:58:00-04:00 :: ⚒ λ Add global code→spec invariant equation to AGENTS.md
+- Δ psl source=c98e310 at=2026-03-12T23:18:00-04:00 :: ⚒ λ Add tri-artifact agreement invariant to AGENTS.md
