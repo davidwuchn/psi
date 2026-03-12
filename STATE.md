@@ -108,7 +108,7 @@ Current truth about the Psi system.
 - ✓ nREPL runtime lifecycle is now integration-tested against a real server start/stop (commit `1a1c044`): `nrepl-runtime-eql-reflects-live-start-stop-test` starts nREPL on a random bound port, verifies EQL attrs reflect the effective runtime endpoint, then stops nREPL and verifies attrs return nil.
 - ✓ Emacs prompt transcript copy semantics are now dispatch-confirmed and parse-stable (commit `854e419`): `psi-compose.el` unmatched-paren parse failure fixed in interrupt callback path; `psi-emacs--default-send-request` now returns true only when RPC returns a non-empty request id; transcript echo path therefore copies user prompt only on confirmed dispatch.
 - ✓ Emacs first-send separator contamination edge-case fixed (commit `6e39269`): input start resolution now prefers the first editable position after the separator line (`psi-emacs--input-separator-draft-start-position`) over stale draft anchor markers, preventing separator text from being prepended into the first prompt payload.
-- ✓ Regression coverage added for failed-dispatch path (`psi-send-does-not-copy-input-when-dispatch-not-confirmed`) and stale-anchor separator path (`psi-send-omits-input-separator-from-first-prompt-when-anchor-drifts`); Emacs UI suite remains green in batch runs after compose follow-up updates.
+- ✓ Regression coverage added for failed-dispatch path (`psi-send-does-not-copy-input-when-dispatch-not-confirmed`) and stale-anchor separator path (`psi-send-omits-input-separator-from-first-prompt-when-anchor-drifts`); verification now runs via `bb emacs:test` with 186/186 passing after compose follow-up updates.
 
 ## Components
 
