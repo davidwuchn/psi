@@ -4,6 +4,23 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-12 - AGENTS constraints should declare alpha and multi-file Allium topology explicitly
+
+### λ Alpha-stage compatibility policy should be written as an explicit operating invariant
+
+Stating `In alpha; no backward compatibility` directly in `AGENTS.md` prevents implicit
+assumptions of migration/stability guarantees during rapid architecture iteration. This helps
+scope decisions toward convergence speed over compatibility preservation.
+
+### λ Allium spec shape benefits from explicit graph constraints, not only language identity
+
+Adding structural constraints for connected multi-file specs makes topology part of the contract:
+- `spec_consists_of_multiple_connected_allium_files`
+- `spec_has_no_isolated_allium_file`
+
+These invariants reduce drift toward fragmented/isolated spec files and make future spec-splitting
+changes auditable against a declared connectivity rule.
+
 ## 2026-03-12 - Emacs mode keybindings should self-heal on every activation
 
 ### λ Long-lived Emacs sessions can drift keymap state; mode activation should reapply canonical bindings
