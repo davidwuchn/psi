@@ -1,0 +1,545 @@
+-- allium: 2
+
+-- anthropic-provider.allium
+--
+-- Scope: Anthropic provider behavior for streaming completions in psi.
+--
+-- Source distillation:
+--   - components/ai/src/psi/ai/providers/anthropic.clj
+--   - components/ai/test/psi/ai/providers/anthropic_test.clj
+--
+-- Includes:
+--   - Tool ID normalization to Anthropic's required pattern
+--   - Message transformation (user, assistant, tool-result) to Anthropic API format
+--   - Consecutive tool-result merging into single user message
+--   - Request construction including auth, extended thinking, and beta headers
+--   - OAuth vs API-key auth dispatch
+--   - Extended thinking level to budget_tokens mapping
+--   - Temperature exclusion when extended thinking is active
+--   - SSE streaming and event normalization to executor-facing event types
+--   - Usage accumulation across message_start and message_delta events
+--   - HTTP error handling and API error extraction
+--
+-- Excludes:
+--   - Global conversation lifecycle semantics (see ai-abstract-model.allium)
+--   - Model catalog contents and pricing values (data, not provider protocol)
+--   - Session command/UI behavior and provider selection UX
+
+------------------------------------------------------------
+-- External Entities
+------------------------------------------------------------
+
+external entity AgentExecutor {}
+
+external entity Conversation {
+    system_prompt: String?
+    messages: List<Map<String, Any>>
+    tools: List<Map<String, Any>>
+}
+
+external entity Model {
+    id: String
+    base_url: String
+    supports_reasoning: Boolean
+    max_tokens: Integer?
+}
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value StreamOptions {
+    api_key: String?
+    thinking_level: off | minimal | low | medium | high | xhigh | null
+    temperature: Number?       -- caller override; defaults to 0.7 when thinking inactive
+    max_tokens: Integer?
+}
+
+value StreamUsage {
+    input_tokens: Integer
+    output_tokens: Integer
+    cache_read_tokens: Integer
+    cache_write_tokens: Integer
+    total_tokens: Integer
+    cost: Map<String, Any>?
+}
+
+value StreamEvent {
+    event_type: start | text_start | text_delta | text_end | thinking_delta | toolcall_start | toolcall_delta | toolcall_end | done | error
+    content_index: Integer?
+    id: String?
+    name: String?
+    delta: String?
+    reason: String?
+    usage: StreamUsage?
+    error_message: String?
+    http_status: Integer?
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    default_api_url: String = "https://api.anthropic.com"
+    messages_path: String = "/v1/messages"
+    anthropic_version_header: String = "2023-06-01"
+    default_temperature: Number = 0.7
+    tool_id_pattern: String = "^[a-zA-Z0-9_-]+$"
+
+    -- thinking_level_to_budget: off->nil, minimal->1024, low->2048,
+    --   medium->8000, high->16000, xhigh->32000
+    -- (Map literal syntax; expressed as guidance)
+
+    -- Request URL: model.base_url + config.messages_path
+    -- e.g. "https://api.anthropic.com" + "/v1/messages"
+}
+
+------------------------------------------------------------
+-- Entities
+------------------------------------------------------------
+
+entity AnthropicStream {
+    conversation: Conversation
+    model: Model
+    options: StreamOptions
+
+    resolved_api_key: String?
+    oauth: Boolean = false
+
+    -- Accumulates usage across SSE events
+    usage_acc: StreamUsage
+
+    -- Tracks content block type by index: "text" | "thinking" | "tool_use"
+    block_types: Map<Integer, String>
+
+    done: Boolean = false
+}
+
+------------------------------------------------------------
+-- Tool ID Normalization
+------------------------------------------------------------
+
+enum ToolIdValidity { valid | sanitized | fallback }
+
+rule ToolIdNormalizedBeforeRequest {
+    when: ToolIdEncountered(raw_id)
+
+    ensures:
+        if Matches(raw_id, config.tool_id_pattern):
+            NormalizedToolId(raw_id, valid)
+        else if Matches(Sanitize(raw_id), config.tool_id_pattern):
+            NormalizedToolId(Sanitize(raw_id), sanitized)
+        else:
+            NormalizedToolId(FallbackToolId(), fallback)
+
+    @guidance
+        -- Sanitize: replace [^a-zA-Z0-9_-] with "_", collapse repeated "_" or "-",
+        -- strip leading/trailing "_" and "-".
+        -- FallbackToolId: "tool_" + UUID.randomUUID().
+}
+
+rule ToolIdMappingIsConsistentWithinRequest {
+    when: AnthropicStreamRequested(stream)
+
+    ensures: ∀ raw_id. AllOccurrencesOfRawIdMapToSameNormalizedId(stream, raw_id)
+
+    @guidance
+        -- A mutable atom (tool-id-map) caches raw->normalized mappings for the
+        -- lifetime of one request. tool_use.id in assistant blocks and
+        -- tool_use_id in tool_result blocks are resolved via the same cache,
+        -- ensuring cross-reference consistency.
+}
+
+------------------------------------------------------------
+-- Message Transformation
+------------------------------------------------------------
+
+rule UserMessageTransformed {
+    when: TransformingMessages(conversation)
+    requires: message.role = :user
+
+    ensures: AnthropicMessage({
+        role: "user",
+        content: [{type: "text", text: message.content.text ?? str(message.content)}]
+    })
+
+    @guidance
+        -- content may be a plain string rather than a {:text "..."} map.
+        -- Falls back to str(content) when the :text key is absent.
+}
+
+rule AssistantStructuredMessageTransformed {
+    when: TransformingMessages(conversation)
+    requires: message.role = :assistant
+    requires: message.content.kind = :structured
+
+    ensures: AnthropicMessage({
+        role: "assistant",
+        content: ForEachBlock(message.content.blocks,
+            if block.kind = :text:
+                {type: "text", text: block.text}
+            if block.kind = :tool-call:
+                {type: "tool_use", id: NormalizedToolId(block.id), name: block.name, input: block.input ?? {}}
+            else:
+                {type: "text", text: str(block)})
+    })
+
+    @guidance
+        -- input falls back to {} when nil or non-map to satisfy Anthropic schema.
+        -- Unknown block kinds fall back to a plain text representation via str().
+}
+
+rule AssistantTextMessageTransformed {
+    when: TransformingMessages(conversation)
+    requires: message.role = :assistant
+    requires: message.content.kind != :structured
+
+    ensures: AnthropicMessage({
+        role: "assistant",
+        content: [{type: "text", text: message.content.text ?? ""}]
+    })
+}
+
+rule ToolResultMessageTransformed {
+    when: TransformingMessages(conversation)
+    requires: message.role = :tool-result
+
+    let block = {
+        type: "tool_result",
+        tool_use_id: NormalizedToolId(message.tool_call_id),
+        content: message.content.text ?? message.content
+        is_error: message.is_error (when true)
+    }
+
+    ensures:
+        if PreviousOutputMessageIsToolResultUserMessage():
+            MergeBlockIntoPreviousUserMessage(block)
+        else:
+            AnthropicMessage({role: "user", content: [block]})
+}
+
+rule ConsecutiveToolResultsMergedIntoSingleUserMessage {
+    when: TransformingMessages(conversation)
+
+    ensures: ∀ adjacent tool-result messages. ∃ single user message containing all their blocks
+
+    @guidance
+        -- Anthropic requires all tool_result content blocks appear in one user
+        -- message. The transformer checks whether the last accumulated message is
+        -- already a user message whose content consists entirely of tool_result
+        -- blocks; if so, it appends; otherwise it starts a new user message.
+}
+
+rule UnknownMessageRoleSkipped {
+    when: TransformingMessages(conversation)
+    requires: message.role ∉ {:user :assistant :tool-result}
+
+    ensures: MessageOmittedFromOutput()
+}
+
+------------------------------------------------------------
+-- Authentication
+------------------------------------------------------------
+
+rule ApiKeyResolved {
+    when: AnthropicStreamRequested(stream)
+
+    ensures: stream.resolved_api_key = stream.options.api_key ?? Environment("ANTHROPIC_API_KEY")
+}
+
+rule OAuthDetectedFromApiKey {
+    when: AnthropicStreamRequested(stream)
+    requires: Contains(stream.resolved_api_key, "sk-ant-oat")
+
+    ensures: stream.oauth = true
+}
+
+rule OAuthHeadersUsed {
+    when: RequestHeadersBuilt(stream)
+    requires: stream.oauth = true
+
+    ensures: RequestHeaders({
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + stream.resolved_api_key,
+        "anthropic-version": config.anthropic_version_header
+    })
+}
+
+rule ApiKeyHeadersUsed {
+    when: RequestHeadersBuilt(stream)
+    requires: stream.oauth = false
+
+    ensures: RequestHeaders({
+        "Content-Type": "application/json",
+        "x-api-key": stream.resolved_api_key,
+        "anthropic-version": config.anthropic_version_header
+    })
+}
+
+------------------------------------------------------------
+-- Extended Thinking
+------------------------------------------------------------
+
+rule ThinkingParamAbsentWhenModelLacksReasoning {
+    when: ThinkingParamRequested(model, options)
+    requires: model.supports_reasoning = false
+
+    ensures: ThinkingParam(null)
+}
+
+rule ThinkingParamAbsentWhenLevelIsOff {
+    when: ThinkingParamRequested(model, options)
+    requires: model.supports_reasoning = true
+    requires: options.thinking_level = off or options.thinking_level = null
+
+    ensures: ThinkingParam(null)
+
+    @guidance
+        -- thinking_level absent from options (nil) is treated the same as :off —
+        -- budget lookup returns nil, so thinking is disabled.
+}
+
+rule ThinkingParamPresentForActiveLevel {
+    when: ThinkingParamRequested(model, options)
+    requires: model.supports_reasoning = true
+    requires: options.thinking_level ∈ {minimal, low, medium, high, xhigh}
+
+    ensures: ThinkingParam({type: "enabled", budget_tokens: BudgetForLevel(options.thinking_level)})
+}
+
+rule TemperatureExcludedWhenThinkingActive {
+    when: RequestBodyBuilt(stream)
+    requires: ThinkingParam(stream) != null
+
+    ensures: RequestBodyDoesNotContain("temperature")
+
+    @guidance
+        -- Anthropic rejects requests that include both extended thinking and temperature.
+        -- When thinking is disabled, temperature = options.temperature ?? config.default_temperature.
+        -- Caller may supply a custom temperature via StreamOptions.
+}
+
+rule InterleavedThinkingBetaHeaderAdded {
+    when: RequestHeadersBuilt(stream)
+    requires: ThinkingParam(stream) != null
+
+    ensures: RequestHeader("anthropic-beta") contains "interleaved-thinking-2025-05-14"
+}
+
+rule OAuthAndThinkingBetaHeadersCombined {
+    when: RequestHeadersBuilt(stream)
+    requires: stream.oauth = true
+    requires: ThinkingParam(stream) != null
+
+    ensures: RequestHeader("anthropic-beta") = "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14"
+}
+
+rule OAuthWithoutThinkingBetaHeader {
+    when: RequestHeadersBuilt(stream)
+    requires: stream.oauth = true
+    requires: ThinkingParam(stream) = null
+
+    ensures: RequestHeader("anthropic-beta") = "claude-code-20250219,oauth-2025-04-20"
+}
+
+------------------------------------------------------------
+-- Request Construction
+------------------------------------------------------------
+
+rule AnthropicRequestUrlBuilt {
+    when: AnthropicStreamRequested(stream)
+
+    ensures: RequestUrl(stream) = stream.model.base_url + config.messages_path
+
+    @guidance
+        -- base_url is taken directly from the model record (e.g. "https://api.anthropic.com").
+        -- messages_path is always "/v1/messages".
+        -- No trailing-slash normalisation is applied; callers must supply a clean base_url.
+}
+
+rule AnthropicRequestBodyBuilt {
+    when: AnthropicStreamRequested(stream)
+
+    ensures: RequestBody({
+        model: stream.model.id,
+        max_tokens: stream.options.max_tokens ?? stream.model.max_tokens,
+        system: stream.conversation.system_prompt,
+        messages: TransformedMessages(stream.conversation),
+        stream: true,
+        tools: ToolDefs(stream.conversation) (when non-empty),
+        thinking: ThinkingParam(stream) (when non-null),
+        temperature: config.default_temperature (when ThinkingParam = null)
+    })
+}
+
+rule ToolDefinitionsFormatted {
+    when: ToolDefsBuilt(stream)
+    requires: stream.conversation.tools non-empty
+
+    ensures: ∀ tool. AnthropicToolDef({
+        name: tool.name,
+        description: tool.description,
+        input_schema: tool.parameters
+    })
+}
+
+------------------------------------------------------------
+-- SSE Parsing
+------------------------------------------------------------
+
+rule SseDataLinesParsed {
+    when: SseLineReceived(stream, line)
+
+    ensures:
+        if not StartsWith(line, "data: "):
+            SseLineIgnored(line)
+        else if SubstringAfter(line, "data: ") = "[DONE]":
+            SseLineIgnored(line)
+        else:
+            SseJsonParsedOrIgnoredOnError(line)
+}
+
+------------------------------------------------------------
+-- Streaming Event Normalization
+------------------------------------------------------------
+
+rule MessageStartEmitsStartEvent {
+    when: SseEventReceived(stream, "message_start", event_data)
+
+    let u = event_data.message.usage
+    ensures: UsageAccUpdated(stream, {
+        input_tokens: u.input_tokens ?? 0,
+        cache_read_tokens: u.cache_read_input_tokens ?? 0,
+        cache_write_tokens: u.cache_creation_input_tokens ?? 0
+    })
+    ensures: Emit(StreamEvent{event_type: start})
+}
+
+rule ContentBlockStartRoutedByType {
+    when: SseEventReceived(stream, "content_block_start", event_data)
+
+    let idx = event_data.index
+    let btype = event_data.content_block.type
+
+    ensures: BlockTypeRecorded(stream, idx, btype)
+    ensures:
+        if btype = "tool_use":
+            Emit(StreamEvent{
+                event_type: toolcall_start,
+                content_index: idx,
+                id: event_data.content_block.id,
+                name: event_data.content_block.name
+            })
+        else:
+            Emit(StreamEvent{event_type: text_start, content_index: idx})
+}
+
+rule ContentBlockDeltaRoutedByBlockType {
+    when: SseEventReceived(stream, "content_block_delta", event_data)
+
+    let idx = event_data.index
+    let btype = BlockType(stream, idx)
+    let delta = event_data.delta
+
+    ensures:
+        if btype = "tool_use" and delta.partial_json != null:
+            Emit(StreamEvent{event_type: toolcall_delta, content_index: idx, delta: delta.partial_json})
+        else if btype = "thinking" and (delta.thinking or delta.text) != null:
+            Emit(StreamEvent{event_type: thinking_delta, content_index: idx, delta: delta.thinking ?? delta.text})
+        else if delta.text != null:
+            Emit(StreamEvent{event_type: text_delta, content_index: idx, delta: delta.text})
+}
+
+rule ThinkingDeltaNotMisroutedAsTextDelta {
+    when: SseEventReceived(stream, "content_block_delta", event_data)
+    requires: BlockType(stream, event_data.index) = "thinking"
+
+    ensures: not Emitted(StreamEvent{event_type: text_delta})
+}
+
+rule ContentBlockStopEmitsEndByBlockType {
+    when: SseEventReceived(stream, "content_block_stop", event_data)
+
+    let idx = event_data.index
+    ensures:
+        if BlockType(stream, idx) = "tool_use":
+            Emit(StreamEvent{event_type: toolcall_end, content_index: idx})
+        else:
+            Emit(StreamEvent{event_type: text_end, content_index: idx})
+}
+
+rule MessageDeltaAccumulatesOutputUsage {
+    when: SseEventReceived(stream, "message_delta", event_data)
+
+    ensures: UsageAccUpdated(stream, {output_tokens: event_data.usage.output_tokens ?? 0})
+    ensures:
+        if event_data.delta.stop_reason != null:
+            stream.done = true
+            let usage = FinalizedUsage(stream.usage_acc)
+            Emit(StreamEvent{
+                event_type: done,
+                reason: keyword(event_data.delta.stop_reason),
+                usage: usage
+            })
+}
+
+rule FinalUsageTotalsCalculated {
+    when: DoneEventReady(stream)
+
+    let acc = stream.usage_acc
+    ensures: FinalizedUsage(acc) = StreamUsage{
+        input_tokens: acc.input_tokens,
+        output_tokens: acc.output_tokens,
+        cache_read_tokens: acc.cache_read_tokens,
+        cache_write_tokens: acc.cache_write_tokens,
+        total_tokens: acc.input_tokens + acc.output_tokens + acc.cache_read_tokens + acc.cache_write_tokens,
+        cost: CalculateCost(stream.model, acc)
+    }
+}
+
+rule MessageStopEmitsDoneIfNotAlready {
+    when: SseEventReceived(stream, "message_stop", event_data)
+    requires: stream.done = false
+
+    ensures: Emit(StreamEvent{event_type: done, reason: stop})
+}
+
+------------------------------------------------------------
+-- Error Handling
+------------------------------------------------------------
+
+rule HttpErrorExtractedFromResponseBody {
+    when: ProviderRequestFailed(stream, error)
+
+    ensures:
+        if error.body is InputStream and JsonParseable(error.body):
+            error_message = error.body.error.message
+        else if error.body is InputStream:
+            error_message = RawBodyString(error.body)
+        else:
+            error_message = error.message ?? str(error)
+
+    ensures: Emit(StreamEvent{
+        event_type: error,
+        error_message: error_message,
+        http_status: error.status (when present)
+    })
+}
+
+------------------------------------------------------------
+-- Surface
+------------------------------------------------------------
+
+surface AnthropicProviderApi {
+    facing executor: AgentExecutor
+
+    provides:
+        AnthropicStreamRequested(stream)
+
+    exposes:
+        StreamEvent
+        StreamUsage
+}
+
+open question "Should thinking block text-start/text-end markers be suppressed when the block type is 'thinking', to avoid consumers treating them as regular text delimiters?"
