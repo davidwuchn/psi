@@ -4,6 +4,31 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-12 - Terminalization checks need race-tolerant scheduling when workflow completion is async
+
+### λ Immediate terminal checks are necessary but not sufficient for async workflow runtimes
+
+After wiring `psi.extension/send-message` to run workflow-job terminal checks, a remaining
+race appeared: message injection could happen just before workflow runtime projected `:done`
+for a future-invoked workflow. In that window, the immediate terminal pass sees `:running`
+and no further boundary is guaranteed to fire.
+
+### λ Add a short delayed second pass at turn-bypass injection points
+
+For turn-bypass injection (`send-message`), run:
+1. immediate `maybe-mark-workflow-jobs-terminal!` + `maybe-emit-background-job-terminal-messages!`
+2. delayed second pass (75ms) in a guarded future
+
+This keeps the common case fast (immediate completion) while covering near-boundary async
+state propagation without requiring user prompts or extra extension events.
+
+### λ Regression tests should model time-order races explicitly
+
+`send-message-terminal-detection-handles-workflow-completion-race-test` uses a delayed
+future invoke workflow and fires `send-message` before completion, then asserts eventual
+terminalization. This protects against reintroducing "completed in runtime, still running in
+background-jobs" drift.
+
 ## 2026-03-12 - Background job terminal detection must fire on every message injection path
 
 ### λ `send-message` is a turn-bypass — terminal checks must cover it explicitly
