@@ -4,6 +4,31 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-12 - For eventually-consistent workflow state, read surfaces must reconcile stale background-job status
+
+### λ Event-driven terminalization needs a read-time backstop
+
+Even with send-message-triggered checks and delayed retries, stale `:running` jobs can
+remain if historical races or missed trigger windows occurred. A durable fix is to make
+read surfaces (`/jobs`, `/job`, and EQL `:psi.agent-session/background-jobs`) run a
+workflow→job reconciliation pass before returning data.
+
+This turns read paths into self-healing boundaries: if workflow is terminal and job is
+non-terminal, normalize job status immediately.
+
+### λ "Status projection" and "status source" are different layers
+
+Workflow runtime is the source of truth for workflow completion; background-jobs is a
+projection used for UX, commands, and introspection. Projections can drift under async
+scheduling. Explicit reconciliation keeps projection correctness without requiring stronger
+runtime synchronization.
+
+### λ Resolver-level reconciliation closes app-query observability gaps
+
+Fixing only command paths (`/jobs`) is insufficient when operators inspect state via EQL.
+Adding reconciliation inside the background-job resolver ensures introspection queries and
+command output converge on the same truth.
+
 ## 2026-03-12 - Terminalization checks need race-tolerant scheduling when workflow completion is async
 
 ### λ Immediate terminal checks are necessary but not sufficient for async workflow runtimes
