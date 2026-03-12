@@ -1811,11 +1811,19 @@
   {::pco/op-name 'psi.extension/send-message
    ::pco/params  [:psi/agent-session-ctx :role :content]
    ::pco/output  [:psi.extension/message]}
-  {:psi.extension/message
-   (send-extension-message-in! agent-session-ctx
-                               (or role "assistant")
-                               (or content "")
-                               custom-type)})
+  (let [msg (send-extension-message-in! agent-session-ctx
+                                        (or role "assistant")
+                                        (or content "")
+                                        custom-type)]
+    ;; After injecting an extension message, check whether any workflow-backed
+    ;; background jobs have reached a terminal state.  This covers the case
+    ;; where a workflow (e.g. agent-chain) completes and emits its result via
+    ;; send-message rather than through the normal agent turn boundary, which
+    ;; is the only other place the terminal check runs.
+    (when agent-session-ctx
+      (maybe-mark-workflow-jobs-terminal! agent-session-ctx)
+      (maybe-emit-background-job-terminal-messages! agent-session-ctx))
+    {:psi.extension/message msg}))
 
 (pco/defmutation send-prompt
   [_ {:keys [psi/agent-session-ctx content source]}]

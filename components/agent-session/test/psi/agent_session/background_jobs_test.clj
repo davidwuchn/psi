@@ -9,10 +9,14 @@
   (:require
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
+   [com.fulcrologic.statecharts.chart :as chart]
+   [com.fulcrologic.statecharts.elements :as ele]
    [psi.agent-core.core :as agent-core]
    [psi.agent-session.background-jobs :as bj]
    [psi.agent-session.core :as session]
-   [psi.agent-session.tool-output :as tool-output]))
+   [psi.agent-session.tool-output :as tool-output]
+   [psi.agent-session.workflows :as wf]
+   [psi.query.core :as query]))
 
 (defn- start-job!
   [store tool-call-id thread-id tool-name job-id]
@@ -496,3 +500,68 @@
                           (filter #(bj/terminal-status? (:status %))))]
         (is (= :running (:status running)))
         (is (= 20 (count terminal)))))))
+
+;; ---------------------------------------------------------------------------
+;; Regression: send-message triggers workflow-job terminal detection
+;; ---------------------------------------------------------------------------
+
+(def ^:private instant-done-chart
+  "Minimal statechart that transitions immediately to :done on :workflow/start."
+  (chart/statechart {:id :instant-done-chart}
+                    (ele/state {:id :idle}
+                               (ele/transition {:event :workflow/start :target :done}
+                                               (ele/script
+                                                {:expr (fn [_ _]
+                                                         [{:op :assign
+                                                           :data {:workflow/result "ok"}}])})))
+                    (ele/final {:id :done})))
+
+(deftest send-message-triggers-workflow-job-terminal-detection-test
+  (testing "send-message mutation marks workflow-backed background jobs terminal"
+    (let [ctx       (session/create-context)
+          _         (swap! (:session-data-atom ctx) assoc :startup-bootstrap-completed? true)
+          ext-path  "/test/send-message-regression.clj"
+          wf-id     "wf-sm-1"
+          store     (:background-jobs-atom ctx)
+          thread-id (:session-id (session/get-session-data-in ctx))
+          reg       (:workflow-registry ctx)
+          qctx      (query/create-query-context)
+          _         (session/register-resolvers-in! qctx false)
+          _         (session/register-mutations-in! qctx true)
+          mutate    (fn [op params]
+                      (get (query/query-in qctx
+                                           {:psi/agent-session-ctx ctx}
+                                           [(list op (assoc params :psi/agent-session-ctx ctx))])
+                           op))]
+      ;; Register workflow type and create/start a workflow instance
+      (wf/register-type-in! reg ext-path {:type :instant-done :chart instant-done-chart})
+      (wf/ensure-pump! reg)
+      (wf/create-workflow-in! reg ext-path {:type :instant-done :id wf-id :auto-start? true})
+      ;; Wait for the statechart to reach :done
+      (loop [i 0]
+        (let [w (wf/workflow-in reg ext-path wf-id)]
+          (when (and (< i 200) (not (:done? w)))
+            (Thread/sleep 10)
+            (recur (inc i)))))
+      (is (true? (:done? (wf/workflow-in reg ext-path wf-id)))
+          "workflow should be done before we register the background job")
+      ;; Register a background job that is linked to the now-done workflow
+      (bj/start-background-job-in! store
+                                   {:tool-call-id      "tc-sm-regression"
+                                    :thread-id         thread-id
+                                    :tool-name         "workflow/instant-done"
+                                    :job-id            "job-sm-1"
+                                    :job-kind          :workflow
+                                    :workflow-ext-path ext-path
+                                    :workflow-id       wf-id})
+      (is (= :running (:status (bj/get-job-in store "job-sm-1")))
+          "job should start as running before send-message is called")
+      ;; Invoke send-message via the real Pathom mutation surface — this exercises the fix
+      (mutate 'psi.extension/send-message
+              {:role "assistant" :content "chain result" :custom-type "chain-result"})
+      ;; The job should now be terminal (completed) — the fix under test
+      (let [job (bj/get-job-in store "job-sm-1")]
+        (is (bj/terminal-status? (:status job))
+            "background job should be terminal after send-message")
+        (is (= :completed (:status job))))
+      (wf/shutdown-in! reg))))
