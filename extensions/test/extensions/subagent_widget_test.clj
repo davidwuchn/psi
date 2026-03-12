@@ -133,7 +133,28 @@
                (execute {"action" "continue"
                          "id" 1
                          "prompt" "next"
-                         "fork_session" true})))))))
+                         "fork_session" true}))))))
+
+  (testing "subagent create validates include_result_in_context"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/subagent_widget.clj"})]
+      (sut/init api)
+      (let [execute (get-in @state [:tools "subagent" :execute])]
+        (is (= {:content "Error: include_result_in_context must be true or false." :is-error true}
+               (execute {"action" "create"
+                         "task" "do thing"
+                         "include_result_in_context" "maybe"}))))))
+
+  (testing "subagent continue validates include_result_in_context"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/subagent_widget.clj"})]
+      (sut/init api)
+      (let [execute (get-in @state [:tools "subagent" :execute])]
+        (is (= {:content "Error: include_result_in_context must be true or false." :is-error true}
+               (execute {"action" "continue"
+                         "id" 1
+                         "prompt" "next"
+                         "include_result_in_context" "maybe"})))))))
 
 (deftest prompt-contribution-lists-available-agents-test
   (testing "prompt contribution lists names discovered from .psi/agents"
@@ -221,11 +242,13 @@
               _       (execute {"action" "create"
                                 "task" "x"
                                 "timeout_ms" "1234"
-                                "fork_session" true}
+                                "fork_session" true
+                                "include_result_in_context" true}
                                {:tool-call-id "tc-timeout-1"})]
           (is (= 1234 (:timeout-ms @captured)))
           (is (= :async (:mode @captured)))
           (is (= true (:fork-session? @captured)))
+          (is (= true (:include-result-in-context? @captured)))
           (is (= "tc-timeout-1" (:tool-call-id @captured)))))))
 
   (testing "create uses default timeout when timeout_ms omitted"
@@ -350,6 +373,49 @@
           (handler "--fork @planner investigate")
           (is (= true (:fork-session? @captured)))
           (is (str/includes? @printed "[fork]")))))))
+
+(deftest include-result-in-context-injection-test
+  (testing "emit-result-message injects user+assistant context messages when enabled"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/subagent_widget.clj"
+                                :query-fn (fn [q]
+                                            (case q
+                                              [:psi.agent-session/session-entries]
+                                              {:psi.agent-session/session-entries []}
+                                              {}))})]
+      (sut/init api)
+      (#'sut/emit-result-message! {:id 5
+                                   :prompt "do thing"
+                                   :turn-count 2
+                                   :ok? true
+                                   :elapsed-ms 20
+                                   :result-text "answer"
+                                   :include-result-in-context? true})
+      (let [msgs (:messages @state)]
+        (is (= 2 (count msgs)))
+        (is (nil? (:custom-type (first msgs))))
+        (is (= "user" (:role (first msgs))))
+        (is (str/includes? (:content (first msgs)) "Subagent job id: subagent-5-turn-2"))
+        (is (= "assistant" (:role (second msgs))))
+        (is (= "answer" (:content (second msgs)))))))
+
+  (testing "emit-result-message inserts assistant bridge when last role is user"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/subagent_widget.clj"})]
+      (sut/init api)
+      (with-redefs [sut/context-last-role (fn [_] "user")]
+        (#'sut/emit-result-message! {:id 6
+                                     :prompt "do thing"
+                                     :turn-count 1
+                                     :ok? true
+                                     :elapsed-ms 20
+                                     :result-text "answer"
+                                     :include-result-in-context? true}))
+      (let [msgs (:messages @state)]
+        (is (= "(subagent context bridge)" (:content (first msgs))))
+        (is (= "assistant" (:role (first msgs))))
+        (is (= "user" (:role (second msgs))))
+        (is (= "assistant" (:role (nth msgs 2))))))))
 
 (deftest subagent-widget-placement-follows-ui-type-test
   (testing "widgets render below editor in emacs ui"

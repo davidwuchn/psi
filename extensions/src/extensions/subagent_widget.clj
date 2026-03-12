@@ -90,6 +90,17 @@
     (nil? x) false
     :else ::invalid))
 
+(defn- parse-optional-bool [x]
+  (cond
+    (nil? x) nil
+    (true? x) true
+    (false? x) false
+    (string? x) (case (str/lower-case (str/trim x))
+                  "true" true
+                  "false" false
+                  ::invalid)
+    :else ::invalid))
+
 (defn- tool-call-id-from-opts [opts]
   (or (:tool-call-id opts)
       (get opts "tool-call-id")
@@ -451,8 +462,43 @@
     ((:notify ui) text level)
     (println text)))
 
+(defn- context-last-role [query-fn]
+  (->> (current-session-messages query-fn)
+       (remove :custom-type)
+       (map :role)
+       (filter #{{"user" "assistant"}})
+       last))
+
+(defn- inject-result-into-context!
+  [{:keys [id turn-count result-text]}]
+  (when-let [mutate-fn (some-> @state :api :mutate)]
+    (let [query-fn     (:query-fn @state)
+          last-role    (context-last-role query-fn)
+          turn*        (max 1 (long (or turn-count 1)))
+          job-ref      (str "subagent-" id "-turn-" turn*)
+          user-content (str "Subagent job id: " job-ref)
+          asst-content (or result-text "")]
+      ;; Keep strict user/assistant alternation for provider-facing context.
+      ;; If the last role is user, emit an assistant bridge first.
+      (when (= "user" last-role)
+        (try
+          (mutate-fn 'psi.extension/send-message
+                     {:role "assistant"
+                      :content "(subagent context bridge)"})
+          (catch Exception _ nil)))
+      (try
+        (mutate-fn 'psi.extension/send-message
+                   {:role "user"
+                    :content user-content})
+        (catch Exception _ nil))
+      (try
+        (mutate-fn 'psi.extension/send-message
+                   {:role "assistant"
+                    :content asst-content})
+        (catch Exception _ nil)))))
+
 (defn- emit-result-message!
-  [{:keys [id prompt turn-count ok? elapsed-ms result-text]}]
+  [{:keys [id prompt turn-count ok? elapsed-ms result-text include-result-in-context?]}]
   (let [seconds  (quot (or elapsed-ms 0) 1000)
         heading  (str "Subagent #" id
                       (when (> (or turn-count 1) 1)
@@ -463,17 +509,22 @@
                         (str (subs result-text 0 8000) "\n\n... [truncated]")
                         (or result-text "")))]
     (when-let [mutate-fn (some-> @state :api :mutate)]
-      (try
-        (mutate-fn 'psi.extension/append-entry
-                   {:custom-type "subagent-result"
-                    :data        full})
-        (catch Exception _ nil))
-      (try
-        (mutate-fn 'psi.extension/send-message
-                   {:role        "assistant"
-                    :content     full
-                    :custom-type "subagent-result"})
-        (catch Exception _ nil)))
+      (if include-result-in-context?
+        (inject-result-into-context! {:id id
+                                      :turn-count turn-count
+                                      :result-text result-text})
+        (do
+          (try
+            (mutate-fn 'psi.extension/append-entry
+                       {:custom-type "subagent-result"
+                        :data        full})
+            (catch Exception _ nil))
+          (try
+            (mutate-fn 'psi.extension/send-message
+                       {:role        "assistant"
+                        :content     full
+                        :custom-type "subagent-result"})
+            (catch Exception _ nil)))))
     (println "\n[subagent-result]" heading "\n")
     (when (seq result-text)
       (println (task-preview result-text 800)))
@@ -547,17 +598,22 @@
 
 (defn- continue-script
   [_ data]
-  (let [prompt   (str/trim (or (get-in data [:_event :data :prompt])
-                               (:subagent/current-prompt data)
-                               ""))
-        turn     (inc (long (or (:subagent/turn-count data) 1)))
-        on-start (:subagent/on-start data)]
+  (let [prompt    (str/trim (or (get-in data [:_event :data :prompt])
+                                (:subagent/current-prompt data)
+                                ""))
+        include?  (get-in data [:_event :data :include-result-in-context])
+        include?* (if (nil? include?)
+                    (:subagent/include-result-in-context? data)
+                    (true? include?))
+        turn      (inc (long (or (:subagent/turn-count data) 1)))
+        on-start  (:subagent/on-start data)]
     (when (fn? on-start)
       (on-start {:id (:workflow/id data)
                  :prompt prompt
                  :turn-count turn}))
     [{:op :assign
       :data {:subagent/current-prompt prompt
+             :subagent/include-result-in-context? include?*
              :subagent/turn-count turn
              :subagent/last-text ""
              :subagent/elapsed-ms 0
@@ -575,14 +631,16 @@
         elapsed-ms  (long (or (:elapsed-ms ev) 0))
         prompt      (or (:subagent/current-prompt data) "")
         turn-count  (long (or (:subagent/turn-count data) 1))
+        include?    (true? (:subagent/include-result-in-context? data))
         on-finished (:subagent/on-finished data)]
     (when (fn? on-finished)
-      (on-finished {:id          (:workflow/id data)
-                    :prompt      prompt
-                    :turn-count  turn-count
-                    :ok?         true
-                    :elapsed-ms  elapsed-ms
-                    :result-text text}))
+      (on-finished {:id                          (:workflow/id data)
+                    :prompt                      prompt
+                    :turn-count                  turn-count
+                    :ok?                         true
+                    :elapsed-ms                  elapsed-ms
+                    :result-text                 text
+                    :include-result-in-context?  include?}))
     [{:op :assign
       :data {:subagent/last-text text
              :subagent/elapsed-ms elapsed-ms
@@ -597,14 +655,16 @@
         elapsed-ms  (long (or (:elapsed-ms ev) 0))
         prompt      (or (:subagent/current-prompt data) "")
         turn-count  (long (or (:subagent/turn-count data) 1))
+        include?    (true? (:subagent/include-result-in-context? data))
         on-finished (:subagent/on-finished data)]
     (when (fn? on-finished)
-      (on-finished {:id          (:workflow/id data)
-                    :prompt      prompt
-                    :turn-count  turn-count
-                    :ok?         false
-                    :elapsed-ms  elapsed-ms
-                    :result-text text}))
+      (on-finished {:id                          (:workflow/id data)
+                    :prompt                      prompt
+                    :turn-count                  turn-count
+                    :ok?                         false
+                    :elapsed-ms                  elapsed-ms
+                    :result-text                 text
+                    :include-result-in-context?  include?}))
     [{:op :assign
       :data {:subagent/last-text text
              :subagent/elapsed-ms elapsed-ms
@@ -648,14 +708,15 @@
         get-api-key (some-> @state :api :get-api-key)
         on-start    (fn [_]
                       (refresh-widgets-later!))
-        on-finished (fn [{:keys [id prompt turn-count ok? elapsed-ms result-text]}]
+        on-finished (fn [{:keys [id prompt turn-count ok? elapsed-ms result-text include-result-in-context?]}]
                       (refresh-widgets-later!)
-                      (emit-result-message! {:id          (or (parse-int id) id)
-                                             :prompt      prompt
-                                             :turn-count  turn-count
-                                             :ok?         ok?
-                                             :elapsed-ms  elapsed-ms
-                                             :result-text result-text}))
+                      (emit-result-message! {:id                          (or (parse-int id) id)
+                                             :prompt                      prompt
+                                             :turn-count                  turn-count
+                                             :ok?                         ok?
+                                             :elapsed-ms                  elapsed-ms
+                                             :result-text                 result-text
+                                             :include-result-in-context?  include-result-in-context?}))
         r           (mutate! 'psi.extension.workflow/register-type
                              {:type            subagent-type
                               :description     "Run a background subagent workflow."
@@ -664,23 +725,26 @@
                               :initial-data-fn (fn [input]
                                                  (let [agent-name    (normalize-agent-name (get input :agent))
                                                        fork-session? (true? (get input :fork-session))
+                                                       include?      (true? (get input :include-result-in-context))
                                                        agent-ctx      (create-sub-agent-ctx qf agent-name {:fork-session? fork-session?})]
-                                                   {:subagent/agent-name     agent-name
-                                                    :subagent/fork-session?  fork-session?
-                                                    :subagent/agent-ctx      agent-ctx
-                                                    :subagent/session-ctx    (create-sub-session-ctx agent-ctx qf)
-                                                    :subagent/query-fn       qf
-                                                    :subagent/get-api-key-fn get-api-key
-                                                    :subagent/on-start       on-start
-                                                    :subagent/on-finished    on-finished
-                                                    :subagent/turn-count     0
-                                                    :subagent/current-prompt nil
-                                                    :subagent/last-text      ""
-                                                    :subagent/elapsed-ms     0}))
+                                                   {:subagent/agent-name                  agent-name
+                                                    :subagent/fork-session?               fork-session?
+                                                    :subagent/include-result-in-context?  include?
+                                                    :subagent/agent-ctx                   agent-ctx
+                                                    :subagent/session-ctx                 (create-sub-session-ctx agent-ctx qf)
+                                                    :subagent/query-fn                    qf
+                                                    :subagent/get-api-key-fn              get-api-key
+                                                    :subagent/on-start                    on-start
+                                                    :subagent/on-finished                 on-finished
+                                                    :subagent/turn-count                  0
+                                                    :subagent/current-prompt              nil
+                                                    :subagent/last-text                   ""
+                                                    :subagent/elapsed-ms                  0}))
                               :public-data-fn  (fn [data]
                                                  (select-keys data
                                                               [:subagent/agent-name
                                                                :subagent/fork-session?
+                                                               :subagent/include-result-in-context?
                                                                :subagent/turn-count
                                                                :subagent/current-prompt
                                                                :subagent/last-text
@@ -710,12 +774,13 @@
             (recur)))))))
 
 (defn- spawn-subagent!
-  [task agent-name {:keys [mode tool-call-id timeout-ms fork-session?]
+  [task agent-name {:keys [mode tool-call-id timeout-ms fork-session? include-result-in-context?]
                     :or   {timeout-ms 300000}}]
-  (let [task          (str/trim (or task ""))
-        agent-name    (normalize-agent-name agent-name)
-        mode*         (or mode :async)
-        fork-session? (true? fork-session?)]
+  (let [task                       (str/trim (or task ""))
+        agent-name                 (normalize-agent-name agent-name)
+        mode*                      (or mode :async)
+        fork-session?              (true? fork-session?)
+        include-result-in-context? (true? include-result-in-context?)]
     (cond
       (str/blank? task)
       {:error "task is required"}
@@ -734,7 +799,8 @@
                                     :id                     (str id)
                                     :track-background-job?  (not= :sync mode*)
                                     :input                  (cond-> {:task task
-                                                                     :tool-call-id tool-call-id*}
+                                                                     :tool-call-id tool-call-id*
+                                                                     :include-result-in-context include-result-in-context?}
                                                               agent-name (assoc :agent agent-name)
                                                               fork-session? (assoc :fork-session true))})]
         (if-not (:psi.extension.workflow/created? r)
@@ -766,12 +832,13 @@
                                :else
                                text)]
                 (refresh-widgets!)
-                (emit-result-message! {:id          id
-                                       :prompt      task
-                                       :turn-count  1
-                                       :ok?         ok?
-                                       :elapsed-ms  elapsed
-                                       :result-text text*})
+                (emit-result-message! {:id                          id
+                                       :prompt                      task
+                                       :turn-count                  1
+                                       :ok?                         ok?
+                                       :elapsed-ms                  elapsed
+                                       :result-text                 text*
+                                       :include-result-in-context?  include-result-in-context?})
                 {:ok id
                  :mode :sync
                  :is-error (not ok?)
@@ -785,10 +852,12 @@
 (defn- continue-subagent!
   ([id prompt]
    (continue-subagent! id prompt nil))
-  ([id prompt {:keys [tool-call-id]}]
+  ([id prompt {:keys [tool-call-id include-result-in-context?]}]
    (let [wf            (workflow-by-id id)
          prompt        (str/trim (or prompt ""))
-         tool-call-id* (or tool-call-id (str "subagent-continue-" id "-" (java.util.UUID/randomUUID)))]
+         tool-call-id* (or tool-call-id (str "subagent-continue-" id "-" (java.util.UUID/randomUUID)))
+         include?      (when (some? include-result-in-context?)
+                         (true? include-result-in-context?))]
      (cond
        (nil? wf)
        {:error (str "No subagent #" id " found.")}
@@ -804,8 +873,10 @@
                         {:id                    (str id)
                          :event                 :subagent/continue
                          :track-background-job? true
-                         :data                  {:prompt prompt
-                                                 :tool-call-id tool-call-id*}})]
+                         :data                  (cond-> {:prompt prompt
+                                                         :tool-call-id tool-call-id*}
+                                                  (some? include?)
+                                                  (assoc :include-result-in-context include?))})]
          (if (:psi.extension.workflow/event-accepted? r)
            (do (refresh-widgets!)
                {:ok true
@@ -908,10 +979,11 @@
   ([args]
    (execute-subagent-tool args nil))
   ([args opts]
-   (let [action       (some-> (get args "action") str str/trim str/lower-case)
-         mode         (parse-create-mode (get args "mode"))
-         timeout-ms   (parse-timeout-ms (get args "timeout_ms"))
-         fork-session (parse-bool (get args "fork_session"))]
+   (let [action                    (some-> (get args "action") str str/trim str/lower-case)
+         mode                      (parse-create-mode (get args "mode"))
+         timeout-ms                (parse-timeout-ms (get args "timeout_ms"))
+         fork-session              (parse-bool (get args "fork_session"))
+         include-result-in-context (parse-optional-bool (get args "include_result_in_context"))]
      (case action
        "create"
        (let [task         (str/trim (or (get args "task") ""))
@@ -924,15 +996,20 @@
            (= fork-session ::invalid)
            {:content "Error: fork_session must be true or false." :is-error true}
 
+           (= include-result-in-context ::invalid)
+           {:content "Error: include_result_in_context must be true or false." :is-error true}
+
            (str/blank? task)
            {:content "Error: task is required." :is-error true}
 
            :else
-           (let [fork? (true? fork-session)
-                 r     (spawn-subagent! task agent-name {:mode mode
-                                                         :tool-call-id tool-call-id
-                                                         :timeout-ms timeout-ms
-                                                         :fork-session? fork?})]
+           (let [fork?    (true? fork-session)
+                 include? (true? include-result-in-context)
+                 r        (spawn-subagent! task agent-name {:mode mode
+                                                            :tool-call-id tool-call-id
+                                                            :timeout-ms timeout-ms
+                                                            :fork-session? fork?
+                                                            :include-result-in-context? include?})]
              (if-let [e (:error r)]
                {:content (str "Error: " e) :is-error true}
                (if (= :sync (:mode r))
@@ -962,6 +1039,9 @@
            (not (nil? (get args "fork_session")))
            {:content "Error: fork_session is only supported for action=create" :is-error true}
 
+           (= include-result-in-context ::invalid)
+           {:content "Error: include_result_in_context must be true or false." :is-error true}
+
            (nil? id)
            {:content "Error: id is required." :is-error true}
 
@@ -969,7 +1049,8 @@
            {:content "Error: prompt is required." :is-error true}
 
            :else
-           (let [result (continue-subagent! id prompt {:tool-call-id tool-call-id})]
+           (let [result (continue-subagent! id prompt {:tool-call-id tool-call-id
+                                                       :include-result-in-context? include-result-in-context})]
              (if-let [e (:error result)]
                {:content e :is-error true}
                {:content (str "Subagent #" id " continuing in background"
@@ -1027,6 +1108,8 @@
                                                  :description "Optional execution mode for action=create (default async)"}
                                        "fork_session" {:type "boolean"
                                                        :description "Optional for action=create. When true, subagent starts from a fork of the invoking session conversation."}
+                                       "include_result_in_context" {:type "boolean"
+                                                                    :description "Optional for action=create|continue. When true, inject subagent result into parent LLM context as user+assistant messages while preserving alternation."}
                                        "timeout_ms" {:type "integer"
                                                      :description "Optional sync timeout in milliseconds for action=create, mode=sync (default 300000)"}
                                        "id"     {:type "integer"

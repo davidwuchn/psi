@@ -11,11 +11,13 @@ value SubagentCreateArgs {
     agent: String?
     mode: sync | async?
     fork_session: Boolean?
+    include_result_in_context: Boolean?
 }
 
 value SubagentContinueArgs {
     id: Integer
     prompt: String
+    include_result_in_context: Boolean?
 }
 
 value SubagentCreateResponse {
@@ -63,6 +65,13 @@ rule SubagentForkSessionMustBeBooleanWhenProvided {
     ensures: Error.thrown("fork_session must be true or false")
 }
 
+rule SubagentIncludeResultInContextMustBeBooleanWhenProvided {
+    when: SubagentToolCalled(action, args)
+    requires: args.include_result_in_context not in {null, true, false}
+
+    ensures: Error.thrown("include_result_in_context must be true or false")
+}
+
 rule SubagentForkSessionIsOnlySupportedForCreate {
     when: SubagentToolCalled(action, args)
     requires: action in {continue, remove, list}
@@ -83,6 +92,21 @@ rule SubagentCreatePropagatesForkSessionFlag {
 
     ensures: SubagentWorkflowCreated(workflow_id, thread_id)
     ensures: SubagentWorkflow(workflow_id).input.fork_session = EffectiveForkSession(args)
+}
+
+rule SubagentCreatePropagatesIncludeResultInContextFlag {
+    when: SubagentToolCalled(action: create, args, tool_call_id, thread_id)
+
+    ensures: SubagentWorkflowCreated(workflow_id, thread_id)
+    ensures: SubagentWorkflow(workflow_id).input.include_result_in_context = (args.include_result_in_context ?? false)
+}
+
+rule SubagentContinuePropagatesIncludeResultInContextFlagWhenProvided {
+    when: SubagentToolCalled(action: continue, args, tool_call_id, thread_id)
+    requires: args.include_result_in_context != null
+
+    ensures: SubagentWorkflowEventAccepted(args.id, event: "subagent/continue")
+    ensures: SubagentWorkflow(args.id).data.include_result_in_context = args.include_result_in_context
 }
 
 rule SubagentCreateSyncPersistsWorkflowAndRunsToTerminal {
@@ -117,15 +141,33 @@ rule SubagentCreateSyncFailurePersistsErrorWorkflow {
     ensures: SubagentWorkflowContinuable(workflow_id)
 }
 
-rule SubagentCreateSyncEmitsResultMessage {
+rule SubagentCreateSyncEmitsResultMessageWhenContextInjectionDisabled {
     when: SubagentToolCalled(action: create, args, tool_call_id, thread_id)
     requires: EffectiveCreateMode(args) = sync
     requires: SubagentWorkflowReachedTerminalPhase(workflow_id, phase)
+    requires: (args.include_result_in_context ?? false) = false
 
     ensures: ext/CustomMessageSent(session, message)
     ensures: message.customType = "subagent-result"
     ensures: message.role = "assistant"
     ensures: message.content != ""
+}
+
+rule SubagentResultInjectedIntoContextWhenEnabled {
+    when: SubagentWorkflowReachedTerminalPhase(workflow_id, phase)
+    requires: SubagentWorkflow(workflow_id).input.include_result_in_context = true
+
+    ensures: not ext/CustomMessageSent(session, message where message.customType = "subagent-result")
+
+    ensures: ext/MessageSent(session, user_message)
+    ensures: user_message.role = "user"
+    ensures: user_message.content contains "Subagent job id:"
+
+    ensures: ext/MessageSent(session, assistant_message)
+    ensures: assistant_message.role = "assistant"
+    ensures: assistant_message.content = SubagentTerminalText(workflow_id)
+
+    ensures: PreservesRoleAlternation(session, after: assistant_message)
 }
 
 rule SubagentCreateAsyncCreatesWorkflowAndBackgroundJob {
