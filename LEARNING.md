@@ -4,6 +4,29 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-12 - OpenAI capture callbacks and Emacs separator-anchor drift need explicit boundary contracts
+
+### λ Provider capture telemetry should be callback-chained and bounded at session edge
+
+OpenAI provider request/reply capture is most reliable when callbacks are chained
+(at executor boundary) rather than replaced, and when capture history is bounded
+with explicit limits. Tagging each capture with `turn-id` preserves turn-level
+traceability for EQL introspection while preventing unbounded growth.
+
+### λ OpenAI temperature semantics differ by API and should be encoded as explicit invariants
+
+Chat-completions requests should carry deterministic `temperature` (default `0`,
+override respected), while codex responses requests must omit top-level
+`temperature` because backend rejects it. Keeping this split as an explicit,
+tested invariant avoids subtle provider regressions.
+
+### λ Emacs first-send draft extraction should anchor after the separator line, not a stale draft marker
+
+When startup/repair paths leave a stale draft anchor on the separator line,
+first prompt extraction can include separator text unless input-start resolution
+prefers the first editable position after the separator marker. A focused
+regression test for anchor drift locks this contract.
+
 ## 2026-03-12 - Emacs transcript echo should be gated by confirmed request ids, and parse/load checks should precede ERT runs
 
 ### λ Frontend transcript copy contracts should key off transport-confirmed dispatch, not callback presence
