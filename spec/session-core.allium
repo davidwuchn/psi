@@ -1,0 +1,275 @@
+-- allium: 2
+module session-core
+
+value SessionId { value: String }
+value MessageId { value: String }
+value WorktreePath { value: String }
+value ProjectId { value: String }
+value Timestamp { value: String }
+value ToolName { value: String }
+value JsonMap { value: Any }
+
+external entity Project {
+    id: ProjectId
+    git_origin_url: String?
+    local_url: String
+}
+
+external entity GitWorktree {
+    path: WorktreePath
+    project_id: ProjectId
+    branch: String?
+    head_sha: String?
+}
+
+entity AgentSession {
+    id: SessionId
+    parent_session_id: SessionId?
+    project_id: ProjectId
+    worktree_path: WorktreePath
+
+    system_prompt: String
+    start_instant: Timestamp
+    ended_at: Timestamp?
+
+    name: String?
+    summary_line: String?
+
+    active_tools: Set<ToolName>
+
+    streaming_state: idle | streaming_assistant | streaming_tool
+    status: active | paused | completed | failed
+
+    is_root: parent_session_id = null
+    has_parent: parent_session_id != null
+}
+
+entity SessionMessage {
+    id: MessageId
+    session: SessionId
+    parent_message_id: MessageId?
+    timestamp: Timestamp
+    sequence_no: Integer
+
+    role: user | assistant | tool | system | extension
+    content: String?
+    metadata: JsonMap?
+
+    tool_name: ToolName?
+    tool_call_id: String?
+}
+
+entity SessionContainment {
+    parent_session_id: SessionId
+    child_session_id: SessionId
+    relation: fork | subagent
+    created_at: Timestamp
+}
+
+rule SessionCreated {
+    when: SessionCreateRequested(project_id, worktree_path, system_prompt, name)
+
+    ensures: AgentSession.created(
+        id: new_session_id(),
+        parent_session_id: null,
+        project_id: project_id,
+        worktree_path: worktree_path,
+        system_prompt: system_prompt,
+        start_instant: now,
+        ended_at: null,
+        name: name,
+        summary_line: null,
+        active_tools: {},
+        streaming_state: idle,
+        status: active
+    )
+}
+
+rule SessionForked {
+    when: SessionForkRequested(parent_session_id, worktree_path, system_prompt, name)
+    requires: exists p in AgentSessions where p.id = parent_session_id and p.status = active
+
+    ensures: AgentSession.created(
+        id: new_session_id(),
+        parent_session_id: parent_session_id,
+        project_id: project_id_for(parent_session_id),
+        worktree_path: worktree_path,
+        system_prompt: system_prompt,
+        start_instant: now,
+        ended_at: null,
+        name: name,
+        summary_line: null,
+        active_tools: active_tools_for(parent_session_id),
+        streaming_state: idle,
+        status: active
+    )
+
+    ensures: SessionContainment.created(
+        parent_session_id: parent_session_id,
+        child_session_id: child_session_id,
+        relation: fork,
+        created_at: now
+    )
+}
+
+rule SubagentSessionCreated {
+    when: SubagentSessionRequested(parent_session_id, system_prompt, name)
+    requires: exists p in AgentSessions where p.id = parent_session_id and p.status = active
+
+    ensures: AgentSession.created(
+        id: new_session_id(),
+        parent_session_id: parent_session_id,
+        project_id: project_id_for(parent_session_id),
+        worktree_path: worktree_path_for(parent_session_id),
+        system_prompt: system_prompt,
+        start_instant: now,
+        ended_at: null,
+        name: name,
+        summary_line: null,
+        active_tools: active_tools_for(parent_session_id),
+        streaming_state: idle,
+        status: active
+    )
+
+    ensures: SessionContainment.created(
+        parent_session_id: parent_session_id,
+        child_session_id: child_session_id,
+        relation: subagent,
+        created_at: now
+    )
+}
+
+rule MessageAppended {
+    when: SessionMessageAppendRequested(session, role, content, metadata, tool_name, tool_call_id)
+    requires: exists s in AgentSessions where s.id = session and s.status = active
+
+    ensures: SessionMessage.created(
+        id: new_message_id(),
+        session: session,
+        parent_message_id: last_message_id_for(session),
+        timestamp: now,
+        sequence_no: next_sequence_no_for(session),
+        role: role,
+        content: content,
+        metadata: metadata,
+        tool_name: tool_name,
+        tool_call_id: tool_call_id
+    )
+}
+
+rule AssistantStreamStarted {
+    when: AssistantStreamStarted(id)
+    requires: exists s in AgentSessions where s.id = id and s.status = active
+    ensures:
+        for s in AgentSessions where s.id = id:
+            s.streaming_state = streaming_assistant
+}
+
+rule AssistantStreamCompleted {
+    when: AssistantStreamCompleted(id)
+    requires: exists s in AgentSessions where s.id = id and s.status = active
+    ensures:
+        for s in AgentSessions where s.id = id:
+            s.streaming_state = idle
+}
+
+rule SessionSummaryUpdated {
+    when: SessionSummaryRequested(id)
+    requires: exists s in AgentSessions where s.id = id
+    ensures:
+        for s in AgentSessions where s.id = id:
+            s.summary_line = SummarizeSessionLine(id)
+}
+
+rule SessionCompleted {
+    when: SessionCompletionRequested(id)
+    requires: exists s in AgentSessions where s.id = id and s.status = active
+    ensures:
+        for s in AgentSessions where s.id = id:
+            s.status = completed
+    ensures:
+        for s in AgentSessions where s.id = id:
+            s.ended_at = now
+    ensures:
+        for s in AgentSessions where s.id = id:
+            s.streaming_state = idle
+}
+
+invariant ParentSessionExists {
+    for s in AgentSessions:
+        (s.parent_session_id = null) or exists p in AgentSessions where p.id = s.parent_session_id
+}
+
+invariant SessionHasStableProject {
+    for s in AgentSessions:
+        exists p in Projects where p.id = s.project_id
+}
+
+contract SessionCoreEql {
+    create_session: (input: JsonMap) -> JsonMap
+    fork_session: (input: JsonMap) -> JsonMap
+    create_subagent_session: (input: JsonMap) -> JsonMap
+    append_message: (input: JsonMap) -> JsonMap
+    session_lineage: (id: SessionId) -> JsonMap
+
+    @invariant SessionIdentityAttrs
+        -- session attrs include:
+        -- {:session/id :session/parent-id :session/project-id :session/worktree-path :session/start-instant}
+
+    @invariant SessionPromptAndSummaryAttrs
+        -- session attrs include:
+        -- {:session/system-prompt :session/name :session/summary-line}
+
+    @invariant SessionMessageAttrs
+        -- message attrs include:
+        -- {:session.message/id :session.message/session :session.message/role :session.message/content :session.message/sequence-no}
+
+    @invariant SessionContainmentAttrs
+        -- lineage attrs include:
+        -- {:session/children [{:session/id :session/relation}]}
+}
+
+actor EqlClient {
+    identified_by: "client-id"
+}
+
+surface SessionCoreApi {
+    facing client: EqlClient
+
+    contracts:
+        fulfils SessionCoreEql
+
+    exposes:
+        for s in AgentSessions:
+            s.id
+            s.parent_session_id
+            s.project_id
+            s.worktree_path
+            s.start_instant
+            s.system_prompt
+            s.name
+            s.summary_line
+            s.active_tools
+            s.streaming_state
+            s.status
+
+    provides:
+        SessionCreateRequested(project_id, worktree_path, system_prompt, name)
+        SessionForkRequested(parent_session_id, worktree_path, system_prompt, name)
+        SubagentSessionRequested(parent_session_id, system_prompt, name)
+        SessionMessageAppendRequested(session, role, content, metadata, tool_name, tool_call_id)
+        AssistantStreamStarted(id)
+        AssistantStreamCompleted(id)
+        SessionSummaryRequested(id)
+        SessionCompletionRequested(id)
+
+    @guarantee SessionRunsInWorktreeContext
+        -- Every session is bound to a project and a git worktree path.
+
+    @guarantee SessionCanContainSessions
+        -- Fork and subagent relations are represented as explicit parent-child containment.
+}
+
+open question "Should SessionMessage.content allow structured multimodal content in addition to String?"
+open question "Should system and extension messages be persisted in the same stream as user/assistant/tool messages?"
+open question "Should forked sessions default to inherited system prompt, or require explicit prompt at fork time?"

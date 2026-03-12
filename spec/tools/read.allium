@@ -17,7 +17,7 @@ value ReadOutputOverride {
 }
 
 value ReadOptions {
-    cwd: String?
+    worktree_path: String?
     overrides: Map<String, ReadOutputOverride>?
     auto_resize_images: Boolean?
 }
@@ -68,12 +68,12 @@ config {
 rule ReadResolvesPathWithReadFallbacks {
     when: ExecuteRead(args, opts)
 
-    ensures: resolved = path/ResolveReadPathCalled(args.path, opts.cwd)
+    ensures: resolved = path/ResolveReadPathCalled(args.path, opts.worktree_path)
 }
 
 rule ReadFailsWhenFileMissing {
     when: ExecuteRead(args, opts)
-    let resolved = path/ResolveReadPathCalled(args.path, opts.cwd)
+    let resolved = path/ResolveReadPathCalled(args.path, opts.worktree_path)
     requires: not File.exists(resolved)
 
     ensures: Error.thrown("File not found: " + AbsolutePath(resolved))
@@ -81,7 +81,7 @@ rule ReadFailsWhenFileMissing {
 
 rule ReadDeterminesImageTypeFromMagicBytes {
     when: ExecuteRead(args, opts)
-    let resolved = path/ResolveReadPathCalled(args.path, opts.cwd)
+    let resolved = path/ResolveReadPathCalled(args.path, opts.worktree_path)
 
     ensures: sniff = File.readPrefix(resolved, config.read_file_type_sniff_bytes)
     ensures: detected_mime = DetectMimeFromMagic(sniff)
@@ -89,7 +89,7 @@ rule ReadDeterminesImageTypeFromMagicBytes {
 
 rule ReadReturnsSupportedImageAsContentBlocks {
     when: ExecuteRead(args, opts)
-    let resolved = path/ResolveReadPathCalled(args.path, opts.cwd)
+    let resolved = path/ResolveReadPathCalled(args.path, opts.worktree_path)
     let mime = DetectMimeFromMagic(File.readPrefix(resolved, config.read_file_type_sniff_bytes))
     requires: mime in config.read_supported_image_mime_types
 
@@ -115,7 +115,7 @@ rule ReadReturnsSupportedImageAsContentBlocks {
 
 rule ReadReturnsWarningOnlyForNonImageBinaryFiles {
     when: ExecuteRead(args, opts)
-    let resolved = path/ResolveReadPathCalled(args.path, opts.cwd)
+    let resolved = path/ResolveReadPathCalled(args.path, opts.worktree_path)
     let sniff = File.readPrefix(resolved, config.read_file_type_sniff_bytes)
     let mime = DetectMimeFromMagic(sniff)
 
@@ -138,7 +138,7 @@ rule ReadOffsetIsOneIndexed {
 
 rule ReadFailsWhenOffsetBeyondEnd {
     when: ExecuteRead(args, opts)
-    let resolved = path/ResolveReadPathCalled(args.path, opts.cwd)
+    let resolved = path/ResolveReadPathCalled(args.path, opts.worktree_path)
     requires: IsTextFile(resolved)
     requires: args.offset != null
 
@@ -157,7 +157,7 @@ rule ReadUsesEffectivePolicyWithOverrides {
 
 rule ReadTextUsesHeadTruncation {
     when: ExecuteRead(args, opts)
-    let resolved = path/ResolveReadPathCalled(args.path, opts.cwd)
+    let resolved = path/ResolveReadPathCalled(args.path, opts.worktree_path)
     requires: IsTextFile(resolved)
 
     let full_text = Utf8(File.readBytes(resolved))

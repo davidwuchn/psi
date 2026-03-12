@@ -9,7 +9,7 @@ use "./memory-backing-stores.allium" as stores
 external entity DatalevinRuntime {
     available: Boolean
     version: String
-    cwd: String
+    worktree_path: String
 }
 
 external entity DatalevinConnection {
@@ -108,7 +108,7 @@ rule DatalevinStorePathResolved {
     when: DatalevinStoreOpenRequested(store, runtime)
     requires: runtime.available = true
 
-    ensures: store.db_path = ResolveDatalevinStorePath(config.datalevin_store_root, runtime.cwd, config.datalevin_store_file_name)
+    ensures: store.db_path = ResolveDatalevinStorePath(config.datalevin_store_root, runtime.worktree_path, config.datalevin_store_file_name)
 }
 
 rule DatalevinStoreOpened {

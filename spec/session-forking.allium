@@ -1,0 +1,153 @@
+-- allium: 2
+module session-forking
+
+use "./session-management.allium" as session
+use "./session-core.allium" as core
+
+value SessionId { value: String }
+value Timestamp { value: String }
+value EqlMap { value: Any }
+
+entity ForkRequest {
+    id: String
+    parent_session_id: SessionId
+    entry_id: String
+    intent: String
+    inheritance_request: EqlMap
+    constraints_request: EqlMap
+    status: requested | completed | failed
+    child_session_id: SessionId?
+    requested_at: Timestamp
+    completed_at: Timestamp?
+    failure_reason: String?
+}
+
+rule ForkSessionAccepted {
+    when: ForkSessionRequested(parent_session_id, entry_id, intent, inheritance_request, constraints_request)
+    requires: exists cp in core/AgentSessions where cp.id = parent_session_id and cp.status = active
+
+    ensures: ForkRequest.created(
+        id: uuid(),
+        parent_session_id: parent_session_id,
+        entry_id: entry_id,
+        intent: intent,
+        inheritance_request: inheritance_request,
+        constraints_request: constraints_request,
+        status: requested,
+        requested_at: now
+    )
+
+    ensures: core/SessionForkRequested(
+        parent_session_id: parent_session_id,
+        worktree_path: worktree_path_for(parent_session_id),
+        system_prompt: system_prompt_for(parent_session_id),
+        name: session_name_for(parent_session_id)
+    )
+
+    ensures: session/SessionForked(session_for(parent_session_id), entry_id)
+    ensures: ForkSessionCompleted(parent_session_id, child_session_id)
+}
+
+rule ForkSessionRequestCompleted {
+    when: ForkSessionCompleted(parent_session_id, child_session_id)
+    requires: exists r in ForkRequests where r.parent_session_id = parent_session_id and r.status = requested
+
+    ensures:
+        for r in ForkRequests where r.parent_session_id = parent_session_id and r.status = requested:
+            r.child_session_id = child_session_id
+    ensures:
+        for r in ForkRequests where r.parent_session_id = parent_session_id and r.status = requested:
+            r.status = completed
+    ensures:
+        for r in ForkRequests where r.parent_session_id = parent_session_id and r.status = completed:
+            r.completed_at = now
+}
+
+rule ForkSessionRejected {
+    when: ForkSessionRequested(parent_session_id, entry_id, intent, inheritance_request, constraints_request)
+    requires: not exists cp in core/AgentSessions where cp.id = parent_session_id and cp.status = active
+
+    ensures: ForkRequest.created(
+        id: uuid(),
+        parent_session_id: parent_session_id,
+        entry_id: entry_id,
+        intent: intent,
+        inheritance_request: inheritance_request,
+        constraints_request: constraints_request,
+        status: failed,
+        requested_at: now,
+        completed_at: now,
+        failure_reason: "parent session missing or inactive"
+    )
+}
+
+contract SessionForkMutationEql {
+    fork_session: (input: EqlMap) -> EqlMap
+
+    @invariant ForkMutationInputShape
+        -- input requires:
+        -- {:session/id <SessionId>
+        --  :session/entry-id <String>
+        --  :session/intent <String>
+        --  :session/inheritance <Map>
+        --  :session/constraints <Map>}
+
+    @invariant ForkMutationOutputShape
+        -- successful output includes:
+        -- {:session/id <SessionId>
+        --  :session/parent-id <SessionId>
+        --  :session/intent <String>
+        --  :session/inheritance <Map>
+        --  :session/constraints <Map>}
+}
+
+contract SessionLineageQueryEql {
+    session_lineage: (id: SessionId) -> EqlMap
+
+    @invariant LineageQueryOutputShape
+        -- output includes at minimum:
+        -- {:session/id <SessionId>
+        --  :session/parent-id <SessionId?>
+        --  :session/children [{:session/id <SessionId>} ...]}
+
+    @invariant LineageSourceOfTruth
+        -- lineage is resolved from core session containment and persisted parent_session headers.
+}
+
+actor EqlClient {
+    identified_by: "client-id"
+}
+
+surface SessionForkMutationApi {
+    facing client: EqlClient
+    contracts:
+        fulfils SessionForkMutationEql
+
+    provides:
+        ForkSessionRequested(parent_session_id, entry_id, intent, inheritance_request, constraints_request)
+
+    @guarantee SuccessfulForkCreatesIndependentChildSession
+        -- Child session is linked by :session/parent-id and can evolve independently.
+}
+
+surface SessionLineageQueryApi {
+    facing client: EqlClient
+    contracts:
+        fulfils SessionLineageQueryEql
+
+    exposes:
+        for s in core/AgentSessions:
+            s.id
+            s.parent_session_id
+
+    @guarantee LineageIsNavigableAsGraph
+        -- Parent/child links are queryable for traversal and visualization.
+}
+
+open question "What is the default inheritance policy for fork_session when :session/inheritance is omitted?"
+open question "Should child sessions run in soft isolation (shared workspace) or hard isolation (separate sandbox/worktree)?"
+open question "Should merge-back be part of session-forking core semantics or a separate capability?"
+open question "What budget constraints are mandatory on forked sessions (tokens, wall-clock timeout, tool allowlist)?"
+-- Decision: lineage retention mode is archival.
+-- TTL is current psi process lifetime.
+-- Archived lineage is never garbage collected.

@@ -6,7 +6,7 @@
 use "./memory-layer.allium" as memory
 
 external entity SystemRuntime {
-    cwd: String
+    worktree_path: String
     shutting_down: Boolean
 }
 

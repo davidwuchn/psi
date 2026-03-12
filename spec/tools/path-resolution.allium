@@ -5,7 +5,7 @@
 
 value PathResolutionInput {
     raw_path: String
-    cwd: String
+    worktree_path: String
 }
 
 value PathResolutionResult {
@@ -44,22 +44,22 @@ rule HomeExpanded {
 }
 
 rule ResolveToCwd {
-    when: ResolveToCwdCalled(path, cwd)
+    when: ResolveToCwdCalled(path, worktree_path)
 
     ensures:
         if IsAbsolutePath(path):
             resolved = path
         else:
-            resolved = JoinPath(cwd, path)
+            resolved = JoinPath(worktree_path, path)
 }
 
 rule ResolveReadPathTriesVariants {
     -- read path resolution attempts macOS-specific filename variants if
     -- the directly resolved path does not exist.
-    when: ResolveReadPathCalled(raw_path, cwd)
+    when: ResolveReadPathCalled(raw_path, worktree_path)
 
     let expanded = ExpandPath(raw_path)
-    let resolved = ResolveToCwd(expanded, cwd)
+    let resolved = ResolveToCwd(expanded, worktree_path)
     let am_pm_variant = MacOsAmPmVariant(resolved, config.narrow_no_break_space)
     let nfd_variant = NormalizeUnicodeNFD(resolved)
     let curly_variant = CurlyQuoteVariant(resolved)
@@ -81,7 +81,7 @@ rule ResolveReadPathTriesVariants {
 }
 
 rule ImageExtensionIsNotTrustedForRead {
-    when: ResolveReadPathCalled(raw_path, cwd)
+    when: ResolveReadPathCalled(raw_path, worktree_path)
 
     ensures: MimeTypeDecisionSource = file_magic_bytes
 }
@@ -91,8 +91,8 @@ surface PathResolutionApi {
 
     provides:
         ExpandPathCalled(raw_path)
-        ResolveToCwdCalled(path, cwd)
-        ResolveReadPathCalled(raw_path, cwd)
+        ResolveToCwdCalled(path, worktree_path)
+        ResolveReadPathCalled(raw_path, worktree_path)
 
     exposes:
         PathResolutionResult

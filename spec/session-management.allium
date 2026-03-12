@@ -1,4 +1,4 @@
--- allium: 1
+-- allium: 2
 
 -- session-management.allium
 -- AgentSession orchestration: lifecycle, prompting, model/thinking, and persistence hooks.
@@ -6,6 +6,7 @@
 use "./agent.allium" as agent
 use "./extension-system.allium" as ext
 use "./compaction.allium" as compact
+use "./session-core.allium" as core
 
 external entity Model {
     provider: String
@@ -26,7 +27,7 @@ value TokenUsage {
 }
 
 value SessionStats {
-    session_id: String
+    id: String
     session_file: String?
     user_messages: Integer
     assistant_messages: Integer
@@ -51,9 +52,10 @@ entity SessionEntry {
 }
 
 entity AgentSession {
-    session_id: String
+    id: String
     session_file: String?
-    session_name: String?
+    name: String?
+    worktree_path: String?
 
     model: Model?
     thinking_level: off | minimal | low | medium | high | xhigh
@@ -74,7 +76,7 @@ entity AgentSession {
     system_prompt: String
 
     journal: Set<SessionEntry>
-    leaf_id: String?
+    leaf_entry_id: String?
     journal_flushed: Boolean
 
     is_idle: not is_streaming and not is_compacting
@@ -92,6 +94,13 @@ config {
 
 rule NewSessionStarted {
     when: NewSessionStarted(session, input)
+
+    ensures: core/SessionCreateRequested(
+        project_id: input.project_id,
+        worktree_path: session.worktree_path ?? input.worktree_path,
+        system_prompt: session.system_prompt,
+        name: session.name
+    )
 
     ensures: session.is_streaming = false
     ensures: session.is_compacting = false
@@ -114,7 +123,7 @@ rule UserPrompts {
     ensures: agent/Prompt(session.agent, expanded, images)
     ensures: SessionEntry.created(
         id: NewEntryId(),
-        parent_id: session.leaf_id,
+        parent_id: session.leaf_entry_id,
         timestamp: now,
         kind: message,
         payload: {role: "user", text: expanded}
@@ -178,7 +187,7 @@ rule SessionModelSelected {
     ensures: session.model = model
     ensures: SessionEntry.created(
         id: NewEntryId(),
-        parent_id: session.leaf_id,
+        parent_id: session.leaf_entry_id,
         timestamp: now,
         kind: model,
         payload: {provider: model.provider, model_id: model.id}
@@ -191,7 +200,7 @@ rule SessionThinkingLevelSelected {
     ensures: session.thinking_level = level
     ensures: SessionEntry.created(
         id: NewEntryId(),
-        parent_id: session.leaf_id,
+        parent_id: session.leaf_entry_id,
         timestamp: now,
         kind: thinking_level,
         payload: {thinking_level: level}
@@ -201,7 +210,13 @@ rule SessionThinkingLevelSelected {
 rule SessionForked {
     when: SessionForked(session, entry_id)
 
-    ensures: session.leaf_id = entry_id
+    ensures: core/SessionForkRequested(
+        parent_session_id: session.id,
+        worktree_path: worktree_path_for(session.id),
+        system_prompt: session.system_prompt,
+        name: session.name
+    )
+    ensures: session.leaf_entry_id = entry_id
     ensures: session.retry_attempt = 0
 }
 
@@ -216,14 +231,22 @@ rule SessionResumed {
 rule SessionEntryAppended {
     when: SessionEntryAppended(session, entry)
 
+    ensures: core/SessionMessageAppendRequested(
+        session: session.id,
+        role: entry.payload.role,
+        content: entry.payload.text,
+        metadata: entry.payload,
+        tool_name: entry.payload.tool_name,
+        tool_call_id: entry.payload.tool_call_id
+    )
     ensures: session.journal = session.journal + {entry}
-    ensures: session.leaf_id = entry.id
+    ensures: session.leaf_entry_id = entry.id
 }
 
 rule SessionStatsComputed {
     when: SessionStatsRequested(session)
 
-    ensures: SessionStatsFor(session).session_id = session.session_id
+    ensures: SessionStatsFor(session).id = session.id
     ensures: SessionStatsFor(session).session_file = session.session_file
     ensures: SessionStatsFor(session).total_messages = CountMessageEntries(session.journal)
 }
@@ -231,7 +254,7 @@ rule SessionStatsComputed {
 rule SessionUsageTotalsAreSessionScoped {
     when: SessionStatsRequested(session)
 
-    ensures: SessionTokenUsageTotals(session) aggregates only entries where entry.session_id = session.session_id
+    ensures: SessionTokenUsageTotals(session) aggregates only entries where entry.session = session.id
 }
 
 actor User {
@@ -244,9 +267,10 @@ surface AgentSessionApi {
     context session: AgentSession
 
     exposes:
-        session.session_id
+        session.id
         session.session_file
-        session.session_name
+        session.name
+        session.worktree_path
         session.model
         session.thinking_level
         session.is_streaming
@@ -269,6 +293,7 @@ surface AgentSessionApi {
         -- Session orchestrates agent turns, queue semantics, and lifecycle state.
         -- Slash commands may be intercepted before prompt dispatch.
         -- Persistence adapters append journal entries and restore session state.
+        -- Core session identity and lineage are delegated to session-core.
 }
 
 open question "Should tree navigation branch-summary be synchronous or background async?"

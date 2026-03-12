@@ -1,10 +1,11 @@
--- allium: 1
+-- allium: 2
 
 -- rpc-edn.allium
 -- Canonical EDN-lines RPC transport for psi frontends.
 
 use "./coding-agent.allium" as coding
 use "./ui-extension-points.allium" as ui
+use "./session-core.allium" as core
 
 value RpcClientInfo {
     name: String
@@ -16,7 +17,7 @@ value RpcClientInfo {
 value RpcServerInfo {
     protocol_version: String
     features: Set<String>
-    session_id: String?
+    id: String?
     model_id: String?
     thinking_level: String?
 }
@@ -56,7 +57,7 @@ value ErrorFrame {
 }
 
 value SessionUpdatedPayload {
-    session_id: String
+    id: String
     phase: String
     is_streaming: Boolean
     is_compacting: Boolean
@@ -156,7 +157,7 @@ rule HandshakeNegotiatesCapabilities {
     ensures: HandshakeSucceeded(endpoint, RpcServerInfo{
         protocol_version: endpoint.protocol_version,
         features: SupportedRpcFeatures(endpoint),
-        session_id: endpoint.session.session.session_id,
+        id: endpoint.session.session.id,
         model_id: endpoint.session.session.model.id,
         thinking_level: endpoint.session.session.thinking_level
     })
@@ -224,7 +225,7 @@ rule SessionUpdatedPayloadSpecConsistencyGuard {
     requires: frame.event = "session/updated"
 
     ensures: EventPayloadType(frame.data) = SessionUpdatedPayload
-    ensures: RequiredPayloadKeys(frame.data) = {"session-id", "phase", "is-streaming", "is-compacting", "pending-message-count", "retry-attempt"}
+    ensures: RequiredPayloadKeys(frame.data) = {"id", "phase", "is-streaming", "is-compacting", "pending-message-count", "retry-attempt"}
 }
 
 rule UnknownEventTopicsAreForwardCompatible {
@@ -261,7 +262,7 @@ surface RpcTransportApi {
         endpoint.protocol_version
 
     provides:
-        start(cwd, model, session_path)
+        start(worktree_path, model, session_path)
         stop()
         handshake(client)
         send(id, op, params)

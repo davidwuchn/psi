@@ -27,11 +27,11 @@ value RememberSignal {
 }
 
 value RememberCapture {
-    id: String
+    capture_id: String
     signal: RememberSignal
 
-    session_id: String?
-    cwd: String?
+    session: String?
+    worktree_path: String?
     git_branch: String?
 
     summary: String
@@ -84,10 +84,10 @@ rule MemoryCaptureWritten {
     requires: signal.type = manual
 
     ensures: entry = RememberCapture{
-        id: NewCaptureId(),
+        capture_id: NewCaptureId(),
         signal: signal,
-        session_id: context.session_id,
-        cwd: context.cwd,
+        session: context.id,
+        worktree_path: context.worktree_path,
         git_branch: context.git_branch,
         summary: context.summary,
         evidence: context.evidence,

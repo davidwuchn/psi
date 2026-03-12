@@ -14,7 +14,7 @@ config {
 entity TuiResumeRuntime {
     phase: idle | streaming | selecting_session | exiting
 
-    cwd: String
+    worktree_path: String
     current_session_file: String?
 
     supports_resume_selector: Boolean
@@ -51,7 +51,7 @@ rule ResumeSlashResultOpensSelector {
         scope: config.default_selector_scope,
         search: "",
         selected: 0,
-        current_scope_sessions: persist/SessionsListed(runtime.cwd),
+        current_scope_sessions: persist/SessionsListed(runtime.worktree_path),
         all_scope_sessions: null
     }
 }
@@ -242,7 +242,7 @@ surface TuiResumeSelectorContract {
     @guidance
         -- /resume opens selector only for selector-capable runtimes.
         -- Selector starts in current-project scope; Tab toggles current/all.
-        -- Search is case-insensitive over session name, first message, and cwd.
+        -- Search is case-insensitive over session name, first message, and worktree_path.
         -- Selection index is clamped after every scope/search/list change.
         -- Enter rehydrates transcript + tool rows from resume callback output.
         -- Escape cancels; Ctrl+C exits.

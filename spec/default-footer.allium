@@ -11,7 +11,7 @@ value FooterStatus {
 }
 
 value FooterInputs {
-    cwd: String
+    worktree_path: String
     git_branch: String?
     session_name: String?
 
@@ -60,7 +60,7 @@ rule FooterReadsCanonicalProjectionAttributes {
     when: FooterRenderRequested(footer, width)
 
     ensures: FooterQueryAttributes() = {
-        "psi.agent-session/cwd",
+        "psi.agent-session/worktree_path",
         "psi.agent-session/git-branch",
         "psi.agent-session/session-name",
         "psi.agent-session/usage-input",
@@ -84,7 +84,7 @@ rule FooterInputsUseSafeFallbacks {
 
     ensures: FooterInputsFor(footer) is derived from the active session only
 
-    ensures: FooterInputsFor(footer).cwd = FirstNonNull(QueryValue("psi.agent-session/cwd"), footer.cwd_fallback, "")
+    ensures: FooterInputsFor(footer).worktree_path = FirstNonNull(QueryValue("psi.agent-session/worktree_path"), footer.cwd_fallback, "")
     ensures: FooterInputsFor(footer).git_branch = QueryValue("psi.agent-session/git-branch")
     ensures: FooterInputsFor(footer).session_name = QueryValue("psi.agent-session/session-name")
 
@@ -111,7 +111,7 @@ rule FooterRendered {
 
     let inputs = FooterInputsFor(footer)
     let context = FooterContextFor(inputs.context_fraction, inputs.context_window, inputs.auto_compaction_enabled)
-    let path_line = FooterPathLine(inputs.cwd, inputs.git_branch, inputs.session_name, width)
+    let path_line = FooterPathLine(inputs.worktree_path, inputs.git_branch, inputs.session_name, width)
 
     let left_stats = LeftStatsLine(inputs, context)
     let right_stats = RightStatsLine(inputs)
@@ -129,9 +129,9 @@ rule FooterRendered {
 }
 
 rule PathLineComposition {
-    when: FooterPathLineRequested(cwd, git_branch, session_name, width)
+    when: FooterPathLineRequested(worktree_path, git_branch, session_name, width)
 
-    ensures: FooterPathLine(cwd, git_branch, session_name, width) = MiddleTruncate(BuildPathLine(cwd, git_branch, session_name), Max(1, width))
+    ensures: FooterPathLine(worktree_path, git_branch, session_name, width) = MiddleTruncate(BuildPathLine(worktree_path, git_branch, session_name), Max(1, width))
 }
 
 rule LeftStatsPartOrder {

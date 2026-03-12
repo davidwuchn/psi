@@ -1,9 +1,10 @@
--- allium: 1
+-- allium: 2
 
 -- session-startup-prompts.allium
 -- Configurable startup prompts for new AgentSession bootstrap.
 
-use "./coding-agent.allium" as session
+use "./session-management.allium" as session
+use "./session-core.allium" as core
 
 value StartupPromptRule {
     id: String
@@ -28,7 +29,7 @@ entity StartupPromptConfig {
 }
 
 entity SessionStartupBootstrap {
-    session_id: String
+    id: String
     prompts_applied: Set<StartupPromptApplied>
     started_at: Timestamp?
     completed_at: Timestamp?
@@ -43,7 +44,7 @@ config {
 }
 
 rule StartupPromptConfigLoaded {
-    when: SessionCreated(session)
+    when: session/NewSessionStarted(s, input)
     requires: config.startup_prompts_enabled = true
 
     ensures: StartupPromptConfig.created(
@@ -53,23 +54,22 @@ rule StartupPromptConfigLoaded {
 }
 
 rule StartupPromptRulesComposed {
-    when: StartupPromptRulesComposed(session)
+    when: StartupPromptRulesComposed(s)
     requires: CurrentStartupPromptConfig() != null
 
     ensures: merged = MergeRulesWithProjectPrecedence(CurrentStartupPromptConfig().global_rules, CurrentStartupPromptConfig().project_rules)
-    ensures: eligible = FilterEnabledAndMatching(merged, SessionMode(session))
+    ensures: eligible = FilterEnabledAndMatching(merged, SessionMode(s))
     ensures: result = SortStartupRules(eligible)
 }
 
 rule StartupPromptsRunOnNewSession {
-    when: SessionCreated(session)
+    when: session/NewSessionStarted(s, input)
     requires: config.startup_prompts_enabled = true
-    requires: not SessionResumed(session)
 
-    let ordered = StartupPromptRulesComposed(session)
+    let ordered = StartupPromptRulesComposed(s)
 
     ensures: SessionStartupBootstrap.created(
-        session_id: session.sessionId,
+        id: s.id,
         prompts_applied: ProjectStartupPromptApplied(ordered),
         started_at: now,
         completed_at: null,
@@ -79,23 +79,23 @@ rule StartupPromptsRunOnNewSession {
 
     ensures:
         for p in ordered:
-            msg_id = session/UserMessageAppended(session, content: p.text, metadata: {startup: true, startup_id: p.id})
-            session/AgentTurnInvoked(session)
-            AppendStartupMessageId(session.sessionId, msg_id)
+            entry = session/SessionEntry{
+                id: NewEntryId(),
+                parent_id: s.leaf_entry_id,
+                timestamp: now,
+                kind: message,
+                payload: {role: "user", text: p.text, startup: true, startup_id: p.id}
+            }
+            session/SessionEntryAppended(s, entry)
+            AppendStartupMessageId(s.id, entry.id)
 
-    ensures: MarkStartupBootstrapCompleted(session.sessionId, now)
+    ensures: MarkStartupBootstrapCompleted(s.id, now)
 }
 
-rule StartupPromptsNotReplayedOnResumeOrSwitch {
-    when: SessionResumed(session)
+rule StartupPromptsNotReplayedOnResume {
+    when: session/SessionResumed(s, session_path)
 
-    ensures: NoStartupPromptReplay(session)
-}
-
-rule StartupPromptsNotReplayedOnSwitch {
-    when: SessionSwitched(session)
-
-    ensures: NoStartupPromptReplay(session)
+    ensures: NoStartupPromptReplay(s)
 }
 
 surface StartupPromptEqlApi {
@@ -109,8 +109,8 @@ surface StartupPromptEqlApi {
         SessionStartupBootstrap.startup_message_ids
 
     provides:
-        StartupPromptRulesComposed(session)
-        StartupPromptsRunOnNewSession(session)
+        StartupPromptRulesComposed(s)
+        StartupPromptsRunOnNewSession(s)
 }
 
 rule StartupPromptAttrsResolvable {
@@ -153,3 +153,4 @@ rule StartupPromptAttrsDiscoverableInGraph {
 
 open question "Should startup prompts run as independent turns or as one concatenated startup turn?"
 open question "Should forked sessions re-run startup prompts by default, or inherit prior startup transcript only?"
+open question "Should startup prompts be represented as core/system messages instead of user-role messages?"

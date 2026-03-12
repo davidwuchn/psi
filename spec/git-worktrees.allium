@@ -16,12 +16,12 @@ value GitWorktree {
     locked: Boolean
     prunable: Boolean
     prunable_reason: String?
-    is_current_cwd: Boolean
+    is_current_worktree_path: Boolean
     is_main_worktree: Boolean
 }
 
 value GitWorktreeSummary {
-    cwd: String
+    worktree_path: String
     inside_git_repo: Boolean
     current_path: String?
     current_branch: String?
@@ -37,11 +37,11 @@ value WorktreeCommandResult {
 }
 
 entity GitWorktreeRegistry {
-    cwd: String
+    worktree_path: String
     worktrees: Set<GitWorktree>
 
     worktree_count: worktrees.count
-    current: worktrees where is_current_cwd
+    current: worktrees where is_current_worktree_path
     has_current: current.count > 0
     main: worktrees where is_main_worktree
 }
@@ -54,8 +54,8 @@ config {
 rule WorktreeRegistryLoadsFromGitPorcelain {
     when: SessionCreated(sess)
 
-    let parsed = ParseGitWorktreePorcelain(sess.cwd)
-    ensures: GitWorktreeRegistry.created(cwd: sess.cwd, worktrees: parsed)
+    let parsed = ParseGitWorktreePorcelain(sess.worktree_path)
+    ensures: GitWorktreeRegistry.created(worktree_path: sess.worktree_path, worktrees: parsed)
 }
 
 rule WorktreeRegistryRefreshesOnStatusRequest {
@@ -63,15 +63,15 @@ rule WorktreeRegistryRefreshesOnStatusRequest {
     requires: text in {"/status", "/worktree"}
     requires: CurrentWorktreeRegistry() != null
 
-    ensures: CurrentWorktreeRegistry().worktrees = ParseGitWorktreePorcelain(CurrentWorktreeRegistry().cwd)
+    ensures: CurrentWorktreeRegistry().worktrees = ParseGitWorktreePorcelain(CurrentWorktreeRegistry().worktree_path)
 }
 
-rule CurrentWorktreeIsDerivedByCwdMatch {
+rule CurrentWorktreeIsDerivedByWorktreePathMatch {
     when: WorktreeRegistryEvaluated(registry)
 
     ensures:
         for wt in registry.worktrees:
-            wt.is_current_cwd = IsSamePath(wt.path, registry.cwd)
+            wt.is_current_worktree_path = IsSamePath(wt.path, registry.worktree_path)
 }
 
 rule MainWorktreeDerivedFromGitMainPath {
@@ -167,20 +167,20 @@ rule StatusIncludesCurrentWorktreeIdentity {
 
 rule OutsideGitRepoReturnsEmptyWorktreeList {
     when: SessionCreated(sess)
-    requires: not IsInsideGitRepo(sess.cwd)
+    requires: not IsInsideGitRepo(sess.worktree_path)
 
-    ensures: GitWorktreeRegistry.created(cwd: sess.cwd, worktrees: {})
+    ensures: GitWorktreeRegistry.created(worktree_path: sess.worktree_path, worktrees: {})
     ensures: EqlValue(":git.worktree/inside-repo?") = false
 }
 
 rule WorktreeParseFailureDoesNotBreakSession {
-    when: ParseGitWorktreePorcelainFailed(cwd)
+    when: ParseGitWorktreePorcelainFailed(worktree_path)
 
-    ensures: GitWorktreeRegistry.created(cwd: cwd, worktrees: {})
+    ensures: GitWorktreeRegistry.created(worktree_path: worktree_path, worktrees: {})
     ensures: TelemetryEventRecorded("git.worktree.parse_failed")
     ensures: SessionRemainsUsable()
 }
 
 open question "Should /worktree support subcommands in this phase (e.g. /worktree list), or stay single-command?"
-open question "Should /new in a linked worktree always inherit cwd, or allow selecting main worktree by default?"
+open question "Should /new in a linked worktree always inherit worktree_path, or allow selecting main worktree by default?"
 open question "When detached HEAD is detected, should :psi.agent-session/git-branch remain detached or include short SHA?"

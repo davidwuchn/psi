@@ -1,9 +1,10 @@
--- allium: 1
+-- allium: 2
 
 -- session-persistence.allium
 -- Session journal disk I/O for append-only session files.
 
 use "./session-management.allium" as session
+use "./session-core.allium" as core
 
 config {
     sessions_root: String = "~/.psi/agent/sessions"
@@ -15,14 +16,14 @@ value SessionHeader {
     version: Integer
     id: String
     timestamp: Timestamp
-    cwd: String
+    worktree_path: String
     parent_session: String?
 }
 
 value SessionInfo {
     path: String
     id: String
-    cwd: String
+    worktree_path: String
     name: String?
     parent_session_path: String?
     created: Timestamp
@@ -39,7 +40,7 @@ entity SessionFile {
     version: Integer
 
     is_valid: header.type = "session" and header.id != ""
-    cwd: header.cwd
+    worktree_path: header.worktree_path
 }
 
 entity SessionDirectory {
@@ -48,18 +49,18 @@ entity SessionDirectory {
 
 rule SessionFileCreated {
     when: session/NewSessionStarted(s, input)
-    requires: s.sessionFile = null
+    requires: s.session_file = null
 
-    ensures: dir = SessionDirectoryFor(s.cwd)
-    ensures: s.sessionFile = NewSessionFilePath(dir.path, s.sessionId, now)
+    ensures: dir = SessionDirectoryFor(s.worktree_path)
+    ensures: s.session_file = NewSessionFilePath(dir.path, s.id, now)
     ensures: SessionFile.created(
-        path: s.sessionFile,
+        path: s.session_file,
         header: SessionHeader{
             type: "session",
             version: config.current_version,
-            id: s.sessionId,
+            id: s.id,
             timestamp: now,
-            cwd: s.cwd,
+            worktree_path: s.worktree_path,
             parent_session: null
         },
         entries: {},
@@ -70,25 +71,32 @@ rule SessionFileCreated {
 rule ForkedSessionFileCreated {
     when: session/SessionForked(s, entry_id)
 
-    let parent_path = s.sessionFile
-    let branch_entries = EntriesOnPathTo(s.journal, entry_id)
-    let dir = SessionDirectoryFor(s.cwd)
+    ensures: core/SessionContainment.created(
+        parent_session_id: SessionId{value: s.id},
+        child_session_id: SessionId{value: child_session_id_for_fork(s.id, entry_id)},
+        relation: fork,
+        created_at: now
+    )
 
-    ensures: s.sessionFile = NewSessionFilePath(dir.path, s.sessionId, now)
+    let parent_path = s.session_file
+    let branch_entries = EntriesOnPathTo(s.journal, entry_id)
+    let dir = SessionDirectoryFor(s.worktree_path)
+
+    ensures: s.session_file = NewSessionFilePath(dir.path, s.id, now)
     ensures: SessionFile.created(
-        path: s.sessionFile,
+        path: s.session_file,
         header: SessionHeader{
             type: "session",
             version: config.current_version,
-            id: s.sessionId,
+            id: s.id,
             timestamp: now,
-            cwd: s.cwd,
+            worktree_path: s.worktree_path,
             parent_session: parent_path
         },
         entries: branch_entries,
         version: config.current_version
     )
-    ensures: SessionFileWrittenToDisk(s.sessionFile)
+    ensures: SessionFileWrittenToDisk(s.session_file)
 }
 
 rule EntryFlushedToDisk {
@@ -98,10 +106,10 @@ rule EntryFlushedToDisk {
 
     ensures:
         if has_assistant and not s.journal_flushed:
-            SessionFileWrittenToDisk(s.sessionFile, all_entries: s.journal)
+            SessionFileWrittenToDisk(s.session_file, all_entries: s.journal)
             s.journal_flushed = true
         else if has_assistant:
-            SessionFileAppendedToDisk(s.sessionFile, entry)
+            SessionFileAppendedToDisk(s.session_file, entry)
 }
 
 rule SessionLoaded {
@@ -111,17 +119,17 @@ rule SessionLoaded {
     requires: IsValidSessionHeader(raw_entries)
 
     let migrated = MigratedToCurrentVersion(raw_entries)
-    ensures: s.sessionId = HeaderSessionId(migrated)
-    ensures: s.cwd = HeaderCwd(migrated)
+    ensures: s.id = HeaderSessionId(migrated)
+    ensures: s.worktree_path = HeaderCwd(migrated)
     ensures: s.journal = SessionEntriesFromFile(migrated)
     ensures: s.journal_flushed = true
-    ensures: s.leafId = LastEntryId(s.journal)
+    ensures: s.leaf_entry_id = LastEntryId(s.journal)
 }
 
 rule MostRecentSessionFound {
-    when: ContinueRecentRequested(cwd)
+    when: ContinueRecentRequested(worktree_path)
 
-    let dir = SessionDirectoryFor(cwd)
+    let dir = SessionDirectoryFor(worktree_path)
     let files = ValidSessionFilesSortedByModifiedDesc(dir.path)
 
     ensures:
@@ -148,17 +156,17 @@ rule MigratedV2ToV3 {
 }
 
 rule SessionDirectoryResolved {
-    when: SessionDirectoryFor(cwd)
+    when: SessionDirectoryFor(worktree_path)
 
-    ensures: encoded = EncodeCwdForSessionDir(cwd)
+    ensures: encoded = EncodeCwdForSessionDir(worktree_path)
     ensures: result = SessionDirectory{path: config.sessions_root + "/" + encoded}
     ensures: DirectoryCreatedIfAbsent(result.path)
 }
 
 rule SessionsListed {
-    when: SessionsListed(cwd, session_dir)
+    when: SessionsListed(worktree_path, session_dir)
 
-    let dir = session_dir ?? SessionDirectoryFor(cwd)
+    let dir = session_dir ?? SessionDirectoryFor(worktree_path)
     ensures: result = BuildSessionInfoList(dir.path)
     ensures: result = SortSessionInfoByModifiedDesc(result)
 }
@@ -176,21 +184,22 @@ surface SessionPersistenceApi {
     context s: session/AgentSession
 
     exposes:
-        s.sessionFile
+        s.session_file
         s.journal_flushed
 
     provides:
         SessionFileCreated(s)
         EntryFlushedToDisk(s, entry)
         SessionLoaded(s, session_path)
-        MostRecentSessionFound(s.cwd)
-        SessionsListed(s.cwd, null)
+        MostRecentSessionFound(s.worktree_path)
+        SessionsListed(s.worktree_path, null)
         AllSessionsListed()
 
     @guidance
         -- Disk operations are mediated through this surface.
         -- Initial session file write is lazy until first assistant message.
         -- Fork writes immediately with branch history.
+        -- parent_session in file header is the persisted lineage edge.
 }
 
 open question "Should the on-disk format stay NDJSON or move to EDN?"

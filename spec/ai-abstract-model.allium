@@ -96,7 +96,7 @@ entity StreamSession {
 }
 
 entity StreamEvent {
-    session_id: String
+    id: String
     sequence: Integer
     event_type: start | text_start | text_delta | text_end | thinking_start | thinking_delta | thinking_end | toolcall_start | toolcall_delta | toolcall_end | done | error
     timestamp: Timestamp

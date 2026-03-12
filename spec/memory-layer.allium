@@ -1,21 +1,9 @@
--- allium: 1
+-- allium: 2
 
 -- memory-layer.allium
 --
 -- Scope: Step 10 — queryable memory layer that combines query, history,
 --        knowledge graph context, and recoverability.
---
--- Includes:
---   - Memory layer readiness and lifecycle
---   - Memory sessions, records, provenance, and recovery runs
---   - Graph snapshots/deltas as memory artifacts
---   - Recovery behavior that composes session + history + graph signals
---   - EQL surface requirements for memory queries
---
--- Excludes:
---   - HTTP / RPC transports (Steps 8/9)
---   - Remember execution loop and autonomous planning policy (Step 11)
---   - Rich mutation side-effect entities (deferred from Step 7)
 
 use "./graph-emergence.allium" as graph
 
@@ -24,27 +12,27 @@ use "./graph-emergence.allium" as graph
 ------------------------------------------------------------
 
 external entity QueryGraphSummary {
-    resolverCount: Integer
-    mutationCount: Integer
-    resolverSymbols: Set<String>
-    mutationSymbols: Set<String>
-    envBuilt: Boolean
+    resolver_count: Integer
+    mutation_count: Integer
+    resolver_symbols: Set<String>
+    mutation_symbols: Set<String>
+    env_built: Boolean
 }
 
 external entity GitRepository {
     path: String
-    currentCommit: String?
+    current_commit: String?
     status: clean | modified | staged | error
-    hasHistory: Boolean
+    has_history: Boolean
 }
 
 external entity CapabilityGraph {
     status: emerging | stable | expanding | error
-    generatedAt: Timestamp?
-    nodeCount: Integer
-    edgeCount: Integer
-    capabilityIds: Set<String>
-    operationSymbols: Set<String>
+    generated_at: Timestamp?
+    node_count: Integer
+    edge_count: Integer
+    capability_ids: Set<String>
+    operation_symbols: Set<String>
 }
 
 external entity SystemState {
@@ -63,39 +51,39 @@ external entity MemoryEqlSurface {
 ------------------------------------------------------------
 
 value MemoryProvenance {
-    sessionId: String?
-    gitCommit: String?
+    id: String?
+    git_commit: String?
 
-    resolverSymbols: Set<String>
-    mutationSymbols: Set<String>
+    resolver_symbols: Set<String>
+    mutation_symbols: Set<String>
 
-    graphFingerprint: String?
-    capabilityIds: Set<String>
+    graph_fingerprint: String?
+    capability_ids: Set<String>
 
     sources: Set<String>          -- {"session", "history", "graph", "manual"}
 }
 
 value RecoveryFilter {
     tags: Set<String>?
-    capabilityIds: Set<String>?
-    contentTypes: Set<String>?
+    capability_ids: Set<String>?
+    content_types: Set<String>?
     since: Timestamp?
 }
 
 value DomainCoverage {
     domain: String
-    resolverCount: Integer
-    mutationCount: Integer
-    hasCoverage: Boolean
+    resolver_count: Integer
+    mutation_count: Integer
+    has_coverage: Boolean
 }
 
 value MemoryIndexStats {
-    totalMemories: Integer
-    byType: Map<String, Integer>
-    byTag: Map<String, Integer>
-    bySource: Map<String, Integer>
-    capabilityLinkCount: Integer
-    graphSnapshotCount: Integer
+    total_memories: Integer
+    by_type: Map<String, Integer>
+    by_tag: Map<String, Integer>
+    by_source: Map<String, Integer>
+    capability_link_count: Integer
+    graph_snapshot_count: Integer
 }
 
 ------------------------------------------------------------
@@ -105,40 +93,40 @@ value MemoryIndexStats {
 entity MemoryLayer {
     status: initializing | ready | querying | error
 
-    queryGraph: QueryGraphSummary?
-    gitRepository: GitRepository?
-    capabilityGraph: CapabilityGraph?
+    query_graph: QueryGraphSummary?
+    git_repository: GitRepository?
+    capability_graph: CapabilityGraph?
 
-    memorySessions: List<MemorySession>
-    graphSnapshots: List<GraphSnapshot>
-    graphDeltas: List<GraphDelta>
+    memory_sessions: List<MemorySession>
+    graph_snapshots: List<GraphSnapshot>
+    graph_deltas: List<GraphDelta>
 
-    indexStats: MemoryIndexStats
+    index_stats: MemoryIndexStats
 
     -- Derived
-    canRemember: status = ready and queryGraph != null
-    canRecover: status = ready and gitRepository != null and gitRepository.hasHistory = true
-    hasKnowledgeIndex: graphSnapshots.count > 0
+    can_remember: status = ready and query_graph != null
+    can_recover: status = ready and git_repository != null and git_repository.has_history = true
+    has_knowledge_index: graph_snapshots.count > 0
 }
 
 entity MemorySession {
-    memoryLayer: MemoryLayer
-    sessionId: String
-    startedAt: Timestamp
-    endedAt: Timestamp?
+    memory_layer: MemoryLayer
+    id: String
+    started_at: Timestamp
+    ended_at: Timestamp?
 
     memories: List<MemoryRecord>
     recoveries: List<Recovery>
 
     -- Derived
-    isActive: endedAt = null
-    memoryCount: memories.count
-    recoveryCount: recoveries.count
+    is_active: ended_at = null
+    memory_count: memories.count
+    recovery_count: recoveries.count
 }
 
 entity MemoryRecord {
     session: MemorySession
-    contentType: learning | discovery | state | pattern
+    content_type: learning | discovery | state | pattern
     content: String
     timestamp: Timestamp
 
@@ -146,36 +134,36 @@ entity MemoryRecord {
     provenance: MemoryProvenance
 
     -- Derived
-    hasTags: tags.count > 0
-    hasProvenance: provenance != null
-    isCommitted: provenance.gitCommit != null
+    has_tags: tags.count > 0
+    has_provenance: provenance != null
+    is_committed: provenance.git_commit != null
 }
 
 entity GraphSnapshot {
-    memoryLayer: MemoryLayer
+    memory_layer: MemoryLayer
 
     fingerprint: String
-    capturedAt: Timestamp
+    captured_at: Timestamp
 
-    nodeCount: Integer
-    edgeCount: Integer
-    capabilityCount: Integer
+    node_count: Integer
+    edge_count: Integer
+    capability_count: Integer
 
-    domainCoverage: List<DomainCoverage>
+    domain_coverage: List<DomainCoverage>
 }
 
 entity GraphDelta {
-    memoryLayer: MemoryLayer
+    memory_layer: MemoryLayer
 
-    fromFingerprint: String
-    toFingerprint: String
-    capturedAt: Timestamp
+    from_fingerprint: String
+    to_fingerprint: String
+    captured_at: Timestamp
 
-    addedCapabilities: Set<String>
-    removedCapabilities: Set<String>
+    added_capabilities: Set<String>
+    removed_capabilities: Set<String>
 
-    addedOperations: Set<String>
-    removedOperations: Set<String>
+    added_operations: Set<String>
+    removed_operations: Set<String>
 }
 
 entity Recovery {
@@ -183,16 +171,16 @@ entity Recovery {
 
     query: String
     filter: RecoveryFilter?
-    sourcesUsed: Set<String>
+    sources_used: Set<String>
 
-    recoveredMemories: Set<MemoryRecord>
-    recoveryTime: Timestamp
+    recovered_memories: Set<MemoryRecord>
+    recovery_time: Timestamp
 
-    resultsLimit: Integer
-    resultsTruncated: Boolean
+    results_limit: Integer
+    results_truncated: Boolean
 
     -- Derived
-    foundMemories: recoveredMemories.count > 0
+    found_memories: recovered_memories.count > 0
 }
 
 ------------------------------------------------------------
@@ -206,8 +194,6 @@ config {
         "session", "history", "graph"
     }
 
-    -- Resolved: default recovery ranking weights.
-    -- Sum must remain 100.
     default_recovery_weight_recency_pct: Integer = 25
     default_recovery_weight_text_relevance_pct: Integer = 50
     default_recovery_weight_capability_proximity_pct: Integer = 25
@@ -215,7 +201,6 @@ config {
     require_provenance_on_write: Boolean = true
     capture_graph_snapshot_on_change: Boolean = true
 
-    -- Resolved: fixed-window retention, no summary entities in Step 10.
     graph_history_retention_policy: String = "fixed-window"
     graph_snapshot_retention_max: Integer = 200
     graph_delta_retention_max: Integer = 1000
@@ -240,17 +225,16 @@ config {
 ------------------------------------------------------------
 
 rule MemoryLayerActivates {
-    -- Aligns with bootstrap-system MemoryLayerActivates, but adds graph context.
-    when: MemoryLayerInitializeRequested(layer, querySummary, repo, capabilityGraph, state)
+    when: MemoryLayerInitializeRequested(layer, query_summary, repo, capability_graph, state)
 
-    requires: querySummary.envBuilt = true
-    requires: repo.hasHistory = true
-    requires: capabilityGraph.status in {stable, expanding}
+    requires: query_summary.env_built = true
+    requires: repo.has_history = true
+    requires: capability_graph.status in {stable, expanding}
 
     ensures: layer.status = ready
-    ensures: layer.queryGraph = querySummary
-    ensures: layer.gitRepository = repo
-    ensures: layer.capabilityGraph = capabilityGraph
+    ensures: layer.query_graph = query_summary
+    ensures: layer.git_repository = repo
+    ensures: layer.capability_graph = capability_graph
 
     ensures: state.history_ready = true
     ensures: state.knowledge_ready = true
@@ -258,16 +242,16 @@ rule MemoryLayerActivates {
 }
 
 rule MemoryLayerActivationFails {
-    when: MemoryLayerInitializeRequested(layer, querySummary, repo, capabilityGraph, state)
+    when: MemoryLayerInitializeRequested(layer, query_summary, repo, capability_graph, state)
 
-    requires: querySummary.envBuilt = false or repo.hasHistory = false
+    requires: query_summary.env_built = false or repo.has_history = false
 
     ensures: layer.status = error
     ensures: state.memory_ready = false
 }
 
 rule MemoryWriteCreatesRecord {
-    when: RememberRequested(layer, session, contentType, content, tags, provenance)
+    when: RememberRequested(layer, session, content_type, content, tags, provenance)
 
     requires: layer.status = ready
     requires: content != null
@@ -278,7 +262,7 @@ rule MemoryWriteCreatesRecord {
 
     ensures: exists memory = MemoryRecord.created(
         session: session,
-        contentType: contentType,
+        content_type: content_type,
         content: content,
         timestamp: now,
         tags: tags,
@@ -289,80 +273,77 @@ rule MemoryWriteCreatesRecord {
 }
 
 rule MemoryWriteLinksGraphContext {
-    -- Every memory write in Step 10 links to graph context when available.
-    when: RememberRequested(layer, session, contentType, content, tags, provenance)
+    when: RememberRequested(layer, session, content_type, content, tags, provenance)
 
     requires: layer.status = ready
-    requires: layer.capabilityGraph != null
+    requires: layer.capability_graph != null
 
-    ensures: provenance.graphFingerprint = CurrentGraphFingerprint(layer.capabilityGraph)
-    ensures: provenance.capabilityIds = RelevantCapabilityIds(content, layer.capabilityGraph)
+    ensures: provenance.graph_fingerprint = CurrentGraphFingerprint(layer.capability_graph)
+    ensures: provenance.capability_ids = RelevantCapabilityIds(content, layer.capability_graph)
 }
 
 rule GraphSnapshotCapturedOnChange {
-    when: CapabilityGraphComputed(layer, capabilityGraph)
+    when: CapabilityGraphComputed(layer, capability_graph)
 
     requires: layer.status = ready
     requires: config.capture_graph_snapshot_on_change = true
-    requires: capabilityGraph.status in {stable, expanding}
-    requires: LatestGraphFingerprint(layer) != CurrentGraphFingerprint(capabilityGraph)
+    requires: capability_graph.status in {stable, expanding}
+    requires: LatestGraphFingerprint(layer) != CurrentGraphFingerprint(capability_graph)
 
     ensures: exists snapshot = GraphSnapshot.created(
-        memoryLayer: layer,
-        fingerprint: CurrentGraphFingerprint(capabilityGraph),
-        capturedAt: now,
-        nodeCount: capabilityGraph.nodeCount,
-        edgeCount: capabilityGraph.edgeCount,
-        capabilityCount: capabilityGraph.capabilityIds.count,
-        domainCoverage: CurrentDomainCoverage(capabilityGraph)
+        memory_layer: layer,
+        fingerprint: CurrentGraphFingerprint(capability_graph),
+        captured_at: now,
+        node_count: capability_graph.node_count,
+        edge_count: capability_graph.edge_count,
+        capability_count: capability_graph.capability_ids.count,
+        domain_coverage: CurrentDomainCoverage(capability_graph)
     )
 
-    ensures: layer.graphSnapshots = Prepend(layer.graphSnapshots, snapshot)
+    ensures: layer.graph_snapshots = Prepend(layer.graph_snapshots, snapshot)
 }
 
 rule GraphDeltaDerivedFromSnapshots {
-    when: CapabilityGraphComputed(layer, capabilityGraph)
+    when: CapabilityGraphComputed(layer, capability_graph)
 
     requires: layer.status = ready
-    requires: layer.graphSnapshots.count > 0
-    requires: LatestGraphFingerprint(layer) != CurrentGraphFingerprint(capabilityGraph)
+    requires: layer.graph_snapshots.count > 0
+    requires: LatestGraphFingerprint(layer) != CurrentGraphFingerprint(capability_graph)
 
     let previous = LatestGraphSnapshot(layer)
 
     ensures: exists delta = GraphDelta.created(
-        memoryLayer: layer,
-        fromFingerprint: previous.fingerprint,
-        toFingerprint: CurrentGraphFingerprint(capabilityGraph),
-        capturedAt: now,
-        addedCapabilities: AddedCapabilities(previous, capabilityGraph),
-        removedCapabilities: RemovedCapabilities(previous, capabilityGraph),
-        addedOperations: AddedOperations(previous, capabilityGraph),
-        removedOperations: RemovedOperations(previous, capabilityGraph)
+        memory_layer: layer,
+        from_fingerprint: previous.fingerprint,
+        to_fingerprint: CurrentGraphFingerprint(capability_graph),
+        captured_at: now,
+        added_capabilities: AddedCapabilities(previous, capability_graph),
+        removed_capabilities: RemovedCapabilities(previous, capability_graph),
+        added_operations: AddedOperations(previous, capability_graph),
+        removed_operations: RemovedOperations(previous, capability_graph)
     )
 
-    ensures: layer.graphDeltas = Prepend(layer.graphDeltas, delta)
+    ensures: layer.graph_deltas = Prepend(layer.graph_deltas, delta)
 }
 
 rule GraphHistoryCompactedByFixedWindow {
-    -- Resolved retention policy: keep most recent N, trim oldest,
-    -- and do not introduce summary entities in Step 10.
     when: GraphHistoryCompactionRequested(layer)
 
     requires: layer.status = ready
     requires: config.graph_history_retention_policy = "fixed-window"
     requires:
-        layer.graphSnapshots.count > config.graph_snapshot_retention_max or
-        layer.graphDeltas.count > config.graph_delta_retention_max
+        layer.graph_snapshots.count > config.graph_snapshot_retention_max or
+        layer.graph_deltas.count > config.graph_delta_retention_max
 
     ensures:
-        layer.graphSnapshots = KeepMostRecent(
-            layer.graphSnapshots,
+        layer.graph_snapshots = KeepMostRecent(
+            layer.graph_snapshots,
             config.graph_snapshot_retention_max
         )
 
     ensures:
-        layer.graphDeltas = KeepMostRecent(
-            layer.graphDeltas,
+        layer.graph_deltas = KeepMostRecent(
+            layer.graph_deltas,
             config.graph_delta_retention_max
         )
 
@@ -370,41 +351,41 @@ rule GraphHistoryCompactedByFixedWindow {
 }
 
 rule RecoveryComposesSessionHistoryAndGraph {
-    when: RecoverRequested(layer, session, searchQuery, filter, limit?)
+    when: RecoverRequested(layer, session, search_query, filter, limit?)
 
     requires: layer.status = ready
-    requires: searchQuery != null
-    requires: searchQuery != ""
+    requires: search_query != null
+    requires: search_query != ""
 
-    let effectiveLimit = limit or config.default_recovery_limit
+    let effective_limit = limit or config.default_recovery_limit
 
     ensures: exists recovery = Recovery.created(
         session: session,
-        query: searchQuery,
+        query: search_query,
         filter: filter,
-        sourcesUsed: config.required_recovery_sources,
-        recoveredMemories: RankedDeduplicatedMemories(
+        sources_used: config.required_recovery_sources,
+        recovered_memories: RankedDeduplicatedMemories(
             layer,
             session,
-            searchQuery,
+            search_query,
             filter,
-            effectiveLimit,
+            effective_limit,
             {
                 recency: config.default_recovery_weight_recency_pct,
-                textRelevance: config.default_recovery_weight_text_relevance_pct,
-                capabilityProximity: config.default_recovery_weight_capability_proximity_pct
+                text_relevance: config.default_recovery_weight_text_relevance_pct,
+                capability_proximity: config.default_recovery_weight_capability_proximity_pct
             }
         ),
-        recoveryTime: now,
-        resultsLimit: effectiveLimit,
-        resultsTruncated: RecoveryWouldExceedLimit(layer, searchQuery, filter, effectiveLimit)
+        recovery_time: now,
+        results_limit: effective_limit,
+        results_truncated: RecoveryWouldExceedLimit(layer, search_query, filter, effective_limit)
     )
 
-    ensures: recovery.recoveredMemories.count <= effectiveLimit
+    ensures: recovery.recovered_memories.count <= effective_limit
 }
 
 rule RecoveryRankingUsesDefaultWeights {
-    when: RecoverRequested(layer, session, searchQuery, filter, limit?)
+    when: RecoverRequested(layer, session, search_query, filter, limit?)
 
     requires: layer.status = ready
 
@@ -413,28 +394,28 @@ rule RecoveryRankingUsesDefaultWeights {
         config.default_recovery_weight_text_relevance_pct +
         config.default_recovery_weight_capability_proximity_pct = 100
 
-    ensures: RecoveryScore(memory, searchQuery, filter) =
+    ensures: RecoveryScore(memory, search_query, filter) =
         WeightedScore(
-            text_relevance(memory, searchQuery),
+            text_relevance(memory, search_query),
             recency(memory.timestamp),
-            capability_proximity(memory.provenance.capabilityIds, filter.capabilityIds),
+            capability_proximity(memory.provenance.capability_ids, filter.capability_ids),
             {
-                textRelevance: config.default_recovery_weight_text_relevance_pct,
+                text_relevance: config.default_recovery_weight_text_relevance_pct,
                 recency: config.default_recovery_weight_recency_pct,
-                capabilityProximity: config.default_recovery_weight_capability_proximity_pct
+                capability_proximity: config.default_recovery_weight_capability_proximity_pct
             }
         )
 }
 
 rule RecoverySupportsCapabilityHistory {
-    when: RecoverRequested(layer, session, searchQuery, filter, limit?)
+    when: RecoverRequested(layer, session, search_query, filter, limit?)
 
     requires: layer.status = ready
     requires: filter != null
-    requires: filter.capabilityIds != null
+    requires: filter.capability_ids != null
 
-    ensures: RecoveryByCapabilityIds(layer, filter.capabilityIds).each(m =>
-        Intersects(m.provenance.capabilityIds, filter.capabilityIds)
+    ensures: RecoveryByCapabilityIds(layer, filter.capability_ids).each(m =>
+        Intersects(m.provenance.capability_ids, filter.capability_ids)
     )
 }
 
@@ -471,19 +452,19 @@ surface QueryableMemoryApi {
 
     exposes:
         layer.status
-        layer.indexStats
-        layer.graphSnapshots
-        layer.graphDeltas
+        layer.index_stats
+        layer.graph_snapshots
+        layer.graph_deltas
 
     provides:
-        Remember(client, session, contentType, content, tags)
-            when layer.canRemember = true
+        Remember(client, session, content_type, content, tags)
+            when layer.can_remember = true
 
-        Recover(client, session, searchQuery, filter)
-            when layer.canRecover = true
+        Recover(client, session, search_query, filter)
+            when layer.can_recover = true
 
-        QueryCapabilityHistory(client, capabilityId)
-            when layer.hasKnowledgeIndex = true
+        QueryCapabilityHistory(client, capability_id)
+            when layer.has_knowledge_index = true
 }
 
 -- Resolved decisions:

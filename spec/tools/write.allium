@@ -11,7 +11,7 @@ value WriteArgs {
 }
 
 value WriteOptions {
-    cwd: String?
+    worktree_path: String?
 }
 
 value WriteResult {
@@ -23,14 +23,14 @@ rule WriteExpandsAndResolvesPathAgainstCwd {
     when: ExecuteWrite(args, opts)
 
     ensures: expanded = path/ExpandPathCalled(args.path)
-    ensures: resolved = path/ResolveToCwdCalled(expanded, opts.cwd)
+    ensures: resolved = path/ResolveToCwdCalled(expanded, opts.worktree_path)
 }
 
 rule WriteCreatesParents {
     when: ExecuteWrite(args, opts)
 
     let expanded = path/ExpandPathCalled(args.path)
-    let resolved = path/ResolveToCwdCalled(expanded, opts.cwd)
+    let resolved = path/ResolveToCwdCalled(expanded, opts.worktree_path)
     ensures: Directory.makeParents(resolved)
 }
 
@@ -38,7 +38,7 @@ rule WriteOverwritesFile {
     when: ExecuteWrite(args, opts)
 
     let expanded = path/ExpandPathCalled(args.path)
-    let resolved = path/ResolveToCwdCalled(expanded, opts.cwd)
+    let resolved = path/ResolveToCwdCalled(expanded, opts.worktree_path)
     ensures: File.writeUtf8(resolved, args.content)
 }
 
@@ -46,7 +46,7 @@ rule WriteReturnsByteCountAndResolvedPath {
     when: ExecuteWrite(args, opts)
 
     let expanded = path/ExpandPathCalled(args.path)
-    let resolved = path/ResolveToCwdCalled(expanded, opts.cwd)
+    let resolved = path/ResolveToCwdCalled(expanded, opts.worktree_path)
     let bytes = Utf8Bytes(args.content or "")
 
     ensures: result = WriteResult{
@@ -66,6 +66,6 @@ surface WriteToolApi {
 
     @guidance
         -- write is create-or-overwrite, never append.
-        -- Relative paths are expanded/normalized then resolved against cwd.
+        -- Relative paths are expanded/normalized then resolved against worktree_path.
         -- Success message reports bytes written and resolved target path.
 }

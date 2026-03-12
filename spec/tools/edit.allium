@@ -12,7 +12,7 @@ value EditArgs {
 }
 
 value EditOptions {
-    cwd: String?
+    worktree_path: String?
 }
 
 value EditDiff {
@@ -30,14 +30,14 @@ rule EditExpandsAndResolvesPathAgainstCwd {
     when: ExecuteEdit(args, opts)
 
     ensures: expanded = path/ExpandPathCalled(args.path)
-    ensures: resolved = path/ResolveToCwdCalled(expanded, opts.cwd)
+    ensures: resolved = path/ResolveToCwdCalled(expanded, opts.worktree_path)
 }
 
 rule EditFailsWhenFileMissing {
     when: ExecuteEdit(args, opts)
 
     let expanded = path/ExpandPathCalled(args.path)
-    let resolved = path/ResolveToCwdCalled(expanded, opts.cwd)
+    let resolved = path/ResolveToCwdCalled(expanded, opts.worktree_path)
     requires: not File.exists(resolved)
 
     ensures: Error.thrown("File not found: " + PathString(resolved))
@@ -47,7 +47,7 @@ rule EditNormalizesForMatching {
     when: ExecuteEdit(args, opts)
 
     let expanded = path/ExpandPathCalled(args.path)
-    let resolved = path/ResolveToCwdCalled(expanded, opts.cwd)
+    let resolved = path/ResolveToCwdCalled(expanded, opts.worktree_path)
     let raw_content = File.read(resolved)
     let bom = Utf8BomPrefix(raw_content)
     let content_no_bom = StripBom(raw_content)
@@ -130,7 +130,7 @@ rule EditReturnsSuccessMessageAndDiffDetails {
 
 rule EditWithoutCwdAcceptsAbsolutePath {
     when: ExecuteEdit(args, opts)
-    requires: opts.cwd = null
+    requires: opts.worktree_path = null
     requires: IsAbsolutePath(args.path)
 
     ensures: resolved = path/ResolveToCwdCalled(path/ExpandPathCalled(args.path), null)
