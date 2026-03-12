@@ -4,43 +4,76 @@
 -- Discover effective nREPL endpoint via EQL/graph and consume it from emacs/tui/console.
 
 value NreplRuntimeInfo {
-  host: String
-  port: Integer
-  endpoint: String
+    host: String?
+    port: Integer?
+    endpoint: String?
+}
+
+surface RuntimeNreplEqlApi {
+    facing caller: session/User
+
+    exposes:
+        NreplRuntimeInfo.host
+        NreplRuntimeInfo.port
+        NreplRuntimeInfo.endpoint
+
+    provides:
+        NreplRuntimeAttrsResolvable()
+        NreplRuntimeAttrsDiscoverableInGraph()
 }
 
 rule NreplRuntimeAttrsResolvable {
-  when: QueryRequested([:psi.runtime/nrepl-host :psi.runtime/nrepl-port :psi.runtime/nrepl-endpoint])
+    when: AgentSessionResolversRegistered()
 
-  ensures: ResultHas(:psi.runtime/nrepl-host)
-  ensures: ResultHas(:psi.runtime/nrepl-port)
-  ensures: ResultHas(:psi.runtime/nrepl-endpoint)
+    ensures: EqlAttributeResolvable(":psi.runtime/nrepl-host")
+    ensures: EqlAttributeResolvable(":psi.runtime/nrepl-port")
+    ensures: EqlAttributeResolvable(":psi.runtime/nrepl-endpoint")
+}
+
+rule NreplRuntimeAttrsReturnNilWhenDisabled {
+    when: NreplServerDisabled()
+
+    ensures: EqlValue(":psi.runtime/nrepl-host") = null
+    ensures: EqlValue(":psi.runtime/nrepl-port") = null
+    ensures: EqlValue(":psi.runtime/nrepl-endpoint") = null
 }
 
 rule NreplRuntimePortReflectsEffectiveServer {
-  when: NreplServerStarted(bound_port)
+    when: NreplServerStarted(bound_port)
 
-  ensures: QueryResult(:psi.runtime/nrepl-port) = bound_port
+    ensures: EqlValue(":psi.runtime/nrepl-port") = bound_port
 }
 
 rule NreplRuntimeEndpointConsistent {
-  when: QueryRequested([:psi.runtime/nrepl-host :psi.runtime/nrepl-port :psi.runtime/nrepl-endpoint])
+    when: NreplServerStarted(bound_port)
 
-  ensures: QueryResult(:psi.runtime/nrepl-endpoint) = QueryResult(:psi.runtime/nrepl-host) + ":" + ToString(QueryResult(:psi.runtime/nrepl-port))
+    ensures: EqlValue(":psi.runtime/nrepl-endpoint") = EqlValue(":psi.runtime/nrepl-host") + ":" + ToString(bound_port)
 }
 
-rule GraphDiscoveryIncludesNreplRuntimeAttrs {
-  when: QueryRequested([:psi.graph/root-queryable-attrs :psi.graph/resolver-syms])
+rule NreplRuntimeAttrsDiscoverableInGraph {
+    when: AgentSessionResolversRegistered()
 
-  ensures: Contains(QueryResult(:psi.graph/root-queryable-attrs), :psi.runtime/nrepl-host)
-  ensures: Contains(QueryResult(:psi.graph/root-queryable-attrs), :psi.runtime/nrepl-port)
-  ensures: Contains(QueryResult(:psi.graph/root-queryable-attrs), :psi.runtime/nrepl-endpoint)
+    ensures: GraphNodesContainAttributes({
+        ":psi.runtime/nrepl-host",
+        ":psi.runtime/nrepl-port",
+        ":psi.runtime/nrepl-endpoint"
+    })
+
+    ensures: GraphEdgesContainAttributes({
+        ":psi.runtime/nrepl-host",
+        ":psi.runtime/nrepl-port",
+        ":psi.runtime/nrepl-endpoint"
+    })
 }
 
 rule ClientsUseCanonicalEqlRuntimeAttrs {
-  when: ClientNeedsNreplEndpoint(client)
-  requires: client in [:emacs :tui :console]
+    when: ClientNeedsNreplEndpoint(client)
+    requires: client in {"emacs", "tui", "console"}
 
-  ensures: ClientFetchesViaEql(client, [:psi.runtime/nrepl-host :psi.runtime/nrepl-port :psi.runtime/nrepl-endpoint])
-  ensures: not ClientUsesLocalPortFileParsing(client)
+    ensures: ClientFetchesViaEql(client, {
+        ":psi.runtime/nrepl-host",
+        ":psi.runtime/nrepl-port",
+        ":psi.runtime/nrepl-endpoint"
+    })
+    ensures: not ClientUsesLocalPortFileParsing(client)
 }

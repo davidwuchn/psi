@@ -58,6 +58,7 @@
                         "components/agent-session/src"
                         "extensions/src"
                         "components/extension-test-helpers/src"]
-          :extra-deps  {lambdaisland/kaocha {:mvn/version "1.91.1392"}}
+          :extra-deps  {lambdaisland/kaocha {:mvn/version "1.91.1392"}
+                        nrepl/nrepl         {:mvn/version "1.5.1"}}
           :jvm-opts    ["--enable-native-access=ALL-UNNAMED"]
           :main-opts   ["-m" "kaocha.runner"]}}}
