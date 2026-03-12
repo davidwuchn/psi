@@ -24,6 +24,15 @@ show a direct `straight.el` GitHub recipe and explicit customization points (`ps
 Adding autoload stubs for `psi-emacs-start`/`psi-emacs-project` in `psi.el` aligns runtime behavior
 with the documented install flow.
 
+### λ User-facing startup commands should be documented against a user-local alias, not repository dev aliases
+
+`-M:run` is a repository alias and works when run from the clone, but user docs are clearer and more
+portable when they define an explicit `~/.clojure/deps.edn` `:psi` alias with a local clone path and
+then use `clojure -M:psi ...` consistently.
+
+This separates operator docs from repo-internal developer alias naming and avoids ambiguity about where
+commands must be run from.
+
 ## 2026-03-12 - AGENTS constraints should declare alpha and multi-file Allium topology explicitly
 
 ### λ Alpha-stage compatibility policy should be written as an explicit operating invariant
