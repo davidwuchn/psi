@@ -100,6 +100,7 @@ Ordered steps toward PSI COMPLETE.
 - Docs path is now unified on `doc/` (not mixed `doc/` + `docs/`).
 - Emacs user docs now include straight.el GitHub installation and `psi-emacs-command` customization in `doc/emacs-ui.md`; autoload stubs for `psi-emacs-start` and `psi-emacs-project` are declared in `components/emacs-ui/psi.el`.
 - README references now include nucleus and link to built-in extension documentation in `doc/extensions.md`.
+- Quick Start + CLI docs now standardize user-local invocation via a `~/.clojure/deps.edn` `:psi` alias (`:local/root` clone path) and command examples use `clojure -M:psi` instead of `-M:run`.
 
 ## Next
 
