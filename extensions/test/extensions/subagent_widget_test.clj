@@ -112,7 +112,28 @@
                (execute {"action" "create"
                          "task" "do thing"
                          "mode" "sync"
-                         "timeout_ms" 0})))))))
+                         "timeout_ms" 0}))))))
+
+  (testing "subagent create validates fork_session"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/subagent_widget.clj"})]
+      (sut/init api)
+      (let [execute (get-in @state [:tools "subagent" :execute])]
+        (is (= {:content "Error: fork_session must be true or false." :is-error true}
+               (execute {"action" "create"
+                         "task" "do thing"
+                         "fork_session" "maybe"}))))))
+
+  (testing "subagent continue rejects fork_session parameter"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/subagent_widget.clj"})]
+      (sut/init api)
+      (let [execute (get-in @state [:tools "subagent" :execute])]
+        (is (= {:content "Error: fork_session is only supported for action=create" :is-error true}
+               (execute {"action" "continue"
+                         "id" 1
+                         "prompt" "next"
+                         "fork_session" true})))))))
 
 (deftest prompt-contribution-lists-available-agents-test
   (testing "prompt contribution lists names discovered from .psi/agents"
@@ -199,10 +220,12 @@
         (let [execute (get-in @state [:tools "subagent" :execute])
               _       (execute {"action" "create"
                                 "task" "x"
-                                "timeout_ms" "1234"}
+                                "timeout_ms" "1234"
+                                "fork_session" true}
                                {:tool-call-id "tc-timeout-1"})]
           (is (= 1234 (:timeout-ms @captured)))
           (is (= :async (:mode @captured)))
+          (is (= true (:fork-session? @captured)))
           (is (= "tc-timeout-1" (:tool-call-id @captured)))))))
 
   (testing "create uses default timeout when timeout_ms omitted"
@@ -297,6 +320,36 @@
           (is (:ok? result))
           (is (= [fake-agent-ctx qf] @created))
           (is (= fake-session-ctx (nth @captured 1))))))))
+
+(deftest slash-sub-args-fork-flag-test
+  (testing "parse-sub-args supports --fork and -f before optional agent"
+    (is (= {:fork-session? true
+            :task "do thing"}
+           (#'sut/parse-sub-args "--fork do thing")))
+    (is (= {:fork-session? true
+            :agent "planner"
+            :task "do thing"}
+           (#'sut/parse-sub-args "-f @planner do thing")))
+    (is (= {:fork-session? false
+            :agent "builder"
+            :task "ship it"}
+           (#'sut/parse-sub-args "@builder ship it")))))
+
+(deftest slash-sub-command-passes-fork-to-spawn-test
+  (testing "/sub forwards fork flag and prints [fork] marker"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/subagent_widget.clj"})
+          captured (atom nil)
+          printed  (atom nil)]
+      (sut/init api)
+      (with-redefs [sut/spawn-subagent! (fn [_task _agent opts]
+                                          (reset! captured opts)
+                                          {:ok 7 :mode :async :job-id "job-7"})
+                    println (fn [& xs] (reset! printed (apply str xs)))]
+        (let [handler (get-in @state [:commands "sub" :handler])]
+          (handler "--fork @planner investigate")
+          (is (= true (:fork-session? @captured)))
+          (is (str/includes? @printed "[fork]")))))))
 
 (deftest subagent-widget-placement-follows-ui-type-test
   (testing "widgets render below editor in emacs ui"

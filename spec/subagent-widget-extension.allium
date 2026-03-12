@@ -10,6 +10,7 @@ value SubagentCreateArgs {
     task: String
     agent: String?
     mode: sync | async?
+    fork_session: Boolean?
 }
 
 value SubagentContinueArgs {
@@ -53,6 +54,35 @@ rule SubagentModeIsOnlySupportedForCreate {
     requires: args.mode != null
 
     ensures: Error.thrown("mode is only supported for action=create")
+}
+
+rule SubagentForkSessionMustBeBooleanWhenProvided {
+    when: SubagentToolCalled(action: create, args)
+    requires: args.fork_session not in {null, true, false}
+
+    ensures: Error.thrown("fork_session must be true or false")
+}
+
+rule SubagentForkSessionIsOnlySupportedForCreate {
+    when: SubagentToolCalled(action, args)
+    requires: action in {continue, remove, list}
+    requires: args.fork_session != null
+
+    ensures: Error.thrown("fork_session is only supported for action=create")
+}
+
+rule SubagentCreateDefaultsForkSessionToFalse {
+    when: SubagentToolCalled(action: create, args)
+    requires: args.fork_session = null
+
+    ensures: EffectiveForkSession(args) = false
+}
+
+rule SubagentCreatePropagatesForkSessionFlag {
+    when: SubagentToolCalled(action: create, args, tool_call_id, thread_id)
+
+    ensures: SubagentWorkflowCreated(workflow_id, thread_id)
+    ensures: SubagentWorkflow(workflow_id).input.fork_session = EffectiveForkSession(args)
 }
 
 rule SubagentCreateSyncPersistsWorkflowAndRunsToTerminal {
@@ -155,6 +185,7 @@ surface SubagentWidgetApi {
 
     exposes:
         EffectiveCreateMode(args)
+        EffectiveForkSession(args)
         SubagentCreateResponse
         SubagentContinueResponse
 
@@ -164,8 +195,11 @@ surface SubagentWidgetApi {
 
     @guidance
         -- create supports mode=sync|async; default mode is async.
+        -- create supports fork_session=true|false; default is false.
         -- mode is rejected for continue/remove/list.
+        -- fork_session is rejected for continue/remove/list.
         -- create mode=sync persists a workflow id and returns terminal output with no job_id.
         -- create mode=async returns both workflow id and background job_id.
         -- continue remains background-only and returns a background job_id.
+        -- slash command supports /sub [--fork|-f] [@agent] <task>.
 }

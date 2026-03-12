@@ -2,7 +2,7 @@
   "Subagent widget backed by extension workflows.
 
    Commands/tools:
-   - /sub [@agent] <task>
+   - /sub [--fork|-f] [@agent] <task>
    - /subcont <id> <prompt>
    - /subrm <id>
    - /subclear
@@ -78,6 +78,17 @@
       "async" :async
       "sync" :sync
       ::invalid)))
+
+(defn- parse-bool [x]
+  (cond
+    (true? x) true
+    (false? x) false
+    (string? x) (case (str/lower-case (str/trim x))
+                  "true" true
+                  "false" false
+                  ::invalid)
+    (nil? x) false
+    :else ::invalid))
 
 (defn- tool-call-id-from-opts [opts]
   (or (:tool-call-id opts)
@@ -214,18 +225,37 @@
         profile))
     base-prompt))
 
-(defn- create-sub-agent-ctx [query-fn agent-name]
-  (let [agent-ctx    (agent/create-context)
-        tools        (->> tools/all-tools
-                          (filter #(contains? subagent-tool-names (:name %)))
-                          vec)
-        base-prompt  (current-system-prompt query-fn)
-        final-prompt (compose-system-prompt base-prompt query-fn agent-name)]
+(defn- current-session-messages [query-fn]
+  (when query-fn
+    (let [result (query-fn [{:psi.agent-session/session-entries
+                             [:psi.session-entry/kind
+                              :psi.session-entry/data]}])]
+      (->> (:psi.agent-session/session-entries result)
+           (keep (fn [entry]
+                   (when (= :message (:psi.session-entry/kind entry))
+                     (let [msg (get-in entry [:psi.session-entry/data :message])]
+                       (when (and (map? msg)
+                                  (contains? #{"user" "assistant" "toolResult"}
+                                             (:role msg)))
+                         msg)))))
+           vec))))
+
+(defn- create-sub-agent-ctx [query-fn agent-name {:keys [fork-session?]}]
+  (let [agent-ctx      (agent/create-context)
+        tools          (->> tools/all-tools
+                            (filter #(contains? subagent-tool-names (:name %)))
+                            vec)
+        base-prompt    (current-system-prompt query-fn)
+        final-prompt   (compose-system-prompt base-prompt query-fn agent-name)
+        fork-messages  (when fork-session?
+                         (current-session-messages query-fn))]
     (agent/create-agent-in! agent-ctx)
     (agent/set-tools-in! agent-ctx tools)
     (agent/set-thinking-level-in! agent-ctx :off)
     (when (seq final-prompt)
       (agent/set-system-prompt-in! agent-ctx final-prompt))
+    (when (seq fork-messages)
+      (agent/replace-messages-in! agent-ctx fork-messages))
     agent-ctx))
 
 (defn- current-session-cwd [query-fn]
@@ -292,6 +322,10 @@
   (or (:subagent/agent-name (wf-data wf))
       (get-in wf [:psi.extension.workflow/input :agent])))
 
+(defn- wf-forked? [wf]
+  (or (= true (:subagent/fork-session? (wf-data wf)))
+      (= true (get-in wf [:psi.extension.workflow/input :fork-session]))))
+
 (defn- elapsed-seconds [wf]
   (let [running?   (:psi.extension.workflow/running? wf)
         elapsed-ms (or (:psi.extension.workflow/elapsed-ms wf) 0)
@@ -337,12 +371,14 @@
 (defn- widget-lines [wf]
   (let [agent-tag   (when-let [agent-name (some-> (wf-agent-name wf) str str/trim not-empty)]
                       (str " · @" agent-name))
+        fork-tag    (when (wf-forked? wf) " · fork")
         line-1      (str (status-icon wf)
                          " Subagent #" (:psi.extension.workflow/id wf)
                          " " (phase-badge wf)
                          " · T" (wf-turn-count wf)
                          " · " (elapsed-seconds wf) "s"
                          agent-tag
+                         fork-tag
                          " · " (task-preview (wf-task wf) 52))
         detail-line (widget-detail-line wf)
         action-line (widget-action-line wf)]
@@ -626,9 +662,11 @@
                               :chart           subagent-chart
                               :start-event     :subagent/start
                               :initial-data-fn (fn [input]
-                                                 (let [agent-name (normalize-agent-name (get input :agent))
-                                                       agent-ctx   (create-sub-agent-ctx qf agent-name)]
+                                                 (let [agent-name    (normalize-agent-name (get input :agent))
+                                                       fork-session? (true? (get input :fork-session))
+                                                       agent-ctx      (create-sub-agent-ctx qf agent-name {:fork-session? fork-session?})]
                                                    {:subagent/agent-name     agent-name
+                                                    :subagent/fork-session?  fork-session?
                                                     :subagent/agent-ctx      agent-ctx
                                                     :subagent/session-ctx    (create-sub-session-ctx agent-ctx qf)
                                                     :subagent/query-fn       qf
@@ -642,6 +680,7 @@
                               :public-data-fn  (fn [data]
                                                  (select-keys data
                                                               [:subagent/agent-name
+                                                               :subagent/fork-session?
                                                                :subagent/turn-count
                                                                :subagent/current-prompt
                                                                :subagent/last-text
@@ -671,11 +710,12 @@
             (recur)))))))
 
 (defn- spawn-subagent!
-  [task agent-name {:keys [mode tool-call-id timeout-ms]
+  [task agent-name {:keys [mode tool-call-id timeout-ms fork-session?]
                     :or   {timeout-ms 300000}}]
-  (let [task       (str/trim (or task ""))
-        agent-name (normalize-agent-name agent-name)
-        mode*      (or mode :async)]
+  (let [task          (str/trim (or task ""))
+        agent-name    (normalize-agent-name agent-name)
+        mode*         (or mode :async)
+        fork-session? (true? fork-session?)]
     (cond
       (str/blank? task)
       {:error "task is required"}
@@ -695,7 +735,8 @@
                                     :track-background-job?  (not= :sync mode*)
                                     :input                  (cond-> {:task task
                                                                      :tool-call-id tool-call-id*}
-                                                              agent-name (assoc :agent agent-name))})]
+                                                              agent-name (assoc :agent agent-name)
+                                                              fork-session? (assoc :fork-session true))})]
         (if-not (:psi.extension.workflow/created? r)
           {:error (or (:psi.extension.workflow/error r)
                       "Failed to create workflow")}
@@ -802,11 +843,13 @@
                      (fn [s]
                        (let [agent-tag (when-let [agent-name (some-> (wf-agent-name s) str str/trim not-empty)]
                                          (str " · @" agent-name))
+                             fork-tag  (when (wf-forked? s) " · fork")
                              base (str "#" (:psi.extension.workflow/id s)
                                        " " (phase-badge s)
                                        " · T" (wf-turn-count s)
                                        " · " (elapsed-seconds s) "s"
                                        agent-tag
+                                       fork-tag
                                        " · " (task-preview (wf-task s) 70))
                              err  (when (:psi.extension.workflow/error? s)
                                     (when-let [e (wf-error-line s)]
@@ -825,14 +868,21 @@
       nil
 
       :else
-      (let [parts (str/split trimmed #"\s+" 2)
-            first-token (first parts)]
-        (if (and (string? first-token)
-                 (str/starts-with? first-token "@")
-                 (= 2 (count parts)))
-          {:agent (subs first-token 1)
-           :task  (str/trim (second parts))}
-          {:task trimmed})))))
+      (let [tokens       (->> (str/split trimmed #"\s+")
+                              (remove str/blank?)
+                              vec)
+            [fork? rest] (if (and (seq tokens)
+                                  (contains? #{"--fork" "-f"} (first tokens)))
+                           [true (subvec tokens 1)]
+                           [false tokens])]
+        (when (seq rest)
+          (if (str/starts-with? (first rest) "@")
+            (when (> (count rest) 1)
+              {:fork-session? fork?
+               :agent         (subs (first rest) 1)
+               :task          (str/join " " (subvec rest 1))})
+            {:fork-session? fork?
+             :task          (str/join " " rest)}))))))
 
 (defn- parse-subcont-args [args]
   (let [trimmed (str/trim (or args ""))
@@ -858,9 +908,10 @@
   ([args]
    (execute-subagent-tool args nil))
   ([args opts]
-   (let [action     (some-> (get args "action") str str/trim str/lower-case)
-         mode       (parse-create-mode (get args "mode"))
-         timeout-ms (parse-timeout-ms (get args "timeout_ms"))]
+   (let [action       (some-> (get args "action") str str/trim str/lower-case)
+         mode         (parse-create-mode (get args "mode"))
+         timeout-ms   (parse-timeout-ms (get args "timeout_ms"))
+         fork-session (parse-bool (get args "fork_session"))]
      (case action
        "create"
        (let [task         (str/trim (or (get args "task") ""))
@@ -870,24 +921,31 @@
            (= timeout-ms ::invalid)
            {:content "Error: timeout_ms must be a positive integer." :is-error true}
 
+           (= fork-session ::invalid)
+           {:content "Error: fork_session must be true or false." :is-error true}
+
            (str/blank? task)
            {:content "Error: task is required." :is-error true}
 
            :else
-           (let [r (spawn-subagent! task agent-name {:mode mode
-                                                     :tool-call-id tool-call-id
-                                                     :timeout-ms timeout-ms})]
+           (let [fork? (true? fork-session)
+                 r     (spawn-subagent! task agent-name {:mode mode
+                                                         :tool-call-id tool-call-id
+                                                         :timeout-ms timeout-ms
+                                                         :fork-session? fork?})]
              (if-let [e (:error r)]
                {:content (str "Error: " e) :is-error true}
                (if (= :sync (:mode r))
                  {:content (str "Subagent #" (:ok r)
                                 (when agent-name (str " (@" agent-name ")"))
+                                (when fork? " [fork]")
                                 " finished.\n\n"
                                 (:content r))
                   :is-error (boolean (:is-error r))}
                  {:content (str "Subagent #" (:ok r)
                                 " spawned in background"
                                 (when agent-name (str " (@" agent-name ")"))
+                                (when fork? " [fork]")
                                 (when-let [jid (:job-id r)]
                                   (str " (job " jid ")"))
                                 ".")
@@ -900,6 +958,9 @@
          (cond
            (not (nil? (get args "mode")))
            {:content "Error: mode is only supported for action=create" :is-error true}
+
+           (not (nil? (get args "fork_session")))
+           {:content "Error: fork_session is only supported for action=create" :is-error true}
 
            (nil? id)
            {:content "Error: id is required." :is-error true}
@@ -964,6 +1025,8 @@
                                        "mode"   {:type "string"
                                                  :enum ["sync" "async"]
                                                  :description "Optional execution mode for action=create (default async)"}
+                                       "fork_session" {:type "boolean"
+                                                       :description "Optional for action=create. When true, subagent starts from a fork of the invoking session conversation."}
                                        "timeout_ms" {:type "integer"
                                                      :description "Optional sync timeout in milliseconds for action=create, mode=sync (default 300000)"}
                                        "id"     {:type "integer"
@@ -979,18 +1042,20 @@
 
   ;; Slash commands
   ((:register-command api) "sub"
-                           {:description "Spawn a subagent: /sub [@agent] <task>"
+                           {:description "Spawn a subagent: /sub [--fork|-f] [@agent] <task>"
                             :handler     (fn [args]
-                                           (if-let [{:keys [agent task]} (parse-sub-args args)]
-                                             (let [r (spawn-subagent! task agent {:mode :async})]
+                                           (if-let [{:keys [agent task fork-session?]} (parse-sub-args args)]
+                                             (let [r (spawn-subagent! task agent {:mode :async
+                                                                                  :fork-session? fork-session?})]
                                                (if-let [e (:error r)]
                                                  (println (str "Error: " e))
                                                  (println (str "Spawned Subagent #" (:ok r)
                                                                (when (seq agent)
                                                                  (str " (@" (normalize-agent-name agent) ")"))
+                                                               (when fork-session? " [fork]")
                                                                (when-let [jid (:job-id r)]
                                                                  (str " (job " jid ")"))))))
-                                             (println "Usage: /sub [@agent] <task>")))})
+                                             (println "Usage: /sub [--fork|-f] [@agent] <task>")))})
 
   ((:register-command api) "subcont"
                            {:description "Continue a subagent: /subcont <id> <prompt>"

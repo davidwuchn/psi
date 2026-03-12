@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-03-12
+
+- λ Δ Added optional subagent session-forking capability:
+  - `subagent` tool `action=create` now accepts `fork_session` (boolean, default `false`)
+  - when `fork_session=true`, subagent starts with invoking session conversation history (`user`/`assistant`/`toolResult` messages)
+  - validation added: `fork_session` must be boolean and is rejected for non-`create` actions
+- Δ Added slash command fork flag support: `/sub [--fork|-f] [@agent] <task>`
+- Δ Updated subagent extension spec (`spec/subagent-widget-extension.allium`) with fork-session args/rules and surface guidance.
+- Δ Updated `META.md` to record subagent optional fork inheritance in session semantics.
+
 ## 2026-03-06
 
 - λ Δ Added `spec/git-worktrees.allium` and Step 11a acceptance checklist in `PLAN.md`.
