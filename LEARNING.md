@@ -4,6 +4,26 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-12 - README should be an index; user docs should live under `doc/`
+
+### λ Splitting README into concise entry + linked guides reduces drift and improves discoverability
+
+Moving operational detail into focused docs (`doc/cli.md`, `doc/tui.md`, `doc/emacs-ui.md`,
+`doc/architecture.md`, `doc/extension-api.md`, `doc/extensions.md`, `doc/psi-project-config.md`)
+keeps `README.md` short, easier to maintain, and better as a starting map for users.
+
+### λ One canonical user-doc root (`doc/`) prevents path entropy (`doc/` vs `docs/`)
+
+Allowing mixed roots creates avoidable link churn and contributor uncertainty. Consolidating on
+`doc/` and updating README/AGENTS links removes ambiguity and makes future doc moves predictable.
+
+### λ Emacs install docs should match real distribution paths
+
+Because Emacs files are consumed from this repo (`components/emacs-ui/*.el`), user docs should
+show a direct `straight.el` GitHub recipe and explicit customization points (`psi-emacs-command`).
+Adding autoload stubs for `psi-emacs-start`/`psi-emacs-project` in `psi.el` aligns runtime behavior
+with the documented install flow.
+
 ## 2026-03-12 - AGENTS constraints should declare alpha and multi-file Allium topology explicitly
 
 ### λ Alpha-stage compatibility policy should be written as an explicit operating invariant
