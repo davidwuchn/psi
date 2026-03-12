@@ -658,6 +658,12 @@ Failure path appends deterministic assistant-visible feedback, sets
     (if (psi-emacs--rpc-frame-success-p frame)
         (progn
           (psi-emacs--reset-transcript-state)
+          ;; Keep bottom-of-buffer affordances visible while backend session
+          ;; rehydrates and before first canonical footer/session update arrives.
+          (when (fboundp 'psi-emacs--seed-connecting-footer)
+            (psi-emacs--seed-connecting-footer))
+          (when (fboundp 'psi-emacs--focus-input-area)
+            (psi-emacs--focus-input-area (current-buffer)))
           (psi-emacs--set-run-state state 'streaming)
           (psi-emacs--request-get-messages-for-switch state))
       (let ((message (psi-emacs--switch-session-error-message frame)))

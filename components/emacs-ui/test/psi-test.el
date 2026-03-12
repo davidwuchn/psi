@@ -1227,7 +1227,8 @@
                          (setq cleared-before-replay
                                (and (not (string-match-p "old transcript" (buffer-string)))
                                     (null (psi-emacs-state-last-error psi-emacs--state))
-                                    (zerop (hash-table-count (psi-emacs-state-tool-rows psi-emacs--state)))))
+                                    (zerop (hash-table-count (psi-emacs-state-tool-rows psi-emacs--state)))
+                                    (equal "connecting..." (psi-emacs-state-projection-footer psi-emacs--state))))
                          (funcall callback
                                   '((:kind . :response)
                                     (:ok . t)
