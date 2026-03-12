@@ -4,6 +4,31 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-12 - Subagent forkability should preserve tool/slash/spec parity as one contract
+
+### λ Add new subagent behavior once, project it through both invocation surfaces
+
+When `subagent(action=create)` gained `fork_session`, parity required updating both:
+- tool call surface (`fork_session` boolean with strict validation), and
+- slash surface (`/sub --fork|-f`) with identical semantics.
+
+If only one surface is updated, operator behavior diverges and PSL has to reconcile it later.
+
+### λ Fork is a context inheritance policy, so visibility belongs in status surfaces
+
+Optional context inheritance (`fork_session=true`) should be visible in runtime status UI,
+not hidden in creation-time args only. Adding explicit fork markers in widget/list output
+makes concurrent subagent runs diagnosable.
+
+### λ Meta/spec operational memory must track subagent session inheritance explicitly
+
+Because subagent fork behavior changes session relationships, updates should land together in:
+- `spec/subagent-widget-extension.allium` (normative tool contract),
+- `META.md` (system model truth),
+- `PLAN.md` and `STATE.md` (execution memory).
+
+This keeps PSL follow-up minimal and prevents “implemented but undocumented” drift.
+
 ## 2026-03-12 - Fork semantics must converge across runtime state, on-disk lineage, and spec guarantees
 
 ### λ Forking is not only session-id rotation; it is a persistence boundary
