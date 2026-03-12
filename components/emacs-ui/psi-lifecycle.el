@@ -180,9 +180,13 @@ COMMAND is a list suitable for `make-process'."
     process))
 
 (defun psi-emacs--default-send-request (state op params &optional callback)
-  "Send OP with PARAMS using STATE rpc client, if available."
+  "Send OP with PARAMS using STATE rpc client, if available.
+
+Returns non-nil when request dispatch was accepted by transport."
   (when-let ((client (psi-emacs-state-rpc-client state)))
-    (psi-rpc-send-request! client op params callback)))
+    (let ((id (psi-rpc-send-request! client op params callback)))
+      (and (stringp id)
+           (not (string-empty-p id))))))
 
 (defun psi-emacs--teardown-buffer ()
   "Stop owned subprocess and clear local/global frontend state for current buffer."

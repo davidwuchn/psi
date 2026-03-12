@@ -3100,6 +3100,21 @@
       (should (string-empty-p (psi-emacs--tail-draft-text)))
       (should (string-match-p "^User: hello input" (buffer-string))))))
 
+(ert-deftest psi-send-does-not-copy-input-when-dispatch-not-confirmed ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-transport-state psi-emacs--state) 'ready)
+    (psi-emacs--ensure-input-area)
+    (goto-char (psi-emacs--draft-end-position))
+    (insert "hello input")
+    (cl-letf (((symbol-value 'psi-emacs--send-request-function)
+               (lambda (_state _op _params &optional _callback)
+                 nil)))
+      (psi-emacs-send-from-buffer nil))
+    (should (equal "hello input" (psi-emacs--tail-draft-text)))
+    (should-not (string-match-p "^User: hello input" (buffer-string)))))
+
 (ert-deftest psi-send-repairs-missing-input-separator-after-submit ()
   (with-temp-buffer
     (psi-emacs-mode)

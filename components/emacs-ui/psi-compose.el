@@ -493,7 +493,7 @@ When idle, this is a silent no-op."
                         (pending (alist-get :pending data))
                         (dropped (alist-get :dropped-steering-text data)))
                    (when pending
-                     (psi-emacs--restore-dropped-steering-to-draft dropped)))))))))))
+                     (psi-emacs--restore-dropped-steering-to-draft dropped))))))))))))
 
 
 (defun psi-emacs-abort ()
