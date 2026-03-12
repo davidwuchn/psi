@@ -3931,3 +3931,34 @@ A concise built-in tools list in README is useful for orientation, but deeper to
 contracts (for example `app-query-tool` usage/discovery flow) should live in a
 project-config/reference doc. This preserves quick discoverability while keeping
 high-detail guidance maintainable.
+
+## 2026-03-12 - Run lifecycle UX should include explicit removal operations
+
+### λ Workflow-backed lists need symmetric remove affordances in both tool and command surfaces
+
+For `agent-chain`, listing and running were available, but removing stale/finished
+runs required indirect cleanup (`reload`/session switch). Adding an explicit remove
+path keeps lifecycle operations complete and predictable:
+- tool: `agent-chain(action="remove", id="run-<n>")`
+- command: `/chain-rm <run-id>`
+
+Symmetry matters: if a capability is exposed to the model via tool schema, operators
+should also get a direct slash command path.
+
+### λ Remove must clear both runtime workflow and projection cache
+
+Agent-chain tracks runs in two places:
+1. workflow registry (`psi.extension.workflow/*`)
+2. extension-local `:runs` cache used for widget projection
+
+A remove operation that only deletes the workflow leaves stale rows in widget output.
+`remove-chain-run!` should mutate workflow removal, dissoc local run cache entry, and
+refresh widget state in one path.
+
+### λ Text-projected Emacs UI favors command affordances over faux interactivity
+
+Current extension widget API is line-oriented text, not per-line actionable buttons.
+In Emacs projection, the stable pattern is to show deterministic text and pair it with
+commands (`/subrm`, `/chain-rm`) rather than invent pseudo-click controls. This keeps
+the UX consistent with existing projection constraints while still supporting quick run
+cleanup.
