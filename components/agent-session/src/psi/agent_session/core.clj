@@ -525,21 +525,48 @@
       (get-session-data-in ctx))))
 
 (defn fork-session-in!
-  "Fork the session from `entry-id`, creating a new session branch."
+  "Fork the session from `entry-id`, creating a new session branch.
+
+  Persistence semantics:
+  - child session gets a new session id and its own session file
+  - child journal contains entries/messages up to `entry-id`
+  - child session file is written immediately with `:parent-session`
+    pointing at the parent session file (when available)"
   [ctx entry-id]
   (let [reg     (:extension-registry ctx)
         journal (:journal-atom ctx)]
     (ext/dispatch-in reg "session_before_fork" {:entry-id entry-id})
-    (let [messages (persist/messages-up-to journal entry-id)]
+    (let [parent-sd          (get-session-data-in ctx)
+          parent-session-file (:session-file parent-sd)
+          new-session-id     (str (java.util.UUID/randomUUID))
+          messages           (vec (persist/messages-up-to journal entry-id))
+          branch-entries     (vec (persist/entries-up-to journal entry-id))]
+      ;; Forked runtime state starts from branch-local history.
+      (reset! journal branch-entries)
       (swap-session! ctx assoc
-                     :session-id (str (java.util.UUID/randomUUID))
+                     :session-id new-session-id
                      :session-file nil
                      :startup-prompts []
                      :startup-bootstrap-completed? false
                      :startup-bootstrap-started-at nil
                      :startup-bootstrap-completed-at nil
                      :startup-message-ids [])
-      (agent/replace-messages-in! (:agent-ctx ctx) (vec messages))
+
+      ;; Forked agent conversation mirrors the branched journal message path.
+      (agent/replace-messages-in! (:agent-ctx ctx) messages)
+
+      ;; Fork persistence: create/write child file immediately with lineage header.
+      (when (:persist? ctx)
+        (let [session-dir (persist/session-dir-for (:cwd ctx))
+              file        (persist/new-session-file-path session-dir new-session-id)]
+          (swap-session! ctx assoc :session-file (str file))
+          (persist/flush-journal! file
+                                  new-session-id
+                                  (:cwd ctx)
+                                  parent-session-file
+                                  branch-entries)
+          (reset! (:flush-state-atom ctx) {:flushed? true :session-file file})))
+
       (ext/dispatch-in reg "session_fork" {})
       (get-session-data-in ctx))))
 

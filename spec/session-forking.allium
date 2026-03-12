@@ -128,6 +128,11 @@ surface SessionForkMutationApi {
 
     @guarantee SuccessfulForkCreatesIndependentChildSession
         -- Child session is linked by :session/parent-id and can evolve independently.
+
+    @guarantee ForkPersistsChildLineageEagerly
+        -- On successful fork, the child session file is created immediately.
+        -- Child file header carries parent_session pointing to the parent session file path (when available).
+        -- Child file entries are branched from parent history up to and including the fork entry.
 }
 
 surface SessionLineageQueryApi {

@@ -106,6 +106,26 @@
         (is (nil? (:startup-bootstrap-completed-at sd)))
         (is (= [] (:startup-message-ids sd)))))))
 
+(deftest fork-session-persists-child-file-with-parent-lineage-test
+  (let [cwd        (str (System/getProperty "java.io.tmpdir") "/psi-fork-" (java.util.UUID/randomUUID))
+        _          (.mkdirs (java.io.File. cwd))
+        ctx        (session/create-context {:cwd cwd})
+        _          (session/new-session-in! ctx)
+        parent-sd  (session/get-session-data-in ctx)
+        parent-file (:session-file parent-sd)
+        entry-id   (:id (session/journal-append-in! ctx (persist/message-entry {:role "user"
+                                                                                 :content [{:type :text :text "branch-here"}]
+                                                                                 :timestamp (java.time.Instant/now)})))]
+    (session/fork-session-in! ctx entry-id)
+    (let [child-sd     (session/get-session-data-in ctx)
+          child-file   (:session-file child-sd)
+          loaded-child (persist/load-session-file child-file)]
+      (is (string? child-file))
+      (is (.exists (java.io.File. child-file)))
+      (is (= parent-file (get-in loaded-child [:header :parent-session])))
+      (is (= (:session-id child-sd) (get-in loaded-child [:header :id])))
+      (is (= (count @(:journal-atom ctx)) (count (:entries loaded-child)))))))
+
 (deftest resume-session-model-fallback-test
   (testing "resume-session-in! keeps current model when resumed journal has no model entry"
     (let [initial-model {:provider "openai" :id "gpt-5.3-codex" :reasoning true}
