@@ -4,6 +4,27 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-12 - nREPL EQL discovery should be verified with a real server lifecycle test
+
+### λ Runtime endpoint attrs need one live start/stop test in addition to atom-injection tests
+
+Unit tests that inject `:nrepl-runtime-atom` values prove resolver mapping, but they do
+not prove the runtime wiring path from `start-nrepl!`/`stop-nrepl!` into EQL. Adding a
+single integration test that starts nREPL on port `0`, queries `:psi.runtime/nrepl-*`,
+and then verifies nil-after-stop catches lifecycle drift early.
+
+### λ Test aliases must include runtime-only deps when integration tests resolve optional namespaces
+
+`start-nrepl!` uses `requiring-resolve` for `nrepl.server/start-server`. Focused test runs
+can fail with missing classpath deps even when runtime aliases work. Adding `nrepl/nrepl`
+to the `:test` alias keeps integration tests self-contained and repeatable.
+
+### λ File-side compatibility artifacts are secondary to canonical runtime attrs in lifecycle assertions
+
+The `.nrepl-port` file remains useful for editor compatibility, but the contract under test
+for discovery should center on canonical EQL attrs (`:psi.runtime/nrepl-host`,
+`:psi.runtime/nrepl-port`, `:psi.runtime/nrepl-endpoint`) across running and stopped states.
+
 ## 2026-03-11 - nREPL runtime discovery should be modeled as session-root attrs, not port-file parsing
 
 ### λ Canonical nREPL endpoint discovery belongs in EQL root attrs for cross-client parity
