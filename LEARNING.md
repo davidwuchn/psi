@@ -4,6 +4,19 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-12 - `/resume` rehydrate should mirror `/new` local UX repair before replay
+
+### λ Session-switch reset gaps are the same class as new-session reset gaps
+
+`/resume` success flow also clears transcript state before `get_messages` replay. Without immediate
+local reseed/focus, users can briefly lose the compose/footer affordances just like `/new`.
+Applying the same repair pattern (seed `connecting...` + focus input area) closes this transient UI hole.
+
+### λ Rehydrate affordances should be policy-shared across reset entry points
+
+`/new` and `/resume` are different intents but share the same reset→rehydrate shape. Treating
+post-reset affordance repair as a shared policy reduces drift and keeps UX parity across commands.
+
 ## 2026-03-12 - `/new` reset UX needs local placeholder rehydration before backend replay
 
 ### λ `/new` creates a visible rehydrate gap unless footer/input are reseeded immediately
