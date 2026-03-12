@@ -126,9 +126,11 @@ Ordered steps toward PSI COMPLETE.
   - `:psi.runtime/nrepl-endpoint`
 - `main.clj` now stores effective nREPL runtime info in a shared runtime atom and wires it into session context creation for console/TUI/RPC modes.
 - Graph discovery contract verified in resolver tests (`:psi.graph/root-queryable-attrs`, `:psi.graph/edges`).
+- Live lifecycle verification added (commit `1a1c044`): `main_test` now starts/stops a real nREPL server and asserts EQL reflects effective bound port while running and nil attrs after stop.
 - Verification:
-  - `clojure -M:test --focus psi.agent-session.resolvers-test`
-  - `clojure -M:test --focus psi.agent-session.main-test`
+  - `clojure -M:test --focus psi.agent-session.resolvers-test/nrepl-runtime-resolver-test`
+  - `clojure -M:test --focus psi.agent-session.main-test/bootstrap-runtime-session-wires-nrepl-runtime-atom-test`
+  - `clojure -M:test --focus psi.agent-session.main-test/nrepl-runtime-eql-reflects-live-start-stop-test`
 
 ### Step 12 — Emacs UI ◇ in progress
 - Spec: `spec/emacs-frontend.allium`

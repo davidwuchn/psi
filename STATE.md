@@ -101,6 +101,7 @@ Current truth about the Psi system.
 - ✓ Workflow mutation background-job tracking now supports both creation and continuation paths (commit `9f55a9f`): core tracking accepts `psi.extension.workflow/send-event` when `track-background-job?` is true, and mutations surface `:psi.extension.background-job/id` for immediate cross-surface job inspection/cancellation workflows.
 - ✓ Background-job EQL introspection attrs are now first-class and graph-discoverable (commit `8185869`): session root resolves `:psi.agent-session/background-job-count`, `:psi.agent-session/background-job-statuses`, and `:psi.agent-session/background-jobs` with nested `:psi.background-job/*` entities; resolver tests assert root-queryable + graph-edge discoverability.
 - ✓ nREPL runtime endpoint discovery is now first-class on the session graph (commit `e3280fb`): `:psi.runtime/nrepl-host`, `:psi.runtime/nrepl-port`, and `:psi.runtime/nrepl-endpoint` resolve from session root, are discoverable via `:psi.graph/root-queryable-attrs`/`:psi.graph/edges`, and return nil when nREPL is disabled.
+- ✓ nREPL runtime lifecycle is now integration-tested against a real server start/stop (commit `1a1c044`): `nrepl-runtime-eql-reflects-live-start-stop-test` starts nREPL on a random bound port, verifies EQL attrs reflect the effective runtime endpoint, then stops nREPL and verifies attrs return nil.
 
 ## Components
 
