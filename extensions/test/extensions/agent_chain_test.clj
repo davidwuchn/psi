@@ -57,7 +57,7 @@
             (sut/init api)
             (is (contains? (:workflow-types @state) :agent-chain-run))
             (is (contains? (:tools @state) "agent-chain"))
-            (is (= #{"chain" "chain-reload"}
+            (is (= #{"chain" "chain-reload" "chain-rm"}
                    (set (keys (:commands @state)))))
             (is (= 1 (count (get-in @state [:handlers "session_switch"]))))
             (is (contains? (:widgets @state) "agent-chain"))
@@ -202,6 +202,50 @@
                     contrib     (get-in @state [:prompt-contributions contrib-key])]
                 (is (str/includes? (:content contrib) "new-chain"))
                 (is (str/includes? (:content contrib) "new stuff"))))))
+        (finally
+          (.delete tmp))))))
+
+(deftest agent-chain-remove-test
+  (testing "agent-chain action=remove removes existing run"
+    (let [tmp (temp-dir)]
+      (try
+        (write-chain-config!
+         tmp
+         [{:name "greet"
+           :description "Greet"
+           :steps [{:agent "planner" :prompt "$INPUT"}]}])
+        (with-user-dir (.getAbsolutePath tmp)
+          (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                                     {:path "/test/agent-chain.clj"})]
+            (sut/init api)
+            (let [execute (get-in @state [:tools "agent-chain" :execute])
+                  _       (execute {"action" "run" "chain" "greet" "task" "hello"})
+                  result  (execute {"action" "remove" "id" "run-1"})]
+              (is (false? (:is-error result)))
+              (is (str/includes? (:content result) "Removed chain run run-1"))
+              (is (nil? (get-in @state [:workflows "run-1"]))))))
+        (finally
+          (.delete tmp))))))
+
+(deftest chain-rm-command-test
+  (testing "/chain-rm removes a run by id"
+    (let [tmp (temp-dir)]
+      (try
+        (write-chain-config!
+         tmp
+         [{:name "greet"
+           :description "Greet"
+           :steps [{:agent "planner" :prompt "$INPUT"}]}])
+        (with-user-dir (.getAbsolutePath tmp)
+          (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                                     {:path "/test/agent-chain.clj"})]
+            (sut/init api)
+            (let [execute    (get-in @state [:tools "agent-chain" :execute])
+                  _          (execute {"action" "run" "chain" "greet" "task" "hello"})
+                  rm-handler (get-in @state [:commands "chain-rm" :handler])
+                  output     (with-out-str (rm-handler "run-1"))]
+              (is (str/includes? output "Removed chain run run-1"))
+              (is (nil? (get-in @state [:workflows "run-1"]))))))
         (finally
           (.delete tmp))))))
 

@@ -231,14 +231,18 @@
          (str " — " (task-preview last-work 70)))))
 
 (defn- widget-lines []
-  (let [runs (->> (tracked-runs)
-                  (sort-by :updated-at >)
-                  (take max-widget-runs))]
-    (vec (concat
-          ["⛓ Agent Chain"]
-          (if (seq runs)
-            (map widget-run-line runs)
-            ["(no recent runs)"])))))
+  (let [runs       (->> (tracked-runs)
+                        (sort-by :updated-at >)
+                        (take max-widget-runs))
+        chain-names (->> @(:chains @state)
+                         (map :name)
+                         (filter seq))
+        header     (str "⛓ Agent Chain"
+                        (when (seq chain-names)
+                          (str " · " (str/join " · " chain-names))))]
+    (vec (if (seq runs)
+           (cons header (map widget-run-line runs))
+           [header]))))
 
 (defn- prompt-contribution-content []
   (let [cs @(:chains @state)]
@@ -378,6 +382,35 @@
       (mutate! 'psi.extension.workflow/remove
                {:id (:psi.extension.workflow/id wf)}))
     (count runs)))
+
+(defn- remove-chain-run!
+  [run-id]
+  (let [sid (str/trim (str (or run-id "")))
+        wf  (workflow-by-id sid)]
+    (cond
+      (str/blank? sid)
+      {:ok false
+       :error "run id is required"}
+
+      (nil? wf)
+      (do
+        (when-let [runs-a (:runs @state)]
+          (swap! runs-a dissoc sid))
+        (refresh-widget!)
+        {:ok false
+         :error (str "No chain run \"" sid "\" found.")})
+
+      :else
+      (let [r (mutate! 'psi.extension.workflow/remove {:id sid})]
+        (if (:psi.extension.workflow/removed? r)
+          (do
+            (when-let [runs-a (:runs @state)]
+              (swap! runs-a dissoc sid))
+            (refresh-widget!)
+            {:ok true})
+          {:ok false
+           :error (or (:psi.extension.workflow/error r)
+                      (str "Failed to remove chain run \"" sid "\"."))})))))
 
 ;;; Sub-agent execution (in-process)
 
@@ -852,7 +885,7 @@
                 {:content  msg
                  :is-error true})
               {:content  (str "Chain run started: " run-id
-                               "\nMonitor with agent-chain action=\"list\" (or /chain).")
+                              "\nMonitor with agent-chain action=\"list\" (or /chain).")
                :is-error false})))))))
 
 (defn- action-list
@@ -931,7 +964,13 @@
        "run"    (action-run args-map opts)
        "list"   (action-list)
        "reload" (action-reload)
-       {:content  (str "Unknown action: \"" action "\". Valid actions: run, list, reload.")
+       "remove" (let [result (remove-chain-run! (get args-map "id"))]
+                  (if (:ok result)
+                    {:content  (str "Removed chain run " (str/trim (str (get args-map "id"))) ".")
+                     :is-error false}
+                    {:content  (:error result)
+                     :is-error true}))
+       {:content  (str "Unknown action: \"" action "\". Valid actions: run, list, reload, remove.")
         :is-error true}))))
 
 ;;; Extension init
@@ -975,15 +1014,18 @@
       :description (str "Run and manage agent chain pipelines. Do not poll unless explicitly asked to. "
                         "action=\"run\": start a named chain (requires chain, task). "
                         "action=\"list\": show available chains, agents, and recent runs. "
-                        "action=\"reload\": reload chain definitions and agent files from disk.")
+                        "action=\"reload\": reload chain definitions and agent files from disk. "
+                        "action=\"remove\": remove a chain run by id.")
       :parameters  (pr-str {:type       "object"
                             :properties {"action" {:type        "string"
-                                                   :enum        ["run" "list" "reload"]
-                                                   :description "Action to perform: run, list, or reload"}
+                                                   :enum        ["run" "list" "reload" "remove"]
+                                                   :description "Action to perform: run, list, reload, or remove"}
                                          "chain"  {:type        "string"
                                                    :description "Chain name to run (required for action=\"run\")"}
                                          "task"   {:type        "string"
-                                                   :description "Task/prompt for the chain (required for action=\"run\")"}}
+                                                   :description "Task/prompt for the chain (required for action=\"run\")"}
+                                         "id"     {:type        "string"
+                                                   :description "Run id to remove (required for action=\"remove\")"}}
                             :required   ["action"]})
       :execute     execute-agent-chain})
 
@@ -999,6 +1041,16 @@
                               (fn [_args]
                                 (let [result (action-reload)]
                                   (println (str "  ✓ " (:content result)))))})
+
+    ((:register-command api) "chain-rm"
+                             {:description "Remove a chain run: /chain-rm <run-id>"
+                              :handler
+                              (fn [args]
+                                (let [run-id (str/trim (or args ""))
+                                      result (remove-chain-run! run-id)]
+                                  (if (:ok result)
+                                    (println (str "Removed chain run " run-id "."))
+                                    (println (:error result)))))})
 
     ((:on api) "session_switch"
                (fn [_ev]
