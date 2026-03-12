@@ -47,6 +47,18 @@ window-point target."
               (when (window-live-p win)
                 (set-window-point win pos)))))))))
 
+(defun psi-emacs--show-connecting-affordances (&optional buffer window)
+  "Ensure transient connecting footer and input focus are visible.
+
+Used by startup and session rehydrate flows (/new, /resume) so users keep
+input/footer affordances while waiting for canonical backend updates."
+  (let ((buffer* (or buffer (current-buffer))))
+    (when (buffer-live-p buffer*)
+      (with-current-buffer buffer*
+        (when psi-emacs--state
+          (psi-emacs--seed-connecting-footer)
+          (psi-emacs--focus-input-area buffer* window))))))
+
 (defun psi-emacs--normalize-directory (dir)
   "Return DIR as absolute directory path, or nil when unavailable."
   (when (and (stringp dir)
@@ -145,8 +157,7 @@ frontend state boundaries."
             (psi-emacs--focus-input-area)
             (when (and (null (psi-emacs-state-projection-footer state))
                        (null (psi-emacs-state-projection-range state)))
-              (psi-emacs--seed-connecting-footer)
-              (psi-emacs--focus-input-area))
+              (psi-emacs--show-connecting-affordances buffer))
             ;; Recover from stale/disconnected buffer state (e.g. after code
             ;; reload or failed startup handshake) by restarting transport.
             (unless client-live-and-connected?
@@ -160,9 +171,7 @@ frontend state boundaries."
         (psi-emacs--ensure-startup-banner)
         (setf (psi-emacs-state-draft-anchor psi-emacs--state)
               (copy-marker (point-max) nil))
-        (psi-emacs--focus-input-area)
-        (psi-emacs--seed-connecting-footer)
-        (psi-emacs--focus-input-area)
+        (psi-emacs--show-connecting-affordances buffer)
         (puthash buffer psi-emacs--state psi-emacs--state-by-buffer)
         (psi-emacs--refresh-header-line)
         (psi-emacs--start-rpc-client buffer)))

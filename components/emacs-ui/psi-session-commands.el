@@ -303,10 +303,8 @@ Returns selected MODEL-ENTRY map or nil when cancelled/no selection."
         (psi-emacs--reset-transcript-state t)
         ;; Keep bottom-of-buffer affordances visible while backend session
         ;; rehydrates and before first canonical footer/session update arrives.
-        (when (fboundp 'psi-emacs--seed-connecting-footer)
-          (psi-emacs--seed-connecting-footer))
-        (when (fboundp 'psi-emacs--focus-input-area)
-          (psi-emacs--focus-input-area (current-buffer)))
+        (when (fboundp 'psi-emacs--show-connecting-affordances)
+          (psi-emacs--show-connecting-affordances (current-buffer)))
         (psi-emacs--set-run-state state 'streaming)
         (psi-emacs--request-get-messages-for-switch state))
     (psi-emacs--append-assistant-message
@@ -660,10 +658,8 @@ Failure path appends deterministic assistant-visible feedback, sets
           (psi-emacs--reset-transcript-state)
           ;; Keep bottom-of-buffer affordances visible while backend session
           ;; rehydrates and before first canonical footer/session update arrives.
-          (when (fboundp 'psi-emacs--seed-connecting-footer)
-            (psi-emacs--seed-connecting-footer))
-          (when (fboundp 'psi-emacs--focus-input-area)
-            (psi-emacs--focus-input-area (current-buffer)))
+          (when (fboundp 'psi-emacs--show-connecting-affordances)
+            (psi-emacs--show-connecting-affordances (current-buffer)))
           (psi-emacs--set-run-state state 'streaming)
           (psi-emacs--request-get-messages-for-switch state))
       (let ((message (psi-emacs--switch-session-error-message frame)))
