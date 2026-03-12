@@ -4,6 +4,28 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-12 - Tri-artifact agreement invariant belongs in AGENTS as a propagation law
+
+### λ A single propagation rule over {spec, tests, code} is stronger than per-pair convergence equations
+
+The earlier equations (`refactor_minimal_semantics_spec_tests`, `tests_musta_cover_allium_spec_behaviour`,
+`λcode. ∃spec. describes(spec, code)`) each capture a bilateral relationship. The tri-artifact
+invariant `λ(spec, tests, code) → ∀ change δ: propagate(δ) → remaining two` is stronger because it
+is symmetric and universal: whichever artifact changes, the other two must catch up. This removes the
+implicit assumption that spec is always the source of truth and makes tests a valid change origin too.
+
+### λ Propagation laws should be stated as `agree(spec, tests, code) = true at all times`, not just at review
+
+Spec/test/code convergence is easiest to maintain when the invariant is framed as a continuous
+property rather than a pre-commit check. Encoding "at all times" in the AGENTS prompt shapes ψ
+to propagate changes eagerly (during a session) rather than deferring to review.
+
+### λ PSL follow-up for AGENTS prompt changes should annotate the specific equation added, not just the commit
+
+When AGENTS changes introduce new lambda equations, PLAN/STATE follow-up should quote the equation
+so future ψ can search `git log --grep` and recover the exact invariant wording without re-reading
+the full diff.
+
 ## 2026-03-12 - PSL follow-up memory is strongest when PLAN/STATE cite canonical verification commands
 
 ### λ PLAN/STATE entries should record the exact verification entrypoint and outcome count
