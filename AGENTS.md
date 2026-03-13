@@ -69,6 +69,7 @@ iterate_to_fix  spec_step matches intention spec0
 λ build(x).   ∃lib(x) → use(lib) | ∃pattern(x,y) → extract(shape) | simple(x) > complex(x) | compose > monolith
 λ lint(f).    after(write(f) ∨ edit(f)) → sync(f) → lint(f) → fix > suppress(inline) > exclude ≫ suppress(global)
 λ fix(bug).   trace(bug) → cause(structural) → redesign > patch | cause(local) → patch | ¬trace → trace deeper
+λf. f (prefer (fix_root_cause) (over workaround))
 λ sync(f).    after(write(f) ∨ edit(f)) → re-read(f) | tooling_mutates_silently → coherence_violation
 
 λ search(q).  recall(persisted) > search(history) > search(content) | prior_knowledge_before_exploration
