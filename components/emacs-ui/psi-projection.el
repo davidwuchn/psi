@@ -47,13 +47,27 @@
     (when (and (stringp command)
                (not (string-empty-p command))
                psi-emacs--state)
-      (if (fboundp 'psi-emacs--dispatch-idle-compose-message)
-          (psi-emacs--dispatch-idle-compose-message command)
-        (when (functionp psi-emacs--send-request-function)
-          (funcall psi-emacs--send-request-function
-                   psi-emacs--state
-                   "prompt"
-                   `((:message . ,command))))))))
+      (let* ((trimmed (string-trim command))
+             (slash-candidate? (and (not (string-empty-p trimmed))
+                                    (string-prefix-p "/" trimmed)))
+             (prompt-fallback
+              (lambda ()
+                (when (functionp psi-emacs--send-request-function)
+                  (funcall psi-emacs--send-request-function
+                           psi-emacs--state
+                           "prompt"
+                           `((:message . ,command)))))))
+        (cond
+         ((fboundp 'psi-emacs--dispatch-idle-compose-message)
+          (psi-emacs--dispatch-idle-compose-message command))
+         ((and slash-candidate?
+               (functionp psi-emacs--idle-slash-command-handler-function))
+          (unless (funcall psi-emacs--idle-slash-command-handler-function
+                           psi-emacs--state
+                           command)
+            (funcall prompt-fallback)))
+         (t
+          (funcall prompt-fallback)))))))
 
 (defun psi-emacs--projection-seq (value)
   "Normalize VALUE into a proper list sequence."

@@ -930,6 +930,41 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
+(ert-deftest psi-tree-dispatch-uses-default-handler-when-custom-slash-handler-returns-nil ()
+  "`/tree` remains locally handled even when a custom slash handler declines it.
+
+This prevents fallback to backend `prompt` (which would surface TUI-only `/tree`
+text) in long-lived Emacs sessions with overridden slash handlers."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (let ((slash-calls nil)
+              (rpc-calls nil))
+          (setf (psi-emacs-state-host-snapshot psi-emacs--state)
+                '((:active-session-id . "s1")
+                  (:sessions . (((:id . "s1") (:name . "main")   (:is-active . t)   (:is-streaming . nil) (:parent-session-id . nil))
+                                ((:id . "s2") (:name . "fork-1") (:is-active . nil) (:is-streaming . nil) (:parent-session-id . nil))))))
+          (cl-letf (((symbol-value 'psi-emacs--idle-slash-command-handler-function)
+                     (lambda (_state message)
+                       (push message slash-calls)
+                       nil))
+                    ((symbol-value 'psi-emacs--send-request-function)
+                     (lambda (_state op params &optional _callback)
+                       (push (list op params) rpc-calls)
+                       t)))
+            (let ((result (psi-emacs--dispatch-idle-compose-message "/tree s2")))
+              (should (eq t (plist-get result :dispatched?)))
+              (should (eq t (plist-get result :local-only?)))))
+          (setq slash-calls (nreverse slash-calls))
+          (setq rpc-calls (nreverse rpc-calls))
+          (should (equal '("/tree s2") slash-calls))
+          (should (= 1 (length rpc-calls)))
+          (should (equal "switch_session" (caar rpc-calls)))
+          (should (equal "s2" (alist-get :session-id (cadar rpc-calls) nil nil #'equal))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
 (ert-deftest psi-idle-unknown-slash-falls-through-to-prompt ()
   (with-temp-buffer
     (psi-emacs-mode)

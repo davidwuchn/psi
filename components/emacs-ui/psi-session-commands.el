@@ -844,12 +844,24 @@ to normal prompt dispatch.
 Returns plist:
   :dispatched?  non-nil when consumed locally or dispatched remotely
   :local-only?  non-nil when consumed by local slash interception."
-  (let ((handled (and psi-emacs--state
-                      (psi-emacs--slash-command-candidate-p message)
-                      (funcall psi-emacs--idle-slash-command-handler-function
-                               psi-emacs--state
-                               message))))
-    (if handled
+  (let* ((slash-candidate? (and psi-emacs--state
+                                (psi-emacs--slash-command-candidate-p message)))
+         (trimmed (string-trim (or message "")))
+         (tree-candidate? (and slash-candidate?
+                               (or (equal trimmed "/tree")
+                                   (string-prefix-p "/tree " trimmed))))
+         (handler psi-emacs--idle-slash-command-handler-function)
+         (default-handler (and (fboundp 'psi-emacs--default-handle-idle-slash-command)
+                               #'psi-emacs--default-handle-idle-slash-command))
+         (handled (and slash-candidate?
+                       (functionp handler)
+                       (funcall handler psi-emacs--state message)))
+         (handled* (or handled
+                       (and tree-candidate?
+                            (not (eq handler default-handler))
+                            (functionp default-handler)
+                            (funcall default-handler psi-emacs--state message)))))
+    (if handled*
         (list :dispatched? t :local-only? t)
       (let ((sent? (psi-emacs--dispatch-request "prompt" `((:message . ,message)))))
         (when sent?
