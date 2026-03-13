@@ -6,6 +6,22 @@ Ordered steps toward PSI COMPLETE.
 
 ## Done
 
+### Step 11h — TUI tmux integration harness baseline ✓ complete
+- Added Allium contract: `spec/tui-tmux-integration-harness.allium`.
+  - Scope includes tmux harness lifecycle and one baseline end-to-end scenario.
+  - Scenario contract: launch TUI → wait ready → `/help` marker assertion → `/quit` clean-exit assertion.
+- Implemented reusable test harness helpers:
+  - `components/tui/test/psi/tui/test_harness/tmux.clj`
+  - Shared primitives: tmux preflight, detached session start, send-line, pane capture/sanitize, wait/assert helpers, cleanup.
+- Added baseline integration test:
+  - `components/tui/test/psi/tui/tmux_integration_harness_test.clj` (`^:integration`)
+  - Uses detached tmux with unique session names and always-on cleanup.
+- Baseline assertions stabilized to runtime-observable markers:
+  - readiness marker: `刀:` / `Type a message`
+  - help marker: `(anything else is sent to the agent)`
+  - quit marker: pane process transitions away from `java`.
+- Implementation commit: `1613f5f`
+
 ### Step 11g — Subagent widget UI spec distillation + elicitation ✓ complete
 - Added dedicated UI contract: `spec/subagent-widget-ui.allium` (commit `480e2f6`).
 - Distilled widget/result-message behavior from implementation + tests, then refined by elicitation decisions:
