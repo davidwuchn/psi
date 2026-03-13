@@ -13,6 +13,11 @@ Ordered steps toward PSI COMPLETE.
   - `spec_has_no_isolated_allium_file`
 - Captured in commit `8bd0d58` to anchor future spec-shape decisions in prompt memory.
 
+### Step 11f — PSL follow-up prompt/result refinement ✓ complete
+- `extensions/src/extensions/plan_state_learning.clj` PSL prompt now includes an explicit instruction to avoid compliance commentary in final responses.
+- PSL workflow status messaging now only emits an extension transcript message on failure (success-path status message removed to reduce transcript noise).
+- Captured in commit `0fcdf3b`.
+
 ### Step 11c — Session spec consolidation + naming normalization ✓ complete
 - Added core session domain spec: `spec/session-core.allium` (Allium 2)
 - Added session forking API/contract spec: `spec/session-forking.allium` (Allium 2)
