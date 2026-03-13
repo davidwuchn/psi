@@ -94,7 +94,8 @@ Used to detect stalled streaming runs and transition to deterministic recovery."
   session-effective-reasoning-effort
   header-model-label
   extension-command-names
-  transcript-hydrated?)
+  transcript-hydrated?
+  host-snapshot)
 
 (defvar psi-emacs--spawn-process-function #'psi-emacs--default-spawn-process
   "Function used to spawn a psi subprocess.

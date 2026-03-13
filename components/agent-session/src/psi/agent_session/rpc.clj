@@ -626,6 +626,7 @@
   #{"session/updated"
     "session/resumed"
     "session/rehydrated"
+    "host/updated"
     "assistant/delta"
     "assistant/thinking-delta"
     "assistant/message"
@@ -644,6 +645,7 @@
   {"session/updated" #{:session-id :phase :is-streaming :is-compacting :pending-message-count :retry-attempt :interrupt-pending}
    "session/resumed" #{:session-id :session-file :message-count}
    "session/rehydrated" #{:messages :tool-calls :tool-order}
+   "host/updated" #{:active-session-id :sessions}
    "assistant/delta" #{:text}
    "assistant/thinking-delta" #{:text}
    "assistant/message" #{:role :content}
@@ -731,6 +733,28 @@
      :model-reasoning             (boolean (:reasoning model))
      :thinking-level              (some-> thinking-level name)
      :effective-reasoning-effort  effective-effort}))
+
+(defn- host-updated-payload
+  "Build the `host/updated` event payload from the current host snapshot.
+
+   Each session slot includes :id :name :is-streaming :is-active :parent-session-id.
+   Sessions are ordered by updated-at ascending (oldest first → stable tree order)."
+  [ctx]
+  (let [host       (session/get-session-host-in ctx)
+        active-id  (:active-session-id host)
+        sd         (session/get-session-data-in ctx)
+        current-id (:session-id sd)
+        slots      (->> (session/list-host-sessions-in ctx)
+                        (mapv (fn [m]
+                                {:id                (:session-id m)
+                                 :name              (:session-name m)
+                                 :is-streaming      (boolean
+                                                     (and (= (:session-id m) current-id)
+                                                          (:is-streaming sd)))
+                                 :is-active         (= (:session-id m) active-id)
+                                 :parent-session-id (:parent-session-id m)})))]
+    {:active-session-id active-id
+     :sessions          slots}))
 
 (def ^:private footer-query
   [:psi.agent-session/cwd
@@ -1502,6 +1526,9 @@
            (emit-event! emit-frame! state {:event "footer/updated"
                                            :id (:id request)
                                            :data (footer-updated-payload ctx)})
+           (emit-event! emit-frame! state {:event "host/updated"
+                                           :id (:id request)
+                                           :data (host-updated-payload ctx)})
            (response-frame (:id request) op true {:session-id (:session-id sd)
                                                   :session-file (:session-file sd)}))
 
@@ -1530,6 +1557,9 @@
                (emit-event! emit-frame! state {:event "footer/updated"
                                                :id (:id request)
                                                :data (footer-updated-payload ctx)})
+               (emit-event! emit-frame! state {:event "host/updated"
+                                               :id (:id request)
+                                               :data (host-updated-payload ctx)})
                (response-frame (:id request) op true {:session-id (:session-id sd)
                                                       :session-file (:session-file sd)})))
            (let [session-path (req-arg! request params :session-path #(and (string? %) (not (str/blank? %))) "non-empty path string")]
@@ -1554,6 +1584,9 @@
                (emit-event! emit-frame! state {:event "footer/updated"
                                                :id (:id request)
                                                :data (footer-updated-payload ctx)})
+               (emit-event! emit-frame! state {:event "host/updated"
+                                               :id (:id request)
+                                               :data (host-updated-payload ctx)})
                (response-frame (:id request) op true {:session-id (:session-id sd)
                                                       :session-file (:session-file sd)}))))
 
@@ -1655,7 +1688,7 @@
                                        state
                                        {}
                                        (or (ext-ui/snapshot (:ui-state-atom ctx)) {})))
-             ;; Emit current session/footer snapshot immediately on subscription
+             ;; Emit current session/footer/host snapshots immediately on subscription
              ;; so frontends render baseline status without waiting for prompt activity.
            (emit-event! emit-frame! state {:event "session/updated"
                                            :id (:id request)
@@ -1663,6 +1696,9 @@
            (emit-event! emit-frame! state {:event "footer/updated"
                                            :id (:id request)
                                            :data (footer-updated-payload ctx)})
+           (emit-event! emit-frame! state {:event "host/updated"
+                                           :id (:id request)
+                                           :data (host-updated-payload ctx)})
            (response-frame (:id request) op true {:subscribed (->> (:subscribed-topics @state) sort vec)}))
 
          "unsubscribe"

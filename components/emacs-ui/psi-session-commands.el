@@ -270,6 +270,7 @@ Returns selected MODEL-ENTRY map or nil when cancelled/no selection."
    (list "Supported slash commands:"
          "/quit, /exit  Exit this psi buffer"
          "/resume [path] Resume a prior session (selector when path omitted)"
+         "/tree         Switch between live sessions (completing-read picker)"
          "/new          Start a fresh backend session"
          "/status       Show frontend diagnostics"
          "/worktree     Show git worktree context"
@@ -706,6 +707,70 @@ Failure path appends deterministic assistant-visible feedback, sets
         (psi-emacs--handle-idle-resume-explicit-path state session-path)
       (psi-emacs--handle-idle-resume-no-arg state))))
 
+;;; ── /tree session picker ─────────────────────────────────────────────────
+
+(defun psi-emacs--tree-session-candidates (slots active-id)
+  "Build completing-read candidates from host session SLOTS with ACTIVE-ID.
+
+Returns an alist of (label . session-id)."
+  (mapcar
+   (lambda (slot)
+     (let* ((id          (psi-emacs--event-data-get slot '(:id id)))
+            (is-active   (psi-emacs--event-data-get slot '(:is-active is-active :isActive isActive)))
+            (is-streaming (psi-emacs--event-data-get slot '(:is-streaming is-streaming :isStreaming isStreaming)))
+            (parent-id   (psi-emacs--event-data-get slot '(:parent-session-id parent-session-id :parentSessionId parentSessionId)))
+            (name        (if (and (listp slot)
+                                  (fboundp 'psi-emacs--session-display-name))
+                             (psi-emacs--session-display-name slot)
+                           (or id "(unknown)")))
+            (indent      (if parent-id "  " ""))
+            (suffix      (concat
+                          (when is-streaming " [streaming]")
+                          (when is-active " ← active")))
+            (label       (concat indent name suffix)))
+       (cons label id)))
+   slots))
+
+(defun psi-emacs--request-switch-session-by-id (state session-id)
+  "Dispatch `switch_session` for SESSION-ID (in-process host session) from STATE."
+  (when (and state
+             (stringp session-id)
+             (not (string-empty-p session-id)))
+    (let ((buffer (current-buffer)))
+      (psi-emacs--dispatch-request
+       "switch_session"
+       `((:session-id . ,session-id))
+       (lambda (frame)
+         (when (buffer-live-p buffer)
+           (with-current-buffer buffer
+             (when (eq state psi-emacs--state)
+               (psi-emacs--handle-switch-session-response state session-id frame)))))))))
+
+(defun psi-emacs--handle-idle-tree-command (state)
+  "Handle `/tree` command: open completing-read session picker and switch."
+  (let* ((snapshot   (and state (psi-emacs-state-host-snapshot state)))
+         (active-id  (and snapshot
+                          (psi-emacs--event-data-get snapshot
+                                                     '(:active-session-id active-session-id))))
+         (slots      (and snapshot
+                          (append (psi-emacs--event-data-get snapshot '(:sessions sessions)) nil)))
+         (candidates (psi-emacs--tree-session-candidates slots active-id)))
+    (if (null candidates)
+        (psi-emacs--append-assistant-message "No live sessions available.")
+      (let* ((selected-label
+              (completing-read "Switch session: " candidates nil t nil nil
+                               ;; default: active session label
+                               (car (rassoc active-id candidates))))
+             (selected-id (cdr (assoc selected-label candidates))))
+        (cond
+         ((null selected-id)
+          nil)
+         ((equal selected-id active-id)
+          (psi-emacs--append-assistant-message
+           (format "Already on session: %s" selected-label)))
+         (t
+          (psi-emacs--request-switch-session-by-id state selected-id)))))))
+
 (defun psi-emacs--default-handle-idle-slash-command (state message)
   "Default idle slash handler.
 
@@ -719,6 +784,14 @@ normal prompt dispatch."
        t)
       ("/resume"
        (psi-emacs--handle-idle-resume-command state message)
+       t)
+      ("/tree"
+       (let* ((trimmed* (string-trim (or message "")))
+              (tail (string-trim (string-remove-prefix "/tree" trimmed*)))
+              (session-id (when (and (stringp tail) (not (string-empty-p tail))) tail)))
+         (if session-id
+             (psi-emacs--request-switch-session-by-id state session-id)
+           (psi-emacs--handle-idle-tree-command state)))
        t)
       ("/new"
        (psi-emacs--request-new-session state)

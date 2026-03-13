@@ -20,6 +20,7 @@
   '(("/quit" . "Exit this psi buffer")
     ("/exit" . "Exit this psi buffer")
     ("/resume" . "Resume a prior session")
+    ("/tree" . "Switch between live sessions")
     ("/new" . "Start a fresh backend session")
     ("/status" . "Show frontend diagnostics")
     ("/worktree" . "Show git worktree context")

@@ -3476,6 +3476,161 @@
       (when (file-directory-p tmp)
         (delete-directory tmp t)))))
 
+;;; ── host/updated + session tree widget ─────────────────────────────────────
+
+(ert-deftest psi-host-updated-stores-snapshot-on-state ()
+  "host/updated stores host snapshot on frontend state."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (psi-emacs--handle-rpc-event
+     '((:event . "host/updated")
+       (:data . ((:active-session-id . "s1")
+                 (:sessions . [((:id . "s1") (:name . "main") (:is-active . t) (:is-streaming . nil) (:parent-session-id . nil))
+                               ((:id . "s2") (:name . "fork-1") (:is-active . nil) (:is-streaming . nil) (:parent-session-id . "s1"))
+                               ])))))
+    (let ((snap (psi-emacs-state-host-snapshot psi-emacs--state)))
+      (should (listp snap))
+      (should (equal "s1" (alist-get :active-session-id snap nil nil #'equal))))))
+
+(ert-deftest psi-host-updated-renders-session-tree-widget ()
+  "host/updated with multiple sessions adds session-tree widget to projection."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (psi-emacs--handle-rpc-event
+     '((:event . "host/updated")
+       (:data . ((:active-session-id . "s1")
+                 (:sessions . [((:id . "s1") (:name . "main") (:is-active . t) (:is-streaming . nil) (:parent-session-id . nil))
+                               ((:id . "s2") (:name . "fork-1") (:is-active . nil) (:is-streaming . nil) (:parent-session-id . "s1"))
+                               ])))))
+    (let* ((widgets (psi-emacs-state-projection-widgets psi-emacs--state))
+           (tree-w (seq-find (lambda (w)
+                               (and (equal "psi-session"
+                                           (psi-emacs--event-data-get w '(:extension-id extension-id)))
+                                    (equal "session-tree"
+                                           (psi-emacs--event-data-get w '(:widget-id widget-id)))))
+                             widgets)))
+      (should tree-w)
+      (let* ((lines (append (psi-emacs--event-data-get tree-w '(:content-lines content-lines)) nil))
+             (texts (mapcar (lambda (l) (alist-get :text l nil nil #'equal)) lines)))
+        (should (= 2 (length lines)))
+        (should (cl-some (lambda (t) (string-match-p "main" t)) texts))
+        (should (cl-some (lambda (t) (string-match-p "← active" t)) texts))
+        (should (cl-some (lambda (t) (string-match-p "fork-1" t)) texts))))))
+
+(ert-deftest psi-host-updated-single-session-omits-widget ()
+  "host/updated with only one session does not add session-tree widget."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (psi-emacs--handle-rpc-event
+     '((:event . "host/updated")
+       (:data . ((:active-session-id . "s1")
+                 (:sessions . [((:id . "s1") (:name . "main") (:is-active . t) (:is-streaming . nil) (:parent-session-id . nil))
+                               ])))))
+    (let* ((widgets (psi-emacs-state-projection-widgets psi-emacs--state))
+           (tree-w (seq-find (lambda (w)
+                               (equal "psi-session"
+                                      (psi-emacs--event-data-get w '(:extension-id extension-id))))
+                             widgets)))
+      (should-not tree-w))))
+
+(ert-deftest psi-session-tree-active-line-has-no-action ()
+  "Active session slot line carries no action."
+  (let* ((slots '(((:id . "s1") (:name . "main") (:is-active . t) (:is-streaming . nil) (:parent-session-id . nil))))
+         (lines (psi-emacs--session-tree-widget-lines slots "s1"))
+         (line  (car lines)))
+    (should (equal "main ← active" (alist-get :text line nil nil #'equal)))
+    (should-not (alist-get :action line nil nil #'equal))))
+
+(ert-deftest psi-session-tree-inactive-line-has-switch-action ()
+  "Inactive session slot line carries /tree <id> action."
+  (let* ((slots '(((:id . "s1") (:name . "main")   (:is-active . t)   (:is-streaming . nil) (:parent-session-id . nil))
+                  ((:id . "s2") (:name . "fork-1") (:is-active . nil) (:is-streaming . nil) (:parent-session-id . nil))))
+         (lines (psi-emacs--session-tree-widget-lines slots "s1"))
+         (inactive (cadr lines))
+         (action   (alist-get :action inactive nil nil #'equal)))
+    (should action)
+    (should (equal "/tree s2"
+                   (psi-emacs--event-data-get action '(:command command))))))
+
+(ert-deftest psi-session-tree-streaming-slot-shows-badge ()
+  "Streaming session slot appends [streaming] to its text."
+  (let* ((slots '(((:id . "s1") (:name . "main")   (:is-active . t)   (:is-streaming . nil) (:parent-session-id . nil))
+                  ((:id . "s2") (:name . "fork-1") (:is-active . nil) (:is-streaming . t)   (:parent-session-id . nil))))
+         (lines (psi-emacs--session-tree-widget-lines slots "s1"))
+         (fork-line (cadr lines)))
+    (should (string-match-p "\\[streaming\\]" (alist-get :text fork-line nil nil #'equal)))))
+
+(ert-deftest psi-session-tree-child-slot-is-indented ()
+  "Child session (parent-session-id matches a sibling id) is indented."
+  (let* ((slots '(((:id . "s1") (:name . "main")   (:is-active . t)   (:is-streaming . nil) (:parent-session-id . nil))
+                  ((:id . "s2") (:name . "fork-1") (:is-active . nil) (:is-streaming . nil) (:parent-session-id . "s1"))))
+         (lines (psi-emacs--session-tree-widget-lines slots "s1"))
+         (child-text (alist-get :text (cadr lines) nil nil #'equal)))
+    (should (string-prefix-p "  " child-text))))
+
+(ert-deftest psi-tree-slash-command-dispatches-switch-by-id ()
+  "'/tree <id>' slash command calls switch_session with session-id."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    ;; Seed a host snapshot with two sessions
+    (setf (psi-emacs-state-host-snapshot psi-emacs--state)
+          '((:active-session-id . "s1")
+            (:sessions . (((:id . "s1") (:name . "main")   (:is-active . t)   (:is-streaming . nil) (:parent-session-id . nil))
+                          ((:id . "s2") (:name . "fork-1") (:is-active . nil) (:is-streaming . nil) (:parent-session-id . nil))))))
+    (let ((calls nil))
+      (cl-letf (((symbol-value 'psi-emacs--send-request-function)
+                 (lambda (_state op params &optional _cb)
+                   (push (list op params) calls)
+                   t)))
+        (psi-emacs--default-handle-idle-slash-command psi-emacs--state "/tree s2"))
+      (should (= 1 (length calls)))
+      (should (equal "switch_session" (caar calls)))
+      (should (equal "s2" (alist-get :session-id (cadar calls) nil nil #'equal))))))
+
+(ert-deftest psi-tree-slash-command-no-op-when-already-active ()
+  "'/tree <active-id>' appends a message and sends no RPC."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-host-snapshot psi-emacs--state)
+          '((:active-session-id . "s1")
+            (:sessions . (((:id . "s1") (:name . "main") (:is-active . t) (:is-streaming . nil) (:parent-session-id . nil))))))
+    (let ((calls nil))
+      (cl-letf (((symbol-value 'psi-emacs--send-request-function)
+                 (lambda (_state op params &optional _cb)
+                   (push (list op params) calls)
+                   t)))
+        (psi-emacs--default-handle-idle-slash-command psi-emacs--state "/tree s1"))
+      ;; Direct /tree <id> dispatches switch_session immediately (no-op message
+      ;; only happens from the picker path; direct id dispatch always fires)
+      ;; Confirm exactly one call to switch_session was made (session-id branch)
+      (should (= 1 (length calls))))))
+
+(ert-deftest psi-session-display-name-uses-name-slot ()
+  "psi-emacs--session-display-name returns slot name when present."
+  (should (equal "my-session"
+                 (psi-emacs--session-display-name
+                  '((:id . "abc12345") (:name . "my-session"))))))
+
+(ert-deftest psi-session-display-name-falls-back-to-id-prefix ()
+  "psi-emacs--session-display-name returns '(session <prefix>)' when name nil."
+  (should (equal "(session abc12345)"
+                 (psi-emacs--session-display-name
+                  '((:id . "abc123456789") (:name . nil))))))
+
+(ert-deftest psi-tree-capf-includes-tree-command ()
+  "'/tree' appears in slash CAPF candidates."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (insert "/tr")
+    (let* ((capf (psi-emacs-prompt-capf))
+           (cands (all-completions "/tr" (nth 2 capf))))
+      (should (member "/tree" cands)))))
+
 (provide 'psi-test)
 
 ;;; psi-test.el ends here

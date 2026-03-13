@@ -111,6 +111,75 @@ When MODEL-REASONING is non-nil, append an explicit thinking/effort suffix."
           (t                                    'idle))))
       (psi-emacs--refresh-header-line))))
 
+(defun psi-emacs--session-display-name (slot)
+  "Return display name for session SLOT map.
+
+Uses :name if non-empty, else falls back to \"(session <8-char id prefix>)\"."
+  (let ((name (psi-emacs--event-data-get slot '(:name name))))
+    (if (and (stringp name) (not (string-empty-p (string-trim name))))
+        (string-trim name)
+      (let ((id (or (psi-emacs--event-data-get slot '(:id id)) "")))
+        (format "(session %s)" (substring id 0 (min 8 (length id))))))))
+
+(defun psi-emacs--session-tree-widget-lines (slots active-id)
+  "Build structured widget content-lines for SLOTS with ACTIVE-ID marked.
+
+Returns a list of line maps with :text and optionally :action.
+Child sessions (non-nil parent-session-id that matches a slot) are indented."
+  (let* ((slot-ids (mapcar (lambda (s)
+                             (psi-emacs--event-data-get s '(:id id)))
+                           slots))
+         (slot-id-set (and (listp slot-ids)
+                           (make-hash-table :test 'equal))))
+    (dolist (id slot-ids)
+      (when id (puthash id t slot-id-set)))
+    (mapcar
+     (lambda (slot)
+       (let* ((id          (psi-emacs--event-data-get slot '(:id id)))
+              (is-active   (psi-emacs--event-data-get slot '(:is-active is-active :isActive isActive)))
+              (is-streaming (psi-emacs--event-data-get slot '(:is-streaming is-streaming :isStreaming isStreaming)))
+              (parent-id   (psi-emacs--event-data-get slot '(:parent-session-id parent-session-id :parentSessionId parentSessionId)))
+              (indent      (if (and parent-id (gethash parent-id slot-id-set))
+                               "  " ""))
+              (base-name   (psi-emacs--session-display-name slot))
+              (suffix      (concat
+                            (when is-streaming " [streaming]")
+                            (when is-active " ← active")))
+              (text        (concat indent base-name suffix)))
+         (if is-active
+             `((:text . ,text))
+           `((:text . ,text)
+             (:action . ((:type . "command")
+                         (:command . ,(concat "/tree " id))))))))
+     slots)))
+
+(defun psi-emacs--handle-host-updated-event (data)
+  "Handle `host/updated` DATA: store snapshot and refresh session tree widget."
+  (when psi-emacs--state
+    (let* ((active-id (psi-emacs--event-data-get data '(:active-session-id active-session-id :activeSessionId activeSessionId)))
+           (slots     (append (psi-emacs--event-data-get data '(:sessions sessions)) nil))
+           (snapshot  `((:active-session-id . ,active-id) (:sessions . ,slots)))
+           (lines     (psi-emacs--session-tree-widget-lines slots active-id))
+           (widget    `((:placement . "left")
+                        (:extension-id . "psi-session")
+                        (:widget-id . "session-tree")
+                        (:content-lines . ,lines)))
+           (existing  (psi-emacs-state-projection-widgets psi-emacs--state))
+           (others    (seq-remove
+                       (lambda (w)
+                         (and (equal (psi-emacs--event-data-get w '(:extension-id extension-id :extensionId extensionId))
+                                     "psi-session")
+                              (equal (psi-emacs--event-data-get w '(:widget-id widget-id :widgetId widgetId))
+                                     "session-tree")))
+                       (or existing [])))
+           (updated   (if (> (length slots) 1)
+                          (cons widget others)
+                        others)))
+      (setf (psi-emacs-state-host-snapshot psi-emacs--state) snapshot)
+      (setf (psi-emacs-state-projection-widgets psi-emacs--state)
+            (psi-emacs--projection-sort-widgets updated))
+      (psi-emacs--upsert-projection-block))))
+
 (defun psi-emacs--handle-rpc-event (frame)
   "Handle inbound rpc-edn event FRAME for transcript rendering."
   (let* ((event (alist-get :event frame nil nil #'equal))
@@ -129,6 +198,8 @@ When MODEL-REASONING is non-nil, append an explicit thinking/effort suffix."
         (or (psi-emacs--event-data-get data '(:text text :delta delta)) "")))
       ("session/updated"
        (psi-emacs--handle-session-updated-event data))
+      ("host/updated"
+       (psi-emacs--handle-host-updated-event data))
       ((or "tool/start" "tool/executing" "tool/update" "tool/result")
        (psi-emacs--assistant-before-tool-event)
        (let* ((tool-id (psi-emacs--event-data-get data
