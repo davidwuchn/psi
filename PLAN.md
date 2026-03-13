@@ -168,6 +168,35 @@ Ordered steps toward PSI COMPLETE.
   - `clojure -M:test --focus psi.agent-session.main-test/bootstrap-runtime-session-wires-nrepl-runtime-atom-test`
   - `clojure -M:test --focus psi.agent-session.main-test/nrepl-runtime-eql-reflects-live-start-stop-test`
 
+### Step 11f — Multi-session host runtime (non-UI) ◇ in progress
+- Goal: one psi process hosts multiple sessions concurrently, with active-session default routing and explicit session-id targeting.
+- Spec/meta elicitation completed and captured:
+  - `META.md` updated with SessionHost + active-session routing semantics
+  - `spec/session-core.allium` / `spec/session-management.allium` / `spec/session-forking.allium`
+  - `spec/session-persistence.allium` / `spec/session-startup-prompts.allium`
+- Implemented (runtime foundation):
+  - in-process host registry (`components/agent-session/src/psi/agent_session/session_host.clj`)
+  - core wiring (`:session-host-atom`, host upsert on session mutation, active-session pointer)
+  - `ensure-session-loaded-in!` + `set-active-session-in!` in `core.clj`
+  - RPC `switch_session` supports `:session-id` (in addition to legacy `:session-path`)
+  - RPC added `list_sessions` op (host snapshot)
+  - targetable RPC ops now accept optional `:session-id` and load/switch before execution
+- Implemented (supporting convergence):
+  - persistence header v4 (`:parent-session-id` + `:parent-session`), v3→v4 read migration
+  - session schema/runtime now tracks `:parent-session-id`, `:parent-session-path`, `:spawn-mode`
+  - startup prompt policy now spawn-aware (`:new-root` default run, spawned defaults skip)
+- Remaining:
+  - tighten operation isolation semantics for concurrent in-flight runs across routed sessions
+  - verify no regressions in background-job gating and api-key routing tests
+- Progress (2026-03-13): multi-session test hardening completed for routing + introspection
+  - RPC coverage added in `rpc_test.clj` for `list_sessions`, `switch_session(:session-id)`, targetable `:session-id` routing, and invalid `:session-id` rejection.
+  - Resolver coverage added in `resolvers_test.clj` for host-index process view + persisted session list view.
+  - Graph introspection coverage added for host-index attrs (`:psi.agent-session/host-active-session-id`, `:psi.agent-session/host-session-count`, `:psi.agent-session/host-sessions`) across `:psi.graph/root-queryable-attrs`/`:psi.graph/edges` surfaces.
+  - Verification snapshot:
+    - `clojure -M:test --focus psi.agent-session.rpc-test` → 32 tests, 316 assertions, 0 failures
+    - `clojure -M:test --focus psi.agent-session.resolvers-test` → 32 tests, 304 assertions, 0 failures
+  - Contract nuance locked by tests: `:psi.agent-session/host-sessions` is a join attr and should be validated via graph edges (it is not guaranteed to appear as a scalar in `:psi.graph/root-queryable-attrs`).
+
 ### Step 12 — Emacs UI ◇ in progress
 - Spec: `spec/emacs-frontend.allium`
 - Current: rpc-edn frontend and core interaction model implemented
@@ -196,6 +225,8 @@ Ordered steps toward PSI COMPLETE.
 - Progress: commit `d90880d` adds close confirmation for live psi buffers by installing `psi-emacs--confirm-kill-buffer-p` on `kill-buffer-query-functions`; declining keeps buffer/process alive, and noninteractive test runs bypass prompts. Regression tests added for decline + noninteractive behavior.
 - Progress: commit `505380f` hardens `psi-mode` keymap lifecycle by extracting `psi-emacs--install-mode-keybindings` and reinstalling bindings on each mode activation to self-heal stale keymap mutations in long-lived Emacs sessions; adds focused ERT coverage `psi-interrupt-keybinding-is-installed` for `C-c C-c` interrupt wiring.
 - Progress: commit `3cc8a76` made runtime UI surface introspectable (`:psi.agent-session/ui-type`) and exposed `:ui-type` on extension API; extension widgets now branch placement by UI (`:console|:tui|:emacs`) in `subagent_widget`, `agent-chain`, and `mcp_tasks_run`.
+- Progress: commit `fc1aa93` expands Emacs slash CAPF built-in candidates to include common backend/server commands (`/history`, `/prompts`, `/skills`, `/login`, `/logout`, `/remember`, `/skill:`), adds focused completion regression coverage, and updates `components/emacs-ui/README.md` to document the broader slash surface.
+- Verification: `bb emacs:test` green at 192/192 after slash-candidate expansion follow-up.
 - Completed in this cycle:
   - [x] Prompt completion architecture added via CAPF (`components/emacs-ui/psi-completion.el`)
   - [x] `/` completion (slash commands) + `@` completion (file references)
