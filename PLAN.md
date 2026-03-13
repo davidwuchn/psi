@@ -210,7 +210,7 @@ Ordered steps toward PSI COMPLETE.
   - `clojure -M:test --focus psi.agent-session.main-test/bootstrap-runtime-session-wires-nrepl-runtime-atom-test`
   - `clojure -M:test --focus psi.agent-session.main-test/nrepl-runtime-eql-reflects-live-start-stop-test`
 
-### Step 11f — Multi-session host runtime (non-UI) ◇ in progress
+### Step 11f — Multi-session host runtime (non-UI) ✓ complete
 - Goal: one psi process hosts multiple sessions concurrently, with active-session default routing and explicit session-id targeting.
 - Spec/meta elicitation completed and captured:
   - `META.md` updated with SessionHost + active-session routing semantics
@@ -228,7 +228,9 @@ Ordered steps toward PSI COMPLETE.
   - session schema/runtime now tracks `:parent-session-id`, `:parent-session-path`, `:spawn-mode`
   - startup prompt policy now spawn-aware (`:new-root` default run, spawned defaults skip)
 - Remaining:
-  - verify no regressions in background-job gating and api-key routing tests
+  - (closed 2026-03-13) background-job gating and api-key routing regressions re-verified:
+    - `clojure -M:test --focus psi.agent-session.core-test/send-workflow-event-track-background-job-gated-test --focus psi.agent-session.rpc-test/rpc-prompt-passes-resolved-api-key-to-agent-loop-test`
+    - result: 2 tests, 7 assertions, 0 failures
 - Progress (2026-03-13, commit `395d036`): cross-process session persistence locking + spec-decision convergence
   - Session write path now enforces exclusive sidecar file locking (`<session-file>.lock`) in `persistence.clj` for header writes, full flushes, and append writes.
   - Lock acquisition is bounded-retry and fails explicitly with contextual `ExceptionInfo` when contention does not clear.
@@ -336,6 +338,8 @@ Ordered steps toward PSI COMPLETE.
 - Progress: commit `f23e38f` expands Emacs slash CAPF built-in candidates to include common backend/server commands (`/history`, `/prompts`, `/skills`, `/login`, `/logout`, `/remember`, `/skill:`), adds focused completion regression coverage, and updates `components/emacs-ui/README.md` to document the broader slash surface.
 - PSL follow-up: commit `50c9d59` syncs user-facing docs in `doc/emacs-ui.md` with the same slash/backend completion behavior so top-level docs match component-level frontend docs.
 - Verification: `bb emacs:test` green at 192/192 after slash-candidate expansion follow-up.
+- Progress: commit `cdfadda` fixes Emacs session-tree widget action routing so projected `/tree <id>` commands follow idle slash interception (`psi-emacs--dispatch-idle-compose-message`) instead of raw `prompt` dispatch; this restores `switch_session` behavior and avoids TUI-only `/tree` fallback text on widget click/RET.
+- Verification: `bb emacs:test` green at 205/205 with new regression `psi-projection-tree-widget-action-uses-idle-slash-routing`.
 - Completed in this cycle:
   - [x] Prompt completion architecture added via CAPF (`components/emacs-ui/psi-completion.el`)
   - [x] `/` completion (slash commands) + `@` completion (file references)
