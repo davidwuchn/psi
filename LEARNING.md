@@ -4,6 +4,25 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-13 - GPT-5.x model additions should be anchored to one upstream baseline per family
+
+### λ For OpenAI GPT-5 family updates, copy both transport and metadata shape from a single canonical source
+
+When adding a new GPT-5.x model, carrying only the model id is insufficient. The runtime behavior depends on
+transport fields (`:api`, `:base-url`) and capability/cost metadata (`:supports-*`, context window, token limits,
+cost tuple). Using one upstream baseline (here `~/src/pi-mono`) prevents mixed-family drift.
+
+### λ Registration tests should enumerate newly added model keys to catch catalog regressions early
+
+Adding `:gpt-5.4` to the GPT-5 Codex family list in `psi.ai.core-test` provides a cheap guard that the model is
+present, schema-valid, and wired to the expected provider/api pair. This catches accidental key removals or transport
+mismatches before provider/runtime failures.
+
+### λ Small docs examples are part of the model-surface contract
+
+Updating `PSI_MODEL` examples in runtime docs (`main.clj` docstring) keeps operator-facing guidance synchronized with
+available catalog keys. This reduces confusion when users test newly added models immediately after a catalog update.
+
 ## 2026-03-13 - Cross-process session persistence requires explicit sidecar lock discipline
 
 ### λ Session file safety should lock a dedicated `<session-file>.lock`, not rely on append atomicity assumptions
