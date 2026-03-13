@@ -242,9 +242,12 @@ Ordered steps toward PSI COMPLETE.
   - Emacs (`psi-completion.el`): `/tree` added to slash CAPF specs.
   - Emacs (`psi.el`): `host-snapshot` slot added to `psi-emacs-state`.
   - Tests: 12 new ERT tests; 204/204 passing.
+- Progress (2026-03-13, commit `7ab1277`): fork gap closed
+  - `fork` RPC op now emits `host/updated` after `fork-session-in!`; session tree widget reflects forked session immediately.
+  - Subagent creation intentionally excluded — subagents use isolated contexts and are not host peers.
+  - Three new rpc_test assertions: subscribe, fork, and new_session `host/updated` coverage.
 - Remaining (multi-session UI):
   - TUI session tree rendering (deferred)
-  - `host/updated` emission on fork/subagent creation (those bypass `new_session` RPC path)
 
 ### Step 12 — Emacs UI ◇ in progress
 - Spec: `spec/emacs-frontend.allium`
