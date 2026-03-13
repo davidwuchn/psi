@@ -11,10 +11,11 @@ value EqlMap { value: Any }
 entity ForkRequest {
     id: String
     parent_session_id: SessionId
-    entry_id: String
+    entry_id: String?
+    mode: fork_head | fork_at_entry
     intent: String
-    inheritance_request: EqlMap
-    constraints_request: EqlMap
+    inheritance_request: EqlMap?
+    constraints_request: EqlMap?
     status: requested | completed | failed
     child_session_id: SessionId?
     requested_at: Timestamp
@@ -22,14 +23,43 @@ entity ForkRequest {
     failure_reason: String?
 }
 
-rule ForkSessionAccepted {
-    when: ForkSessionRequested(parent_session_id, entry_id, intent, inheritance_request, constraints_request)
+rule ForkSessionAcceptedAtHead {
+    when: ForkSessionRequested(parent_session_id, null, fork_head, intent, inheritance_request, constraints_request)
     requires: exists cp in core/AgentSessions where cp.id = parent_session_id and cp.status = active
 
     ensures: ForkRequest.created(
         id: uuid(),
         parent_session_id: parent_session_id,
+        entry_id: null,
+        mode: fork_head,
+        intent: intent,
+        inheritance_request: inheritance_request,
+        constraints_request: constraints_request,
+        status: requested,
+        requested_at: now
+    )
+
+    ensures: core/SessionForkRequested(
+        parent_session_id: parent_session_id,
+        worktree_path: worktree_path_for(parent_session_id),
+        system_prompt: system_prompt_for(parent_session_id),
+        name: session_name_for(parent_session_id)
+    )
+
+    ensures: session/SessionForked(session_for(parent_session_id), LastEntryId(session_for(parent_session_id).journal))
+    ensures: ForkSessionCompleted(parent_session_id, child_session_id)
+}
+
+rule ForkSessionAcceptedAtEntry {
+    when: ForkSessionRequested(parent_session_id, entry_id, fork_at_entry, intent, inheritance_request, constraints_request)
+    requires: exists cp in core/AgentSessions where cp.id = parent_session_id and cp.status = active
+    requires: entry_id != null
+
+    ensures: ForkRequest.created(
+        id: uuid(),
+        parent_session_id: parent_session_id,
         entry_id: entry_id,
+        mode: fork_at_entry,
         intent: intent,
         inheritance_request: inheritance_request,
         constraints_request: constraints_request,
@@ -64,13 +94,14 @@ rule ForkSessionRequestCompleted {
 }
 
 rule ForkSessionRejected {
-    when: ForkSessionRequested(parent_session_id, entry_id, intent, inheritance_request, constraints_request)
+    when: ForkSessionRequested(parent_session_id, entry_id, mode, intent, inheritance_request, constraints_request)
     requires: not exists cp in core/AgentSessions where cp.id = parent_session_id and cp.status = active
 
     ensures: ForkRequest.created(
         id: uuid(),
         parent_session_id: parent_session_id,
         entry_id: entry_id,
+        mode: mode,
         intent: intent,
         inheritance_request: inheritance_request,
         constraints_request: constraints_request,
@@ -87,10 +118,11 @@ contract SessionForkMutationEql {
     @invariant ForkMutationInputShape
         -- input requires:
         -- {:session/id <SessionId>
-        --  :session/entry-id <String>
+        --  :session/mode <fork_head|fork_at_entry>
+        --  :session/entry-id <String?>
         --  :session/intent <String>
-        --  :session/inheritance <Map>
-        --  :session/constraints <Map>}
+        --  :session/inheritance <Map?>
+        --  :session/constraints <Map?>}
 
     @invariant ForkMutationOutputShape
         -- successful output includes:
@@ -124,7 +156,7 @@ surface SessionForkMutationApi {
         fulfils SessionForkMutationEql
 
     provides:
-        ForkSessionRequested(parent_session_id, entry_id, intent, inheritance_request, constraints_request)
+        ForkSessionRequested(parent_session_id, entry_id, mode, intent, inheritance_request, constraints_request)
 
     @guarantee SuccessfulForkCreatesIndependentChildSession
         -- Child session is linked by :session/parent-id and can evolve independently.
@@ -149,10 +181,11 @@ surface SessionLineageQueryApi {
         -- Parent/child links are queryable for traversal and visualization.
 }
 
-open question "What is the default inheritance policy for fork_session when :session/inheritance is omitted?"
+-- Decision: default inheritance policy for fork_session is inherit-parent-config-then-diverge.
 open question "Should child sessions run in soft isolation (shared workspace) or hard isolation (separate sandbox/worktree)?"
 open question "Should merge-back be part of session-forking core semantics or a separate capability?"
 open question "What budget constraints are mandatory on forked sessions (tokens, wall-clock timeout, tool allowlist)?"
 -- Decision: lineage retention mode is archival.
 -- TTL is current psi process lifetime.
 -- Archived lineage is never garbage collected.
+-- Decision: active session switch does not interrupt non-target session runs.

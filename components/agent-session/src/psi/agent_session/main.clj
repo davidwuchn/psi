@@ -484,7 +484,7 @@
   [ctx ai-ctx ai-model]
   (session/new-session-in! ctx)
   (try
-    (runtime/run-startup-prompts-in! ctx {:ai-ctx ai-ctx :ai-model ai-model})
+    (runtime/run-startup-prompts-in! ctx {:ai-ctx ai-ctx :ai-model ai-model :spawn-mode :new-root})
     (catch Throwable t
       (timbre/warn t "Startup prompts failed; continuing with empty startup transcript")))
   (let [agent-messages (:messages (agent/get-data-in (:agent-ctx ctx)))

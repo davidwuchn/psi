@@ -29,7 +29,9 @@
         → add linear :id/:parent-id chain
    v2 — :version 2, entries have :id/:parent-id
         → rename :hook-message role to :custom in message entries
-   v3 — current
+   v3 — header has :parent-session path hint only
+        → add :parent-session-id in header
+   v4 — current
 
    Public API
    ──────────
@@ -68,7 +70,7 @@
 ;;; Constants
 ;;; ============================================================
 
-(def ^:private current-version 3)
+(def ^:private current-version 4)
 
 (def ^:private sessions-root
   (delay (io/file (System/getProperty "user.home") ".psi" "agent" "sessions")))
@@ -207,13 +209,14 @@
 ;;; ============================================================
 
 (defn- make-header
-  [session-id cwd parent-session]
-  {:type           :session
-   :version        current-version
-   :id             session-id
-   :timestamp      (Instant/now)
-   :cwd            (str cwd)
-   :parent-session (when parent-session (str parent-session))})
+  [session-id cwd parent-session-id parent-session-path]
+  {:type              :session
+   :version           current-version
+   :id                session-id
+   :timestamp         (Instant/now)
+   :cwd               (str cwd)
+   :parent-session-id (when parent-session-id (str parent-session-id))
+   :parent-session    (when parent-session-path (str parent-session-path))})
 
 ;;; ============================================================
 ;;; Disk write
@@ -232,15 +235,17 @@
 (defn write-header!
   "Write the session header as the first line of `file`.
   Overwrites any existing content."
-  [^File file session-id cwd parent-session]
-  (let [header (make-header session-id cwd parent-session)
-        ^Path path (.toPath file)
-        ^bytes bytes (.getBytes (str (entry->line header) "\n") "UTF-8")
-        ^"[Ljava.nio.file.OpenOption;" opts
-        (into-array OpenOption [StandardOpenOption/CREATE
-                                StandardOpenOption/TRUNCATE_EXISTING
-                                StandardOpenOption/WRITE])]
-    (Files/write path bytes opts)))
+  ([^File file session-id cwd parent-session-path]
+   (write-header! file session-id cwd nil parent-session-path))
+  ([^File file session-id cwd parent-session-id parent-session-path]
+   (let [header (make-header session-id cwd parent-session-id parent-session-path)
+         ^Path path (.toPath file)
+         ^bytes bytes (.getBytes (str (entry->line header) "\n") "UTF-8")
+         ^"[Ljava.nio.file.OpenOption;" opts
+         (into-array OpenOption [StandardOpenOption/CREATE
+                                 StandardOpenOption/TRUNCATE_EXISTING
+                                 StandardOpenOption/WRITE])]
+     (Files/write path bytes opts))))
 
 (defn append-entry-to-disk!
   "Append a single `entry` line to `file`."
@@ -250,18 +255,20 @@
 (defn flush-journal!
   "Write the header + all `entries` to `file` in one operation.
   Overwrites any existing content."
-  [^File file session-id cwd parent-session entries]
-  (let [header (make-header session-id cwd parent-session)
-        lines  (str/join "\n"
-                         (cons (entry->line header)
-                               (map entry->line entries)))
-        ^Path path (.toPath file)
-        ^bytes bytes (.getBytes (str lines "\n") "UTF-8")
-        ^"[Ljava.nio.file.OpenOption;" opts
-        (into-array OpenOption [StandardOpenOption/CREATE
-                                StandardOpenOption/TRUNCATE_EXISTING
-                                StandardOpenOption/WRITE])]
-    (Files/write path bytes opts)))
+  ([^File file session-id cwd parent-session-path entries]
+   (flush-journal! file session-id cwd nil parent-session-path entries))
+  ([^File file session-id cwd parent-session-id parent-session-path entries]
+   (let [header (make-header session-id cwd parent-session-id parent-session-path)
+         lines  (str/join "\n"
+                          (cons (entry->line header)
+                                (map entry->line entries)))
+         ^Path path (.toPath file)
+         ^bytes bytes (.getBytes (str lines "\n") "UTF-8")
+         ^"[Ljava.nio.file.OpenOption;" opts
+         (into-array OpenOption [StandardOpenOption/CREATE
+                                 StandardOpenOption/TRUNCATE_EXISTING
+                                 StandardOpenOption/WRITE])]
+     (Files/write path bytes opts))))
 
 ;;; ============================================================
 ;;; Persist-on-append (called by core.clj after append-entry!)
@@ -280,21 +287,24 @@
   `flush-state-atom` — atom from create-flush-state
   `session-id`     — string
   `cwd`            — string
-  `parent-session` — string or nil"
-  [journal-atom flush-state-atom session-id cwd parent-session]
-  (let [{:keys [flushed? session-file]} @flush-state-atom]
-    (when session-file
-      (let [entries       @journal-atom
-            has-assistant (some (fn [e]
-                                  (and (= :message (:kind e))
-                                       (= "assistant" (get-in e [:data :message :role]))))
-                                entries)]
-        (when has-assistant
-          (if flushed?
-            (append-entry-to-disk! session-file (last entries))
-            (do
-              (flush-journal! session-file session-id cwd parent-session entries)
-              (swap! flush-state-atom assoc :flushed? true))))))))
+  `parent-session-id` — string or nil
+  `parent-session-path` — string or nil"
+  ([journal-atom flush-state-atom session-id cwd parent-session-path]
+   (persist-entry! journal-atom flush-state-atom session-id cwd nil parent-session-path))
+  ([journal-atom flush-state-atom session-id cwd parent-session-id parent-session-path]
+   (let [{:keys [flushed? session-file]} @flush-state-atom]
+     (when session-file
+       (let [entries       @journal-atom
+             has-assistant (some (fn [e]
+                                   (and (= :message (:kind e))
+                                        (= "assistant" (get-in e [:data :message :role]))))
+                                 entries)]
+         (when has-assistant
+           (if flushed?
+             (append-entry-to-disk! session-file (last entries))
+             (do
+               (flush-journal! session-file session-id cwd parent-session-id parent-session-path entries)
+               (swap! flush-state-atom assoc :flushed? true)))))))))
 
 ;;; ============================================================
 ;;; Migration
@@ -341,6 +351,21 @@
             entry))
         entries))
 
+(defn- parent-id-from-path
+  "Best-effort parent session id derivation from parent session path.
+   Expects filenames like <timestamp>_<id>.ndedn. Returns nil on mismatch."
+  [parent-path]
+  (when (string? parent-path)
+    (some->> (re-matches #".*_([^/_\\]+)\\.ndedn$" parent-path)
+             second)))
+
+(defn- migrate-v3->v4-header
+  "Ensure header has :parent-session-id (derive from :parent-session path when possible)."
+  [header]
+  (let [existing (:parent-session-id header)
+        derived  (or existing (parent-id-from-path (:parent-session header)))]
+    (assoc header :parent-session-id derived)))
+
 (defn- migrate-entries
   "Apply all necessary migrations to bring `entries` to current-version.
   `header` is the parsed header map (mutated version field is ignored here;
@@ -351,7 +376,8 @@
     (cond-> {:header (assoc header :version current-version)
              :entries entries}
       (< version 2) (update :entries migrate-v1->v2)
-      (< version 3) (update :entries migrate-v2->v3))))
+      (< version 3) (update :entries migrate-v2->v3)
+      (< version 4) (update :header migrate-v3->v4-header))))
 
 ;;; ============================================================
 ;;; Disk read
@@ -457,6 +483,7 @@
      :id                  (:id header)
      :cwd                 (:cwd header)
      :name                name
+     :parent-session-id   (:parent-session-id header)
      :parent-session-path (:parent-session header)
      :created             (:timestamp header)
      :modified            modified

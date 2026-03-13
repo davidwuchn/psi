@@ -12,6 +12,9 @@
    :psi.agent-session/session-id
    :psi.agent-session/session-file
    :psi.agent-session/session-name
+   :psi.agent-session/host-active-session-id
+   :psi.agent-session/host-session-count
+   :psi.agent-session/host-sessions
    :psi.agent-session/model
    :psi.agent-session/thinking-level
    :psi.agent-session/is-streaming
@@ -338,16 +341,43 @@
 ;; ── Core session fields ─────────────────────────────────
 
 (pco/defresolver agent-session-identity
-  "Resolve stable identity and naming fields."
+  "Resolve stable identity, naming, and host session registry fields."
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.agent-session/session-id
                  :psi.agent-session/session-file
-                 :psi.agent-session/session-name]}
-  (let [sd @(:session-data-atom agent-session-ctx)]
-    {:psi.agent-session/session-id   (:session-id sd)
-     :psi.agent-session/session-file (:session-file sd)
-     :psi.agent-session/session-name (:session-name sd)}))
+                 :psi.agent-session/session-name
+                 :psi.agent-session/host-active-session-id
+                 :psi.agent-session/host-session-count
+                 {:psi.agent-session/host-sessions
+                  [:psi.session-info/id
+                   :psi.session-info/path
+                   :psi.session-info/name
+                   :psi.session-info/parent-session-id
+                   :psi.session-info/parent-session-path]}]}
+  (let [sd   @(:session-data-atom agent-session-ctx)
+        host (if-let [ha (:session-host-atom agent-session-ctx)]
+               @ha
+               {:active-session-id (:session-id sd)
+                :sessions {(:session-id sd) {:session-id (:session-id sd)
+                                             :session-file (:session-file sd)
+                                             :session-name (:session-name sd)
+                                             :parent-session-id (:parent-session-id sd)
+                                             :parent-session-path (:parent-session-path sd)}}})
+        hs   (->> (:sessions host) vals (sort-by :updated-at) vec)]
+    {:psi.agent-session/session-id              (:session-id sd)
+     :psi.agent-session/session-file            (:session-file sd)
+     :psi.agent-session/session-name            (:session-name sd)
+     :psi.agent-session/host-active-session-id  (:active-session-id host)
+     :psi.agent-session/host-session-count      (count hs)
+     :psi.agent-session/host-sessions
+     (mapv (fn [m]
+             {:psi.session-info/id                  (:session-id m)
+              :psi.session-info/path                (:session-file m)
+              :psi.session-info/name                (:session-name m)
+              :psi.session-info/parent-session-id   (:parent-session-id m)
+              :psi.session-info/parent-session-path (:parent-session-path m)})
+           hs)}))
 
 ;; ── Phase and streaming state ───────────────────────────
 
@@ -1573,6 +1603,7 @@
    :psi.session-info/id                  (:id info)
    :psi.session-info/cwd                 (:cwd info)
    :psi.session-info/name                (:name info)
+   :psi.session-info/parent-session-id   (:parent-session-id info)
    :psi.session-info/parent-session-path (:parent-session-path info)
    :psi.session-info/created             (:created info)
    :psi.session-info/modified            (:modified info)
@@ -1589,6 +1620,7 @@
                    :psi.session-info/id
                    :psi.session-info/cwd
                    :psi.session-info/name
+                   :psi.session-info/parent-session-id
                    :psi.session-info/parent-session-path
                    :psi.session-info/created
                    :psi.session-info/modified
@@ -1609,6 +1641,7 @@
                    :psi.session-info/id
                    :psi.session-info/cwd
                    :psi.session-info/name
+                   :psi.session-info/parent-session-id
                    :psi.session-info/parent-session-path
                    :psi.session-info/created
                    :psi.session-info/modified

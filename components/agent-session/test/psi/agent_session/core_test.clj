@@ -35,6 +35,55 @@
 
 ;; ── Session lifecycle ───────────────────────────────────────────────────────
 
+(deftest session-host-registry-test
+  (testing "create-context seeds host registry with current session"
+    (let [ctx  (session/create-context)
+          host (session/get-session-host-in ctx)
+          sid  (:session-id (session/get-session-data-in ctx))]
+      (is (= sid (:active-session-id host)))
+      (is (contains? (:sessions host) sid))))
+
+  (testing "new-session-in! registers new session and sets it active"
+    (let [ctx (session/create-context)
+          sid-before (:session-id (session/get-session-data-in ctx))]
+      (session/new-session-in! ctx)
+      (let [sid-after (:session-id (session/get-session-data-in ctx))
+            host      (session/get-session-host-in ctx)]
+        (is (not= sid-before sid-after))
+        (is (= sid-after (:active-session-id host)))
+        (is (contains? (:sessions host) sid-before))
+        (is (contains? (:sessions host) sid-after)))))
+
+  (testing "ensure-session-loaded-in! resumes by host session id"
+    (let [cwd   (str (System/getProperty "java.io.tmpdir") "/psi-host-load-" (java.util.UUID/randomUUID))
+          _     (.mkdirs (java.io.File. cwd))
+          ctx   (session/create-context {:cwd cwd})
+          _     (session/new-session-in! ctx)
+          sid1  (:session-id (session/get-session-data-in ctx))
+          path1 (:session-file (session/get-session-data-in ctx))
+          _     (persist/flush-journal! (java.io.File. path1)
+                                        sid1
+                                        cwd
+                                        nil
+                                        nil
+                                        [(persist/thinking-level-entry :off)])
+          _     (session/new-session-in! ctx)
+          sid2  (:session-id (session/get-session-data-in ctx))]
+      (is (not= sid1 sid2))
+      (session/ensure-session-loaded-in! ctx sid1)
+      (is (= sid1 (:session-id (session/get-session-data-in ctx))))
+      (is (= sid1 (:active-session-id (session/get-session-host-in ctx))))))
+
+  (testing "set-active-session-in! changes active session when id exists"
+    (let [ctx        (session/create-context)
+          first-id   (:session-id (session/get-session-data-in ctx))]
+      (session/new-session-in! ctx)
+      (let [second-id (:session-id (session/get-session-data-in ctx))]
+        (session/set-active-session-in! ctx first-id)
+        (is (= first-id (:active-session-id (session/get-session-host-in ctx))))
+        (session/set-active-session-in! ctx second-id)
+        (is (= second-id (:active-session-id (session/get-session-host-in ctx))))))))
+
 (deftest new-session-test
   (testing "new-session-in! resets session-id"
     (let [ctx    (session/create-context)
@@ -123,6 +172,7 @@
       (is (string? child-file))
       (is (.exists (java.io.File. child-file)))
       (is (= parent-file (get-in loaded-child [:header :parent-session])))
+      (is (= (:session-id parent-sd) (get-in loaded-child [:header :parent-session-id])))
       (is (= (:session-id child-sd) (get-in loaded-child [:header :id])))
       (is (= (count @(:journal-atom ctx)) (count (:entries loaded-child)))))))
 
@@ -1056,7 +1106,9 @@
                              :event    :workflow/finish
                              :track-background-job? true
                              :data     {:tool-call-id "tc-gate-2"}})
-            jobs-b  (session/list-background-jobs-in! ctx thread-id)]
+            jobs-b  (session/list-background-jobs-in! ctx
+                                                      thread-id
+                                                      [:running :pending-cancel :completed :failed :cancelled :timed-out])]
         (is (true? (:psi.extension.workflow/event-accepted? tracked)))
         (is (string? (:psi.extension.background-job/id tracked)))
         (is (some #(= (:psi.extension.background-job/id tracked) (:job-id %)) jobs-b))))))

@@ -10,6 +10,7 @@
    [psi.agent-session.commands :as commands]
    [psi.agent-session.core :as session]
    [psi.agent-session.oauth.core :as oauth]
+   [psi.agent-session.persistence :as persist]
    [psi.agent-session.rpc :as rpc]
    [psi.agent-session.runtime :as runtime]
    [psi.agent-session.tools :as tools]
@@ -1039,6 +1040,108 @@
       (is (contains? event-topics "session/rehydrated"))
       (is (some #(contains? (:data %) :session-id) events))
       (is (some #(contains? (:data %) :messages) events)))))
+
+(deftest rpc-multi-session-host-routing-test
+  (testing "list_sessions returns host snapshot with active-session-id"
+    (let [cwd     (str (System/getProperty "java.io.tmpdir") "/psi-rpc-host-" (java.util.UUID/randomUUID))
+          _       (.mkdirs (java.io.File. cwd))
+          ctx     (session/create-context {:cwd cwd})
+          sid0    (:session-id (session/get-session-data-in ctx))
+          state   (atom {:ready? true :pending {}})
+          handler (rpc/make-session-request-handler ctx)
+          input   (str "{:id \"n1\" :kind :request :op \"new_session\"}\n"
+                       "{:id \"l1\" :kind :request :op \"list_sessions\"}\n")
+          {:keys [out-lines]} (run-loop input handler state)
+          frames  (parse-frames out-lines)
+          new-resp  (some #(when (and (= :response (:kind %))
+                                      (= "new_session" (:op %))) %)
+                          frames)
+          list-resp (some #(when (and (= :response (:kind %))
+                                      (= "list_sessions" (:op %))) %)
+                          frames)
+          sid1    (get-in new-resp [:data :session-id])
+          sessions (get-in list-resp [:data :sessions])]
+      (is (string? sid1))
+      (is (= sid1 (get-in list-resp [:data :active-session-id])))
+      (is (some #(= sid0 (:session-id %)) sessions))
+      (is (some #(= sid1 (:session-id %)) sessions))))
+
+  (testing "switch_session accepts :session-id and restores that runtime session"
+    (let [cwd     (str (System/getProperty "java.io.tmpdir") "/psi-rpc-switch-" (java.util.UUID/randomUUID))
+          _       (.mkdirs (java.io.File. cwd))
+          ctx     (session/create-context {:cwd cwd})
+          _       (session/new-session-in! ctx)
+          sid1    (:session-id (session/get-session-data-in ctx))
+          path1   (:session-file (session/get-session-data-in ctx))
+          _       (persist/flush-journal! (java.io.File. path1)
+                                          sid1
+                                          cwd
+                                          nil
+                                          nil
+                                          [(persist/thinking-level-entry :off)])
+          _       (session/new-session-in! ctx)
+          sid2    (:session-id (session/get-session-data-in ctx))
+          _       (session/new-session-in! ctx)
+          state   (atom {:ready? true
+                         :pending {}
+                         :subscribed-topics #{"session/resumed"}})
+          handler (rpc/make-session-request-handler ctx)
+          input   (str "{:id \"s1\" :kind :request :op \"switch_session\" :params {:session-id \"" sid1 "\"}}\n")
+          {:keys [out-lines]} (run-loop input handler state)
+          frames    (parse-frames out-lines)
+          switch-r  (some #(when (and (= :response (:kind %))
+                                      (= "switch_session" (:op %))) %)
+                          frames)
+          resumed-e (some #(when (= "session/resumed" (:event %)) %)
+                          frames)]
+      (is (not= sid1 sid2))
+      (is (string? path1))
+      (is (.exists (java.io.File. path1)))
+      (is (= sid1 (get-in switch-r [:data :session-id])))
+      (is (= sid1 (get-in resumed-e [:data :session-id])))
+      (is (= sid1 (:session-id (session/get-session-data-in ctx))))
+      (is (= sid1 (:active-session-id (session/get-session-host-in ctx))))))
+
+  (testing "targetable ops accept :session-id and route to that session"
+    (let [cwd     (str (System/getProperty "java.io.tmpdir") "/psi-rpc-target-" (java.util.UUID/randomUUID))
+          _       (.mkdirs (java.io.File. cwd))
+          ctx     (session/create-context {:cwd cwd})
+          _       (session/new-session-in! ctx)
+          sid1    (:session-id (session/get-session-data-in ctx))
+          path1   (:session-file (session/get-session-data-in ctx))
+          _       (persist/flush-journal! (java.io.File. path1)
+                                          sid1
+                                          cwd
+                                          nil
+                                          nil
+                                          [(persist/thinking-level-entry :off)])
+          _       (session/new-session-in! ctx)
+          sid2    (:session-id (session/get-session-data-in ctx))
+          _       (session/new-session-in! ctx)
+          state   (atom {:ready? true :pending {}})
+          handler (rpc/make-session-request-handler ctx)
+          input   (str "{:id \"m1\" :kind :request :op \"set_session_name\" :params {:session-id \"" sid1 "\" :name \"alpha\"}}\n")
+          {:keys [out-lines]} (run-loop input handler state)
+          frame   (-> out-lines first edn/read-string)]
+      (is (not= sid1 sid2))
+      (is (= :response (:kind frame)))
+      (is (= "set_session_name" (:op frame)))
+      (is (= "alpha" (get-in frame [:data :session-name])))
+      (is (= sid1 (:session-id (session/get-session-data-in ctx))))
+      (is (= "alpha" (:session-name (session/get-session-data-in ctx))))))
+
+  (testing "targetable op rejects invalid :session-id param"
+    (let [ctx     (session/create-context)
+          state   (atom {:ready? true :pending {}})
+          handler (rpc/make-session-request-handler ctx)
+          {:keys [out-lines]}
+          (run-loop "{:id \"g1\" :kind :request :op \"get_state\" :params {:session-id \"\"}}\n"
+                    handler
+                    state)
+          frame   (-> out-lines first edn/read-string)]
+      (is (= :error (:kind frame)))
+      (is (= "get_state" (:op frame)))
+      (is (= "request/invalid-params" (:error-code frame))))))
 
 (deftest rpc-new-session-uses-callback-rehydrate-payload-test
   (testing "new_session uses on-new-session! callback when provided"

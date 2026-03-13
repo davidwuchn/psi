@@ -65,3 +65,16 @@
            (sp/discover-rules {:cwd dir
                                :global-prompts-file (.getAbsolutePath bad)
                                :project-prompts-file (.getAbsolutePath bad)})))))
+
+(deftest should-run-startup-prompts-policy-test
+  (testing "defaults: new-root true, spawned modes false"
+    (is (true? (sp/should-run? {:spawn-mode :new-root})))
+    (is (false? (sp/should-run? {:spawn-mode :fork-head})))
+    (is (false? (sp/should-run? {:spawn-mode :fork-at-entry})))
+    (is (false? (sp/should-run? {:spawn-mode :subagent}))))
+
+  (testing "explicit overrides respected"
+    (is (true? (sp/should-run? {:spawn-mode :fork-head :run-on-fork-head? true})))
+    (is (true? (sp/should-run? {:spawn-mode :fork-at-entry :run-on-fork-at-entry? true})))
+    (is (true? (sp/should-run? {:spawn-mode :subagent :run-on-subagent? true})))
+    (is (false? (sp/should-run? {:spawn-mode :new-root :run-on-new-root? false})))))

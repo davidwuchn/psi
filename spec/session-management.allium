@@ -43,6 +43,12 @@ value ContextUsage {
     percent: Decimal?
 }
 
+entity SessionHostRuntime {
+    host_id: String
+    active_session_id: String?
+    sessions: Set<AgentSession>
+}
+
 entity SessionEntry {
     id: String
     parent_id: String?
@@ -128,6 +134,22 @@ rule UserPrompts {
         kind: message,
         payload: {role: "user", text: expanded}
     )
+}
+
+rule PromptRoutingDefaultsToActiveSession {
+    when: PromptRequested(host, text, images, session_id)
+    requires: session_id = null
+    requires: host.active_session_id != null
+
+    ensures: UserPrompts(SessionById(host, host.active_session_id), text, images)
+}
+
+rule PromptRoutingUsesExplicitSession {
+    when: PromptRequested(host, text, images, session_id)
+    requires: session_id != null
+    requires: SessionById(host, session_id) != null
+
+    ensures: UserPrompts(SessionById(host, session_id), text, images)
 }
 
 rule UserPromptsWhileStreaming {
@@ -220,6 +242,27 @@ rule SessionForked {
     ensures: session.retry_attempt = 0
 }
 
+rule NewRootSessionUsesGlobalBaseline {
+    when: NewSessionStarted(session, input)
+    requires: input.spawn_mode = new_root
+
+    ensures: session.active_tools = config.default_active_tools
+    ensures: session.system_prompt = GlobalBaselineSystemPrompt()
+    ensures: session.extensions = GlobalBaselineExtensions()
+}
+
+rule SpawnedSessionInheritsThenDiverges {
+    when: SessionSpawnedFromParent(child, parent, spawn_mode)
+    requires: spawn_mode in {fork_head, fork_at_entry, subagent}
+
+    ensures: child.active_tools = parent.active_tools
+    ensures: child.system_prompt = parent.system_prompt
+    ensures: child.extensions = parent.extensions
+    ensures: child.model = parent.model
+
+    ensures: ParentAndChildConfigsCanDivergeAfterSpawn(parent.id, child.id)
+}
+
 rule SessionResumed {
     when: SessionResumed(session, session_path)
 
@@ -294,6 +337,8 @@ surface AgentSessionApi {
         -- Slash commands may be intercepted before prompt dispatch.
         -- Persistence adapters append journal entries and restore session state.
         -- Core session identity and lineage are delegated to session-core.
+        -- Session host routes prompt/mutation requests to explicit session id, else active session.
+        -- Multiple sessions may stream concurrently; active-session switch is routing-only.
 }
 
 open question "Should tree navigation branch-summary be synchronous or background async?"

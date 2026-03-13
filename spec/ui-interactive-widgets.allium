@@ -1,0 +1,114 @@
+-- allium: 2
+
+-- ui-interactive-widgets.allium
+-- Cross-UI interactive widget rendering and action semantics.
+
+use "./ui-extension-points.allium" as ui
+use "./emacs-frontend.allium" as emacs
+use "./tui.allium" as tui
+use "./extension-system.allium" as ext
+
+value WidgetRenderCapability {
+    kind: text_only | text_with_actions
+}
+
+entity UiWidgetRuntime {
+    ui_kind: emacs | tui | console
+    capability: WidgetRenderCapability
+}
+
+config {
+    default_widget_action_mode_emacs: WidgetRenderCapability = text_with_actions
+    default_widget_action_mode_tui: WidgetRenderCapability = text_only
+    default_widget_action_mode_console: WidgetRenderCapability = text_only
+}
+
+rule EmacsSupportsWidgetActions {
+    when: emacs/EmacsFrontendInitialized(frontend)
+
+    ensures: UiWidgetRuntime{ui_kind: emacs}.capability = config.default_widget_action_mode_emacs
+}
+
+rule TuiDefaultsToTextOnlyWidgetRendering {
+    when: tui/TuiInitialized(runtime)
+
+    ensures: UiWidgetRuntime{ui_kind: tui}.capability = config.default_widget_action_mode_tui
+}
+
+rule ConsoleDefaultsToTextOnlyWidgetRendering {
+    when: ConsoleUiInitialized(runtime)
+
+    ensures: UiWidgetRuntime{ui_kind: console}.capability = config.default_widget_action_mode_console
+}
+
+rule WidgetLinesAlwaysRenderAsText {
+    when: ui/WidgetSet(session, extension_id, widget_id, placement, content)
+
+    ensures: ForEach(session.ui_state.widgets[extension_id, widget_id].content_lines,
+                     line -> RenderedTextLineExists(extension_id, widget_id, line.text))
+}
+
+rule TextOnlyUIsIgnoreWidgetActions {
+    when: WidgetProjectionRequested(session, ui_runtime, extension_id, widget_id)
+
+    requires: ui_runtime.capability.kind = text_only
+
+    ensures: ForEach(session.ui_state.widgets[extension_id, widget_id].content_lines,
+                     line -> line.action = null or ActionBindingNotCreated(ui_runtime, extension_id, widget_id, line))
+    ensures: ForEach(session.ui_state.widgets[extension_id, widget_id].content_lines,
+                     line -> RenderedTextLineExists(extension_id, widget_id, line.text))
+}
+
+rule ActionCapableUIsBindCommandActions {
+    when: WidgetProjectionRequested(session, ui_runtime, extension_id, widget_id)
+
+    requires: ui_runtime.capability.kind = text_with_actions
+
+    ensures: ForEach(session.ui_state.widgets[extension_id, widget_id].content_lines,
+                     line -> line.action = null or ActionBindingCreated(ui_runtime,
+                                                                         extension_id,
+                                                                         widget_id,
+                                                                         line,
+                                                                         line.action))
+}
+
+rule ActionActivationDispatchesWidgetCommand {
+    when: WidgetActionActivated(session, ui_runtime, extension_id, widget_id, line_index)
+
+    requires: ui_runtime.capability.kind = text_with_actions
+    requires: exists line = session.ui_state.widgets[extension_id, widget_id].content_lines[line_index]
+    requires: line.action != null
+    requires: line.action.type = command
+
+    ensures: ui/WidgetLineActionTriggered(session, extension_id, widget_id, line_index)
+}
+
+rule WidgetCommandActionsUseSlashCommandDispatch {
+    when: ui/WidgetLineActionTriggered(session, extension_id, widget_id, line_index)
+
+    ensures: ext/ExtensionCommandHandlerCalled(
+        command_name: CommandName(session.ui_state.widgets[extension_id, widget_id].content_lines[line_index].action.command),
+        command_args: CommandTail(session.ui_state.widgets[extension_id, widget_id].content_lines[line_index].action.command)
+    )
+}
+
+rule WidgetRenderingIsDeterministicAcrossUIs {
+    when: WidgetProjectionRequested(session, ui_runtime, extension_id, widget_id)
+
+    ensures: ProjectedTextLines(ui_runtime, extension_id, widget_id) =
+             session.ui_state.widgets[extension_id, widget_id].content_text
+}
+
+surface InteractiveWidgetProjection {
+    facing ext_mod: ext/ExtensionModule
+
+    context runtime: UiWidgetRuntime
+
+    provides:
+        WidgetProjectionRequested(session, runtime, extension_id, widget_id)
+        WidgetActionActivated(session, runtime, extension_id, widget_id, line_index)
+
+    @guidance
+        -- Preserve text-first rendering parity across emacs/tui/console.
+        -- Action bindings are optional affordances layered on top of canonical text.
+        -- Never require action support for correctness of extension behavior.

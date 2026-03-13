@@ -6,6 +6,7 @@
 use "./coding-agent.allium" as coding
 use "./agent-turn-interrupts.allium" as turn_interrupts
 use "./ui-extension-points.allium" as ui
+use "./ui-interactive-widgets.allium" as ui_widgets
 use "./rpc-edn.allium" as rpc
 use "./tool-output-display.allium" as tool_display
 use "./tool-output-rendering.allium" as tool_render
@@ -250,6 +251,12 @@ rule ExtensionUiUsesSharedContract {
 
     ensures: UsesContract(frontend, ui/ExtensionUI)
     ensures: UsesContract(frontend, ui/ExtensionUIQuery)
+}
+
+rule InteractiveWidgetsUseSharedContract {
+    when: RpcEventReceived(frontend.rpc, "ui/widgets-updated", payload)
+
+    ensures: UsesContract(frontend, ui_widgets/InteractiveWidgetProjection)
 }
 
 rule NewSessionResetPreservesBannerBeforeReplay {

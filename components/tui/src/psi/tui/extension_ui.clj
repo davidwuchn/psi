@@ -16,7 +16,9 @@
 
    Headless fallback: when no TUI is active, dialog methods return defaults
    immediately (confirm → false, select → nil, input → nil).
-   Fire-and-forget methods (notify, set-widget, set-status) are no-ops.")
+   Fire-and-forget methods (notify, set-widget, set-status) are no-ops."
+  (:require [clojure.string :as str]))
+
 
 ;; ============================================================
 ;; UI state structure
@@ -182,17 +184,72 @@
 ;; Widgets
 ;; ============================================================
 
+(defn- normalize-widget-action
+  [x]
+  (when (map? x)
+    (let [raw-type    (or (:type x) (get x "type"))
+          action-type (cond
+                        (keyword? raw-type) raw-type
+                        (symbol? raw-type) (keyword (name raw-type))
+                        (string? raw-type) (-> raw-type str/lower-case keyword)
+                        :else nil)
+          command     (some-> (or (:command x) (get x "command")) str str/trim)]
+      (when (and (= :command action-type)
+                 (seq command))
+        {:type :command
+         :command command}))))
+
+(defn- normalize-widget-line
+  [line]
+  (cond
+    (string? line)
+    {:text line}
+
+    (map? line)
+    (let [text*  (or (:text line) (get line "text"))
+          action (normalize-widget-action (or (:action line) (get line "action")))
+          text   (cond
+                   (string? text*) text*
+                   (nil? text*) (or (:command action) "")
+                   :else (str text*))]
+      {:text text
+       :action action})
+
+    (nil? line)
+    nil
+
+    :else
+    {:text (str line)}))
+
+(defn- normalize-widget-content
+  [content]
+  (let [xs (cond
+             (vector? content) content
+             (sequential? content) (vec content)
+             (nil? content) []
+             :else [content])]
+    (->> xs
+         (map normalize-widget-line)
+         (remove nil?)
+         vec)))
+
 (defn set-widget!
   "Set or replace a widget. `placement` is :above-editor or :below-editor.
-   `content` is a vector of strings (one per line).
+   `content` may be vector<string> or vector<line-map> where line-map is
+   {:text string :action {:type :command :command string}}.
+   `:content` stores plain text fallback lines; `:content-lines` stores
+   canonical structured lines.
    No-op when ui-state-atom is nil (headless)."
   [ui-state-atom ext-id widget-id placement content]
   (when ui-state-atom
-    (swap! ui-state-atom assoc-in [:widgets [ext-id widget-id]]
-           {:extension-id ext-id
-            :widget-id    widget-id
-            :placement    placement
-            :content      content})))
+    (let [content-lines (normalize-widget-content content)
+          content-text  (mapv :text content-lines)]
+      (swap! ui-state-atom assoc-in [:widgets [ext-id widget-id]]
+             {:extension-id ext-id
+              :widget-id    widget-id
+              :placement    placement
+              :content      content-text
+              :content-lines content-lines}))))
 
 (defn clear-widget!
   "Remove a widget. No-op when ui-state-atom is nil."

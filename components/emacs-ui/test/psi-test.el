@@ -2669,6 +2669,44 @@
       (should-not (string-match-p "\\[left/ext-a/w-1\\]" buf))
       (should-not (string-match-p "\\[\"Head line\"" buf)))))
 
+(ert-deftest psi-extension-ui-widgets-updated-renders-structured-content-lines ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (psi-emacs--handle-rpc-event
+     '((:event . "ui/widgets-updated")
+       (:data . ((:widgets . [((:placement . "left")
+                               (:extension-id . "ext-a")
+                               (:widget-id . "w-1")
+                               (:content-lines . [((:text . "Plain line"))
+                                                  ((:text . "Delete run-1")
+                                                   (:action . ((:type . "command")
+                                                               (:command . "/chain-rm run-1"))))]))])))))
+    (let ((buf (buffer-string)))
+      (should (string-match-p "Plain line" buf))
+      (should (string-match-p "Delete run-1" buf)))
+    (goto-char (point-min))
+    (should (search-forward "Delete run-1" nil t))
+    (let ((cmd (get-text-property (max (point-min) (1- (point))) 'psi-widget-command)))
+      (should (equal "/chain-rm run-1" cmd)))))
+
+(ert-deftest psi-projection-widget-action-activates-command-via-prompt-op ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (let ((calls nil))
+      (cl-letf (((symbol-value 'psi-emacs--send-request-function)
+                 (lambda (_state op params &optional _callback)
+                   (push (list op params) calls)
+                   t)))
+        (insert (propertize "Delete run-1"
+                            'psi-widget-command "/chain-rm run-1"
+                            'keymap psi-emacs--projection-widget-action-keymap))
+        (goto-char (point-min))
+        (psi-emacs--projection-activate-widget-action)
+        (should (equal '(("prompt" ((:message . "/chain-rm run-1"))))
+                       calls))))))
+
 (ert-deftest psi-extension-ui-status-updated-replaces-and-sorts-by-extension-id ()
   (with-temp-buffer
     (psi-emacs-mode)

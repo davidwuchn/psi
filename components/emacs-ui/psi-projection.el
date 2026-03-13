@@ -11,6 +11,48 @@
 
 (defvar psi-emacs-notification-timeout-seconds)
 
+(defvar psi-emacs--send-request-function)
+
+(defvar psi-emacs--projection-widget-action-keymap
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "RET") #'psi-emacs--projection-activate-widget-action)
+    (define-key map [mouse-1] #'psi-emacs--projection-activate-widget-action)
+    map))
+
+(defun psi-emacs--projection-action->command (action)
+  "Return slash command string from ACTION map, or nil."
+  (let* ((type* (and (listp action)
+                     (psi-emacs--event-data-get action '(:type type))))
+         (type (cond
+                ((keywordp type*) (substring (symbol-name type*) 1))
+                ((symbolp type*) (symbol-name type*))
+                ((stringp type*) (downcase type*))
+                (t nil)))
+         (command (and (listp action)
+                       (psi-emacs--event-data-get action '(:command command)))))
+    (when (and (equal type "command")
+               (stringp command)
+               (not (string-empty-p (string-trim command))))
+      (string-trim command))))
+
+(defun psi-emacs--projection-activate-widget-action (&optional event)
+  "Activate widget action at point or mouse EVENT."
+  (interactive)
+  (let* ((pos (cond
+               ((and event (consp event))
+                (posn-point (event-end event)))
+               (t (point))))
+         (command (and (integerp pos)
+                       (get-text-property pos 'psi-widget-command))))
+    (when (and (stringp command)
+               (not (string-empty-p command))
+               psi-emacs--state
+               (functionp psi-emacs--send-request-function))
+      (funcall psi-emacs--send-request-function
+               psi-emacs--state
+               "prompt"
+               `((:message . ,command))))))
+
 (defun psi-emacs--projection-seq (value)
   "Normalize VALUE into a proper list sequence."
   (cond
@@ -38,19 +80,27 @@
 
 (defun psi-emacs--projection-widget-content-lines (widget)
   "Return display content lines for projected WIDGET."
-  (let* ((content (and (listp widget)
+  (let* ((content-lines (and (listp widget)
+                             (psi-emacs--event-data-get widget '(:content-lines content-lines :contentLines contentLines))))
+         (content (and (listp widget)
                        (psi-emacs--event-data-get widget '(:content content))))
-         (content-seq (psi-emacs--projection-seq content)))
-    (if content-seq
-        (let ((lines (delq nil
+         (content-seq (psi-emacs--projection-seq (or content-lines content)))
+         (lines (and content-seq
+                     (delq nil
                            (mapcar (lambda (line)
                                      (cond
                                       ((stringp line)
                                        (unless (string-empty-p line) line))
+                                      ((listp line)
+                                       (let ((txt (psi-emacs--event-data-get line '(:text text))))
+                                         (when (and (stringp txt)
+                                                    (not (string-empty-p txt)))
+                                           txt)))
                                       ((null line) nil)
                                       (t (format "%s" line))))
-                                   content-seq))))
-          (or lines (list "")))
+                                   content-seq)))))
+    (if content-seq
+        (or lines (list ""))
       (list (psi-emacs--projection-item-text widget)))))
 
 (defun psi-emacs--projection-widget-lines (widget)
@@ -58,8 +108,38 @@
 
 Widget metadata (placement/extension-id/widget-id) is intentionally omitted
 from transcript projection rendering."
-  (or (psi-emacs--projection-widget-content-lines widget)
-      (list "")))
+  (let* ((content-lines (and (listp widget)
+                             (psi-emacs--event-data-get widget '(:content-lines content-lines :contentLines contentLines))))
+         (line-seq (psi-emacs--projection-seq content-lines))
+         (rendered (and line-seq
+                        (delq nil
+                              (mapcar (lambda (line)
+                                        (cond
+                                         ((stringp line)
+                                          (unless (string-empty-p line) line))
+                                         ((listp line)
+                                          (let* ((txt (psi-emacs--event-data-get line '(:text text)))
+                                                 (action (psi-emacs--event-data-get line '(:action action)))
+                                                 (command (psi-emacs--projection-action->command action)))
+                                            (when (and (stringp txt)
+                                                       (not (string-empty-p txt)))
+                                              (if command
+                                                  (propertize txt
+                                                              'face 'psi-emacs-projection-widget-face
+                                                              'font-lock-face 'psi-emacs-projection-widget-face
+                                                              'mouse-face 'highlight
+                                                              'help-echo command
+                                                              'follow-link t
+                                                              'keymap psi-emacs--projection-widget-action-keymap
+                                                              'psi-widget-command command)
+                                                txt))))
+                                         ((null line) nil)
+                                         (t (format "%s" line))))
+                                      line-seq)))))
+    (if line-seq
+        (or rendered (list ""))
+      (or (psi-emacs--projection-widget-content-lines widget)
+          (list "")))))
 
 (defun psi-emacs--projection-sort-widgets (widgets)
   "Return WIDGETS sorted by [placement, extension-id, widget-id]."

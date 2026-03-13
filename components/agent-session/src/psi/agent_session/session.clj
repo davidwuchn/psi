@@ -110,6 +110,9 @@
    [:session-id :string]
    [:session-file {:optional true} [:maybe :string]]
    [:session-name {:optional true} [:maybe :string]]
+   [:parent-session-id {:optional true} [:maybe :string]]
+   [:parent-session-path {:optional true} [:maybe :string]]
+   [:spawn-mode {:optional true} [:enum :new-root :fork-head :fork-at-entry :subagent]]
    [:model {:optional true} [:maybe model-schema]]
    [:thinking-level thinking-level-schema]
    [:is-streaming :boolean]
@@ -196,6 +199,9 @@
     {:session-id              (str (java.util.UUID/randomUUID))
      :session-file            nil
      :session-name            nil
+     :parent-session-id       nil
+     :parent-session-path     nil
+     :spawn-mode              :new-root
      :model                   nil
      :thinking-level          :off
      :is-streaming            false

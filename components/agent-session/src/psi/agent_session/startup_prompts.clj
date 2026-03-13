@@ -14,7 +14,11 @@
 (def default-config
   {:enabled?             true
    :global-prompts-file  (str (System/getProperty "user.home") "/.psi/agent/startup-prompts.edn")
-   :project-prompts-file ".psi/startup-prompts.edn"})
+   :project-prompts-file ".psi/startup-prompts.edn"
+   :run-on-new-root?     true
+   :run-on-fork-head?    false
+   :run-on-fork-at-entry? false
+   :run-on-subagent?     false})
 
 (def ^:private phase-order
   {:system-bootstrap  0
@@ -116,6 +120,21 @@
         (->> eligible
              (sort-by by-order)
              vec)))))
+
+(defn should-run?
+  "Return true when startup prompts should run for `spawn-mode`.
+   spawn-mode values: :new-root | :fork-head | :fork-at-entry | :subagent"
+  [{:keys [spawn-mode run-on-new-root? run-on-fork-head? run-on-fork-at-entry? run-on-subagent?]
+    :or   {run-on-new-root?      (:run-on-new-root? default-config)
+           run-on-fork-head?     (:run-on-fork-head? default-config)
+           run-on-fork-at-entry? (:run-on-fork-at-entry? default-config)
+           run-on-subagent?      (:run-on-subagent? default-config)}}]
+  (case spawn-mode
+    :fork-head     (boolean run-on-fork-head?)
+    :fork-at-entry (boolean run-on-fork-at-entry?)
+    :subagent      (boolean run-on-subagent?)
+    ;; default/new-root
+    (boolean run-on-new-root?)))
 
 (defn applied-view
   "Projection for persisted bootstrap telemetry."

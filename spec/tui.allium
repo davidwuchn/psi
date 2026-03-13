@@ -9,6 +9,12 @@
 --   TUI       ←  main container, differential renderer, focus & overlay manager
 --   Component ←  protocol: render / handle-input / invalidate
 --   Focusable ←  protocol extension: cursor marker for IME positioning
+--
+-- Cross-spec link:
+--   See ./ui-interactive-widgets.allium for extension widget interaction
+--   capabilities. TUI defaults to text-only widget rendering.
+
+use "./ui-interactive-widgets.allium" as ui_widgets
 
 ------------------------------------------------------------
 -- External Entities
@@ -281,6 +287,12 @@ rule TUIStarts {
     ensures: TerminalStarted(tui.terminal)
     ensures: CursorHidden(tui.terminal)
     ensures: RenderRequested(tui)
+}
+
+rule TuiInteractiveWidgetContract {
+    when: StartTUI(tui)
+
+    ensures: UsesContract(tui, ui_widgets/InteractiveWidgetProjection)
 }
 
 rule TUIStops {

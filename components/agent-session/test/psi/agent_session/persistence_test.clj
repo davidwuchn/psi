@@ -105,6 +105,7 @@
         (is (= :session (:type header)))
         (is (= "sess-1" (:id header)))
         (is (= "/my/project" (:cwd header)))
+        (is (nil? (:parent-session-id header)))
         (is (nil? (:parent-session header))))
       (.delete f)
       (.delete dir))))
@@ -274,7 +275,8 @@
           entries [(p/thinking-level-entry :off)]]
       (p/flush-journal! f "v3-sess" "/c" nil entries)
       (let [loaded (p/load-session-file f)]
-        (is (= 3 (get-in loaded [:header :version]))))
+        (is (= 4 (get-in loaded [:header :version]))
+            "load migrates current v3 files to v4 on read"))
       (.delete f)
       (.delete dir))))
 
@@ -347,6 +349,18 @@
                          (p/session-info-entry "My Session")])
       (let [sessions (p/list-sessions dir)]
         (is (= "My Session" (:name (first sessions)))))
+      (.delete f)
+      (.delete dir)))
+
+  (testing "SessionInfo includes parent-session-id when present in header"
+    (let [dir (tmp-dir)
+          f   (io/file dir "child.ndedn")]
+      (p/flush-journal! f "sess-child" "/proj" "sess-parent" "/tmp/parent.ndedn"
+                        [(p/message-entry (assistant-msg "hi"))])
+      (let [sessions (p/list-sessions dir)
+            info     (first sessions)]
+        (is (= "sess-parent" (:parent-session-id info)))
+        (is (= "/tmp/parent.ndedn" (:parent-session-path info))))
       (.delete f)
       (.delete dir)))
 

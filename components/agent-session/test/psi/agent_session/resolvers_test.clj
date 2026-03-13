@@ -8,7 +8,8 @@
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.background-jobs :as bg-jobs]
    [psi.agent-session.core :as session]
-   [psi.agent-session.oauth.core :as oauth]))
+   [psi.agent-session.oauth.core :as oauth]
+   [psi.agent-session.persistence :as persist]))
 
 ;; ── helpers ─────────────────────────────────────────────
 
@@ -127,6 +128,76 @@
       (is (instance? java.time.Instant (:psi.agent-session/current-time result))))))
 
 ;; ── Model selector bridge attrs ──────────────────────────
+
+(deftest multi-session-host-eql-process-and-persisted-test
+  (testing "host index attrs expose process sessions and persisted session list remains queryable"
+    (let [cwd      (str (System/getProperty "java.io.tmpdir") "/psi-resolvers-host-" (java.util.UUID/randomUUID))
+          _        (.mkdirs (java.io.File. cwd))
+          ctx      (session/create-context {:cwd cwd})
+          _        (session/new-session-in! ctx)
+          sid-1    (:session-id (session/get-session-data-in ctx))
+          path-1   (:session-file (session/get-session-data-in ctx))
+          _        (persist/flush-journal! (java.io.File. path-1)
+                                           sid-1
+                                           cwd
+                                           nil
+                                           nil
+                                           [(persist/thinking-level-entry :off)
+                                            (persist/session-info-entry "alpha")])
+          _        (session/new-session-in! ctx)
+          sid-2    (:session-id (session/get-session-data-in ctx))
+          path-2   (:session-file (session/get-session-data-in ctx))
+          _        (persist/flush-journal! (java.io.File. path-2)
+                                           sid-2
+                                           cwd
+                                           nil
+                                           nil
+                                           [(persist/thinking-level-entry :off)
+                                            (persist/session-info-entry "beta")])
+          process-result
+          (q-in ctx [:psi.agent-session/host-active-session-id
+                     :psi.agent-session/host-session-count
+                     {:psi.agent-session/host-sessions
+                      [:psi.session-info/id
+                       :psi.session-info/path
+                       :psi.session-info/name]}])
+          persisted-result
+          (q-in ctx [{:psi.session/list
+                      [:psi.session-info/id
+                       :psi.session-info/path
+                       :psi.session-info/name
+                       :psi.session-info/message-count]}])
+          host-sessions (:psi.agent-session/host-sessions process-result)
+          persisted    (:psi.session/list persisted-result)]
+      (is (= sid-2 (:psi.agent-session/host-active-session-id process-result)))
+      (is (>= (:psi.agent-session/host-session-count process-result) 3))
+      (is (some #(= sid-1 (:psi.session-info/id %)) host-sessions))
+      (is (some #(= sid-2 (:psi.session-info/id %)) host-sessions))
+      (is (some #(= path-1 (:psi.session-info/path %)) host-sessions))
+      (is (some #(= path-2 (:psi.session-info/path %)) host-sessions))
+
+      (is (vector? persisted))
+      (is (some #(= sid-1 (:psi.session-info/id %)) persisted))
+      (is (some #(= sid-2 (:psi.session-info/id %)) persisted))
+      (is (some #(= "alpha" (:psi.session-info/name %)) persisted))
+      (is (some #(= "beta" (:psi.session-info/name %)) persisted))
+      (is (every? integer? (map :psi.session-info/message-count persisted))))))
+
+(deftest host-index-graph-introspection-test
+  (testing "host-index attrs are discoverable in graph root attrs and edges"
+    (let [result     (q [:psi.graph/root-queryable-attrs :psi.graph/edges])
+          root-attrs (:psi.graph/root-queryable-attrs result)
+          edge-attrs (keep :attribute (:psi.graph/edges result))
+          attr-present? (fn [attrs k]
+                          (or (some #(= k %) attrs)
+                              (some #(and (map? %) (contains? % k)) attrs)))]
+      (is (attr-present? root-attrs :psi.agent-session/host-active-session-id))
+      (is (attr-present? root-attrs :psi.agent-session/host-session-count))
+      ;; host-sessions is a join attribute and is represented on graph edges
+      ;; (it may not appear as a scalar key in root-queryable attrs).
+      (is (attr-present? edge-attrs :psi.agent-session/host-active-session-id))
+      (is (attr-present? edge-attrs :psi.agent-session/host-session-count))
+      (is (attr-present? edge-attrs :psi.agent-session/host-sessions)))))
 
 (deftest model-catalog-resolver-test
   (testing "model-catalog is queryable with deterministic model entries"

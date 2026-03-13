@@ -41,6 +41,10 @@ config {
     startup_prompts_enabled: Boolean = true
     global_startup_prompts_file: String = "~/.psi/agent/startup-prompts.edn"
     project_startup_prompts_file: String = ".psi/startup-prompts.edn"
+    run_on_new_root: Boolean = true
+    run_on_fork_head: Boolean = false
+    run_on_fork_at_entry: Boolean = false
+    run_on_subagent: Boolean = false
 }
 
 rule StartupPromptConfigLoaded {
@@ -62,9 +66,11 @@ rule StartupPromptRulesComposed {
     ensures: result = SortStartupRules(eligible)
 }
 
-rule StartupPromptsRunOnNewSession {
+rule StartupPromptsRunOnNewRootSession {
     when: session/NewSessionStarted(s, input)
     requires: config.startup_prompts_enabled = true
+    requires: input.spawn_mode = new_root
+    requires: config.run_on_new_root = true
 
     let ordered = StartupPromptRulesComposed(s)
 
@@ -92,6 +98,20 @@ rule StartupPromptsRunOnNewSession {
     ensures: MarkStartupBootstrapCompleted(s.id, now)
 }
 
+rule StartupPromptsSkippedOnSpawnedSessions {
+    when: session/NewSessionStarted(s, input)
+    requires: config.startup_prompts_enabled = true
+    requires: input.spawn_mode in {fork_head, fork_at_entry, subagent}
+
+    ensures:
+        if input.spawn_mode = fork_head and config.run_on_fork_head = false:
+            NoStartupPromptReplay(s)
+        else if input.spawn_mode = fork_at_entry and config.run_on_fork_at_entry = false:
+            NoStartupPromptReplay(s)
+        else if input.spawn_mode = subagent and config.run_on_subagent = false:
+            NoStartupPromptReplay(s)
+}
+
 rule StartupPromptsNotReplayedOnResume {
     when: session/SessionResumed(s, session_path)
 
@@ -110,7 +130,8 @@ surface StartupPromptEqlApi {
 
     provides:
         StartupPromptRulesComposed(s)
-        StartupPromptsRunOnNewSession(s)
+        StartupPromptsRunOnNewRootSession(s)
+        StartupPromptsSkippedOnSpawnedSessions(s)
 }
 
 rule StartupPromptAttrsResolvable {
@@ -152,5 +173,5 @@ rule StartupPromptAttrsDiscoverableInGraph {
 }
 
 open question "Should startup prompts run as independent turns or as one concatenated startup turn?"
-open question "Should forked sessions re-run startup prompts by default, or inherit prior startup transcript only?"
+-- Decision: forked/subagent spawned sessions inherit prior startup transcript only by default (no startup replay).
 open question "Should startup prompts be represented as core/system messages instead of user-role messages?"

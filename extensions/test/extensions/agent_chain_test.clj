@@ -142,7 +142,16 @@
               (is (false? (:is-error result)))
               (is (str/includes? (:content result) "Chain run started:"))
               (is (str/includes? (:content result) "Monitor with agent-chain"))
-              (is (contains? (:workflows @state) "run-1")))))
+              (is (contains? (:workflows @state) "run-1"))
+              (let [lines (get-in @state [:widgets "agent-chain" :lines])
+                    run-line (some #(when (map? %)
+                                      (let [t (:text %)]
+                                        (when (and (string? t)
+                                                   (str/includes? t "run-1"))
+                                          %)))
+                                   lines)]
+                (is (map? run-line))
+                (is (= "/chain-rm run-1" (get-in run-line [:action :command])))))))
         (finally
           (.delete tmp))))))
 

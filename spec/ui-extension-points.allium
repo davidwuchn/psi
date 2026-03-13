@@ -2,6 +2,7 @@
 
 -- ui-extension-points.allium
 -- Shared extension UI contract for interactive frontends.
+-- See also: ./ui-interactive-widgets.allium for cross-UI widget action semantics.
 
 use "./extension-system.allium" as ext
 use "./coding-agent.allium" as session
@@ -13,6 +14,16 @@ value WidgetPlacement {
 
 value NotificationLevel {
     kind: info | warning | error
+}
+
+value WidgetAction {
+    type: command
+    command: String
+}
+
+value WidgetLine {
+    text: String
+    action: WidgetAction?
 }
 
 value DialogOption {
@@ -43,7 +54,8 @@ entity Widget {
     extension_id: String
     widget_id: String
     placement: WidgetPlacement
-    content: Set<String>
+    content_text: Set<String>
+    content_lines: Set<WidgetLine>
 }
 
 entity StatusEntry {
@@ -129,7 +141,51 @@ rule HeadlessDialogFallback {
 rule WidgetSet {
     when: WidgetSet(session, extension_id, widget_id, placement, content)
 
-    ensures: session.ui_state.widgets = UpsertWidget(session.ui_state.widgets, extension_id, widget_id, placement, content)
+    ensures:
+        if Every(content, IsString):
+            session.ui_state.widgets = UpsertWidget(session.ui_state.widgets,
+                                                    extension_id,
+                                                    widget_id,
+                                                    placement,
+                                                    content_text: content,
+                                                    content_lines: ToWidgetLines(content))
+        else:
+            session.ui_state.widgets = UpsertWidget(session.ui_state.widgets,
+                                                    extension_id,
+                                                    widget_id,
+                                                    placement,
+                                                    content_text: ToPlainText(content),
+                                                    content_lines: ToWidgetLines(content))
+}
+
+rule WidgetLineTextFallback {
+    when: WidgetSet(session, extension_id, widget_id, placement, content)
+
+    ensures: ForEach(session.ui_state.widgets[extension_id, widget_id].content_lines,
+                     line -> line.text != "")
+    ensures: session.ui_state.widgets[extension_id, widget_id].content_text =
+             Map(session.ui_state.widgets[extension_id, widget_id].content_lines,
+                 line -> line.text)
+}
+
+rule WidgetActionCompatibility {
+    when: WidgetSet(session, extension_id, widget_id, placement, content)
+
+    ensures: ForEach(session.ui_state.widgets[extension_id, widget_id].content_lines,
+                     line -> line.action = null or line.action.type = command)
+    ensures: ForEach(session.ui_state.widgets[extension_id, widget_id].content_lines,
+                     line -> line.action = null or line.action.command.startsWith("/"))
+}
+
+rule WidgetActionCommandDispatch {
+    when: WidgetLineActionTriggered(session, extension_id, widget_id, line_index)
+
+    requires: exists line = session.ui_state.widgets[extension_id, widget_id].content_lines[line_index]
+    requires: line.action != null
+    requires: line.action.type = command
+
+    ensures: ext/ExtensionCommandHandlerCalled(command_name: CommandName(line.action.command),
+                                               command_args: CommandTail(line.action.command))
 }
 
 rule WidgetCleared {
@@ -238,6 +294,9 @@ surface ExtensionUI {
     @guidance
         -- Dialog requests block extension flow via promise resolution.
         -- Only one active dialog is shown; others queue FIFO.
+        -- WidgetSet content accepts vector<string> and vector<WidgetLine-shaped maps>.
+        -- Canonical WidgetLine map shape is {text: String, action?: {type: command, command: String}}.
+        -- Non-interactive UIs ignore action and render text only.
         -- In headless mode, dialogs resolve immediately with safe defaults.
         -- Widgets/status/notifications are extension-scoped contributions.
 }

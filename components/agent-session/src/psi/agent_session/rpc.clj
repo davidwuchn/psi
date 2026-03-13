@@ -46,6 +46,7 @@
    "login_complete"
    "new_session"
    "switch_session"
+   "list_sessions"
    "fork"
    "set_session_name"
    "set_model"
@@ -62,6 +63,30 @@
    "unsubscribe"
    "resolve_dialog"
    "cancel_dialog"])
+
+(def ^:private targetable-rpc-ops
+  #{"query_eql"
+    "prompt"
+    "prompt_while_streaming"
+    "steer"
+    "follow_up"
+    "abort"
+    "interrupt"
+    "list_background_jobs"
+    "inspect_background_job"
+    "cancel_background_job"
+    "fork"
+    "set_session_name"
+    "set_model"
+    "cycle_model"
+    "set_thinking_level"
+    "cycle_thinking_level"
+    "compact"
+    "set_auto_compaction"
+    "set_auto_retry"
+    "get_state"
+    "get_messages"
+    "get_session_stats"})
 
 (defn response-frame
   ([id op ok]
@@ -406,8 +431,12 @@
     (response-frame (:id request) "cancel_dialog" true {:accepted true})))
 
 (defn- request-thread-id
-  [ctx]
-  (:session-id (session/get-session-data-in ctx)))
+  [ctx params]
+  (let [target-id (:session-id params)
+        sd        (if target-id
+                    (session/get-session-data-in ctx target-id)
+                    (session/get-session-data-in ctx))]
+    (:session-id sd)))
 
 (defn- normalize-statuses-param
   [statuses]
@@ -452,7 +481,7 @@
     (when (= ::invalid statuses*)
       (throw (ex-info "invalid request parameter :statuses: sequential of keywords/strings"
                       {:error-code "request/invalid-params"})))
-    (let [thread-id (request-thread-id ctx)
+    (let [thread-id (request-thread-id ctx params)
           jobs      (if statuses*
                       (session/list-background-jobs-in! ctx thread-id statuses*)
                       (session/list-background-jobs-in! ctx thread-id))]
@@ -462,7 +491,7 @@
 (defn- handle-inspect-background-job!
   [ctx request params]
   (let [job-id    (req-arg! request params :job-id #(and (string? %) (not (str/blank? %))) "non-empty string")
-        thread-id (request-thread-id ctx)
+        thread-id (request-thread-id ctx params)
         job       (session/inspect-background-job-in! ctx thread-id job-id)]
     (response-frame (:id request) "inspect_background_job" true
                     {:job (background-job->rpc-view job)})))
@@ -470,7 +499,7 @@
 (defn- handle-cancel-background-job!
   [ctx request params]
   (let [job-id    (req-arg! request params :job-id #(and (string? %) (not (str/blank? %))) "non-empty string")
-        thread-id (request-thread-id ctx)
+        thread-id (request-thread-id ctx params)
         job       (session/cancel-background-job-in! ctx thread-id job-id :user)]
     (response-frame (:id request) "cancel_background_job" true
                     {:accepted true
@@ -1182,6 +1211,24 @@
              {:role    "assistant"
               :content [{:type :text :text (str "[command result: " result-type "]")}]}))))
 
+(defn- with-target-session!
+  "Run `f` against optional target session-id in request params.
+
+   If :session-id is provided, ensures that session is loaded as active in the
+   runtime context before invoking f."
+  [ctx request f]
+  (let [params     (params-map request)
+        session-id (:session-id params)]
+    (when session-id
+      (when-not (string? session-id)
+        (throw (ex-info "invalid request parameter :session-id: non-empty string"
+                        {:error-code "request/invalid-params"})))
+      (when (str/blank? session-id)
+        (throw (ex-info "invalid request parameter :session-id: non-empty string"
+                        {:error-code "request/invalid-params"})))
+      (session/ensure-session-loaded-in! ctx session-id))
+    (f)))
+
 (defn- run-prompt-async!
   [ctx request emit-frame! state]
   (let [message      (get-in request [:params :message])
@@ -1310,8 +1357,9 @@
    (fn [request emit-frame! state]
      (try
        (let [op     (:op request)
-             params (params-map request)]
-         (case op
+             params (params-map request)
+             dispatch-op (fn []
+                           (case op
            "ping"
            (response-frame (:id request) "ping" true {:pong true :protocol-version protocol-version})
 
@@ -1422,30 +1470,60 @@
                                                     :session-file (:session-file sd)}))
 
            "switch_session"
-           (let [session-path (req-arg! request params :session-path #(and (string? %) (not (str/blank? %))) "non-empty path string")]
-             (when-not (.exists (io/file session-path))
-               (throw (ex-info "session file not found"
-                               {:error-code "request/not-found"})))
-             (let [sd   (session/resume-session-in! ctx session-path)
-                   msgs (:messages (agent/get-data-in (:agent-ctx ctx)))]
-               (emit-event! emit-frame! state {:event "session/resumed"
-                                               :id (:id request)
-                                               :data {:session-id   (:session-id sd)
-                                                      :session-file (:session-file sd)
-                                                      :message-count (count msgs)}})
-               (emit-event! emit-frame! state {:event "session/rehydrated"
-                                               :id (:id request)
-                                               :data {:messages msgs
-                                                      :tool-calls {}
-                                                      :tool-order []}})
-               (emit-event! emit-frame! state {:event "session/updated"
-                                               :id (:id request)
-                                               :data (session-updated-payload ctx)})
-               (emit-event! emit-frame! state {:event "footer/updated"
-                                               :id (:id request)
-                                               :data (footer-updated-payload ctx)})
-               (response-frame (:id request) op true {:session-id (:session-id sd)
-                                                      :session-file (:session-file sd)})))
+           (if-let [sid (:session-id params)]
+             (do
+               (when-not (and (string? sid) (not (str/blank? sid)))
+                 (throw (ex-info "invalid request parameter :session-id: non-empty string"
+                                 {:error-code "request/invalid-params"})))
+               (let [_    (session/ensure-session-loaded-in! ctx sid)
+                     sd   (session/get-session-data-in ctx)
+                     msgs (:messages (agent/get-data-in (:agent-ctx ctx)))]
+                 (emit-event! emit-frame! state {:event "session/resumed"
+                                                 :id (:id request)
+                                                 :data {:session-id   (:session-id sd)
+                                                        :session-file (:session-file sd)
+                                                        :message-count (count msgs)}})
+                 (emit-event! emit-frame! state {:event "session/rehydrated"
+                                                 :id (:id request)
+                                                 :data {:messages msgs
+                                                        :tool-calls {}
+                                                        :tool-order []}})
+                 (emit-event! emit-frame! state {:event "session/updated"
+                                                 :id (:id request)
+                                                 :data (session-updated-payload ctx)})
+                 (emit-event! emit-frame! state {:event "footer/updated"
+                                                 :id (:id request)
+                                                 :data (footer-updated-payload ctx)})
+                 (response-frame (:id request) op true {:session-id (:session-id sd)
+                                                        :session-file (:session-file sd)})))
+             (let [session-path (req-arg! request params :session-path #(and (string? %) (not (str/blank? %))) "non-empty path string")]
+               (when-not (.exists (io/file session-path))
+                 (throw (ex-info "session file not found"
+                                 {:error-code "request/not-found"})))
+               (let [sd   (session/resume-session-in! ctx session-path)
+                     msgs (:messages (agent/get-data-in (:agent-ctx ctx)))]
+                 (emit-event! emit-frame! state {:event "session/resumed"
+                                                 :id (:id request)
+                                                 :data {:session-id   (:session-id sd)
+                                                        :session-file (:session-file sd)
+                                                        :message-count (count msgs)}})
+                 (emit-event! emit-frame! state {:event "session/rehydrated"
+                                                 :id (:id request)
+                                                 :data {:messages msgs
+                                                        :tool-calls {}
+                                                        :tool-order []}})
+                 (emit-event! emit-frame! state {:event "session/updated"
+                                                 :id (:id request)
+                                                 :data (session-updated-payload ctx)})
+                 (emit-event! emit-frame! state {:event "footer/updated"
+                                                 :id (:id request)
+                                                 :data (footer-updated-payload ctx)})
+                 (response-frame (:id request) op true {:session-id (:session-id sd)
+                                                        :session-file (:session-file sd)}))))
+
+           "list_sessions"
+           (response-frame (:id request) op true {:active-session-id (:active-session-id (session/get-session-host-in ctx))
+                                                  :sessions (session/list-host-sessions-in ctx)})
 
            "fork"
            (let [entry-id (req-arg! request params :entry-id #(and (string? %) (not (str/blank? %))) "non-empty entry id")
@@ -1572,7 +1650,10 @@
                          :op            op
                          :error-code    "request/op-not-supported"
                          :error-message (str "unsupported op: " op)
-                         :data          {:supported-ops supported-rpc-ops}})))
+                         :data          {:supported-ops supported-rpc-ops}})))]
+         (if (contains? targetable-rpc-ops op)
+           (with-target-session! ctx request dispatch-op)
+           (dispatch-op)))
        (catch Throwable e
          (exception->error-frame request e))))))
 

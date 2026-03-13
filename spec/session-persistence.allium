@@ -8,7 +8,7 @@ use "./session-core.allium" as core
 
 config {
     sessions_root: String = "~/.psi/agent/sessions"
-    current_version: Integer = 3
+    current_version: Integer = 4
 }
 
 value SessionHeader {
@@ -17,6 +17,7 @@ value SessionHeader {
     id: String
     timestamp: Timestamp
     worktree_path: String
+    parent_session_id: String?
     parent_session: String?
 }
 
@@ -25,12 +26,21 @@ value SessionInfo {
     id: String
     worktree_path: String
     name: String?
+    parent_session_id: String?
     parent_session_path: String?
     created: Timestamp
     modified: Timestamp
     message_count: Integer
     first_message: String
     all_messages_text: String
+}
+
+value SessionHostIndexEntry {
+    host_id: String
+    project_id: String
+    worktree_path: String
+    active_session_id: String?
+    session_count: Integer
 }
 
 entity SessionFile {
@@ -47,6 +57,10 @@ entity SessionDirectory {
     path: String
 }
 
+entity SessionHostIndex {
+    entries: Set<SessionHostIndexEntry>
+}
+
 rule SessionFileCreated {
     when: session/NewSessionStarted(s, input)
     requires: s.session_file = null
@@ -61,6 +75,7 @@ rule SessionFileCreated {
             id: s.id,
             timestamp: now,
             worktree_path: s.worktree_path,
+            parent_session_id: null,
             parent_session: null
         },
         entries: {},
@@ -72,13 +87,14 @@ rule ForkedSessionFileCreated {
     when: session/SessionForked(s, entry_id)
 
     ensures: core/SessionContainment.created(
-        parent_session_id: SessionId{value: s.id},
-        child_session_id: SessionId{value: child_session_id_for_fork(s.id, entry_id)},
-        relation: fork,
+        parent_session_id: SessionId{value: parent_session_id_for_fork(s.id, entry_id)},
+        child_session_id: SessionId{value: s.id},
+        relation: fork_at_entry,
         created_at: now
     )
 
-    let parent_path = s.session_file
+    let parent_id = parent_session_id_for_fork(s.id, entry_id)
+    let parent_path = parent_session_path_for_fork(s.id, entry_id)
     let branch_entries = EntriesOnPathTo(s.journal, entry_id)
     let dir = SessionDirectoryFor(s.worktree_path)
 
@@ -91,6 +107,7 @@ rule ForkedSessionFileCreated {
             id: s.id,
             timestamp: now,
             worktree_path: s.worktree_path,
+            parent_session_id: parent_id,
             parent_session: parent_path
         },
         entries: branch_entries,
@@ -120,7 +137,9 @@ rule SessionLoaded {
 
     let migrated = MigratedToCurrentVersion(raw_entries)
     ensures: s.id = HeaderSessionId(migrated)
-    ensures: s.worktree_path = HeaderCwd(migrated)
+    ensures: s.worktree_path = HeaderWorktreePath(migrated)
+    ensures: s.parent_session_id = HeaderParentSessionId(migrated)
+    ensures: s.parent_session_path = HeaderParentSessionPath(migrated)
     ensures: s.journal = SessionEntriesFromFile(migrated)
     ensures: s.journal_flushed = true
     ensures: s.leaf_entry_id = LastEntryId(s.journal)
@@ -155,6 +174,14 @@ rule MigratedV2ToV3 {
     ensures: SetHeaderVersion(raw_entries, 3)
 }
 
+rule MigratedV3ToV4 {
+    when: MigratedToCurrentVersion(raw_entries)
+    requires: HeaderVersion(raw_entries) = 3
+
+    ensures: EnsureParentSessionIdInHeader(raw_entries)
+    ensures: SetHeaderVersion(raw_entries, 4)
+}
+
 rule SessionDirectoryResolved {
     when: SessionDirectoryFor(worktree_path)
 
@@ -178,6 +205,22 @@ rule AllSessionsListed {
     ensures: result = SortSessionInfoByModifiedDesc(result)
 }
 
+rule SessionHostIndexBuilt {
+    when: SessionHostIndexRequested()
+
+    ensures: SessionHostIndex.created(
+        entries: BuildSessionHostIndexFromSessionHeaders(config.sessions_root)
+    )
+}
+
+rule SessionHostIndexResolvesActiveSession {
+    when: SessionHostIndexRequested()
+
+    ensures:
+        for e in SessionHostIndex.entries:
+            e.active_session_id = ResolveActiveSessionForHost(e.host_id)
+}
+
 surface SessionPersistenceApi {
     facing caller: session/AgentSession
 
@@ -194,12 +237,15 @@ surface SessionPersistenceApi {
         MostRecentSessionFound(s.worktree_path)
         SessionsListed(s.worktree_path, null)
         AllSessionsListed()
+        SessionHostIndexRequested()
 
     @guidance
         -- Disk operations are mediated through this surface.
         -- Initial session file write is lazy until first assistant message.
         -- Fork writes immediately with branch history.
-        -- parent_session in file header is the persisted lineage edge.
+        -- parent_session_id is canonical lineage identity in file header.
+        -- parent_session_path is an optional denormalized lookup hint.
+        -- Host/session index enables process-level multi-session listing and switching.
 }
 
 open question "Should the on-disk format stay NDJSON or move to EDN?"

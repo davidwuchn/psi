@@ -97,3 +97,23 @@
         (is (= 1 (count (:errors result))))
         (is (= :error (:status (get by-id "s1"))))
         (is (nil? (get by-id "s2")))))))
+
+(deftest run-startup-prompts-in-skips-fork-by-default-test
+  (let [ctx (session/create-context {:persist? false})
+        calls (atom [])]
+    (session/new-session-in! ctx)
+    (with-redefs [psi.agent-session.startup-prompts/discover-rules
+                  (fn [_]
+                    [{:id "s1" :phase :system-bootstrap :priority 1 :source :project :text "one"}])
+                  runtime/run-agent-loop-in!
+                  (fn [_ctx _ai-ctx _ai-model user-messages _opts]
+                    (swap! calls conj user-messages)
+                    {:role "assistant" :content [{:type :text :text "ok"}]})]
+      (let [result (runtime/run-startup-prompts-in! ctx {:ai-ctx nil
+                                                         :ai-model {:provider :anthropic :id "m"}
+                                                         :spawn-mode :fork-head})
+            sd (session/get-session-data-in ctx)]
+        (is (= [] (:rules result)))
+        (is (= [] @calls))
+        (is (= [] (:startup-prompts sd)))
+        (is (true? (:startup-bootstrap-completed? sd)))))))

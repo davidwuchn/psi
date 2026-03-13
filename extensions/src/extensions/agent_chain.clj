@@ -216,7 +216,7 @@
     (vals @runs-a)
     []))
 
-(defn- widget-run-line
+(defn- widget-run-text
   [{:keys [run-id chain-name phase step-index step-count step-agent last-work elapsed-ms]}]
   (str (status-icon (or phase :pending)) " " run-id
        " [" (-> (or phase :pending) name str/upper-case) "] "
@@ -230,16 +230,26 @@
        (when (seq last-work)
          (str " — " (task-preview last-work 70)))))
 
+(defn- widget-run-line
+  [run]
+  (let [line-text (widget-run-text run)
+        run-id    (str/trim (str (or (:run-id run) "")))]
+    (if (seq run-id)
+      {:text   (str line-text " · ✕ remove")
+       :action {:type :command
+                :command (str "/chain-rm " run-id)}}
+      line-text)))
+
 (defn- widget-lines []
-  (let [runs       (->> (tracked-runs)
-                        (sort-by :updated-at >)
-                        (take max-widget-runs))
+  (let [runs        (->> (tracked-runs)
+                         (sort-by :updated-at >)
+                         (take max-widget-runs))
         chain-names (->> @(:chains @state)
                          (map :name)
                          (filter seq))
-        header     (str "⛓ Agent Chain"
-                        (when (seq chain-names)
-                          (str " · " (str/join " · " chain-names))))]
+        header      (str "⛓ Agent Chain"
+                         (when (seq chain-names)
+                           (str " · " (str/join " · " chain-names))))]
     (vec (if (seq runs)
            (cons header (map widget-run-line runs))
            [header]))))

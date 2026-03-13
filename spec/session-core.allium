@@ -62,8 +62,26 @@ entity SessionMessage {
 entity SessionContainment {
     parent_session_id: SessionId
     child_session_id: SessionId
-    relation: fork | subagent
+    relation: fork | fork_at_entry | subagent
     created_at: Timestamp
+}
+
+entity SessionHost {
+    id: String
+    project_id: ProjectId
+    worktree_path: WorktreePath
+    active_session_id: SessionId?
+}
+
+rule SessionHostInitialized {
+    when: SessionHostInitialized(project_id, worktree_path)
+
+    ensures: SessionHost.created(
+        id: host_id_for(project_id, worktree_path),
+        project_id: project_id,
+        worktree_path: worktree_path,
+        active_session_id: null
+    )
 }
 
 rule SessionCreated {
@@ -83,6 +101,10 @@ rule SessionCreated {
         streaming_state: idle,
         status: active
     )
+
+    ensures:
+        for h in SessionHosts where h.project_id = project_id and h.worktree_path = worktree_path:
+            h.active_session_id = created_session_id()
 }
 
 rule SessionForked {
@@ -110,6 +132,10 @@ rule SessionForked {
         relation: fork,
         created_at: now
     )
+
+    ensures:
+        for h in SessionHosts where h.project_id = project_id_for(parent_session_id) and h.worktree_path = worktree_path:
+            h.active_session_id = child_session_id
 }
 
 rule SubagentSessionCreated {
@@ -137,6 +163,10 @@ rule SubagentSessionCreated {
         relation: subagent,
         created_at: now
     )
+
+    ensures:
+        for h in SessionHosts where h.project_id = project_id_for(parent_session_id) and h.worktree_path = worktree_path_for(parent_session_id):
+            h.active_session_id = child_session_id
 }
 
 rule MessageAppended {
@@ -181,6 +211,19 @@ rule SessionSummaryUpdated {
             s.summary_line = SummarizeSessionLine(id)
 }
 
+rule ActiveSessionSwitched {
+    when: SessionSwitchRequested(project_id, worktree_path, session_id)
+    requires: exists s in AgentSessions where s.id = session_id and s.project_id = project_id and s.worktree_path = worktree_path
+
+    ensures:
+        for h in SessionHosts where h.project_id = project_id and h.worktree_path = worktree_path:
+            h.active_session_id = session_id
+
+    ensures:
+        for r in AgentSessions where r.project_id = project_id and r.worktree_path = worktree_path and r.id != session_id:
+            r.streaming_state = r.streaming_state
+}
+
 rule SessionCompleted {
     when: SessionCompletionRequested(id)
     requires: exists s in AgentSessions where s.id = id and s.status = active
@@ -205,12 +248,25 @@ invariant SessionHasStableProject {
         exists p in Projects where p.id = s.project_id
 }
 
+invariant ActiveSessionBelongsToHost {
+    for h in SessionHosts:
+        (h.active_session_id = null) or
+        exists s in AgentSessions where s.id = h.active_session_id and s.project_id = h.project_id and s.worktree_path = h.worktree_path
+}
+
+invariant ParentSessionIsImmutable {
+    for s in AgentSessions:
+        ParentSessionIdNeverChangesAfterCreate(s.id)
+}
+
 contract SessionCoreEql {
     create_session: (input: JsonMap) -> JsonMap
     fork_session: (input: JsonMap) -> JsonMap
     create_subagent_session: (input: JsonMap) -> JsonMap
     append_message: (input: JsonMap) -> JsonMap
     session_lineage: (id: SessionId) -> JsonMap
+    list_sessions: (project_id: ProjectId, worktree_path: WorktreePath) -> JsonMap
+    switch_session: (project_id: ProjectId, worktree_path: WorktreePath, session_id: SessionId) -> JsonMap
 
     @invariant SessionIdentityAttrs
         -- session attrs include:
@@ -227,6 +283,15 @@ contract SessionCoreEql {
     @invariant SessionContainmentAttrs
         -- lineage attrs include:
         -- {:session/children [{:session/id :session/relation}]}
+
+    @invariant SessionHostAttrs
+        -- host attrs include:
+        -- {:session.host/id :session.host/project-id :session.host/worktree-path :session.host/active-session-id}
+
+    @invariant SessionListAndSwitchAttrs
+        -- list/switch attrs include:
+        -- {:session/list [{:session/id :session/name :session/status :session/streaming-state}]
+        --  :session/active-id}
 }
 
 actor EqlClient {
@@ -254,9 +319,11 @@ surface SessionCoreApi {
             s.status
 
     provides:
+        SessionHostInitialized(project_id, worktree_path)
         SessionCreateRequested(project_id, worktree_path, system_prompt, name)
         SessionForkRequested(parent_session_id, worktree_path, system_prompt, name)
         SubagentSessionRequested(parent_session_id, system_prompt, name)
+        SessionSwitchRequested(project_id, worktree_path, session_id)
         SessionMessageAppendRequested(session, role, content, metadata, tool_name, tool_call_id)
         AssistantStreamStarted(id)
         AssistantStreamCompleted(id)
@@ -268,6 +335,13 @@ surface SessionCoreApi {
 
     @guarantee SessionCanContainSessions
         -- Fork and subagent relations are represented as explicit parent-child containment.
+
+    @guarantee ActiveSessionRoutesByDefault
+        -- Prompts/mutations without explicit session id route to the host active session.
+
+    @guarantee SessionSwitchDoesNotInterruptOthers
+        -- Switching active session does not force non-target sessions to idle.
+        -- In-flight runs in non-target sessions continue.
 }
 
 open question "Should SessionMessage.content allow structured multimodal content in addition to String?"

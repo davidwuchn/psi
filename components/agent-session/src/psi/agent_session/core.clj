@@ -73,6 +73,7 @@
    [psi.agent-session.project-preferences :as project-prefs]
    [psi.agent-session.resolvers :as resolvers]
    [psi.agent-session.session :as session]
+   [psi.agent-session.session-host :as session-host]
    [psi.agent-session.system-prompt :as sys-prompt]
    [psi.agent-session.statechart :as sc]
    [psi.memory.runtime :as memory-runtime]
@@ -84,6 +85,7 @@
 
 (declare execute-compaction-in!)
 (declare set-session-name-in!)
+(declare resume-session-in!)
 (declare register-resolvers-in!)
 (declare register-mutations-in!)
 (declare refresh-system-prompt-in!)
@@ -280,11 +282,13 @@
          flush-state-atom  (persist/create-flush-state)
          ui-state-atom     (ext-ui/create-ui-state)
          merged-config     (merge session/default-config (or config {}))
+         host-atom         (atom (session-host/create-host @session-data-atom))
          ;; Build ctx without actions-fn so we can close over it
          ctx               {:sc-env                sc-env
                             :sc-session-id         sc-session-id
                             :started-at            (java.time.Instant/now)
                             :session-data-atom      session-data-atom
+                            :session-host-atom      host-atom
                             :tool-output-stats-atom  (atom {:calls []
                                                             :aggregates {:total-context-bytes 0
                                                                          :by-tool {}
@@ -340,6 +344,7 @@
                                  flush-state-atom
                                  (:session-id @session-data-atom)
                                  resolved-cwd
+                                 (:parent-session-id @session-data-atom)
                                  (:session-file @session-data-atom)))
                               (try
                                 (memory-runtime/remember-session-message!
@@ -377,12 +382,27 @@
 ;; ============================================================
 
 (defn get-session-data-in
-  "Return the current AgentSession data map from `ctx`."
-  [ctx]
-  @(:session-data-atom ctx))
+  "Return the current AgentSession data map from `ctx`.
+
+   If `session-id` is provided and host metadata knows that id, returns that
+   host session metadata entry (read-only listing projection)."
+  ([ctx]
+   @(:session-data-atom ctx))
+  ([ctx session-id]
+   (if-let [host-atom (:session-host-atom ctx)]
+     (or (get-in @host-atom [:sessions session-id])
+         @(:session-data-atom ctx))
+     @(:session-data-atom ctx))))
 
 (defn- swap-session! [ctx f & args]
-  (apply swap! (:session-data-atom ctx) f args))
+  (let [sd (apply swap! (:session-data-atom ctx) f args)]
+    (when-let [host-atom (:session-host-atom ctx)]
+      (swap! host-atom
+             (fn [host]
+               (-> host
+                   (session-host/upsert-session sd)
+                   (session-host/set-active-session (:session-id sd))))))
+    sd))
 
 ;; ============================================================
 ;; Journal append helper
@@ -399,6 +419,7 @@
        (:flush-state-atom ctx)
        (:session-id sd)
        (:cwd ctx)
+       (:parent-session-id sd)
        (:session-file sd)))))
 
 (defn journal-append-in!
@@ -406,6 +427,62 @@
    Use `persist/message-entry` et al. to build entries."
   [ctx entry]
   (journal-append! ctx entry))
+
+(defn get-session-host-in
+  "Return session host registry snapshot for this process context." 
+  [ctx]
+  (if-let [host-atom (:session-host-atom ctx)]
+    @host-atom
+    (session-host/create-host (get-session-data-in ctx))))
+
+(defn list-host-sessions-in
+  "Return host-tracked sessions metadata entries." 
+  [ctx]
+  (session-host/sessions (get-session-host-in ctx)))
+
+(defn set-active-session-in!
+  "Set active default-routing session id in host registry when known.
+   Returns host snapshot after update."
+  [ctx session-id]
+  (if-let [host-atom (:session-host-atom ctx)]
+    (do (swap! host-atom session-host/set-active-session session-id)
+        @host-atom)
+    (get-session-host-in ctx)))
+
+(defn ensure-session-loaded-in!
+  "Ensure `session-id` is loaded as the active runtime session in this context.
+
+   Behavior:
+   - if session-id is nil, no-op
+   - if already current, only updates host active pointer
+   - if known in host registry with a session-file path, resumes that file and
+     marks it active
+   - otherwise throws ex-info with :error-code request/not-found"
+  [ctx session-id]
+  (when session-id
+    (let [current-id (:session-id (get-session-data-in ctx))]
+      (if (= current-id session-id)
+        (do (set-active-session-in! ctx session-id)
+            (get-session-data-in ctx))
+        (let [host (get-session-host-in ctx)
+              target (get-in host [:sessions session-id])
+              path   (:session-file target)]
+          (cond
+            (nil? target)
+            (throw (ex-info "session id not found in host registry"
+                            {:error-code "request/not-found"
+                             :session-id session-id}))
+
+            (or (nil? path) (str/blank? path))
+            (throw (ex-info "session id is not resumable (missing session file)"
+                            {:error-code "request/not-found"
+                             :session-id session-id}))
+
+            :else
+            (do
+              (resume-session-in! ctx path)
+              (set-active-session-in! ctx session-id)
+              (get-session-data-in ctx))))))))
 
 (defn sc-phase-in
   "Return the active statechart phase for `ctx`."
@@ -423,9 +500,12 @@
 
 (defn new-session-in!
   "Start a fresh session (resets agent and session data).
-  Dispatches session_before_switch / session_switch extension events."
+  Dispatches session_before_switch / session_switch extension events.
+
+   opts:
+   - :spawn-mode (keyword) default :new-root"
   ([ctx] (new-session-in! ctx {}))
-  ([ctx _opts]
+  ([ctx opts]
    (let [reg                  (:extension-registry ctx)
          {:keys [cancelled?]} (ext/dispatch-in reg "session_before_switch" {:reason :new})]
      (when-not cancelled?
@@ -436,6 +516,9 @@
                         :session-id        new-session-id
                         :session-file      nil
                         :session-name      nil
+                        :parent-session-id nil
+                        :parent-session-path nil
+                        :spawn-mode        (or (:spawn-mode opts) :new-root)
                         :interrupt-pending false
                         :interrupt-requested-at nil
                         :steering-messages []
@@ -509,6 +592,8 @@
                            :session-name   (some #(when (= :session-info (:kind %))
                                                     (get-in % [:data :name]))
                                                  (rseq (vec entries)))
+                           :parent-session-id (:parent-session-id header)
+                           :parent-session-path (:parent-session header)
                            :interrupt-pending false
                            :interrupt-requested-at nil
                            :model          model
@@ -536,15 +621,17 @@
   (let [reg     (:extension-registry ctx)
         journal (:journal-atom ctx)]
     (ext/dispatch-in reg "session_before_fork" {:entry-id entry-id})
-    (let [parent-sd          (get-session-data-in ctx)
+    (let [parent-sd           (get-session-data-in ctx)
+          parent-session-id   (:session-id parent-sd)
           parent-session-file (:session-file parent-sd)
-          new-session-id     (str (java.util.UUID/randomUUID))
-          messages           (vec (persist/messages-up-to journal entry-id))
-          branch-entries     (vec (persist/entries-up-to journal entry-id))]
+          new-session-id      (str (java.util.UUID/randomUUID))
+          messages            (vec (persist/messages-up-to journal entry-id))
+          branch-entries      (vec (persist/entries-up-to journal entry-id))]
       ;; Forked runtime state starts from branch-local history.
       (reset! journal branch-entries)
       (swap-session! ctx assoc
                      :session-id new-session-id
+                     :parent-session-id parent-session-id
                      :session-file nil
                      :startup-prompts []
                      :startup-bootstrap-completed? false
@@ -563,6 +650,7 @@
           (persist/flush-journal! file
                                   new-session-id
                                   (:cwd ctx)
+                                  parent-session-id
                                   parent-session-file
                                   branch-entries)
           (reset! (:flush-state-atom ctx) {:flushed? true :session-file file})))

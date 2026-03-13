@@ -282,23 +282,29 @@
    - :run-loop-fn
    - :progress-queue
    - :session-mode (keyword, optional; default :build)
+   - :spawn-mode (keyword, optional; default :new-root)
    - :fail-fast? (boolean, optional; default false)
 
    Returns {:rules [...] :applied [...] :errors [...]} where :applied contains
    per-rule outcomes. On prompt execution failure, execution continues by default
    with an error outcome captured in :applied/:errors."
-  [ctx {:keys [ai-ctx ai-model run-loop-fn progress-queue session-mode fail-fast?]
+  [ctx {:keys [ai-ctx ai-model run-loop-fn progress-queue session-mode spawn-mode fail-fast?]
         :or   {session-mode :build
+               spawn-mode :new-root
                fail-fast? false}}]
-  (let [started-at (java.time.Instant/now)
+  (let [should-run? (startup-prompts/should-run?
+                     {:spawn-mode spawn-mode})
+        started-at (java.time.Instant/now)
         _ (swap! (:session-data-atom ctx) assoc
                  :startup-bootstrap-started-at started-at
                  :startup-bootstrap-completed? false
                  :startup-bootstrap-completed-at nil
                  :startup-message-ids [])
-        rules (startup-prompts/discover-rules
-               {:cwd (:cwd ctx)
-                :session-mode session-mode})
+        rules (if should-run?
+                (startup-prompts/discover-rules
+                 {:cwd (:cwd ctx)
+                  :session-mode session-mode})
+                [])
         {:keys [applied errors]}
         (loop [remaining rules
                applied []
