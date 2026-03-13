@@ -4,6 +4,29 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-13 - Session host routing tests should persist resume targets when lazy flush is in play
+
+### λ Host-id routing tests fail nondeterministically unless target session files are explicitly persisted
+
+`ensure-session-loaded-in!` / `switch_session(:session-id)` rely on host metadata plus
+session-file paths. In tests that create multiple sessions quickly, lazy first-assistant
+flush means earlier sessions may not yet have readable files. Explicitly persisting fixtures
+(`persist/flush-journal!`) makes host-id routing deterministic and avoids false regressions.
+
+### λ Background-job list defaults hide terminal workflow jobs in gating tests
+
+`list-background-jobs-in!` defaults to non-terminal statuses only. Tests asserting tracked
+workflow job presence after immediate completion must either query with explicit terminal+
+non-terminal statuses or assert via inspect-by-id; otherwise they can fail despite correct
+tracking behavior.
+
+### λ Batch session verification should be kept as a focused runnable set in memory docs
+
+For multi-session host work, a compact regression suite (`core-test`, `persistence-test`,
+`rpc-test`, `resolvers-test`, `runtime-startup-prompts-test`, `startup-prompts-test`)
+provides a reproducible confidence envelope and should be recorded whenever a large session
+sweep is committed.
+
 ## 2026-03-13 - PSL follow-up should encode graph-introspection nuance for join attrs
 
 ### λ Root-queryable attrs and graph edges serve different discovery roles
