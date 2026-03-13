@@ -102,6 +102,18 @@ Compose source rules:
 - Normal editing keeps the anchor at the start of the current draft tail, so transcript text above the anchor is not resent unless you explicitly select it as a region.
 - Reconnect clear (`C-c C-r` after confirmation) resets the buffer and repositions the draft anchor at the new buffer end; after reconnect, sends come only from text typed after that reset point.
 
+## Prompt completion (`/` and `@`)
+
+`psi-emacs-mode` installs a CAPF (`psi-emacs-prompt-capf`) for compose input.
+
+- `/...` completes slash commands:
+  - idle-local commands (for example `/resume`, `/new`, `/status`, `/worktree`, `/jobs`, `/model`, `/thinking`, `/help`)
+  - common backend commands (`/history`, `/prompts`, `/skills`, `/login`, `/logout`, `/remember`, `/skill:`)
+  - extension commands discovered from backend introspection
+- `@...` completes file references from cwd/project-root (with configurable hidden/excluded policy)
+
+Completion behavior knobs live in customize group `psi-emacs-completion`.
+
 ## Rendering, status, and errors
 
 - Assistant streaming uses a single in-progress block updated by
