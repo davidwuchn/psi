@@ -39,7 +39,9 @@
   {:provider :anthropic :id "test-model" :name "Test"})
 
 (def ^:private cmd-opts
-  {:oauth-ctx nil :ai-model test-ai-model})
+  {:oauth-ctx nil
+   :ai-model test-ai-model
+   :supports-session-tree? true})
 
 (defn- with-ready-memory-ctx
   [ctx]
@@ -90,6 +92,38 @@
 (deftest dispatch-resume-test
   (let [ctx (make-test-ctx)]
     (is (= {:type :resume} (commands/dispatch ctx "/resume" cmd-opts)))))
+
+(deftest dispatch-tree-open-test
+  (let [ctx (make-test-ctx)]
+    (is (= {:type :tree-open} (commands/dispatch ctx "/tree" cmd-opts)))))
+
+(deftest dispatch-tree-not-supported-test
+  (let [ctx (make-test-ctx)
+        result (commands/dispatch ctx "/tree" (assoc cmd-opts :supports-session-tree? false))]
+    (is (= :text (:type result)))
+    (is (str/includes? (:message result) "only available in TUI mode"))))
+
+(deftest dispatch-tree-switch-by-id-test
+  (let [ctx        (make-test-ctx)
+        before-id  (:session-id (session/get-session-data-in ctx))
+        _          (session/new-session-in! ctx)
+        active-id  (:session-id (session/get-session-data-in ctx))
+        host       (session/get-session-host-in ctx)
+        target-id  (some (fn [sid]
+                           (when (and (string? sid) (not= sid active-id)) sid))
+                         (keys (:sessions host)))
+        result     (commands/dispatch ctx (str "/tree " target-id) cmd-opts)]
+    (is (string? before-id))
+    (is (string? target-id))
+    (is (= :tree-switch (:type result)))
+    (is (= target-id (:session-id result)))))
+
+(deftest dispatch-tree-active-session-id-is-noop-test
+  (let [ctx       (make-test-ctx)
+        active-id (:session-id (session/get-session-data-in ctx))
+        result    (commands/dispatch ctx (str "/tree " active-id) cmd-opts)]
+    (is (= :text (:type result)))
+    (is (str/includes? (:message result) "Already active session"))))
 
 (deftest dispatch-status-test
   (let [ctx    (make-test-ctx)
@@ -430,7 +464,7 @@
 (deftest format-help-includes-all-commands-test
   (let [ctx (make-test-ctx)
         s   (commands/format-help ctx)]
-    (doseq [cmd ["/quit" "/status" "/history" "/new" "/resume"
+    (doseq [cmd ["/quit" "/status" "/history" "/new" "/resume" "/tree"
                  "/login" "/logout" "/remember" "/worktree"
                  "/jobs" "/job" "/cancel-job"
                  "/help" "/prompts" "/skills"]]

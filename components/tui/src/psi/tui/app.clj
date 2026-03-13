@@ -204,7 +204,7 @@
             :last-escape-ms nil}})
 
 (def ^:private builtin-slash-commands
-  ["/quit" "/exit" "/resume" "/new" "/status" "/help" "/remember"
+  ["/quit" "/exit" "/resume" "/new" "/tree" "/status" "/help" "/remember"
    "/worktree" "/jobs" "/job" "/cancel-job"])
 
 (defn- input-value [state]
@@ -739,7 +739,7 @@
             :else             (str (quot diff-days 365) "y")))))))
 
 (defn- filter-sessions
-  "Return sessions matching `query` (case-insensitive substring on first-message + name)."
+  "Return sessions matching `query` (case-insensitive substring on summary fields)."
   [sessions query]
   (if (str/blank? query)
     sessions
@@ -747,8 +747,18 @@
       (filterv (fn [s]
                  (or (str/includes? (str/lower-case (or (:first-message s) "")) q)
                      (str/includes? (str/lower-case (or (:name s) "")) q)
-                     (str/includes? (str/lower-case (or (:cwd s) "")) q)))
+                     (str/includes? (str/lower-case (or (:cwd s) "")) q)
+                     (str/includes? (str/lower-case (or (:session-id s) "")) q)
+                     (str/includes? (str/lower-case (or (:path s) "")) q)))
                sessions))))
+
+(def ^:private tree-selector-query
+  [:psi.agent-session/host-active-session-id
+   {:psi.agent-session/host-sessions
+    [:psi.session-info/id
+     :psi.session-info/path
+     :psi.session-info/name
+     :psi.session-info/parent-session-id]}])
 
 (defn- session-selector-init
   "Build the initial session selector state for `cwd`."
@@ -761,7 +771,52 @@
      :search                ""
      :selected              0
      :loading?              false
-     :current-session-file  current-session-file}))
+     :current-session-file  current-session-file
+     :active-session-id     nil}))
+
+(defn- host-session->selector-session
+  [cwd m]
+  {:session-id        (:psi.session-info/id m)
+   :path              (:psi.session-info/path m)
+   :name              (:psi.session-info/name m)
+   :parent-session-id (:psi.session-info/parent-session-id m)
+   :first-message     ""
+   :message-count     0
+   :modified          nil
+   :cwd               cwd})
+
+(defn- selected-index-for-session-id
+  [sessions sid]
+  (or (first (keep-indexed (fn [i s]
+                             (when (= sid (:session-id s)) i))
+                           sessions))
+      0))
+
+(defn- session-selector-init-from-host
+  "Build selector state from the live host snapshot query.
+   Falls back to persisted /resume-style listing when query is unavailable."
+  [state]
+  (let [cwd                 (:cwd state)
+        current-session-file (:current-session-file state)
+        query-fn            (:query-fn state)]
+    (if-not query-fn
+      (session-selector-init cwd current-session-file)
+      (try
+        (let [data      (or (query-fn tree-selector-query) {})
+              active-id (:psi.agent-session/host-active-session-id data)
+              sessions  (mapv (partial host-session->selector-session cwd)
+                              (or (:psi.agent-session/host-sessions data) []))
+              selected  (selected-index-for-session-id sessions active-id)]
+          {:sessions              sessions
+           :all-sessions          nil
+           :scope                 :current
+           :search                ""
+           :selected              selected
+           :loading?              false
+           :current-session-file  current-session-file
+           :active-session-id     active-id})
+        (catch Exception _
+          (session-selector-init cwd current-session-file))))))
 
 (defn- selector-sessions
   "Return the active sessions list for the current scope."
@@ -882,6 +937,8 @@
      :initial-tool-order   — optional initial tool row order
      :resume-fn!           — (fn [session-path]) called when user selects a session;
                               returns {:messages [...], :tool-calls {...}, :tool-order [...]}
+     :switch-session-fn!   — (fn [session-id]) called by /tree direct-switch;
+                              returns {:messages [...], :tool-calls {...}, :tool-order [...]} | nil
      :dispatch-fn          — (fn [text]) → command result map or nil; central command dispatch
      :on-interrupt-fn!     — (fn [state]) -> {:queued-text str? :message str?} | nil
      :on-queue-input-fn!   — (fn [text state]) -> {:message str?} | nil
@@ -924,7 +981,9 @@
            :current-session-file  (or (:current-session-file opts)
                                       (:psi.agent-session/session-file introspected))
            :resume-fn!            (:resume-fn! opts)
-           :session-selector      nil   ;; non-nil when /resume is active
+           :switch-session-fn!    (:switch-session-fn! opts)
+           :session-selector      nil   ;; non-nil when /resume or /tree picker is active
+           :session-selector-mode nil   ;; :resume | :tree
            :prompt-input-state    (initial-prompt-input-state)
            :queue                 queue
            :width                 80
@@ -940,14 +999,21 @@
 ;; ── Update helpers ──────────────────────────────────────────
 
 (defn- open-session-selector
-  "Enter session-selector phase."
-  [state]
-  (let [sel (session-selector-init (:cwd state) (:current-session-file state))]
-    [(-> state
-         (assoc :phase :selecting-session
-                :session-selector sel)
-         (set-input-model (charm/text-input-reset (:input state))))
-     nil]))
+  "Enter session-selector phase.
+   mode:
+   - :resume => persisted session files
+   - :tree   => live host sessions (multi-session surface)"
+  ([state] (open-session-selector state :resume))
+  ([state mode]
+   (let [sel (case mode
+               :tree (session-selector-init-from-host state)
+               (session-selector-init (:cwd state) (:current-session-file state)))]
+     [(-> state
+          (assoc :phase :selecting-session
+                 :session-selector sel
+                 :session-selector-mode mode)
+          (set-input-model (charm/text-input-reset (:input state))))
+      nil])))
 
 (defn- handle-dispatch-result
   "Translate a command dispatch result map into [new-state cmd].
@@ -959,7 +1025,38 @@
       [state charm/quit-cmd]
 
       :resume
-      (open-session-selector state)
+      (open-session-selector state :resume)
+
+      :tree-open
+      (open-session-selector state :tree)
+
+      :tree-switch
+      (let [switch-fn (:switch-session-fn! state)
+            sid       (:session-id result)]
+        (if (and switch-fn (string? sid) (not (str/blank? sid)))
+          (let [restored (switch-fn sid)
+                restored-msgs (if (map? restored) (:messages restored) restored)
+                restored-tool-calls (if (map? restored) (:tool-calls restored) nil)
+                restored-tool-order (if (map? restored) (:tool-order restored) nil)]
+            [(-> state
+                 (assoc :phase :idle
+                        :messages (vec (or restored-msgs []))
+                        :stream-text nil
+                        :stream-thinking nil
+                        :tool-calls (or restored-tool-calls {})
+                        :tool-order (vec (or restored-tool-order []))
+                        :session-selector nil
+                        :session-selector-mode nil)
+                 (set-input-model (charm/text-input-reset (:input state))))
+             nil])
+          [(-> state
+               (assoc :session-selector nil
+                      :session-selector-mode nil
+                      :phase :idle)
+               (set-input-model (charm/text-input-reset (:input state)))
+               (update :messages conj {:role :assistant
+                                       :text "Session switch is unavailable in this runtime."}))
+           nil]))
 
       :new-session
       (let [rehydrate (:rehydrate result)
@@ -1031,14 +1128,15 @@
     (cond
       ;; Escape — cancel, return to idle
       (msg/key-match? m "escape")
-      [(assoc state :phase :idle :session-selector nil) nil]
+      [(assoc state :phase :idle :session-selector nil :session-selector-mode nil) nil]
 
       ;; Ctrl+C — quit
       (msg/key-match? m "ctrl+c")
       [state charm/quit-cmd]
 
-      ;; Tab — toggle scope
-      (msg/key-match? m "tab")
+      ;; Tab — toggle scope (resume mode only)
+      (and (msg/key-match? m "tab")
+           (not= :tree (:session-selector-mode state)))
       (let [new-scope (if (= :current (:scope sel)) :all :current)
             new-sel   (if (and (= :all new-scope) (nil? (:all-sessions sel)))
                         ;; Lazily load all sessions on first Tab to :all
@@ -1062,30 +1160,49 @@
       ;; Enter — select the highlighted session
       (msg/key-match? m "enter")
       (let [filtered (selector-filtered sel)
-            chosen   (nth filtered (:selected sel) nil)]
+            chosen   (nth filtered (:selected sel) nil)
+            mode     (:session-selector-mode state :resume)]
         (if chosen
-          (let [path         (:path chosen)
-                resume-fn    (:resume-fn! state)
-                ;; resume-fn! returns {:messages [...]
-                ;;                      :tool-calls {...}
-                ;;                      :tool-order [...]}.
-                ;; Fallback keeps older callback shape ([{:role ... :text ...} ...]).
-                restored     (when resume-fn (resume-fn path))
-                restored-msgs (if (map? restored) (:messages restored) restored)
-                restored-tool-calls (if (map? restored) (:tool-calls restored) nil)
-                restored-tool-order (if (map? restored) (:tool-order restored) nil)
-                new-state    (-> state
-                                 (assoc :phase            :idle
-                                        :session-selector nil
-                                        :current-session-file path
-                                        :messages         (or restored-msgs [])
-                                        :stream-text      nil
-                                        :stream-thinking  nil
-                                        :tool-calls       (or restored-tool-calls {})
-                                        :tool-order       (or restored-tool-order [])))]
-            [new-state nil])
+          (if (= :tree mode)
+            (let [sid             (:session-id chosen)
+                  switch-fn       (:switch-session-fn! state)
+                  restored        (when (and switch-fn sid) (switch-fn sid))
+                  restored-msgs   (if (map? restored) (:messages restored) restored)
+                  restored-tool-calls (if (map? restored) (:tool-calls restored) nil)
+                  restored-tool-order (if (map? restored) (:tool-order restored) nil)
+                  new-state       (-> state
+                                      (assoc :phase :idle
+                                             :session-selector nil
+                                             :session-selector-mode nil
+                                             :messages (vec (or restored-msgs []))
+                                             :stream-text nil
+                                             :stream-thinking nil
+                                             :tool-calls (or restored-tool-calls {})
+                                             :tool-order (vec (or restored-tool-order []))))]
+              [new-state nil])
+            (let [path         (:path chosen)
+                  resume-fn    (:resume-fn! state)
+                  ;; resume-fn! returns {:messages [...]
+                  ;;                      :tool-calls {...}
+                  ;;                      :tool-order [...]}.
+                  ;; Fallback keeps older callback shape ([{:role ... :text ...} ...]).
+                  restored     (when resume-fn (resume-fn path))
+                  restored-msgs (if (map? restored) (:messages restored) restored)
+                  restored-tool-calls (if (map? restored) (:tool-calls restored) nil)
+                  restored-tool-order (if (map? restored) (:tool-order restored) nil)
+                  new-state    (-> state
+                                   (assoc :phase            :idle
+                                          :session-selector nil
+                                          :session-selector-mode nil
+                                          :current-session-file path
+                                          :messages         (vec (or restored-msgs []))
+                                          :stream-text      nil
+                                          :stream-thinking  nil
+                                          :tool-calls       (or restored-tool-calls {})
+                                          :tool-order       (vec (or restored-tool-order []))))]
+              [new-state nil]))
           ;; Nothing selected — just close
-          [(assoc state :phase :idle :session-selector nil) nil]))
+          [(assoc state :phase :idle :session-selector nil :session-selector-mode nil) nil]))
 
       ;; Backspace / printable chars — update search
       (msg/key-press? m)
@@ -2079,17 +2196,24 @@
       (or p ""))))
 
 (defn- render-session-selector
-  "Render the /resume session picker."
-  [sel-state current-session-file width]
+  "Render the /resume or /tree session picker."
+  [sel-state current-session-file width mode]
   (let [{:keys [scope search selected]} sel-state
         filtered  (selector-filtered sel-state)
         n         (count filtered)
-        scope-str (if (= :current scope)
-                    (str (charm/render selector-sel-style "◉ Current") "  ○ All")
-                    (str "○ Current  " (charm/render selector-sel-style "◉ All")))
-        title     (str (charm/render selector-title-style "Resume Session")
-                       "  " scope-str
-                       "  " (charm/render selector-hint-style "[Tab=scope ↑↓=nav Enter=select Esc=cancel]"))]
+        tree-mode? (= :tree mode)
+        scope-str (if tree-mode?
+                    ""
+                    (if (= :current scope)
+                      (str (charm/render selector-sel-style "◉ Current") "  ○ All")
+                      (str "○ Current  " (charm/render selector-sel-style "◉ All"))))
+        title-label (if tree-mode? "Session Tree" "Resume Session")
+        title-hints (if tree-mode?
+                      "[↑↓=nav Enter=switch Esc=cancel]"
+                      "[Tab=scope ↑↓=nav Enter=select Esc=cancel]")
+        title     (str (charm/render selector-title-style title-label)
+                       (when (seq scope-str) (str "  " scope-str))
+                       "  " (charm/render selector-hint-style title-hints))]
     (str title "\n"
          (charm/render selector-search-style (str "Search: " search "█")) "\n"
          (render-separator width) "\n"
@@ -2099,17 +2223,39 @@
                      (map-indexed
                       (fn [i info]
                         (let [is-sel     (= i selected)
-                              is-current (= (:path info) current-session-file)
+                              is-current (if tree-mode?
+                                           (or (= (:session-id info) (:active-session-id sel-state))
+                                               (= (:session-id info) (:id info)))
+                                           (= (:path info) current-session-file))
                               age        (format-age (:modified info))
-                              label      (or (:name info) (:first-message info) "(empty)")
-                              label      (str/replace label #"\n" " ")
-                              cwd-part   (when (= :all scope)
-                                           (str " " (charm/render dim-style
-                                                                  (shorten-path (:cwd info)))))
-                              right      (str (charm/render dim-style
-                                                            (str (:message-count info) " " age))
-                                              (or cwd-part ""))
-                              right-w    (count right) ; approximate
+                              sid-str    (some-> (:session-id info) str)
+                              label-base (or (:name info)
+                                             (when sid-str
+                                               (str "session-" (subs sid-str 0 (min 8 (count sid-str)))))
+                                             (:first-message info)
+                                             "(empty)")
+                              label      (str/replace label-base #"\n" " ")
+                              parent?    (boolean (:parent-session-id info))
+                              label      (if (and tree-mode? parent?)
+                                           (str "  " label)
+                                           label)
+                              right      (if tree-mode?
+                                           (let [streaming? (boolean (:is-streaming info))
+                                                 sid (:session-id info)
+                                                 sid-str (some-> sid str)]
+                                             (str (when streaming?
+                                                    (charm/render dim-style " ◉stream"))
+                                                  (when sid-str
+                                                    (charm/render dim-style
+                                                                  (str "  " (subs sid-str 0 (min 8 (count sid-str))))))))
+                                           (let [cwd-part   (when (= :all scope)
+                                                              (str " " (charm/render dim-style
+                                                                                     (shorten-path (:cwd info)))))
+                                                 mc (:message-count info)]
+                                             (str (charm/render dim-style
+                                                                (str mc " " age))
+                                                  (or cwd-part ""))))
+                              right-w    (ansi/visible-width right)
                               avail      (max 10 (- width 4 right-w))
                               label-tr   (if (> (count label) avail)
                                            (str (subs label 0 (- avail 1)) "…")
@@ -2121,7 +2267,7 @@
                                            is-current (charm/render selector-cur-style label-tr)
                                            is-sel     (charm/render selector-sel-style label-tr)
                                            :else      label-tr)
-                              pad        (str/join (repeat (max 1 (- width 2 (count label-tr) right-w)) " "))]
+                              pad        (str/join (repeat (max 1 (- width 2 (ansi/visible-width label-tr) right-w)) " "))]
                           (str cursor styled-lbl pad right)))
                       filtered)))
          "\n"
@@ -2416,7 +2562,7 @@
        ;; Session selector takes over the whole screen
        (str (render-banner model-name prompt-templates skills extension-summary)
             "\n"
-            (render-session-selector session-selector current-session-file term-width)
+            (render-session-selector session-selector current-session-file term-width (:session-selector-mode state))
             clear-to-end-seq)
        ;; Normal chat view
        (str (render-banner model-name prompt-templates skills extension-summary)

@@ -116,6 +116,7 @@
          "  /skills  — list available skills\n"
          "  /new     — start a fresh session\n"
          "  /resume  — resume a previous session\n"
+         "  /tree [session-id] — open/switch live session tree (TUI)\n"
          "  /login [provider] — login with an OAuth provider\n"
          "  /logout  — logout from an OAuth provider\n"
          "  /model [provider model-id] — show current model or set model\n"
@@ -187,7 +188,7 @@
          "\n───────────────────────────────────────")))
 
 (defn format-worktree
-  "Return a deterministic git worktree status string for the session cwd." 
+  "Return a deterministic git worktree status string for the session cwd."
   [ctx]
   (let [d (session/query-in ctx
                             [:psi.agent-session/cwd
@@ -354,7 +355,7 @@
                   :ai-model    resolved model map}
 
    Result types — see ns docstring."
-  [ctx text {:keys [oauth-ctx ai-model on-new-session!]}]
+  [ctx text {:keys [oauth-ctx ai-model on-new-session! supports-session-tree?]}]
   (let [trimmed (str/trim text)]
     (cond
       ;; Quit
@@ -375,6 +376,48 @@
       ;; Resume
       (= trimmed "/resume")
       {:type :resume}
+
+      ;; Session tree (TUI multi-session surface)
+      (or (= trimmed "/tree")
+          (str/starts-with? trimmed "/tree "))
+      (if-not supports-session-tree?
+        {:type :text
+         :message "[/tree is only available in TUI mode (--tui)]"}
+        (let [arg       (-> (str/replace trimmed #"^/tree\s*" "") str/trim)
+              host      (session/get-session-host-in ctx)
+              active-id (:active-session-id host)
+              sessions  (vec (or (session/list-host-sessions-in ctx) []))]
+          (cond
+            (str/blank? arg)
+            {:type :tree-open}
+
+            :else
+            (let [match-by-id
+                  (some (fn [m]
+                          (when (= arg (:session-id m))
+                            m))
+                        sessions)
+                  match-by-prefix
+                  (when-not match-by-id
+                    (let [matches (filterv (fn [m]
+                                             (str/starts-with? (or (:session-id m) "") arg))
+                                           sessions)]
+                      (when (= 1 (count matches))
+                        (first matches))))
+                  chosen (or match-by-id match-by-prefix)
+                  sid    (:session-id chosen)]
+              (cond
+                (nil? chosen)
+                {:type :text
+                 :message (str "Session not found in host: " arg)}
+
+                (= sid active-id)
+                {:type :text
+                 :message (str "Already active session: " sid)}
+
+                :else
+                {:type :tree-switch
+                 :session-id sid})))))
 
       ;; Status
       (= trimmed "/status")

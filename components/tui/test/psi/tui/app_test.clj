@@ -26,6 +26,7 @@
   (case text
     ("/quit" "/exit")  {:type :quit}
     "/resume"          {:type :resume}
+    "/tree"            {:type :tree-open}
     "/new"             {:type :new-session :message "[New session started]"}
     "/status"          {:type :text :message "test status"}
     "/help"            {:type :text :message "test help"}
@@ -304,6 +305,74 @@
             [s3 _]    (update-fn s2 (msg/key-press :backspace))]
         (is (= "a" (get-in s2 [:session-selector :search])))
         (is (= "" (get-in s3 [:session-selector :search])))))))
+
+(deftest tree-command-opens-tree-selector-test
+  (testing "/tree enters selector in :tree mode"
+    (let [update-fn (app/make-update (stub-agent-fn ""))
+          qfn       (fn [_q]
+                      {:psi.agent-session/host-active-session-id "s1"
+                       :psi.agent-session/host-sessions
+                       [{:psi.session-info/id "s1"
+                         :psi.session-info/path "/tmp/psi-test/a.ndedn"
+                         :psi.session-info/name "Root"}]})
+          [state _] ((app/make-init "test-model" qfn nil {:dispatch-fn default-dispatch-fn
+                                                            :cwd "/tmp/psi-test"}))
+          typed      (type-text update-fn state "/tree")
+          [s1 _]     (update-fn typed (msg/key-press :enter))]
+      (is (= :selecting-session (:phase s1)))
+      (is (= :tree (:session-selector-mode s1)))
+      (is (= "s1" (get-in s1 [:session-selector :active-session-id]))))))
+
+(deftest tree-direct-switch-restores-state-test
+  (testing "/tree <id> dispatch result triggers switch-session callback"
+    (let [switched-id (atom nil)
+          dispatch-fn (fn [text]
+                        (when (= text "/tree s2")
+                          {:type :tree-switch :session-id "s2"}))
+          update-fn   (app/make-update (stub-agent-fn ""))
+          state       (init-state "test-model"
+                                  {:dispatch-fn dispatch-fn
+                                   :switch-session-fn! (fn [sid]
+                                                         (reset! switched-id sid)
+                                                         {:messages [{:role :assistant :text "switched"}]
+                                                          :tool-calls {"t1" {:name "read" :status :success :result "ok"}}
+                                                          :tool-order ["t1"]})})
+          typed       (type-text update-fn state "/tree s2")
+          [s1 _]      (update-fn typed (msg/key-press :enter))]
+      (is (= "s2" @switched-id))
+      (is (= :idle (:phase s1)))
+      (is (= "switched" (get-in s1 [:messages 0 :text])))
+      (is (= ["t1"] (:tool-order s1))))))
+
+(deftest tree-selector-enter-switches-via-callback-test
+  (testing "enter in :tree selector switches highlighted session"
+    (let [switched-id (atom nil)
+          update-fn   (app/make-update (stub-agent-fn ""))
+          qfn         (fn [_q]
+                        {:psi.agent-session/host-active-session-id "s1"
+                         :psi.agent-session/host-sessions
+                         [{:psi.session-info/id "s1"
+                           :psi.session-info/path "/tmp/psi-test/a.ndedn"
+                           :psi.session-info/name "Root"}
+                          {:psi.session-info/id "s2"
+                           :psi.session-info/path "/tmp/psi-test/b.ndedn"
+                           :psi.session-info/name "Child"
+                           :psi.session-info/parent-session-id "s1"}]})
+          [state _]   ((app/make-init "test-model" qfn nil {:dispatch-fn default-dispatch-fn
+                                                              :cwd "/tmp/psi-test"
+                                                              :switch-session-fn! (fn [sid]
+                                                                                    (reset! switched-id sid)
+                                                                                    {:messages [{:role :assistant
+                                                                                                 :text (str "switched " sid)}]
+                                                                                     :tool-calls {}
+                                                                                     :tool-order []})}))
+          typed       (type-text update-fn state "/tree")
+          [s1 _]      (update-fn typed (msg/key-press :enter))
+          [s2 _]      (update-fn s1 (msg/key-press :down))
+          [s3 _]      (update-fn s2 (msg/key-press :enter))]
+      (is (= "s2" @switched-id))
+      (is (= :idle (:phase s3)))
+      (is (= "switched s2" (get-in s3 [:messages 0 :text]))))))
 
 ;;;; Update — agent results
 

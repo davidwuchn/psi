@@ -593,6 +593,7 @@
      (print-initial-transcript! startup-rehydrate)
      (let [cmd-opts {:oauth-ctx oauth-ctx
                      :ai-model ai-model
+                     :supports-session-tree? false
                      :on-new-session! (fn []
                                         (start-new-session-with-startup! ctx ai-ctx ai-model))}]
        (loop []
@@ -721,8 +722,21 @@
                            :tool-calls {}
                            :tool-order []})))
 
+         switch-session-fn! (fn [session-id]
+                              (try
+                                (session/ensure-session-loaded-in! ctx session-id)
+                                (let [messages (:messages (agent/get-data-in (:agent-ctx ctx)))]
+                                  (agent-messages->tui-resume-state messages))
+                                (catch Exception e
+                                  (timbre/error e "Session switch failed:" session-id)
+                                  {:messages [{:role :assistant
+                                               :text (str "✗ Session switch failed: " (ex-message e))}]
+                                   :tool-calls {}
+                                   :tool-order []})))
+
          cmd-opts  {:oauth-ctx oauth-ctx
                     :ai-model ai-model
+                    :supports-session-tree? true
                     :on-new-session! (fn []
                                        (start-new-session-with-startup! ctx ai-ctx ai-model))}
 
@@ -813,6 +827,7 @@
                       :initial-tool-calls   (or (:tool-calls startup-rehydrate) {})
                       :initial-tool-order   (vec (or (:tool-order startup-rehydrate) []))
                       :resume-fn!           resume-fn!
+                      :switch-session-fn!   switch-session-fn!
                       :event-queue          event-queue
                       :alt-screen           false}))))
 

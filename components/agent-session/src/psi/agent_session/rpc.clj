@@ -1321,6 +1321,7 @@
                                    cmd-result    (when-not pending-login
                                                    (commands/dispatch ctx message {:oauth-ctx oauth-ctx
                                                                                    :ai-model  ai-model
+                                                                                   :supports-session-tree? false
                                                                                    :on-new-session! on-new-session!}))]
                                (cond
                                  pending-login

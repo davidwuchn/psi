@@ -24,8 +24,16 @@ clojure -M:run --tui --nrepl 8888
 
 ## In-session commands
 
-`/status` `/history` `/new` `/help` `/quit` `/skills` `/prompts` `/remember [text]`
+`/status` `/history` `/new` `/resume` `/tree [session-id]` `/help` `/quit` `/skills` `/prompts` `/remember [text]`
 `/skill:<name>` plus any extension commands
+
+### Multi-session commands
+
+- `/resume` opens the persisted-session picker (session files on disk).
+- `/tree` opens the live host session picker (in-process multi-session view).
+- `/tree <session-id|prefix>` switches directly to a live host session by id.
+
+`/tree` is TUI-only; console/RPC surfaces return a deterministic guidance message.
 
 `/remember` performs a single manual memory capture from the runtime command surface.
 It writes one memory artifact with the provided text (or a default note when blank).
