@@ -26,6 +26,22 @@ Both `/tree <id>` direct path and picker Enter path should converge through the 
 (`switch-session-fn!`) that calls `session/ensure-session-loaded-in!` and rehydrates transcript/tool rows.
 Single-path switching prevents drift between direct and interactive flows.
 
+## 2026-03-13 - Changelog-first PSL follow-up keeps plan/state memory coherent
+
+### λ Record shipped behavior once in CHANGELOG, then converge PLAN/STATE immediately
+
+When a feature commit is followed by a changelog-only commit (`d869843` for `/tree`),
+PLAN/STATE can drift unless they are explicitly updated to reference that memory event.
+Treating changelog updates as first-class state transitions keeps internal planning
+artifacts aligned with user-facing release memory.
+
+### λ Runtime-gated command surfaces should be documented as rollout semantics, not implementation detail
+
+For `/tree`, the important contract is not only that TUI supports it, but that console/RPC
+return deterministic guidance via capability gating (`supports-session-tree?`). Capturing this
+in PLAN/STATE/CHANGELOG avoids regressions where future surfaces accidentally expose partial
+or inconsistent behavior.
+
 ## 2026-03-13 - Distilled widget specs should lock UI policy decisions explicitly, not leave them as open questions
 
 ### λ Subagent widget behavior needs a dedicated UI spec separate from tool/workflow semantics
