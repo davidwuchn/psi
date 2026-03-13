@@ -93,7 +93,8 @@
      "- Commit message title must summarise the learning or plan/state change and finish with [psi:psl-auto].\n"
      "- Do not use git add -A or git add .\n"
      "- Only stage explicit target files for each commit.\n"
-     "- If a phase has no meaningful changes, skip that commit and explain why in your final response.\n")))
+     "- If a phase has no meaningful changes, skip that commit and explain why in your final response.\n"
+     "- do not comment on your compliance with these constraints\n")))
 
 ;; ---------------------------------------------------------------------------
 ;; Workflow job (runs in background future after session goes idle)
@@ -105,23 +106,23 @@
     (try
       (if (str/includes? subject marker)
         {:status :done :skipped? true}
-        (let [prompt         (psl-prompt {:source-sha source-sha})
-              subagent-res   (run-subagent-psl! mutate-fn prompt)
+        (let [prompt          (psl-prompt {:source-sha source-sha})
+              subagent-res    (run-subagent-psl! mutate-fn prompt)
               plan-succeeded? (true? (:psi.extension.tool-plan/succeeded? subagent-res))
-              first-result   (first (:psi.extension.tool-plan/results subagent-res))
-              tool-result    (:result first-result)
-              content        (str (or (:content tool-result) ""))
-              is-error?      (or (false? plan-succeeded?)
-                                 (true? (:is-error tool-result)))
-              status-msg     (if is-error?
-                               (str "PSL subagent run failed"
-                                    (when (seq content)
-                                      (str ": " content)))
-                               "PSL subagent run completed (forked context).")]
-          (send-message! mutate-fn status-msg)
-          {:status :done
-           :accepted? (not is-error?)
-           :delivery :subagent
+              first-result    (first (:psi.extension.tool-plan/results subagent-res))
+              tool-result     (:result first-result)
+              content         (str (or (:content tool-result) ""))
+              is-error?       (or (false? plan-succeeded?)
+                                  (true? (:is-error tool-result)))
+              status-msg      (when is-error?
+                                (str "PSL subagent run failed"
+                                     (when (seq content)
+                                       (str ": " content))))]
+          (when status-msg
+            (send-message! mutate-fn status-msg))
+          {:status          :done
+           :accepted?       (not is-error?)
+           :delivery        :subagent
            :subagent-result subagent-res}))
       (catch Exception e
         (send-message! mutate-fn (str "PSL error: " (ex-message e)))
