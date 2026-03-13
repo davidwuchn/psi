@@ -258,7 +258,7 @@ Ordered steps toward PSI COMPLETE.
   - `fork` RPC op now emits `host/updated` after `fork-session-in!`; session tree widget reflects forked session immediately.
   - Subagent creation intentionally excluded — subagents use isolated contexts and are not host peers.
   - Three new rpc_test assertions: subscribe, fork, and new_session `host/updated` coverage.
-- Progress (2026-03-13): TUI multi-session surface landed (`/tree` + host-backed picker)
+- Progress (2026-03-13, commit `92fc518`): TUI multi-session surface landed (`/tree` + host-backed picker)
   - Commands: `/tree` added to central dispatch with runtime gating (`:supports-session-tree?`), direct switch via session id/prefix (`:tree-switch`), and consistent no-op/error messaging.
   - TUI: selector now supports `:session-selector-mode` (`:resume|:tree`), host-backed initialization from `:psi.agent-session/host-sessions` + `:psi.agent-session/host-active-session-id`, tree-aware rendering (active highlight, parent indent, streaming badge, session-id suffix), and mode-specific key hints/Tab behavior.
   - Runtime wiring: TUI `run-tui-session` now passes `switch-session-fn!` (calls `session/ensure-session-loaded-in!` + rehydrate), plus `:supports-session-tree? true`; console/RPC explicitly pass `:supports-session-tree? false` for deterministic fallback text.
