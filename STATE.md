@@ -5,6 +5,9 @@ Current truth about the Psi system.
 ---
 
 ## Operating Frame
+- ✓ Emacs e2e harness assertions + startup timeout stabilization landed (2026-03-13, commit `ada2c32`): added `components/emacs-ui/test/psi-e2e-test.el`, `bb emacs:e2e` task, and synced docs (`components/emacs-ui/README.md`, `doc/emacs-ui.md`). Harness now asserts input focus, visible footer/projection, and non-input read-only guarantees across startup + `/history` flow.
+- ✓ Projection/footer read-only behavior is now explicit in runtime (`components/emacs-ui/psi-projection.el`): projection interior is marked read-only while boundary insertion remains writable so transcript/tool rows can still append directly before the projection block.
+- ✓ Emacs e2e transport readiness is stabilized for local startup variance by widening harness timeout to 60s; verification is green at `bb emacs:test` + `bb emacs:e2e` (`psi-emacs-e2e:ok`).
 - ✓ TUI tmux integration harness baseline landed (2026-03-13, commit `1613f5f`): new spec `spec/tui-tmux-integration-harness.allium`, reusable harness helpers `components/tui/test/psi/tui/test_harness/tmux.clj`, and baseline `^:integration` test `components/tui/test/psi/tui/tmux_integration_harness_test.clj`.
 - ✓ Harness contract now validates terminal-boundary viability with deterministic markers: ready (`刀:`/`Type a message`), help output (`(anything else is sent to the agent)`), and clean quit via pane process transition (`java` -> non-`java`).
 - ✓ AGENTS prompt memory now encodes alpha/back-compat posture and multi-file Allium structural constraints (commit `8bd0d58`): `In alpha; no backward compatibility`, `spec_consists_of_multiple_connected_allium_files`, and `spec_has_no_isolated_allium_file` are explicit top-level invariants.

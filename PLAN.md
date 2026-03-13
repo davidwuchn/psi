@@ -6,6 +6,22 @@ Ordered steps toward PSI COMPLETE.
 
 ## Done
 
+### Step 15 — Emacs e2e harness assertions + transport timeout stabilization ✓ complete
+- Added live Emacs end-to-end harness tasking and docs surface:
+  - `components/emacs-ui/test/psi-e2e-test.el`
+  - `bb emacs:e2e` in `bb.edn`
+  - docs sync in `components/emacs-ui/README.md` and `doc/emacs-ui.md`
+- E2E assertions now cover startup/session boundary guarantees:
+  - compose input remains focused
+  - footer/projection is visible
+  - non-input regions reject direct edits
+- Stabilized e2e readiness in real runtime conditions:
+  - timeout widened to 60s for handshake/startup variance
+  - projection rendering marks interior projection/footer region read-only while preserving writable boundary insertion for transcript/tool rows
+- Verification snapshot (commit `ada2c32`):
+  - `bb emacs:test` green
+  - `bb emacs:e2e` green (`psi-emacs-e2e:ok`)
+
 ### Step 11h — TUI tmux integration harness baseline ✓ complete
 - Added Allium contract: `spec/tui-tmux-integration-harness.allium`.
   - Scope includes tmux harness lifecycle and one baseline end-to-end scenario.
