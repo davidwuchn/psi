@@ -102,6 +102,15 @@ Ordered steps toward PSI COMPLETE.
 - README references now include nucleus and link to built-in extension documentation in `doc/extensions.md`.
 - Quick Start + CLI docs now standardize user-local invocation via a `~/.clojure/deps.edn` `:psi` alias (`:local/root` clone path) and command examples use `clojure -M:psi` instead of `-M:run`.
 
+### Step 14 — OpenAI model catalog refresh (GPT-5.4) ✓ complete
+- Added `:gpt-5.4` to `components/ai/src/psi/ai/models.clj` with Codex Responses transport (`:openai-codex-responses`) and ChatGPT backend base URL.
+- Synced catalog metadata to current upstream values used in `~/src/pi-mono` baseline:
+  - context window `272000`, max tokens `128000`
+  - costs `input 2.5`, `output 15.0`, `cache-read 0.25`, `cache-write 0.0`
+- Extended model-registration coverage in `components/ai/test/psi/ai/core_test.clj` to include `:gpt-5.4` in the GPT-5 Codex family assertions.
+- Updated runtime docs example in `components/agent-session/src/psi/agent_session/main.clj` (`PSI_MODEL` example now includes `gpt-5.4`).
+- Implementation commit: `bc67c9b`.
+
 ## Next
 
 ### Step 10 — Remember memory capture ✓ complete
