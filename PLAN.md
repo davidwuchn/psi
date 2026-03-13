@@ -297,6 +297,11 @@ Ordered steps toward PSI COMPLETE.
 - Progress (2026-03-13, commit `d869843`): changelog memory synced for `/tree` rollout
   - Added explicit `CHANGELOG.md` entry documenting command semantics (`/tree`, `/tree <id|prefix>`), runtime gating (`supports-session-tree?`), TUI host-backed selector mode, switch callback wiring, and validation snapshot.
   - Keeps internal plan/state narrative aligned with user-facing release memory for the same feature delta.
+- Progress (2026-03-13, commit `1613f5f`): TUI tmux integration harness baseline added for live-surface verification
+  - Added reusable tmux harness utilities (`components/tui/test/psi/tui/test_harness/tmux.clj`) and one detached-session end-to-end scenario test (`components/tui/test/psi/tui/tmux_integration_harness_test.clj`).
+  - Baseline scenario verifies boot readiness marker, `/help` marker, and `/quit` clean process exit with pane snapshot capture on failure.
+  - Added contract spec `spec/tui-tmux-integration-harness.allium` and user doc entry in `doc/tui.md`.
+  - Scope is verification infrastructure for TUI interaction boundaries; it does not change multi-session routing semantics.
 - Remaining (multi-session UI):
   - optional follow-up: add richer collapsed/expandable subtree interactions in TUI row model (current model is fully expanded tree-only)
 
