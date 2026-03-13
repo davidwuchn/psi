@@ -6,6 +6,16 @@ Ordered steps toward PSI COMPLETE.
 
 ## Done
 
+### Step 15a — RPC handshake host snapshot bootstrap + `/tree` simplification ✓ complete
+- RPC handshake path now emits a host snapshot event (`host/updated`) during bootstrap in rpc-edn mode.
+  - Wiring: `:handshake-host-updated-payload-fn` in rpc runtime state
+  - Handler: handshake emits `host/updated` before handshake response when configured
+- Emacs `/tree` now relies on bootstrapped host snapshot state and no longer queries `list_sessions` as a fallback.
+- Coverage updated:
+  - RPC handshake tests now assert host snapshot emission when configured.
+  - Emacs suite remains green with `/tree` operating from host snapshot state.
+- Implementation commit: `a639f3e`
+
 ### Step 15 — Emacs e2e harness assertions + transport timeout stabilization ✓ complete
 - Added live Emacs end-to-end harness tasking and docs surface:
   - `components/emacs-ui/test/psi-e2e-test.el`

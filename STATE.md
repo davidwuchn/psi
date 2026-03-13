@@ -5,6 +5,9 @@ Current truth about the Psi system.
 ---
 
 ## Operating Frame
+- ✓ RPC handshake now emits `host/updated` bootstrap snapshot for rpc-edn sessions (2026-03-13, commit `a639f3e`) via `:handshake-host-updated-payload-fn` + handshake event emission path in `psi.agent-session.rpc`.
+- ✓ Emacs `/tree` session selection is simplified to a single source of truth (`host-snapshot`) with no `list_sessions` fallback branch (commit `a639f3e`); startup host state is expected from handshake bootstrap + subscribe lifecycle.
+- ✓ Handshake coverage now includes host snapshot event assertion in `components/agent-session/test/psi/agent_session/rpc_test.clj` (commit `a639f3e`), preserving protocol-level initialization guarantees for session-tree consumers.
 - ✓ Emacs e2e harness assertions + startup timeout stabilization landed (2026-03-13, commit `ada2c32`): added `components/emacs-ui/test/psi-e2e-test.el`, `bb emacs:e2e` task, and synced docs (`components/emacs-ui/README.md`, `doc/emacs-ui.md`). Harness now asserts input focus, visible footer/projection, and non-input read-only guarantees across startup + `/history` flow.
 - ✓ Projection/footer read-only behavior is now explicit in runtime (`components/emacs-ui/psi-projection.el`): projection interior is marked read-only while boundary insertion remains writable so transcript/tool rows can still append directly before the projection block.
 - ✓ Emacs e2e transport readiness is stabilized for local startup variance by widening harness timeout to 60s; verification is green at `bb emacs:test` + `bb emacs:e2e` (`psi-emacs-e2e:ok`).
