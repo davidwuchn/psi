@@ -2707,6 +2707,24 @@
         (should (equal '(("prompt" ((:message . "/chain-rm run-1"))))
                        calls))))))
 
+(ert-deftest psi-projection-tree-widget-action-uses-idle-slash-routing ()
+  "Widget action `/tree <id>` should route via idle slash handler (switch_session)."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (let ((calls nil))
+      (cl-letf (((symbol-value 'psi-emacs--send-request-function)
+                 (lambda (_state op params &optional _callback)
+                   (push (list op params) calls)
+                   t)))
+        (insert (propertize "switch to s2"
+                            'psi-widget-command "/tree s2"
+                            'keymap psi-emacs--projection-widget-action-keymap))
+        (goto-char (point-min))
+        (psi-emacs--projection-activate-widget-action)
+        (should (equal '(("switch_session" ((:session-id . "s2"))))
+                       calls))))))
+
 (ert-deftest psi-extension-ui-status-updated-replaces-and-sorts-by-extension-id ()
   (with-temp-buffer
     (psi-emacs-mode)

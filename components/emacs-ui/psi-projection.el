@@ -46,12 +46,14 @@
                        (get-text-property pos 'psi-widget-command))))
     (when (and (stringp command)
                (not (string-empty-p command))
-               psi-emacs--state
-               (functionp psi-emacs--send-request-function))
-      (funcall psi-emacs--send-request-function
-               psi-emacs--state
-               "prompt"
-               `((:message . ,command))))))
+               psi-emacs--state)
+      (if (fboundp 'psi-emacs--dispatch-idle-compose-message)
+          (psi-emacs--dispatch-idle-compose-message command)
+        (when (functionp psi-emacs--send-request-function)
+          (funcall psi-emacs--send-request-function
+                   psi-emacs--state
+                   "prompt"
+                   `((:message . ,command))))))))
 
 (defun psi-emacs--projection-seq (value)
   "Normalize VALUE into a proper list sequence."
