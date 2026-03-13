@@ -49,6 +49,19 @@ entity SessionHostRuntime {
     sessions: Set<AgentSession>
 }
 
+value SessionHostSnapshot {
+    active_session_id: String?
+    sessions: List<SessionSlot>
+}
+
+value SessionSlot {
+    id: String
+    name: String?
+    is_streaming: Boolean
+    is_active: Boolean
+    parent_session_id: String?
+}
+
 entity SessionEntry {
     id: String
     parent_id: String?
@@ -339,6 +352,41 @@ surface AgentSessionApi {
         -- Core session identity and lineage are delegated to session-core.
         -- Session host routes prompt/mutation requests to explicit session id, else active session.
         -- Multiple sessions may stream concurrently; active-session switch is routing-only.
+        -- `host/updated` is the single source of truth for the live session list in UIs.
+        -- Emitted on subscribe (initial state) and whenever host session set or active_session_id changes.
+        -- New session, fork, switch_session, and new_session all trigger HostUpdatedEmitted.
+        -- Session slot name falls back to id prefix when name is null.
+}
+
+rule HostUpdatedEmittedOnSessionChange {
+    when: SessionHostStateChanged(host)
+
+    ensures: HostUpdatedEmitted(host, SessionHostSnapshot {
+        active_session_id: host.active_session_id,
+        sessions: MapToSlots(host.sessions, host.active_session_id)
+    })
+}
+
+rule HostUpdatedEmittedOnSubscribe {
+    when: RpcSubscribeCompleted(host)
+
+    ensures: HostUpdatedEmitted(host, SessionHostSnapshot {
+        active_session_id: host.active_session_id,
+        sessions: MapToSlots(host.sessions, host.active_session_id)
+    })
+}
+
+rule SessionSlotIsActiveWhenMatchesHost {
+    when: SessionSlotProjected(host, slot)
+
+    ensures: slot.is_active = (slot.id = host.active_session_id)
+}
+
+rule SessionSlotStreamingReflectsLivePhase {
+    when: SessionSlotProjected(host, slot)
+    requires: exists s in host.sessions where s.id = slot.id
+
+    ensures: slot.is_streaming = SessionById(host, slot.id).is_streaming
 }
 
 open question "Should tree navigation branch-summary be synchronous or background async?"

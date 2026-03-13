@@ -14,6 +14,7 @@ use "./prompt-input-autocomplete.allium" as prompt_autocomplete
 use "./emacs-prompt-completion.allium" as emacs_prompt_completion
 use "./prompt-slash-commands.allium" as slash_commands
 use "./emacs-footer.allium" as emacs_footer
+use "./session-management.allium" as session_mgmt
 
 value FrontendCapabilities {
     prompting: Boolean
@@ -302,6 +303,151 @@ surface EmacsFrontendApi {
         -- Auto-connect lifecycle is start -> handshake -> subscribe.
         -- Streaming assistant/tool events update transcript incrementally.
         -- Tool output collapse/expand is global per frontend view.
+}
+
+-- ── Session tree widget ────────────────────────────────────────────────────
+
+rule HostUpdatedRendersSessionTreeWidget {
+    when: RpcEventReceived(frontend.rpc, "host/updated", payload)
+
+    ensures: SessionTreeWidgetProjected(frontend, payload.sessions, payload.active_session_id)
+    ensures: ui/WidgetSet(
+        session: frontend.session,
+        extension_id: "psi-session",
+        widget_id: "session-tree",
+        placement: "left",
+        content: SessionTreeWidgetLines(payload.sessions, payload.active_session_id)
+    )
+}
+
+rule SessionTreeWidgetLineIsActive {
+    when: SessionTreeWidgetLines(sessions, active_session_id)
+    requires: exists slot in sessions where slot.id = active_session_id
+
+    ensures: ActiveSlotLine(slot) = WidgetLine {
+        text: SessionDisplayName(slot) + " ← active",
+        action: null
+    }
+}
+
+rule SessionTreeWidgetLineIsInactive {
+    when: SessionTreeWidgetLines(sessions, active_session_id)
+    requires: exists slot in sessions where slot.id != active_session_id
+
+    ensures: InactiveSlotLine(slot) = WidgetLine {
+        text: SessionDisplayName(slot),
+        action: WidgetAction { type: command, command: "/tree " + slot.id }
+    }
+}
+
+rule SessionTreeWidgetLineShowsStreamingState {
+    when: SessionTreeWidgetLines(sessions, active_session_id)
+    requires: exists slot in sessions where slot.is_streaming = true
+
+    ensures: SlotLineText(slot) = SessionDisplayName(slot) + " [streaming]"
+}
+
+rule SessionDisplayNameUsesNameOrFallback {
+    when: SessionDisplayName(slot)
+    requires: slot.name != null
+
+    ensures: SessionDisplayName(slot) = slot.name
+}
+
+rule SessionDisplayNameFallsBackToIdPrefix {
+    when: SessionDisplayName(slot)
+    requires: slot.name = null
+
+    ensures: SessionDisplayName(slot) = "(session " + StringPrefix(slot.id, 8) + ")"
+}
+
+rule SessionTreeWidgetReflectsParentChildIndent {
+    when: SessionTreeWidgetLines(sessions, active_session_id)
+    requires: exists slot in sessions where slot.parent_session_id != null
+    requires: exists s in sessions where s.id = slot.parent_session_id
+
+    ensures: SlotLineIndent(slot) = SlotLineIndent(s) + 2
+}
+
+rule HostUpdatedOnSubscribeInitializesWidget {
+    when: RpcEventReceived(frontend.rpc, "host/updated", payload)
+    requires: frontend.run_state = connecting
+
+    ensures: SessionTreeWidgetProjected(frontend, payload.sessions, payload.active_session_id)
+}
+
+-- ── /tree command ───────────────────────────────────────────────────────────
+
+rule TreeCommandOpensSessionPicker {
+    when: SlashCommandHandled(frontend, command: "/tree")
+
+    ensures: SessionPickerOpened(frontend)
+    ensures: SessionPickerCandidates(frontend) = MapToPickerLabels(frontend.host_snapshot.sessions,
+                                                                    frontend.host_snapshot.active_session_id)
+}
+
+rule SessionPickerCandidateLabelForStreaming {
+    when: SessionPickerCandidates(frontend)
+    requires: exists slot in frontend.host_snapshot.sessions where slot.is_streaming = true
+
+    ensures: CandidateLabel(slot) = SessionDisplayName(slot) + " [streaming]"
+}
+
+rule SessionPickerCandidateLabelForActive {
+    when: SessionPickerCandidates(frontend)
+    requires: exists slot in frontend.host_snapshot.sessions where slot.is_active = true
+
+    ensures: CandidateLabel(slot) = SessionDisplayName(slot) + " ← active"
+}
+
+rule SessionPickerSelectionDispatchesSwitchSession {
+    when: SessionPickerCompleted(frontend, selected_slot_id)
+    requires: selected_slot_id != frontend.host_snapshot.active_session_id
+
+    ensures: RpcRequestSent(frontend.rpc, "switch_session", {session_id: selected_slot_id})
+    ensures: ConnectingAffordancesShown(frontend)
+}
+
+rule SessionPickerSelectionNoOpWhenAlreadyActive {
+    when: SessionPickerCompleted(frontend, selected_slot_id)
+    requires: selected_slot_id = frontend.host_snapshot.active_session_id
+
+    ensures: NoRpcRequestSent(frontend.rpc, "switch_session")
+}
+
+rule SessionPickerCancelledIsNoOp {
+    when: SessionPickerCancelled(frontend)
+
+    ensures: NoRpcRequestSent(frontend.rpc, "switch_session")
+}
+
+rule SwitchSessionResponseRehydratesTranscript {
+    when: SessionPickerCompleted(frontend, selected_slot_id)
+    requires: selected_slot_id != frontend.host_snapshot.active_session_id
+
+    ensures: TranscriptResetAndRehydrated(frontend)
+    ensures: frontend.buffer.cursor_in_input_area = true
+}
+
+surface EmacsFrontendSessionTreeApi {
+    facing client: rpc/RpcClient
+
+    context frontend: EmacsFrontend
+
+    provides:
+        SessionTreeWidgetProjected(frontend, sessions, active_session_id)
+        SessionPickerOpened(frontend)
+        SessionPickerCompleted(frontend, selected_slot_id)
+        SessionPickerCancelled(frontend)
+
+    @guidance
+        -- Widget is updated on every `host/updated` event (subscribe + any session state change).
+        -- `/tree` opens completing-read with all live host sessions as candidates.
+        -- Selecting an already-active session is a no-op (no switch_session RPC call).
+        -- After selection, `psi-emacs--show-connecting-affordances` runs before rehydrate events arrive.
+        -- Session display name: use slot.name if non-empty, else "(session <id-prefix-8>)".
+        -- Parent-child nesting uses indentation, not a full interactive tree component.
+        -- A richer interactive session browser (keyboard navigation, fold/unfold) is deferred.
 }
 
 open question "Should reconnect optionally offer session selection before clearing buffer?"
