@@ -6,6 +6,18 @@ Ordered steps toward PSI COMPLETE.
 
 ## Done
 
+### Step 11g — Subagent widget UI spec distillation + elicitation ✓ complete
+- Added dedicated UI contract: `spec/subagent-widget-ui.allium` (commit `480e2f6`).
+- Distilled widget/result-message behavior from implementation + tests, then refined by elicitation decisions:
+  - terminal widgets persist until explicit remove
+  - widget ordering policy is most-recent-first
+  - TUI remains text-only for widget action bindings
+  - render truncation/preview limits are per-request configurable (with defaults)
+  - result heading includes optional `@agent` and `[fork]` markers
+  - error summary precedence remains `error-message` then last non-blank result line
+  - visibility policy is scoped to subagent sessions that are children of current session
+- Follow-up convergence remains: align extension/runtime/tests to this new UI contract.
+
 ### Step 11e — AGENTS alpha + multi-file Allium constraints ✓ complete
 - Prompt-memory contract in `AGENTS.md` now explicitly states alpha posture: `In alpha; no backward compatibility`.
 - Added explicit structural Allium invariants for specs:
