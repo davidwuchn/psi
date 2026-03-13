@@ -71,7 +71,7 @@
       (is (= :openai-completions (:api model)))))
 
   (testing "GPT-5 Codex family models are registered"
-    (doseq [k [:gpt-5.2-codex :gpt-5.3-codex :gpt-5.3-codex-spark]]
+    (doseq [k [:gpt-5.2-codex :gpt-5.3-codex :gpt-5.3-codex-spark :gpt-5.4]]
       (let [model (models/get-model k)]
         (is (schemas/valid? schemas/Model model) (str "valid model schema for " k))
         (is (= :openai (:provider model)) (str "openai provider for " k))
@@ -100,18 +100,18 @@
                            (core/send-message "Test"))
           ;; Construct a conversation with a known assistant message
           updated      (update conversation :messages conj
-                                {:id        "test-id"
-                                 :role      :assistant
-                                 :content   {:kind :text :text "Response"}
-                                 :timestamp (java.time.Instant/now)
-                                 :usage     {:input-tokens  10
-                                             :output-tokens 20
-                                             :total-tokens  30
-                                             :cost          {:input       0.01
-                                                             :output      0.02
-                                                             :cache-read  0.0
-                                                             :cache-write 0.0
-                                                             :total       0.03}}})]
+                               {:id        "test-id"
+                                :role      :assistant
+                                :content   {:kind :text :text "Response"}
+                                :timestamp (java.time.Instant/now)
+                                :usage     {:input-tokens  10
+                                            :output-tokens 20
+                                            :total-tokens  30
+                                            :cost          {:input       0.01
+                                                            :output      0.02
+                                                            :cache-read  0.0
+                                                            :cache-write 0.0
+                                                            :total       0.03}}})]
       (is (= 30 (:total-tokens (core/get-conversation-usage updated))))
       (is (= 0.03 (:total (core/get-conversation-cost updated)))))))
 

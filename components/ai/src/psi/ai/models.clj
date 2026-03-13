@@ -467,6 +467,22 @@
     :input-cost 0.0
     :output-cost 0.0
     :cache-read-cost 0.0
+    :cache-write-cost 0.0}
+
+   :gpt-5.4
+   {:id "gpt-5.4"
+    :name "GPT-5.4"
+    :provider :openai
+    :api :openai-codex-responses
+    :base-url "https://chatgpt.com/backend-api"
+    :supports-reasoning true
+    :supports-images true
+    :supports-text true
+    :context-window 272000
+    :max-tokens 128000
+    :input-cost 2.5
+    :output-cost 15.0
+    :cache-read-cost 0.25
     :cache-write-cost 0.0}})
 
 (def all-models
