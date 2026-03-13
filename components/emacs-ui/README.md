@@ -32,6 +32,7 @@ Examples:
 Run repeatable frontend checks from repo root:
 
 - `bb emacs:test` — run ERT suites (`psi-test.el`, `psi-rpc-test.el`)
+- `bb emacs:e2e` — run live end-to-end harness (`psi-e2e-test.el`) against `clojure -M:psi --rpc-edn`
 - `bb emacs:byte-compile` — byte-compile frontend modules (auto-cleans `.elc`)
 - `bb emacs:check` — run byte-compile + tests
 

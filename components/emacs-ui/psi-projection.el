@@ -454,12 +454,20 @@ tracks transcript growth like a terminal footer."
                   ;; projection tail stay outside the projection range.
                   (new-end (copy-marker (point) nil)))
               (insert rendered)
-              ;; After insertion, make start marker advance when user inserts at
-              ;; draft/projection boundary so draft text stays outside range.
-              (set-marker-insertion-type new-start t)
-              (set-marker new-end (point))
-              (setf (psi-emacs-state-projection-range psi-emacs--state)
-                    (cons new-start new-end))))))
+              (let ((render-start (marker-position new-start))
+                    (render-end (point)))
+                ;; Keep projection/footer content non-editable by user input.
+                ;; Leave boundary insertion at projection start writable so
+                ;; transcript/tool appends can insert immediately before block.
+                (when (and (fboundp 'psi-emacs--mark-region-read-only)
+                           (< (1+ render-start) render-end))
+                  (psi-emacs--mark-region-read-only (1+ render-start) render-end))
+                ;; After insertion, make start marker advance when user inserts at
+                ;; draft/projection boundary so draft text stays outside range.
+                (set-marker-insertion-type new-start t)
+                (set-marker new-end render-end)
+                (setf (psi-emacs-state-projection-range psi-emacs--state)
+                      (cons new-start new-end)))))))
 
       (when follow-anchor
         (psi-emacs--set-draft-anchor-to-end)))))

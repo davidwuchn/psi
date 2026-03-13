@@ -74,6 +74,7 @@ Requirement: command must launch psi in rpc-edn mode (include `--rpc-edn`).
 From repo root:
 
 - `bb emacs:test`
+- `bb emacs:e2e` (live end-to-end harness against `clojure -M:psi --rpc-edn`)
 - `bb emacs:byte-compile`
 - `bb emacs:check`
 

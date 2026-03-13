@@ -19,6 +19,7 @@
       "tool/update"
       "tool/result"
       "session/updated"
+      "host/updated"
       "footer/updated"
       "error")
     psi-rpc-core-topics))
