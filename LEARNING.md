@@ -3,6 +3,19 @@
 
 ---
 
+## 2026-03-13 - Prompt memory should state root-cause preference explicitly (commit `859515c`)
+
+### λ Fix strategy preference belongs in durable prompt memory
+
+When a workaround and a root-cause fix are both available, future ψ behavior is more consistent if the
+preference is encoded as an explicit reusable principle in `AGENTS.md` instead of relying on situational
+reasoning in session transcripts.
+
+### λ Compact lambda form keeps the rule searchable and composable
+
+Encoding the rule as `λf. f (prefer (fix_root_cause) (over workaround))` matches existing prompt-memory
+style and makes it easy to reference in follow-up planning, reviews, and commit history search.
+
 ## 2026-03-13 - Handshake should establish host snapshot baseline; `/tree` should stay single-path (commit `a639f3e`)
 
 ### λ Multi-session host state is connection bootstrap state, not an optional follow-up query
