@@ -266,6 +266,9 @@ Ordered steps toward PSI COMPLETE.
   - Verification snapshot:
     - `clojure -M:test --focus psi.agent-session.commands-test --focus psi.tui.app-test` → 115 tests, 338 assertions, 0 failures
     - `clojure -M:test --focus psi.agent-session.main-test --focus psi.agent-session.rpc-test` → 51 tests, 398 assertions, 0 failures
+- Progress (2026-03-13, commit `d869843`): changelog memory synced for `/tree` rollout
+  - Added explicit `CHANGELOG.md` entry documenting command semantics (`/tree`, `/tree <id|prefix>`), runtime gating (`supports-session-tree?`), TUI host-backed selector mode, switch callback wiring, and validation snapshot.
+  - Keeps internal plan/state narrative aligned with user-facing release memory for the same feature delta.
 - Remaining (multi-session UI):
   - follow-up polish: optional explicit tree iconography + richer parent/child grouping in TUI row model (currently flat list + indent)
 
