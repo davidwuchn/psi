@@ -26,6 +26,20 @@ When a PSL task lands, update both `STATE.md` (what is true now) and `PLAN.md`
 (what is next / what is completed) so future ψ can recover both status and rationale
 without replaying commit diffs.
 
+## 2026-03-13 - PSL follow-up should keep user-doc surfaces synchronized, not only component docs
+
+### λ User-facing completion changes must be mirrored in both frontend-local and top-level docs
+
+Updating `components/emacs-ui/README.md` captured the frontend contract, but users navigating
+from the main doc index rely on `doc/emacs-ui.md`. A PSL follow-up should explicitly sync both
+surfaces so discoverability docs and component docs do not diverge.
+
+### λ PLAN/STATE should record doc-sync follow-ups as first-class operational truth
+
+When a behavior change is already implemented and tested, a later doc-sync commit (like `50c9d59`)
+still matters operationally. Recording it in `PLAN.md` and `STATE.md` prevents future ψ from
+re-opening already-converged UX questions due to stale documentation memory.
+
 ## 2026-03-13 - PSL follow-up should reference the final canonical commit id in memory docs
 
 ### λ PLAN/STATE references should track the rewritten commit, not an intermediate hash
