@@ -3,6 +3,30 @@
 
 ---
 
+## 2026-03-13 - TUI tree polish: hierarchy rendering needs explicit row-model metadata (commit `3c1c385`)
+
+### λ Derive tree rendering metadata once, then render statelessly
+
+For `/tree` selector rows, computing `:tree-depth` and `:tree-prefix` in a dedicated
+ordering pass (`tree-sort-host-sessions`) keeps render logic simple and avoids
+UI drift from ad-hoc indent checks. A single pass can also enforce sibling stability,
+cycle guards, and duplicate suppression.
+
+### λ Fixed-slot status cells prevent visual jitter in mixed-state session lists
+
+When only some rows carry `active` or `stream` badges, right-edge columns shift unless
+missing badges reserve space. Rendering a fixed `[active] [stream]` cell (with blanks
+when absent) keeps both badges and session-id suffixes column-stable across rows.
+
+### λ Alignment tests should lock slots, not incidental badge co-location
+
+A robust alignment test should assert:
+- fixed relative position of `stream` slot from `active` slot
+- stable session-id suffix column across rows
+
+Comparing `active` and `stream` to the same absolute column is incorrect because they
+occupy different slots by design.
+
 ## 2026-03-13 - `/resume` and `/tree` must stay separate in TUI multi-session UX (commit `92fc518`)
 
 ### λ Persisted-history navigation and live-host routing are different products
