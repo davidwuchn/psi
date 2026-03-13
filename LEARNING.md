@@ -3,6 +3,29 @@
 
 ---
 
+## 2026-03-13 - `/resume` and `/tree` must stay separate in TUI multi-session UX (commit `92fc518`)
+
+### λ Persisted-history navigation and live-host routing are different products
+
+`/resume` should remain backed by persisted session files (`persist/list-sessions`) for recovery across restarts,
+while `/tree` should be backed by live host snapshot attrs (`:psi.agent-session/host-sessions`,
+`:psi.agent-session/host-active-session-id`) for in-process multi-session routing.
+Trying to unify these into one data source loses either durability semantics or live routing state.
+
+### λ Gate surface-specific commands explicitly at dispatch boundary
+
+Adding `:supports-session-tree?` to command dispatch keeps `/tree` deterministic across runtimes:
+- TUI: interactive tree picker + direct id/prefix switch
+- console/RPC: explicit guidance text
+
+This avoids accidental partial support where command parsing exists but runtime callbacks do not.
+
+### λ Keep switch path singular: command result → runtime callback → `ensure-session-loaded-in!`
+
+Both `/tree <id>` direct path and picker Enter path should converge through the same callback
+(`switch-session-fn!`) that calls `session/ensure-session-loaded-in!` and rehydrates transcript/tool rows.
+Single-path switching prevents drift between direct and interactive flows.
+
 ## 2026-03-13 - Distilled widget specs should lock UI policy decisions explicitly, not leave them as open questions
 
 ### λ Subagent widget behavior needs a dedicated UI spec separate from tool/workflow semantics
