@@ -188,6 +188,16 @@ Ordered steps toward PSI COMPLETE.
 - Remaining:
   - tighten operation isolation semantics for concurrent in-flight runs across routed sessions
   - verify no regressions in background-job gating and api-key routing tests
+- Progress (2026-03-13, commit `395d036`): cross-process session persistence locking + spec-decision convergence
+  - Session write path now enforces exclusive sidecar file locking (`<session-file>.lock`) in `persistence.clj` for header writes, full flushes, and append writes.
+  - Lock acquisition is bounded-retry and fails explicitly with contextual `ExceptionInfo` when contention does not clear.
+  - Session spec open questions were resolved and encoded as explicit decisions:
+    - fork prompt default inherits parent system prompt (`spec/session-core.allium`)
+    - fork isolation = soft workspace isolation, merge-back separate capability, fork budgets optional (`spec/session-forking.allium`)
+    - cross-process file locking required (`spec/session-persistence.allium`)
+  - Verification snapshot:
+    - `clojure -M:test --focus psi.agent-session.persistence-test` → 12 tests, 75 assertions, 0 failures
+    - `clojure -M:test --focus psi.agent-session.core-test` → 32 tests, 272 assertions, 0 failures
 - Progress (2026-03-13): multi-session test hardening completed for routing + introspection
   - RPC coverage added in `rpc_test.clj` for `list_sessions`, `switch_session(:session-id)`, targetable `:session-id` routing, and invalid `:session-id` rejection.
   - Resolver coverage added in `resolvers_test.clj` for host-index process view + persisted session list view.
