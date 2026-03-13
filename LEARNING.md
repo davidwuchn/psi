@@ -3,6 +3,27 @@
 
 ---
 
+## 2026-03-13 - Distilled widget specs should lock UI policy decisions explicitly, not leave them as open questions
+
+### λ Subagent widget behavior needs a dedicated UI spec separate from tool/workflow semantics
+
+`spec/subagent-widget-extension.allium` captures create/continue/remove/list semantics and context-injection policy,
+but widget projection/display behavior is a distinct contract. Capturing it in a dedicated
+`spec/subagent-widget-ui.allium` prevents UI behavior from being inferred only from implementation/tests.
+
+### λ Elicited UI policy choices should replace open questions immediately
+
+For subagent widgets, the highest-value decisions to lock were:
+- terminal rows persist until explicit remove
+- ordering policy = most-recent-first
+- TUI remains text-only for widget actions (for now)
+- preview/result truncation limits are per-request configurable
+- result headings may include `@agent` and `[fork]`
+- visibility should be scoped to child sessions of the current session
+
+Turning these from open questions into explicit rules gives future ψ a stable target for convergence work.
+
+
 ## 2026-03-13 - host/updated emission must cover all RPC paths that mutate host session state
 
 ### λ Every RPC op that changes the session host must emit host/updated — not just the obvious ones
