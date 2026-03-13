@@ -1262,6 +1262,71 @@
       (is (not (str/includes? stats-line "↑111")))
       (is (not (str/includes? stats-line "↓22"))))))
 
+(deftest rpc-subscribe-emits-host-updated-test
+  (testing "subscribe emits host/updated with active-session-id and sessions list"
+    (let [ctx     (session/create-context)
+          sid     (:session-id (session/get-session-data-in ctx))
+          state   (atom {:ready? true
+                         :pending {}
+                         :subscribed-topics #{"host/updated"}})
+          handler (rpc/make-session-request-handler ctx)
+          input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                       "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"host/updated\"]}}\n")
+          {:keys [out-lines]} (run-loop input handler state)
+          frames   (parse-frames out-lines)
+          host-evt (some #(when (= "host/updated" (:event %)) %) frames)]
+      (is (some? host-evt) "host/updated must be emitted on subscribe")
+      (is (= sid (get-in host-evt [:data :active-session-id])))
+      (is (vector? (get-in host-evt [:data :sessions])))
+      (is (some #(= sid (:id %)) (get-in host-evt [:data :sessions]))))))
+
+(deftest rpc-fork-emits-host-updated-test
+  (testing "fork emits host/updated with new session in sessions list"
+    (let [cwd     (str (System/getProperty "java.io.tmpdir") "/psi-rpc-fork-" (java.util.UUID/randomUUID))
+          _       (.mkdirs (java.io.File. cwd))
+          ctx     (session/create-context {:cwd cwd})
+          _       (session/set-model-in! ctx {:provider "anthropic" :id "claude-sonnet"})
+          ;; Append a message entry so fork has an entry-id to branch from
+          entry   (persist/message-entry {:role "user" :content "hi"})
+          _       (session/journal-append-in! ctx entry)
+          entry-id (:id entry)
+          state   (atom {:ready? true
+                         :pending {}
+                         :subscribed-topics #{"host/updated"}})
+          handler (rpc/make-session-request-handler ctx)
+          input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                       "{:id \"f1\" :kind :request :op \"fork\" :params {:entry-id \"" entry-id "\"}}\n")
+          {:keys [out-lines]} (run-loop input handler state)
+          frames    (parse-frames out-lines)
+          fork-resp (some #(when (and (= :response (:kind %)) (= "fork" (:op %))) %) frames)
+          host-evt  (some #(when (= "host/updated" (:event %)) %) frames)
+          new-sid   (get-in fork-resp [:data :session-id])]
+      (is (some? fork-resp) "fork must return a response")
+      (is (string? new-sid) "fork must return a new session-id")
+      (is (some? host-evt) "fork must emit host/updated")
+      (is (= new-sid (get-in host-evt [:data :active-session-id]))
+          "host/updated active-session-id must be the forked session")
+      (is (some #(= new-sid (:id %)) (get-in host-evt [:data :sessions]))
+          "host/updated sessions must include the forked session"))))
+
+(deftest rpc-new-session-emits-host-updated-test
+  (testing "new_session emits host/updated event"
+    (let [ctx     (session/create-context)
+          state   (atom {:ready? true
+                         :pending {}
+                         :subscribed-topics #{"host/updated"}})
+          handler (rpc/make-session-request-handler ctx)
+          input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                       "{:id \"n1\" :kind :request :op \"new_session\"}\n")
+          {:keys [out-lines]} (run-loop input handler state)
+          frames    (parse-frames out-lines)
+          new-resp  (some #(when (and (= :response (:kind %)) (= "new_session" (:op %))) %) frames)
+          host-evt  (some #(when (= "host/updated" (:event %)) %) frames)
+          new-sid   (get-in new-resp [:data :session-id])]
+      (is (some? host-evt) "new_session must emit host/updated")
+      (is (= new-sid (get-in host-evt [:data :active-session-id])))
+      (is (vector? (get-in host-evt [:data :sessions]))))))
+
 (deftest rpc-e2e-handshake-query-and-streaming-test
   (testing "handshake -> query_eql -> prompt with interleaved events"
     (let [ctx (session/create-context)

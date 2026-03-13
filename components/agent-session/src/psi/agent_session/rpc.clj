@@ -1597,6 +1597,9 @@
          "fork"
          (let [entry-id (req-arg! request params :entry-id #(and (string? %) (not (str/blank? %))) "non-empty entry id")
                sd       (session/fork-session-in! ctx entry-id)]
+           (emit-event! emit-frame! state {:event "host/updated"
+                                           :id (:id request)
+                                           :data (host-updated-payload ctx)})
            (response-frame (:id request) op true {:session-id (:session-id sd)
                                                   :session-file (:session-file sd)}))
 
