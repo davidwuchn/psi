@@ -182,9 +182,9 @@ surface SessionLineageQueryApi {
 }
 
 -- Decision: default inheritance policy for fork_session is inherit-parent-config-then-diverge.
-open question "Should child sessions run in soft isolation (shared workspace) or hard isolation (separate sandbox/worktree)?"
-open question "Should merge-back be part of session-forking core semantics or a separate capability?"
-open question "What budget constraints are mandatory on forked sessions (tokens, wall-clock timeout, tool allowlist)?"
+-- Decision: child sessions run in soft isolation (shared workspace/worktree).
+-- Decision: merge-back is a separate capability, not part of core session-forking semantics.
+-- Decision: fork budget constraints are optional policy (no mandatory baseline token/time/tool limits).
 -- Decision: lineage retention mode is archival.
 -- TTL is current psi process lifetime.
 -- Archived lineage is never garbage collected.

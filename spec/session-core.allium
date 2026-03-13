@@ -346,4 +346,4 @@ surface SessionCoreApi {
 
 open question "Should SessionMessage.content allow structured multimodal content in addition to String?"
 open question "Should system and extension messages be persisted in the same stream as user/assistant/tool messages?"
-open question "Should forked sessions default to inherited system prompt, or require explicit prompt at fork time?"
+-- Decision: forked sessions inherit parent system prompt by default.

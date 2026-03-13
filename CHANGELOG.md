@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-03-13
+
+- λ Δ Multi-session persistence locking + session decision convergence:
+  - Updated session specs with elicited decisions:
+    - `spec/session-core.allium`: fork default prompt inheritance is explicit.
+    - `spec/session-forking.allium`: soft isolation, merge-back-as-separate-capability, optional fork budgets.
+    - `spec/session-persistence.allium`: cross-process file locking required.
+  - Implemented cross-process locking in session persistence write path (`components/agent-session/src/psi/agent_session/persistence.clj`):
+    - added exclusive sidecar lock strategy (`<session-file>.lock`) with bounded retry for all writes (`write-header!`, `flush-journal!`, append path).
+    - lock acquisition failure now throws explicit `ExceptionInfo` with lock/session context.
+  - Added persistence regression coverage (`components/agent-session/test/psi/agent_session/persistence_test.clj`):
+    - `session-file-locking-test` verifies write fails while lock is externally held.
+  - Verification:
+    - `clojure -M:test --focus psi.agent-session.persistence-test` (12 tests, 75 assertions, 0 failures)
+    - `clojure -M:test --focus psi.agent-session.core-test` (32 tests, 272 assertions, 0 failures)
+
 ## 2026-03-12
 
 - λ Δ Added optional subagent session-forking capability:

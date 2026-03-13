@@ -14,6 +14,11 @@
    At that point the full journal (header + all entries) is written at
    once.  Subsequent entries are appended one line at a time.
 
+   Cross-process safety
+   ────────────────────
+   Every write path acquires an exclusive sidecar file lock
+   (<session-file>.lock) before mutating the session file.
+
    The flush state is tracked in a separate atom returned by
    `create-flush-state`.  Both atoms live in the session context.
 
@@ -61,7 +66,8 @@
    [clojure.string :as str]
    [psi.agent-session.session :as session])
   (:import
-   (java.io File)
+   (java.io File RandomAccessFile)
+   (java.nio.channels FileLock OverlappingFileLockException)
    (java.nio.file Files OpenOption Path StandardOpenOption)
    (java.time Instant ZoneOffset)
    (java.time.format DateTimeFormatter)))
@@ -74,6 +80,9 @@
 
 (def ^:private sessions-root
   (delay (io/file (System/getProperty "user.home") ".psi" "agent" "sessions")))
+
+(def ^:dynamic *session-file-lock-retry-ms* 25)
+(def ^:dynamic *session-file-lock-max-attempts* 400)
 
 ;;; ============================================================
 ;;; Journal operations (in-memory atom)
@@ -222,53 +231,100 @@
 ;;; Disk write
 ;;; ============================================================
 
+(defn- with-session-file-lock
+  "Execute `f` while holding an exclusive file lock for `file`.
+
+  Cross-process safety:
+  - uses a dedicated sidecar lock file: <session-file>.lock
+  - retries lock acquisition for a bounded interval
+  - throws ex-info if lock cannot be acquired
+
+  Returns the result of `f`."
+  [^File file f]
+  (let [lock-file (io/file (str (.getAbsolutePath file) ".lock"))
+        _         (when-let [parent (.getParentFile lock-file)]
+                    (when-not (.exists parent) (.mkdirs parent)))
+        raf       (RandomAccessFile. lock-file "rw")]
+    (try
+      (let [channel (.getChannel raf)
+            lock    (loop [attempt 0]
+                      (when (< attempt *session-file-lock-max-attempts*)
+                        (or (try
+                              (.tryLock channel)
+                              (catch OverlappingFileLockException _
+                                nil))
+                            (do
+                              (Thread/sleep *session-file-lock-retry-ms*)
+                              (recur (inc attempt))))))]
+        (when-not lock
+          (throw (ex-info "Failed to acquire session file lock"
+                          {:lock-path (.getAbsolutePath lock-file)
+                           :session-file (.getAbsolutePath file)
+                           :max-attempts *session-file-lock-max-attempts*
+                           :retry-ms *session-file-lock-retry-ms*})))
+        (try
+          (f)
+          (finally
+            (.release ^FileLock lock))))
+      (finally
+        (.close raf)))))
+
 (defn- append-line!
-  "Append `line` + newline to `file` atomically via NIO."
+  "Append `line` + newline to `file` atomically via NIO under an exclusive lock."
   [^File file line]
-  (let [^Path path (.toPath file)
-        ^bytes bytes (.getBytes (str line "\n") "UTF-8")
-        ^"[Ljava.nio.file.OpenOption;" opts
-        (into-array OpenOption [StandardOpenOption/CREATE
-                                StandardOpenOption/APPEND])]
-    (Files/write path bytes opts)))
+  (with-session-file-lock
+    file
+    (fn []
+      (let [^Path path (.toPath file)
+            ^bytes bytes (.getBytes (str line "\n") "UTF-8")
+            ^"[Ljava.nio.file.OpenOption;" opts
+            (into-array OpenOption [StandardOpenOption/CREATE
+                                    StandardOpenOption/APPEND])]
+        (Files/write path bytes opts)))))
 
 (defn write-header!
   "Write the session header as the first line of `file`.
-  Overwrites any existing content."
+  Overwrites any existing content. Uses exclusive file lock."
   ([^File file session-id cwd parent-session-path]
    (write-header! file session-id cwd nil parent-session-path))
   ([^File file session-id cwd parent-session-id parent-session-path]
-   (let [header (make-header session-id cwd parent-session-id parent-session-path)
-         ^Path path (.toPath file)
-         ^bytes bytes (.getBytes (str (entry->line header) "\n") "UTF-8")
-         ^"[Ljava.nio.file.OpenOption;" opts
-         (into-array OpenOption [StandardOpenOption/CREATE
-                                 StandardOpenOption/TRUNCATE_EXISTING
-                                 StandardOpenOption/WRITE])]
-     (Files/write path bytes opts))))
+   (with-session-file-lock
+     file
+     (fn []
+       (let [header (make-header session-id cwd parent-session-id parent-session-path)
+             ^Path path (.toPath file)
+             ^bytes bytes (.getBytes (str (entry->line header) "\n") "UTF-8")
+             ^"[Ljava.nio.file.OpenOption;" opts
+             (into-array OpenOption [StandardOpenOption/CREATE
+                                     StandardOpenOption/TRUNCATE_EXISTING
+                                     StandardOpenOption/WRITE])]
+         (Files/write path bytes opts))))))
 
 (defn append-entry-to-disk!
-  "Append a single `entry` line to `file`."
+  "Append a single `entry` line to `file` (under lock)."
   [^File file entry]
   (append-line! file (entry->line entry)))
 
 (defn flush-journal!
   "Write the header + all `entries` to `file` in one operation.
-  Overwrites any existing content."
+  Overwrites any existing content. Uses exclusive file lock."
   ([^File file session-id cwd parent-session-path entries]
    (flush-journal! file session-id cwd nil parent-session-path entries))
   ([^File file session-id cwd parent-session-id parent-session-path entries]
-   (let [header (make-header session-id cwd parent-session-id parent-session-path)
-         lines  (str/join "\n"
-                          (cons (entry->line header)
-                                (map entry->line entries)))
-         ^Path path (.toPath file)
-         ^bytes bytes (.getBytes (str lines "\n") "UTF-8")
-         ^"[Ljava.nio.file.OpenOption;" opts
-         (into-array OpenOption [StandardOpenOption/CREATE
-                                 StandardOpenOption/TRUNCATE_EXISTING
-                                 StandardOpenOption/WRITE])]
-     (Files/write path bytes opts))))
+   (with-session-file-lock
+     file
+     (fn []
+       (let [header (make-header session-id cwd parent-session-id parent-session-path)
+             lines  (str/join "\n"
+                              (cons (entry->line header)
+                                    (map entry->line entries)))
+             ^Path path (.toPath file)
+             ^bytes bytes (.getBytes (str lines "\n") "UTF-8")
+             ^"[Ljava.nio.file.OpenOption;" opts
+             (into-array OpenOption [StandardOpenOption/CREATE
+                                     StandardOpenOption/TRUNCATE_EXISTING
+                                     StandardOpenOption/WRITE])]
+         (Files/write path bytes opts))))))
 
 ;;; ============================================================
 ;;; Persist-on-append (called by core.clj after append-entry!)

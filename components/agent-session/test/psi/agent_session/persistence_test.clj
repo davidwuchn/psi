@@ -8,7 +8,8 @@
    [psi.agent-session.persistence :as p]
    [psi.agent-session.session :as session])
   (:import
-   (java.io File)
+   (java.io File RandomAccessFile)
+   (java.nio.channels FileLock)
    (java.nio.file Files)
    (java.nio.file.attribute FileAttribute)))
 
@@ -137,6 +138,33 @@
       (is (= 2 (count (slurp-lines f))))
       (.delete f)
       (.delete dir))))
+
+(deftest session-file-locking-test
+  (testing "write operations block/fail while lock sidecar is held by another process handle"
+    (let [dir       (tmp-dir)
+          session-f (io/file dir "locked.ndedn")
+          lock-f    (io/file dir "locked.ndedn.lock")
+          raf       (RandomAccessFile. lock-f "rw")]
+      (try
+        (let [channel (.getChannel raf)
+              held    (.lock channel)]
+          (try
+            (binding [p/*session-file-lock-max-attempts* 2
+                      p/*session-file-lock-retry-ms*    1]
+              (let [ex (try
+                         (p/write-header! session-f "sess-lock" "/proj" nil)
+                         nil
+                         (catch clojure.lang.ExceptionInfo e
+                           e))]
+                (is (some? ex))
+                (is (re-find #"Failed to acquire session file lock" (ex-message ex)))))
+            (finally
+              (.release ^FileLock held))))
+        (finally
+          (.close raf)
+          (when (.exists session-f) (.delete session-f))
+          (when (.exists lock-f) (.delete lock-f))
+          (.delete dir))))))
 
 ;;; ── persist-entry! lazy flush ──────────────────────────────────────────────
 

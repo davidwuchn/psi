@@ -250,4 +250,4 @@ surface SessionPersistenceApi {
 
 open question "Should the on-disk format stay NDJSON or move to EDN?"
 open question "Should lazy flush remain first-assistant-message or flush every entry?"
-open question "Do we need cross-process file locking for concurrent writers?"
+-- Decision: cross-process file locking is required for concurrent writers.
