@@ -376,8 +376,10 @@
   (when (and (not (:psi.extension.workflow/running? wf))
              (or (:psi.extension.workflow/done? wf)
                  (:psi.extension.workflow/error? wf)))
-    (str "  /subcont " (:psi.extension.workflow/id wf) " <prompt> · /subrm "
-         (:psi.extension.workflow/id wf))))
+    (let [id (:psi.extension.workflow/id wf)]
+      {:text   (str "  /subcont " id " <prompt> · ✕ remove")
+       :action {:type :command
+                :command (str "/subrm " id)}})))
 
 (defn- widget-lines [wf]
   (let [agent-tag   (when-let [agent-name (some-> (wf-agent-name wf) str str/trim not-empty)]

@@ -417,6 +417,24 @@
         (is (= "user" (:role (second msgs))))
         (is (= "assistant" (:role (nth msgs 2))))))))
 
+(deftest subagent-widget-action-line-test
+  (testing "completed/errored subagent rows expose clickable remove action"
+    (let [wf {:psi.extension.workflow/id "7"
+              :psi.extension.workflow/running? false
+              :psi.extension.workflow/done? true
+              :psi.extension.workflow/error? false}
+          line (#'sut/widget-action-line wf)]
+      (is (map? line))
+      (is (str/includes? (:text line) "✕ remove"))
+      (is (= "/subrm 7" (get-in line [:action :command])))))
+
+  (testing "running subagent rows do not expose remove action"
+    (let [wf {:psi.extension.workflow/id "7"
+              :psi.extension.workflow/running? true
+              :psi.extension.workflow/done? false
+              :psi.extension.workflow/error? false}]
+      (is (nil? (#'sut/widget-action-line wf))))))
+
 (deftest subagent-widget-placement-follows-ui-type-test
   (testing "widgets render below editor in emacs ui"
     (let [{:keys [api state]} (nullable/create-nullable-extension-api
