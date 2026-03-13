@@ -4071,3 +4071,15 @@ In Emacs projection, the stable pattern is to show deterministic text and pair i
 commands (`/subrm`, `/chain-rm`) rather than invent pseudo-click controls. This keeps
 the UX consistent with existing projection constraints while still supporting quick run
 cleanup.
+
+## 2026-03-13 - PSL follow-up for 578a2a7 should preserve command-backed widget action semantics
+
+### λ "Clickable" in Emacs projection is command metadata over text, not a new interaction primitive
+
+The `578a2a7` subagent-widget change is best treated as convergence on the existing
+projection contract: action rows remain text-first and become "clickable" by attaching
+explicit command action metadata (`/subrm <id>`), mirroring agent-chain behavior.
+
+This avoids introducing bespoke row-button semantics, keeps render parity with current
+widget infrastructure, and preserves one operator mental model for run cleanup across
+extensions.
