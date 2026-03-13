@@ -1,6 +1,21 @@
+
 # Learning
 
 ---
+
+## 2026-03-13 - PSL follow-up runs should minimize transcript noise while tightening instruction specificity
+
+### λ PSL follow-up prompt text can encode style constraints directly when behavior drifts
+
+When PSL subagent outputs start including unwanted meta-commentary (for example, compliance narration),
+a precise one-line constraint in the generated PSL prompt is an effective stabilizer. Encoding that rule at
+prompt-construction time keeps behavior aligned without broader architecture changes.
+
+### λ PSL status signaling should be failure-biased in parent transcripts
+
+For asynchronous maintenance workflows, success-path status messages can add transcript noise without
+improving operator control. Emitting `plan-state-learning` status messages only on failure preserves
+visibility for actionable conditions while keeping normal successful runs quiet.
 
 ## 2026-03-13 - Multi-session UI: host/updated event + session tree widget
 
