@@ -4,6 +4,28 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-13 - PSL follow-up should encode graph-introspection nuance for join attrs
+
+### λ Root-queryable attrs and graph edges serve different discovery roles
+
+For host-index introspection, scalar attrs (`:psi.agent-session/host-active-session-id`,
+`:psi.agent-session/host-session-count`) can be asserted from
+`:psi.graph/root-queryable-attrs`, but join attrs like
+`:psi.agent-session/host-sessions` should be asserted from `:psi.graph/edges`.
+Treating both surfaces as equivalent creates false failures.
+
+### λ Multi-session routing tests require explicit persisted fixtures for session-id switching
+
+`switch_session(:session-id)` resumes via host metadata and session-file paths. In tests,
+ensuring a concrete persisted session file (e.g. via `persist/flush-journal!`) avoids
+non-determinism from lazy persistence and makes routing assertions stable.
+
+### λ PSL follow-ups should persist both operational truth and planning intent
+
+When a PSL task lands, update both `STATE.md` (what is true now) and `PLAN.md`
+(what is next / what is completed) so future ψ can recover both status and rationale
+without replaying commit diffs.
+
 ## 2026-03-13 - Emacs slash CAPF should include common backend commands, not only idle-local + extension names
 
 ### λ Completion affordances must reflect the command surface users actually execute
