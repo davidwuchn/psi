@@ -271,7 +271,7 @@ Ordered steps toward PSI COMPLETE.
   - Right-side status cells are fixed-slot aligned (`[active] [stream]`) with consistent session-id suffix column alignment.
   - Verification snapshot:
     - `clojure -M:test --focus psi.tui.app-test` → 77 tests, 210 assertions, 0 failures
-- Progress (2026-03-13, commit `TBD`): multi-session route-lock isolation tightened for exclusive session-lifecycle ops
+- Progress (2026-03-13, commit `115c6ab`): multi-session route-lock isolation tightened for exclusive session-lifecycle ops
   - Added explicit exclusive route-lock op class in RPC (`new_session`, `switch_session`, `fork`) so they fail fast with `request/session-routing-conflict` when a prompt route-lock is active, even when targeting the same session.
   - Route-lock guard refactored (`valid-target-session-id!`, `maybe-assert-route-lock!`) and reused across targetable dispatch + exclusive-op gate path.
   - Added RPC regression: `exclusive ops are rejected while prompt is in-flight when lock enforcement is enabled`.
