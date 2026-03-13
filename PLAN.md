@@ -196,6 +196,7 @@ Ordered steps toward PSI COMPLETE.
     - `clojure -M:test --focus psi.agent-session.rpc-test` → 32 tests, 316 assertions, 0 failures
     - `clojure -M:test --focus psi.agent-session.resolvers-test` → 32 tests, 304 assertions, 0 failures
   - Contract nuance locked by tests: `:psi.agent-session/host-sessions` is a join attr and should be validated via graph edges (it is not guaranteed to appear as a scalar in `:psi.graph/root-queryable-attrs`).
+  - PSL follow-up for `fc1aa93` converged docs + tests so this slice is now explicitly tracked in plan memory.
 
 ### Step 12 — Emacs UI ◇ in progress
 - Spec: `spec/emacs-frontend.allium`
