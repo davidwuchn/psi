@@ -26,6 +26,15 @@ When a PSL task lands, update both `STATE.md` (what is true now) and `PLAN.md`
 (what is next / what is completed) so future ψ can recover both status and rationale
 without replaying commit diffs.
 
+## 2026-03-13 - PSL follow-up should reference the final canonical commit id in memory docs
+
+### λ PLAN/STATE references should track the rewritten commit, not an intermediate hash
+
+When a commit is rewritten to isolate scope, memory docs must point at the final
+canonical hash (`f23e38f` here), otherwise future ψ chases stale history links.
+Updating `PLAN.md` + `STATE.md` as a dedicated PSL follow-up keeps repository memory
+coherent with actual git topology.
+
 ## 2026-03-13 - Emacs slash CAPF should include common backend commands, not only idle-local + extension names
 
 ### λ Completion affordances must reflect the command surface users actually execute
