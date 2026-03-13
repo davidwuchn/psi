@@ -3,6 +3,41 @@
 
 ---
 
+## 2026-03-13 - host/updated emission must cover all RPC paths that mutate host session state
+
+### λ Every RPC op that changes the session host must emit host/updated — not just the obvious ones
+
+`new_session` and `switch_session` are the obvious host-mutation ops and were wired first.
+`fork` is a subtler case: it calls `fork-session-in!` which updates the host registry via
+`swap-session!`, but the RPC handler returned before emitting `host/updated`. The Emacs
+session tree widget therefore never reflected forked sessions until the next subscribe or
+session switch.
+
+Fix pattern: after any RPC op that mutates host state (new_session, switch_session, fork),
+emit `host/updated` before the response frame. Subscribe also emits it for initial hydration.
+
+### λ Subagent creation is intentionally excluded from host/updated — isolated context is not a host peer
+
+Subagents (`subagent_widget.clj`) create their own isolated `session-ctx` with a fresh
+`session-data-atom` that is never registered in the parent host's `session-host-atom`.
+This is correct by design: subagents are ephemeral child workers, not peer sessions the
+operator switches between. Emitting `host/updated` for subagent creation would pollute the
+session tree with transient worker sessions.
+
+Rule: `host/updated` reflects the operator-visible session graph (the host registry), not
+every internal context allocation.
+
+### λ RPC event coverage tests should assert the event is emitted, not just that the op succeeds
+
+The fork gap was caught by inspection, not by a failing test. Adding explicit `host/updated`
+assertions for subscribe, fork, and new_session to `rpc_test.clj` closes this class of
+regression: future changes to these ops will fail fast if they drop the emission.
+
+Pattern: for every RPC op that must emit a specific event, add a focused test that
+subscribes to that topic and asserts the event appears in the output frames.
+
+---
+
 ## 2026-03-13 - PSL follow-up runs should minimize transcript noise while tightening instruction specificity
 
 ### λ PSL follow-up prompt text can encode style constraints directly when behavior drifts
