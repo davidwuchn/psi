@@ -3274,6 +3274,24 @@
       (should (member "/jobs" cands))
       (should (member "/job" cands)))))
 
+(ert-deftest psi-capf-slash-context-includes-server-command-candidates ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (insert "/re")
+    (let* ((capf (psi-emacs-prompt-capf))
+           (table (nth 2 capf))
+           (cands (all-completions "/re" table)))
+      (should capf)
+      (should (member "/remember" cands))))
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (insert "/hi")
+    (let* ((capf (psi-emacs-prompt-capf))
+           (table (nth 2 capf))
+           (cands (all-completions "/hi" table)))
+      (should capf)
+      (should (member "/history" cands)))))
+
 (ert-deftest psi-capf-slash-includes-extension-commands-from-state ()
   (with-temp-buffer
     (psi-emacs-mode)

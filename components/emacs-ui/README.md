@@ -99,7 +99,10 @@ History behavior:
 
 `psi-emacs-mode` installs a CAPF (`psi-emacs-prompt-capf`) for compose input.
 
-- `/...` completes built-in slash commands (category `psi_prompt`)
+- `/...` completes slash commands (category `psi_prompt`)
+  - includes idle-local commands (`/resume`, `/new`, `/status`, …)
+  - includes common backend commands (`/history`, `/prompts`, `/skills`, `/login`, `/logout`, `/remember`, `/skill:`)
+  - includes discovered extension commands from backend introspection
 - `@...` completes file references (category `psi_reference`)
   - searches current working directory and project root (when distinct)
   - hidden file policy is configurable
