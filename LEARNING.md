@@ -3,6 +3,28 @@
 
 ---
 
+## 2026-03-13 - Route-lock isolation must include exclusive lifecycle ops, not only cross-session targets (commit `115c6ab`)
+
+### λ Same-session lifecycle mutations can still violate in-flight prompt routing guarantees
+
+Guarding only cross-session target mismatches is insufficient. While a prompt request holds the
+route-lock, lifecycle ops like `new_session`, `switch_session`, and `fork` can still invalidate
+assumptions for the in-flight run even if they target the same session id.
+
+### λ Route-lock policy should be modeled as op classes
+
+A small explicit op class (`exclusive-route-lock-rpc-ops`) keeps enforcement readable and composable:
+- targetable ops: allow same-session routing, reject cross-session conflicts
+- exclusive lifecycle ops: reject whenever a route-lock exists
+
+This keeps behavior deterministic and makes future policy changes localized.
+
+### λ Regression tests should exercise lock semantics through the transport loop
+
+The robust check is end-to-end through `run-stdio-loop!` with a blocked prompt and a second request,
+asserting canonical `request/session-routing-conflict` payload fields. This catches dispatch-boundary
+regressions that unit-only helper tests can miss.
+
 ## 2026-03-13 - TUI tree polish: hierarchy rendering needs explicit row-model metadata (commit `3c1c385`)
 
 ### λ Derive tree rendering metadata once, then render statelessly
