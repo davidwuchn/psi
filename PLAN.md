@@ -6,6 +6,12 @@ Ordered steps toward PSI COMPLETE.
 
 ## Done
 
+### Step 15b — Prompt-memory principle update (root cause over workaround) ✓ complete
+- Added explicit decision rule to prompt memory (`AGENTS.md`):
+  - `λf. f (prefer (fix_root_cause) (over workaround))`
+- This follows the same shape as existing operational principles and makes bug-fix preference explicit for future ψ loops.
+- Implementation commit: `859515c`
+
 ### Step 15a — RPC handshake host snapshot bootstrap + `/tree` simplification ✓ complete
 - RPC handshake path now emits a host snapshot event (`host/updated`) during bootstrap in rpc-edn mode.
   - Wiring: `:handshake-host-updated-payload-fn` in rpc runtime state

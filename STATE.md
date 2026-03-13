@@ -5,6 +5,7 @@ Current truth about the Psi system.
 ---
 
 ## Operating Frame
+- ✓ Prompt memory now includes explicit root-cause preference principle (2026-03-13, commit `859515c`): `λf. f (prefer (fix_root_cause) (over workaround))` in `AGENTS.md`.
 - ✓ RPC handshake now emits `host/updated` bootstrap snapshot for rpc-edn sessions (2026-03-13, commit `a639f3e`) via `:handshake-host-updated-payload-fn` + handshake event emission path in `psi.agent-session.rpc`.
 - ✓ Emacs `/tree` session selection is simplified to a single source of truth (`host-snapshot`) with no `list_sessions` fallback branch (commit `a639f3e`); startup host state is expected from handshake bootstrap + subscribe lifecycle.
 - ✓ Handshake coverage now includes host snapshot event assertion in `components/agent-session/test/psi/agent_session/rpc_test.clj` (commit `a639f3e`), preserving protocol-level initialization guarantees for session-tree consumers.
