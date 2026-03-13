@@ -24,6 +24,22 @@ The robust assertion is RPC op-level: widget activation for `/tree s2` must emit
 `switch_session {:session-id "s2"}`. Verifying op shape catches routing regressions even when
 transcript copy or fallback assistant text changes.
 
+### λ `/tree` should fail over to default slash handling when custom handlers decline it
+
+In long-lived Emacs sessions, `psi-emacs--idle-slash-command-handler-function` can be rebound
+(custom test hooks or extension experiments). If that custom handler returns nil for `/tree`,
+falling straight to backend `prompt` leaks TUI-only guidance text. A targeted failover in
+`psi-emacs--dispatch-idle-compose-message` keeps `/tree` frontend-first: try custom handler,
+then retry with `psi-emacs--default-handle-idle-slash-command` before any backend prompt fallback.
+
+### λ Widget action fallback paths must preserve slash semantics even when compose helpers are absent
+
+`psi-emacs--projection-activate-widget-action` must not assume
+`psi-emacs--dispatch-idle-compose-message` is always fbound (reload/order windows exist). The
+fallback path should still treat slash commands as slash commands (invoke idle handler first), and
+only use raw `prompt` for non-slash or unhandled commands. This keeps clicked `/tree <id>` and
+typed `/tree <id>` behavior converged under partial reload states.
+
 ## 2026-03-13 - tmux TUI integration harness should assert stable terminal-boundary markers, not brittle help headers (commit `1613f5f`)
 
 ### λ Baseline TUI E2E needs a reusable harness layer, not one-off shell scripts
