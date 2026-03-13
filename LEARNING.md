@@ -3,6 +3,27 @@
 
 ---
 
+## 2026-03-13 - Emacs projected widget actions must reuse idle slash routing, not raw prompt dispatch (commit `cdfadda`)
+
+### λ Session-tree widget command actions are frontend commands first, backend prompts second
+
+Projected widget actions like `/tree <id>` encode frontend command intent. Sending them through
+raw `prompt` bypasses Emacs idle slash interception and routes into backend prompt command dispatch,
+which can trigger runtime-gated fallback text (`/tree is only available in TUI mode`) instead of
+frontend `switch_session` behavior.
+
+### λ One command path prevents semantic drift between typed and clicked interactions
+
+Typed `/tree <id>` already goes through `psi-emacs--dispatch-idle-compose-message` and maps to
+`switch_session`. Widget action activation should call the same path so keyboard-enter/click actions
+and typed commands share identical semantics and stay converged as slash behavior evolves.
+
+### λ Regression tests should lock transport op shape, not only visible transcript text
+
+The robust assertion is RPC op-level: widget activation for `/tree s2` must emit
+`switch_session {:session-id "s2"}`. Verifying op shape catches routing regressions even when
+transcript copy or fallback assistant text changes.
+
 ## 2026-03-13 - tmux TUI integration harness should assert stable terminal-boundary markers, not brittle help headers (commit `1613f5f`)
 
 ### λ Baseline TUI E2E needs a reusable harness layer, not one-off shell scripts
