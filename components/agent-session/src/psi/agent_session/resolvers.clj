@@ -1984,14 +1984,24 @@
 
 (declare all-resolvers)
 
+(defn- session-resolver-surface
+  "Canonical resolver set used by agent-session/query-in.
+
+   Kept in sync with `build-env` so graph introspection reflects what is
+   actually queryable from session root, independent of global registry state."
+  []
+  (->> (concat all-resolvers
+               history-resolvers/all-resolvers
+               memory-resolvers/all-resolvers
+               recursion-resolvers/all-resolvers)
+       vec))
+
 (defn- operation-metadata
   []
-  (let [registered-resolvers (registry/all-resolvers)
-        resolver-source      (if (seq registered-resolvers)
-                               registered-resolvers
-                               all-resolvers)]
-    {:resolver-ops (mapv #(graph/operation->metadata :resolver %) resolver-source)
-     :mutation-ops (mapv #(graph/operation->metadata :mutation %) (registry/all-mutations))}))
+  {:resolver-ops (mapv #(graph/operation->metadata :resolver %)
+                       (session-resolver-surface))
+   :mutation-ops (mapv #(graph/operation->metadata :mutation %)
+                       (registry/all-mutations))})
 
 (pco/defresolver query-graph-bridge
   "Resolve all :psi.graph/* attrs from :psi/agent-session-ctx so app-query-tool can access
@@ -2024,11 +2034,15 @@
                  :psi.graph/domain-coverage
                  :psi.graph/root-seeds
                  :psi.graph/root-queryable-attrs]}
-  (let [_                   agent-session-ctx
-        op-meta             (operation-metadata)
-        cgraph              (graph/derive-capability-graph op-meta)
-        resolver-syms       (registry/registered-resolver-syms)
-        mutation-syms       (registry/registered-mutation-syms)
+  (let [_                    agent-session-ctx
+        op-meta              (operation-metadata)
+        cgraph               (graph/derive-capability-graph op-meta)
+        resolver-syms        (->> (:resolver-ops op-meta)
+                                  (map :symbol)
+                                  set)
+        mutation-syms        (->> (:mutation-ops op-meta)
+                                  (map :symbol)
+                                  set)
         root-queryable-attrs (graph/derive-root-queryable-attrs
                               (:resolver-ops op-meta)
                               #{:psi/agent-session-ctx :psi/memory-ctx :psi/recursion-ctx :psi/engine-ctx})]
@@ -2129,12 +2143,8 @@
    Includes memory + recursion resolvers locally so :psi.memory/* and
    :psi.recursion/* attrs are queryable via agent-session/query-in."
   []
-  (->> (concat all-resolvers
-               history-resolvers/all-resolvers
-               memory-resolvers/all-resolvers
-               recursion-resolvers/all-resolvers)
-       vec
-       pci/register))
+  (-> (session-resolver-surface)
+      pci/register))
 
 (def ^:private query-env (atom nil))
 

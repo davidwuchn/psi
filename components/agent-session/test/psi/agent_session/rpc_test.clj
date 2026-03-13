@@ -813,38 +813,38 @@
           call-n    (atom 0)
           first-sse (str
                      "data: " (json/generate-string
-                                {:type "response.output_item.added"
-                                 :output_index 0
-                                 :item {:type "function_call"
-                                        :id "fc_1"
-                                        :call_id "call_1"
-                                        :name "bash"
-                                        :arguments ""}}) "\n\n"
+                               {:type "response.output_item.added"
+                                :output_index 0
+                                :item {:type "function_call"
+                                       :id "fc_1"
+                                       :call_id "call_1"
+                                       :name "bash"
+                                       :arguments ""}}) "\n\n"
                      "data: " (json/generate-string
-                                {:type "response.output_item.done"
-                                 :output_index 0
-                                 :item {:type "function_call"
-                                        :id "fc_1"
-                                        :call_id "call_1"
-                                        :name "bash"
-                                        :arguments "{\"command\":\"pwd\"}"}}) "\n\n"
+                               {:type "response.output_item.done"
+                                :output_index 0
+                                :item {:type "function_call"
+                                       :id "fc_1"
+                                       :call_id "call_1"
+                                       :name "bash"
+                                       :arguments "{\"command\":\"pwd\"}"}}) "\n\n"
                      "data: " (json/generate-string
-                                {:type "response.completed"
-                                 :response {:status "completed"}}) "\n\n")
+                               {:type "response.completed"
+                                :response {:status "completed"}}) "\n\n")
           second-sse (str
                       "data: " (json/generate-string
-                                 {:type "response.output_item.added"
-                                  :item {:type "message"
-                                         :id "msg_2"
-                                         :role "assistant"
-                                         :status "in_progress"
-                                         :content []}}) "\n\n"
+                                {:type "response.output_item.added"
+                                 :item {:type "message"
+                                        :id "msg_2"
+                                        :role "assistant"
+                                        :status "in_progress"
+                                        :content []}}) "\n\n"
                       "data: " (json/generate-string
-                                 {:type "response.output_text.delta"
-                                  :delta "Final response"}) "\n\n"
+                                {:type "response.output_text.delta"
+                                 :delta "Final response"}) "\n\n"
                       "data: " (json/generate-string
-                                 {:type "response.completed"
-                                  :response {:status "completed"}}) "\n\n")
+                                {:type "response.completed"
+                                 :response {:status "completed"}}) "\n\n")
           input     (str
                      "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                      "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"tool/start\" \"tool/executing\" \"tool/result\" \"assistant/message\"]}}\n"
@@ -902,30 +902,30 @@
           call-n    (atom 0)
           first-sse (str
                      "data: " (json/generate-string
+                               {:choices [{:delta {:role "assistant"}}]}) "\n\n"
+                     "data: " (json/generate-string
+                               {:choices [{:delta {:tool_calls [{:index 0
+                                                                 :function {:name "bash"
+                                                                            :arguments "{\"command\":\"pwd\"}"}}]}}]}) "\n\n"
+                     "data: " (json/generate-string
+                               {:choices [{:delta {:tool_calls [{:index 0
+                                                                 :id "call_late"
+                                                                 :function {:name "bash"}}]}}]}) "\n\n"
+                     "data: " (json/generate-string
+                               {:choices [{:finish_reason "tool_calls"}]
+                                :usage {:prompt_tokens 2
+                                        :completion_tokens 2
+                                        :total_tokens 4}}) "\n\n")
+          second-sse (str
+                      "data: " (json/generate-string
                                 {:choices [{:delta {:role "assistant"}}]}) "\n\n"
-                     "data: " (json/generate-string
-                                {:choices [{:delta {:tool_calls [{:index 0
-                                                                  :function {:name "bash"
-                                                                             :arguments "{\"command\":\"pwd\"}"}}]}}]}) "\n\n"
-                     "data: " (json/generate-string
-                                {:choices [{:delta {:tool_calls [{:index 0
-                                                                  :id "call_late"
-                                                                  :function {:name "bash"}}]}}]}) "\n\n"
-                     "data: " (json/generate-string
-                                {:choices [{:finish_reason "tool_calls"}]
+                      "data: " (json/generate-string
+                                {:choices [{:delta {:content "Final response"}}]}) "\n\n"
+                      "data: " (json/generate-string
+                                {:choices [{:finish_reason "stop"}]
                                  :usage {:prompt_tokens 2
                                          :completion_tokens 2
                                          :total_tokens 4}}) "\n\n")
-          second-sse (str
-                      "data: " (json/generate-string
-                                 {:choices [{:delta {:role "assistant"}}]}) "\n\n"
-                      "data: " (json/generate-string
-                                 {:choices [{:delta {:content "Final response"}}]}) "\n\n"
-                      "data: " (json/generate-string
-                                 {:choices [{:finish_reason "stop"}]
-                                  :usage {:prompt_tokens 2
-                                          :completion_tokens 2
-                                          :total_tokens 4}}) "\n\n")
           input     (str
                      "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                      "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"tool/start\" \"tool/executing\" \"tool/result\" \"assistant/message\"]}}\n"
@@ -977,30 +977,30 @@
           call-n    (atom 0)
           first-sse (str
                      "data: " (json/generate-string
+                               {:choices [{:delta {:role "assistant"}}]}) "\n\n"
+                     "data: " (json/generate-string
+                               {:choices [{:delta {:tool_calls [{:index 0
+                                                                 :id "call_1"
+                                                                 :function {:name "bash"
+                                                                            :arguments "{\"command\""}}]}}]}) "\n\n"
+                     "data: " (json/generate-string
+                               {:choices [{:delta {:tool_calls [{:index 0
+                                                                 :function {:arguments "{\"command\":\"pwd\"}"}}]}}]}) "\n\n"
+                     "data: " (json/generate-string
+                               {:choices [{:finish_reason "tool_calls"}]
+                                :usage {:prompt_tokens 2
+                                        :completion_tokens 2
+                                        :total_tokens 4}}) "\n\n")
+          second-sse (str
+                      "data: " (json/generate-string
                                 {:choices [{:delta {:role "assistant"}}]}) "\n\n"
-                     "data: " (json/generate-string
-                                {:choices [{:delta {:tool_calls [{:index 0
-                                                                  :id "call_1"
-                                                                  :function {:name "bash"
-                                                                             :arguments "{\"command\""}}]}}]}) "\n\n"
-                     "data: " (json/generate-string
-                                {:choices [{:delta {:tool_calls [{:index 0
-                                                                  :function {:arguments "{\"command\":\"pwd\"}"}}]}}]}) "\n\n"
-                     "data: " (json/generate-string
-                                {:choices [{:finish_reason "tool_calls"}]
+                      "data: " (json/generate-string
+                                {:choices [{:delta {:content "Final response"}}]}) "\n\n"
+                      "data: " (json/generate-string
+                                {:choices [{:finish_reason "stop"}]
                                  :usage {:prompt_tokens 2
                                          :completion_tokens 2
                                          :total_tokens 4}}) "\n\n")
-          second-sse (str
-                      "data: " (json/generate-string
-                                 {:choices [{:delta {:role "assistant"}}]}) "\n\n"
-                      "data: " (json/generate-string
-                                 {:choices [{:delta {:content "Final response"}}]}) "\n\n"
-                      "data: " (json/generate-string
-                                 {:choices [{:finish_reason "stop"}]
-                                  :usage {:prompt_tokens 2
-                                          :completion_tokens 2
-                                          :total_tokens 4}}) "\n\n")
           input     (str
                      "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                      "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"tool/start\" \"tool/executing\" \"tool/result\" \"assistant/message\"]}}\n"
@@ -1141,7 +1141,76 @@
           frame   (-> out-lines first edn/read-string)]
       (is (= :error (:kind frame)))
       (is (= "get_state" (:op frame)))
-      (is (= "request/invalid-params" (:error-code frame))))))
+      (is (= "request/invalid-params" (:error-code frame)))))
+
+  (testing "targetable op rejects cross-session routing while prompt is in-flight when lock enforcement is enabled"
+    (let [cwd     (str (System/getProperty "java.io.tmpdir") "/psi-rpc-routing-lock-" (java.util.UUID/randomUUID))
+          _       (.mkdirs (java.io.File. cwd))
+          ctx     (session/create-context {:cwd cwd})
+          _       (session/new-session-in! ctx)
+          sid1    (:session-id (session/get-session-data-in ctx))
+          path1   (:session-file (session/get-session-data-in ctx))
+          _       (persist/flush-journal! (java.io.File. path1)
+                                          sid1
+                                          cwd
+                                          nil
+                                          nil
+                                          [(persist/thinking-level-entry :off)])
+          _       (session/new-session-in! ctx)
+          sid2    (:session-id (session/get-session-data-in ctx))
+          gate    (promise)
+          release (promise)
+          state   (atom {:ready? true
+                         :pending {}
+                         :enforce-session-route-lock? true
+                         :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
+                         :run-agent-loop-fn (fn [& _]
+                                              (deliver gate true)
+                                              @release
+                                              {:role "assistant" :content [{:type :text :text "ok"}]})})
+          handler (rpc/make-session-request-handler ctx)
+          in-reader   (java.io.PipedReader.)
+          in-writer   (java.io.PipedWriter. in-reader)
+          out-writer  (java.io.StringWriter.)
+          err-writer  (java.io.StringWriter.)
+          write-line! (fn [line]
+                        (.write in-writer (str line "\n"))
+                        (.flush in-writer))
+          loop-future (future
+                        (rpc/run-stdio-loop! {:in              in-reader
+                                              :out             out-writer
+                                              :err             err-writer
+                                              :state           state
+                                              :request-handler handler}))]
+      (try
+        (write-line! "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}")
+        (write-line! (str "{:id \"p1\" :kind :request :op \"prompt\" :params {:session-id \"" sid1 "\" :message \"hold\"}}"))
+        (deref gate 1000 nil)
+        (write-line! (str "{:id \"g2\" :kind :request :op \"get_state\" :params {:session-id \"" sid2 "\"}}"))
+        (Thread/sleep 150)
+        (deliver release true)
+        (Thread/sleep 250)
+        (.close in-writer)
+        (deref loop-future 1000 nil)
+        (let [frames (->> (str/split-lines (str out-writer))
+                          (remove str/blank?)
+                          parse-frames)
+              conflict (some #(when (and (= :error (:kind %))
+                                         (= "g2" (:id %))) %)
+                             frames)]
+          (is (some? conflict))
+          (is (= "request/session-routing-conflict" (:error-code conflict)))
+          (is (= sid1 (get-in conflict [:data :inflight-session-id])))
+          (is (= sid2 (get-in conflict [:data :target-session-id]))))
+        (finally
+          (deliver release true)
+          (when-let [f (:ui-watch-loop @state)]
+            (future-cancel f))
+          (when-let [f (:external-event-loop @state)]
+            (future-cancel f))
+          (future-cancel loop-future)
+          (try (.close in-writer) (catch Exception _ nil))
+          (try (.close in-reader) (catch Exception _ nil)))))))
 
 (deftest rpc-new-session-uses-callback-rehydrate-payload-test
   (testing "new_session uses on-new-session! callback when provided"
@@ -1178,10 +1247,10 @@
                          :subscribed-topics #{"footer/updated"}})
           handler (rpc/make-session-request-handler ctx)
           _       (session/journal-append-in! ctx {:kind :message
-                                                :session-id (:session-id (session/get-session-data-in ctx))
-                                                :data {:message {:role "assistant"
-                                                                 :usage {:input-tokens 111
-                                                                         :output-tokens 22}}}})
+                                                   :session-id (:session-id (session/get-session-data-in ctx))
+                                                   :data {:message {:role "assistant"
+                                                                    :usage {:input-tokens 111
+                                                                            :output-tokens 22}}}})
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"n1\" :kind :request :op \"new_session\"}\n")
           {:keys [out-lines]} (run-loop input handler state)
