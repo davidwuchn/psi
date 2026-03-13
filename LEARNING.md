@@ -4,6 +4,31 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-13 - Emacs slash CAPF should include common backend commands, not only idle-local + extension names
+
+### λ Completion affordances must reflect the command surface users actually execute
+
+In Emacs compose input, users expect `/` completion to offer both locally-intercepted
+commands and common backend commands they can send through `prompt` (for example
+`/remember`, `/history`, `/prompts`). Restricting built-ins to idle-local commands makes
+slash completion feel broken even when command execution still works.
+
+### λ Keep completion catalogs explicit and test the missing classes directly
+
+Extending `psi-emacs-slash-command-specs` with common server commands plus focused
+ERT checks (e.g. `/re -> /remember`, `/hi -> /history`) closes a practical discoverability
+gap and prevents regressions where only extension-discovered names remain visible.
+
+### λ Docs should describe slash completion as layered sources, not “built-ins only”
+
+The accurate model is:
+1) idle-local slash commands,
+2) common backend command candidates,
+3) extension-discovered command names.
+
+Documenting this layered surface in `components/emacs-ui/README.md` aligns operator
+expectations with runtime behavior.
+
 ## 2026-03-12 - README should be an index; user docs should live under `doc/`
 
 ### λ Splitting README into concise entry + linked guides reduces drift and improves discoverability
