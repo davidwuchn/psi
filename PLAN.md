@@ -227,6 +227,7 @@ Ordered steps toward PSI COMPLETE.
 - Progress: commit `505380f` hardens `psi-mode` keymap lifecycle by extracting `psi-emacs--install-mode-keybindings` and reinstalling bindings on each mode activation to self-heal stale keymap mutations in long-lived Emacs sessions; adds focused ERT coverage `psi-interrupt-keybinding-is-installed` for `C-c C-c` interrupt wiring.
 - Progress: commit `3cc8a76` made runtime UI surface introspectable (`:psi.agent-session/ui-type`) and exposed `:ui-type` on extension API; extension widgets now branch placement by UI (`:console|:tui|:emacs`) in `subagent_widget`, `agent-chain`, and `mcp_tasks_run`.
 - Progress: commit `f23e38f` expands Emacs slash CAPF built-in candidates to include common backend/server commands (`/history`, `/prompts`, `/skills`, `/login`, `/logout`, `/remember`, `/skill:`), adds focused completion regression coverage, and updates `components/emacs-ui/README.md` to document the broader slash surface.
+- PSL follow-up: commit `50c9d59` syncs user-facing docs in `doc/emacs-ui.md` with the same slash/backend completion behavior so top-level docs match component-level frontend docs.
 - Verification: `bb emacs:test` green at 192/192 after slash-candidate expansion follow-up.
 - Completed in this cycle:
   - [x] Prompt completion architecture added via CAPF (`components/emacs-ui/psi-completion.el`)

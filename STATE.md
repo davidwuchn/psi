@@ -43,6 +43,7 @@ Current truth about the Psi system.
 - ✓ 2026-03-06 session boot aligned via nucleus/OODA ritual; current mode is ◈ reflect → ready for · atom execution.
 - ✓ Emacs prompt completion architecture implemented via CAPF: `/` command completion + `@` reference completion, category metadata (`psi_prompt`, `psi_reference`), affixation/annotation/exit hooks, cwd+project-root search, and configurable completion policies.
 - ✓ Emacs slash CAPF now includes common backend/server command candidates in the built-in list (`/history`, `/prompts`, `/skills`, `/login`, `/logout`, `/remember`, `/skill:`), not only idle-local commands and extension-discovered names (commit `f23e38f`).
+- ✓ User-facing Emacs docs are synchronized for slash/backend completion behavior at both component and top-level doc surfaces (`components/emacs-ui/README.md` + `doc/emacs-ui.md`, commit `50c9d59`).
 - ✓ Emacs completion verification expanded: `components/emacs-ui` ERT suite green at 192/192 after slash-candidate expansion and regression test additions.
 - ✓ Step 11a git-worktree visibility (read-only) implemented: `:git.worktree/*` attrs, session-root bridge attrs, `/worktree` command, and `/status` worktree surfacing.
 - ✓ Worktree failure path now degrades safely with telemetry marker (`git.worktree.parse_failed`) and coverage.
