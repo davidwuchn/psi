@@ -4,6 +4,24 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-13 - Agent-chain parent transcript should receive only the final stage payload
+
+### λ Multi-stage orchestration should hide intermediate chain plumbing from parent conversation state
+
+For `agent-chain(action="run")`, emitting step-level progress (`on-update`, per-step status logs, workflow-terminal synthetic messages)
+creates transcript noise and can confuse parent-session reasoning. Keep intermediate chain execution observable in workflow/widget state,
+but deliver only the final chain output into parent assistant message history.
+
+### λ Final result delivery should use normal assistant messages, not custom transcript markers, when parent consumption is intended
+
+`custom-type` messages are intentionally filtered from LLM-facing conversation reconstruction. If the chain result should be available to
+the parent model/session as normal dialogue, emit a plain assistant message without `custom-type`.
+
+### λ Disable workflow background-job tracking for agent-chain runs when final result is delivered directly
+
+If chain completion is already delivered by extension-controlled final message emission, enabling workflow background-job tracking can cause
+redundant terminal-injection side effects. Setting `:track-background-job? false` on workflow create prevents duplicate/non-final plumbing output.
+
 ## 2026-03-13 - GPT-5.x model additions should be anchored to one upstream baseline per family
 
 ### λ For OpenAI GPT-5 family updates, copy both transport and metadata shape from a single canonical source
