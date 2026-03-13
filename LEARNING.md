@@ -4,6 +4,22 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-13 - Widget command actions should be encoded as structured lines for Emacs parity
+
+### λ Remove controls in projection widgets must use `:action` command metadata, not plain text hints
+
+Emacs projection clickability depends on structured widget lines with explicit action payloads
+(`{:text ... :action {:type :command :command "..."}}`). Plain-text affordances like
+`/subrm <id>` are visible but not activatable. For subagent terminal rows, emit structured
+`/subrm` actions (with a readable `✕ remove` label) to match agent-chain interaction behavior.
+
+### λ Cross-extension UX parity benefits from testing private widget-line constructors directly
+
+A focused extension test against the widget action-line constructor catches regressions in
+clickability semantics without requiring full UI event simulation. Assert both sides:
+- terminal rows expose an action map with `/subrm <id>`
+- running rows expose no remove action
+
 ## 2026-03-13 - Session host routing tests should persist resume targets when lazy flush is in play
 
 ### λ Host-id routing tests fail nondeterministically unless target session files are explicitly persisted
