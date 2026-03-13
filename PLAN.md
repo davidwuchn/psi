@@ -266,11 +266,17 @@ Ordered steps toward PSI COMPLETE.
   - Verification snapshot:
     - `clojure -M:test --focus psi.agent-session.commands-test --focus psi.tui.app-test` → 115 tests, 338 assertions, 0 failures
     - `clojure -M:test --focus psi.agent-session.main-test --focus psi.agent-session.rpc-test` → 51 tests, 398 assertions, 0 failures
+- Progress (2026-03-13, commit `3c1c385`): TUI `/tree` hierarchy + alignment polish complete
+  - Row model now computes explicit tree order from host lineage (stable siblings; cycle/duplicate guard) instead of flat insertion order.
+  - Tree iconography added: root `●`, branch connectors `├─` / `└─`, and carry-through `│` for nested sibling context.
+  - Right-side status cells are fixed-slot aligned (`[active] [stream]`) with consistent session-id suffix column alignment.
+  - Verification snapshot:
+    - `clojure -M:test --focus psi.tui.app-test` → 77 tests, 210 assertions, 0 failures
 - Progress (2026-03-13, commit `d869843`): changelog memory synced for `/tree` rollout
   - Added explicit `CHANGELOG.md` entry documenting command semantics (`/tree`, `/tree <id|prefix>`), runtime gating (`supports-session-tree?`), TUI host-backed selector mode, switch callback wiring, and validation snapshot.
   - Keeps internal plan/state narrative aligned with user-facing release memory for the same feature delta.
 - Remaining (multi-session UI):
-  - follow-up polish: optional explicit tree iconography + richer parent/child grouping in TUI row model (currently flat list + indent)
+  - optional follow-up: add richer collapsed/expandable subtree interactions in TUI row model (current model is fully expanded tree-only)
 
 ### Step 12 — Emacs UI ◇ in progress
 - Spec: `spec/emacs-frontend.allium`
