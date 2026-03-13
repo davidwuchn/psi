@@ -1,0 +1,262 @@
+-- allium: 1
+
+-- tui-tmux-integration-harness.allium
+-- Scope: integration-test harness for psi TUI using tmux, plus one basic end-to-end scenario.
+-- Includes:
+--   - tmux-backed session lifecycle for test execution
+--   - harness primitives (start, send keys, capture pane, wait/assert, cleanup)
+--   - one baseline E2E scenario: launch -> /help -> verify marker -> /quit -> clean exit
+-- Excludes:
+--   - full interaction matrix (editing semantics, resume/tree flows, agent streaming behavior)
+--   - non-tmux terminal drivers (expect/pty wrappers)
+--   - provider-dependent AI assertions
+
+use "./tui.allium" as tui
+
+value HarnessOptions {
+    working_dir: String?
+    launch_command: String?
+    session_name: String?
+
+    startup_timeout_ms: Integer?
+    step_timeout_ms: Integer?
+}
+
+value HarnessResult {
+    status: passed | failed | skipped
+    reason: String?
+
+    evidence: Set<String>
+}
+
+entity TmuxHarnessRuntime {
+    phase: idle
+         | preflight
+         | session_starting
+         | app_starting
+         | app_ready
+         | running_scenario
+         | app_exiting
+         | cleaning_up
+         | completed
+         | failed
+         | skipped
+
+    tmux_available: Boolean?
+    session_name: String?
+    pane_id: String?
+
+    effective_options: HarnessOptions?
+
+    pane_snapshot: String?
+    last_error: String?
+    result: HarnessResult?
+}
+
+config {
+    tmux_binary: String = "tmux"
+
+    default_launch_command: String = "clojure -M:psi --tui"
+    default_startup_timeout_ms: Integer = 60000
+    default_step_timeout_ms: Integer = 15000
+    poll_interval_ms: Integer = 100
+
+    -- Prompt marker expected after TUI boot.
+    tui_ready_marker: String = "刀:"
+
+    -- Marker from /help output; appears in every built-in help rendering.
+    help_output_marker: String = "(anything else is sent to the agent)"
+
+    capture_lines: Integer = 3000
+}
+
+rule PreflightChecksTmuxAvailability {
+    when: BasicTuiHarnessScenarioRequested(runtime, options)
+    requires: runtime.phase = idle
+
+    ensures: runtime.phase = preflight
+
+    ensures:
+        if CommandAvailable(config.tmux_binary):
+            runtime.tmux_available = true
+        else:
+            runtime.tmux_available = false
+}
+
+rule MissingTmuxSkipsScenario {
+    when: BasicTuiHarnessScenarioRequested(runtime, options)
+    requires: runtime.tmux_available = false
+
+    ensures: runtime.phase = skipped
+    ensures: runtime.result = HarnessResult{
+        status: skipped,
+        reason: "tmux_not_available",
+        evidence: {"tmux binary not found on PATH"}
+    }
+}
+
+rule EffectiveOptionsResolved {
+    when: BasicTuiHarnessScenarioRequested(runtime, options)
+    requires: runtime.tmux_available = true
+
+    ensures: runtime.effective_options = HarnessOptions{
+        working_dir: options.working_dir,
+        launch_command: options.launch_command ?? config.default_launch_command,
+        session_name: options.session_name ?? UniqueSessionName("psi-tui-it"),
+        startup_timeout_ms: options.startup_timeout_ms ?? config.default_startup_timeout_ms,
+        step_timeout_ms: options.step_timeout_ms ?? config.default_step_timeout_ms
+    }
+}
+
+rule HarnessStartsDetachedTmuxSession {
+    when: BasicTuiHarnessScenarioRequested(runtime, options)
+    requires: runtime.tmux_available = true
+    requires: runtime.effective_options != null
+
+    ensures: runtime.phase = session_starting
+    ensures: TmuxSessionStarted(runtime.effective_options.session_name, detached: true)
+    ensures: runtime.session_name = runtime.effective_options.session_name
+    ensures: runtime.pane_id = PrimaryPaneId(runtime.session_name)
+}
+
+rule HarnessLaunchesPsiTuiInPane {
+    when: TmuxSessionStarted(session_name, detached)
+    requires: detached = true
+
+    ensures: runtime.phase = app_starting
+    ensures: TmuxPaneSendLine(runtime.pane_id, runtime.effective_options.launch_command)
+}
+
+rule HarnessWaitsForPromptReadiness {
+    when: TmuxPaneSendLine(pane_id, line)
+    requires: line = runtime.effective_options.launch_command
+
+    ensures: WaitUntil(
+        condition: PaneContainsText(pane_id, config.tui_ready_marker, normalize: strip_ansi),
+        timeout_ms: runtime.effective_options.startup_timeout_ms,
+        poll_interval_ms: config.poll_interval_ms
+    )
+
+    ensures:
+        if WaitSucceeded:
+            runtime.phase = app_ready
+        else:
+            runtime.phase = failed
+}
+
+rule BasicScenarioSendsHelpCommand {
+    when: runtime.phase becomes app_ready
+
+    ensures: runtime.phase = running_scenario
+    ensures: TmuxPaneSendKeys(runtime.pane_id, "/help", enter: true)
+}
+
+rule BasicScenarioAssertsHelpOutputMarker {
+    when: TmuxPaneSendKeys(runtime.pane_id, "/help", enter: true)
+
+    ensures: WaitUntil(
+        condition: PaneContainsText(runtime.pane_id, config.help_output_marker, normalize: strip_ansi),
+        timeout_ms: runtime.effective_options.step_timeout_ms,
+        poll_interval_ms: config.poll_interval_ms
+    )
+
+    ensures:
+        if WaitSucceeded:
+            HelpAssertionPassed(runtime)
+        else:
+            HelpAssertionFailed(runtime)
+}
+
+rule BasicScenarioSendsQuitCommand {
+    when: HelpAssertionPassed(runtime)
+
+    ensures: runtime.phase = app_exiting
+    ensures: TmuxPaneSendKeys(runtime.pane_id, "/quit", enter: true)
+}
+
+rule BasicScenarioAssertsCleanExit {
+    when: TmuxPaneSendKeys(runtime.pane_id, "/quit", enter: true)
+
+    ensures: WaitUntil(
+        condition: TmuxPaneCurrentCommand(runtime.pane_id) != "java",
+        timeout_ms: runtime.effective_options.step_timeout_ms,
+        poll_interval_ms: config.poll_interval_ms
+    )
+
+    ensures:
+        if WaitSucceeded:
+            runtime.phase = completed
+            runtime.result = HarnessResult{
+                status: passed,
+                reason: null,
+                evidence: {"basic_help_quit_scenario_passed"}
+            }
+        else:
+            runtime.phase = failed
+            runtime.last_error = "quit_timeout"
+}
+
+rule FailureCapturesPaneEvidence {
+    when: runtime.phase becomes failed
+
+    ensures: runtime.pane_snapshot = CapturePane(
+        pane_id: runtime.pane_id,
+        lines: config.capture_lines,
+        normalize: preserve_raw_and_strip_ansi
+    )
+
+    ensures:
+        if runtime.result = null:
+            runtime.result = HarnessResult{
+                status: failed,
+                reason: runtime.last_error ?? "scenario_failed",
+                evidence: {runtime.pane_snapshot}
+            }
+}
+
+rule CleanupAlwaysKillsHarnessSession {
+    when: BasicTuiHarnessScenarioFinished(runtime)
+
+    ensures: runtime.phase = cleaning_up
+    ensures: TmuxSessionKilledIfExists(runtime.session_name)
+}
+
+rule CleanupRunsOnSuccessFailureAndSkip {
+    when: runtime.phase in {completed, failed, skipped}
+
+    ensures: BasicTuiHarnessScenarioFinished(runtime)
+}
+
+rule NoCrossTestSessionReuse {
+    when: BasicTuiHarnessScenarioRequested(runtime, options)
+
+    ensures: runtime.session_name = UniqueSessionName("psi-tui-it")
+}
+
+surface TuiTmuxIntegrationHarnessContract {
+    facing caller: IntegrationTestRunner
+
+    context runtime: TmuxHarnessRuntime
+
+    provides:
+        BasicTuiHarnessScenarioRequested(runtime, options)
+
+    exposes:
+        runtime.phase
+        runtime.result
+        runtime.last_error
+        runtime.pane_snapshot
+
+    related:
+        tui/TuiPromptInputContract
+
+    @guidance
+        -- Harness is terminal-boundary integration verification.
+        -- Matching assertions must use ANSI-stripped text for stability.
+        -- Scenario intentionally validates only boot/help/quit viability.
+        -- Additional interactive scenarios should compose these same primitives.
+}
+
+open question "Should missing tmux be treated as skipped (current) or hard test failure in CI?"
+open question "Should the ready marker remain the prompt prefix `刀:` or use another sentinel from startup banner?"
+open question "Should the harness persist captured pane artifacts to files or keep in-memory evidence only?"

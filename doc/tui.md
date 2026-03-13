@@ -2,6 +2,26 @@
 
 This document covers interactive terminal usage for psi (`--tui`).
 
+## Integration harness (tmux)
+
+A baseline tmux-backed integration harness test exists at:
+- `components/tui/test/psi/tui/tmux_integration_harness_test.clj`
+
+Reusable harness helpers live at:
+- `components/tui/test/psi/tui/test_harness/tmux.clj`
+
+What it validates:
+1. start psi TUI in detached tmux (`exec clojure -M:psi --tui`)
+2. wait until prompt is ready (`刀:` / `Type a message`)
+3. send `/help` and assert help output marker appears
+4. send `/quit` and assert pane process exits the Java TUI process
+
+Run it explicitly (integration tests are skipped by default in `tests.edn`):
+
+```bash
+clojure -M:test --focus psi.tui.tmux-integration-harness-test --skip-meta foo
+```
+
 ## Start
 
 ```bash

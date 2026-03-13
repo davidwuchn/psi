@@ -12,6 +12,10 @@
     - Help assertion checks stable marker: `(anything else is sent to the agent)`.
     - Quit assertion checks pane process transition away from `java`.
     - Always performs best-effort tmux session cleanup and captures pane snapshot on failure.
+  - Extracted reusable tmux harness helpers to:
+    - `components/tui/test/psi/tui/test_harness/tmux.clj`
+    - includes shared lifecycle helpers (`start-session!`, `send-line!`, `capture-pane`,
+      waits/assert helpers) and a reusable baseline scenario runner.
   - Verification:
     - `clj-kondo --lint components/tui/test/psi/tui/tmux_integration_harness_test.clj`
     - `clojure -M:test --focus psi.tui.tmux-integration-harness-test --skip-meta foo`
