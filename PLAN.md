@@ -230,12 +230,16 @@ Ordered steps toward PSI COMPLETE.
 - Progress (2026-03-13, commit `62f46cd`): multi-session UI spec landed
   - `session-management.allium`: `SessionHostSnapshot` + `SessionSlot` values; `host/updated` event rules (on subscribe + host state change); slot active/streaming projection rules; guidance in `AgentSessionApi` surface.
   - `emacs-frontend.allium`: session tree widget rules (`psi-session/session-tree`, placement `left`); display name fallback rules; parent-child indent rule; `/tree` completing-read picker rules; switch dispatch + connecting affordances + transcript rehydrate rules; `EmacsFrontendSessionTreeApi` surface.
-- Remaining (multi-session UI implementation):
-  - Backend: emit `host/updated` RPC event (new topic, subscribe + host state change triggers)
-  - Backend: `session-updated-payload` or new `host-updated-payload` carrying `SessionHostSnapshot`
-  - Emacs: handle `host/updated` event → render `psi-session/session-tree` widget
-  - Emacs: `/tree` slash command → completing-read picker → `switch_session` dispatch
-  - Tests: RPC event emission, Emacs widget render, picker dispatch
+- Progress (2026-03-13, commit `16ce8ed`): multi-session UI implementation complete
+  - Backend: `host/updated` added to event-topics + required-payload-keys; `host-updated-payload` builds `SessionHostSnapshot` with per-slot `{id name is-streaming is-active parent-session-id}`; emitted on subscribe, `new_session`, and both `switch_session` branches.
+  - Emacs (`psi-events.el`): `psi-emacs--session-display-name` (name or id-prefix fallback); `psi-emacs--session-tree-widget-lines` (active marker, streaming badge, parent-child indent, `/tree <id>` actions); `psi-emacs--handle-host-updated-event` injects `psi-session/session-tree` widget (hidden when ≤1 session); `host/updated` wired into `handle-rpc-event`.
+  - Emacs (`psi-session-commands.el`): `psi-emacs--request-switch-session-by-id` (`:session-id` path); `psi-emacs--handle-idle-tree-command` (completing-read picker from host snapshot); `/tree <id>` direct dispatch for widget click; `/tree` wired into idle slash handler and help text.
+  - Emacs (`psi-completion.el`): `/tree` added to slash CAPF specs.
+  - Emacs (`psi.el`): `host-snapshot` slot added to `psi-emacs-state`.
+  - Tests: 12 new ERT tests; 204/204 passing.
+- Remaining (multi-session UI):
+  - TUI session tree rendering (deferred)
+  - `host/updated` emission on fork/subagent creation (those bypass `new_session` RPC path)
 
 ### Step 12 — Emacs UI ◇ in progress
 - Spec: `spec/emacs-frontend.allium`
