@@ -1,5 +1,45 @@
 # Learning
 
+---
+
+## 2026-03-13 - Multi-session UI: host/updated event + session tree widget
+
+### λ `host/updated` should be a dedicated event, not piggybacked on `session/updated`
+
+`session/updated` carries per-session phase/streaming state for the *active* session only.
+Multi-session UIs need a snapshot of *all* live sessions simultaneously. Mixing this into
+`session/updated` would require the frontend to accumulate per-session state across events.
+A dedicated `host/updated` event carrying the full `SessionHostSnapshot` (active-session-id
++ all slots) keeps the frontend stateless with respect to the session list: every event is
+a complete replacement, not a diff.
+
+### λ Widget should be hidden when only one session is live
+
+Showing a session tree widget with a single entry adds noise without value. The widget
+should only appear when `(> (length slots) 1)`. On subscribe with a single session the
+widget is absent; it appears automatically when a second session is forked or started.
+
+### λ `/tree <id>` direct dispatch enables widget click-to-switch without a picker
+
+Widget action lines carry `/tree <id>` as their command. The idle slash handler must
+distinguish `/tree` (no arg → picker) from `/tree <id>` (direct switch). This keeps
+the widget and the interactive command as two entry points to the same switch path
+without duplicating the `switch_session` dispatch logic.
+
+### λ `switch_session` has two dispatch shapes: by `:session-id` (in-process) and by `:session-path` (disk resume)
+
+The existing `psi-emacs--request-switch-session` sends `:session-path`. In-process host
+sessions are identified by `:session-id` (no file path needed — the backend resolves via
+`ensure-session-loaded-in!`). A separate `psi-emacs--request-switch-session-by-id` keeps
+the two shapes distinct and avoids conflating disk-resume with live-host switching.
+
+### λ Emit `host/updated` at every host state boundary in RPC, not just on explicit session ops
+
+Subscribe, `new_session`, and both `switch_session` branches are the minimal set. Fork and
+subagent creation bypass the RPC `new_session` path and do not yet emit `host/updated` —
+this is a known gap. The safe pattern is: any RPC op that mutates `session-host-atom`
+should emit `host/updated` after its `session/updated` + `footer/updated` pair.
+
 Accumulated discoveries from ψ evolution.
 
 ---
