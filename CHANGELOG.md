@@ -2,6 +2,22 @@
 
 ## 2026-03-13
 
+- λ Δ TUI live multi-session surface (`/tree`) landed:
+  - Added `/tree` command to central dispatcher with two modes:
+    - `/tree` opens a session picker.
+    - `/tree <session-id|prefix>` performs direct session switch.
+  - Runtime gating added via `:supports-session-tree?`:
+    - TUI enables `/tree`.
+    - Console/RPC return deterministic guidance text.
+  - TUI selector now supports `:session-selector-mode` (`:resume|:tree`):
+    - `:resume` uses persisted session listing.
+    - `:tree` uses live host snapshot attrs (`:psi.agent-session/host-active-session-id`, `:psi.agent-session/host-sessions`).
+  - Added TUI switch callback path (`switch-session-fn!`) wired to `session/ensure-session-loaded-in!` + transcript/tool rehydrate.
+  - Added/updated tests across commands + TUI + runtime + RPC for `/tree` behavior and gating.
+  - Verification:
+    - `clojure -M:test --focus psi.agent-session.commands-test --focus psi.tui.app-test --focus psi.agent-session.main-test --focus psi.agent-session.rpc-test`
+    - 166 tests, 736 assertions, 0 failures.
+
 - λ Δ Multi-session persistence locking + session decision convergence:
   - Updated session specs with elicited decisions:
     - `spec/session-core.allium`: fork default prompt inheritance is explicit.
