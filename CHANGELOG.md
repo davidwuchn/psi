@@ -2,6 +2,21 @@
 
 ## 2026-03-13
 
+- λ Δ Added tmux-backed TUI integration harness baseline:
+  - Added new spec: `spec/tui-tmux-integration-harness.allium`.
+    - Captures harness lifecycle (preflight/start/send/wait/assert/cleanup).
+    - Includes one baseline scenario: launch TUI → `/help` marker assertion → `/quit` exit assertion.
+  - Added integration test: `components/tui/test/psi/tui/tmux_integration_harness_test.clj`.
+    - `^:integration` test uses detached tmux session with unique session names.
+    - Readiness assertion waits for prompt marker (`刀:`/`Type a message`).
+    - Help assertion checks stable marker: `(anything else is sent to the agent)`.
+    - Quit assertion checks pane process transition away from `java`.
+    - Always performs best-effort tmux session cleanup and captures pane snapshot on failure.
+  - Verification:
+    - `clj-kondo --lint components/tui/test/psi/tui/tmux_integration_harness_test.clj`
+    - `clojure -M:test --focus psi.tui.tmux-integration-harness-test --skip-meta foo`
+
+
 - λ Δ TUI live multi-session surface (`/tree`) landed:
   - Added `/tree` command to central dispatcher with two modes:
     - `/tree` opens a session picker.
@@ -26,6 +41,15 @@
   - Verification:
     - `clojure -M:test --focus psi.tui.app-test`
     - 77 tests, 210 assertions, 0 failures.
+
+- λ Δ Multi-session route-lock isolation hardened for exclusive session lifecycle ops:
+  - Added explicit exclusive route-lock op class in RPC: `new_session`, `switch_session`, `fork`.
+  - When `:enforce-session-route-lock?` is enabled and a prompt is in-flight, these lifecycle ops now fail fast with canonical `request/session-routing-conflict` (including inflight/target session ids), even for same-session targets.
+  - Refactored route-lock path into reusable helpers (`valid-target-session-id!`, `maybe-assert-route-lock!`) and applied guard at dispatch boundary for exclusive ops.
+  - Added RPC regression test: `exclusive ops are rejected while prompt is in-flight when lock enforcement is enabled`.
+  - Verification:
+    - `clojure -M:test --focus psi.agent-session.rpc-test` (35 tests, 336 assertions, 0 failures)
+    - `clojure -M:test --focus psi.agent-session.core-test/send-workflow-event-track-background-job-gated-test --focus psi.agent-session.rpc-test/rpc-prompt-passes-resolved-api-key-to-agent-loop-test` (2 tests, 7 assertions, 0 failures)
 
 - λ Δ Multi-session persistence locking + session decision convergence:
   - Updated session specs with elicited decisions:

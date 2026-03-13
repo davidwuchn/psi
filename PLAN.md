@@ -212,7 +212,6 @@ Ordered steps toward PSI COMPLETE.
   - session schema/runtime now tracks `:parent-session-id`, `:parent-session-path`, `:spawn-mode`
   - startup prompt policy now spawn-aware (`:new-root` default run, spawned defaults skip)
 - Remaining:
-  - tighten operation isolation semantics for concurrent in-flight runs across routed sessions
   - verify no regressions in background-job gating and api-key routing tests
 - Progress (2026-03-13, commit `395d036`): cross-process session persistence locking + spec-decision convergence
   - Session write path now enforces exclusive sidecar file locking (`<session-file>.lock`) in `persistence.clj` for header writes, full flushes, and append writes.
@@ -272,6 +271,13 @@ Ordered steps toward PSI COMPLETE.
   - Right-side status cells are fixed-slot aligned (`[active] [stream]`) with consistent session-id suffix column alignment.
   - Verification snapshot:
     - `clojure -M:test --focus psi.tui.app-test` → 77 tests, 210 assertions, 0 failures
+- Progress (2026-03-13, commit `TBD`): multi-session route-lock isolation tightened for exclusive session-lifecycle ops
+  - Added explicit exclusive route-lock op class in RPC (`new_session`, `switch_session`, `fork`) so they fail fast with `request/session-routing-conflict` when a prompt route-lock is active, even when targeting the same session.
+  - Route-lock guard refactored (`valid-target-session-id!`, `maybe-assert-route-lock!`) and reused across targetable dispatch + exclusive-op gate path.
+  - Added RPC regression: `exclusive ops are rejected while prompt is in-flight when lock enforcement is enabled`.
+  - Verification snapshot:
+    - `clojure -M:test --focus psi.agent-session.rpc-test` → 35 tests, 336 assertions, 0 failures
+    - `clojure -M:test --focus psi.agent-session.core-test/send-workflow-event-track-background-job-gated-test --focus psi.agent-session.rpc-test/rpc-prompt-passes-resolved-api-key-to-agent-loop-test` → 2 tests, 7 assertions, 0 failures
 - Progress (2026-03-13, commit `d869843`): changelog memory synced for `/tree` rollout
   - Added explicit `CHANGELOG.md` entry documenting command semantics (`/tree`, `/tree <id|prefix>`), runtime gating (`supports-session-tree?`), TUI host-backed selector mode, switch callback wiring, and validation snapshot.
   - Keeps internal plan/state narrative aligned with user-facing release memory for the same feature delta.

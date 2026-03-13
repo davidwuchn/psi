@@ -1210,6 +1210,73 @@
             (future-cancel f))
           (future-cancel loop-future)
           (try (.close in-writer) (catch Exception _ nil))
+          (try (.close in-reader) (catch Exception _ nil))))))
+
+  (testing "exclusive ops are rejected while prompt is in-flight when lock enforcement is enabled"
+    (let [cwd     (str (System/getProperty "java.io.tmpdir") "/psi-rpc-routing-lock-exclusive-" (java.util.UUID/randomUUID))
+          _       (.mkdirs (java.io.File. cwd))
+          ctx     (session/create-context {:cwd cwd})
+          _       (session/new-session-in! ctx)
+          sid1    (:session-id (session/get-session-data-in ctx))
+          path1   (:session-file (session/get-session-data-in ctx))
+          _       (persist/flush-journal! (java.io.File. path1)
+                                          sid1
+                                          cwd
+                                          nil
+                                          nil
+                                          [(persist/thinking-level-entry :off)])
+          gate    (promise)
+          release (promise)
+          state   (atom {:ready? true
+                         :pending {}
+                         :enforce-session-route-lock? true
+                         :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
+                         :run-agent-loop-fn (fn [& _]
+                                              (deliver gate true)
+                                              @release
+                                              {:role "assistant" :content [{:type :text :text "ok"}]})})
+          handler (rpc/make-session-request-handler ctx)
+          in-reader   (java.io.PipedReader.)
+          in-writer   (java.io.PipedWriter. in-reader)
+          out-writer  (java.io.StringWriter.)
+          err-writer  (java.io.StringWriter.)
+          write-line! (fn [line]
+                        (.write in-writer (str line "\n"))
+                        (.flush in-writer))
+          loop-future (future
+                        (rpc/run-stdio-loop! {:in              in-reader
+                                              :out             out-writer
+                                              :err             err-writer
+                                              :state           state
+                                              :request-handler handler}))]
+      (try
+        (write-line! "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}")
+        (write-line! (str "{:id \"p1\" :kind :request :op \"prompt\" :params {:session-id \"" sid1 "\" :message \"hold\"}}"))
+        (deref gate 1000 nil)
+        (write-line! "{:id \"n2\" :kind :request :op \"new_session\"}")
+        (Thread/sleep 150)
+        (deliver release true)
+        (Thread/sleep 250)
+        (.close in-writer)
+        (deref loop-future 1000 nil)
+        (let [frames (->> (str/split-lines (str out-writer))
+                          (remove str/blank?)
+                          parse-frames)
+              conflict (some #(when (and (= :error (:kind %))
+                                         (= "n2" (:id %))) %)
+                             frames)]
+          (is (some? conflict))
+          (is (= "request/session-routing-conflict" (:error-code conflict)))
+          (is (= sid1 (get-in conflict [:data :inflight-session-id])))
+          (is (= sid1 (get-in conflict [:data :target-session-id]))))
+        (finally
+          (deliver release true)
+          (when-let [f (:ui-watch-loop @state)]
+            (future-cancel f))
+          (when-let [f (:external-event-loop @state)]
+            (future-cancel f))
+          (future-cancel loop-future)
+          (try (.close in-writer) (catch Exception _ nil))
           (try (.close in-reader) (catch Exception _ nil)))))))
 
 (deftest rpc-new-session-uses-callback-rehydrate-payload-test
