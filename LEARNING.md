@@ -3,6 +3,26 @@
 
 ---
 
+## 2026-03-13 - Handshake should establish host snapshot baseline; `/tree` should stay single-path (commit `a639f3e`)
+
+### λ Multi-session host state is connection bootstrap state, not an optional follow-up query
+
+If `/tree` depends on local `host-snapshot`, the protocol should guarantee that snapshot near connection time.
+Emitting `host/updated` from handshake bootstrap (when runtime provides a host payload function) turns this into
+an explicit invariant instead of relying on later event timing or ad-hoc frontend recovery queries.
+
+### λ Keep `/tree` on one data path to reduce UI complexity
+
+A fallback `list_sessions` query branch adds parsing/normalization code and test surface in Emacs that duplicates
+host-event semantics. Once handshake/subscribe provide host snapshots reliably, `/tree` should consume one source
+of truth (`host-snapshot`) and keep picker/switch logic focused on projection behavior.
+
+### λ Handshake-level host event assertions are a durable protocol guard
+
+Asserting host snapshot emission directly in RPC handshake tests catches regressions before frontend behavior drifts.
+This is stronger than only asserting `/tree` transcript outcomes because it validates the transport contract that all
+session-tree consumers depend on.
+
 ## 2026-03-13 - Emacs projected widget actions must reuse idle slash routing, not raw prompt dispatch (commit `cdfadda`)
 
 ### λ Session-tree widget command actions are frontend commands first, backend prompts second
