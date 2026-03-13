@@ -4,6 +4,28 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-13 - Multi-session UI needs a dedicated host event, not piggyback on session/updated
+
+### λ `host/updated` should be a first-class RPC event topic, not inferred from session/updated payloads
+
+`session/updated` carries per-session phase state. The live session list (host snapshot: active-session-id + all slots) is host-level state, not session-level. Conflating them forces clients to reconstruct host state from a stream of per-session events — error-prone and order-sensitive. A dedicated `host/updated` event carrying `SessionHostSnapshot` gives clients one authoritative push of the full live session list on subscribe and on any host state change.
+
+### λ Session tree widget data and `/tree` picker share the same `host/updated` snapshot
+
+Both the left-panel widget and the completing-read picker are projections of the same `SessionHostSnapshot`. Specifying them against the same event source keeps display name logic, streaming markers, and active indicators consistent across both surfaces without a separate query path.
+
+### λ Spec the display name fallback before implementation to avoid divergence
+
+Active session id is a UUID; without an explicit fallback rule (`name ?? "(session " + id[:8] + ")"`) implementations diverge between showing raw UUIDs, empty strings, or file paths. Encoding the fallback as a named spec rule (`SessionDisplayNameFallsBackToIdPrefix`) makes it testable and prevents per-surface drift.
+
+### λ Completing-read is the right first session picker; defer full tree browser
+
+A completing-read picker (like `/resume`) gives immediate `/tree` UX with no new UI infrastructure. A full keyboard-navigable tree browser (fold/unfold, depth-first navigation like pi-mono) is a richer future capability. Deferring it explicitly in the spec surface (`EmacsFrontendSessionTreeApi`) prevents scope creep while keeping the door open.
+
+### λ Graph introspection surface should use a locally-composed resolver set, not the global registry
+
+`operation-metadata` and `build-env` in `resolvers.clj` previously diverged: one used the global registry, the other composed locally. Extracting `session-resolver-surface` as a shared function makes the graph introspection surface stable and independent of registration order or global registry state at query time.
+
 ## 2026-03-13 - Agent-chain parent transcript should receive only the final stage payload
 
 ### λ Multi-stage orchestration should hide intermediate chain plumbing from parent conversation state
