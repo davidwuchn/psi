@@ -3,6 +3,27 @@
 
 ---
 
+## 2026-03-13 - tmux TUI integration harness should assert stable terminal-boundary markers, not brittle help headers (commit `1613f5f`)
+
+### λ Baseline TUI E2E needs a reusable harness layer, not one-off shell scripts
+
+Extracting tmux lifecycle operations into a dedicated test helper namespace keeps follow-up
+integration scenarios cheap to add and reduces per-test orchestration drift. The useful core is:
+start detached session, send literal input + Enter, capture/sanitize pane output, poll with timeout,
+and always perform best-effort session cleanup.
+
+### λ Readiness and help assertions must use markers that survive extension/runtime variation
+
+The most stable readiness checks in this runtime were prompt-level markers (`刀:` / `Type a message`).
+For `/help`, extension and formatting variability make top-of-help headings brittle; a stable footer
+marker (`(anything else is sent to the agent)`) is a better integration contract boundary.
+
+### λ `/quit` exit assertions are more reliable at process-boundary than transcript-text boundary
+
+Asserting that the tmux pane command transitions away from `java` is more robust than asserting
+specific final text in a terminal transcript. Terminal output can vary with ANSI/control sequences,
+while pane process state directly reflects whether the TUI process exited.
+
 ## 2026-03-13 - Route-lock isolation must include exclusive lifecycle ops, not only cross-session targets (commit `115c6ab`)
 
 ### λ Same-session lifecycle mutations can still violate in-flight prompt routing guarantees
