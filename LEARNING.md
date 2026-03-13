@@ -24,6 +24,20 @@ Asserting that the tmux pane command transitions away from `java` is more robust
 specific final text in a terminal transcript. Terminal output can vary with ANSI/control sequences,
 while pane process state directly reflects whether the TUI process exited.
 
+## 2026-03-13 - PSL follow-up for 1613f5f should classify tmux harness changes as verification scope
+
+### λ Harness deltas must be tracked as confidence infrastructure, not product semantics
+
+The tmux harness commit added a verifiable terminal-boundary test contract and reusable orchestration
+helpers, but it did not change runtime multi-session behavior. Recording this distinction in plan/state
+memory prevents accidental roadmap drift where test infrastructure is mistaken for unfinished feature work.
+
+### λ Follow-up memory should capture what behavior is now protected
+
+For this harness, the protected boundary is explicit: TUI startup readiness marker, stable `/help`
+marker, and `/quit` process exit in a real terminal host. Capturing these assertions in LEARNING helps
+future ψ choose the same durable markers when extending integration coverage.
+
 ## 2026-03-13 - Route-lock isolation must include exclusive lifecycle ops, not only cross-session targets (commit `115c6ab`)
 
 ### λ Same-session lifecycle mutations can still violate in-flight prompt routing guarantees
