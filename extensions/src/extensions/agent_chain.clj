@@ -195,14 +195,12 @@
                         (or output "")))]
     (when-let [mf (:mutate-fn @state)]
       (try
+        ;; Emit the final result directly as a normal assistant message so only
+        ;; the final agent output reaches parent conversation/transcript.
         (mf 'psi.extension/send-message
-            {:role        "assistant"
-             :content     full
-             :custom-type "chain-result"})
-        (catch Exception _ nil)))
-    (println "\n[chain-result]" heading "\n")
-    (when (seq output)
-      (println (task-preview output 800)))))
+            {:role    "assistant"
+             :content full})
+        (catch Exception _ nil)))))
 
 (defn- now-ms []
   (System/currentTimeMillis))
@@ -313,29 +311,6 @@
                (assoc runs run-id updated))))
     (trim-runs!)
     (refresh-widget!)))
-
-(defn- progress-line
-  [{:keys [run-id chain-name phase step-index step-count step-agent last-work elapsed-ms]}]
-  (str "agent-chain " (or run-id "run")
-       " [" (-> (or phase :running) name str/upper-case) "]"
-       " " (or chain-name "chain")
-       (when (and (number? step-index) (number? step-count) (pos? step-count))
-         (str " step " (inc step-index) "/" step-count
-              (when (seq step-agent)
-                (str " " step-agent))))
-       (when (pos? (long (or elapsed-ms 0)))
-         (str " · " (quot (long elapsed-ms) 1000) "s"))
-       (when (seq last-work)
-         (str " — " (task-preview last-work 70)))))
-
-(defn- emit-tool-update!
-  [on-update content details is-error]
-  (when (fn? on-update)
-    (try
-      (on-update (cond-> {:content (str (or content ""))}
-                   (some? details) (assoc :details details)
-                   (some? is-error) (assoc :is-error (boolean is-error))))
-      (catch Exception _ nil))))
 
 ;;; Extension query/mutate helpers
 
@@ -649,15 +624,7 @@
                                                            :last-work  (or last-work "")
                                                            :elapsed-ms elapsed*})
                                              (pos? (long (or elapsed 0)))
-                                             (assoc :step-elapsed-ms (long elapsed)))))
-                            (println (str "  " (status-icon status)
-                                          " Step " (inc idx)
-                                          " [" step-agent "] "
-                                          (name status)
-                                          (when (pos? elapsed)
-                                            (str " " (quot elapsed 1000) "s"))
-                                          (when (seq last-work)
-                                            (str " — " (task-preview last-work 60)))))))]
+                                             (assoc :step-elapsed-ms (long elapsed)))))))]
     (upsert-run! run-id*
                  (fn [r]
                    (merge r
@@ -813,11 +780,10 @@
 
 (defn- action-run
   "Run a named chain. Requires :chain and :task in args-map."
-  [args-map opts]
+  [args-map _opts]
   (let [{:keys [all-agents query-fn]} @state
         chain-name       (str/trim (or (get args-map "chain") ""))
         agents           @all-agents
-        on-update        (:on-update opts)
         model            (when query-fn
                            (:psi.agent-session/model
                             (query-fn [:psi.agent-session/model])))
@@ -865,23 +831,16 @@
                                                   :last-work  ""
                                                   :elapsed-ms 0
                                                   :started-ms started-ms})))
-                _          (emit-tool-update! on-update
-                                              (progress-line (or (run-by-id run-id)
-                                                                 {:run-id     run-id
-                                                                  :chain-name (:name chain)
-                                                                  :phase      :running}))
-                                              {:run-id run-id
-                                               :phase  :running}
-                                              false)
                 created    (mutate! 'psi.extension.workflow/create
-                                    {:type  chain-workflow-type
-                                     :id    run-id
-                                     :meta  {:chain-name (:name chain)}
-                                     :input {:run-id run-id
-                                             :task   task
-                                             :chain  chain
-                                             :agents agents
-                                             :model  model}})]
+                                    {:type                  chain-workflow-type
+                                     :id                    run-id
+                                     :track-background-job? false
+                                     :meta                  {:chain-name (:name chain)}
+                                     :input                 {:run-id run-id
+                                                             :task   task
+                                                             :chain  chain
+                                                             :agents agents
+                                                             :model  model}})]
             (if-not (:psi.extension.workflow/created? created)
               (let [msg (str "Failed to start chain run: "
                              (or (:psi.extension.workflow/error created)

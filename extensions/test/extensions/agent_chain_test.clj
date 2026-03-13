@@ -155,6 +155,66 @@
         (finally
           (.delete tmp))))))
 
+(deftest agent-chain-run-does-not-emit-intermediate-tool-updates-test
+  (testing "agent-chain run ignores on-update callback and does not stream intermediate stage output"
+    (let [tmp (temp-dir)]
+      (try
+        (write-chain-config!
+         tmp
+         [{:name "greet"
+           :description "Greet"
+           :steps [{:agent "greeter" :prompt "$INPUT"}]}])
+        (with-user-dir (.getAbsolutePath tmp)
+          (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                                     {:path "/test/agent-chain.clj"})
+                updates (atom [])]
+            (sut/init api)
+            (let [execute (get-in @state [:tools "agent-chain" :execute])
+                  result  (execute {"action" "run" "chain" "greet" "task" "hello"}
+                                   {:on-update #(swap! updates conj %)})]
+              (is (false? (:is-error result)))
+              (is (empty? @updates)))))
+        (finally
+          (.delete tmp))))))
+
+(deftest agent-chain-run-disables-background-job-tracking-test
+  (testing "agent-chain workflow creation explicitly disables background job tracking"
+    (let [tmp (temp-dir)]
+      (try
+        (write-chain-config!
+         tmp
+         [{:name "greet"
+           :description "Greet"
+           :steps [{:agent "greeter" :prompt "$INPUT"}]}])
+        (with-user-dir (.getAbsolutePath tmp)
+          (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                                     {:path "/test/agent-chain.clj"})]
+            (sut/init api)
+            (let [execute (get-in @state [:tools "agent-chain" :execute])
+                  _       (execute {"action" "run" "chain" "greet" "task" "hello"})
+                  create-call (some #(when (= 'psi.extension.workflow/create (:op %)) %)
+                                    (:mutations @state))]
+              (is (some? create-call))
+              (is (false? (get-in create-call [:params :track-background-job?]))))))
+        (finally
+          (.delete tmp))))))
+
+(deftest emit-chain-result-emits-final-assistant-message-only-test
+  (testing "emit-chain-result writes a normal assistant message (no custom-type, no custom entry)"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/agent-chain.clj"})]
+      (sut/init api)
+      (#'sut/emit-chain-result! {:run-id "run-7"
+                                 :chain-name "greet"
+                                 :ok? true
+                                 :elapsed-ms 1000
+                                 :output "hello"})
+      (let [last-msg (last (:messages @state))]
+        (is (= "assistant" (:role last-msg)))
+        (is (= "hello" (last (str/split (:content last-msg) #"\n"))))
+        (is (not (contains? last-msg :custom-type)))
+        (is (empty? (:entries @state)))))))
+
 (deftest agent-chain-list-test
   (testing "agent-chain action=list returns chain and agent info"
     (let [tmp (temp-dir)]
