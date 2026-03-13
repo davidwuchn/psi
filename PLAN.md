@@ -223,6 +223,19 @@ Ordered steps toward PSI COMPLETE.
   - Regression suites are green for the session slice:
     - `core-test`, `persistence-test`, `rpc-test`, `resolvers-test`, `runtime-startup-prompts-test`, `startup-prompts-test`
     - aggregate verification run: 116 tests, 1000 assertions, 0 failures.
+- Progress (2026-03-13, commit `b3517dd`): route-lock enforcement and graph resolver surface hardening
+  - `with-target-session!` extended with optional route-lock guard (`enforce-session-route-lock?`); conflicts surface structured error payload with inflight/target session ids.
+  - `run-prompt-async!` acquires/releases `:session-route-lock` scoped to request-id + target session.
+  - `session-resolver-surface` extracted in `resolvers.clj` so graph introspection uses a stable locally-composed set independent of global registry state.
+- Progress (2026-03-13, commit `62f46cd`): multi-session UI spec landed
+  - `session-management.allium`: `SessionHostSnapshot` + `SessionSlot` values; `host/updated` event rules (on subscribe + host state change); slot active/streaming projection rules; guidance in `AgentSessionApi` surface.
+  - `emacs-frontend.allium`: session tree widget rules (`psi-session/session-tree`, placement `left`); display name fallback rules; parent-child indent rule; `/tree` completing-read picker rules; switch dispatch + connecting affordances + transcript rehydrate rules; `EmacsFrontendSessionTreeApi` surface.
+- Remaining (multi-session UI implementation):
+  - Backend: emit `host/updated` RPC event (new topic, subscribe + host state change triggers)
+  - Backend: `session-updated-payload` or new `host-updated-payload` carrying `SessionHostSnapshot`
+  - Emacs: handle `host/updated` event → render `psi-session/session-tree` widget
+  - Emacs: `/tree` slash command → completing-read picker → `switch_session` dispatch
+  - Tests: RPC event emission, Emacs widget render, picker dispatch
 
 ### Step 12 — Emacs UI ◇ in progress
 - Spec: `spec/emacs-frontend.allium`
