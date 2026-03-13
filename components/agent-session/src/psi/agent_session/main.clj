@@ -866,6 +866,7 @@
                oauth-ctx   (:oauth-ctx boot)
                state       (atom {:handshake-server-info-fn (fn [] (assoc (rpc/session->handshake-server-info ctx)
                                                                           :ui-type :emacs))
+                                  :handshake-host-updated-payload-fn (fn [] (#'rpc/host-updated-payload ctx))
                                   :subscribed-topics #{}
                                   :rpc-ai-model ai-model
                                   :on-new-session! (fn []

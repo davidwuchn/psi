@@ -626,14 +626,21 @@
 (deftest rpc-handshake-server-info-test
   (testing "handshake emits server-info with protocol/session metadata"
     (let [ctx     (session/create-context)
-          state   (atom {:handshake-server-info-fn (fn [] (rpc/session->handshake-server-info ctx))})
+          sid     (:session-id (session/get-session-data-in ctx))
+          state   (atom {:handshake-server-info-fn (fn [] (rpc/session->handshake-server-info ctx))
+                         :handshake-host-updated-payload-fn (fn [] (#'rpc/host-updated-payload ctx))
+                         :subscribed-topics #{"host/updated"}})
           handler (rpc/make-session-request-handler ctx)
           {:keys [out-lines]}
           (run-loop "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                     handler
                     state)
-          frame   (-> out-lines first edn/read-string)
+          [host-event frame] (parse-frames out-lines)
           info    (get-in frame [:data :server-info])]
+      (is (= :event (:kind host-event)))
+      (is (= "host/updated" (:event host-event)))
+      (is (= sid (get-in host-event [:data :active-session-id])))
+      (is (vector? (get-in host-event [:data :sessions])))
       (is (= :response (:kind frame)))
       (is (= "handshake" (:op frame)))
       (is (= "1.0" (:protocol-version info)))
@@ -643,13 +650,15 @@
   (testing "handshake includes runtime ui-type when provided by bootstrap/runtime state"
     (let [ctx     (session/create-context)
           state   (atom {:handshake-server-info-fn (fn [] (assoc (rpc/session->handshake-server-info ctx)
-                                                                 :ui-type :emacs))})
+                                                                 :ui-type :emacs))
+                         :handshake-host-updated-payload-fn (fn [] (#'rpc/host-updated-payload ctx))
+                         :subscribed-topics #{"host/updated"}})
           handler (rpc/make-session-request-handler ctx)
           {:keys [out-lines]}
           (run-loop "{:id \"h2\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                     handler
                     state)
-          frame   (-> out-lines first edn/read-string)
+          frame   (-> out-lines parse-frames second)
           info    (get-in frame [:data :server-info])]
       (is (= :response (:kind frame)))
       (is (= "handshake" (:op frame)))

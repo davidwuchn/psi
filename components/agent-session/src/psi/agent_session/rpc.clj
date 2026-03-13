@@ -94,6 +94,8 @@
     "switch_session"
     "fork"})
 
+(declare emit-event!)
+
 (defn response-frame
   ([id op ok]
    (response-frame id op ok nil))
@@ -262,7 +264,7 @@
              second
              Integer/parseInt)))
 
-(defn- handle-handshake! [request state]
+(defn- handle-handshake! [request emit-frame! state]
   (let [version (or (get-in request [:params :client-info :protocol-version])
                     (get-in request [:params :protocol-version]))
         major   (protocol-major version)]
@@ -280,11 +282,20 @@
       :else
       (let [server-info-fn (or (:handshake-server-info-fn @state)
                                (fn [] {:protocol-version protocol-version}))
+            host-payload-fn (:handshake-host-updated-payload-fn @state)
             server-info    (merge {:protocol-version protocol-version}
                                   (or (server-info-fn) {}))]
         (swap! state assoc
                :ready? true
                :negotiated-protocol-version protocol-version)
+        ;; Optional bootstrap host snapshot event for frontends that need
+        ;; immediate session-tree state before subscribe lifecycle completes.
+        (when (fn? host-payload-fn)
+          (emit-event! emit-frame! state {:event "host/updated"
+                                          :id (:id request)
+                                          :data (or (host-payload-fn)
+                                                    {:active-session-id nil
+                                                     :sessions []})}))
         (response-frame (:id request)
                         "handshake"
                         true
@@ -330,7 +341,7 @@
       (= "handshake" op)
       (if-let [error (:error (accept-request! request state))]
         (emit-tracked! error)
-        (emit-tracked! (handle-handshake! request state)))
+        (emit-tracked! (handle-handshake! request emit-tracked! state)))
 
       :else
       (if-let [error (:error (accept-request! request state))]

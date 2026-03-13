@@ -715,19 +715,21 @@ Failure path appends deterministic assistant-visible feedback, sets
 Returns an alist of (label . session-id)."
   (mapcar
    (lambda (slot)
-     (let* ((id          (psi-emacs--event-data-get slot '(:id id)))
-            (is-active   (psi-emacs--event-data-get slot '(:is-active is-active :isActive isActive)))
+     (let* ((id           (psi-emacs--event-data-get slot '(:id id)))
+            (is-active*   (psi-emacs--event-data-get slot '(:is-active is-active :isActive isActive)))
+            (is-active    (or is-active*
+                              (and id active-id (equal id active-id))))
             (is-streaming (psi-emacs--event-data-get slot '(:is-streaming is-streaming :isStreaming isStreaming)))
-            (parent-id   (psi-emacs--event-data-get slot '(:parent-session-id parent-session-id :parentSessionId parentSessionId)))
-            (name        (if (and (listp slot)
-                                  (fboundp 'psi-emacs--session-display-name))
-                             (psi-emacs--session-display-name slot)
-                           (or id "(unknown)")))
-            (indent      (if parent-id "  " ""))
-            (suffix      (concat
-                          (when is-streaming " [streaming]")
-                          (when is-active " ← active")))
-            (label       (concat indent name suffix)))
+            (parent-id    (psi-emacs--event-data-get slot '(:parent-session-id parent-session-id :parentSessionId parentSessionId)))
+            (name         (if (and (listp slot)
+                                   (fboundp 'psi-emacs--session-display-name))
+                              (psi-emacs--session-display-name slot)
+                            (or id "(unknown)")))
+            (indent       (if parent-id "  " ""))
+            (suffix       (concat
+                           (when is-streaming " [streaming]")
+                           (when is-active " ← active")))
+            (label        (concat indent name suffix)))
        (cons label id)))
    slots))
 
@@ -746,15 +748,9 @@ Returns an alist of (label . session-id)."
              (when (eq state psi-emacs--state)
                (psi-emacs--handle-switch-session-response state session-id frame)))))))))
 
-(defun psi-emacs--handle-idle-tree-command (state)
-  "Handle `/tree` command: open completing-read session picker and switch."
-  (let* ((snapshot   (and state (psi-emacs-state-host-snapshot state)))
-         (active-id  (and snapshot
-                          (psi-emacs--event-data-get snapshot
-                                                     '(:active-session-id active-session-id))))
-         (slots      (and snapshot
-                          (append (psi-emacs--event-data-get snapshot '(:sessions sessions)) nil)))
-         (candidates (psi-emacs--tree-session-candidates slots active-id)))
+(defun psi-emacs--tree-select-and-switch (state active-id slots)
+  "Prompt from SLOTS (ACTIVE-ID default) and switch selected session."
+  (let ((candidates (psi-emacs--tree-session-candidates slots active-id)))
     (if (null candidates)
         (psi-emacs--append-assistant-message "No live sessions available.")
       (let* ((selected-label
@@ -770,6 +766,16 @@ Returns an alist of (label . session-id)."
            (format "Already on session: %s" selected-label)))
          (t
           (psi-emacs--request-switch-session-by-id state selected-id)))))))
+
+(defun psi-emacs--handle-idle-tree-command (state)
+  "Handle `/tree` command: open completing-read session picker and switch."
+  (let* ((snapshot  (and state (psi-emacs-state-host-snapshot state)))
+         (active-id (and snapshot
+                         (psi-emacs--event-data-get snapshot
+                                                    '(:active-session-id active-session-id))))
+         (slots     (and snapshot
+                         (append (psi-emacs--event-data-get snapshot '(:sessions sessions)) nil))))
+    (psi-emacs--tree-select-and-switch state active-id slots)))
 
 (defun psi-emacs--default-handle-idle-slash-command (state message)
   "Default idle slash handler.
