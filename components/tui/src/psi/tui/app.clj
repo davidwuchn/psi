@@ -713,8 +713,10 @@
 ;;    :selected     0                   — cursor index into filtered list
 ;;    :loading?     false}
 ;;
-;; Sessions are displayed as a flat filtered list (no tree for simplicity).
-;; Tab toggles scope.  Type to search.  ↑/↓ navigate.  Enter selects.  Esc cancels.
+;; Sessions are displayed as a filtered list. In :tree mode, host sessions are
+;; arranged into parent/child order with connector prefixes.
+;; Tab toggles scope (resume mode only). Type to search. ↑/↓ navigate.
+;; Enter selects. Esc cancels.
 
 (defn- format-age
   "Human-readable age string from a timestamp (Instant or Date)."
@@ -780,10 +782,71 @@
    :path              (:psi.session-info/path m)
    :name              (:psi.session-info/name m)
    :parent-session-id (:psi.session-info/parent-session-id m)
+   :is-streaming      (boolean (or (:psi.session-info/is-streaming m)
+                                   (:is-streaming m)))
    :first-message     ""
    :message-count     0
    :modified          nil
-   :cwd               cwd})
+   :cwd               cwd
+   :tree-depth        0
+   :tree-prefix       ""})
+
+(defn- tree-sort-host-sessions
+  "Return host sessions in tree order with connector metadata.
+
+   - Root sessions are those with no parent, or with missing parent id.
+   - Sibling order is stable based on input order.
+   - Each session gets :tree-depth and :tree-prefix for rendering."
+  [sessions]
+  (let [sessions           (vec sessions)
+        by-id              (into {} (map (juxt :session-id identity) sessions))
+        input-order        (into {} (map-indexed (fn [i s] [(:session-id s) i]) sessions))
+        children-by-parent (reduce (fn [acc s]
+                                     (let [parent-id      (:parent-session-id s)
+                                           parent-exists? (and parent-id (contains? by-id parent-id))
+                                           parent-key     (if parent-exists? parent-id ::root)]
+                                       (update acc parent-key (fnil conj []) s)))
+                                   {}
+                                   sessions)
+        children-by-parent (update-vals children-by-parent
+                                        (fn [xs]
+                                          (vec (sort-by #(get input-order (:session-id %) Integer/MAX_VALUE)
+                                                        xs))))
+        roots              (let [rs (get children-by-parent ::root [])]
+                             (if (seq rs) rs sessions))]
+    (let [emitted (volatile! #{})]
+      (letfn [(tree-prefix [ancestor-has-next last-sibling?]
+                (str (apply str (map #(if % "│ " "  ") ancestor-has-next))
+                     (if last-sibling? "└─ " "├─ ")))
+              (walk [node depth ancestor-has-next last-sibling? visited]
+                (let [sid      (:session-id node)
+                      cycle?   (contains? visited sid)
+                      emitted? (contains? @emitted sid)]
+                  (if (or cycle? emitted?)
+                    []
+                    (let [visited' (conj visited sid)
+                          _        (vswap! emitted conj sid)
+                          node'    (assoc node
+                                          :tree-depth depth
+                                          :tree-prefix (if (zero? depth)
+                                                         ""
+                                                         (tree-prefix ancestor-has-next last-sibling?)))
+                          children (get children-by-parent sid [])
+                          child-path (if (zero? depth)
+                                       ancestor-has-next
+                                       (conj ancestor-has-next (not last-sibling?)))
+                          child-count (count children)]
+                      (reduce (fn [acc [idx child]]
+                                (let [child-last? (= idx (dec child-count))]
+                                  (into acc (walk child (inc depth) child-path child-last? visited'))))
+                              [node']
+                              (map-indexed vector children))))))]
+        (vec
+         (reduce (fn [acc [idx root]]
+                   (let [root-last? (= idx (dec (count roots)))]
+                     (into acc (walk root 0 [] root-last? #{}))))
+                 []
+                 (map-indexed vector roots)))))))
 
 (defn- selected-index-for-session-id
   [sessions sid]
@@ -804,8 +867,9 @@
       (try
         (let [data      (or (query-fn tree-selector-query) {})
               active-id (:psi.agent-session/host-active-session-id data)
-              sessions  (mapv (partial host-session->selector-session cwd)
-                              (or (:psi.agent-session/host-sessions data) []))
+              sessions  (->> (or (:psi.agent-session/host-sessions data) [])
+                             (mapv (partial host-session->selector-session cwd))
+                             tree-sort-host-sessions)
               selected  (selected-index-for-session-id sessions active-id)]
           {:sessions              sessions
            :all-sessions          nil
@@ -2189,6 +2253,23 @@
 (def ^:private selector-hint-style   dim-style)
 (def ^:private selector-search-style (charm/style :fg charm/green))
 
+(def ^:private tree-active-badge "[active]")
+(def ^:private tree-stream-badge "[stream]")
+
+(defn- spaces
+  [n]
+  (apply str (repeat (max 0 n) " ")))
+
+(defn- render-tree-status-cell
+  [active? streaming?]
+  (let [active-cell (if active?
+                      (charm/render selector-cur-style tree-active-badge)
+                      (spaces (count tree-active-badge)))
+        stream-cell (if streaming?
+                      (charm/render dim-style tree-stream-badge)
+                      (spaces (count tree-stream-badge)))]
+    (str active-cell " " stream-cell)))
+
 (defn- shorten-path [p]
   (let [home (System/getProperty "user.home")]
     (if (and p (.startsWith ^String p home))
@@ -2235,16 +2316,23 @@
                                              (:first-message info)
                                              "(empty)")
                               label      (str/replace label-base #"\n" " ")
-                              parent?    (boolean (:parent-session-id info))
-                              label      (if (and tree-mode? parent?)
-                                           (str "  " label)
+                              tree-prefix (if tree-mode? (or (:tree-prefix info) "") "")
+                              tree-depth (int (or (:tree-depth info) 0))
+                              root?      (zero? tree-depth)
+                              glyph      (when tree-mode?
+                                           (if root?
+                                             (charm/render dim-style "● ")
+                                             ""))
+                              label      (if tree-mode?
+                                           (str tree-prefix glyph label)
                                            label)
                               right      (if tree-mode?
-                                           (let [streaming? (boolean (:is-streaming info))
-                                                 sid (:session-id info)
-                                                 sid-str (some-> sid str)]
-                                             (str (when streaming?
-                                                    (charm/render dim-style " ◉stream"))
+                                           (let [sid        (:session-id info)
+                                                 sid-str    (some-> sid str)
+                                                 active?    (= sid (:active-session-id sel-state))
+                                                 streaming? (boolean (:is-streaming info))
+                                                 status-cell (render-tree-status-cell active? streaming?)]
+                                             (str status-cell
                                                   (when sid-str
                                                     (charm/render dim-style
                                                                   (str "  " (subs sid-str 0 (min 8 (count sid-str))))))))
@@ -2257,8 +2345,8 @@
                                                   (or cwd-part ""))))
                               right-w    (ansi/visible-width right)
                               avail      (max 10 (- width 4 right-w))
-                              label-tr   (if (> (count label) avail)
-                                           (str (subs label 0 (- avail 1)) "…")
+                              label-tr   (if (> (ansi/visible-width label) avail)
+                                           (ansi/strip-ansi (ansi/truncate-to-width label avail "…"))
                                            label)
                               cursor     (if is-sel
                                            (charm/render selector-sel-style "▸ ")

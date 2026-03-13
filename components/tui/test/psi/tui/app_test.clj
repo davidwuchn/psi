@@ -316,7 +316,7 @@
                          :psi.session-info/path "/tmp/psi-test/a.ndedn"
                          :psi.session-info/name "Root"}]})
           [state _] ((app/make-init "test-model" qfn nil {:dispatch-fn default-dispatch-fn
-                                                            :cwd "/tmp/psi-test"}))
+                                                          :cwd "/tmp/psi-test"}))
           typed      (type-text update-fn state "/tree")
           [s1 _]     (update-fn typed (msg/key-press :enter))]
       (is (= :selecting-session (:phase s1)))
@@ -359,13 +359,13 @@
                            :psi.session-info/name "Child"
                            :psi.session-info/parent-session-id "s1"}]})
           [state _]   ((app/make-init "test-model" qfn nil {:dispatch-fn default-dispatch-fn
-                                                              :cwd "/tmp/psi-test"
-                                                              :switch-session-fn! (fn [sid]
-                                                                                    (reset! switched-id sid)
-                                                                                    {:messages [{:role :assistant
-                                                                                                 :text (str "switched " sid)}]
-                                                                                     :tool-calls {}
-                                                                                     :tool-order []})}))
+                                                            :cwd "/tmp/psi-test"
+                                                            :switch-session-fn! (fn [sid]
+                                                                                  (reset! switched-id sid)
+                                                                                  {:messages [{:role :assistant
+                                                                                               :text (str "switched " sid)}]
+                                                                                   :tool-calls {}
+                                                                                   :tool-order []})}))
           typed       (type-text update-fn state "/tree")
           [s1 _]      (update-fn typed (msg/key-press :enter))
           [s2 _]      (update-fn s1 (msg/key-press :down))
@@ -373,6 +373,72 @@
       (is (= "s2" @switched-id))
       (is (= :idle (:phase s3)))
       (is (= "switched s2" (get-in s3 [:messages 0 :text]))))))
+
+(deftest tree-selector-view-renders-hierarchy-and-active-badge-test
+  (testing "tree selector view renders parent-child connectors and active marker"
+    (let [update-fn (app/make-update (stub-agent-fn ""))
+          qfn       (fn [_q]
+                      {:psi.agent-session/host-active-session-id "s1"
+                       ;; child intentionally appears before parent to verify tree ordering
+                       :psi.agent-session/host-sessions
+                       [{:psi.session-info/id "s2"
+                         :psi.session-info/path "/tmp/psi-test/b.ndedn"
+                         :psi.session-info/name "Child"
+                         :psi.session-info/parent-session-id "s1"}
+                        {:psi.session-info/id "s1"
+                         :psi.session-info/path "/tmp/psi-test/a.ndedn"
+                         :psi.session-info/name "Root"}]})
+          [state _] ((app/make-init "test-model" qfn nil {:dispatch-fn default-dispatch-fn
+                                                          :cwd "/tmp/psi-test"}))
+          typed     (type-text update-fn state "/tree")
+          [s1 _]    (update-fn typed (msg/key-press :enter))
+          plain     (ansi/strip-ansi (app/view (assoc s1 :width 120)))
+          root-idx  (.indexOf plain "Root")
+          child-idx (.indexOf plain "└─ Child")]
+      (is (str/includes? plain "Session Tree"))
+      (is (str/includes? plain "● Root"))
+      (is (str/includes? plain "[active]"))
+      (is (str/includes? plain "└─ Child"))
+      (is (and (>= root-idx 0)
+               (>= child-idx 0)
+               (< root-idx child-idx))))))
+
+(deftest tree-selector-view-aligns-status-columns-test
+  (testing "tree selector status badges align across rows"
+    (let [update-fn (app/make-update (stub-agent-fn ""))
+          qfn       (fn [_q]
+                      {:psi.agent-session/host-active-session-id "s1"
+                       :psi.agent-session/host-sessions
+                       [{:psi.session-info/id "s1"
+                         :psi.session-info/path "/tmp/psi-test/a.ndedn"
+                         :psi.session-info/name "Root"}
+                        {:psi.session-info/id "s2"
+                         :psi.session-info/path "/tmp/psi-test/b.ndedn"
+                         :psi.session-info/name "Child"
+                         :psi.session-info/parent-session-id "s1"
+                         :is-streaming true}]})
+          [state _] ((app/make-init "test-model" qfn nil {:dispatch-fn default-dispatch-fn
+                                                          :cwd "/tmp/psi-test"}))
+          typed      (type-text update-fn state "/tree")
+          [s1 _]     (update-fn typed (msg/key-press :enter))
+          plain      (ansi/strip-ansi (app/view (assoc s1 :width 120)))
+          lines      (str/split-lines plain)
+          row-root       (first (filter #(str/includes? % "Root") lines))
+          row-child      (first (filter #(str/includes? % "Child") lines))
+          active-col     (when row-root (.indexOf row-root "[active]"))
+          stream-col     (when row-child (.indexOf row-child "[stream]"))
+          root-id-col    (when row-root (.indexOf row-root "s1"))
+          child-id-col   (when row-child (.indexOf row-child "s2"))
+          expected-stream-col (when (number? active-col)
+                                (+ active-col (count "[active]") 1))]
+      (is (string? row-root))
+      (is (string? row-child))
+      (is (number? active-col))
+      (is (number? stream-col))
+      ;; stream badge sits in fixed slot after active slot
+      (is (= expected-stream-col stream-col))
+      ;; session-id suffix column stays aligned row-to-row
+      (is (= root-id-col child-id-col)))))
 
 ;;;; Update — agent results
 

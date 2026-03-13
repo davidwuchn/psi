@@ -18,6 +18,15 @@
     - `clojure -M:test --focus psi.agent-session.commands-test --focus psi.tui.app-test --focus psi.agent-session.main-test --focus psi.agent-session.rpc-test`
     - 166 tests, 736 assertions, 0 failures.
 
+- λ Δ TUI `/tree` hierarchy polish shipped:
+  - Host session picker now orders rows by parent/child tree structure (not raw host insertion order).
+  - Tree rows now use explicit glyphs: root marker `●`, branch connectors `├─` / `└─`, and carry-through `│` for nested siblings.
+  - Right-side status cells are now column-aligned (`[active] [stream]`) to keep mixed-state rows visually stable.
+  - Added focused TUI regression coverage to lock hierarchy order, connector rendering, and status-column alignment.
+  - Verification:
+    - `clojure -M:test --focus psi.tui.app-test`
+    - 77 tests, 210 assertions, 0 failures.
+
 - λ Δ Multi-session persistence locking + session decision convergence:
   - Updated session specs with elicited decisions:
     - `spec/session-core.allium`: fork default prompt inheritance is explicit.
