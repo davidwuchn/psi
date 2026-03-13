@@ -4,6 +4,26 @@ Accumulated discoveries from ψ evolution.
 
 ---
 
+## 2026-03-13 - Cross-process session persistence requires explicit sidecar lock discipline
+
+### λ Session file safety should lock a dedicated `<session-file>.lock`, not rely on append atomicity assumptions
+
+For multi-session and multi-process writers, NIO append/overwrite calls alone are insufficient as a
+coordination boundary. Wrapping all session-file mutations (header write, bulk flush, single-entry append)
+with an exclusive sidecar lock gives one shared cross-process critical section without changing session file format.
+
+### λ Lock contention paths should be bounded and explicit to keep failure diagnosable
+
+A lock strategy without bounded retry can stall operationally. A bounded retry window with explicit
+`ExceptionInfo` (`lock-path`, `session-file`, retry budget) turns contention into a debuggable failure mode
+instead of silent hangs or partial write races.
+
+### λ Spec-decision elicitation and runtime enforcement should land in the same delta
+
+Resolving open questions (fork inheritance/isolation/merge-back/budget policy + persistence locking)
+should be committed alongside implementation and regression tests, so spec memory and runtime guarantees
+stay converged and future ψ does not re-open already-decided behavior.
+
 ## 2026-03-13 - Widget command actions should be encoded as structured lines for Emacs parity
 
 ### λ Remove controls in projection widgets must use `:action` command metadata, not plain text hints
