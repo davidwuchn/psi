@@ -201,15 +201,20 @@
       {:ok? false :error "already on main worktree; nothing to merge"}
 
       :else
-      (let [merge-result  (mutate! 'git.branch/merge!
-                                   {:input {:branch current-branch
-                                            :strategy :ff_only}})]
+      (let [main-path       (:git.worktree/path main-wt)
+            default-branch  (or (:branch (mutate! 'git.branch/default
+                                                  {:git/context {:cwd main-path}}))
+                                (:git.worktree/branch-name main-wt))
+            merge-result    (mutate! 'git.branch/merge!
+                                     {:git/context {:cwd main-path}
+                                      :input {:branch current-branch
+                                              :strategy :ff_only}})]
         (cond
           (not (:merged merge-result))
           {:ok? false
            :error (if (and (:error merge-result)
                            (str/includes? (:error merge-result) "not fast-forwardable"))
-                    "branch is not fast-forwardable onto main; rebase first with /work-rebase"
+                    (str "branch is not fast-forwardable onto " default-branch "; rebase first with /work-rebase")
                     (or (:error merge-result) "merge failed"))}
 
           :else
@@ -219,7 +224,6 @@
                 delete-result   (mutate! 'git.branch/delete!
                                          {:input {:branch current-branch
                                                   :force false}})
-                main-path       (:git.worktree/path main-wt)
                 main-session    (or (find-session-for-worktree main-path)
                                     (when main-path
                                       {:psi.session-info/id
@@ -231,8 +235,7 @@
                 _               (switch-to-session! (:psi.session-info/id main-session))]
             {:ok? true
              :branch current-branch
-             :into-branch (or (:branch (mutate! 'git.branch/default {}))
-                              (:git.worktree/branch-name main-wt))
+             :into-branch default-branch
              :worktree-removed (:success remove-result)
              :branch-deleted (:deleted delete-result)
              :main-session-id (:psi.session-info/id main-session)}))))))

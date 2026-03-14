@@ -149,8 +149,9 @@
 
 (deftest work-merge-and-rebase-commands-test
   (testing "/work-merge switches back to an existing main session and /work-rebase uses git mutations"
-    (let [printed  (atom [])
-          switched (atom [])
+    (let [printed      (atom [])
+          switched     (atom [])
+          merge-params (atom nil)
           {:keys [api state]} (nullable/create-nullable-extension-api
                                {:path "/test/work_on.clj"
                                 :query-fn (fn [q]
@@ -178,7 +179,8 @@
                                 :mutate-fn (fn [op params]
                                              (case op
                                                git.branch/default {:branch "main"}
-                                               git.branch/merge! {:merged true}
+                                               git.branch/merge! (do (reset! merge-params params)
+                                                                     {:merged true})
                                                git.worktree/remove! {:success true}
                                                git.branch/delete! {:deleted true}
                                                git.branch/rebase! {:success true}
@@ -190,6 +192,8 @@
         ((get-in @state [:commands "work-merge" :handler]) "")
         ((get-in @state [:commands "work-rebase" :handler]) "")
         (is (= ["main-s"] @switched))
+        (is (= "/repo/main" (get-in @merge-params [:git/context :cwd]))
+            "merge must execute in the main worktree context")
         (is (re-find #"Merged `feature-x` into `main`" (first @printed)))
         (is (re-find #"Rebased `feature-x` onto `main`" (second @printed))))))
 
