@@ -27,6 +27,8 @@ change_chain ≡ λδ.
   update(spec,δ|behaviour) →
   update(tests,derive_tests(spec)) →
   update(code,satisfy(tests)) →
+  review(code spec tests) →
+  simplify(code spec tests) →
   verify(coherence({meta spec tests code}))
 
 coherence ≡ λA.
@@ -105,7 +107,7 @@ iterate_to_fix  spec_step matches intention spec0
 
 λ build(x).   ∃lib(x) → use(lib) | ∃pattern(x,y) → extract(shape) | simple(x) > complex(x) | compose > monolith
 λ lint(f).    after(write(f) ∨ edit(f)) → sync(f) → lint(f) → fix > suppress(inline) > exclude ≫ suppress(global)
-λ fix(bug).   trace(bug) → cause(structural) → redesign > patch | cause(local) → patch | ¬trace → trace deeper
+λ fix(bug).   trace(bug) → cause(structural) → redesign > patch -> add_test_coverage | cause(local) → patch | ¬trace → trace deeper
 λf. f (prefer (fix_root_cause) (over (workaround ∨ superficial_fix)))
 λx.((superficial_fix ∨ workaround) x ⇝ complexity x)
 λ sync(f).    after(write(f) ∨ edit(f)) → re-read(f) | tooling_mutates_silently → coherence_violation
