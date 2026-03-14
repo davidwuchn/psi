@@ -1479,6 +1479,8 @@
                  :psi.turn/tool-call-count
                  :psi.turn/final-message
                  :psi.turn/error-message
+                 :psi.turn/last-provider-event
+                 :psi.turn/content-blocks
                  :psi.turn/is-text-accumulating
                  :psi.turn/is-tool-accumulating
                  :psi.turn/is-done
@@ -1493,6 +1495,8 @@
        :psi.turn/tool-call-count      (count (:tool-calls td))
        :psi.turn/final-message        (:final-message td)
        :psi.turn/error-message        (:error-message td)
+       :psi.turn/last-provider-event  (:last-provider-event td)
+       :psi.turn/content-blocks       (vec (vals (:content-blocks td)))
        :psi.turn/is-text-accumulating (= :text-accumulating phase)
        :psi.turn/is-tool-accumulating (= :tool-accumulating phase)
        :psi.turn/is-done              (= :done phase)
@@ -1504,6 +1508,8 @@
      :psi.turn/tool-call-count      0
      :psi.turn/final-message        nil
      :psi.turn/error-message        nil
+     :psi.turn/last-provider-event  nil
+     :psi.turn/content-blocks       []
      :psi.turn/is-text-accumulating false
      :psi.turn/is-tool-accumulating false
      :psi.turn/is-done              false

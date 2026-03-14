@@ -29,6 +29,8 @@
           td  (turn-sc/get-turn-data ctx)]
       (is (= "" (:text-buffer td)))
       (is (empty? (:tool-calls td)))
+      (is (empty? (:content-blocks td)))
+      (is (nil? (:last-provider-event td)))
       (is (nil? (:final-message td)))
       (is (nil? (:error-message td)))))
 

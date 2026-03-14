@@ -141,6 +141,69 @@
     (.offer ^java.util.concurrent.LinkedBlockingQueue progress-queue
             (assoc event :type :agent-event))))
 
+(defn- note-last-provider-event!
+  [turn-data event-type data]
+  (swap! turn-data assoc
+         :last-provider-event
+         (cond-> {:type      event-type
+                  :timestamp (java.time.Instant/now)}
+           (contains? data :content-index) (assoc :content-index (:content-index data))
+           (contains? data :reason) (assoc :reason (:reason data))
+           (contains? data :http-status) (assoc :http-status (:http-status data))
+           (contains? data :error-message) (assoc :error-message (:error-message data)))))
+
+(defn- update-content-block!
+  [turn-data idx f]
+  (swap! turn-data update :content-blocks
+         (fn [blocks]
+           (let [blocks* (or blocks (sorted-map))
+                 current (get blocks* idx {:content-index idx
+                                           :kind :unknown
+                                           :status :open
+                                           :delta-count 0})]
+             (assoc blocks* idx (f current))))))
+
+(defn- begin-content-block!
+  [turn-data idx]
+  (let [ts (java.time.Instant/now)]
+    (update-content-block!
+     turn-data idx
+     (fn [current]
+       (-> current
+           (assoc :content-index idx
+                  :status :open
+                  :ended-at nil)
+           ((fn [block]
+              (cond-> block
+                (nil? (:started-at block)) (assoc :started-at ts)))))))))
+
+(defn- note-content-delta!
+  [turn-data idx kind]
+  (let [ts (java.time.Instant/now)]
+    (update-content-block!
+     turn-data idx
+     (fn [current]
+       (-> current
+           (assoc :content-index idx
+                  :kind kind
+                  :status :open
+                  :last-delta-at ts)
+           (update :delta-count (fnil inc 0))
+           ((fn [block]
+              (cond-> block
+                (nil? (:started-at block)) (assoc :started-at ts)))))))))
+
+(defn- end-content-block!
+  [turn-data idx]
+  (let [ts (java.time.Instant/now)]
+    (update-content-block!
+     turn-data idx
+     (fn [current]
+       (assoc current
+              :content-index idx
+              :status :closed
+              :ended-at ts)))))
+
 (defn- common-prefix-length
   "Return length of common prefix shared by strings `a` and `b`."
   [a b]
@@ -280,25 +343,60 @@ Also tolerates cumulative snapshots that differ near previous tail
     (let [td (:turn-data data)]
       (case action-key
         :on-stream-start
-        (agent/begin-stream-in! agent-ctx
-                                {:role      "assistant"
-                                 :content   [{:type :text :text ""}]
-                                 :timestamp (java.time.Instant/now)})
+        (do
+          (note-last-provider-event! td :start data)
+          (agent/begin-stream-in! agent-ctx
+                                  {:role      "assistant"
+                                   :content   [{:type :text :text ""}]
+                                   :timestamp (java.time.Instant/now)}))
+
+        :on-text-start
+        (do
+          (note-last-provider-event! td :text-start data)
+          (begin-content-block! td (or (:content-index data) 0)))
 
         :on-text-delta
-        (do (swap! td update :text-buffer merge-stream-text (:delta data))
-            (emit-progress! progress-queue
-                            {:event-kind :text-delta
-                             :text       (:text-buffer @td)})
-            (agent/update-stream-in! agent-ctx
-                                     {:role      "assistant"
-                                      :content   [{:type :text :text (:text-buffer @td)}]
-                                      :timestamp (java.time.Instant/now)}))
+        (do
+          (note-last-provider-event! td :text-delta data)
+          (note-content-delta! td (or (:content-index data) 0) :text)
+          (swap! td update :text-buffer merge-stream-text (:delta data))
+          (emit-progress! progress-queue
+                          {:event-kind :text-delta
+                           :text       (:text-buffer @td)})
+          (agent/update-stream-in! agent-ctx
+                                   {:role      "assistant"
+                                    :content   [{:type :text :text (:text-buffer @td)}]
+                                    :timestamp (java.time.Instant/now)}))
+
+        :on-text-end
+        (do
+          (note-last-provider-event! td :text-end data)
+          (end-content-block! td (or (:content-index data) 0)))
+
+        :on-thinking-start
+        (do
+          (note-last-provider-event! td :thinking-start data)
+          (begin-content-block! td (or (:content-index data) 0))
+          (update-content-block! td (or (:content-index data) 0)
+                                 #(assoc % :kind :thinking)))
+
+        :on-thinking-delta
+        (do
+          (note-last-provider-event! td :thinking-delta data)
+          (note-content-delta! td (or (:content-index data) 0) :thinking))
+
+        :on-thinking-end
+        (do
+          (note-last-provider-event! td :thinking-end data)
+          (end-content-block! td (or (:content-index data) 0)))
 
         :on-toolcall-start
         (let [idx     (:content-index data)
               tc-id   (:tool-id data)
               tc-name (:tool-name data)]
+          (note-last-provider-event! td :toolcall-start data)
+          (begin-content-block! td idx)
+          (update-content-block! td idx #(assoc % :kind :tool-call))
           (swap! td update-in [:tool-calls idx]
                  (fn [cur]
                    (merge {:id nil :name nil :arguments "" :content-index idx}
@@ -310,6 +408,8 @@ Also tolerates cumulative snapshots that differ near previous tail
         :on-toolcall-delta
         (let [idx   (:content-index data)
               delta (:delta data)]
+          (note-last-provider-event! td :toolcall-delta data)
+          (note-content-delta! td idx :tool-call)
           (swap! td update-in [:tool-calls idx]
                  (fn [cur]
                    (let [current-args (or (:arguments cur) "")]
@@ -318,7 +418,10 @@ Also tolerates cumulative snapshots that differ near previous tail
                             {:arguments (str current-args (or delta ""))
                              :content-index idx})))))
 
-        :on-toolcall-end nil
+        :on-toolcall-end
+        (do
+          (note-last-provider-event! td :toolcall-end data)
+          (end-content-block! td (:content-index data)))
 
         :on-done
         (let [{:keys [text-buffer tool-calls]} @td
@@ -330,6 +433,7 @@ Also tolerates cumulative snapshots that differ near previous tail
                                  :stop-reason (or (:reason data) :stop)
                                  :timestamp   (java.time.Instant/now)}
                           (map? usage) (assoc :usage usage))]
+          (note-last-provider-event! td :done data)
           (emit-tool-ready-progress! progress-queue completed)
           (emit-tool-assembly-errors! progress-queue completed)
           (swap! td assoc :final-message final)
@@ -348,6 +452,7 @@ Also tolerates cumulative snapshots that differ near previous tail
                              :error-message err-msg
                              :timestamp     (java.time.Instant/now)}
                       (:http-status data) (assoc :http-status (:http-status data)))]
+          (note-last-provider-event! td :error data)
           (swap! td assoc :final-message final :error-message err-msg)
           (agent/end-stream-in! agent-ctx final)
           (deliver done-p final))

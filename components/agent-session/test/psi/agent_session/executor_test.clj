@@ -134,6 +134,7 @@
 (deftest thinking-delta-emits-progress-event-test
   (let [agent-ctx   (setup-agent-ctx!)
         session-ctx (setup-session-ctx! agent-ctx)
+        turn-atom   (atom nil)
         user-msg    {:role "user" :content [{:type :text :text "hi"}]}
         q           (LinkedBlockingQueue.)
         stream-fn   (fn [_ai-ctx _conv _model _opts consume-fn]
@@ -142,14 +143,19 @@
                       (consume-fn {:type :done :reason :stop}))]
     (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
       (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg]
-                                {:progress-queue q})
+                                {:turn-ctx-atom turn-atom
+                                 :progress-queue q})
       (let [events (loop [acc []]
                      (if-let [e (.poll q 5 TimeUnit/MILLISECONDS)]
                        (recur (conj acc e))
                        acc))
-            thinking (some #(when (= :thinking-delta (:event-kind %)) %) events)]
+            thinking (some #(when (= :thinking-delta (:event-kind %)) %) events)
+            td       (turn-sc/get-turn-data @turn-atom)]
         (is (some? thinking))
-        (is (= "plan" (:text thinking)))))))
+        (is (= "plan" (:text thinking)))
+        (is (= :done (get-in td [:last-provider-event :type])))
+        (is (= :thinking (get-in td [:content-blocks 0 :kind])))
+        (is (= 1 (get-in td [:content-blocks 0 :delta-count])))))))
 
 (deftest thinking-delta-cumulative-snapshot-normalised-test
   "Anthropic sends thinking_delta events as cumulative snapshots (each event
@@ -203,6 +209,7 @@
 (deftest idle-timeout-errors-when-stream-stalls-test
   (let [agent-ctx   (setup-agent-ctx!)
         session-ctx (setup-session-ctx! agent-ctx)
+        turn-atom   (atom nil)
         user-msg    {:role "user" :content [{:type :text :text "hi"}]}
         stream-fn   (fn [_ai-ctx _conv _model _opts consume-fn]
                       (future
@@ -212,9 +219,14 @@
     (with-redefs [psi.agent-session.executor/do-stream! stream-fn
                   psi.agent-session.executor/llm-stream-idle-timeout-ms 120
                   psi.agent-session.executor/llm-stream-wait-poll-ms 20]
-      (let [result (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg])]
+      (let [result (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg]
+                                             {:turn-ctx-atom turn-atom})
+            td     (turn-sc/get-turn-data @turn-atom)]
         (is (= :error (:stop-reason result)))
-        (is (= "Timeout waiting for LLM response" (:error-message result)))))))
+        (is (= "Timeout waiting for LLM response" (:error-message result)))
+        (is (= :error (get-in td [:last-provider-event :type])))
+        (is (= "Timeout waiting for LLM response"
+               (get-in td [:last-provider-event :error-message])))))))
 
 (deftest thinking-level-is-forwarded-to-ai-options-test
   (let [agent-ctx   (setup-agent-ctx!)
@@ -244,6 +256,29 @@
     (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
       (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg])
       (is (= 777 (:llm-stream-idle-timeout-ms @seen-opts))))))
+
+(deftest text-boundary-events-are-recorded-in-turn-data-test
+  (let [agent-ctx   (setup-agent-ctx!)
+        session-ctx (setup-session-ctx! agent-ctx)
+        turn-atom   (atom nil)
+        user-msg    {:role "user" :content [{:type :text :text "hi"}]}
+        stream-fn   (fn [_ai-ctx _conv _model _opts consume-fn]
+                      (consume-fn {:type :start})
+                      (consume-fn {:type :text-start :content-index 0})
+                      (consume-fn {:type :text-delta :content-index 0 :delta "Hello"})
+                      (consume-fn {:type :text-end :content-index 0})
+                      (consume-fn {:type :done :reason :stop}))]
+    (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
+      (let [result (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg]
+                                             {:turn-ctx-atom turn-atom})
+            td     (turn-sc/get-turn-data @turn-atom)]
+        (is (= "Hello"
+               (some #(when (= :text (:type %)) (:text %))
+                     (:content result))))
+        (is (= :done (get-in td [:last-provider-event :type])))
+        (is (= :text (get-in td [:content-blocks 0 :kind])))
+        (is (= :closed (get-in td [:content-blocks 0 :status])))
+        (is (= 1 (get-in td [:content-blocks 0 :delta-count])))))))
 
 (deftest cumulative-snapshot-text-deltas-replace-instead-of-repeating-test
   (let [agent-ctx   (setup-agent-ctx!)

@@ -41,10 +41,12 @@
 (defn create-turn-data
   "Return a fresh turn data map."
   []
-  {:text-buffer   ""
-   :tool-calls    (sorted-map)
-   :final-message nil
-   :error-message nil})
+  {:text-buffer         ""
+   :tool-calls          (sorted-map)
+   :content-blocks      (sorted-map)
+   :last-provider-event nil
+   :final-message       nil
+   :error-message       nil})
 
 ;; ============================================================
 ;; Script helper
