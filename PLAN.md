@@ -353,7 +353,7 @@ Ordered steps toward PSI COMPLETE.
 
 ### Step 11b — Worktree usage (mutations + /work-on extension) ◇ spec complete
 - Spec: `spec/git-worktree-mutations.allium` (Layer 1) + `spec/work-on-extension.allium` (Layer 2)
-- Meta: worktree usage model added to `META.md` (commit `0673e06`)
+- Meta: worktree usage model added to `META.md` (commit `0673e06`), trimmed to essential shape (commit `23327d7`)
 - Architecture: three layers
   - Layer 0 (✓ exists): read-only resolvers + `/worktree` command
   - Layer 1 (⊨ spec complete): git worktree add/remove, branch merge/delete/rebase as EQL mutations in history component
