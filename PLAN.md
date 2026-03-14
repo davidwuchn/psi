@@ -6,6 +6,18 @@ Ordered steps toward PSI COMPLETE.
 
 ## Done
 
+### Step 15c — Startup host bootstrap should create exactly one real session ✓ complete
+- Removed phantom startup host entries by aligning session creation with actual runtime intent.
+- `create-context` now starts with an empty host registry instead of seeding it from `initial-session`.
+- `bootstrap-in!` (renamed from `bootstrap-session-in!`) now applies startup wiring to the current context without creating a new session.
+- `bootstrap-runtime-session!` now creates one real session up front, then runs startup prompts in that same session instead of creating a second startup-only branch.
+- Result: startup host snapshot contains exactly one real active session rather than seed/bootstrap/startup artifacts.
+- Coverage updated:
+  - core host-registry tests now assert empty host on fresh context and first real registration on `new-session-in!`
+  - runtime bootstrap regression asserts single-session host state
+  - resolver/introspection call sites updated to `bootstrap-in!`
+- Implementation commit: `87a5e77`
+
 ### Step 15b — Prompt-memory principle update (root cause over workaround) ✓ complete
 - Added explicit decision rule to prompt memory (`AGENTS.md`):
   - `λf. f (prefer (fix_root_cause) (over workaround))`
