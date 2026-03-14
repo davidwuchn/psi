@@ -421,6 +421,13 @@ Ordered steps toward PSI COMPLETE.
   - Focused verification green:
     - `clojure -M:test --focus extensions.work-on-test`
     - result: 4 tests, 14 assertions, 0 failures
+- PSL follow-up landed (2026-03-14, commit `e33d7bd`): worktree-bound sessions now name the worktree directory explicitly in the prompt runtime metadata.
+  - Root cause: footer/session cwd state could be correct after `/work-on` while the prompt still carried only one baked cwd line, making cwd-sensitive freeform prompts more likely to answer from stale prompt state instead of from the active worktree context.
+  - Fix: `system_prompt.clj` now includes both `Current working directory` and `Current worktree directory`, and session new/resume prompt retargeting refreshes both metadata lines when the active worktree changes.
+  - Coverage updated in `components/agent-session/test/psi/agent_session/system_prompt_test.clj` and `components/agent-session/test/psi/agent_session/core_test.clj`.
+  - Focused verification green:
+    - `clojure -M:test --focus psi.agent-session.system-prompt-test --focus psi.agent-session.core-test/query-in-test`
+    - result: 3 tests, 40 assertions, 0 failures
 - No remaining required follow-up for the shipped worktree session workflow; future work is additive UX/documentation polish only.
 
 ### Step 12 — Emacs UI ◇ in progress
