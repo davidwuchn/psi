@@ -3,6 +3,20 @@
 
 ---
 
+## 2026-03-14 - `/work-merge` must execute merge mutations from the main worktree, not the linked feature worktree (commit `ae22cb1`)
+
+### λ A git mutation with no explicit context silently inherits the active session worktree
+
+`git.branch/merge!` operates on the current branch of its `:git/context`. In the `/work-merge` flow, omitting that context meant the mutation ran inside the active linked worktree session, where the current branch already was the feature branch being “merged”. That made the merge look successful while doing nothing to the default branch.
+
+### λ Cleanup after a false-success merge can destroy operator confidence faster than the merge bug itself
+
+Because `/work-merge` removed the linked worktree after the no-op merge, the operator was left with a success message, missing worktree directory, and unchanged main branch. When orchestration commands mix a state-changing action with cleanup, the action must be rooted correctly before cleanup runs or the command can erase the easiest recovery path while claiming success.
+
+### λ Regression tests for orchestration commands must assert execution context, not only returned messages
+
+The old test only asserted that `/work-merge` reported `Merged <branch> into <default>` and switched sessions. That allowed a context bug to pass because the mutation payload was never checked. For worktree-aware orchestration, tests need to lock `:git/context` itself, not just high-level summaries.
+
 ## 2026-03-14 - Worktree identity must stay explicit through every session-facing surface (commit `62c03f7`)
 
 ### λ Persisting worktree identity is not enough if clients only receive cwd or session file paths
