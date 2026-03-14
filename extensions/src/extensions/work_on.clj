@@ -111,12 +111,10 @@
 (defn- create-worktree-session!
   [description worktree-path _parent-session-id]
   (when-let [f (:create-session-fn @state)]
-    (let [session (current-session-query)]
-      (try
-        (f {:session-name description
-            :worktree-path worktree-path
-            :system-prompt (:psi.agent-session/system-prompt session)})
-        (catch Exception _ nil)))))
+    (try
+      (f {:session-name description
+          :worktree-path worktree-path})
+      (catch Exception _ nil))))
 
 (defn work-on!
   [description]

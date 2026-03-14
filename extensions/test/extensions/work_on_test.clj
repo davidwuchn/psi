@@ -86,7 +86,7 @@
           (is (= "s-created" (:session-id @created-session)))
           (is (= "/repo/fix-footer-not-displayed" (:worktree-path @created-session)))
           (is (= "Fix footer not displayed" (:session-name @created-session)))
-          (is (= "prompt" (:system-prompt @created-session)))
+          (is (nil? (:system-prompt @created-session)))
           (is (re-find #"Working in `/repo/fix-footer-not-displayed` on branch `fix-footer-not-displayed`"
                        @printed)))))))
 
