@@ -483,6 +483,7 @@ Ordered steps toward PSI COMPLETE.
     - `clojure -M:test --focus extensions.work-on-test`
     - result: 8 tests, 42 assertions, 0 failures
 - No remaining required follow-up for the shipped worktree session workflow; future work is additive UX/documentation polish only.
+- Follow-up debugging guidance now reinforced in prompt memory (2026-03-14, commit `c75eb04`): AGENTS change chain explicitly includes review + simplify before coherence verification, and bug-fix guidance now requires adding test coverage after structural fixes. Use this as the default PSL loop for remaining worktree merge diagnosis: reproduce → prove with focused tests → simplify only after the root cause is covered.
 
 ### Step 12 — Emacs UI ◇ in progress
 - Spec: `spec/emacs-frontend.allium`
