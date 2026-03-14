@@ -4,6 +4,8 @@ Current truth about the Psi system.
 
 ---
 
+- ✓ Anthropic thinking-delta cumulative-snapshot display bug fixed (2026-03-13, commit `9b24637`): executor now normalises `thinking_delta` events per-content-index via `merge-stream-text`; emitted `:text` is the full accumulated thinking text (replace semantics); TUI and Emacs updated to replace rather than append. `ThinkingDeltaIsCumulativeSnapshot` guidance rule added to `spec/anthropic-provider.allium`. 15 executor + 77 TUI + 206 Emacs tests green.
+
 ## Operating Frame
 - ✓ `/tree` session switch no longer leaves "connecting..." footer (2026-03-13, commit `d15b3de`): response callback now calls `psi-emacs--focus-input-area` instead of `psi-emacs--show-connecting-affordances`; `footer/updated` + `session/updated` events arrive before the response frame and already carry the correct footer, so overwriting with a placeholder was incorrect. Same fix applied to `/new` success path. 206/206 ERT passing.
 - ✓ Prompt memory now includes explicit root-cause preference principle (2026-03-13, commit `859515c`): `λf. f (prefer (fix_root_cause) (over workaround))` in `AGENTS.md`.

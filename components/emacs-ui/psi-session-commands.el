@@ -301,10 +301,16 @@ Returns selected MODEL-ENTRY map or nil when cancelled/no selection."
         ;; /new is a non-reconnect session operation, so keep current tool view.
         ;; Clear stale transcript state, then fetch canonical messages so startup
         ;; prompts are replayed in the frontend transcript.
-        (psi-emacs--reset-transcript-state t)
-        ;; footer/updated and session/updated arrive as events before the response
-        ;; frame, so the footer is already correct by the time this callback fires.
-        ;; Only focus input — do not overwrite the footer with "connecting...".
+        ;; footer/updated + session/updated events arrive before the response frame
+        ;; and correctly set projection-footer.  Capture it before reset clears it.
+        (let ((saved-footer (and psi-emacs--state
+                                 (psi-emacs-state-projection-footer psi-emacs--state))))
+          (psi-emacs--reset-transcript-state t)
+          (when (and saved-footer psi-emacs--state)
+            (setf (psi-emacs-state-projection-footer psi-emacs--state) saved-footer)
+            (when (fboundp 'psi-emacs--upsert-projection-block)
+              (psi-emacs--upsert-projection-block))))
+        ;; Only focus input — footer already correctly set from footer/updated event.
         (when (fboundp 'psi-emacs--focus-input-area)
           (psi-emacs--focus-input-area (current-buffer)))
         (psi-emacs--set-run-state state 'streaming)
@@ -657,10 +663,17 @@ Failure path appends deterministic assistant-visible feedback, sets
   (when (and state (eq state psi-emacs--state))
     (if (psi-emacs--rpc-frame-success-p frame)
         (progn
-          (psi-emacs--reset-transcript-state)
-          ;; footer/updated and session/updated arrive as events before the response
-          ;; frame, so the footer is already correct by the time this callback fires.
-          ;; Only focus input — do not overwrite the footer with "connecting...".
+          ;; footer/updated + session/updated events arrive before the response frame
+          ;; and correctly set projection-footer.  Capture it before reset-transcript-state
+          ;; clears it, then restore after so the footer survives the buffer wipe.
+          (let ((saved-footer (and psi-emacs--state
+                                   (psi-emacs-state-projection-footer psi-emacs--state))))
+            (psi-emacs--reset-transcript-state)
+            (when (and saved-footer psi-emacs--state)
+              (setf (psi-emacs-state-projection-footer psi-emacs--state) saved-footer)
+              (when (fboundp 'psi-emacs--upsert-projection-block)
+                (psi-emacs--upsert-projection-block))))
+          ;; Only focus input — footer already correctly set from footer/updated event.
           (when (fboundp 'psi-emacs--focus-input-area)
             (psi-emacs--focus-input-area (current-buffer)))
           (psi-emacs--set-run-state state 'streaming)

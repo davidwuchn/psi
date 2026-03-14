@@ -458,6 +458,20 @@ rule ThinkingDeltaNotMisroutedAsTextDelta {
     ensures: not Emitted(StreamEvent{event_type: text_delta})
 }
 
+rule ThinkingDeltaIsCumulativeSnapshot {
+    -- Anthropic extended-thinking sends thinking_delta events as cumulative
+    -- snapshots: each event's delta.thinking field contains the FULL thinking
+    -- text accumulated so far for that content block, not an incremental chunk.
+    -- Consumers must normalise (e.g. merge-stream-text) before accumulating.
+    -- This differs from text_delta which is also snapshot-normalised at the
+    -- executor layer, but thinking has no statechart-based text-buffer.
+    @guidance
+    "delta.thinking in thinking_delta SSE events is a cumulative snapshot.
+     The executor normalises per-content-index via merge-stream-text and emits
+     the full accumulated text; downstream consumers (TUI, Emacs) must replace,
+     not append, their local thinking state on each event."
+}
+
 rule ContentBlockStopEmitsEndByBlockType {
     when: SseEventReceived(stream, "content_block_stop", event_data)
 
