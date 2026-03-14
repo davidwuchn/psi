@@ -3,6 +3,32 @@
 
 ---
 
+## 2026-03-13 - Anthropic thinking deltas are cumulative snapshots, not incremental chunks (commit `9b24637`)
+
+### λ Thinking-delta consumers must use replace semantics, not append
+
+Anthropic's extended-thinking API sends `thinking_delta` events where `delta.thinking` is the
+**full thinking text so far**, not an incremental chunk. Every consumer that appends these values
+produces the doubling pattern: `NowNow I seeNow I see the flow…`.
+
+Fix pattern: normalise at the executor layer using `merge-stream-text` (per content-index buffer),
+emit accumulated text in the progress event, and have all consumers replace rather than append.
+This mirrors the text-delta path which already used `merge-stream-text`.
+
+### λ Normalise provider-style mismatches at the executor, not at each consumer
+
+`merge-stream-text` was already designed for both incremental and cumulative-snapshot styles.
+Applying it at the executor boundary means TUI, Emacs, and any future consumers all receive
+normalised accumulated text — they only need replace semantics, not their own merge logic.
+
+### λ Per-content-index buffers are required for interleaved thinking
+
+Anthropic's `interleaved-thinking-2025-05-14` beta can emit multiple thinking blocks per turn,
+each with a distinct `content-index`. A single shared buffer would corrupt block boundaries;
+a `{content-index → accumulated-text}` map keeps each block independent.
+
+---
+
 ## 2026-03-13 - RPC events arrive before the response frame; response callbacks must not overwrite event-set state (commit `d15b3de`)
 
 ### λ Events emitted synchronously before a response frame are already applied when the callback fires
