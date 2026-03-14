@@ -3,6 +3,28 @@
 
 ---
 
+## 2026-03-14 - Worktree usage needs layered spec architecture, not a monolithic feature spec (commit `0673e06`)
+
+### λ Separate git plumbing from orchestration in both spec and implementation
+
+Worktree-based workflows span two distinct responsibility boundaries: git operations (worktree add/remove, branch merge/delete/rebase) and session lifecycle orchestration (`/work-on` creates worktree + branch + session in one command). Specifying these as separate layers — Layer 1 (git mutations, no session awareness) and Layer 2 (extension composing mutations + sessions) — keeps each layer independently testable and avoids coupling git plumbing to session semantics.
+
+### λ Mechanical slug generation is more predictable than AI-generated slugs
+
+For branch names derived from `/work-on <description>`, a deterministic algorithm (tokenize, drop stopwords, take first 4 significant terms, lowercase, hyphenate) produces predictable, reproducible slugs. AI-generated slugs would vary across sessions and models, making branch names harder to predict from the description and harder to test.
+
+### λ Merge strategy should default to the safest option and provide a preparation command
+
+Defaulting to `--ff-only` means merges never create unexpected merge commits or leave conflict markers. When fast-forward isn't possible, the operator gets a clear error with actionable guidance (`/work-rebase`). This is safer than `--no-ff` (which always creates merge commits) or `--ff` (which silently falls back to merge commits when ff isn't possible).
+
+### λ Session preservation after worktree merge keeps transcript accessible
+
+After `/work-merge` removes the worktree directory and deletes the branch, the session that was created by `/work-on` should remain in the host registry. The session transcript contains the full work history (tool calls, decisions, learnings) and may be valuable for review or reference even after the code is merged. Removing the session would destroy this context unnecessarily.
+
+### λ Existing read-only worktree spec should close its open questions when mutation layer is designed
+
+The three open questions in `git-worktrees.allium` were deferred during the read-only phase but became decidable once the mutation/orchestration design was established. Closing them at spec-design time (not implementation time) prevents the questions from drifting and ensures the read-only layer's contract is stable before mutations build on top of it.
+
 ## 2026-03-14 - Startup bootstrap should not create phantom host sessions (commit `87a5e77`)
 
 ### λ Host registries should track operator-visible sessions, not context seeds
