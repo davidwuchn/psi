@@ -3,6 +3,20 @@
 
 ---
 
+## 2026-03-14 - Prompt memory for debugging improves when the change loop requires review, simplification, and proof (commit `c75eb04`)
+
+### λ Root-cause fixes need an explicit proof step in prompt memory, not just an implementation step
+
+When debugging live worktree flows, it is easy to stop once the code shape looks plausible. Encoding `add_test_coverage` directly into `λ fix(bug)` keeps the prompt memory aligned with the actual convergence loop: reproduce, patch, prove. This matters most for mutation-boundary and worktree-context bugs, where a superficially sensible fix can still fail in the integrated path.
+
+### λ Review and simplification belong in the remembered change loop, not only in repository lore
+
+Adding `review(code spec tests)` and `simplify(code spec tests)` to `change_chain` improves future ψ effectiveness because it turns a vague style preference into an explicit completion criterion. In debugging sessions, this reduces the tendency to accumulate defensive patches after the first green test and instead encourages a final pass to remove accidental complexity once the root cause is covered.
+
+### λ Prompt memory should teach the order of operations for convergence, not only the preferred values
+
+The most useful AGENTS changes were procedural: update artifacts, review, simplify, verify coherence. Values like "fix root cause" become more actionable when the remembered loop also tells future ψ when to test, when to review, and when to simplify. For PSL-style follow-ups, procedural memory is often more leverageable than another abstract principle.
+
 ## 2026-03-14 - Layer 1 worktree attach semantics need direct coverage, not only extension-level follow-ups (commit `c8b2573`)
 
 ### λ Existing-branch attach has an important git constraint: the branch cannot already be checked out in another worktree
