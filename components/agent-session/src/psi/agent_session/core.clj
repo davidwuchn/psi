@@ -76,6 +76,8 @@
    [psi.agent-session.session-host :as session-host]
    [psi.agent-session.system-prompt :as sys-prompt]
    [psi.agent-session.statechart :as sc]
+   [psi.history.git :as history-git]
+   [psi.history.resolvers :as history-resolvers]
    [psi.memory.runtime :as memory-runtime]
    [psi.query.core :as query]))
 
@@ -1164,8 +1166,12 @@
   (let [qctx (query/create-query-context)
         _    (register-resolvers-in! qctx false)
         _    (register-mutations-in! qctx true)
-        seed {:psi/agent-session-ctx ctx}
-        full-params (assoc params :psi/agent-session-ctx ctx)
+        git-ctx (history-git/create-context (effective-cwd-in ctx))
+        seed {:psi/agent-session-ctx ctx
+              :git/context git-ctx}
+        full-params (assoc params
+                           :psi/agent-session-ctx ctx
+                           :git/context git-ctx)
         payload (get (query/query-in qctx seed [(list op-sym full-params)]) op-sym)]
     (maybe-track-background-workflow-job! ctx op-sym full-params payload)
     payload))
@@ -2468,10 +2474,12 @@
      (query/rebuild-env-in! qctx))))
 
 (defn register-mutations-in!
-  "Register all agent-session mutations into an isolated `qctx` query context."
+  "Register all agent-session mutations into an isolated `qctx` query context.
+   Includes history mutations so extension/runtime mutation calls can execute
+   git worktree and branch operations through the isolated query env."
   ([qctx] (register-mutations-in! qctx true))
   ([qctx rebuild?]
-   (doseq [m all-mutations]
+   (doseq [m (concat all-mutations history-resolvers/all-mutations)]
      (query/register-mutation-in! qctx m))
    (when rebuild?
      (query/rebuild-env-in! qctx))))

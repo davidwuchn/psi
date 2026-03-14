@@ -13,6 +13,7 @@
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.project-preferences :as project-prefs]
+   [psi.history.git :as history-git]
    [psi.query.core :as query]
    [psi.recursion.core :as recursion])
   (:import
@@ -948,6 +949,30 @@
                                     :psi.agent-session/phase])]
         (is (string? (:psi.agent-session/session-id result)))
         (is (= :idle (:psi.agent-session/phase result)))))))
+
+(deftest register-mutations-in!-includes-history-mutations-test
+  (testing "register-mutations-in! wires history git mutations into isolated query ctx"
+    (let [git-ctx (history-git/create-null-context)
+          ctx     (session/create-context {:cwd (:repo-dir git-ctx) :persist? false})
+          qctx    (query/create-query-context)]
+      (session/register-resolvers-in! qctx false)
+      (session/register-mutations-in! qctx true)
+      (let [syms (query/mutation-syms-in qctx)
+            wt-path (str (.getParentFile (File. (:repo-dir git-ctx)))
+                         File/separator
+                         "ext-mutation-worktree-"
+                         (java.util.UUID/randomUUID))
+            result (get (query/query-in qctx
+                                        {:psi/agent-session-ctx ctx
+                                         :git/context (history-git/create-context (:repo-dir git-ctx))}
+                                        [(list 'git.worktree/add!
+                                               {:psi/agent-session-ctx ctx
+                                                :git/context (history-git/create-context (:repo-dir git-ctx))
+                                                :input {:path wt-path
+                                                        :branch "ext-mutation-worktree"}})])
+                        'git.worktree/add!)]
+        (is (contains? syms 'git.worktree/add!))
+        (is (true? (:success result)))))))
 
 (deftest session-query-in-exposes-recursion-attrs-test
   (testing "session/query-in can read recursion attrs from live session recursion-ctx"

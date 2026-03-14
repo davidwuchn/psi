@@ -139,7 +139,9 @@
                                                 :create_branch true}})]
             (if-not (:success add-result)
               {:ok? false
-               :error (str "worktree creation failed: " (:error add-result))}
+               :error (str "worktree creation failed: "
+                           (or (:error add-result)
+                               "missing git mutation payload"))}
               (let [sd (create-worktree-session! description*
                                                 worktree-path
                                                 (:psi.agent-session/session-id session))]
