@@ -830,7 +830,10 @@ clojure-lsp"}]})
       (is (not (str/includes? out "⠋ waiting for response…"))))))
 
 (deftest thinking-delta-updates-stream-thinking-and-renders-test
-  (testing "thinking progress accumulates and is visible in streaming view"
+  (testing "thinking progress replaces (not appends) and is visible in streaming view"
+    ;; :text in thinking-delta events is the full accumulated text from the
+    ;; backend (replace semantics, not append).  The executor normalises both
+    ;; incremental and cumulative-snapshot provider styles before emission.
     (let [update-fn (app/make-update (stub-agent-fn ""))
           state     (assoc (init-state) :phase :streaming)
           [s1 _]    (update-fn state {:type :agent-event
@@ -838,7 +841,7 @@ clojure-lsp"}]})
                                       :text "Plan"})
           [s2 _]    (update-fn s1 {:type :agent-event
                                    :event-kind :thinking-delta
-                                   :text " step"})
+                                   :text "Plan step"})
           out       (app/view s2)]
       (is (= "Plan step" (:stream-thinking s2)))
       (is (str/includes? out "Plan step")))))

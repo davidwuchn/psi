@@ -495,9 +495,15 @@ Also tolerates cumulative snapshots that differ near previous tail
                                         agent-session-ctx
                                         (assoc capture :turn-id turn-id))))))
         done-p           (promise)
-        actions-fn       (make-turn-actions agent-ctx done-p progress-queue)
-        turn-ctx         (turn-sc/create-turn-context actions-fn)
-        last-progress-ms (atom (now-ms))]
+        actions-fn        (make-turn-actions agent-ctx done-p progress-queue)
+        turn-ctx          (turn-sc/create-turn-context actions-fn)
+        last-progress-ms  (atom (now-ms))
+        ;; Per-content-index thinking buffers — Anthropic interleaved thinking can
+        ;; emit multiple thinking blocks (each with a distinct content-index).
+        ;; merge-stream-text normalises both cumulative-snapshot and incremental
+        ;; provider styles. The emitted :text is the full accumulated thinking text
+        ;; for the block so far (consumers should replace, not append).
+        thinking-buffers  (atom {})]
     ;; Expose turn context for nREPL introspection
     (when turn-ctx-atom
       (reset! turn-ctx-atom turn-ctx))
@@ -515,12 +521,14 @@ Also tolerates cumulative snapshots that differ near previous tail
                                          {:delta (:delta event)})
 
                     :thinking-delta
-                    (emit-progress! progress-queue
-                                    {:event-kind :thinking-delta
-                                     :text       (let [d (:delta event)]
-                                                   (if (string? d)
-                                                     d
-                                                     (str (or d ""))))})
+                    (let [idx    (or (:content-index event) 0)
+                          raw    (let [d (:delta event)]
+                                   (if (string? d) d (str (or d ""))))
+                          merged (get (swap! thinking-buffers update idx merge-stream-text raw) idx)]
+                      (emit-progress! progress-queue
+                                      {:event-kind    :thinking-delta
+                                       :content-index idx
+                                       :text          merged}))
 
                     :toolcall-start
                     (do

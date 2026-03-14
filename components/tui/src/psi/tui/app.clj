@@ -1355,9 +1355,7 @@
       [(assoc state :stream-text (:text event)) nil]
 
       :thinking-delta
-      [(update state :stream-thinking
-               (fn [current]
-                 (str (or current "") (or (:text event) ""))))
+      [(assoc state :stream-thinking (or (:text event) ""))
        nil]
 
       :tool-start

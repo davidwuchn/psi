@@ -138,7 +138,7 @@
         q           (LinkedBlockingQueue.)
         stream-fn   (fn [_ai-ctx _conv _model _opts consume-fn]
                       (consume-fn {:type :start})
-                      (consume-fn {:type :thinking-delta :delta "plan"})
+                      (consume-fn {:type :thinking-delta :content-index 0 :delta "plan"})
                       (consume-fn {:type :done :reason :stop}))]
     (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
       (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg]
@@ -150,6 +150,36 @@
             thinking (some #(when (= :thinking-delta (:event-kind %)) %) events)]
         (is (some? thinking))
         (is (= "plan" (:text thinking)))))))
+
+(deftest thinking-delta-cumulative-snapshot-normalised-test
+  "Anthropic sends thinking_delta events as cumulative snapshots (each event
+  contains the full thinking text so far). Verify that the executor normalises
+  these into non-duplicating accumulated text so consumers can safely replace."
+  (let [agent-ctx   (setup-agent-ctx!)
+        session-ctx (setup-session-ctx! agent-ctx)
+        user-msg    {:role "user" :content [{:type :text :text "hi"}]}
+        q           (LinkedBlockingQueue.)
+        ;; Simulate Anthropic cumulative snapshots: each delta = full text so far
+        stream-fn   (fn [_ai-ctx _conv _model _opts consume-fn]
+                      (consume-fn {:type :start})
+                      (consume-fn {:type :thinking-delta :content-index 0 :delta "Now"})
+                      (consume-fn {:type :thinking-delta :content-index 0 :delta "Now I see"})
+                      (consume-fn {:type :thinking-delta :content-index 0 :delta "Now I see the flow"})
+                      (consume-fn {:type :done :reason :stop}))]
+    (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
+      (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg]
+                                {:progress-queue q})
+      (let [events (loop [acc []]
+                     (if-let [e (.poll q 5 TimeUnit/MILLISECONDS)]
+                       (recur (conj acc e))
+                       acc))
+            thinking-events (filterv #(= :thinking-delta (:event-kind %)) events)
+            last-thinking   (last thinking-events)]
+        ;; Each emitted event should carry the full accumulated text (replace semantics)
+        (is (= 3 (count thinking-events)))
+        (is (= "Now"              (:text (nth thinking-events 0))))
+        (is (= "Now I see"        (:text (nth thinking-events 1))))
+        (is (= "Now I see the flow" (:text last-thinking)))))))
 
 (deftest idle-timeout-resets-on-stream-progress-test
   (let [agent-ctx   (setup-agent-ctx!)

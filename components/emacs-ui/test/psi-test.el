@@ -1814,7 +1814,10 @@ text) in long-lived Emacs sessions with overridden slash handlers."
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
 (ert-deftest psi-thinking-streaming-multiple-deltas-update-in-place ()
-  "Multiple thinking deltas must accumulate in a single line, not produce multiple lines."
+  "Multiple thinking deltas must update a single line in-place, not produce multiple lines.
+
+The backend emits the full accumulated thinking text in each event (replace
+semantics).  Each successive event carries more text than the previous one."
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -1823,9 +1826,9 @@ text) in long-lived Emacs sessions with overridden slash handlers."
           (psi-emacs--handle-rpc-event
            '((:event . "assistant/thinking-delta") (:data . ((:text . "I")))))
           (psi-emacs--handle-rpc-event
-           '((:event . "assistant/thinking-delta") (:data . ((:text . " think")))))
+           '((:event . "assistant/thinking-delta") (:data . ((:text . "I think")))))
           (psi-emacs--handle-rpc-event
-           '((:event . "assistant/thinking-delta") (:data . ((:text . " more")))))
+           '((:event . "assistant/thinking-delta") (:data . ((:text . "I think more")))))
           (should (equal "I think more" (psi-emacs-state-thinking-in-progress psi-emacs--state)))
           ;; Exactly one thinking line in the buffer — not one per delta
           (should (equal 1 (cl-count-if (lambda (line) (string-prefix-p "ψ⋯ " line))
