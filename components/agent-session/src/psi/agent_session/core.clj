@@ -282,7 +282,7 @@
          flush-state-atom  (persist/create-flush-state)
          ui-state-atom     (ext-ui/create-ui-state)
          merged-config     (merge session/default-config (or config {}))
-         host-atom         (atom (session-host/create-host @session-data-atom))
+         host-atom         (atom (session-host/empty-host))
          ;; Build ctx without actions-fn so we can close over it
          ctx               {:sc-env                sc-env
                             :sc-session-id         sc-session-id
@@ -2479,16 +2479,18 @@
        :tool-count        (count (:tools (agent/get-data-in (:agent-ctx ctx))))
        :extension-results ext-results})))
 
-(defn bootstrap-session-in!
+(defn bootstrap-in!
   "Reusable session bootstrap for CLI/TUI and tests.
 
+   Applies startup wiring to the current session data without creating a new
+   session branch.
+
    Steps:
-   1) ensure a session file exists (new-session-in!)
-   2) optionally register global query resolvers/mutations
-   3) register base tools and set system prompt
-   4) load prompts/skills/tools/extensions via EQL mutations
-   5) merge extension tools into active tools
-   6) persist startup summary to :startup-bootstrap in session data
+   1) optionally register global query resolvers/mutations
+   2) register base tools and set system prompt
+   3) load prompts/skills/tools/extensions via EQL mutations
+   4) merge extension tools into active tools
+   5) persist startup summary to :startup-bootstrap in session data
 
    opts keys:
    :register-global-query? — register agent-session resolvers/mutations globally (default true)
@@ -2512,7 +2514,6 @@
                skills                 []
                tools                  []
                extension-paths        []}}]
-  (new-session-in! ctx)
   (when register-global-query?
     (register-resolvers!)
     (register-mutations!))

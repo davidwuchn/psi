@@ -65,9 +65,8 @@
                 sys-prompt/discover-context-files (fn [_] [])
                 sys-prompt/build-system-prompt (fn [_] "")
                 ext/discover-extension-paths (fn [& _] [])
-                session/bootstrap-session-in!
-                (fn [ctx _]
-                  (session/new-session-in! ctx)
+                session/bootstrap-in!
+                (fn [_ctx _]
                   {:extension-errors [] :extension-loaded-count 0})]
     (f)))
 
@@ -243,6 +242,30 @@
              (#'main/session-runtime-config-from-args
               ["--llm-idle-timeout-ms" "not-a-number"]))))))
 
+(deftest bootstrap-runtime-session-initial-host-has-single-session-test
+  (with-redefs [oauth/create-context (fn [] nil)
+                pt/discover-templates (fn [] [])
+                skills/discover-skills (fn [] {:skills [] :diagnostics []})
+                sys-prompt/discover-context-files (fn [_] [])
+                sys-prompt/build-system-prompt (fn [_] "")
+                ext/discover-extension-paths (fn [& _] [])
+                introspection/register-resolvers! (fn [] nil)
+                memory-runtime/sync-memory-layer! (fn [_] {:ok? true})
+                session/bootstrap-in!
+                (fn [_ctx _]
+                  {:extension-errors [] :extension-loaded-count 0})]
+    (let [{:keys [ctx]} (#'main/bootstrap-runtime-session!
+                         {:provider :anthropic
+                          :id "test-model"
+                          :name "Test Model"
+                          :supports-reasoning false}
+                         {})
+          host (session/get-session-host-in ctx)
+          sd   (session/get-session-data-in ctx)]
+      (is (= 1 (count (:sessions host))))
+      (is (= (:session-id sd) (:active-session-id host)))
+      (is (= [(:session-id sd)] (vec (keys (:sessions host))))))))
+
 (deftest bootstrap-runtime-session-passes-memory-runtime-opts-to-sync-test
   (let [captured (atom nil)]
     (with-redefs [oauth/create-context (fn [] nil)
@@ -255,9 +278,8 @@
                   memory-runtime/sync-memory-layer! (fn [opts]
                                                       (reset! captured opts)
                                                       {:ok? true})
-                  session/bootstrap-session-in!
-                  (fn [ctx _]
-                    (session/new-session-in! ctx)
+                  session/bootstrap-in!
+                  (fn [_ctx _]
                     {:extension-errors [] :extension-loaded-count 0})]
       (let [{:keys [ctx]} (#'main/bootstrap-runtime-session!
                            {:provider :anthropic
@@ -282,7 +304,7 @@
                 ext/discover-extension-paths (fn [& _] [])
                 introspection/register-resolvers! (fn [] nil)
                 memory-runtime/sync-memory-layer! (fn [_] {:ok? true})
-                session/bootstrap-session-in!
+                session/bootstrap-in!
                 (fn [ctx _]
                   (session/new-session-in! ctx)
                   {:extension-errors [] :extension-loaded-count 0})]
@@ -311,7 +333,7 @@
                     ext/discover-extension-paths (fn [& _] [])
                     introspection/register-resolvers! (fn [] nil)
                     memory-runtime/sync-memory-layer! (fn [_] {:ok? true})
-                    session/bootstrap-session-in!
+                    session/bootstrap-in!
                     (fn [ctx _]
                       (session/new-session-in! ctx)
                       {:extension-errors [] :extension-loaded-count 0})]
@@ -390,7 +412,7 @@
                   ext/discover-extension-paths (fn [& _] [])
                   introspection/register-resolvers! (fn [] nil)
                   memory-runtime/sync-memory-layer! (fn [_] {:ok? true})
-                  session/bootstrap-session-in!
+                  session/bootstrap-in!
                   (fn [ctx _]
                     (session/new-session-in! ctx)
                     {:extension-errors [] :extension-loaded-count 0})]
@@ -421,7 +443,7 @@
                   ext/discover-extension-paths (fn [& _] [])
                   introspection/register-resolvers! (fn [] nil)
                   memory-runtime/sync-memory-layer! (fn [_] {:ok? true})
-                  session/bootstrap-session-in!
+                  session/bootstrap-in!
                   (fn [ctx _]
                     (session/new-session-in! ctx)
                     {:extension-errors [] :extension-loaded-count 0})]

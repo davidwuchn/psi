@@ -36,23 +36,21 @@
 ;; ── Session lifecycle ───────────────────────────────────────────────────────
 
 (deftest session-host-registry-test
-  (testing "create-context seeds host registry with current session"
+  (testing "create-context starts with an empty host registry"
     (let [ctx  (session/create-context)
-          host (session/get-session-host-in ctx)
-          sid  (:session-id (session/get-session-data-in ctx))]
-      (is (= sid (:active-session-id host)))
-      (is (contains? (:sessions host) sid))))
+          host (session/get-session-host-in ctx)]
+      (is (nil? (:active-session-id host)))
+      (is (= {} (:sessions host)))))
 
-  (testing "new-session-in! registers new session and sets it active"
-    (let [ctx (session/create-context)
-          sid-before (:session-id (session/get-session-data-in ctx))]
+  (testing "new-session-in! registers first real session and sets it active"
+    (let [ctx        (session/create-context)
+          seed-id    (:session-id (session/get-session-data-in ctx))]
       (session/new-session-in! ctx)
       (let [sid-after (:session-id (session/get-session-data-in ctx))
             host      (session/get-session-host-in ctx)]
-        (is (not= sid-before sid-after))
+        (is (not= seed-id sid-after))
         (is (= sid-after (:active-session-id host)))
-        (is (contains? (:sessions host) sid-before))
-        (is (contains? (:sessions host) sid-after)))))
+        (is (= #{sid-after} (set (keys (:sessions host))))))))
 
   (testing "ensure-session-loaded-in! resumes by host session id"
     (let [cwd   (str (System/getProperty "java.io.tmpdir") "/psi-host-load-" (java.util.UUID/randomUUID))
@@ -75,14 +73,15 @@
       (is (= sid1 (:active-session-id (session/get-session-host-in ctx))))))
 
   (testing "set-active-session-in! changes active session when id exists"
-    (let [ctx        (session/create-context)
-          first-id   (:session-id (session/get-session-data-in ctx))]
+    (let [ctx (session/create-context)]
       (session/new-session-in! ctx)
-      (let [second-id (:session-id (session/get-session-data-in ctx))]
-        (session/set-active-session-in! ctx first-id)
-        (is (= first-id (:active-session-id (session/get-session-host-in ctx))))
-        (session/set-active-session-in! ctx second-id)
-        (is (= second-id (:active-session-id (session/get-session-host-in ctx))))))))
+      (let [first-id (:session-id (session/get-session-data-in ctx))]
+        (session/new-session-in! ctx)
+        (let [second-id (:session-id (session/get-session-data-in ctx))]
+          (session/set-active-session-in! ctx first-id)
+          (is (= first-id (:active-session-id (session/get-session-host-in ctx))))
+          (session/set-active-session-in! ctx second-id)
+          (is (= second-id (:active-session-id (session/get-session-host-in ctx)))))))))
 
 (deftest new-session-test
   (testing "new-session-in! resets session-id"
@@ -1378,13 +1377,13 @@
         (is (= "foo" (:name (first (:tools ad)))))))))
 
 (deftest bootstrap-session-test
-  (testing "bootstrap-session-in! stores startup summary and applies resources"
+  (testing "bootstrap-in! stores startup summary and applies resources"
     (let [ctx      (session/create-context)
           template {:name "greet" :description "d" :content "c" :source :project :file-path "/tmp/greet.md"}
           skill    {:name "coding" :description "d" :file-path "/tmp/SKILL.md"
                     :base-dir "/tmp" :source :project :disable-model-invocation false}
           tool     {:name "foo" :label "Foo" :description "bar" :parameters "{}"}
-          summary  (session/bootstrap-session-in!
+          summary  (session/bootstrap-in!
                     ctx {:register-global-query? false
                          :base-tools             []
                          :system-prompt          "sys"
@@ -1399,6 +1398,8 @@
       (is (= 1 (:tool-count summary)))
       (is (= 0 (:extension-error-count summary)))
       (is (map? (:startup-bootstrap sd)))
+      (is (= :console (:ui-type sd)))
+      (is (nil? (:session-file sd)))
       (is (= "sys" (:developer-prompt sd)))
       (is (= :fallback (:developer-prompt-source sd)))
       (is (= 1 (count (:prompt-templates sd))))
@@ -1406,9 +1407,9 @@
       (is (= 1 (count (:tools ad)))))))
 
 (deftest bootstrap-session-developer-prompt-override-test
-  (testing "bootstrap-session-in! accepts explicit developer prompt"
+  (testing "bootstrap-in! accepts explicit developer prompt"
     (let [ctx (session/create-context)]
-      (session/bootstrap-session-in!
+      (session/bootstrap-in!
        ctx {:register-global-query? false
             :system-prompt          "sys"
             :developer-prompt       "dev"

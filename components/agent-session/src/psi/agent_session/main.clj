@@ -473,6 +473,23 @@
       (timbre/warn e "Unable to query :psi.graph/capabilities for system prompt enrichment")
       [])))
 
+(defn- startup-rehydrate-from-current-session!
+  "Run startup prompts in the current session and return rehydrate payload.
+
+   Returns map:
+   {:agent-messages [...]
+    :messages [...]
+    :tool-calls {...}
+    :tool-order [...]}"
+  [ctx ai-ctx ai-model]
+  (try
+    (runtime/run-startup-prompts-in! ctx {:ai-ctx ai-ctx :ai-model ai-model :spawn-mode :new-root})
+    (catch Throwable t
+      (timbre/warn t "Startup prompts failed; continuing with empty startup transcript")))
+  (let [agent-messages (:messages (agent/get-data-in (:agent-ctx ctx)))
+        tui-state      (agent-messages->tui-resume-state agent-messages)]
+    (assoc tui-state :agent-messages agent-messages)))
+
 (defn- start-new-session-with-startup!
   "Create a fresh session branch and run configured startup prompts.
 
@@ -483,13 +500,7 @@
     :tool-order [...]}"
   [ctx ai-ctx ai-model]
   (session/new-session-in! ctx)
-  (try
-    (runtime/run-startup-prompts-in! ctx {:ai-ctx ai-ctx :ai-model ai-model :spawn-mode :new-root})
-    (catch Throwable t
-      (timbre/warn t "Startup prompts failed; continuing with empty startup transcript")))
-  (let [agent-messages (:messages (agent/get-data-in (:agent-ctx ctx)))
-        tui-state      (agent-messages->tui-resume-state agent-messages)]
-    (assoc tui-state :agent-messages agent-messages)))
+  (startup-rehydrate-from-current-session! ctx ai-ctx ai-model))
 
 (defn- bootstrap-runtime-session!
   "Create and bootstrap a live session context shared by CLI/TUI/RPC modes.
@@ -529,9 +540,10 @@
                          :recursion-ctx recursion-ctx
                          :nrepl-runtime-atom nrepl-runtime
                          :ui-type ui-type})
+        _              (session/new-session-in! ctx)
         ext-paths      (ext/discover-extension-paths [] cwd)
         app-query-tool (tools/make-app-query-tool (fn [q] (session/query-in ctx q)))
-        summary        (session/bootstrap-session-in!
+        summary        (session/bootstrap-in!
                         ctx {:register-global-query? false
                              :base-tools             (conj (vec tools/all-tools) app-query-tool)
                              :system-prompt          base-prompt
@@ -550,7 +562,7 @@
         _              (session/set-system-prompt-in! ctx system-prompt)
         _              (memory-runtime/sync-memory-layer! (merge {:cwd cwd}
                                                                  (or memory-runtime-opts {})))
-        startup-rehydrate (start-new-session-with-startup! ctx nil ai-model)]
+        startup-rehydrate (startup-rehydrate-from-current-session! ctx nil ai-model)]
     (doseq [{:keys [path error]} (:extension-errors summary)]
       (timbre/warn "Extension error:" path error))
     (when (pos? (:extension-loaded-count summary))

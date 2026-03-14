@@ -159,7 +159,7 @@
 (deftest startup-bootstrap-introspection-test
   (testing "startup bootstrap summary is queryable via introspection graph"
     (let [session-ctx (session/create-context)
-          _           (session/bootstrap-session-in!
+          _           (session/bootstrap-in!
                        session-ctx {:register-global-query? false
                                     :base-tools             []
                                     :system-prompt          "sys"

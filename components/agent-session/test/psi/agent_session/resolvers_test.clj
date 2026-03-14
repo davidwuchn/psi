@@ -170,7 +170,7 @@
           host-sessions (:psi.agent-session/host-sessions process-result)
           persisted    (:psi.session/list persisted-result)]
       (is (= sid-2 (:psi.agent-session/host-active-session-id process-result)))
-      (is (>= (:psi.agent-session/host-session-count process-result) 3))
+      (is (= 2 (:psi.agent-session/host-session-count process-result)))
       (is (some #(= sid-1 (:psi.session-info/id %)) host-sessions))
       (is (some #(= sid-2 (:psi.session-info/id %)) host-sessions))
       (is (some #(= path-1 (:psi.session-info/path %)) host-sessions))
