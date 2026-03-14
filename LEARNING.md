@@ -21,6 +21,24 @@ Once a session can move away from process cwd, `:cwd` in the session header is n
 
 `create-null-context` gives each test its own repo, but sibling linked worktrees can still collide if every test uses the shared JVM temp parent with the same slug path. Deriving test worktree paths from both the repo identity and a unique suffix prevents false failures where git reports an existing path from a different test's worktree.
 
+## 2026-03-14 - Extension session lifecycle should be public API, not extension-internal var resolution (commit `3bbb958`)
+
+### λ Session lifecycle helpers used by extensions should be first-class extension surface
+
+`/work-on` originally reached into `psi.agent-session.core` with resolved vars to create and switch sessions. That works locally but it is the wrong boundary: extensions should depend on the extension API and extension mutations, not on internal vars in session-core. When a capability is needed by an extension and is valid beyond one extension, it should be promoted into a public extension-facing session lifecycle surface.
+
+### λ Worktree orchestration composes better when session creation and switching are explicit mutations
+
+Adding `psi.extension/create-session` and `psi.extension/switch-session` made the worktree workflow simpler and more stable. `/work-on` can now create a new worktree-bound session through one clear capability, and `/work-merge` can return to a main-worktree session through the matching switch capability. The extension becomes orchestration-only; session semantics remain owned by session-core.
+
+### λ Public capability promotion requires spec, runtime API, and test helper convergence together
+
+A new extension capability is not complete when only the runtime mutation exists. The extension API (`createSession`, `switchSession`), nullable extension test API, session Allium surfaces, and extension-system Allium surface must all converge in the same sweep. Otherwise extensions and tests drift into parallel ad-hoc contracts.
+
+### λ Follow-up deltas should close the plan loop explicitly in repo memory
+
+When a plan item lists optional follow-ups and one of them lands later, repo memory should move from “candidate” to “converged” with the commit anchor and verification snapshot. Otherwise future ψ sees a stale open loop and may re-investigate already-completed work.
+
 ## 2026-03-14 - Meta descriptions should state what, not how (commit `23327d7`)
 
 ### λ Meta is topology, spec is mechanism
