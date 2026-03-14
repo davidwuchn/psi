@@ -231,6 +231,27 @@ A linked worktree may already have an associated session transcript in the host 
 
 `worktree path already exists` is ambiguous: it can mean a stale non-worktree directory, or a valid linked worktree that should be resumed. The extension should first check the registered git worktree list and only surface a real error when the existing filesystem path is not a known worktree. Distinguishing these cases at the command layer prevents false-negative workflow failures.
 
+## 2026-03-14 - Tool-boundary thinking segments should reset in the backend, not be reconstructed in the UI (commit `42d1788`)
+
+### λ Tool boundaries define a new cumulative thinking segment
+
+Emacs intentionally archives live thinking when tool output begins so the transcript can show a reasoning block before the tool and a fresh reasoning block after it. If backend thinking accumulation continues across the whole turn, the next post-tool thinking delta replays pre-tool text into the new block. Resetting the thinking accumulator at `:toolcall-start` makes the transport match the UI boundary: cumulative within a segment, fresh after a tool boundary.
+
+### λ Healthy buffer markers can still hide a semantic mismatch
+
+Live debugging showed the Emacs input-separator marker and transcript append position were correct: the separator advanced, append position tracked it, and the active thinking range updated in place before archive. That ruled out stale marker/point bugs and shifted the diagnosis to stream semantics. When append mechanics are healthy but repeated cumulative lines still appear, inspect event meaning before editing buffer logic.
+
+### λ Tool lifecycle splits should be aligned at the shared backend contract when multiple UIs consume the stream
+
+The tempting frontend fix was to diff cumulative thinking text against archived prefixes in Emacs. But the underlying mismatch affected the shared `assistant/thinking-delta` contract, not just one renderer. Resetting accumulation in the executor at tool start keeps Emacs simple and gives every consumer the same clearer rule: thinking deltas are cumulative for the current segment, and tool start begins a new segment.
+
+### λ Regression coverage should pin the same behavior at executor, RPC, and UI layers
+
+This bug crossed layers: executor accumulation, RPC event sequencing, and Emacs transcript rendering. Locking only one layer would leave the semantic boundary implicit again. The durable fix included:
+- executor test for fresh post-tool thinking accumulation
+- RPC test for post-tool `assistant/thinking-delta` ordering/content
+- Emacs regression for cumulative prefix-snapshot replace-in-place rendering
+
 ## 2026-03-14 - Session worktree binding must be session-scoped, not process-scoped (commit `ad691d4`)
 
 ### λ Worktree-aware session routing needs a session field, not just a context cwd
