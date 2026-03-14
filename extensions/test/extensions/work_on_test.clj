@@ -90,6 +90,53 @@
           (is (re-find #"Working in `/repo/fix-footer-not-displayed` on branch `fix-footer-not-displayed`"
                        @printed)))))))
 
+(deftest work-on-command-reuses-existing-worktree-test
+  (testing "/work-on reuses an existing worktree and switches to its existing session"
+    (let [printed  (atom nil)
+          switched (atom [])
+          {:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/work_on.clj"
+                                :query-fn (fn [q]
+                                            (case q
+                                              [:psi.agent-session/session-id
+                                               :psi.agent-session/session-name
+                                               :psi.agent-session/session-file
+                                               :psi.agent-session/cwd
+                                               :psi.agent-session/system-prompt
+                                               :psi.agent-session/host-sessions
+                                               :psi.agent-session/git-worktree-current
+                                               :psi.agent-session/git-worktrees]
+                                              {:psi.agent-session/session-id "s-main"
+                                               :psi.agent-session/cwd "/repo/main"
+                                               :psi.agent-session/system-prompt "prompt"
+                                               :psi.agent-session/host-sessions [{:psi.session-info/id "s-main"
+                                                                                 :psi.session-info/cwd "/repo/main"
+                                                                                 :psi.session-info/name "main"}
+                                                                                {:psi.session-info/id "s-existing"
+                                                                                 :psi.session-info/cwd "/repo/fix-repeated-thinking-output"
+                                                                                 :psi.session-info/name "Fix repeated thinking output in emacs"}]
+                                               :psi.agent-session/git-worktree-current {:git.worktree/path "/repo/main"
+                                                                                        :git.worktree/branch-name "main"}
+                                               :psi.agent-session/git-worktrees [{:git.worktree/path "/repo/main"
+                                                                                 :git.worktree/branch-name "main"
+                                                                                 :git.worktree/current? true}
+                                                                                {:git.worktree/path "/repo/fix-repeated-thinking-output"
+                                                                                 :git.worktree/branch-name "fix-repeated-thinking-output"}]}
+                                              {}))
+                                :mutate-fn (fn [op _params]
+                                             (case op
+                                               git.worktree/add! {:success false
+                                                                  :error "worktree path already exists"}
+                                               psi.extension/switch-session (do (swap! switched conj "s-existing")
+                                                                                {:psi.agent-session/session-id "s-existing"})
+                                               nil))})]
+      (with-redefs [println (fn [& xs] (reset! printed (apply str xs)))]
+        (sut/init api)
+        ((get-in @state [:commands "work-on" :handler]) "fix repeated thinking output in emacs")
+        (is (= ["s-existing"] @switched))
+        (is (re-find #"Working in `/repo/fix-repeated-thinking-output` on branch `fix-repeated-thinking-output`"
+                     @printed)))))
+
 (deftest work-on-command-usage-error-test
   (testing "/work-on without description prints usage"
     (let [{:keys [api state]} (nullable/create-nullable-extension-api
@@ -195,4 +242,4 @@
                  :psi.agent-session/cwd "/repo/main"}]
                @created))
         (is (= ["s-main-created"] @switched))
-        (is (re-find #"Merged `feature-x` into `main`" @printed))))))
+        (is (re-find #"Merged `feature-x` into `main`" @printed)))))))

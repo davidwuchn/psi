@@ -80,6 +80,14 @@
               s))
           sessions)))
 
+(defn- find-worktree-by-path
+  [worktree-path]
+  (let [worktrees (or (:psi.agent-session/git-worktrees (current-session-query)) [])]
+    (some (fn [wt]
+            (when (= worktree-path (:git.worktree/path wt))
+              wt))
+          worktrees)))
+
 (defn- switch-to-session!
   [session-id]
   (when-let [f (:switch-session-fn @state)]
@@ -137,11 +145,8 @@
                                                 :branch branch-name
                                                 :base_ref nil
                                                 :create_branch true}})]
-            (if-not (:success add-result)
-              {:ok? false
-               :error (str "worktree creation failed: "
-                           (or (:error add-result)
-                               "missing git mutation payload"))}
+            (cond
+              (:success add-result)
               (let [sd (create-worktree-session! description*
                                                 worktree-path
                                                 (:psi.agent-session/session-id session))]
@@ -149,7 +154,38 @@
                  :worktree-path worktree-path
                  :branch-name branch-name
                  :session-id (:session-id sd)
-                 :session-name description*}))))))))
+                 :session-name description*})
+
+              (= "worktree path already exists" (:error add-result))
+              (if-let [existing-wt (find-worktree-by-path worktree-path)]
+                (let [existing-session (find-session-for-worktree worktree-path)]
+                  (if existing-session
+                    (do
+                      (switch-to-session! (:psi.session-info/id existing-session))
+                      {:ok? true
+                       :reused? true
+                       :worktree-path worktree-path
+                       :branch-name (or (:git.worktree/branch-name existing-wt) branch-name)
+                       :session-id (:psi.session-info/id existing-session)
+                       :session-name (:psi.session-info/name existing-session)})
+                    (let [sd (create-worktree-session! description*
+                                                      worktree-path
+                                                      (:psi.agent-session/session-id session))]
+                      {:ok? true
+                       :reused? true
+                       :worktree-path worktree-path
+                       :branch-name (or (:git.worktree/branch-name existing-wt) branch-name)
+                       :session-id (:session-id sd)
+                       :session-name description*})))
+                {:ok? false
+                 :error (str "worktree path already exists but is not a registered git worktree: "
+                             worktree-path)})
+
+              :else
+              {:ok? false
+               :error (str "worktree creation failed: "
+                           (or (:error add-result)
+                               "missing git mutation payload"))})))))))
 
 (defn work-merge!
   []
