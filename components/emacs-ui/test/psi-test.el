@@ -1841,6 +1841,33 @@ semantics).  Each successive event carries more text than the previous one."
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
+(ert-deftest psi-thinking-streaming-cumulative-prefix-snapshots-replace-single-line ()
+  "Cumulative thinking snapshots that extend one character at a time stay on one line.
+
+This matches the backend contract for `assistant/thinking-delta`, which emits
+full accumulated thinking text rather than append-only chunks."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (progn
+          (dolist (text '("- TUII found the main doc drift:"
+                          "- TUI commandI found the main doc drift:"
+                          "- TUI command docsI found the main doc drift:"
+                          "- TUI command docs don'tI found the main doc drift:"
+                          "- TUI command docs don't mention `/work-*`"))
+            (psi-emacs--handle-rpc-event
+             `((:event . "assistant/thinking-delta") (:data . ((:text . ,text))))))
+          (should (equal "- TUI command docs don't mention `/work-*`"
+                         (psi-emacs-state-thinking-in-progress psi-emacs--state)))
+          (should (equal 1 (cl-count-if (lambda (line) (string-prefix-p "ψ⋯ " line))
+                                        (split-string (buffer-string) "\n" t))))
+          (should (equal (format "ψ⋯ %s\n"
+                                 "- TUI command docs don't mention `/work-*`")
+                         (buffer-string))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
 (ert-deftest psi-thinking-streaming-uses-thinking-face-on-prefix ()
   (with-temp-buffer
     (psi-emacs-mode)

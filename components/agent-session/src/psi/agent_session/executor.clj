@@ -664,6 +664,12 @@ Also tolerates cumulative snapshots that differ near previous tail
 
                     :toolcall-start
                     (do
+                      ;; Thinking deltas are emitted to frontends as cumulative snapshots.
+                      ;; Reset the per-content-index thinking accumulator when a tool call
+                      ;; starts so post-tool thinking becomes a fresh cumulative segment.
+                      ;; This keeps frontend tool-boundary thinking splits from replaying
+                      ;; pre-tool thinking text on the next thinking delta.
+                      (swap! thinking-buffers dissoc (or (:content-index event) 0))
                       (append-tool-call-attempt!
                        agent-session-ctx
                        {:turn-id       turn-id

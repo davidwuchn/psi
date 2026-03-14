@@ -187,6 +187,27 @@
         (is (= "Now I see"        (:text (nth thinking-events 1))))
         (is (= "Now I see the flow" (:text last-thinking)))))))
 
+(deftest thinking-delta-resets-after-toolcall-start-test
+  (let [agent-ctx   (setup-agent-ctx!)
+        session-ctx (setup-session-ctx! agent-ctx)
+        user-msg    {:role "user" :content [{:type :text :text "hi"}]}
+        q           (LinkedBlockingQueue.)
+        stream-fn   (fn [_ai-ctx _conv _model _opts consume-fn]
+                      (consume-fn {:type :start})
+                      (consume-fn {:type :thinking-delta :content-index 0 :delta "plan-1"})
+                      (consume-fn {:type :toolcall-start :content-index 0 :id "t1" :name "read"})
+                      (consume-fn {:type :thinking-delta :content-index 0 :delta "plan-2"})
+                      (consume-fn {:type :done :reason :stop}))]
+    (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
+      (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg]
+                                {:progress-queue q})
+      (let [events (loop [acc []]
+                     (if-let [e (.poll q 5 TimeUnit/MILLISECONDS)]
+                       (recur (conj acc e))
+                       acc))
+            thinking-events (filterv #(= :thinking-delta (:event-kind %)) events)]
+        (is (= ["plan-1" "plan-2"] (mapv :text thinking-events)))))))
+
 (deftest idle-timeout-resets-on-stream-progress-test
   (let [agent-ctx   (setup-agent-ctx!)
         session-ctx (setup-session-ctx! agent-ctx)
