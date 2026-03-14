@@ -3,7 +3,22 @@
 
 ---
 
-## 2026-03-13 - Footer state must be saved and restored around transcript reset (commit `e91c490`)
+## 2026-03-13 - Footer state must be saved and restored around transcript reset (commit `ac969b8`)
+
+### λ Two separate bugs can both hide the footer; they must be fixed independently
+
+The `/tree` session-switch footer regression had two distinct root causes that were fixed in sequence:
+
+1. **`d15b3de`** — Response callback called `show-connecting-affordances`, overwriting the footer that `footer/updated` had already correctly set.
+2. **`ac969b8`** — After stopping the overwrite, `reset-transcript-state` (called from the same callback) still cleared `projection-footer` to nil, so the footer disappeared even though no placeholder was written.
+
+Fixing only (1) is insufficient. The save-restore pattern in (2) is the complete fix: capture `projection-footer` before reset, restore after, then call `upsert-projection-block` to render.
+
+### λ Test assertions must be updated when the correct expected value changes
+
+The test `psi-idle-new-slash-restores-input-area-and-footer-after-reset` previously asserted `(null (projection-footer))` because the old code always cleared it. After the fix, the correct assertion is that the footer value set by events is preserved. Tests asserting intermediate state that was previously "wrong by design" must be updated when the design is corrected.
+
+## 2026-03-13 - Footer state must be saved and restored around transcript reset (originally noted commit `e91c490`)
 
 ### λ `reset-transcript-state` wipes all session state including already-correct footer
 
