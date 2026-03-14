@@ -400,6 +400,13 @@ Ordered steps toward PSI COMPLETE.
   - `doc/tui.md` now documents `/worktree`, `/work-on`, `/work-merge`, `/work-rebase`, and `/work-status`
   - `doc/extensions.md` now documents `:create-session` / `:switch-session` and their worktree-session use
   - `doc/emacs-ui.md` now notes `/work-*` command discovery in slash completion
+- PSL follow-up landed (2026-03-14, commit `4386b98`): isolated extension query contexts now register the full session resolver surface, not only agent-session-local resolvers.
+  - Root cause: `register-resolvers-in!` omitted history resolvers, so extension API EQL queries could not derive `:git.worktree/current` and `/work-on` incorrectly fell through to `not inside a git repository`.
+  - Fix: `resolvers/session-resolver-surface` is now public and `register-resolvers-in!` uses it for isolated qctx construction.
+  - Regression coverage added in `components/agent-session/test/psi/agent_session/resolvers_test.clj` for isolated-qctx worktree attr resolution (the same path used by extension `:query`).
+  - Focused verification green:
+    - `clojure -M:test --focus extensions.work-on-test --focus psi.agent-session.resolvers-test/register-resolvers-in-includes-history-resolvers-test`
+    - result: 6 tests, 22 assertions, 0 failures
 - No remaining required follow-up for the shipped worktree session workflow; future work is additive UX/documentation polish only.
 
 ### Step 12 — Emacs UI ◇ in progress
