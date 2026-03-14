@@ -396,8 +396,11 @@ Ordered steps toward PSI COMPLETE.
   - focused verification green:
     - `clojure -M:test --focus psi.agent-session.extensions-test --focus extensions.work-on-test --focus psi.agent-session.core-test`
     - result: 64 tests, 405 assertions, 0 failures
-- Remaining follow-up candidate:
-  - sync user/internal docs for the new `/work-*` command surface
+- Follow-up docs sync landed (commit `26f1245`):
+  - `doc/tui.md` now documents `/worktree`, `/work-on`, `/work-merge`, `/work-rebase`, and `/work-status`
+  - `doc/extensions.md` now documents `:create-session` / `:switch-session` and their worktree-session use
+  - `doc/emacs-ui.md` now notes `/work-*` command discovery in slash completion
+- No remaining required follow-up for the shipped worktree session workflow; future work is additive UX/documentation polish only.
 
 ### Step 12 — Emacs UI ◇ in progress
 - Spec: `spec/emacs-frontend.allium`
