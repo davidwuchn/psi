@@ -110,7 +110,7 @@ Compose source rules:
 - `/...` completes slash commands:
   - idle-local commands (for example `/resume`, `/new`, `/status`, `/worktree`, `/jobs`, `/model`, `/thinking`, `/help`)
   - common backend commands (`/history`, `/prompts`, `/skills`, `/login`, `/logout`, `/remember`, `/skill:`)
-  - extension commands discovered from backend introspection
+  - extension commands discovered from backend introspection, including worktree workflow commands such as `/work-on`, `/work-merge`, `/work-rebase`, `/work-status` when the extension is loaded
 - `@...` completes file references from cwd/project-root (with configurable hidden/excluded policy)
 
 Completion behavior knobs live in customize group `psi-emacs-completion`.

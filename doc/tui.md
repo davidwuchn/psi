@@ -44,8 +44,8 @@ clojure -M:run --tui --nrepl 8888
 
 ## In-session commands
 
-`/status` `/history` `/new` `/resume` `/tree [session-id]` `/help` `/quit` `/skills` `/prompts` `/remember [text]`
-`/skill:<name>` plus any extension commands
+`/status` `/history` `/new` `/resume` `/tree [session-id]` `/worktree` `/help` `/quit` `/skills` `/prompts` `/remember [text]`
+`/skill:<name>` plus any extension commands such as `/work-on`, `/work-merge`, `/work-rebase`, `/work-status`
 
 ### Multi-session commands
 
@@ -58,6 +58,25 @@ clojure -M:run --tui --nrepl 8888
   keep deep trees and mixed session states visually stable.
 
 `/tree` is TUI-only; console/RPC surfaces return a deterministic guidance message.
+
+### Worktree commands
+
+- `/worktree` shows git worktree context for the current session worktree.
+- `/work-on <description>` creates a sibling git worktree + branch and moves you into
+  a distinct new host session bound to that worktree.
+- `/work-merge` fast-forward merges the current linked-worktree branch into the default
+  branch, removes the linked worktree, deletes the branch, and switches back to an
+  existing main-worktree session when possible.
+- If no main-worktree session exists, `/work-merge` creates one and switches to it.
+- `/work-rebase` rebases the current linked-worktree branch onto the default branch.
+- `/work-status` shows the active linked worktree overview.
+
+Operational notes:
+- Worktree paths are sibling directories of the main worktree.
+- `/work-on` uses a mechanical slug from the description.
+- Tool operations in a worktree session run with that session's `worktree_path` as cwd.
+- After `/work-merge`, the transcript of the linked-worktree session is preserved in the
+  host session tree even though the branch/worktree are removed.
 
 `/remember` performs a single manual memory capture from the runtime command surface.
 It writes one memory artifact with the provided text (or a default note when blank).
