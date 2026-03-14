@@ -3,6 +3,20 @@
 
 ---
 
+## 2026-03-14 - Layer 1 worktree attach semantics need direct coverage, not only extension-level follow-ups (commit `c8b2573`)
+
+### λ Existing-branch attach has an important git constraint: the branch cannot already be checked out in another worktree
+
+It is not enough to say that `/work-on` should "attach to an existing branch". Git allows `git worktree add <path> <branch>` for an existing branch only when that branch is not still active in another worktree. If the branch is currently checked out elsewhere, the attach attempt must fail until that worktree is removed. This is a Layer 1 rule of the git substrate and should be captured directly in git-level tests/specs, not inferred indirectly from extension behavior.
+
+### λ Extension-level regression coverage can hide missing substrate contracts
+
+The `/work-on` follow-ups exercised attach-to-existing-branch through the extension path, but that still left the lower-level git contract under-specified. Adding explicit Layer 1 tests made the substrate rule visible: first attach fails while the branch is checked out in a sibling worktree, then succeeds after the original worktree is removed. When debugging orchestration features, promote any substrate invariant you discover into the substrate spec/tests instead of leaving it encoded only in higher-level integration cases.
+
+### λ Deterministic worktree UX depends on separating "branch exists" from "branch available for attachment"
+
+A deterministic slug branch can exist in two different states: merely present in refs, or currently occupied by another worktree. Those states need different handling. Treating them as the same "branch already exists" condition obscures the real recovery path and encourages brittle retry logic. The useful distinction is not just branch existence, but branch attachability.
+
 ## 2026-03-14 - `/work-merge` cleanup must be gated by verified postconditions, not optimistic mutation success (commit `12ab9d4`)
 
 ### λ Destructive orchestration commands need explicit postcondition checks before cleanup
