@@ -5,6 +5,7 @@ Current truth about the Psi system.
 ---
 
 ## Operating Frame
+- ✓ `/tree` session switch no longer leaves "connecting..." footer (2026-03-13, commit `d15b3de`): response callback now calls `psi-emacs--focus-input-area` instead of `psi-emacs--show-connecting-affordances`; `footer/updated` + `session/updated` events arrive before the response frame and already carry the correct footer, so overwriting with a placeholder was incorrect. Same fix applied to `/new` success path. 206/206 ERT passing.
 - ✓ Prompt memory now includes explicit root-cause preference principle (2026-03-13, commit `859515c`): `λf. f (prefer (fix_root_cause) (over workaround))` in `AGENTS.md`.
 - ✓ RPC handshake now emits `host/updated` bootstrap snapshot for rpc-edn sessions (2026-03-13, commit `a639f3e`) via `:handshake-host-updated-payload-fn` + handshake event emission path in `psi.agent-session.rpc`.
 - ✓ Emacs `/tree` session selection is simplified to a single source of truth (`host-snapshot`) with no `list_sessions` fallback branch (commit `a639f3e`); startup host state is expected from handshake bootstrap + subscribe lifecycle.
