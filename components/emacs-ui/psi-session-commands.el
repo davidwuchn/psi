@@ -302,10 +302,11 @@ Returns selected MODEL-ENTRY map or nil when cancelled/no selection."
         ;; Clear stale transcript state, then fetch canonical messages so startup
         ;; prompts are replayed in the frontend transcript.
         (psi-emacs--reset-transcript-state t)
-        ;; Keep bottom-of-buffer affordances visible while backend session
-        ;; rehydrates and before first canonical footer/session update arrives.
-        (when (fboundp 'psi-emacs--show-connecting-affordances)
-          (psi-emacs--show-connecting-affordances (current-buffer)))
+        ;; footer/updated and session/updated arrive as events before the response
+        ;; frame, so the footer is already correct by the time this callback fires.
+        ;; Only focus input — do not overwrite the footer with "connecting...".
+        (when (fboundp 'psi-emacs--focus-input-area)
+          (psi-emacs--focus-input-area (current-buffer)))
         (psi-emacs--set-run-state state 'streaming)
         (psi-emacs--request-get-messages-for-switch state))
     (psi-emacs--append-assistant-message
@@ -657,10 +658,11 @@ Failure path appends deterministic assistant-visible feedback, sets
     (if (psi-emacs--rpc-frame-success-p frame)
         (progn
           (psi-emacs--reset-transcript-state)
-          ;; Keep bottom-of-buffer affordances visible while backend session
-          ;; rehydrates and before first canonical footer/session update arrives.
-          (when (fboundp 'psi-emacs--show-connecting-affordances)
-            (psi-emacs--show-connecting-affordances (current-buffer)))
+          ;; footer/updated and session/updated arrive as events before the response
+          ;; frame, so the footer is already correct by the time this callback fires.
+          ;; Only focus input — do not overwrite the footer with "connecting...".
+          (when (fboundp 'psi-emacs--focus-input-area)
+            (psi-emacs--focus-input-area (current-buffer)))
           (psi-emacs--set-run-state state 'streaming)
           (psi-emacs--request-get-messages-for-switch state))
       (let ((message (psi-emacs--switch-session-error-message frame)))

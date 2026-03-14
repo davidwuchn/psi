@@ -1267,8 +1267,7 @@ text) in long-lived Emacs sessions with overridden slash handlers."
                          (setq cleared-before-replay
                                (and (not (string-match-p "old transcript" (buffer-string)))
                                     (null (psi-emacs-state-last-error psi-emacs--state))
-                                    (zerop (hash-table-count (psi-emacs-state-tool-rows psi-emacs--state)))
-                                    (equal "connecting..." (psi-emacs-state-projection-footer psi-emacs--state))))
+                                    (zerop (hash-table-count (psi-emacs-state-tool-rows psi-emacs--state)))))
                          (funcall callback
                                   '((:kind . :response)
                                     (:ok . t)
@@ -1433,8 +1432,10 @@ text) in long-lived Emacs sessions with overridden slash handlers."
           (setq rpc-calls (nreverse rpc-calls))
           (should (equal '("new_session" "get_messages") (mapcar #'car rpc-calls)))
           (should (psi-emacs--input-separator-marker-valid-p))
-          (should (equal "connecting..." (psi-emacs-state-projection-footer psi-emacs--state)))
-          (should (string-match-p "connecting\\.\\.\\." (buffer-string))))
+          ;; reset-transcript-state clears the footer to nil.  footer/updated arrives as
+          ;; an event before the response frame in the real protocol and restores the footer,
+          ;; but in this unit test no footer/updated event fires so footer stays nil.
+          (should (null (psi-emacs-state-projection-footer psi-emacs--state))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
