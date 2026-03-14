@@ -388,7 +388,7 @@ Ordered steps toward PSI COMPLETE.
 - Verification snapshot:
   - `clojure -M:test --focus psi.history.git-test --focus psi.history.resolvers-test --focus psi.introspection.agent-session-test --focus psi.agent-session.core-test --focus psi.agent-session.resolvers-test --focus extensions.work-on-test`
   - result: 118 tests, 817 assertions, 0 failures
-- Follow-up convergence landed (post-`ad691d4`):
+- Follow-up convergence landed (post-`ad691d4`, commit `3bbb958`):
   - `/work-on` now creates a distinct host peer session explicitly instead of rebinding the active runtime session in place
   - `/work-merge` now auto-switches back to an existing main-worktree session when present, or creates one when absent
   - extension session lifecycle surface now exists as first-class mutations/API (`psi.extension/create-session`, `psi.extension/switch-session`; `createSession`, `switchSession`)
