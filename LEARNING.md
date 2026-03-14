@@ -3,6 +3,38 @@
 
 ---
 
+## 2026-03-13 - RPC events arrive before the response frame; response callbacks must not overwrite event-set state (commit `d15b3de`)
+
+### λ Events emitted synchronously before a response frame are already applied when the callback fires
+
+In the psi RPC protocol, the backend emits `footer/updated` and `session/updated` as `:event` frames
+before the `:response` frame for ops like `switch_session` and `new_session`. The Emacs client processes
+these events immediately via `on-event`. By the time the response callback fires, the footer and session
+state are already correct. Any callback that overwrites this state with a placeholder ("connecting...")
+is introducing a regression, not a helpful intermediate state.
+
+### λ `show-connecting-affordances` was designed for startup, not for session-switch callbacks
+
+`psi-emacs--show-connecting-affordances` seeds `"connecting..."` as a footer placeholder and focuses
+input. It was originally introduced to handle the gap between transcript reset and the first event
+arriving from a new session. For session switching over RPC, that gap does not exist — events arrive
+before the response. The correct call in a switch response callback is `psi-emacs--focus-input-area`
+only; the footer is already set.
+
+### λ Tests that assert intermediate state must account for event ordering relative to the callback
+
+Tests that stub out RPC calls and invoke callbacks directly bypass the event channel. When the real
+protocol delivers events before the response, tests that assert "connecting..." in the callback
+are testing the wrong intermediate state. After this fix, the correct test assertion is: footer is
+whatever events set it to (or nil if reset cleared it and no event fired in the test).
+
+### λ Connecting placeholder logic should be scoped to cases where no event precedes the callback
+
+The pattern `seed placeholder → wait for event to replace it` is only valid when events are
+guaranteed to arrive after the response (e.g., reconnect/startup where no events precede the
+handshake response). For ops that emit events before their response frame, the placeholder
+approach inverts the ordering and produces a visible regression.
+
 ## 2026-03-13 - Prompt memory should state root-cause preference explicitly (commit `859515c`)
 
 ### λ Fix strategy preference belongs in durable prompt memory
