@@ -132,6 +132,12 @@
                   {:append-prompt "Extra instructions here."})]
       (is (str/includes? prompt "Extra instructions here."))))
 
+  (testing "includes explicit worktree directory metadata"
+    (let [prompt (sys-prompt/build-system-prompt
+                  {:cwd "/tmp/worktree-demo"})]
+      (is (str/includes? prompt "Current working directory: /tmp/worktree-demo"))
+      (is (str/includes? prompt "Current worktree directory: /tmp/worktree-demo"))))
+
   (testing "includes prompt contributions when provided"
     (let [prompt (sys-prompt/build-system-prompt
                   {:prompt-contributions [{:id "x"

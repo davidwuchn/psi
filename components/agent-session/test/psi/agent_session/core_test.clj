@@ -4,6 +4,7 @@
   Every test gets its own isolated context via `create-context` (Nullable
   pattern) — no global-state mutations, no ordering dependencies."
   (:require
+   [clojure.string :as str]
    [clojure.test :refer [deftest testing is]]
    [com.fulcrologic.statecharts.chart :as chart]
    [com.fulcrologic.statecharts.elements :as ele]
@@ -427,6 +428,26 @@
           result (session/query-in ctx [:psi.agent-session/system-prompt])]
       (is (= prompt (:psi.agent-session/system-prompt result)))
       (is (= prompt (:system-prompt (agent-core/get-data-in (:agent-ctx ctx)))))))
+
+  (testing "new-session-in! retargets runtime prompt cwd metadata to the new worktree path"
+    (let [ctx       (session/create-context)
+          old-cwd   "/tmp/main"
+          new-cwd   "/tmp/worktree"
+          base      (str "Prompt body"
+                         "\nCurrent date and time: Friday, March 13, 2026 at 11:00:00 am GMT-04:00"
+                         "\nCurrent working directory: " old-cwd
+                         "\nCurrent worktree directory: " old-cwd)]
+      (swap! (:session-data-atom ctx) assoc
+             :worktree-path old-cwd
+             :base-system-prompt base
+             :system-prompt base)
+      (session/new-session-in! ctx {:worktree-path new-cwd})
+      (let [sd (session/get-session-data-in ctx)]
+        (is (str/includes? (:base-system-prompt sd) (str "Current working directory: " new-cwd)))
+        (is (str/includes? (:base-system-prompt sd) (str "Current worktree directory: " new-cwd)))
+        (is (str/includes? (:system-prompt sd) (str "Current working directory: " new-cwd)))
+        (is (str/includes? (:system-prompt sd) (str "Current worktree directory: " new-cwd)))
+        (is (not (str/includes? (:system-prompt sd) (str "Current working directory: " old-cwd)))))))
 
   (testing "query-in resolves graph capabilities via agent-session bridge"
     (let [ctx    (session/create-context)

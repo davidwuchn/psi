@@ -92,6 +92,7 @@
 (declare register-resolvers-in!)
 (declare register-mutations-in!)
 (declare refresh-system-prompt-in!)
+(declare retarget-runtime-prompt-metadata-in!)
 (declare send-extension-message-in!)
 (declare maybe-mark-workflow-jobs-terminal!)
 (declare maybe-emit-background-job-terminal-messages!)
@@ -561,6 +562,7 @@
                  file        (persist/new-session-file-path session-dir new-session-id)]
              (swap-session! ctx assoc :session-file (str file))
              (reset! (:flush-state-atom ctx) {:flushed? false :session-file file})))
+         (retarget-runtime-prompt-metadata-in! ctx)
          (when session-name
            (journal-append! ctx (persist/session-info-entry session-name)))
          (journal-append! ctx
@@ -633,9 +635,10 @@
             (when model
               (agent/set-model-in! (:agent-ctx ctx) model))
             (agent/set-thinking-level-in! (:agent-ctx ctx) thinking-level)
-            (agent/replace-messages-in! (:agent-ctx ctx) (vec messages)))))
+            (agent/replace-messages-in! (:agent-ctx ctx) (vec messages))
+            (retarget-runtime-prompt-metadata-in! ctx)))
       (ext/dispatch-in reg "session_switch" {:reason :resume})
-      (get-session-data-in ctx))))
+      (get-session-data-in ctx)))))
 
 (defn fork-session-in!
   "Fork the session from `entry-id`, creating a new session branch.
@@ -890,6 +893,34 @@
   "Return prompt contributions sorted by deterministic render order."
   [ctx]
   (sorted-prompt-contributions (:prompt-contributions (get-session-data-in ctx))))
+
+(def ^:private runtime-metadata-tail-re
+  #"\nCurrent date and time: .*\nCurrent working directory: .*\nCurrent worktree directory: .*\z")
+
+(defn- refresh-runtime-metadata-tail
+  [prompt cwd]
+  (let [now    (java.time.ZonedDateTime/now)
+        fmt    (java.time.format.DateTimeFormatter/ofPattern
+                "EEEE, MMMM d, yyyy 'at' hh:mm:ss a z")
+        dt-str (.format now fmt)
+        tail   (str "\nCurrent date and time: " dt-str
+                    "\nCurrent working directory: " cwd
+                    "\nCurrent worktree directory: " cwd)]
+    (cond
+      (not (string? prompt)) prompt
+      (str/blank? prompt) prompt
+      (re-find runtime-metadata-tail-re prompt)
+      (str/replace prompt runtime-metadata-tail-re tail)
+      :else prompt)))
+
+(defn- retarget-runtime-prompt-metadata-in!
+  [ctx]
+  (let [cwd (effective-cwd-in ctx)]
+    (swap-session! ctx update :base-system-prompt refresh-runtime-metadata-tail cwd)
+    (swap-session! ctx update :system-prompt refresh-runtime-metadata-tail cwd)
+    (when-let [prompt (:system-prompt (get-session-data-in ctx))]
+      (agent/set-system-prompt-in! (:agent-ctx ctx) prompt))
+    (get-session-data-in ctx)))
 
 (defn refresh-system-prompt-in!
   "Recompute runtime :system-prompt from :base-system-prompt plus enabled

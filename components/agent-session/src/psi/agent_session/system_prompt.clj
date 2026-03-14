@@ -262,4 +262,5 @@
           (or skills-section "")
           (or contributions-section "")
           "\nCurrent date and time: " dt-str
-          "\nCurrent working directory: " resolved-cwd))))
+          "\nCurrent working directory: " resolved-cwd
+          "\nCurrent worktree directory: " resolved-cwd))))
