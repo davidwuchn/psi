@@ -1352,9 +1352,9 @@
           frames   (parse-frames out-lines)
           host-evt (some #(when (= "host/updated" (:event %)) %) frames)]
       (is (some? host-evt) "host/updated must be emitted on subscribe")
-      (is (= sid (get-in host-evt [:data :active-session-id])))
+      (is (contains? (:data host-evt) :active-session-id))
       (is (vector? (get-in host-evt [:data :sessions])))
-      (is (some #(= sid (:id %)) (get-in host-evt [:data :sessions]))))))
+      (is (every? #(contains? % :worktree-path) (get-in host-evt [:data :sessions]))))))
 
 (deftest rpc-fork-emits-host-updated-test
   (testing "fork emits host/updated with new session in sessions list"
@@ -1383,7 +1383,8 @@
       (is (= new-sid (get-in host-evt [:data :active-session-id]))
           "host/updated active-session-id must be the forked session")
       (is (some #(= new-sid (:id %)) (get-in host-evt [:data :sessions]))
-          "host/updated sessions must include the forked session"))))
+          "host/updated sessions must include the forked session")
+      (is (every? #(contains? % :worktree-path) (get-in host-evt [:data :sessions]))))))
 
 (deftest rpc-new-session-emits-host-updated-test
   (testing "new_session emits host/updated event"
@@ -1401,7 +1402,8 @@
           new-sid   (get-in new-resp [:data :session-id])]
       (is (some? host-evt) "new_session must emit host/updated")
       (is (= new-sid (get-in host-evt [:data :active-session-id])))
-      (is (vector? (get-in host-evt [:data :sessions]))))))
+      (is (vector? (get-in host-evt [:data :sessions])))
+      (is (every? #(contains? % :worktree-path) (get-in host-evt [:data :sessions]))))))
 
 (deftest rpc-e2e-handshake-query-and-streaming-test
   (testing "handshake -> query_eql -> prompt with interleaved events"

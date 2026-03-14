@@ -161,11 +161,15 @@
                      {:psi.agent-session/host-sessions
                       [:psi.session-info/id
                        :psi.session-info/path
+                       :psi.session-info/cwd
+                       :psi.session-info/worktree-path
                        :psi.session-info/name]}])
           persisted-result
           (q-in ctx [{:psi.session/list
                       [:psi.session-info/id
                        :psi.session-info/path
+                       :psi.session-info/cwd
+                       :psi.session-info/worktree-path
                        :psi.session-info/name
                        :psi.session-info/message-count]}])
           host-sessions (:psi.agent-session/host-sessions process-result)
@@ -176,12 +180,16 @@
       (is (some #(= sid-2 (:psi.session-info/id %)) host-sessions))
       (is (some #(= path-1 (:psi.session-info/path %)) host-sessions))
       (is (some #(= path-2 (:psi.session-info/path %)) host-sessions))
+      (is (every? #(= cwd (:psi.session-info/cwd %)) host-sessions))
+      (is (every? #(= cwd (:psi.session-info/worktree-path %)) host-sessions))
 
       (is (vector? persisted))
       (is (some #(= sid-1 (:psi.session-info/id %)) persisted))
       (is (some #(= sid-2 (:psi.session-info/id %)) persisted))
       (is (some #(= "alpha" (:psi.session-info/name %)) persisted))
       (is (some #(= "beta" (:psi.session-info/name %)) persisted))
+      (is (every? #(= cwd (:psi.session-info/cwd %)) persisted))
+      (is (every? #(= cwd (:psi.session-info/worktree-path %)) persisted))
       (is (every? integer? (map :psi.session-info/message-count persisted))))))
 
 (deftest host-index-graph-introspection-test

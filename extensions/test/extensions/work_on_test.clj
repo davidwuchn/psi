@@ -135,7 +135,7 @@
         ((get-in @state [:commands "work-on" :handler]) "fix repeated thinking output in emacs")
         (is (= ["s-existing"] @switched))
         (is (re-find #"Working in `/repo/fix-repeated-thinking-output` on branch `fix-repeated-thinking-output`"
-                     @printed)))))
+                     @printed))))))
 
 (deftest work-on-command-usage-error-test
   (testing "/work-on without description prints usage"
@@ -242,4 +242,165 @@
                  :psi.agent-session/cwd "/repo/main"}]
                @created))
         (is (= ["s-main-created"] @switched))
-        (is (re-find #"Merged `feature-x` into `main`" @printed)))))))
+        (is (re-find #"Merged `feature-x` into `main`" @printed))))))
+
+(deftest work-merge-conflict-and-ff-failure-messages-test
+  (testing "/work-merge reports fast-forward guidance when merge is not fast-forwardable"
+    (let [printed (atom nil)
+          {:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/work_on.clj"
+                                :query-fn (fn [q]
+                                            (case q
+                                              [:psi.agent-session/session-id
+                                               :psi.agent-session/session-name
+                                               :psi.agent-session/session-file
+                                               :psi.agent-session/cwd
+                                               :psi.agent-session/system-prompt
+                                               :psi.agent-session/host-sessions
+                                               :psi.agent-session/git-worktree-current
+                                               :psi.agent-session/git-worktrees]
+                                              {:psi.agent-session/session-id "s-feature"
+                                               :psi.agent-session/git-worktree-current {:git.worktree/path "/repo/feature-x"
+                                                                                        :git.worktree/branch-name "feature-x"}
+                                               :psi.agent-session/git-worktrees [{:git.worktree/path "/repo/main"
+                                                                                 :git.worktree/branch-name "main"}
+                                                                                {:git.worktree/path "/repo/feature-x"
+                                                                                 :git.worktree/branch-name "feature-x"
+                                                                                 :git.worktree/current? true}]}
+                                              {}))
+                                :mutate-fn (fn [op _params]
+                                             (case op
+                                               git.branch/merge! {:merged false
+                                                                  :error "not fast-forwardable onto main"}
+                                               nil))})]
+      (with-redefs [println (fn [& xs] (reset! printed (apply str xs)))]
+        (sut/init api)
+        ((get-in @state [:commands "work-merge" :handler]) "")
+        (is (= "branch is not fast-forwardable onto main; rebase first with /work-rebase"
+               @printed)))))
+
+  (testing "/work-merge reports generic merge failure when merge fails for another reason"
+    (let [printed (atom nil)
+          {:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/work_on.clj"
+                                :query-fn (fn [q]
+                                            (case q
+                                              [:psi.agent-session/session-id
+                                               :psi.agent-session/session-name
+                                               :psi.agent-session/session-file
+                                               :psi.agent-session/cwd
+                                               :psi.agent-session/system-prompt
+                                               :psi.agent-session/host-sessions
+                                               :psi.agent-session/git-worktree-current
+                                               :psi.agent-session/git-worktrees]
+                                              {:psi.agent-session/session-id "s-feature"
+                                               :psi.agent-session/git-worktree-current {:git.worktree/path "/repo/feature-x"
+                                                                                        :git.worktree/branch-name "feature-x"}
+                                               :psi.agent-session/git-worktrees [{:git.worktree/path "/repo/main"
+                                                                                 :git.worktree/branch-name "main"}
+                                                                                {:git.worktree/path "/repo/feature-x"
+                                                                                 :git.worktree/branch-name "feature-x"
+                                                                                 :git.worktree/current? true}]}
+                                              {}))
+                                :mutate-fn (fn [op _params]
+                                             (case op
+                                               git.branch/merge! {:merged false
+                                                                  :error "merge conflict; resolve manually"}
+                                               nil))})]
+      (with-redefs [println (fn [& xs] (reset! printed (apply str xs)))]
+        (sut/init api)
+        ((get-in @state [:commands "work-merge" :handler]) "")
+        (is (= "merge conflict; resolve manually"
+               @printed))))))
+
+(deftest work-main-worktree-guards-and-status-test
+  (testing "/work-merge and /work-rebase reject execution on the main worktree"
+    (let [printed (atom [])
+          {:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/work_on.clj"
+                                :query-fn (fn [q]
+                                            (case q
+                                              [:psi.agent-session/session-id
+                                               :psi.agent-session/session-name
+                                               :psi.agent-session/session-file
+                                               :psi.agent-session/cwd
+                                               :psi.agent-session/system-prompt
+                                               :psi.agent-session/host-sessions
+                                               :psi.agent-session/git-worktree-current
+                                               :psi.agent-session/git-worktrees]
+                                              {:psi.agent-session/session-id "s-main"
+                                               :psi.agent-session/git-worktree-current {:git.worktree/path "/repo/main"
+                                                                                        :git.worktree/branch-name "main"
+                                                                                        :git.worktree/current? true}
+                                               :psi.agent-session/git-worktrees [{:git.worktree/path "/repo/main"
+                                                                                 :git.worktree/branch-name "main"
+                                                                                 :git.worktree/current? true}]}
+                                              {}))})]
+      (with-redefs [println (fn [& xs] (swap! printed conj (apply str xs)))]
+        (sut/init api)
+        ((get-in @state [:commands "work-merge" :handler]) "")
+        ((get-in @state [:commands "work-rebase" :handler]) "")
+        (is (= ["already on main worktree; nothing to merge"
+                "already on main worktree; nothing to rebase"]
+               @printed)))))
+
+  (testing "/work-status renders linked worktrees and marks the current linked worktree"
+    (let [printed (atom nil)
+          {:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/work_on.clj"
+                                :query-fn (fn [q]
+                                            (case q
+                                              [:psi.agent-session/session-id
+                                               :psi.agent-session/session-name
+                                               :psi.agent-session/session-file
+                                               :psi.agent-session/cwd
+                                               :psi.agent-session/system-prompt
+                                               :psi.agent-session/host-sessions
+                                               :psi.agent-session/git-worktree-current
+                                               :psi.agent-session/git-worktrees]
+                                              {:psi.agent-session/session-id "s-feature"
+                                               :psi.agent-session/git-worktree-current {:git.worktree/path "/repo/feature-x"
+                                                                                        :git.worktree/branch-name "feature-x"
+                                                                                        :git.worktree/current? true}
+                                               :psi.agent-session/git-worktrees [{:git.worktree/path "/repo/main"
+                                                                                 :git.worktree/branch-name "main"}
+                                                                                {:git.worktree/path "/repo/feature-x"
+                                                                                 :git.worktree/branch-name "feature-x"
+                                                                                 :git.worktree/current? true}
+                                                                                {:git.worktree/path "/repo/bug-y"
+                                                                                 :git.worktree/branch-name "bug-y"}]}
+                                              {}))})]
+      (with-redefs [println (fn [& xs] (reset! printed (apply str xs)))]
+        (sut/init api)
+        ((get-in @state [:commands "work-status" :handler]) "")
+        (is (re-find #"Active worktrees:" @printed))
+        (is (re-find #"- /repo/feature-x \[feature-x\] \(current\)" @printed))
+        (is (re-find #"- /repo/bug-y \[bug-y\]" @printed))
+        (is (not (re-find #"- /repo/main \[main\]" @printed))))))
+
+  (testing "/work-status renders none when no linked worktrees exist"
+    (let [printed (atom nil)
+          {:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/work_on.clj"
+                                :query-fn (fn [q]
+                                            (case q
+                                              [:psi.agent-session/session-id
+                                               :psi.agent-session/session-name
+                                               :psi.agent-session/session-file
+                                               :psi.agent-session/cwd
+                                               :psi.agent-session/system-prompt
+                                               :psi.agent-session/host-sessions
+                                               :psi.agent-session/git-worktree-current
+                                               :psi.agent-session/git-worktrees]
+                                              {:psi.agent-session/session-id "s-main"
+                                               :psi.agent-session/git-worktree-current {:git.worktree/path "/repo/main"
+                                                                                        :git.worktree/branch-name "main"
+                                                                                        :git.worktree/current? true}
+                                               :psi.agent-session/git-worktrees [{:git.worktree/path "/repo/main"
+                                                                                 :git.worktree/branch-name "main"
+                                                                                 :git.worktree/current? true}]}
+                                              {}))})]
+      (with-redefs [println (fn [& xs] (reset! printed (apply str xs)))]
+        (sut/init api)
+        ((get-in @state [:commands "work-status" :handler]) "")
+        (is (= "Active worktrees:\n(none)" @printed))))))

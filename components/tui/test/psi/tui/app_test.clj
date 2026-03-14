@@ -209,7 +209,8 @@
                       :first-message "hello"
                       :message-count 3
                       :modified (java.time.Instant/now)
-                      :cwd "/tmp/psi-test"}])]
+                      :cwd "/tmp/psi-test"
+                      :worktree-path "/tmp/psi-test"}])]
       (let [update-fn (app/make-update (stub-agent-fn ""))
             state     (init-state "test-model" {:cwd "/tmp/psi-test"})
             typed     (type-text update-fn state "/resume")
@@ -237,7 +238,8 @@
                         :first-message "hello"
                         :message-count 3
                         :modified (java.time.Instant/now)
-                        :cwd "/tmp/psi-test"}])]
+                        :cwd "/tmp/psi-test"
+                        :worktree-path "/tmp/psi-test"}])]
         (let [update-fn (app/make-update (stub-agent-fn ""))
               state     (init-state "test-model"
                                     {:cwd "/tmp/psi-test"
@@ -277,7 +279,8 @@
                       :first-message "hello"
                       :message-count 3
                       :modified (java.time.Instant/now)
-                      :cwd "/tmp/psi-test"}])]
+                      :cwd "/tmp/psi-test"
+                      :worktree-path "/tmp/psi-test"}])]
       (let [update-fn (app/make-update (stub-agent-fn ""))
             state     (init-state "test-model" {:cwd "/tmp/psi-test"})
             typed     (type-text update-fn state "/resume")
@@ -296,7 +299,8 @@
                       :first-message "hello"
                       :message-count 3
                       :modified (java.time.Instant/now)
-                      :cwd "/tmp/psi-test"}])]
+                      :cwd "/tmp/psi-test"
+                      :worktree-path "/tmp/psi-test"}])]
       (let [update-fn (app/make-update (stub-agent-fn ""))
             state     (init-state "test-model" {:cwd "/tmp/psi-test"})
             typed     (type-text update-fn state "/resume")
@@ -314,7 +318,8 @@
                        :psi.agent-session/host-sessions
                        [{:psi.session-info/id "s1"
                          :psi.session-info/path "/tmp/psi-test/a.ndedn"
-                         :psi.session-info/name "Root"}]})
+                         :psi.session-info/name "Root"
+                         :psi.session-info/worktree-path "/tmp/psi-test/root"}]})
           [state _] ((app/make-init "test-model" qfn nil {:dispatch-fn default-dispatch-fn
                                                           :cwd "/tmp/psi-test"}))
           typed      (type-text update-fn state "/tree")
@@ -353,10 +358,12 @@
                          :psi.agent-session/host-sessions
                          [{:psi.session-info/id "s1"
                            :psi.session-info/path "/tmp/psi-test/a.ndedn"
-                           :psi.session-info/name "Root"}
+                           :psi.session-info/name "Root"
+                           :psi.session-info/worktree-path "/tmp/psi-test/root"}
                           {:psi.session-info/id "s2"
                            :psi.session-info/path "/tmp/psi-test/b.ndedn"
                            :psi.session-info/name "Child"
+                           :psi.session-info/worktree-path "/tmp/psi-test/child"
                            :psi.session-info/parent-session-id "s1"}]})
           [state _]   ((app/make-init "test-model" qfn nil {:dispatch-fn default-dispatch-fn
                                                             :cwd "/tmp/psi-test"
@@ -384,10 +391,12 @@
                        [{:psi.session-info/id "s2"
                          :psi.session-info/path "/tmp/psi-test/b.ndedn"
                          :psi.session-info/name "Child"
+                         :psi.session-info/worktree-path "/tmp/psi-test/child"
                          :psi.session-info/parent-session-id "s1"}
                         {:psi.session-info/id "s1"
                          :psi.session-info/path "/tmp/psi-test/a.ndedn"
-                         :psi.session-info/name "Root"}]})
+                         :psi.session-info/name "Root"
+                         :psi.session-info/worktree-path "/tmp/psi-test/root"}]})
           [state _] ((app/make-init "test-model" qfn nil {:dispatch-fn default-dispatch-fn
                                                           :cwd "/tmp/psi-test"}))
           typed     (type-text update-fn state "/tree")
@@ -397,6 +406,8 @@
           child-idx (.indexOf plain "└─ Child")]
       (is (str/includes? plain "Session Tree"))
       (is (str/includes? plain "● Root"))
+      (is (str/includes? plain "/tmp/psi-test/root"))
+      (is (str/includes? plain "/tmp/psi-test/child"))
       (is (str/includes? plain "[active]"))
       (is (str/includes? plain "└─ Child"))
       (is (and (>= root-idx 0)
@@ -411,10 +422,12 @@
                        :psi.agent-session/host-sessions
                        [{:psi.session-info/id "s1"
                          :psi.session-info/path "/tmp/psi-test/a.ndedn"
-                         :psi.session-info/name "Root"}
+                         :psi.session-info/name "Root"
+                         :psi.session-info/worktree-path "/tmp/psi-test/root"}
                         {:psi.session-info/id "s2"
                          :psi.session-info/path "/tmp/psi-test/b.ndedn"
                          :psi.session-info/name "Child"
+                         :psi.session-info/worktree-path "/tmp/psi-test/child"
                          :psi.session-info/parent-session-id "s1"
                          :is-streaming true}]})
           [state _] ((app/make-init "test-model" qfn nil {:dispatch-fn default-dispatch-fn

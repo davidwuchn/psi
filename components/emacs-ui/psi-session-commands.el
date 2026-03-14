@@ -463,6 +463,7 @@ Return nil for no argument. Otherwise return trimmed argument string."
   "Return canonical EQL query string for `/resume` session discovery."
   "[{:psi.session/list [:psi.session-info/path
                         :psi.session-info/name
+                        :psi.session-info/worktree-path
                         :psi.session-info/first-message
                         :psi.session-info/modified]}]")
 
@@ -487,6 +488,12 @@ Return nil for no argument. Otherwise return trimmed argument string."
      ((not (string-empty-p first-message)) first-message)
      ((not (string-empty-p path)) (file-name-nondirectory path))
      (t "(unnamed session)"))))
+
+(defun psi-emacs--resume-session-worktree-path (session)
+  "Return trimmed worktree path for SESSION, or empty string."
+  (string-trim (or (alist-get :psi.session-info/worktree-path session nil nil #'equal)
+                   (alist-get :psi.session-info/cwd session nil nil #'equal)
+                   "")))
 
 (defun psi-emacs--resume-session-modified-seconds (session)
   "Return SESSION modified timestamp as seconds since epoch.
@@ -526,7 +533,10 @@ Returns list of cons cells (DISPLAY . CANONICAL-PATH)."
       (let ((path (psi-emacs--resume-session-path session)))
         (when (not (string-empty-p path))
           (let* ((description (psi-emacs--resume-session-description session))
-                 (base (format "%s — %s" description path))
+                 (worktree (psi-emacs--resume-session-worktree-path session))
+                 (base (if (string-empty-p worktree)
+                           (format "%s — %s" description path)
+                         (format "%s — %s — %s" description worktree path)))
                  (count (1+ (gethash base seen 0)))
                  (label (if (= count 1)
                             base

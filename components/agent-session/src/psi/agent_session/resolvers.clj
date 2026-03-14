@@ -352,6 +352,8 @@
                  {:psi.agent-session/host-sessions
                   [:psi.session-info/id
                    :psi.session-info/path
+                   :psi.session-info/cwd
+                   :psi.session-info/worktree-path
                    :psi.session-info/name
                    :psi.session-info/parent-session-id
                    :psi.session-info/parent-session-path]}]}
@@ -375,6 +377,8 @@
      (mapv (fn [m]
              {:psi.session-info/id                  (:session-id m)
               :psi.session-info/path                (:session-file m)
+              :psi.session-info/cwd                 (:worktree-path m)
+              :psi.session-info/worktree-path       (:worktree-path m)
               :psi.session-info/name                (:session-name m)
               :psi.session-info/parent-session-id   (:parent-session-id m)
               :psi.session-info/parent-session-path (:parent-session-path m)})
@@ -1606,17 +1610,19 @@
 (defn- session-info->eql
   "Convert a SessionInfo map to :psi.session-info/* attributes."
   [info]
-  {:psi.session-info/path                (:path info)
-   :psi.session-info/id                  (:id info)
-   :psi.session-info/cwd                 (or (:worktree-path info) (:cwd info))
-   :psi.session-info/name                (:name info)
-   :psi.session-info/parent-session-id   (:parent-session-id info)
-   :psi.session-info/parent-session-path (:parent-session-path info)
-   :psi.session-info/created             (:created info)
-   :psi.session-info/modified            (:modified info)
-   :psi.session-info/message-count       (:message-count info)
-   :psi.session-info/first-message       (:first-message info)
-   :psi.session-info/all-messages-text   (:all-messages-text info)})
+  (let [worktree-path (or (:worktree-path info) (:cwd info))]
+    {:psi.session-info/path                (:path info)
+     :psi.session-info/id                  (:id info)
+     :psi.session-info/cwd                 worktree-path
+     :psi.session-info/worktree-path       worktree-path
+     :psi.session-info/name                (:name info)
+     :psi.session-info/parent-session-id   (:parent-session-id info)
+     :psi.session-info/parent-session-path (:parent-session-path info)
+     :psi.session-info/created             (:created info)
+     :psi.session-info/modified            (:modified info)
+     :psi.session-info/message-count       (:message-count info)
+     :psi.session-info/first-message       (:first-message info)
+     :psi.session-info/all-messages-text   (:all-messages-text info)}))
 
 (pco/defresolver session-list-resolver
   "Resolve all sessions for the current session's cwd, sorted by modified desc."
@@ -1626,6 +1632,7 @@
                   [:psi.session-info/path
                    :psi.session-info/id
                    :psi.session-info/cwd
+                   :psi.session-info/worktree-path
                    :psi.session-info/name
                    :psi.session-info/parent-session-id
                    :psi.session-info/parent-session-path
@@ -1649,6 +1656,7 @@
                   [:psi.session-info/path
                    :psi.session-info/id
                    :psi.session-info/cwd
+                   :psi.session-info/worktree-path
                    :psi.session-info/name
                    :psi.session-info/parent-session-id
                    :psi.session-info/parent-session-path

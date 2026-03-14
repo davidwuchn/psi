@@ -214,7 +214,31 @@
         (is (= :minimal (:thinking-level sd)))
         (is (= "openai" (:psi.agent-session/model-provider r)))
         (is (= "gpt-5.3-codex" (:psi.agent-session/model-id r)))
-        (is (= :minimal (:psi.agent-session/thinking-level r)))))))
+        (is (= :minimal (:psi.agent-session/thinking-level r))))))
+
+  (testing "resume-session-in! restores persisted worktree-path and runtime prompt metadata from header"
+    (let [ctx (session/create-context {:cwd "/repo/main"
+                                       :initial-session {:system-prompt "base prompt"
+                                                         :model {:provider "openai"
+                                                                 :id "gpt-5.3-codex"
+                                                                 :reasoning true}}})
+          f   (File/createTempFile "psi-resume-worktree" ".ndedn")]
+      (.deleteOnExit f)
+      (spit f (str "{:type :session :version 4 :id \"sess-worktree\" :timestamp #inst \"2024-01-01T00:00:00Z\" :cwd \"/legacy/cwd\" :worktree-path \"/repo/feature-x\"}\n"
+                   "{:id \"e1\" :parent-id nil :timestamp #inst \"2024-01-01T00:00:01Z\" :kind :thinking-level :data {:thinking-level :medium}}\n"
+                   "{:id \"e2\" :parent-id \"e1\" :timestamp #inst \"2024-01-01T00:00:02Z\" :kind :session-info :data {:name \"Feature X\"}}\n"
+                   "{:id \"e3\" :parent-id \"e2\" :timestamp #inst \"2024-01-01T00:00:03Z\" :kind :message :data {:message {:role \"assistant\" :content [{:type :text :text \"hello\"}]}}}\n"))
+      (session/resume-session-in! ctx (.getAbsolutePath f))
+      (let [sd     (session/get-session-data-in ctx)
+            result (session/query-in ctx [:psi.agent-session/cwd
+                                          :psi.agent-session/session-name
+                                          :psi.agent-session/system-prompt])]
+        (is (= "/repo/feature-x" (:worktree-path sd)))
+        (is (= "/repo/feature-x" (session/effective-cwd-in ctx)))
+        (is (= "/repo/feature-x" (:psi.agent-session/cwd result)))
+        (is (= "Feature X" (:session-name sd)))
+        (is (= "Feature X" (:psi.agent-session/session-name result)))
+        (is (= "base prompt" (:psi.agent-session/system-prompt result)))))))
 
 ;; ── Model management ────────────────────────────────────────────────────────
 

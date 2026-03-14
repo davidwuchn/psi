@@ -778,18 +778,22 @@
 
 (defn- host-session->selector-session
   [cwd m]
-  {:session-id        (:psi.session-info/id m)
-   :path              (:psi.session-info/path m)
-   :name              (:psi.session-info/name m)
-   :parent-session-id (:psi.session-info/parent-session-id m)
-   :is-streaming      (boolean (or (:psi.session-info/is-streaming m)
-                                   (:is-streaming m)))
-   :first-message     ""
-   :message-count     0
-   :modified          nil
-   :cwd               cwd
-   :tree-depth        0
-   :tree-prefix       ""})
+  (let [worktree-path (or (:psi.session-info/worktree-path m)
+                          (:psi.session-info/cwd m)
+                          cwd)]
+    {:session-id        (:psi.session-info/id m)
+     :path              (:psi.session-info/path m)
+     :name              (:psi.session-info/name m)
+     :parent-session-id (:psi.session-info/parent-session-id m)
+     :is-streaming      (boolean (or (:psi.session-info/is-streaming m)
+                                     (:is-streaming m)))
+     :first-message     ""
+     :message-count     0
+     :modified          nil
+     :cwd               worktree-path
+     :worktree-path     worktree-path
+     :tree-depth        0
+     :tree-prefix       ""}))
 
 (defn- tree-sort-host-sessions
   "Return host sessions in tree order with connector metadata.
@@ -2321,22 +2325,24 @@
                                            (if root?
                                              (charm/render dim-style "● ")
                                              ""))
+                              worktree   (shorten-path (or (:worktree-path info) (:cwd info)))
                               label      (if tree-mode?
-                                           (str tree-prefix glyph label)
+                                           (str tree-prefix glyph label
+                                                (when (seq worktree)
+                                                  (charm/render dim-style (str "  " worktree))))
                                            label)
                               right      (if tree-mode?
-                                           (let [sid        (:session-id info)
-                                                 sid-str    (some-> sid str)
-                                                 active?    (= sid (:active-session-id sel-state))
-                                                 streaming? (boolean (:is-streaming info))
+                                           (let [sid         (:session-id info)
+                                                 sid-str     (some-> sid str)
+                                                 active?     (= sid (:active-session-id sel-state))
+                                                 streaming?  (boolean (:is-streaming info))
                                                  status-cell (render-tree-status-cell active? streaming?)]
                                              (str status-cell
                                                   (when sid-str
                                                     (charm/render dim-style
                                                                   (str "  " (subs sid-str 0 (min 8 (count sid-str))))))))
                                            (let [cwd-part   (when (= :all scope)
-                                                              (str " " (charm/render dim-style
-                                                                                     (shorten-path (:cwd info)))))
+                                                              (str " " (charm/render dim-style worktree)))
                                                  mc (:message-count info)]
                                              (str (charm/render dim-style
                                                                 (str mc " " age))

@@ -754,7 +754,7 @@
 (defn- host-updated-payload
   "Build the `host/updated` event payload from the current host snapshot.
 
-   Each session slot includes :id :name :is-streaming :is-active :parent-session-id.
+   Each session slot includes :id :name :worktree-path :is-streaming :is-active :parent-session-id.
    Sessions are ordered by updated-at ascending (oldest first → stable tree order)."
   [ctx]
   (let [host       (session/get-session-host-in ctx)
@@ -765,6 +765,7 @@
                         (mapv (fn [m]
                                 {:id                (:session-id m)
                                  :name              (:session-name m)
+                                 :worktree-path     (:worktree-path m)
                                  :is-streaming      (boolean
                                                      (and (= (:session-id m) current-id)
                                                           (:is-streaming sd)))
