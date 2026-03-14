@@ -304,10 +304,18 @@
    - :path
    - :branch
    - :base-ref (defaults to HEAD)
-   - :create-branch (defaults to true)"
-  [ctx {:keys [path branch base-ref create-branch]
-        :or   {create-branch true}}]
-  (cond
+   - :create-branch (defaults to true)
+
+   Compatibility:
+   - accepts both :create-branch and :create_branch"
+  [ctx req]
+  (let [{:keys [path branch base-ref] :as req*} req
+        create-branch (if (contains? req* :create-branch)
+                        (:create-branch req*)
+                        (if (contains? req* :create_branch)
+                          (:create_branch req*)
+                          true))]
+    (cond
     (path-exists? path)
     {:path path
      :branch branch
@@ -324,11 +332,10 @@
 
     :else
     (let [base-ref* (or base-ref "HEAD")
-          args      (cond-> ["worktree" "add"]
-                      create-branch (into ["-b" branch])
-                      true          (conj path)
-                      (not create-branch) (conj branch)
-                      (seq base-ref*) (conj base-ref*))]
+          args      (if create-branch
+                      (cond-> ["worktree" "add" "-b" branch path]
+                        (seq base-ref*) (conj base-ref*))
+                      ["worktree" "add" path branch])]
       (try
         (run-git ctx args)
         {:path path
@@ -341,7 +348,7 @@
            :branch branch
            :head nil
            :success false
-           :error (error-message e)})))))
+           :error (error-message e)}))))))
 
 (defn worktree-remove
   "Remove a linked worktree.

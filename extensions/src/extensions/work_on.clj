@@ -142,13 +142,13 @@
                                        {:input {:path worktree-path
                                                 :branch branch-name
                                                 :base_ref nil
-                                                :create_branch true}})
+                                                :create-branch true}})
                 add-result    (if (= "branch already exists" (:error create-result))
                                 (mutate! 'git.worktree/add!
                                          {:input {:path worktree-path
                                                   :branch branch-name
                                                   :base_ref nil
-                                                  :create_branch false}})
+                                                  :create-branch false}})
                                 create-result)]
             (cond
               (:success add-result)

@@ -4,6 +4,7 @@
   Every test gets its own isolated context via `create-context` (Nullable
   pattern) — no global-state mutations, no ordering dependencies."
   (:require
+   [clojure.java.io :as io]
    [clojure.string :as str]
    [clojure.test :refer [deftest testing is]]
    [com.fulcrologic.statecharts.chart :as chart]
@@ -1017,7 +1018,34 @@
                                                         :branch "ext-mutation-worktree"}})])
                         'git.worktree/add!)]
         (is (contains? syms 'git.worktree/add!))
-        (is (true? (:success result)))))))
+        (is (true? (:success result))))))
+
+  (testing "isolated extension mutation path can attach a worktree to an existing branch"
+    (let [git-ctx       (history-git/create-null-context)
+          repo-dir      (:repo-dir git-ctx)
+          parent-dir    (.getParentFile (File. repo-dir))
+          branch-name   "fix-repeated-thinking-output"
+          source-path   (str parent-dir File/separator "branch-source")
+          worktree-path (str parent-dir File/separator branch-name)
+          _             (history-git/worktree-add git-ctx {:path source-path
+                                                           :branch branch-name})
+          _             (history-git/worktree-remove git-ctx {:path source-path})
+          ctx           (session/create-context {:cwd repo-dir :persist? false})
+          qctx          (query/create-query-context)]
+      (session/register-resolvers-in! qctx false)
+      (session/register-mutations-in! qctx true)
+      (let [attach (get (query/query-in qctx
+                                        {:psi/agent-session-ctx ctx
+                                         :git/context (history-git/create-context repo-dir)}
+                                        [(list 'git.worktree/add!
+                                               {:psi/agent-session-ctx ctx
+                                                :git/context (history-git/create-context repo-dir)
+                                                :input {:path worktree-path
+                                                        :branch branch-name
+                                                        :create-branch false}})])
+                        'git.worktree/add!)]
+        (is (true? (:success attach)) (pr-str attach))
+        (is (= branch-name (:branch attach)) (pr-str attach))))))
 
 (deftest session-query-in-exposes-recursion-attrs-test
   (testing "session/query-in can read recursion attrs from live session recursion-ctx"

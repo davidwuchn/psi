@@ -122,7 +122,7 @@
                                              (case op
                                                git.worktree/add! (let [input (:input params)]
                                                                    (swap! create-calls conj input)
-                                                                   (if (:create_branch input)
+                                                                   (if (:create-branch input)
                                                                      {:success false
                                                                       :error "branch already exists"}
                                                                      {:success true
@@ -139,11 +139,11 @@
         (is (= [{:path "/repo/fix-repeated-thinking-output"
                  :branch "fix-repeated-thinking-output"
                  :base_ref nil
-                 :create_branch true}
+                 :create-branch true}
                 {:path "/repo/fix-repeated-thinking-output"
                  :branch "fix-repeated-thinking-output"
                  :base_ref nil
-                 :create_branch false}]
+                 :create-branch false}]
                @create-calls))
         (is (re-find #"Working in `/repo/fix-repeated-thinking-output` on branch `fix-repeated-thinking-output`"
                      @printed)))))
