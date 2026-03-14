@@ -1996,7 +1996,7 @@
 
 (declare all-resolvers)
 
-(defn- session-resolver-surface
+(defn session-resolver-surface
   "Canonical resolver set used by agent-session/query-in.
 
    Kept in sync with `build-env` so graph introspection reflects what is

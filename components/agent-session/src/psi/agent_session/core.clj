@@ -2455,12 +2455,14 @@
 
 (defn register-resolvers-in!
   "Register all agent-session resolvers into an isolated `qctx` query context.
+   Includes history, memory, and recursion resolvers so session-root attrs
+   like :psi.agent-session/git-worktree-current are resolvable.
    Rebuilds the env unless `rebuild?` is false (useful when the caller will
    rebuild after adding further operations).
    Use in tests to avoid touching global state."
   ([qctx] (register-resolvers-in! qctx true))
   ([qctx rebuild?]
-   (doseq [r resolvers/all-resolvers]
+   (doseq [r (resolvers/session-resolver-surface)]
      (query/register-resolver-in! qctx r))
    (when rebuild?
      (query/rebuild-env-in! qctx))))

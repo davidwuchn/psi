@@ -9,7 +9,8 @@
    [psi.agent-session.background-jobs :as bg-jobs]
    [psi.agent-session.core :as session]
    [psi.agent-session.oauth.core :as oauth]
-   [psi.agent-session.persistence :as persist]))
+   [psi.agent-session.persistence :as persist]
+   [psi.query.core :as query]))
 
 ;; ── helpers ─────────────────────────────────────────────
 
@@ -539,5 +540,23 @@
       (is (contains? session-result :psi.agent-session/git-worktree-current))
       (is (contains? session-result :psi.agent-session/git-worktree-count))
       (is (integer? (:psi.agent-session/git-worktree-count session-result))))))
+
+(deftest register-resolvers-in-includes-history-resolvers-test
+  (testing "register-resolvers-in! includes history resolvers so worktree attrs are resolvable
+            (regression: extension query-fn uses isolated qctx via register-resolvers-in!)"
+    (let [ctx    (session/create-context {:persist? false})
+          qctx   (query/create-query-context)
+          _      (session/register-resolvers-in! qctx false)
+          _      (session/register-mutations-in! qctx true)
+          result (query/query-in qctx {:psi/agent-session-ctx ctx}
+                                 [:psi.agent-session/git-worktrees
+                                  :psi.agent-session/git-worktree-current
+                                  :psi.agent-session/git-worktree-count])]
+      (is (contains? result :psi.agent-session/git-worktrees)
+          "git-worktrees resolvable via isolated qctx (requires history resolvers)")
+      (is (contains? result :psi.agent-session/git-worktree-current)
+          "git-worktree-current resolvable via isolated qctx (requires history resolvers)")
+      (is (integer? (:psi.agent-session/git-worktree-count result))
+          "git-worktree-count is an integer via isolated qctx"))))
 
 
