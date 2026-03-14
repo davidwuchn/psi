@@ -64,6 +64,12 @@ For built-in extension docs (`extensions/src`), see:
 For architecture overview, components, EQL introspection guidance, and roadmap, see:
 - [`doc/architecture.md`](doc/architecture.md)
 
+## Graph discovery
+
+For the session-root graph discovery surface (`:psi.graph/*`), canonical discovery
+workflow, and graph semantics, see:
+- [`doc/graph-surface.md`](doc/graph-surface.md)
+
 ## ψ Psi project config
 
 Project query/config tool details:
