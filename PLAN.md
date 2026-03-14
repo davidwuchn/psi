@@ -441,6 +441,13 @@ Ordered steps toward PSI COMPLETE.
     - `clojure -M:test --focus psi.agent-session.persistence-test --focus psi.agent-session.core-test/resume-session-model-fallback-test --focus psi.agent-session.resolvers-test/multi-session-host-eql-process-and-persisted-test`
     - `clojure -M:test --focus psi.agent-session.resolvers-test/multi-session-host-eql-process-and-persisted-test --focus psi.agent-session.rpc-test/rpc-subscribe-emits-host-updated-test --focus psi.agent-session.rpc-test/rpc-fork-emits-host-updated-test --focus psi.agent-session.rpc-test/rpc-new-session-emits-host-updated-test`
     - `clojure -M:test --focus psi.tui.app-test/resume-command-opens-selector-test --focus psi.tui.app-test/tree-selector-view-renders-hierarchy-and-active-badge-test --focus psi.tui.app-test/tree-selector-view-aligns-status-columns-test --focus psi.agent-session.resolvers-test/multi-session-host-eql-process-and-persisted-test --focus psi.agent-session.rpc-test/rpc-subscribe-emits-host-updated-test`
+- PSL follow-up landed (2026-03-14, commit `ae22cb1`): `/work-merge` now executes the merge from the main worktree context instead of from the linked feature worktree.
+  - Root cause: the extension called `git.branch/merge!` without `:git/context`, so the mutation ran in the active linked worktree where the current branch already matched the merge target. That produced a false-success no-op merge, then `/work-merge` removed the worktree and reported success.
+  - Fix: `extensions/src/extensions/work_on.clj` now resolves the default branch in `main_wt.path` and passes `:git/context {:cwd main_wt.path}` to `git.branch/merge!`.
+  - Regression coverage added in `extensions/test/extensions/work_on_test.clj` to assert merge execution is rooted at the main worktree path.
+  - Focused verification green:
+    - `clojure -M:test --focus extensions.work-on-test`
+    - result: 8 tests, 30 assertions, 0 failures
 - No remaining required follow-up for the shipped worktree session workflow; future work is additive UX/documentation polish only.
 
 ### Step 12 — Emacs UI ◇ in progress
