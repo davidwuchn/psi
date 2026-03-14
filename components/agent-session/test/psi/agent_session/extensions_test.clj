@@ -493,6 +493,22 @@
       (is (= {:op 'psi.extension.workflow/create :params {:type :subagent :ext-path "/ext/test"}}
              ((:mutate api) 'psi.extension.workflow/create {:type :subagent})))))
 
+  (testing "API session lifecycle helpers delegate to runtime mutate fn"
+    (let [reg         (ext/create-registry)
+          _           (ext/register-extension-in! reg "/ext/test")
+          runtime-fns {:mutate-fn (fn [op params] {:op op :params params})}
+          api         (ext/create-extension-api reg "/ext/test" runtime-fns)]
+      (is (= {:op 'psi.extension/create-session
+              :params {:session-name "feature"
+                       :worktree-path "/repo/feature"
+                       :system-prompt "prompt"}}
+             ((:create-session api) {:session-name "feature"
+                                     :worktree-path "/repo/feature"
+                                     :system-prompt "prompt"})))
+      (is (= {:op 'psi.extension/switch-session
+              :params {:session-id "s1"}}
+             ((:switch-session api) "s1")))))
+
   (testing "API :get-api-key delegates to runtime get-api-key fn"
     (let [reg         (ext/create-registry)
           _           (ext/register-extension-in! reg "/ext/test")

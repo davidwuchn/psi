@@ -529,11 +529,16 @@
      (when-not cancelled?
        (wf/clear-all-in! (:workflow-registry ctx))
        (agent/reset-agent-in! (:agent-ctx ctx))
-       (let [new-session-id (str (java.util.UUID/randomUUID))]
+       (let [new-session-id (str (java.util.UUID/randomUUID))
+             current-sd     (get-session-data-in ctx)
+             worktree-path  (or (:worktree-path opts)
+                                (:worktree-path current-sd))
+             session-name   (:session-name opts)]
          (swap-session! ctx assoc
                         :session-id        new-session-id
                         :session-file      nil
-                        :session-name      nil
+                        :session-name      session-name
+                        :worktree-path     worktree-path
                         :parent-session-id nil
                         :parent-session-path nil
                         :spawn-mode        (or (:spawn-mode opts) :new-root)
@@ -554,6 +559,8 @@
                  file        (persist/new-session-file-path session-dir new-session-id)]
              (swap-session! ctx assoc :session-file (str file))
              (reset! (:flush-state-atom ctx) {:flushed? false :session-file file})))
+         (when session-name
+           (journal-append! ctx (persist/session-info-entry session-name)))
          (journal-append! ctx
                           (persist/thinking-level-entry
                            (:thinking-level (get-session-data-in ctx))))
@@ -1891,6 +1898,38 @@
   (let [sd (set-session-name-in! agent-session-ctx name)]
     {:psi.agent-session/session-name (:session-name sd)}))
 
+(pco/defmutation create-session
+  [_ {:keys [psi/agent-session-ctx session-name worktree-path system-prompt thinking-level]}]
+  {::pco/op-name 'psi.extension/create-session
+   ::pco/params  [:psi/agent-session-ctx]
+   ::pco/output  [:psi.agent-session/session-id
+                  :psi.agent-session/session-name
+                  :psi.agent-session/cwd
+                  :psi.agent-session/thinking-level]}
+  (let [sd0 (new-session-in! agent-session-ctx {:session-name session-name
+                                                :worktree-path worktree-path})
+        _   (when system-prompt
+              (set-system-prompt-in! agent-session-ctx system-prompt))
+        _   (when thinking-level
+              (set-thinking-level-in! agent-session-ctx thinking-level))
+        sd  (get-session-data-in agent-session-ctx)]
+    {:psi.agent-session/session-id    (:session-id sd)
+     :psi.agent-session/session-name  (:session-name sd)
+     :psi.agent-session/cwd           (:worktree-path sd)
+     :psi.agent-session/thinking-level (:thinking-level sd)}))
+
+(pco/defmutation switch-session
+  [_ {:keys [psi/agent-session-ctx session-id]}]
+  {::pco/op-name 'psi.extension/switch-session
+   ::pco/params  [:psi/agent-session-ctx :session-id]
+   ::pco/output  [:psi.agent-session/session-id
+                  :psi.agent-session/session-name
+                  :psi.agent-session/cwd]}
+  (let [sd (ensure-session-loaded-in! agent-session-ctx session-id)]
+    {:psi.agent-session/session-id   (:session-id sd)
+     :psi.agent-session/session-name (:session-name sd)
+     :psi.agent-session/cwd          (:worktree-path sd)}))
+
 (pco/defmutation set-active-tools
   [_ {:keys [psi/agent-session-ctx tool-names]}]
   {::pco/op-name 'psi.extension/set-active-tools
@@ -2385,6 +2424,8 @@
    add-extension
    add-tool
    set-session-name
+   create-session
+   switch-session
    set-active-tools
    set-model
    interrupt

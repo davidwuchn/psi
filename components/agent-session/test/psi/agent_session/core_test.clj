@@ -81,7 +81,23 @@
           (session/set-active-session-in! ctx first-id)
           (is (= first-id (:active-session-id (session/get-session-host-in ctx))))
           (session/set-active-session-in! ctx second-id)
-          (is (= second-id (:active-session-id (session/get-session-host-in ctx)))))))))
+          (is (= second-id (:active-session-id (session/get-session-host-in ctx))))))))
+
+  (testing "new-session-in! accepts explicit worktree-path and session-name and keeps prior host peer"
+    (let [ctx (session/create-context {:cwd "/repo/main"
+                                       :initial-session {:worktree-path "/repo/main"}})]
+      (session/new-session-in! ctx {:session-name "main"
+                                    :worktree-path "/repo/main"})
+      (let [sid-1 (:session-id (session/get-session-data-in ctx))]
+        (session/new-session-in! ctx {:session-name "feature work"
+                                      :worktree-path "/repo/feature-work"})
+        (let [sd   (session/get-session-data-in ctx)
+              host (session/get-session-host-in ctx)]
+          (is (= "feature work" (:session-name sd)))
+          (is (= "/repo/feature-work" (:worktree-path sd)))
+          (is (= (:session-id sd) (:active-session-id host)))
+          (is (= #{sid-1 (:session-id sd)} (set (keys (:sessions host)))))
+          (is (= "/repo/main" (get-in host [:sessions sid-1 :worktree-path]))))))))
 
 (deftest new-session-test
   (testing "new-session-in! resets session-id"

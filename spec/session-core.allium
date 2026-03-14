@@ -267,6 +267,8 @@ contract SessionCoreEql {
     session_lineage: (id: SessionId) -> JsonMap
     list_sessions: (project_id: ProjectId, worktree_path: WorktreePath) -> JsonMap
     switch_session: (project_id: ProjectId, worktree_path: WorktreePath, session_id: SessionId) -> JsonMap
+    extension_create_session: (session_name: String?, worktree_path: WorktreePath?, system_prompt: String?, thinking_level: String?) -> JsonMap
+    extension_switch_session: (session_id: SessionId) -> JsonMap
 
     @invariant SessionIdentityAttrs
         -- session attrs include:
@@ -292,6 +294,16 @@ contract SessionCoreEql {
         -- list/switch attrs include:
         -- {:session/list [{:session/id :session/name :session/status :session/streaming-state}]
         --  :session/active-id}
+
+    @invariant ExtensionCreateSessionAttrs
+        -- extension create-session attrs include:
+        -- {:psi.agent-session/session-id :psi.agent-session/session-name
+        --  :psi.agent-session/cwd :psi.agent-session/thinking-level}
+
+    @invariant ExtensionSwitchSessionAttrs
+        -- extension switch-session attrs include:
+        -- {:psi.agent-session/session-id :psi.agent-session/session-name
+        --  :psi.agent-session/cwd}
 }
 
 actor EqlClient {
@@ -324,6 +336,8 @@ surface SessionCoreApi {
         SessionForkRequested(parent_session_id, worktree_path, system_prompt, name)
         SubagentSessionRequested(parent_session_id, system_prompt, name)
         SessionSwitchRequested(project_id, worktree_path, session_id)
+        ExtensionSessionCreateRequested(session_name, worktree_path, system_prompt, thinking_level)
+        ExtensionSessionSwitchRequested(session_id)
         SessionMessageAppendRequested(session, role, content, metadata, tool_name, tool_call_id)
         AssistantStreamStarted(id)
         AssistantStreamCompleted(id)
@@ -342,6 +356,12 @@ surface SessionCoreApi {
     @guarantee SessionSwitchDoesNotInterruptOthers
         -- Switching active session does not force non-target sessions to idle.
         -- In-flight runs in non-target sessions continue.
+
+    @guarantee ExtensionSessionMutationsReuseCoreLifecycle
+        -- Extension-facing session create/switch mutations are thin wrappers over
+        -- the same core session lifecycle semantics.
+        -- create-session creates a distinct host peer session and makes it active.
+        -- switch-session routes to a resumable host session by id and makes it active.
 }
 
 open question "Should SessionMessage.content allow structured multimodal content in addition to String?"

@@ -388,9 +388,15 @@ Ordered steps toward PSI COMPLETE.
 - Verification snapshot:
   - `clojure -M:test --focus psi.history.git-test --focus psi.history.resolvers-test --focus psi.introspection.agent-session-test --focus psi.agent-session.core-test --focus psi.agent-session.resolvers-test --focus extensions.work-on-test`
   - result: 118 tests, 817 assertions, 0 failures
-- Follow-up candidates (optional refinement, not required for this step):
-  - make `/work-on` create a distinct host peer session explicitly instead of rebinding the active runtime session in place
-  - auto-switch `/work-merge` back to an existing main-worktree session when present
+- Follow-up convergence landed (post-`ad691d4`):
+  - `/work-on` now creates a distinct host peer session explicitly instead of rebinding the active runtime session in place
+  - `/work-merge` now auto-switches back to an existing main-worktree session when present, or creates one when absent
+  - extension session lifecycle surface now exists as first-class mutations/API (`psi.extension/create-session`, `psi.extension/switch-session`; `createSession`, `switchSession`)
+  - session and extension Allium surfaces synchronized (`spec/session-core.allium`, `spec/extension-system.allium`, `spec/work-on-extension.allium`)
+  - focused verification green:
+    - `clojure -M:test --focus psi.agent-session.extensions-test --focus extensions.work-on-test --focus psi.agent-session.core-test`
+    - result: 64 tests, 405 assertions, 0 failures
+- Remaining follow-up candidate:
   - sync user/internal docs for the new `/work-*` command surface
 
 ### Step 12 — Emacs UI ◇ in progress

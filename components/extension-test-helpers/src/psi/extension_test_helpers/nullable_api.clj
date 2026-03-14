@@ -244,6 +244,14 @@
          api         {:path path*
                       :query query*
                       :mutate mutate*
+                      :create-session (fn [{:keys [session-name worktree-path system-prompt thinking-level] :as opts}]
+                                        (mutate* 'psi.extension/create-session
+                                                 (cond-> {:session-name session-name
+                                                          :worktree-path worktree-path}
+                                                   (contains? opts :system-prompt) (assoc :system-prompt system-prompt)
+                                                   (contains? opts :thinking-level) (assoc :thinking-level thinking-level))))
+                      :switch-session (fn [session-id]
+                                        (mutate* 'psi.extension/switch-session {:session-id session-id}))
                       :get-api-key get-key*
                       :ui-type (or (:ui-type opts*) :console)
 

@@ -5,6 +5,8 @@
 (defonce ^:private state
   (atom {:query-fn nil
          :mutate-fn nil
+         :create-session-fn nil
+         :switch-session-fn nil
          :path nil}))
 
 (def ^:private stopwords
@@ -78,6 +80,13 @@
               s))
           sessions)))
 
+(defn- switch-to-session!
+  [session-id]
+  (when-let [f (:switch-session-fn @state)]
+    (try
+      (f session-id)
+      (catch Exception _ nil))))
+
 (defn- sibling-worktree-path
   [main-path slug]
   (let [f (java.io.File. (str main-path))]
@@ -92,20 +101,14 @@
   (println (str text)))
 
 (defn- create-worktree-session!
-  [description worktree-path parent-session-id]
-  (let [ctx-ns  (the-ns 'psi.agent-session.core)
-        ctx-var (ns-resolve ctx-ns 'global-context)
-        set-name-var (ns-resolve ctx-ns 'set-session-name-in!)
-        set-path-var (ns-resolve ctx-ns 'set-worktree-path-in!)
-        data-var (ns-resolve ctx-ns 'get-session-data-in)
-        ctx      (when ctx-var ((var-get ctx-var)))]
-    (when (and ctx set-path-var)
-      ((var-get set-path-var) ctx worktree-path)
-      (when set-name-var
-        ((var-get set-name-var) ctx description))
-      (when parent-session-id
-        (swap! (:session-data-atom ctx) assoc :parent-session-id parent-session-id))
-      ((var-get data-var) ctx))))
+  [description worktree-path _parent-session-id]
+  (when-let [f (:create-session-fn @state)]
+    (let [session (current-session-query)]
+      (try
+        (f {:session-name description
+            :worktree-path worktree-path
+            :system-prompt (:psi.agent-session/system-prompt session)})
+        (catch Exception _ nil)))))
 
 (defn work-on!
   [description]
@@ -174,13 +177,22 @@
                     (or (:error merge-result) "merge failed"))}
 
           :else
-          (let [remove-result (mutate! 'git.worktree/remove!
-                                       {:input {:path current-path
-                                                :force false}})
-                delete-result (mutate! 'git.branch/delete!
-                                       {:input {:branch current-branch
-                                                :force false}})
-                main-session  (find-session-for-worktree (:git.worktree/path main-wt))]
+          (let [remove-result   (mutate! 'git.worktree/remove!
+                                         {:input {:path current-path
+                                                  :force false}})
+                delete-result   (mutate! 'git.branch/delete!
+                                         {:input {:branch current-branch
+                                                  :force false}})
+                main-path       (:git.worktree/path main-wt)
+                main-session    (or (find-session-for-worktree main-path)
+                                    (when main-path
+                                      {:psi.session-info/id
+                                       (:psi.agent-session/session-id
+                                        (create-worktree-session!
+                                         (or (:git.worktree/branch-name main-wt) "main")
+                                         main-path
+                                         nil))}))
+                _               (switch-to-session! (:psi.session-info/id main-session))]
             {:ok? true
              :branch current-branch
              :into-branch (or (:branch (mutate! 'git.branch/default {}))
@@ -266,6 +278,8 @@
   (swap! state assoc
          :query-fn (:query api)
          :mutate-fn (:mutate api)
+         :create-session-fn (:create-session api)
+         :switch-session-fn (:switch-session api)
          :path (:path api))
   ((:register-command api) "work-on"
    {:description "Create a sibling git worktree + branch and continue there"

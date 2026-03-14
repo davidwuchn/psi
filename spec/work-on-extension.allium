@@ -300,6 +300,8 @@ surface WorkOnExtensionApi {
     @guarantee WorktreeSessionBinding
         -- The session created by /work-on has its worktree_path set
         -- to the new worktree, and its name set to the description.
+        -- The extension performs this through the extension session lifecycle surface
+        -- (createSession / switchSession), not by mutating session internals directly.
         -- All tool operations (read/write/edit/bash) run in that worktree context.
 
     @guarantee MergePreservesSession

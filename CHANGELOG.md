@@ -79,6 +79,25 @@
 - Δ Updated subagent extension spec (`spec/subagent-widget-extension.allium`) with fork-session args/rules and surface guidance.
 - Δ Updated `META.md` to record subagent optional fork inheritance in session semantics.
 
+## 2026-03-14
+
+- λ Δ Worktree session follow-up converged:
+  - `/work-on` now creates a distinct host peer session instead of rebinding the active session in place
+  - `/work-merge` now auto-switches back to an existing main-worktree session when present, or creates one when absent
+- Δ Added first-class extension session lifecycle mutations:
+  - `psi.extension/create-session`
+  - `psi.extension/switch-session`
+- Δ Extension API now exposes:
+  - `createSession(options)`
+  - `switchSession(session_id)`
+- Δ Migrated `extensions/src/extensions/work_on.clj` off direct session-core var resolution to the extension session lifecycle surface.
+- Δ Synced Allium surfaces for the new session lifecycle API:
+  - `spec/session-core.allium`
+  - `spec/extension-system.allium`
+  - `spec/work-on-extension.allium`
+- Δ Added focused coverage for extension API session lifecycle helpers and work-on session switching/creation paths.
+- ✓ Verification: `clojure -M:test --focus psi.agent-session.extensions-test --focus extensions.work-on-test --focus psi.agent-session.core-test` → 64 tests, 405 assertions, 0 failures.
+
 ## 2026-03-06
 
 - λ Δ Added `spec/git-worktrees.allium` and Step 11a acceptance checklist in `PLAN.md`.

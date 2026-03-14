@@ -579,6 +579,23 @@
            (f op-sym params'))
          (not-init :mutate)))
 
+     ;; ── Session lifecycle helpers ──────────────────────
+     :create-session
+     (fn [{:keys [session-name worktree-path system-prompt thinking-level] :as opts}]
+       (if-let [f (:mutate-fn runtime-fns)]
+         (f 'psi.extension/create-session
+            (cond-> {:session-name session-name
+                     :worktree-path worktree-path}
+              (contains? opts :system-prompt) (assoc :system-prompt system-prompt)
+              (contains? opts :thinking-level) (assoc :thinking-level thinking-level)))
+         (not-init :create-session)))
+
+     :switch-session
+     (fn [session-id]
+       (if-let [f (:mutate-fn runtime-fns)]
+         (f 'psi.extension/switch-session {:session-id session-id})
+         (not-init :switch-session)))
+
      ;; ── Narrow auth helper (not queryable) ─────────────
      :get-api-key
      (fn [provider]

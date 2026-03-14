@@ -424,8 +424,10 @@ surface ExtensionApi {
         sendUserMessage(content, options?)
         appendEntry(customType, data?)
 
-        -- Session metadata
+        -- Session metadata and lifecycle
         setSessionName(name)
+        createSession(options)
+        switchSession(session_id)
         setLabel(entry_id, label?)
 
         -- Tool management
@@ -454,6 +456,10 @@ surface ExtensionApi {
         --   the default LLM-based summarisation.
         -- Prompt contributions are merged into the system prompt as an ordered
         --   extension-managed layer (generic mechanism, not domain-specific).
+        -- createSession(options) creates a new active host-peer session using
+        --   the session lifecycle surface, optionally setting worktree_path,
+        --   system_prompt, and thinking_level.
+        -- switchSession(session_id) switches to an existing resumable host session by id.
         -- Extension commands shadow prompt templates with the same name.
 }
 
