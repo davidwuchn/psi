@@ -3,6 +3,26 @@
 
 ---
 
+## 2026-03-14 - Startup bootstrap should not create phantom host sessions (commit `87a5e77`)
+
+### λ Host registries should track operator-visible sessions, not context seeds
+
+Seeding `session-host-atom` from `initial-session` made every fresh context appear to already have a live session before any real session lifecycle action occurred. This produced a host entry with no session file and no operator meaning. The correct invariant is: a fresh context starts with an empty host, and only real lifecycle actions (`new-session-in!`, resume, fork, switch to known session) populate it.
+
+### λ Bootstrap wiring and session creation are separate responsibilities
+
+`bootstrap-session-in!` was doing two jobs: applying startup wiring and creating a new session branch. That coupling created an extra host-visible startup artifact and obscured the true lifecycle boundary. Splitting the responsibilities clarifies the model:
+- `bootstrap-in!` applies startup configuration to the current context
+- session creation happens explicitly at runtime boundaries that actually need a new branch
+
+### λ Startup prompts should run inside the first real session, not a throwaway bootstrap branch
+
+`bootstrap-runtime-session!` previously created one session for bootstrap and another for startup prompts. The correct design is to create one real session up front, then run startup prompts inside that same session. This keeps host snapshots, active-session routing, and persisted startup transcript aligned around one operator-visible session.
+
+### λ Test fixtures that stub bootstrap helpers must match the helper's true contract
+
+After `bootstrap-in!` stopped creating a session, test stubs that still called `new-session-in!` inside the bootstrap helper were reintroducing the old phantom-session shape in tests only. When a helper's responsibility narrows, its stubs must narrow too; otherwise tests encode obsolete behavior and hide the real invariant.
+
 ## 2026-03-13 - Footer state must be saved and restored around transcript reset (commit `ac969b8`)
 
 ### λ Two separate bugs can both hide the footer; they must be fixed independently
