@@ -46,15 +46,8 @@ A meta model for psi.
 
 - a git worktree is a first-class context boundary for sessions
 - psi can create, query, and remove git worktrees
-- worktree creation produces a sibling directory of the main worktree
-- worktree branch names are mechanically slugified from a description (up to four significant terms, lowercase, hyphenated)
-- `/work-on <description>` creates a worktree, a branch, and a named session in one command
-- `/work-merge` merges the current worktree branch into the default branch and switches back
-- merge defaults to `--ff-only`; the user must rebase onto the default branch before merging if fast-forward is not possible
-- after successful merge, the worktree is removed and the branch is deleted, but the session remains in the host
-- `/work-on` may be invoked from any worktree (main or linked), creating a new sibling worktree each time
-- worktree mutations (add/remove) and branch operations (merge/delete/rebase) are low-level git plumbing exposed as EQL mutations
-- the `/work-on` and `/work-merge` orchestration is implemented as an extension that composes plumbing mutations with session lifecycle
+- `/work-on <description>` starts a unit of work with minimal ceremony
+- `/work-merge` finishes a unit of work by merging back
 
 - extension widgets have a protocol-level content model designed for cross-UI rendering
 - widget content is a vector of line values where line ∈ string | map
