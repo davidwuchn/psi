@@ -368,32 +368,30 @@ Ordered steps toward PSI COMPLETE.
 - Remaining (multi-session UI):
   - optional follow-up: add richer collapsed/expandable subtree interactions in TUI row model (current model is fully expanded tree-only)
 
-### Step 11b — Worktree usage (mutations + /work-on extension) ◇ spec complete
+### Step 11b — Worktree usage (mutations + /work-on extension) ✓ complete
 - Spec: `spec/git-worktree-mutations.allium` (Layer 1) + `spec/work-on-extension.allium` (Layer 2)
 - Meta: worktree usage model added to `META.md` (commit `0673e06`), trimmed to essential shape (commit `23327d7`)
-- Architecture: three layers
-  - Layer 0 (✓ exists): read-only resolvers + `/worktree` command
-  - Layer 1 (⊨ spec complete): git worktree add/remove, branch merge/delete/rebase as EQL mutations in history component
-  - Layer 2 (⊨ spec complete): `/work-on`, `/work-merge`, `/work-rebase`, `/work-status` extension orchestration
-- Key decisions encoded in specs:
+- Architecture delivered in code:
+  - Layer 0 (✓): read-only resolvers + `/worktree` command
+  - Layer 1 (✓, commit `ad691d4`): git worktree/branch mutations implemented in history component and exposed as EQL mutations
+  - Layer 2 (✓, commit `ad691d4`): `/work-on`, `/work-merge`, `/work-rebase`, `/work-status` implemented in `extensions/src/extensions/work_on.clj`
+- Runtime convergence delivered:
+  - session data now carries session-scoped `:worktree-path`
+  - effective cwd for tools/git/persistence/runtime hooks now prefers session `:worktree-path` over process cwd
+  - persisted session headers/session listing now carry worktree path so resume/query surfaces stay aligned with worktree-bound sessions
+- Key decisions encoded in specs and now reflected in implementation:
   - Worktree paths are sibling directories of main worktree
   - Slug is mechanical: up to 4 significant words, lowercase, hyphenated
   - Merge defaults to `--ff-only`; `/work-rebase` provided as convenience
   - After merge: worktree removed, branch deleted, session kept in host
   - `/work-on` allowed from any worktree (main or linked)
-  - Session created by `/work-on` inherits current system prompt
-- Closed open questions in `spec/git-worktrees.allium`:
-  - `/worktree` stays read-only; mutations in separate spec
-  - `/new` in linked worktree inherits that worktree_path
-  - Detached HEAD: git-branch remains 'detached' (short SHA via `:git.worktree/head`)
-- Implementation plan:
-  1. Layer 1: add git mutation fns to `psi.history.git` (worktree-add, worktree-remove, branch-merge, branch-delete, branch-rebase, default-branch)
-  2. Layer 1: add EQL mutations to `psi.history.resolvers` (`:git.worktree/add!`, `:git.worktree/remove!`, `:git.branch/merge!`, `:git.branch/delete!`, `:git.branch/rebase!`, `:git.branch/default`)
-  3. Layer 1: tests using `create-null-context` with linked worktrees
-  4. Layer 2: work-on extension (`extensions/src/extensions/work_on.clj`)
-  5. Layer 2: slug generation, `/work-on`, `/work-merge`, `/work-rebase`, `/work-status` commands
-  6. Layer 2: extension tests
-  7. Wire into slash command dispatch + help text + CAPF candidates
+- Verification snapshot:
+  - `clojure -M:test --focus psi.history.git-test --focus psi.history.resolvers-test --focus psi.introspection.agent-session-test --focus psi.agent-session.core-test --focus psi.agent-session.resolvers-test --focus extensions.work-on-test`
+  - result: 118 tests, 817 assertions, 0 failures
+- Follow-up candidates (optional refinement, not required for this step):
+  - make `/work-on` create a distinct host peer session explicitly instead of rebinding the active runtime session in place
+  - auto-switch `/work-merge` back to an existing main-worktree session when present
+  - sync user/internal docs for the new `/work-*` command surface
 
 ### Step 12 — Emacs UI ◇ in progress
 - Spec: `spec/emacs-frontend.allium`
