@@ -313,7 +313,19 @@
     (is (true? (:merged result)))
     (is (true? (:fast-forward result)))
     (is (false? (:conflict result)))
+    (is (nil? (:error result)))
     (is (some #(= % "src/merge_feature.clj") files))))
+
+(deftest branch-merge-rejects-false-positive-success-when-run-on-source-branch
+  (let [ctx        (git/create-null-context seed-commits)
+        wt-path    (linked-worktree-path ctx "feature-self")
+        _          (git/worktree-add ctx {:path wt-path :branch "feature-self"})
+        _          (append-and-commit! wt-path "src/feature_self.clj" "(ns feature-self)\n" "⚒ feature self commit")
+        feature-ctx (git/create-context wt-path)
+        result     (git/branch-merge feature-ctx {:branch "feature-self"})]
+    (is (false? (:merged result)))
+    (is (false? (:conflict result)))
+    (is (re-find #"merge reported success but target HEAD did not absorb branch" (:error result)))))
 
 (deftest branch-merge-ff-only-fails-when-not-fast-forwardable
   (let [ctx     (git/create-null-context seed-commits)

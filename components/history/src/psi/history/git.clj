@@ -425,14 +425,29 @@
                             (seq message) (into ["-m" message])
                             true          (conj branch))
                    :ff    ["merge" "--ff" branch]
-                   ["merge" "--ff-only" branch])]
+                   ["merge" "--ff-only" branch])
+            before-head (current-commit ctx)
+            before-branch (current-branch-name ctx)]
         (try
           (run-git ctx args)
-          {:branch branch
-           :merged true
-           :fast-forward (boolean ff?)
-           :conflict false
-           :error nil}
+          (let [after-head (current-commit ctx)
+                verified?  (branch-tip-merged-into-current? ctx branch)
+                changed?   (not= before-head after-head)]
+            (if verified?
+              {:branch branch
+               :merged true
+               :fast-forward (boolean ff?)
+               :conflict false
+               :error nil}
+              {:branch branch
+               :merged false
+               :fast-forward false
+               :conflict false
+               :error (str "merge reported success but target HEAD did not absorb branch"
+                           " (current-branch=" before-branch
+                           ", before-head=" before-head
+                           ", after-head=" after-head
+                           ", changed=" changed? ")")}))
           (catch Exception e
             (let [conflict? (merge-in-progress? ctx)]
               (when conflict?
@@ -608,6 +623,11 @@
         (seq out)                :modified
         :else                    :clean))
     (catch Exception _ :error)))
+
+(defn current-branch
+  "Return the current branch name in `ctx`, or nil when detached."
+  [ctx]
+  (current-branch-name ctx))
 
 (defn current-commit
   "Return the SHA of HEAD in `ctx`."

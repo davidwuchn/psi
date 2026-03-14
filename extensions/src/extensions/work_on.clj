@@ -214,10 +214,14 @@
             default-branch (or (:branch (mutate! 'git.branch/default
                                                  {:git/context {:cwd main-path}}))
                                (:git.worktree/branch-name main-wt))
+            before-branch  (git/current-branch main-git-ctx)
+            before-head    (git/current-commit main-git-ctx)
             merge-result   (mutate! 'git.branch/merge!
                                     {:git/context {:cwd main-path}
                                      :input {:branch current-branch
                                              :strategy :ff_only}})
+            after-branch   (git/current-branch main-git-ctx)
+            after-head     (git/current-commit main-git-ctx)
             merged?        (and (:merged merge-result)
                                 (git/branch-tip-merged-into-current? main-git-ctx current-branch))]
         (cond
@@ -235,6 +239,11 @@
                        " (source=" current-branch
                        ", merge-reported=" (boolean (:merged merge-result))
                        ", merge-error=" (pr-str (:error merge-result))
+                       ", before-branch=" before-branch
+                       ", after-branch=" after-branch
+                       ", before-head=" before-head
+                       ", after-head=" after-head
+                       ", head-changed=" (not= before-head after-head)
                        ", verification=branch tip not ancestor of target HEAD)")}
 
           :else

@@ -306,6 +306,7 @@
                           {:input {:branch "resolver-merge"}})
         default   (mutate query-ctx git-ctx 'git.branch/default {})]
     (is (true? (:merged merged)))
+    (is (nil? (:error merged)))
     (is (true? (:success removed)))
     (is (true? (:deleted deleted)))
     (is (= "main" (:branch default)))))

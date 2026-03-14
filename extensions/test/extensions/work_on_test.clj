@@ -246,6 +246,8 @@
                                                                                 {:psi.agent-session/session-id (:session-id params)})
                                                nil))})]
       (with-redefs [println (fn [& xs] (swap! printed conj (apply str xs)))
+                    git/current-branch (fn [_ctx] "main")
+                    git/current-commit (fn [_ctx] "main-sha")
                     git/branch-tip-merged-into-current? (fn [ctx branch]
                                                          (and (= "/repo/main" (:repo-dir ctx))
                                                               (= "feature-x" branch)))]
@@ -300,6 +302,8 @@
                                                                                 {:psi.agent-session/session-id (:session-id params)})
                                                nil))})]
       (with-redefs [println (fn [& xs] (reset! printed (apply str xs)))
+                    git/current-branch (fn [_ctx] "main")
+                    git/current-commit (fn [_ctx] "main-sha")
                     git/branch-tip-merged-into-current? (fn [ctx branch]
                                                          (and (= "/repo/main" (:repo-dir ctx))
                                                               (= "feature-x" branch)))]
@@ -349,6 +353,13 @@
                                                git.branch/delete! {:deleted true}
                                                nil))})]
       (with-redefs [println (fn [& xs] (reset! printed (apply str xs)))
+                    git/current-branch (fn [_ctx] "main")
+                    git/current-commit (let [calls (atom -1)]
+                                         (fn [_ctx]
+                                           (case (swap! calls inc)
+                                             0 "before-sha"
+                                             1 "after-sha"
+                                             "after-sha")))
                     git/branch-tip-merged-into-current? (fn [_ctx _branch] false)]
         (sut/init api)
         ((get-in @state [:commands "work-merge" :handler]) "")
@@ -356,6 +367,11 @@
         (is (re-find #"merge did not update main; worktree preserved for safety" @printed))
         (is (re-find #"source=feature-x" @printed))
         (is (re-find #"merge-reported=true" @printed))
+        (is (re-find #"before-branch=main" @printed))
+        (is (re-find #"after-branch=main" @printed))
+        (is (re-find #"before-head=before-sha" @printed))
+        (is (re-find #"after-head=after-sha" @printed))
+        (is (re-find #"head-changed=true" @printed))
         (is (re-find #"verification=branch tip not ancestor of target HEAD" @printed)))))
 
   (testing "/work-merge reports fast-forward guidance when merge is not fast-forwardable"
@@ -386,7 +402,9 @@
                                                git.branch/merge! {:merged false
                                                                   :error "not fast-forwardable onto main"}
                                                nil))})]
-      (with-redefs [println (fn [& xs] (reset! printed (apply str xs)))]
+      (with-redefs [println (fn [& xs] (reset! printed (apply str xs)))
+                    git/current-branch (fn [_ctx] "main")
+                    git/current-commit (fn [_ctx] "main-sha")]
         (sut/init api)
         ((get-in @state [:commands "work-merge" :handler]) "")
         (is (= "branch is not fast-forwardable onto main; rebase first with /work-rebase"
@@ -420,7 +438,9 @@
                                                git.branch/merge! {:merged false
                                                                   :error "merge conflict; resolve manually"}
                                                nil))})]
-      (with-redefs [println (fn [& xs] (reset! printed (apply str xs)))]
+      (with-redefs [println (fn [& xs] (reset! printed (apply str xs)))
+                    git/current-branch (fn [_ctx] "main")
+                    git/current-commit (fn [_ctx] "main-sha")]
         (sut/init api)
         ((get-in @state [:commands "work-merge" :handler]) "")
         (is (= "merge conflict; resolve manually"
