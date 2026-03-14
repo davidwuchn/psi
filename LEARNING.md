@@ -3,6 +3,20 @@
 
 ---
 
+## 2026-03-14 - Mutation boundaries must preserve explicit false flags, especially across snake_case / kebab-case seams (commit `5ce1086`)
+
+### λ A live integrated failure can survive both spec fixes and unit tests when boundary keys drift
+
+`/work-on` had already learned the right behavior — retry attach mode when the slug branch already exists — and both the extension unit tests and pure git tests were green. The live command still failed because the actual isolated extension mutation path carried `:create_branch false` while the history git layer only destructured `:create-branch`. When behavior is correct in direct calls but wrong in the integrated path, inspect the boundary map shape before changing more logic.
+
+### λ Explicit `false` is especially vulnerable at compatibility boundaries because defaults silently mask its loss
+
+The git layer defaulted `create-branch` to true. Once the incoming key spelling drifted, the attach flag disappeared and the code quietly fell back to branch-creation semantics, reproducing the original `branch already exists` error. Bugs involving boolean flags are easy to miss because losing `false` often looks like a valid default rather than a malformed request.
+
+### λ Add at least one regression that exercises the real extension mutation path, not only the pure function path
+
+The decisive test was not the pure `history/git.clj` attach case and not the extension unit retry case; it was the integrated isolated-qctx mutation test in `core_test.clj`. That test reproduced the live failure and made the root cause obvious. For extension features that depend on EQL mutation plumbing, one end-to-end mutation-path test is worth many isolated happy-path tests.
+
 ## 2026-03-14 - Existing slug branches should be attached to new sibling worktrees, not treated as terminal failure (commit `0644903`)
 
 ### λ `branch already exists` can mean resumable branch state, not a hard error
