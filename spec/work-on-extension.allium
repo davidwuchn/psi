@@ -103,6 +103,79 @@ rule WorkOnRequested {
     ensures: AssistantMessage("Working in `{sibling_path}` on branch `{slug.branch_name}`")
 }
 
+rule WorkOnAttachesExistingBranchWhenSlugBranchAlreadyExists {
+    when: SlashCommandDispatched("/work-on", description: String)
+    requires: Length(Trim(description)) > 0
+
+    let slug = SlugRequested(description)
+    let main_worktree = worktrees/GitWorktreeRegistry.main
+    let sibling_path = ParentDirectory(main_worktree.path) + "/" + slug.slug
+
+    requires: git/WorktreeAddRequested(
+        path: sibling_path,
+        branch: slug.branch_name,
+        base_ref: null,
+        create_branch: true
+    ).error = "branch already exists"
+
+    step attach_worktree:
+        let wt_result = git/WorktreeAddRequested(
+            path: sibling_path,
+            branch: slug.branch_name,
+            base_ref: null,
+            create_branch: false
+        )
+        requires: wt_result.success = true
+
+    step create_session:
+        let sess = session/SessionCreateRequested(
+            project_id: CurrentProjectId(),
+            worktree_path: sibling_path,
+            system_prompt: CurrentSystemPrompt(),
+            name: description
+        )
+
+    step switch_session:
+        session/SessionSwitchRequested(
+            project_id: CurrentProjectId(),
+            worktree_path: sibling_path,
+            session_id: sess.id
+        )
+
+    ensures: WorkOnResult.created(
+        success: true,
+        worktree_path: sibling_path,
+        branch_name: slug.branch_name,
+        session_id: sess.id,
+        session_name: description
+    )
+}
+
+rule WorkOnReusesExistingRegisteredWorktree {
+    when: SlashCommandDispatched("/work-on", description: String)
+    requires: Length(Trim(description)) > 0
+
+    let slug = SlugRequested(description)
+    let main_worktree = worktrees/GitWorktreeRegistry.main
+    let sibling_path = ParentDirectory(main_worktree.path) + "/" + slug.slug
+
+    requires: git/WorktreeAddRequested(
+        path: sibling_path,
+        branch: slug.branch_name,
+        base_ref: null,
+        create_branch: true
+    ).error = "worktree path already exists"
+    requires: exists wt in worktrees/GitWorktreeRegistry.worktrees where wt.path = sibling_path
+
+    ensures: WorkOnResult.created(
+        success: true,
+        worktree_path: sibling_path,
+        branch_name: slug.branch_name,
+        session_id: ExistingOrCreatedSessionForWorktree(sibling_path).id,
+        session_name: ExistingOrCreatedSessionForWorktree(sibling_path).name
+    )
+}
+
 rule WorkOnFailsWithoutDescription {
     when: SlashCommandDispatched("/work-on", description: String)
     requires: Length(Trim(description)) = 0

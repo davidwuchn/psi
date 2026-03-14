@@ -91,6 +91,63 @@
                        @printed)))))))
 
 (deftest work-on-command-reuses-existing-worktree-test
+  (testing "/work-on creates a worktree from an existing branch when the slug branch already exists"
+    (let [printed      (atom nil)
+          create-calls (atom [])
+          {:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/work_on.clj"
+                                :query-fn (fn [q]
+                                            (case q
+                                              [:psi.agent-session/session-id
+                                               :psi.agent-session/session-name
+                                               :psi.agent-session/session-file
+                                               :psi.agent-session/cwd
+                                               :psi.agent-session/system-prompt
+                                               :psi.agent-session/host-sessions
+                                               :psi.agent-session/git-worktree-current
+                                               :psi.agent-session/git-worktrees]
+                                              {:psi.agent-session/session-id "s-main"
+                                               :psi.agent-session/cwd "/repo/main"
+                                               :psi.agent-session/system-prompt "prompt"
+                                               :psi.agent-session/host-sessions [{:psi.session-info/id "s-main"
+                                                                                 :psi.session-info/cwd "/repo/main"
+                                                                                 :psi.session-info/name "main"}]
+                                               :psi.agent-session/git-worktree-current {:git.worktree/path "/repo/main"
+                                                                                        :git.worktree/branch-name "main"}
+                                               :psi.agent-session/git-worktrees [{:git.worktree/path "/repo/main"
+                                                                                 :git.worktree/branch-name "main"
+                                                                                 :git.worktree/current? true}]}
+                                              {}))
+                                :mutate-fn (fn [op params]
+                                             (case op
+                                               git.worktree/add! (let [input (:input params)]
+                                                                   (swap! create-calls conj input)
+                                                                   (if (:create_branch input)
+                                                                     {:success false
+                                                                      :error "branch already exists"}
+                                                                     {:success true
+                                                                      :path (:path input)
+                                                                      :branch (:branch input)
+                                                                      :head "abc123"}))
+                                               psi.extension/create-session {:psi.agent-session/session-id "s-branch-existing"
+                                                                             :psi.agent-session/session-name (:session-name params)
+                                                                             :psi.agent-session/cwd (:worktree-path params)}
+                                               nil))})]
+      (with-redefs [println (fn [& xs] (reset! printed (apply str xs)))]
+        (sut/init api)
+        ((get-in @state [:commands "work-on" :handler]) "fix repeated thinking output")
+        (is (= [{:path "/repo/fix-repeated-thinking-output"
+                 :branch "fix-repeated-thinking-output"
+                 :base_ref nil
+                 :create_branch true}
+                {:path "/repo/fix-repeated-thinking-output"
+                 :branch "fix-repeated-thinking-output"
+                 :base_ref nil
+                 :create_branch false}]
+               @create-calls))
+        (is (re-find #"Working in `/repo/fix-repeated-thinking-output` on branch `fix-repeated-thinking-output`"
+                     @printed)))))
+
   (testing "/work-on reuses an existing worktree and switches to its existing session"
     (let [printed  (atom nil)
           switched (atom [])
