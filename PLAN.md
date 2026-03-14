@@ -407,6 +407,13 @@ Ordered steps toward PSI COMPLETE.
   - Focused verification green:
     - `clojure -M:test --focus extensions.work-on-test --focus psi.agent-session.resolvers-test/register-resolvers-in-includes-history-resolvers-test`
     - result: 6 tests, 22 assertions, 0 failures
+- PSL follow-up landed (2026-03-14, commit `700c137`): isolated extension mutation contexts now include the git mutation surface needed by `/work-on`.
+  - Root cause: after the query-surface fix, extension mutation execution still built an isolated qctx with only agent-session mutations and no injected `:git/context`, so `git.worktree/add!` returned no payload and `/work-on` failed with blank or `missing git mutation payload` errors.
+  - Fix: `run-extension-mutation-in!` now seeds both query input and mutation params with `:git/context` derived from `effective-cwd-in`, and `register-mutations-in!` now includes `history-resolvers/all-mutations` for isolated qctx mutation execution.
+  - Regression coverage added in `components/agent-session/test/psi/agent_session/core_test.clj` for isolated-qctx history mutation registration and execution.
+  - Focused verification green:
+    - `clojure -M:test --focus psi.agent-session.core-test/register-mutations-in!-includes-history-mutations-test --focus extensions.work-on-test`
+    - result: 6 tests, 21 assertions, 0 failures
 - No remaining required follow-up for the shipped worktree session workflow; future work is additive UX/documentation polish only.
 
 ### Step 12 — Emacs UI ◇ in progress
