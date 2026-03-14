@@ -3,6 +3,24 @@
 
 ---
 
+## 2026-03-14 - Session worktree binding must be session-scoped, not process-scoped (commit `ad691d4`)
+
+### λ Worktree-aware session routing needs a session field, not just a context cwd
+
+`/work-on` creates a new working directory for one branch of work, but the process may continue hosting multiple sessions at once. If cwd only lives on the long-lived context map, all sessions in that process implicitly share the same filesystem root. A session-scoped `:worktree-path` is the correct boundary: tools, git queries, persistence routing, and runtime hooks can derive an effective cwd from the active session instead of from the process.
+
+### λ Effective cwd should be derived once and reused everywhere
+
+The minimal refactor was not “teach `/work-on` about cwd” but “teach the runtime one `effective-cwd-in` rule.” Once `effective-cwd-in` prefers `:worktree-path` over context `:cwd`, the same rule can be reused in tool execution, git-head sync, project preference writes, persistence paths, session listing, and query bridges. A single cwd derivation rule is simpler and safer than ad-hoc worktree checks at each call site.
+
+### λ Persisted session headers must carry worktree identity when runtime cwd becomes session-scoped
+
+Once a session can move away from process cwd, `:cwd` in the session header is no longer merely a process startup fact — it is the resumable worktree identity for that session. Persisting `:worktree-path` alongside the legacy header cwd keeps resume and session listing aligned with the runtime model and avoids a split-brain where in-memory sessions know their worktree but resumed sessions do not.
+
+### λ Linked-worktree tests need unique sibling paths even in isolated temp repos
+
+`create-null-context` gives each test its own repo, but sibling linked worktrees can still collide if every test uses the shared JVM temp parent with the same slug path. Deriving test worktree paths from both the repo identity and a unique suffix prevents false failures where git reports an existing path from a different test's worktree.
+
 ## 2026-03-14 - Meta descriptions should state what, not how (commit `23327d7`)
 
 ### λ Meta is topology, spec is mechanism
