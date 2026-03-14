@@ -462,6 +462,13 @@ Ordered steps toward PSI COMPLETE.
   - Focused verification green:
     - `clojure -M:test --focus psi.agent-session.core-test/register-mutations-in!-includes-history-mutations-test --focus extensions.work-on-test`
     - result: 9 tests, 36 assertions, 0 failures
+- PSL follow-up landed (2026-03-14, commit `12ab9d4`): `/work-merge` now gates cleanup on verified merge success and reports verification failure cause.
+  - Root cause: even after rooting merge execution in the main worktree, the command still trusted the mutation’s `:merged true` result too early and could remove the linked worktree before proving the target branch actually advanced. Operators then saw either a false success or an opaque safety failure with no explanation.
+  - Fix: `extensions/src/extensions/work_on.clj` now verifies from the main worktree that the feature branch tip is ancestor of target HEAD before cleanup; worktree removal and branch deletion now run only after that verification passes. Failure reporting now includes source branch, merge-reported flag, merge error payload, and explicit verification reason. `psi.history.git/branch-tip-merged-into-current?` was added to support the postcondition check.
+  - Regression coverage added in `extensions/test/extensions/work_on_test.clj` for both “preserve worktree when merge verification fails” and richer diagnostic text.
+  - Focused verification green:
+    - `clojure -M:test --focus extensions.work-on-test`
+    - result: 8 tests, 37 assertions, 0 failures
 - No remaining required follow-up for the shipped worktree session workflow; future work is additive UX/documentation polish only.
 
 ### Step 12 — Emacs UI ◇ in progress
