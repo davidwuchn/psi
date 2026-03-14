@@ -1432,10 +1432,11 @@ text) in long-lived Emacs sessions with overridden slash handlers."
           (setq rpc-calls (nreverse rpc-calls))
           (should (equal '("new_session" "get_messages") (mapcar #'car rpc-calls)))
           (should (psi-emacs--input-separator-marker-valid-p))
-          ;; reset-transcript-state clears the footer to nil.  footer/updated arrives as
-          ;; an event before the response frame in the real protocol and restores the footer,
-          ;; but in this unit test no footer/updated event fires so footer stays nil.
-          (should (null (psi-emacs-state-projection-footer psi-emacs--state))))
+          ;; footer/updated arrives as an event before the response frame in the real protocol
+          ;; and sets projection-footer.  The response callback now preserves that value across
+          ;; reset-transcript-state.  In this test "stale footer" was set before the handler,
+          ;; simulating an event-delivered footer, so it is preserved after the reset.
+          (should (equal "stale footer" (psi-emacs-state-projection-footer psi-emacs--state))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
