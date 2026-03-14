@@ -3,6 +3,20 @@
 
 ---
 
+## 2026-03-14 - Existing `/work-on` slug collisions should resume work, not fail (commit `d8dedda`)
+
+### λ Deterministic worktree slugs imply resumable paths, not always-fresh paths
+
+`/work-on` uses a mechanical 4-term slug so the same description tends to map to the same sibling path. Once that path already exists as a linked worktree, treating the collision as a hard error throws away the main benefit of deterministic naming. The correct behavior is to interpret the collision as likely resumable branch state and attempt reuse before failure.
+
+### λ Reusing an existing worktree should prefer an existing host session over creating a duplicate
+
+A linked worktree may already have an associated session transcript in the host registry. If `/work-on` is asked for the same slug again, the best operator outcome is to switch back to that existing session, preserving prior context and avoiding parallel sessions that point at the same worktree. Only when no host session exists should `/work-on` create a new worktree-bound session for that path.
+
+### λ Path-exists errors need domain disambiguation before being surfaced to the user
+
+`worktree path already exists` is ambiguous: it can mean a stale non-worktree directory, or a valid linked worktree that should be resumed. The extension should first check the registered git worktree list and only surface a real error when the existing filesystem path is not a known worktree. Distinguishing these cases at the command layer prevents false-negative workflow failures.
+
 ## 2026-03-14 - Session worktree binding must be session-scoped, not process-scoped (commit `ad691d4`)
 
 ### λ Worktree-aware session routing needs a session field, not just a context cwd
