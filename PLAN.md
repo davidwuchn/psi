@@ -414,6 +414,13 @@ Ordered steps toward PSI COMPLETE.
   - Focused verification green:
     - `clojure -M:test --focus psi.agent-session.core-test/register-mutations-in!-includes-history-mutations-test --focus extensions.work-on-test`
     - result: 6 tests, 21 assertions, 0 failures
+- PSL follow-up landed (2026-03-14, commit `d8dedda`): `/work-on` now reuses existing sibling worktrees when the deterministic slug path already exists.
+  - Root cause: the first shipped implementation treated `worktree path already exists` as a hard error even when the path was an already-registered linked worktree representing resumable branch state.
+  - Fix: `/work-on` now checks the known git worktree list for the slug path, switches to an existing host session for that worktree when present, or creates a fresh worktree-bound session when absent.
+  - Regression coverage added in `extensions/test/extensions/work_on_test.clj` for existing-worktree reuse + session switching.
+  - Focused verification green:
+    - `clojure -M:test --focus extensions.work-on-test`
+    - result: 4 tests, 14 assertions, 0 failures
 - No remaining required follow-up for the shipped worktree session workflow; future work is additive UX/documentation polish only.
 
 ### Step 12 — Emacs UI ◇ in progress
