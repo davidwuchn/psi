@@ -3,6 +3,20 @@
 
 ---
 
+## 2026-03-14 - Worktree identity must stay explicit through every session-facing surface (commit `62c03f7`)
+
+### λ Persisting worktree identity is not enough if clients only receive cwd or session file paths
+
+The system already persisted `:worktree-path`, but resume selectors and host/session listings still forced operators to infer that identity from `cwd`, session file locations, or naming conventions. In a multi-session worktree model, the worktree itself is a first-class routing boundary and must stay explicit in every outward-facing session summary shape, not just in storage.
+
+### λ Normalizing legacy `cwd` to worktree truth helps compatibility, but explicit `worktree-path` is still needed
+
+Mapping `:psi.session-info/cwd` to the effective worktree path preserves older selector/search code, but it also hides whether the client is seeing a compatibility alias or the actual semantic field. Exposing both normalized `cwd` and explicit `worktree-path` lets old consumers keep working while teaching new consumers the right boundary directly.
+
+### λ Session trees and resume pickers need disambiguation data at the label layer, not just in hidden payloads
+
+Once multiple sessions can share similar names across sibling worktrees, a hidden worktree field in the payload is insufficient. The UI label itself must surface worktree identity, otherwise operators still have to guess among near-identical sessions. Worktree-aware labels are part of correctness, not just polish, because they prevent switching/resuming the wrong session.
+
 ## 2026-03-14 - `/work-on` must not carry the parent session’s rendered prompt into a new worktree session (commit `d527981`)
 
 ### λ Session creation should inherit prompt intent, not a previously rendered runtime footer
