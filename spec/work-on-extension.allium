@@ -235,6 +235,9 @@ rule WorkMergeRequested {
         ) executed_in main_wt.path
         requires: merge_result.merged = true
 
+    step verify_merge:
+        requires: BranchTipMergedIntoCurrent(current_branch) executed_in main_wt.path
+
     step remove_worktree:
         let rm_result = git/WorktreeRemoveRequested(
             path: current_wt.path,
@@ -390,6 +393,8 @@ surface WorkOnExtensionApi {
         -- /work-merge never leaves the working tree dirty.
         -- Merge conflicts are aborted, and the operator receives
         -- actionable guidance (rebase first).
+        -- Worktree removal only happens after merge success is verified
+        -- against the main worktree state.
 }
 
 -- Decisions

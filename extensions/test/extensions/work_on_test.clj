@@ -2,7 +2,8 @@
   (:require
    [clojure.test :refer [deftest is testing]]
    [extensions.work-on :as sut]
-   [psi.extension-test-helpers.nullable-api :as nullable]))
+   [psi.extension-test-helpers.nullable-api :as nullable]
+   [psi.history.git :as git]))
 
 (deftest mechanical-slug-test
   (testing "slug is mechanical and limited to four significant words"
@@ -244,7 +245,10 @@
                                                psi.extension/switch-session (do (swap! switched conj (:session-id params))
                                                                                 {:psi.agent-session/session-id (:session-id params)})
                                                nil))})]
-      (with-redefs [println (fn [& xs] (swap! printed conj (apply str xs)))]
+      (with-redefs [println (fn [& xs] (swap! printed conj (apply str xs)))
+                    git/branch-tip-merged-into-current? (fn [ctx branch]
+                                                         (and (= "/repo/main" (:repo-dir ctx))
+                                                              (= "feature-x" branch)))]
         (sut/init api)
         ((get-in @state [:commands "work-merge" :handler]) "")
         ((get-in @state [:commands "work-rebase" :handler]) "")
@@ -295,7 +299,10 @@
                                                psi.extension/switch-session (do (swap! switched conj (:session-id params))
                                                                                 {:psi.agent-session/session-id (:session-id params)})
                                                nil))})]
-      (with-redefs [println (fn [& xs] (reset! printed (apply str xs)))]
+      (with-redefs [println (fn [& xs] (reset! printed (apply str xs)))
+                    git/branch-tip-merged-into-current? (fn [ctx branch]
+                                                         (and (= "/repo/main" (:repo-dir ctx))
+                                                              (= "feature-x" branch)))]
         (sut/init api)
         ((get-in @state [:commands "work-merge" :handler]) "")
         (is (= [{:psi.agent-session/session-id "s-main-created"
@@ -306,6 +313,51 @@
         (is (re-find #"Merged `feature-x` into `main`" @printed))))))
 
 (deftest work-merge-conflict-and-ff-failure-messages-test
+  (testing "/work-merge preserves the worktree when merge verification fails"
+    (let [printed      (atom nil)
+          remove-calls (atom 0)
+          {:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/work_on.clj"
+                                :query-fn (fn [q]
+                                            (case q
+                                              [:psi.agent-session/session-id
+                                               :psi.agent-session/session-name
+                                               :psi.agent-session/session-file
+                                               :psi.agent-session/cwd
+                                               :psi.agent-session/system-prompt
+                                               :psi.agent-session/host-sessions
+                                               :psi.agent-session/git-worktree-current
+                                               :psi.agent-session/git-worktrees]
+                                              {:psi.agent-session/session-id "s-feature"
+                                               :psi.agent-session/host-sessions [{:psi.session-info/id "main-s"
+                                                                                 :psi.session-info/cwd "/repo/main"
+                                                                                 :psi.session-info/name "main"}]
+                                               :psi.agent-session/git-worktree-current {:git.worktree/path "/repo/feature-x"
+                                                                                        :git.worktree/branch-name "feature-x"}
+                                               :psi.agent-session/git-worktrees [{:git.worktree/path "/repo/main"
+                                                                                 :git.worktree/branch-name "main"}
+                                                                                {:git.worktree/path "/repo/feature-x"
+                                                                                 :git.worktree/branch-name "feature-x"
+                                                                                 :git.worktree/current? true}]}
+                                              {}))
+                                :mutate-fn (fn [op _params]
+                                             (case op
+                                               git.branch/default {:branch "main"}
+                                               git.branch/merge! {:merged true}
+                                               git.worktree/remove! (do (swap! remove-calls inc)
+                                                                        {:success true})
+                                               git.branch/delete! {:deleted true}
+                                               nil))})]
+      (with-redefs [println (fn [& xs] (reset! printed (apply str xs)))
+                    git/branch-tip-merged-into-current? (fn [_ctx _branch] false)]
+        (sut/init api)
+        ((get-in @state [:commands "work-merge" :handler]) "")
+        (is (= 0 @remove-calls) "worktree removal must not run when merge is not verified")
+        (is (re-find #"merge did not update main; worktree preserved for safety" @printed))
+        (is (re-find #"source=feature-x" @printed))
+        (is (re-find #"merge-reported=true" @printed))
+        (is (re-find #"verification=branch tip not ancestor of target HEAD" @printed)))))
+
   (testing "/work-merge reports fast-forward guidance when merge is not fast-forwardable"
     (let [printed (atom nil)
           {:keys [api state]} (nullable/create-nullable-extension-api

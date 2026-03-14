@@ -267,6 +267,11 @@
   [ctx branch]
   (zero? (:exit (run-git* ctx ["merge-base" "--is-ancestor" "HEAD" branch]))))
 
+(defn branch-tip-merged-into-current?
+  "Return true when the tip of `branch` is an ancestor of current HEAD in `ctx`."
+  [ctx branch]
+  (zero? (:exit (run-git* ctx ["merge-base" "--is-ancestor" branch "HEAD"]))))
+
 (defn- merge-in-progress?
   [ctx]
   (zero? (:exit (run-git* ctx ["rev-parse" "-q" "--verify" "MERGE_HEAD"]))))

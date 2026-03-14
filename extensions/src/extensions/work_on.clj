@@ -1,6 +1,7 @@
 (ns extensions.work-on
   (:require
-   [clojure.string :as str]))
+   [clojure.string :as str]
+   [psi.history.git :as git]))
 
 (defonce ^:private state
   (atom {:query-fn nil
@@ -208,14 +209,17 @@
       {:ok? false :error "already on main worktree; nothing to merge"}
 
       :else
-      (let [main-path       (:git.worktree/path main-wt)
-            default-branch  (or (:branch (mutate! 'git.branch/default
-                                                  {:git/context {:cwd main-path}}))
-                                (:git.worktree/branch-name main-wt))
-            merge-result    (mutate! 'git.branch/merge!
-                                     {:git/context {:cwd main-path}
-                                      :input {:branch current-branch
-                                              :strategy :ff_only}})]
+      (let [main-path      (:git.worktree/path main-wt)
+            main-git-ctx   (git/create-context main-path)
+            default-branch (or (:branch (mutate! 'git.branch/default
+                                                 {:git/context {:cwd main-path}}))
+                               (:git.worktree/branch-name main-wt))
+            merge-result   (mutate! 'git.branch/merge!
+                                    {:git/context {:cwd main-path}
+                                     :input {:branch current-branch
+                                             :strategy :ff_only}})
+            merged?        (and (:merged merge-result)
+                                (git/branch-tip-merged-into-current? main-git-ctx current-branch))]
         (cond
           (not (:merged merge-result))
           {:ok? false
@@ -224,28 +228,41 @@
                     (str "branch is not fast-forwardable onto " default-branch "; rebase first with /work-rebase")
                     (or (:error merge-result) "merge failed"))}
 
+          (not merged?)
+          {:ok? false
+           :error (str "merge did not update " default-branch
+                       "; worktree preserved for safety"
+                       " (source=" current-branch
+                       ", merge-reported=" (boolean (:merged merge-result))
+                       ", merge-error=" (pr-str (:error merge-result))
+                       ", verification=branch tip not ancestor of target HEAD)")}
+
           :else
-          (let [remove-result   (mutate! 'git.worktree/remove!
-                                         {:input {:path current-path
-                                                  :force false}})
-                delete-result   (mutate! 'git.branch/delete!
-                                         {:input {:branch current-branch
-                                                  :force false}})
-                main-session    (or (find-session-for-worktree main-path)
-                                    (when main-path
-                                      {:psi.session-info/id
-                                       (:psi.agent-session/session-id
-                                        (create-worktree-session!
-                                         (or (:git.worktree/branch-name main-wt) "main")
-                                         main-path
-                                         nil))}))
-                _               (switch-to-session! (:psi.session-info/id main-session))]
+          (let [remove-result (mutate! 'git.worktree/remove!
+                                       {:input {:path current-path
+                                                :force false}})
+                delete-result (mutate! 'git.branch/delete!
+                                       {:input {:branch current-branch
+                                                :force false}})
+                main-session  (or (find-session-for-worktree main-path)
+                                  (when main-path
+                                    {:psi.session-info/id
+                                     (:psi.agent-session/session-id
+                                      (create-worktree-session!
+                                       (or (:git.worktree/branch-name main-wt) "main")
+                                       main-path
+                                       nil))}))
+                _             (switch-to-session! (:psi.session-info/id main-session))]
             {:ok? true
              :branch current-branch
              :into-branch default-branch
              :worktree-removed (:success remove-result)
              :branch-deleted (:deleted delete-result)
-             :main-session-id (:psi.session-info/id main-session)}))))))
+             :main-session-id (:psi.session-info/id main-session)
+             :cleanup-error (cond
+                              (not (:success remove-result)) (str "worktree remove failed: " (:error remove-result))
+                              (not (:deleted delete-result)) (str "branch delete failed: " (:error delete-result))
+                              :else nil)}))))))
 
 (defn work-rebase!
   []
@@ -304,8 +321,10 @@
   (let [result (work-merge!)]
     (if (:ok? result)
       (print-line (str "Merged `" (:branch result)
-                       "` into `" (:into-branch result)
-                       "`, removed worktree, kept session transcript"))
+                       "` into `" (:into-branch result) "`"
+                       (if-let [cleanup-error (:cleanup-error result)]
+                         (str ", but cleanup incomplete: " cleanup-error)
+                         ", removed worktree, kept session transcript")))
       (print-line (:error result)))))
 
 (defn- handle-work-rebase-command
