@@ -3,6 +3,38 @@
 
 ---
 
+## 2026-03-14 - Existing slug branches should be attached to new sibling worktrees, not treated as terminal failure (commit `0644903`)
+
+### λ `branch already exists` can mean resumable branch state, not a hard error
+
+In `/work-on`, the slug-derived branch name is deterministic, so repeating the same description can legitimately target a branch that already exists from earlier work. When `git.worktree/add!` reports `branch already exists`, the command should first reinterpret that as “attach a new linked worktree to the existing branch” instead of failing immediately.
+
+### λ Deterministic slug workflows need two reuse paths: existing branch and existing worktree
+
+A repeated `/work-on` request can land in two different resumable states:
+1. the branch already exists but no sibling worktree is attached yet
+2. the sibling worktree path already exists and may already have a host session
+
+Those are different recovery paths and both need explicit handling. Otherwise the command remains brittle even after one collision case is fixed.
+
+### λ Specs for resumable workflows should name the fallback branches explicitly
+
+The behavior was safer once `spec/work-on-extension.allium` named both fallback paths directly: retry `git.worktree/add!` with `:create_branch false` when the slug branch already exists, and reuse/switch when the sibling worktree is already registered. For deterministic orchestration commands, these fallback branches are part of the main contract, not edge-case implementation detail.
+
+## 2026-03-14 - `/work-on` should treat `branch already exists` as resumable branch state, not a terminal failure (commit `0644903`)
+
+### λ Deterministic slug branches are resumable identities, not create-only names
+
+`/work-on` derives a mechanical branch slug from the description, so repeated invocations naturally converge on the same branch name. Once that branch already exists, the command should interpret the condition as likely resumable work rather than as proof the request is invalid. Deterministic naming only helps if the command can reattach to prior branch state.
+
+### λ `git worktree add` errors need command-level recovery rules, not direct surfacing
+
+`branch already exists` from `git worktree add -b <branch>` does not mean the operator cannot continue; it means the branch-creation variant was the wrong subcase. Retrying with `create_branch false` converts that low-level git error into the intended high-level behavior: create a linked worktree rooted at the existing branch. Orchestration commands should map recoverable git errors into alternate flows before presenting them as failures.
+
+### λ Worktree-path collisions and branch-exists collisions are different recovery classes
+
+A path collision can mean an already-registered linked worktree that should be resumed or switched to. A branch collision with no path collision means a new linked worktree should be attached to existing branch state. Treating both as generic creation failure hides useful domain structure; `/work-on` needs separate recovery paths for existing path vs existing branch.
+
 ## 2026-03-14 - `/work-merge` must execute merge mutations from the main worktree, not the linked feature worktree (commit `ae22cb1`)
 
 ### λ A git mutation with no explicit context silently inherits the active session worktree
