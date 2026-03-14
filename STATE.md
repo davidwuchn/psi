@@ -4,7 +4,9 @@ Current truth about the Psi system.
 
 ---
 
-- ✓ Anthropic thinking-delta cumulative-snapshot display bug fixed (2026-03-13, commit `9b24637`): executor now normalises `thinking_delta` events per-content-index via `merge-stream-text`; emitted `:text` is the full accumulated thinking text (replace semantics); TUI and Emacs updated to replace rather than append. `ThinkingDeltaIsCumulativeSnapshot` guidance rule added to `spec/anthropic-provider.allium`. 15 executor + 77 TUI + 206 Emacs tests green.
+- ✓ Anthropic thinking-delta cumulative-snapshot display bug fixed (2026-03-13, commit `9b24637`): executor now normalises `thinking_delta` events per-content-index via `merge-stream-text`; emitted `:text` is the full accumulated thinking text (replace semantics); TUI and Emacs updated to replace rather than append. 15 executor + 77 TUI + 206 Emacs tests green.
+- ✓ `ThinkingDeltaIsCumulativeSnapshot` guidance rule added to `spec/anthropic-provider.allium` (commit `e91c490`): documents that `delta.thinking` in Anthropic SSE events is a cumulative snapshot, and that executor normalisation + replace-semantics in consumers is the correct handling contract.
+- ✓ Emacs footer preserved across transcript reset on `/new` and `switch_session` (commit `e91c490`): `psi-session-commands.el` now saves `projection-footer` before `reset-transcript-state` and restores + re-renders it after, preventing footer flicker when `footer/updated` events arrive before the response frame but `reset-transcript-state` would otherwise wipe them.
 
 ## Operating Frame
 - ✓ `/tree` session switch no longer leaves "connecting..." footer (2026-03-13, commit `d15b3de`): response callback now calls `psi-emacs--focus-input-area` instead of `psi-emacs--show-connecting-affordances`; `footer/updated` + `session/updated` events arrive before the response frame and already carry the correct footer, so overwriting with a placeholder was incorrect. Same fix applied to `/new` success path. 206/206 ERT passing.
