@@ -1,0 +1,326 @@
+-- allium: 2
+module work-on-extension
+
+-- Layer 2: high-level orchestration for worktree-based work.
+-- Composes git worktree/branch mutations with session lifecycle.
+-- Implemented as an extension with slash commands.
+
+use "./git-worktree-mutations.allium" as git
+use "./git-worktrees.allium" as worktrees
+use "./session-core.allium" as session
+
+-- Slug generation
+
+value WorkSlug {
+    raw_description: String
+    terms: List<String>          -- up to 4 significant terms
+    slug: String                 -- lowercase, hyphenated
+    branch_name: String          -- slug (no prefix)
+}
+
+rule SlugGeneratedMechanically {
+    when: SlugRequested(description: String)
+
+    let words = Tokenize(Lowercase(description))
+    let stopwords = {"a", "an", "the", "and", "or", "but", "in", "on", "at",
+                     "to", "for", "of", "with", "by", "from", "is", "are",
+                     "was", "were", "be", "been", "has", "have", "had",
+                     "do", "does", "did", "will", "would", "could", "should",
+                     "it", "its", "this", "that", "these", "those", "i", "we"}
+    let significant = Filter(words, w => w not in stopwords and Length(w) > 1)
+    let terms = Take(significant, 4)
+
+    ensures: WorkSlug.created(
+        raw_description: description,
+        terms: terms,
+        slug: Join(terms, "-"),
+        branch_name: Join(terms, "-")
+    )
+}
+
+rule SlugContainsOnlyValidBranchChars {
+    when: SlugGenerated(slug: WorkSlug)
+
+    ensures: Matches(slug.slug, "^[a-z0-9][a-z0-9-]*[a-z0-9]$")
+    ensures: not Contains(slug.slug, "--")
+}
+
+-- /work-on command
+
+value WorkOnRequest {
+    description: String
+}
+
+value WorkOnResult {
+    success: Boolean
+    worktree_path: String?
+    branch_name: String?
+    session_id: session/SessionId?
+    session_name: String?
+    error: String?
+}
+
+rule WorkOnRequested {
+    when: SlashCommandDispatched("/work-on", description: String)
+    requires: Length(Trim(description)) > 0
+
+    let slug = SlugRequested(description)
+    let main_worktree = worktrees/GitWorktreeRegistry.main
+    let sibling_path = ParentDirectory(main_worktree.path) + "/" + slug.slug
+
+    step add_worktree:
+        let wt_result = git/WorktreeAddRequested(
+            path: sibling_path,
+            branch: slug.branch_name,
+            base_ref: null,
+            create_branch: true
+        )
+        requires: wt_result.success = true
+
+    step create_session:
+        let sess = session/SessionCreateRequested(
+            project_id: CurrentProjectId(),
+            worktree_path: sibling_path,
+            system_prompt: CurrentSystemPrompt(),
+            name: description
+        )
+
+    step switch_session:
+        session/SessionSwitchRequested(
+            project_id: CurrentProjectId(),
+            worktree_path: sibling_path,
+            session_id: sess.id
+        )
+
+    ensures: WorkOnResult.created(
+        success: true,
+        worktree_path: sibling_path,
+        branch_name: slug.branch_name,
+        session_id: sess.id,
+        session_name: description
+    )
+
+    ensures: AssistantMessage("Working in `{sibling_path}` on branch `{slug.branch_name}`")
+}
+
+rule WorkOnFailsWithoutDescription {
+    when: SlashCommandDispatched("/work-on", description: String)
+    requires: Length(Trim(description)) = 0
+
+    ensures: WorkOnResult.created(
+        success: false,
+        error: "usage: /work-on <description>"
+    )
+}
+
+rule WorkOnFailsWhenWorktreeAddFails {
+    when: WorkOnRequested(req)
+    requires: git/WorktreeAddResult.success = false
+
+    ensures: WorkOnResult.created(
+        success: false,
+        error: "worktree creation failed: " + git/WorktreeAddResult.error
+    )
+}
+
+rule WorkOnFailsOutsideGitRepo {
+    when: SlashCommandDispatched("/work-on", description: String)
+    requires: not worktrees/GitWorktreeRegistry.has_current
+
+    ensures: WorkOnResult.created(
+        success: false,
+        error: "not inside a git repository"
+    )
+}
+
+-- /work-merge command
+
+value WorkMergeResult {
+    success: Boolean
+    branch_merged: String?
+    into_branch: String?
+    worktree_removed: Boolean
+    branch_deleted: Boolean
+    switched_to_session: session/SessionId?
+    error: String?
+}
+
+rule WorkMergeRequested {
+    when: SlashCommandDispatched("/work-merge")
+    requires: CurrentWorktreeIsLinked()
+
+    let current_wt = worktrees/GitWorktreeRegistry.current
+    let current_branch = current_wt.branch_name
+    let default_branch = git/DefaultBranchRequested().branch
+    let main_wt = worktrees/GitWorktreeRegistry.main
+
+    step merge_branch:
+        -- Execute merge from the main worktree context
+        let merge_result = git/BranchMergeRequested(
+            branch: current_branch,
+            strategy: ff_only
+        ) executed_in main_wt.path
+        requires: merge_result.merged = true
+
+    step remove_worktree:
+        let rm_result = git/WorktreeRemoveRequested(
+            path: current_wt.path,
+            force: false
+        )
+
+    step delete_branch:
+        let del_result = git/BranchDeleteRequested(
+            branch: current_branch,
+            force: false
+        )
+
+    step switch_to_main:
+        -- Find or create a session in the main worktree
+        let main_session = FindOrCreateSessionForWorktree(main_wt.path)
+        session/SessionSwitchRequested(
+            project_id: CurrentProjectId(),
+            worktree_path: main_wt.path,
+            session_id: main_session.id
+        )
+
+    ensures: WorkMergeResult.created(
+        success: true,
+        branch_merged: current_branch,
+        into_branch: default_branch,
+        worktree_removed: rm_result.success,
+        branch_deleted: del_result.deleted,
+        switched_to_session: main_session.id
+    )
+
+    ensures: AssistantMessage("Merged `{current_branch}` into `{default_branch}`, removed worktree, switched to main session")
+}
+
+rule WorkMergeFailsOnMainWorktree {
+    when: SlashCommandDispatched("/work-merge")
+    requires: not CurrentWorktreeIsLinked()
+
+    ensures: WorkMergeResult.created(
+        success: false,
+        error: "already on main worktree; nothing to merge"
+    )
+}
+
+rule WorkMergeFailsNotFastForward {
+    when: WorkMergeRequested(req)
+    requires: git/BranchMergeResult.merged = false
+    requires: git/BranchMergeResult.error contains "not fast-forwardable"
+
+    ensures: WorkMergeResult.created(
+        success: false,
+        branch_merged: null,
+        into_branch: git/DefaultBranchRequested().branch,
+        worktree_removed: false,
+        branch_deleted: false,
+        error: "branch is not fast-forwardable onto {default_branch}; rebase first with /work-rebase"
+    )
+}
+
+rule WorkMergeFailsConflict {
+    when: WorkMergeRequested(req)
+    requires: git/BranchMergeResult.conflict = true
+
+    ensures: WorkMergeResult.created(
+        success: false,
+        error: "merge conflict; resolve manually or rebase first"
+    )
+}
+
+-- /work-rebase command (convenience for rebase onto default branch)
+
+value WorkRebaseResult {
+    success: Boolean
+    branch: String?
+    onto: String?
+    error: String?
+}
+
+rule WorkRebaseRequested {
+    when: SlashCommandDispatched("/work-rebase")
+    requires: CurrentWorktreeIsLinked()
+
+    let current_branch = worktrees/GitWorktreeRegistry.current.branch_name
+    let default_branch = git/DefaultBranchRequested().branch
+
+    let rebase_result = git/BranchRebaseRequested(
+        onto: default_branch,
+        branch: current_branch
+    )
+
+    ensures: WorkRebaseResult.created(
+        success: rebase_result.success,
+        branch: current_branch,
+        onto: default_branch,
+        error: rebase_result.error
+    )
+}
+
+rule WorkRebaseFailsOnMainWorktree {
+    when: SlashCommandDispatched("/work-rebase")
+    requires: not CurrentWorktreeIsLinked()
+
+    ensures: WorkRebaseResult.created(
+        success: false,
+        error: "already on main worktree; nothing to rebase"
+    )
+}
+
+-- /work-status command (overview of active work)
+
+rule WorkStatusRequested {
+    when: SlashCommandDispatched("/work-status")
+
+    let linked = worktrees/GitWorktreeRegistry.worktrees
+        where not is_main_worktree
+    let current = worktrees/GitWorktreeRegistry.current
+
+    ensures: AssistantMessage(RenderWorkStatus(linked, current))
+}
+
+-- Extension registration
+
+surface WorkOnExtensionApi {
+    facing caller: session/EqlClient
+
+    provides:
+        SlashCommandDispatched("/work-on", description)
+        SlashCommandDispatched("/work-merge")
+        SlashCommandDispatched("/work-rebase")
+        SlashCommandDispatched("/work-status")
+
+    @guarantee MinimalCeremony
+        -- /work-on creates worktree + branch + session in one command.
+        -- /work-merge merges + cleans up in one command.
+        -- No intermediate manual steps required for the happy path.
+
+    @guarantee WorktreeSessionBinding
+        -- The session created by /work-on has its worktree_path set
+        -- to the new worktree, and its name set to the description.
+        -- All tool operations (read/write/edit/bash) run in that worktree context.
+
+    @guarantee MergePreservesSession
+        -- After /work-merge, the worktree session remains in the host
+        -- registry. Only the worktree directory and git branch are removed.
+        -- The operator can still access the session transcript.
+
+    @guarantee NestedWorkAllowed
+        -- /work-on may be invoked from any worktree (main or linked).
+        -- Each invocation creates a new sibling worktree off the current HEAD.
+
+    @guarantee SafeMergeFailure
+        -- /work-merge never leaves the working tree dirty.
+        -- Merge conflicts are aborted, and the operator receives
+        -- actionable guidance (rebase first).
+}
+
+-- Decisions
+decision "Slug is mechanical: up to 4 significant words, lowercase, hyphenated"
+decision "Worktree path is sibling of main worktree: parent(main)/slug"
+decision "Merge defaults to --ff-only; /work-rebase provided as convenience"
+decision "After merge: worktree removed, branch deleted, session kept in host"
+decision "/work-on allowed from any worktree (main or linked)"
+decision "Session created by /work-on inherits current system prompt"

@@ -181,6 +181,7 @@ rule WorktreeParseFailureDoesNotBreakSession {
     ensures: SessionRemainsUsable()
 }
 
-open question "Should /worktree support subcommands in this phase (e.g. /worktree list), or stay single-command?"
-open question "Should /new in a linked worktree always inherit worktree_path, or allow selecting main worktree by default?"
-open question "When detached HEAD is detected, should :psi.agent-session/git-branch remain detached or include short SHA?"
+-- Closed questions (resolved for worktree mutation phase):
+decision "/worktree stays read-only; mutations are in git-worktree-mutations.allium"
+decision "/new in a linked worktree inherits that worktree_path"
+decision "Detached HEAD: :psi.agent-session/git-branch remains 'detached' (short SHA is available via :git.worktree/head)"

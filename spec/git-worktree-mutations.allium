@@ -1,0 +1,301 @@
+-- allium: 2
+module git-worktree-mutations
+
+-- Layer 1: low-level git worktree and branch plumbing.
+-- Pure git operations with no session awareness.
+-- Exposed as EQL mutations for composability.
+
+use "./git-worktrees.allium" as worktrees
+
+value WorktreeAddRequest {
+    path: String
+    branch: String
+    base_ref: String?                -- default: HEAD
+    create_branch: Boolean = true    -- -b flag
+}
+
+value WorktreeAddResult {
+    path: String
+    branch: String
+    head: String
+    success: Boolean
+    error: String?
+}
+
+value WorktreeRemoveRequest {
+    path: String
+    force: Boolean = false
+}
+
+value WorktreeRemoveResult {
+    path: String
+    success: Boolean
+    error: String?
+}
+
+value BranchMergeRequest {
+    branch: String                   -- branch to merge into current
+    strategy: ff_only | no_ff | ff   -- default: ff_only
+    message: String?                 -- merge commit message (for no_ff)
+}
+
+value BranchMergeResult {
+    branch: String
+    merged: Boolean
+    fast_forward: Boolean
+    conflict: Boolean
+    error: String?
+}
+
+value BranchDeleteRequest {
+    branch: String
+    force: Boolean = false           -- -D vs -d
+}
+
+value BranchDeleteResult {
+    branch: String
+    deleted: Boolean
+    error: String?
+}
+
+value BranchRebaseRequest {
+    onto: String                     -- target branch to rebase onto
+    branch: String?                  -- branch to rebase (default: current)
+}
+
+value BranchRebaseResult {
+    onto: String
+    branch: String
+    success: Boolean
+    conflict: Boolean
+    error: String?
+}
+
+value DefaultBranchResult {
+    branch: String
+    source: symbolic_ref | config | fallback
+}
+
+-- Worktree mutations
+
+rule WorktreeAdded {
+    when: WorktreeAddRequested(req: WorktreeAddRequest)
+    requires: worktrees/GitWorktreeRegistry.worktrees
+        where not exists wt in worktrees where wt.path = req.path
+
+    ensures: GitCommandExecuted("worktree", "add", req.path, "-b", req.branch)
+    ensures: WorktreeAddResult.created(
+        path: req.path,
+        branch: req.branch,
+        head: head_sha_at(req.path),
+        success: true
+    )
+    ensures: worktrees/WorktreeRegistryRefreshesOnStatusRequest
+}
+
+rule WorktreeAddFailsWhenPathExists {
+    when: WorktreeAddRequested(req: WorktreeAddRequest)
+    requires: DirectoryExists(req.path)
+
+    ensures: WorktreeAddResult.created(
+        path: req.path,
+        branch: req.branch,
+        head: null,
+        success: false,
+        error: "worktree path already exists"
+    )
+}
+
+rule WorktreeAddFailsWhenBranchExists {
+    when: WorktreeAddRequested(req: WorktreeAddRequest)
+    requires: req.create_branch = true
+    requires: BranchExists(req.branch)
+
+    ensures: WorktreeAddResult.created(
+        path: req.path,
+        branch: req.branch,
+        head: null,
+        success: false,
+        error: "branch already exists"
+    )
+}
+
+rule WorktreeRemoved {
+    when: WorktreeRemoveRequested(req: WorktreeRemoveRequest)
+    requires: exists wt in worktrees/GitWorktreeRegistry.worktrees where wt.path = req.path
+    requires: not wt.is_main_worktree
+
+    ensures: GitCommandExecuted("worktree", "remove", req.path)
+    ensures: WorktreeRemoveResult.created(
+        path: req.path,
+        success: true
+    )
+    ensures: worktrees/WorktreeRegistryRefreshesOnStatusRequest
+}
+
+rule WorktreeRemoveFailsForMainWorktree {
+    when: WorktreeRemoveRequested(req: WorktreeRemoveRequest)
+    requires: exists wt in worktrees/GitWorktreeRegistry.worktrees
+        where wt.path = req.path and wt.is_main_worktree
+
+    ensures: WorktreeRemoveResult.created(
+        path: req.path,
+        success: false,
+        error: "cannot remove main worktree"
+    )
+}
+
+-- Branch mutations
+
+rule BranchMerged {
+    when: BranchMergeRequested(req: BranchMergeRequest)
+    requires: not WorkingTreeDirty()
+
+    ensures: GitCommandExecuted("merge", merge_flags(req.strategy), req.branch)
+    ensures: BranchMergeResult.created(
+        branch: req.branch,
+        merged: true,
+        fast_forward: req.strategy = ff_only or is_fast_forward(req.branch),
+        conflict: false
+    )
+}
+
+rule BranchMergeFailsFastForwardOnly {
+    when: BranchMergeRequested(req: BranchMergeRequest)
+    requires: req.strategy = ff_only
+    requires: not IsFastForwardable(req.branch)
+
+    ensures: BranchMergeResult.created(
+        branch: req.branch,
+        merged: false,
+        fast_forward: false,
+        conflict: false,
+        error: "not fast-forwardable; rebase first"
+    )
+}
+
+rule BranchMergeConflict {
+    when: BranchMergeRequested(req: BranchMergeRequest)
+    requires: MergeProducesConflicts(req.branch)
+
+    ensures: GitCommandExecuted("merge", "--abort")
+    ensures: BranchMergeResult.created(
+        branch: req.branch,
+        merged: false,
+        fast_forward: false,
+        conflict: true,
+        error: "merge conflict; aborting"
+    )
+}
+
+rule BranchDeleted {
+    when: BranchDeleteRequested(req: BranchDeleteRequest)
+    requires: BranchExists(req.branch)
+    requires: not IsCurrentBranch(req.branch)
+
+    ensures: GitCommandExecuted("branch", delete_flag(req.force), req.branch)
+    ensures: BranchDeleteResult.created(
+        branch: req.branch,
+        deleted: true
+    )
+}
+
+rule BranchRebased {
+    when: BranchRebaseRequested(req: BranchRebaseRequest)
+    requires: not WorkingTreeDirty()
+
+    ensures: GitCommandExecuted("rebase", req.onto, req.branch)
+    ensures: BranchRebaseResult.created(
+        onto: req.onto,
+        branch: rebase_target(req),
+        success: true,
+        conflict: false
+    )
+}
+
+rule BranchRebaseConflict {
+    when: BranchRebaseRequested(req: BranchRebaseRequest)
+    requires: RebaseProducesConflicts(req.onto, req.branch)
+
+    ensures: GitCommandExecuted("rebase", "--abort")
+    ensures: BranchRebaseResult.created(
+        onto: req.onto,
+        branch: rebase_target(req),
+        success: false,
+        conflict: true,
+        error: "rebase conflict; aborting"
+    )
+}
+
+rule DefaultBranchResolved {
+    when: DefaultBranchRequested()
+
+    let symbolic = TryResolveSymbolicRef("refs/remotes/origin/HEAD")
+    let config = TryGitConfig("init.defaultBranch")
+    let fallback = "main"
+
+    ensures: DefaultBranchResult.created(
+        branch: first_non_null(symbolic, config, fallback),
+        source: source_of(symbolic, config, fallback)
+    )
+}
+
+-- EQL mutation surface
+
+contract GitWorktreeMutationEql {
+    worktree_add: (input: WorktreeAddRequest) -> WorktreeAddResult
+    worktree_remove: (input: WorktreeRemoveRequest) -> WorktreeRemoveResult
+    branch_merge: (input: BranchMergeRequest) -> BranchMergeResult
+    branch_delete: (input: BranchDeleteRequest) -> BranchDeleteResult
+    branch_rebase: (input: BranchRebaseRequest) -> BranchRebaseResult
+    default_branch: () -> DefaultBranchResult
+
+    @invariant MutationAttrs
+        -- mutation attrs:
+        -- :git.worktree/add!
+        -- :git.worktree/remove!
+        -- :git.branch/merge!
+        -- :git.branch/delete!
+        -- :git.branch/rebase!
+        -- :git.branch/default
+}
+
+surface GitWorktreeMutationApi {
+    facing caller: session-core/EqlClient
+
+    contracts:
+        fulfils GitWorktreeMutationEql
+
+    provides:
+        WorktreeAddRequested(req)
+        WorktreeRemoveRequested(req)
+        BranchMergeRequested(req)
+        BranchDeleteRequested(req)
+        BranchRebaseRequested(req)
+        DefaultBranchRequested()
+
+    @guarantee WorktreeAddCreatesSiblingDirectory
+        -- Worktree paths are created as siblings of the main worktree directory.
+        -- The path is derived from the main worktree parent + branch slug.
+
+    @guarantee WorktreeRemoveCannotRemoveMain
+        -- The main worktree cannot be removed via this mutation.
+
+    @guarantee MergeAbortsOnConflict
+        -- When merge produces conflicts, the merge is aborted and
+        -- the working tree is left clean.
+
+    @guarantee RebaseAbortsOnConflict
+        -- When rebase produces conflicts, the rebase is aborted and
+        -- the working tree is left clean.
+
+    @guarantee MutationsRefreshWorktreeRegistry
+        -- After successful worktree add or remove, the worktree
+        -- registry is refreshed so resolvers reflect current state.
+}
+
+-- Decisions
+decision "Worktree paths are sibling directories of the main worktree"
+decision "Branch merge defaults to --ff-only; user must rebase before merge if not fast-forwardable"
+decision "Merge and rebase abort on conflict and leave working tree clean"
+decision "Default branch resolution: symbolic-ref > git config > 'main' fallback"
