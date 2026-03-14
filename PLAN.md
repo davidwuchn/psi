@@ -462,6 +462,12 @@ Ordered steps toward PSI COMPLETE.
   - Focused verification green:
     - `clojure -M:test --focus psi.agent-session.core-test/register-mutations-in!-includes-history-mutations-test --focus extensions.work-on-test`
     - result: 9 tests, 36 assertions, 0 failures
+- PSL follow-up landed (2026-03-14, commit `c8b2573`): Layer 1 git worktree specs/tests now lock attach-to-existing-branch semantics explicitly.
+  - Root cause: attach-to-existing-branch behavior was only indirectly covered through `/work-on` follow-ups, leaving the lower-level git contract under-specified and easier to regress while debugging mutation-boundary behavior.
+  - Fix: `spec/git-worktree-mutations.allium` now distinguishes branch-creation and existing-branch attach rules directly; `components/history/test/psi/history/git_test.clj` now verifies attach fails while the branch is already checked out in another worktree and succeeds once that worktree is removed.
+  - Focused verification green:
+    - `clojure -M:test --focus psi.history.git-test/worktree-add-attaches-existing-branch-when-create-branch-false --focus extensions.work-on-test`
+    - result: 9 tests, 39 assertions, 0 failures
 - PSL follow-up landed (2026-03-14, commit `12ab9d4`): `/work-merge` now gates cleanup on verified merge success and reports verification failure cause.
   - Root cause: even after rooting merge execution in the main worktree, the command still trusted the mutation’s `:merged true` result too early and could remove the linked worktree before proving the target branch actually advanced. Operators then saw either a false success or an opaque safety failure with no explanation.
   - Fix: `extensions/src/extensions/work_on.clj` now verifies from the main worktree that the feature branch tip is ancestor of target HEAD before cleanup; worktree removal and branch deletion now run only after that verification passes. Failure reporting now includes source branch, merge-reported flag, merge error payload, and explicit verification reason. `psi.history.git/branch-tip-merged-into-current?` was added to support the postcondition check.
