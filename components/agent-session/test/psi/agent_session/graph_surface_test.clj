@@ -213,6 +213,50 @@
       (is (seq (:psi.graph/capabilities result)))
       (is (seq (:psi.graph/domain-coverage result))))))
 
+(deftest graph-bridge-node-ids-are-unique-test
+  (testing "graph node ids are unique"
+    (let [nodes (:psi.graph/nodes (q [:psi.graph/nodes]))
+          ids   (map :id nodes)]
+      (is (= (count ids) (count (distinct ids)))))))
+
+(deftest graph-bridge-edge-endpoints-exist-test
+  (testing "every graph edge endpoint refers to an existing node id"
+    (let [result    (q [:psi.graph/nodes :psi.graph/edges])
+          node-ids  (set (map :id (:psi.graph/nodes result)))
+          edges     (:psi.graph/edges result)]
+      (is (every? #(contains? node-ids (:from %)) edges))
+      (is (every? #(contains? node-ids (:to %)) edges)))))
+
+(deftest graph-bridge-operation-symbols-have-nodes-test
+  (testing "every resolver/mutation symbol has a corresponding operation node"
+    (let [result         (q [:psi.graph/nodes
+                             :psi.graph/resolver-syms
+                             :psi.graph/mutation-syms])
+          nodes          (:psi.graph/nodes result)
+          resolver-nodes (->> nodes
+                              (filter #(= :resolver (:type %)))
+                              (map :symbol)
+                              set)
+          mutation-nodes (->> nodes
+                              (filter #(= :mutation (:type %)))
+                              (map :symbol)
+                              set)]
+      (is (= (:psi.graph/resolver-syms result) resolver-nodes))
+      (is (= (:psi.graph/mutation-syms result) mutation-nodes)))))
+
+(deftest graph-bridge-capabilities-align-with-domain-coverage-test
+  (testing "capabilities align with domain-coverage for domains present in the graph"
+    (let [result       (q [:psi.graph/capabilities :psi.graph/domain-coverage])
+          capabilities (:psi.graph/capabilities result)
+          coverage-map (into {} (map (juxt :domain identity)
+                                     (:psi.graph/domain-coverage result)))]
+      (doseq [{:keys [domain operation-count resolver-count mutation-count]} capabilities
+              :let [coverage (get coverage-map domain)]]
+        (is coverage (str "expected domain-coverage entry for capability domain " domain))
+        (is (= operation-count (:operation-count coverage)))
+        (is (= resolver-count (:resolver-count coverage)))
+        (is (= mutation-count (:mutation-count coverage)))))))
+
 (deftest root-queryable-attrs-contract-test
   (testing "every advertised root-queryable attr resolves from session root via resolver-only reachability"
     (let [meta       (q [:psi.graph/root-seeds :psi.graph/root-queryable-attrs])

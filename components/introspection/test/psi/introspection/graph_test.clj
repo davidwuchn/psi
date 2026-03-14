@@ -65,3 +65,46 @@
       (is (contains? by-domain :history))
       (is (contains? by-domain :agent-session))
       (is (contains? by-domain :introspection)))))
+
+(deftest derive-capability-graph-node-ids-unique-test
+  (testing "derived graph node ids are unique"
+    (let [node-ids (->> (cached-operation-metadata)
+                        graph/derive-capability-graph
+                        :nodes
+                        (map :id))]
+      (is (= (count node-ids) (count (distinct node-ids)))))))
+
+(deftest derive-capability-graph-edge-endpoints-exist-test
+  (testing "derived graph edges always point at existing node ids"
+    (let [{:keys [nodes edges]} (graph/derive-capability-graph (cached-operation-metadata))
+          node-ids              (set (map :id nodes))]
+      (is (every? #(contains? node-ids (:from %)) edges))
+      (is (every? #(contains? node-ids (:to %)) edges)))))
+
+(deftest derive-capability-graph-operation-symbols-have-nodes-test
+  (testing "derived operation symbols are represented by operation nodes"
+    (let [{:keys [resolver-ops mutation-ops]} (cached-operation-metadata)
+          {:keys [nodes]}                     (graph/derive-capability-graph (cached-operation-metadata))
+          resolver-syms                      (set (map :symbol resolver-ops))
+          mutation-syms                      (set (map :symbol mutation-ops))
+          resolver-node-syms                 (->> nodes
+                                                 (filter #(= :resolver (:type %)))
+                                                 (map :symbol)
+                                                 set)
+          mutation-node-syms                 (->> nodes
+                                                 (filter #(= :mutation (:type %)))
+                                                 (map :symbol)
+                                                 set)]
+      (is (= resolver-syms resolver-node-syms))
+      (is (= mutation-syms mutation-node-syms)))))
+
+(deftest derive-capability-graph-capabilities-align-with-domain-coverage-test
+  (testing "derived capabilities align with domain coverage for present domains"
+    (let [{:keys [capabilities domain-coverage]} (graph/derive-capability-graph (cached-operation-metadata))
+          coverage-map                           (into {} (map (juxt :domain identity) domain-coverage))]
+      (doseq [{:keys [domain operation-count resolver-count mutation-count]} capabilities
+              :let [coverage (get coverage-map domain)]]
+        (is coverage (str "expected domain-coverage entry for capability domain " domain))
+        (is (= operation-count (:operation-count coverage)))
+        (is (= resolver-count (:resolver-count coverage)))
+        (is (= mutation-count (:mutation-count coverage)))))))
