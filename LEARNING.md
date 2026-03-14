@@ -3,6 +3,20 @@
 
 ---
 
+## 2026-03-14 - `/work-on` must not carry the parent session’s rendered prompt into a new worktree session (commit `d527981`)
+
+### λ Session creation should inherit prompt intent, not a previously rendered runtime footer
+
+A rendered `:system-prompt` already contains session-specific runtime facts such as cwd/worktree footer lines. Passing that whole string into `/work-on` session creation copies the parent session’s rendered environment into the child worktree session. The correct inheritance boundary is prompt intent/layers, not the fully materialized prompt text from another session.
+
+### λ Prompt retargeting during session switch can still be undone by later explicit prompt overwrite
+
+New-session prompt retargeting updated runtime footer metadata correctly, but `/work-on` immediately overwrote the new session prompt by calling `create-session` with the old rendered prompt string. When a session-switch fix appears to work in one layer and fail in the final result, check for later explicit state writes that reintroduce stale data after the retarget step.
+
+### λ Worktree session bugs can survive correct footer/session routing if prompt carry-over is stale
+
+The footer can show the right worktree and session cwd can be correct while the model still answers from stale prompt context if the prompt was copied verbatim from the previous session. In multi-session worktree flows, operator-visible routing truth is not enough; prompt creation paths must avoid importing rendered runtime metadata from other sessions.
+
 ## 2026-03-14 - Worktree-bound prompt metadata should name the worktree explicitly (commit `e33d7bd`)
 
 ### λ Session footer truth and prompt truth must converge after worktree switches
