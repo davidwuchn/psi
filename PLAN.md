@@ -475,6 +475,13 @@ Ordered steps toward PSI COMPLETE.
   - Focused verification green:
     - `clojure -M:test --focus extensions.work-on-test`
     - result: 8 tests, 37 assertions, 0 failures
+- PSL follow-up landed (2026-03-14, commit `1c40ffb`): `/work-merge` safety failures now report target-branch state transitions explicitly.
+  - Root cause: the first safety-gated failure message still did not explain whether the merge ran on the intended branch or whether the target HEAD moved, leaving false-positive merge reports under-diagnosed.
+  - Fix: `extensions/src/extensions/work_on.clj` now captures `before-branch`, `after-branch`, `before-head`, `after-head`, and `head-changed` from the main worktree around the merge attempt and includes them in the verification-failure message; `psi.history.git/current-branch` now exposes the current branch name for diagnostics.
+  - Regression coverage added in `extensions/test/extensions/work_on_test.clj` for the richer target-head diagnostic payload.
+  - Focused verification green:
+    - `clojure -M:test --focus extensions.work-on-test`
+    - result: 8 tests, 42 assertions, 0 failures
 - No remaining required follow-up for the shipped worktree session workflow; future work is additive UX/documentation polish only.
 
 ### Step 12 — Emacs UI ◇ in progress
