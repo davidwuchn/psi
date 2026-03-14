@@ -82,8 +82,26 @@ rule WorktreeAdded {
     when: WorktreeAddRequested(req: WorktreeAddRequest)
     requires: worktrees/GitWorktreeRegistry.worktrees
         where not exists wt in worktrees where wt.path = req.path
+    requires: req.create_branch = true
 
     ensures: GitCommandExecuted("worktree", "add", req.path, "-b", req.branch)
+    ensures: WorktreeAddResult.created(
+        path: req.path,
+        branch: req.branch,
+        head: head_sha_at(req.path),
+        success: true
+    )
+    ensures: worktrees/WorktreeRegistryRefreshesOnStatusRequest
+}
+
+rule WorktreeAttachedToExistingBranch {
+    when: WorktreeAddRequested(req: WorktreeAddRequest)
+    requires: worktrees/GitWorktreeRegistry.worktrees
+        where not exists wt in worktrees where wt.path = req.path
+    requires: req.create_branch = false
+    requires: BranchExists(req.branch)
+
+    ensures: GitCommandExecuted("worktree", "add", req.path, req.branch)
     ensures: WorktreeAddResult.created(
         path: req.path,
         branch: req.branch,

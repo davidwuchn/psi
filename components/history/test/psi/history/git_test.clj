@@ -270,6 +270,33 @@
     (is (false? (:success result)))
     (is (= "branch already exists" (:error result)))))
 
+(deftest worktree-add-attaches-existing-branch-when-create-branch-false
+  (let [ctx      (git/create-null-context seed-commits)
+        base-dir (:repo-dir ctx)
+        wt-src   (linked-worktree-path ctx "feature-attached-src")
+        wt-path  (linked-worktree-path ctx "feature-attached")
+        _        (git/worktree-add ctx {:path wt-src :branch "feature-attached-src"})
+        result   (git/worktree-add ctx {:path wt-path
+                                        :branch "feature-attached-src"
+                                        :create-branch false})
+        listed   (git/worktree-list ctx)]
+    (is (false? (:success result)))
+    (is (string? (:error result)))
+    (is (not (some #(= (.getCanonicalPath (File. wt-path))
+                       (.getCanonicalPath (File. (:git.worktree/path %))))
+                   listed)))
+    (git/worktree-remove ctx {:path wt-src})
+    (let [result2 (git/worktree-add ctx {:path wt-path
+                                         :branch "feature-attached-src"
+                                         :create-branch false})
+          listed2 (git/worktree-list ctx)]
+      (is (true? (:success result2)))
+      (is (= wt-path (:path result2)))
+      (is (= "feature-attached-src" (:branch result2)))
+      (is (some #(= (.getCanonicalPath (File. wt-path))
+                    (.getCanonicalPath (File. (:git.worktree/path %))))
+                listed2)))))
+
 (deftest worktree-remove-fails-for-main-worktree
   (let [ctx    (git/create-null-context seed-commits)
         result (git/worktree-remove ctx {:path (:repo-dir ctx)})]
