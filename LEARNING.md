@@ -35,6 +35,20 @@ Once a session can move away from process cwd, `:cwd` in the session header is n
 
 The observed failure was `/work-on` reporting `not inside a git repository`, but the repository was fine. The real fault was missing resolver reachability in the extension query graph. When a command reports an impossible domain condition, check whether the query surface behind it is incomplete before debugging the domain logic itself.
 
+## 2026-03-14 - Isolated extension mutation contexts must include git mutation inputs and registrations (commit `700c137`)
+
+### λ Extension mutation runners need the same cross-domain mutation surface as the commands they orchestrate
+
+After the query-surface repair, `/work-on` advanced to `git.worktree/add!` but still failed because the isolated qctx built by `register-mutations-in!` only loaded agent-session mutations. The extension command was orchestrating a history mutation through an env that did not contain the history mutation surface. Mutation isolation bugs can therefore hide one layer behind resolver isolation bugs.
+
+### λ Git mutations invoked from extension contexts need an explicit `:git/context`, not only session context
+
+History mutations such as `git.worktree/add!` are parameterized by `:git/context`. Seeding only `:psi/agent-session-ctx` is not enough, even when the session can derive cwd indirectly. `run-extension-mutation-in!` should inject `:git/context` derived from `effective-cwd-in` into both the mutation seed and params so git operations run against the active session worktree deterministically.
+
+### λ Blank mutation failures are often missing-surface failures, not domain-level git errors
+
+The observed output was `worktree creation failed:` and then `missing git mutation payload`, which looked like bad error reporting. The deeper cause was that the mutation was absent or under-seeded in the isolated query env, so there was no real domain payload to report. When an extension mutation yields nil or empty payloads, inspect isolated mutation registration and required cross-domain inputs before refining user-facing error text.
+
 ## 2026-03-14 - User docs should close the loop after capability promotion (commit `26f1245`)
 
 ### λ Capability promotion is incomplete until user docs name the new operator path
