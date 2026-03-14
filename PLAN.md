@@ -251,6 +251,16 @@ Ordered steps toward PSI COMPLETE.
   2. identify remaining failures unrelated to removed persistent-provider machinery
   3. then fix remaining behavioural failures one focused namespace at a time (`runtime-test`, `rpc-test`, command/worktree)
 
+### Step 15e — Tool-boundary thinking segments ✓ complete
+- Root cause of repeated Emacs thinking lines converged: backend previously carried cumulative thinking across tool boundaries while Emacs intentionally split/archive-rendered thinking around tool output.
+- Executor now resets per-content-index thinking accumulation on `:toolcall-start`, so post-tool thinking begins a fresh cumulative segment.
+- Coverage added at three layers:
+  - executor regression for post-tool thinking reset
+  - RPC regression for fresh post-tool `assistant/thinking-delta` segment ordering
+  - Emacs regression for cumulative prefix-snapshot replace-in-place rendering
+- Manual live debugging confirmed transcript append/separator markers were healthy; the fault was semantic mismatch at the tool boundary, not stale Emacs buffer positioning.
+- Implementation commit: `42d1788`
+
 ### Step 10 — Remember memory capture ✓ complete
 - Spec: `spec/remember-capture.allium`
 - Current: command exists; spec now narrowed to manual capture semantics
