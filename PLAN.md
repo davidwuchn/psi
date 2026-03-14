@@ -351,6 +351,33 @@ Ordered steps toward PSI COMPLETE.
 - Remaining (multi-session UI):
   - optional follow-up: add richer collapsed/expandable subtree interactions in TUI row model (current model is fully expanded tree-only)
 
+### Step 11b — Worktree usage (mutations + /work-on extension) ◇ spec complete
+- Spec: `spec/git-worktree-mutations.allium` (Layer 1) + `spec/work-on-extension.allium` (Layer 2)
+- Meta: worktree usage model added to `META.md` (commit `0673e06`)
+- Architecture: three layers
+  - Layer 0 (✓ exists): read-only resolvers + `/worktree` command
+  - Layer 1 (⊨ spec complete): git worktree add/remove, branch merge/delete/rebase as EQL mutations in history component
+  - Layer 2 (⊨ spec complete): `/work-on`, `/work-merge`, `/work-rebase`, `/work-status` extension orchestration
+- Key decisions encoded in specs:
+  - Worktree paths are sibling directories of main worktree
+  - Slug is mechanical: up to 4 significant words, lowercase, hyphenated
+  - Merge defaults to `--ff-only`; `/work-rebase` provided as convenience
+  - After merge: worktree removed, branch deleted, session kept in host
+  - `/work-on` allowed from any worktree (main or linked)
+  - Session created by `/work-on` inherits current system prompt
+- Closed open questions in `spec/git-worktrees.allium`:
+  - `/worktree` stays read-only; mutations in separate spec
+  - `/new` in linked worktree inherits that worktree_path
+  - Detached HEAD: git-branch remains 'detached' (short SHA via `:git.worktree/head`)
+- Implementation plan:
+  1. Layer 1: add git mutation fns to `psi.history.git` (worktree-add, worktree-remove, branch-merge, branch-delete, branch-rebase, default-branch)
+  2. Layer 1: add EQL mutations to `psi.history.resolvers` (`:git.worktree/add!`, `:git.worktree/remove!`, `:git.branch/merge!`, `:git.branch/delete!`, `:git.branch/rebase!`, `:git.branch/default`)
+  3. Layer 1: tests using `create-null-context` with linked worktrees
+  4. Layer 2: work-on extension (`extensions/src/extensions/work_on.clj`)
+  5. Layer 2: slug generation, `/work-on`, `/work-merge`, `/work-rebase`, `/work-status` commands
+  6. Layer 2: extension tests
+  7. Wire into slash command dispatch + help text + CAPF candidates
+
 ### Step 12 — Emacs UI ◇ in progress
 - Spec: `spec/emacs-frontend.allium`
 - Current: rpc-edn frontend and core interaction model implemented
