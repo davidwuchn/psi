@@ -433,6 +433,14 @@ Ordered steps toward PSI COMPLETE.
   - Focused verification green:
     - `clojure -M:test --focus psi.agent-session.system-prompt-test --focus psi.agent-session.core-test/query-in-test`
     - result: 3 tests, 40 assertions, 0 failures
+- PSL follow-up landed (2026-03-14, commit `62c03f7`): worktree identity is now exposed coherently across persisted listings, resolver joins, RPC host snapshots, and TUI/Emacs session selectors.
+  - Root cause: `worktree-path` existed in persistence/runtime state but was not propagated consistently through `:psi.session-info/*` joins or UI-facing selector payloads, so resume/tree flows still forced operators to infer worktree identity indirectly from session files or session names.
+  - Fix: resolvers now expose explicit `:psi.session-info/worktree-path` and normalize `:psi.session-info/cwd` to the worktree path; `host/updated` now includes per-session `:worktree-path`; TUI tree rows render worktree paths inline; Emacs `/resume` queries/labels now include worktree path.
+  - Regression coverage added in `components/agent-session/test/psi/agent_session/persistence_test.clj`, `core_test.clj`, `resolvers_test.clj`, `rpc_test.clj`, `components/tui/test/psi/tui/app_test.clj`, and `components/emacs-ui/test/psi-test.el`.
+  - Focused verification green:
+    - `clojure -M:test --focus psi.agent-session.persistence-test --focus psi.agent-session.core-test/resume-session-model-fallback-test --focus psi.agent-session.resolvers-test/multi-session-host-eql-process-and-persisted-test`
+    - `clojure -M:test --focus psi.agent-session.resolvers-test/multi-session-host-eql-process-and-persisted-test --focus psi.agent-session.rpc-test/rpc-subscribe-emits-host-updated-test --focus psi.agent-session.rpc-test/rpc-fork-emits-host-updated-test --focus psi.agent-session.rpc-test/rpc-new-session-emits-host-updated-test`
+    - `clojure -M:test --focus psi.tui.app-test/resume-command-opens-selector-test --focus psi.tui.app-test/tree-selector-view-renders-hierarchy-and-active-badge-test --focus psi.tui.app-test/tree-selector-view-aligns-status-columns-test --focus psi.agent-session.resolvers-test/multi-session-host-eql-process-and-persisted-test --focus psi.agent-session.rpc-test/rpc-subscribe-emits-host-updated-test`
 - No remaining required follow-up for the shipped worktree session workflow; future work is additive UX/documentation polish only.
 
 ### Step 12 — Emacs UI ◇ in progress
