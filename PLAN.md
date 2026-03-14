@@ -6,6 +6,23 @@ Ordered steps toward PSI COMPLETE.
 
 ## Done
 
+### Step 15d — Turn-state provider boundary telemetry ✓ complete
+- Executor turn data now records provider boundary lifecycle, not just assembled text/tool results.
+- New turn-state fields:
+  - `:last-provider-event`
+  - `:content-blocks`
+- Boundary events now update turn state for:
+  - `:text-start` / `:text-end`
+  - `:thinking-start` / `:thinking-delta` / `:thinking-end`
+  - existing tool-call / done / error events
+- Result: a stalled or malformed provider turn can now be diagnosed from executor-local turn telemetry without changing RPC/TUI surfaces.
+- EQL turn resolver now exposes:
+  - `:psi.turn/last-provider-event`
+  - `:psi.turn/content-blocks`
+- Focused verification green:
+  - `clojure -M:test --focus psi.agent-session.executor-test --focus psi.agent-session.turn-statechart-test`
+- Implementation commit: `77f0bb7`
+
 ### Step 15c — Startup host bootstrap should create exactly one real session ✓ complete
 - Removed phantom startup host entries by aligning session creation with actual runtime intent.
 - `create-context` now starts with an empty host registry instead of seeding it from `initial-session`.
