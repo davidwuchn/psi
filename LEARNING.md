@@ -3,6 +3,20 @@
 
 ---
 
+## 2026-03-14 - `/work-merge` cleanup must be gated by verified postconditions, not optimistic mutation success (commit `12ab9d4`)
+
+### λ Destructive orchestration commands need explicit postcondition checks before cleanup
+
+`/work-merge` originally treated `{:merged true}` from the merge mutation as enough evidence to remove the linked worktree and continue cleanup. In practice that was too weak: the command could still report success while the target branch had not actually advanced. For commands that delete recovery state, a mutation’s success flag is only provisional. Cleanup must be gated by a direct postcondition check against repository state.
+
+### λ Safety failures are only actionable when they report both mutation intent and verification reason
+
+`merge did not update master; worktree preserved for safety` was better than a false success, but still left the operator guessing whether the merge ran in the wrong context, silently no-op’d, or failed verification for a different reason. Failure reporting became much more useful once it included the source branch, whether the merge mutation reported success, the merge error payload, and the exact verification reason. When safety gates trip, explain both what was attempted and what invariant was checked.
+
+### λ Preserve the worktree until merge success is proven, not merely suggested
+
+In worktree workflows, the linked worktree is the operator’s easiest recovery artifact. Removing it before proving the target branch now contains the feature tip destroys the clearest rollback path. The correct sequencing is: merge → verify target contains source tip → cleanup. If verification fails, preserve the worktree and make the diagnosis explicit.
+
 ## 2026-03-14 - Mutation boundaries must preserve explicit false flags, especially across snake_case / kebab-case seams (commit `5ce1086`)
 
 ### λ A live integrated failure can survive both spec fixes and unit tests when boundary keys drift
