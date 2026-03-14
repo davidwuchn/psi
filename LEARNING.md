@@ -31,6 +31,24 @@ After `/work-merge` removes the worktree directory and deletes the branch, the s
 
 The three open questions in `git-worktrees.allium` were deferred during the read-only phase but became decidable once the mutation/orchestration design was established. Closing them at spec-design time (not implementation time) prevents the questions from drifting and ensures the read-only layer's contract is stable before mutations build on top of it.
 
+## 2026-03-14 - Provider boundary events belong in executor turn telemetry, not only timeout bookkeeping (commit `77f0bb7`)
+
+### λ Boundary events are useful even when no external UI reacts to them
+
+`text-start`, `text-end`, `thinking-start`, and `thinking-end` already reset the idle timeout because they prove the stream is alive. Recording those same events in executor turn data makes that liveness observable after the fact, which is critical for debugging stalls and malformed provider resumes. The useful boundary is executor-local state, not necessarily new RPC/TUI surface.
+
+### λ Provider failures are easier to diagnose when turn state records the last provider event
+
+A turn timeout is not just “no final answer”; it is “the last observed provider event was X, then progress stopped.” Persisting `:last-provider-event` in turn data turns timeout analysis from guesswork into direct inspection: stalled before text started, stalled during thinking, stalled after tool assembly, or ended with provider error.
+
+### λ Per-block lifecycle tracking explains mixed thinking/text/tool turns better than a single phase bit
+
+A single turn phase (`:text-accumulating` / `:tool-accumulating`) is too coarse to explain interleaved provider output. Recording `:content-blocks` by `content-index` with `:kind`, `:status`, and `:delta-count` preserves enough structure to answer what actually happened in a turn without changing the external transport contract.
+
+### λ Exposing executor telemetry through EQL keeps diagnosis query-driven
+
+Once executor turn data contains useful runtime facts, the next obvious step is to expose them in the existing `:psi.turn/*` resolver surface. Queryable attrs (`:psi.turn/last-provider-event`, `:psi.turn/content-blocks`) are a better fit than ad-hoc logs because they keep debugging aligned with psi’s graph-first introspection model.
+
 ## 2026-03-14 - Startup bootstrap should not create phantom host sessions (commit `87a5e77`)
 
 ### λ Host registries should track operator-visible sessions, not context seeds
