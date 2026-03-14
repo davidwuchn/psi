@@ -6,6 +6,39 @@ Human ⊗ AI
 
 In alpha; no backward compatibility
 
+Artifacts ≡ {meta spec tests code}
+
+role(meta) ≡ {why invariants boundaries ¬how ¬syntax}
+role(spec) ≡ {behaviour surfaces examples acceptance_criteria}
+role(tests) ≡ executable_proof(spec)
+role(code) ≡ mechanism_satisfying(tests)
+
+source_of_truth ≡ spec ∪ tests
+¬source_of_truth(code)
+
+TraceID ≡ λx. ∃ι. ref(meta,ι,x) ∧ ref(spec,ι,x) ∧ ref(tests,ι,x) ∧ (ref(code,ι,x) ∨ inferable(code,ι,x))
+
+derive_tests ≡ λσ.
+  acceptance_criteria(σ) → tests_from(σ)
+
+change_chain ≡ λδ.
+  classify(δ,{intent behaviour proof mechanism}) →
+  update(meta,δ|intent) →
+  update(spec,δ|behaviour) →
+  update(tests,derive_tests(spec)) →
+  update(code,satisfy(tests)) →
+  verify(coherence({meta spec tests code}))
+
+coherence ≡ λA.
+  ∀a ∈ A. ∀b ∈ A.
+    related(a,b) → consistent(a,b)
+
+small ≡ λδ.
+  one_intent(δ) ∧
+  one_rule_cluster(δ) ∧
+  one_test_cluster(δ) ∧
+  minimal_mechanism_change(δ)
+
 λspec. language(spec) = Allium
 spec_consists_of_multiple_connected_allium_files ≡ λspec. ∃F. ∃E. spec = [F E] ∧ |F| > 1 ∧ ∀f ∈ F. allium_file(f) ∧ E ⊆ (F × F) ∧ connected(F, E)
 spec_has_no_isolated_allium_file ≡ λspec. ∃F. ∃E. spec = [F E] ∧ |F| > 1 ∧ ∀f ∈ F. allium_file(f) ∧ ∀f ∈ F. ∃g ∈ F. g ≠ f ∧ ((f,g) ∈ E ∨ (g,f) ∈ E)
@@ -45,6 +78,10 @@ sync_protocol ≡ λchange.
   verify(consistency) →
   commit(Δ + λ)
 
+`why : answer → deeper_answer`
+`root_cause : answer → bool`
+investigate = λq. Y(λf. λa. if root_cause(a) then a else f(why(a)))(q)
+
 λdev_step(spec, code) -> tiny_code_transformation_guided_by_spec
 λspec_step(刀_intention, ψ_values, spec) -> tiny_spec_transformation | guided_by_刀_intention | matching_ψ_values
 iterate_to_fix  dev_step matches spec code0
@@ -69,7 +106,8 @@ iterate_to_fix  spec_step matches intention spec0
 λ build(x).   ∃lib(x) → use(lib) | ∃pattern(x,y) → extract(shape) | simple(x) > complex(x) | compose > monolith
 λ lint(f).    after(write(f) ∨ edit(f)) → sync(f) → lint(f) → fix > suppress(inline) > exclude ≫ suppress(global)
 λ fix(bug).   trace(bug) → cause(structural) → redesign > patch | cause(local) → patch | ¬trace → trace deeper
-λf. f (prefer (fix_root_cause) (over workaround))
+λf. f (prefer (fix_root_cause) (over (workaround ∨ superficial_fix)))
+λx.((superficial_fix ∨ workaround) x ⇝ complexity x)
 λ sync(f).    after(write(f) ∨ edit(f)) → re-read(f) | tooling_mutates_silently → coherence_violation
 
 λ search(q).  recall(persisted) > search(history) > search(content) | prior_knowledge_before_exploration

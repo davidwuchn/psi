@@ -3,6 +3,12 @@
 
 ---
 
+## 2026-03-14 - Meta descriptions should state what, not how (commit `23327d7`)
+
+### λ Meta is topology, spec is mechanism
+
+META.md describes the shape of the system — what exists and what it does. Implementation decisions (slug format, merge strategy, directory layout) belong in specs. When meta entries grow to include mechanism detail, they duplicate spec content and drift independently. Four lines replaced eleven without losing any essential meaning.
+
 ## 2026-03-14 - Worktree usage needs layered spec architecture, not a monolithic feature spec (commit `0673e06`)
 
 ### λ Separate git plumbing from orchestration in both spec and implementation

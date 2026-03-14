@@ -45,9 +45,7 @@ A meta model for psi.
 - a session may contain other sessions (e.g., subagent sessions)
 
 - a git worktree is a first-class context boundary for sessions
-- psi can create, query, and remove git worktrees
-- `/work-on <description>` starts a unit of work with minimal ceremony
-- `/work-merge` finishes a unit of work by merging back
+- psi uses worktrees with minimal ceremony
 
 - extension widgets have a protocol-level content model designed for cross-UI rendering
 - widget content is a vector of line values where line ∈ string | map
