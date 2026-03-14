@@ -8,6 +8,7 @@
      :session-id            — stable UUID string for this branch
      :session-file          — path to the journal file, nil if unsaved
      :session-name          — user-assigned label, nil if unnamed
+     :worktree-path         — effective working directory for this session branch
      :model                 — {:provider string :id string :reasoning bool}
      :thinking-level        — :off | :minimal | :low | :medium | :high | :xhigh
      :is-streaming          — true while the agent loop is running
@@ -110,6 +111,7 @@
    [:session-id :string]
    [:session-file {:optional true} [:maybe :string]]
    [:session-name {:optional true} [:maybe :string]]
+   [:worktree-path :string]
    [:parent-session-id {:optional true} [:maybe :string]]
    [:parent-session-path {:optional true} [:maybe :string]]
    [:spawn-mode {:optional true} [:enum :new-root :fork-head :fork-at-entry :subagent]]
@@ -199,6 +201,8 @@
     {:session-id              (str (java.util.UUID/randomUUID))
      :session-file            nil
      :session-name            nil
+     :worktree-path           (or (:worktree-path overrides)
+                                  (System/getProperty "user.dir"))
      :parent-session-id       nil
      :parent-session-path     nil
      :spawn-mode              :new-root

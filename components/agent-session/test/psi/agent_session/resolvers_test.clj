@@ -309,7 +309,14 @@
       (is (vector? (:psi.agent-session/git-worktrees result)))
       (is (integer? (:psi.agent-session/git-worktree-count result)))
       (when (pos? (:psi.agent-session/git-worktree-count result))
-        (is (map? (:psi.agent-session/git-worktree-current result)))))))
+        (is (map? (:psi.agent-session/git-worktree-current result))))))
+
+  (testing ":psi.agent-session/cwd prefers session worktree-path"
+    (let [ctx    (session/create-context {:cwd "/repo/main"
+                                          :initial-session {:worktree-path "/repo/feature-x"}
+                                          :persist? false})
+          result (q-in ctx [:psi.agent-session/cwd])]
+      (is (= "/repo/feature-x" (:psi.agent-session/cwd result))))))
 
 ;; ── Background jobs introspection ───────────────────────
 

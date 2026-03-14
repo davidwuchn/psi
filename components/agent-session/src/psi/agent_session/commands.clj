@@ -246,7 +246,7 @@
 (defn- remember-provenance
   [ctx]
   (let [session-id (get-in (session/get-session-data-in ctx) [:session-id])
-        cwd        (:cwd ctx)
+        cwd        (session/effective-cwd-in ctx)
         git-branch (try
                      (:psi.agent-session/git-branch
                       (session/query-in ctx [:psi.agent-session/git-branch]))

@@ -13,6 +13,9 @@
 
 (defrecord GitContext [repo-dir])
 
+(declare status)
+(declare current-commit)
+
 (defn create-context
   "Create a GitContext pointing at `repo-dir` (defaults to cwd)."
   ([]
@@ -63,21 +66,30 @@
 
 ;;; Internal helpers
 
-(defn- run-git
-  "Run git `args` in ctx's repo-dir; return trimmed stdout or throw."
+(defn- run-git*
+  "Run git `args` in ctx's repo-dir; return {:out :err :exit}."
   [^GitContext ctx args]
   (let [pb   (ProcessBuilder. ^java.util.List (into ["git"] args))
         _    (.directory pb (File. ^String (:repo-dir ctx)))
         proc (.start pb)
         out  (slurp (.getInputStream proc))
-        _err (slurp (.getErrorStream proc))
+        err  (slurp (.getErrorStream proc))
         exit (.waitFor proc)]
+    {:out  (str/trim out)
+     :err  (str/trim err)
+     :exit exit}))
+
+(defn- run-git
+  "Run git `args` in ctx's repo-dir; return trimmed stdout or throw."
+  [^GitContext ctx args]
+  (let [{:keys [out err exit]} (run-git* ctx args)]
     (when (pos? exit)
       (throw (ex-info "git command failed"
                       {:dir  (:repo-dir ctx)
                        :args args
+                       :err  err
                        :exit exit})))
-    (str/trim out)))
+    out))
 
 (defn- canonical-path
   ^String [p]
@@ -227,6 +239,301 @@
   "Return the current worktree map for `ctx`, or nil when unavailable."
   [ctx]
   (first (filter :git.worktree/current? (worktree-list ctx))))
+
+(defn- path-exists?
+  [path]
+  (.exists (File. (str path))))
+
+(defn- branch-ref
+  [branch]
+  (str "refs/heads/" branch))
+
+(defn- branch-exists?
+  [ctx branch]
+  (zero? (:exit (run-git* ctx ["show-ref" "--verify" "--quiet" (branch-ref branch)]))))
+
+(defn- current-branch-name
+  [ctx]
+  (or (some-> (current-worktree ctx) :git.worktree/branch-name)
+      (let [{:keys [out exit]} (run-git* ctx ["rev-parse" "--abbrev-ref" "HEAD"])]
+        (when (and (zero? exit) (not= out "HEAD"))
+          out))))
+
+(defn- dirty-working-tree?
+  [ctx]
+  (not= :clean (status ctx)))
+
+(defn- fast-forwardable?
+  [ctx branch]
+  (zero? (:exit (run-git* ctx ["merge-base" "--is-ancestor" "HEAD" branch]))))
+
+(defn- merge-in-progress?
+  [ctx]
+  (zero? (:exit (run-git* ctx ["rev-parse" "-q" "--verify" "MERGE_HEAD"]))))
+
+(defn- rebase-in-progress?
+  [ctx]
+  (zero? (:exit (run-git* ctx ["rev-parse" "-q" "--verify" "REBASE_HEAD"]))))
+
+(defn- main-worktree-path
+  [ctx]
+  (some-> (first (worktree-list ctx)) :git.worktree/path canonical-path))
+
+(defn- error-message
+  [e]
+  (or (not-empty (:err (ex-data e)))
+      (ex-message e)
+      "git command failed"))
+
+(defn- normalize-merge-strategy
+  [strategy]
+  (case strategy
+    :ff_only :ff-only
+    :ff-only :ff-only
+    :no_ff :no-ff
+    :no-ff :no-ff
+    :ff :ff
+    :ff-only))
+
+;;; Worktree and branch mutations
+
+(defn worktree-add
+  "Create a linked worktree.
+
+   Request keys:
+   - :path
+   - :branch
+   - :base-ref (defaults to HEAD)
+   - :create-branch (defaults to true)"
+  [ctx {:keys [path branch base-ref create-branch]
+        :or   {create-branch true}}]
+  (cond
+    (path-exists? path)
+    {:path path
+     :branch branch
+     :head nil
+     :success false
+     :error "worktree path already exists"}
+
+    (and create-branch (branch-exists? ctx branch))
+    {:path path
+     :branch branch
+     :head nil
+     :success false
+     :error "branch already exists"}
+
+    :else
+    (let [base-ref* (or base-ref "HEAD")
+          args      (cond-> ["worktree" "add"]
+                      create-branch (into ["-b" branch])
+                      true          (conj path)
+                      (not create-branch) (conj branch)
+                      (seq base-ref*) (conj base-ref*))]
+      (try
+        (run-git ctx args)
+        {:path path
+         :branch branch
+         :head (current-commit (create-context path))
+         :success true
+         :error nil}
+        (catch Exception e
+          {:path path
+           :branch branch
+           :head nil
+           :success false
+           :error (error-message e)})))))
+
+(defn worktree-remove
+  "Remove a linked worktree.
+
+   Request keys:
+   - :path
+   - :force (defaults to false)"
+  [ctx {:keys [path force]
+        :or   {force false}}]
+  (let [path*           (canonical-path path)
+        worktrees       (worktree-list ctx)
+        target          (some (fn [wt]
+                                (when (= (canonical-path (:git.worktree/path wt)) path*)
+                                  wt))
+                              worktrees)
+        main-path       (main-worktree-path ctx)]
+    (cond
+      (nil? target)
+      {:path path
+       :success false
+       :error "worktree path not found"}
+
+      (= path* main-path)
+      {:path path
+       :success false
+       :error "cannot remove main worktree"}
+
+      :else
+      (try
+        (run-git ctx (cond-> ["worktree" "remove"]
+                       force (conj "--force")
+                       true  (conj path)))
+        {:path path
+         :success true
+         :error nil}
+        (catch Exception e
+          {:path path
+           :success false
+           :error (error-message e)})))))
+
+(defn branch-merge
+  "Merge `branch` into the current branch in `ctx`.
+
+   Request keys:
+   - :branch
+   - :strategy (:ff_only/:ff-only default, :ff, :no_ff/:no-ff)
+   - :message (used for no-ff merges)"
+  [ctx {:keys [branch strategy message]}]
+  (let [strategy* (normalize-merge-strategy strategy)
+        ff?       (fast-forwardable? ctx branch)]
+    (cond
+      (dirty-working-tree? ctx)
+      {:branch branch
+       :merged false
+       :fast-forward false
+       :conflict false
+       :error "working tree is dirty"}
+
+      (and (= strategy* :ff-only) (not ff?))
+      {:branch branch
+       :merged false
+       :fast-forward false
+       :conflict false
+       :error "not fast-forwardable; rebase first"}
+
+      :else
+      (let [args (case strategy*
+                   :no-ff (cond-> ["merge" "--no-ff"]
+                            (seq message) (into ["-m" message])
+                            true          (conj branch))
+                   :ff    ["merge" "--ff" branch]
+                   ["merge" "--ff-only" branch])]
+        (try
+          (run-git ctx args)
+          {:branch branch
+           :merged true
+           :fast-forward (boolean ff?)
+           :conflict false
+           :error nil}
+          (catch Exception e
+            (let [conflict? (merge-in-progress? ctx)]
+              (when conflict?
+                (run-git* ctx ["merge" "--abort"]))
+              {:branch branch
+               :merged false
+               :fast-forward false
+               :conflict conflict?
+               :error (if conflict?
+                        "merge conflict; aborting"
+                        (error-message e))})))))))
+
+(defn branch-delete
+  "Delete a local branch.
+
+   Request keys:
+   - :branch
+   - :force (defaults to false)"
+  [ctx {:keys [branch force]
+        :or   {force false}}]
+  (cond
+    (not (branch-exists? ctx branch))
+    {:branch branch
+     :deleted false
+     :error "branch not found"}
+
+    (= branch (current-branch-name ctx))
+    {:branch branch
+     :deleted false
+     :error "cannot delete current branch"}
+
+    :else
+    (try
+      (run-git ctx ["branch" (if force "-D" "-d") branch])
+      {:branch branch
+       :deleted true
+       :error nil}
+      (catch Exception e
+        {:branch branch
+         :deleted false
+         :error (error-message e)}))))
+
+(defn branch-rebase
+  "Rebase a branch onto another branch.
+
+   Request keys:
+   - :onto
+   - :branch (defaults to current branch)"
+  [ctx {:keys [onto branch]}]
+  (let [branch* (or branch (current-branch-name ctx))
+        args    (cond-> ["rebase" onto]
+                  (seq branch) (conj branch))]
+    (cond
+      (dirty-working-tree? ctx)
+      {:onto onto
+       :branch branch*
+       :success false
+       :conflict false
+       :error "working tree is dirty"}
+
+      (not (seq onto))
+      {:onto onto
+       :branch branch*
+       :success false
+       :conflict false
+       :error "missing rebase target"}
+
+      :else
+      (try
+        (run-git ctx args)
+        {:onto onto
+         :branch branch*
+         :success true
+         :conflict false
+         :error nil}
+        (catch Exception e
+          (let [conflict? (rebase-in-progress? ctx)]
+            (when conflict?
+              (run-git* ctx ["rebase" "--abort"]))
+            {:onto onto
+             :branch branch*
+             :success false
+             :conflict conflict?
+             :error (if conflict?
+                      "rebase conflict; aborting"
+                      (error-message e))}))))))
+
+(defn default-branch
+  "Resolve the default branch.
+
+   Resolution order:
+   1. refs/remotes/origin/HEAD symbolic ref
+   2. git config init.defaultBranch
+   3. fallback main"
+  [ctx]
+  (let [{sym-out :out sym-exit :exit} (run-git* ctx ["symbolic-ref" "--short" "refs/remotes/origin/HEAD"])
+        symbolic-branch               (when (and (zero? sym-exit) (seq sym-out))
+                                        (last (str/split sym-out #"/")))
+        {cfg-out :out cfg-exit :exit} (run-git* ctx ["config" "--get" "init.defaultBranch"])
+        config-branch                 (when (and (zero? cfg-exit) (seq cfg-out))
+                                        cfg-out)]
+    (cond
+      (seq symbolic-branch)
+      {:branch symbolic-branch
+       :source :symbolic_ref}
+
+      (seq config-branch)
+      {:branch config-branch
+       :source :config}
+
+      :else
+      {:branch "main"
+       :source :fallback})))
 
 ;;; Public API — all take a GitContext as first arg
 

@@ -23,6 +23,7 @@
                    {:session-id sid
                     :session-file (:session-file session-data)
                     :session-name (:session-name session-data)
+                    :worktree-path (:worktree-path session-data)
                     :parent-session-id (:parent-session-id session-data)
                     :parent-session-path (:parent-session-path session-data)
                     :created-at (now)
@@ -39,6 +40,7 @@
                 {:session-id sid
                  :session-file (:session-file session-data)
                  :session-name (:session-name session-data)
+                 :worktree-path (:worktree-path session-data)
                  :parent-session-id (:parent-session-id session-data)
                  :parent-session-path (:parent-session-path session-data)
                  :created-at created

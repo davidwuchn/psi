@@ -141,7 +141,51 @@
    ::pco/output [:git.worktree/inside-repo?]}
   {:git.worktree/inside-repo? (boolean (git/inside-repo? context))})
 
-;;; All resolvers
+;;; Git mutations
+
+(pco/defmutation git-worktree-add!
+  [_ {:keys [git/context input]}]
+  {::pco/op-name 'git.worktree/add!
+   ::pco/params  [:git/context :input]
+   ::pco/output  [:path :branch :head :success :error]}
+  (git/worktree-add context input))
+
+(pco/defmutation git-worktree-remove!
+  [_ {:keys [git/context input]}]
+  {::pco/op-name 'git.worktree/remove!
+   ::pco/params  [:git/context :input]
+   ::pco/output  [:path :success :error]}
+  (git/worktree-remove context input))
+
+(pco/defmutation git-branch-merge!
+  [_ {:keys [git/context input]}]
+  {::pco/op-name 'git.branch/merge!
+   ::pco/params  [:git/context :input]
+   ::pco/output  [:branch :merged :fast-forward :conflict :error]}
+  (git/branch-merge context input))
+
+(pco/defmutation git-branch-delete!
+  [_ {:keys [git/context input]}]
+  {::pco/op-name 'git.branch/delete!
+   ::pco/params  [:git/context :input]
+   ::pco/output  [:branch :deleted :error]}
+  (git/branch-delete context input))
+
+(pco/defmutation git-branch-rebase!
+  [_ {:keys [git/context input]}]
+  {::pco/op-name 'git.branch/rebase!
+   ::pco/params  [:git/context :input]
+   ::pco/output  [:onto :branch :success :conflict :error]}
+  (git/branch-rebase context input))
+
+(pco/defmutation git-branch-default
+  [_ {:keys [git/context]}]
+  {::pco/op-name 'git.branch/default
+   ::pco/params  [:git/context]
+   ::pco/output  [:branch :source]}
+  (git/default-branch context))
+
+;;; All resolvers/mutations
 
 (def all-resolvers
   [git-repo-status
@@ -155,3 +199,11 @@
    git-worktree-current
    git-worktree-count
    git-worktree-inside-repo])
+
+(def all-mutations
+  [git-worktree-add!
+   git-worktree-remove!
+   git-branch-merge!
+   git-branch-delete!
+   git-branch-rebase!
+   git-branch-default])

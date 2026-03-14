@@ -621,19 +621,46 @@ Also tolerates cumulative snapshots that differ near previous tail
                   (case (:type event)
                     :start nil ;; already transitioned via :turn/start
 
+                    :text-start
+                    (do
+                      (note-last-provider-event! (:turn-data turn-ctx) :text-start event)
+                      (begin-content-block! (:turn-data turn-ctx) (or (:content-index event) 0))
+                      (update-content-block! (:turn-data turn-ctx) (or (:content-index event) 0)
+                                             #(assoc % :kind :text)))
+
                     :text-delta
                     (turn-sc/send-event! turn-ctx :turn/text-delta
-                                         {:delta (:delta event)})
+                                         {:content-index (:content-index event)
+                                          :delta         (:delta event)})
+
+                    :text-end
+                    (do
+                      (note-last-provider-event! (:turn-data turn-ctx) :text-end event)
+                      (end-content-block! (:turn-data turn-ctx) (or (:content-index event) 0)))
+
+                    :thinking-start
+                    (do
+                      (note-last-provider-event! (:turn-data turn-ctx) :thinking-start event)
+                      (begin-content-block! (:turn-data turn-ctx) (or (:content-index event) 0))
+                      (update-content-block! (:turn-data turn-ctx) (or (:content-index event) 0)
+                                             #(assoc % :kind :thinking)))
 
                     :thinking-delta
                     (let [idx    (or (:content-index event) 0)
                           raw    (let [d (:delta event)]
                                    (if (string? d) d (str (or d ""))))
                           merged (get (swap! thinking-buffers update idx merge-stream-text raw) idx)]
+                      (note-last-provider-event! (:turn-data turn-ctx) :thinking-delta event)
+                      (note-content-delta! (:turn-data turn-ctx) idx :thinking)
                       (emit-progress! progress-queue
                                       {:event-kind    :thinking-delta
                                        :content-index idx
                                        :text          merged}))
+
+                    :thinking-end
+                    (do
+                      (note-last-provider-event! (:turn-data turn-ctx) :thinking-end event)
+                      (end-content-block! (:turn-data turn-ctx) (or (:content-index event) 0)))
 
                     :toolcall-start
                     (do
@@ -802,7 +829,8 @@ Also tolerates cumulative snapshots that differ near previous tail
         call-id  (:id tool-call)
         name     (:name tool-call)
         args     (parse-args (:arguments tool-call))
-        opts     {:cwd         (:cwd agent-session-ctx)
+        opts     {:cwd         (or (:worktree-path @(:session-data-atom agent-session-ctx))
+                                   (:cwd agent-session-ctx))
                   :overrides   (:tool-output-overrides @(:session-data-atom agent-session-ctx))
                   :tool-call-id call-id
                   :on-update   (fn [{:keys [content details is-error]}]

@@ -194,7 +194,7 @@
     (session/dispatch-extension-event-in!
      ctx
      "git_head_changed"
-     {:cwd (:cwd ctx)
+     {:cwd (session/effective-cwd-in ctx)
       :head (:head git-sync)
       :previous-head (:previous-head git-sync)
       :reason "head-changed"
@@ -204,7 +204,7 @@
   [ctx]
   (try
     (let [git-sync (invoke-git-head-sync!
-                    {:cwd (:cwd ctx)
+                    {:cwd (session/effective-cwd-in ctx)
                      :memory-ctx (:memory-ctx ctx)})]
       (try
         (maybe-trigger-recursion-from-git-sync! ctx git-sync)
@@ -302,7 +302,7 @@
                  :startup-message-ids [])
         rules (if should-run?
                 (startup-prompts/discover-rules
-                 {:cwd (:cwd ctx)
+                 {:cwd (session/effective-cwd-in ctx)
                   :session-mode session-mode})
                 [])
         {:keys [applied errors]}

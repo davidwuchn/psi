@@ -551,6 +551,13 @@
         (is (= ["foo"] (:psi.tool/names summary)))
         (is (= "foo" (get-in summary [:psi.tool/summary :tools 0 :name]))))))
 
+  (testing "effective-cwd-in prefers session worktree-path over context cwd"
+    (let [ctx (session/create-context {:cwd "/repo/main"
+                                       :initial-session {:worktree-path "/repo/feature-x"}})]
+      (is (= "/repo/feature-x" (session/effective-cwd-in ctx)))
+      (session/set-worktree-path-in! ctx "/repo/feature-y")
+      (is (= "/repo/feature-y" (session/effective-cwd-in ctx)))))
+
   (testing "query-in resolves effective reasoning effort for reasoning models"
     (let [ctx (session/create-context {:initial-session {:model {:provider "openai"
                                                                  :id "gpt-5.3-codex"

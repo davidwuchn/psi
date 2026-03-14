@@ -85,6 +85,7 @@
 
 (declare execute-compaction-in!)
 (declare set-session-name-in!)
+(declare set-worktree-path-in!)
 (declare resume-session-in!)
 (declare register-resolvers-in!)
 (declare register-mutations-in!)
@@ -273,6 +274,8 @@
          sc-session-id     (java.util.UUID/randomUUID)
          resolved-cwd      (or cwd (System/getProperty "user.dir"))
          initial-session*  (cond-> (or initial-session {})
+                             (not (contains? (or initial-session {}) :worktree-path))
+                             (assoc :worktree-path resolved-cwd)
                              (some? ui-type) (assoc :ui-type ui-type))
          session-data-atom (atom (session/initial-session initial-session*))
          agent-ctx         (agent/create-context)
@@ -404,6 +407,21 @@
                    (session-host/set-active-session (:session-id sd))))))
     sd))
 
+(defn effective-cwd-in
+  "Return the effective working directory for the active session.
+   Prefers session-scoped :worktree-path over context :cwd."
+  [ctx]
+  (or (:worktree-path (get-session-data-in ctx))
+      (:cwd ctx)))
+
+(defn set-worktree-path-in!
+  "Set the active session's worktree path.
+   This changes the effective cwd for tools, git queries, persistence routing,
+   and runtime hooks that read session cwd through `effective-cwd-in`."
+  [ctx worktree-path]
+  (swap-session! ctx assoc :worktree-path (str worktree-path))
+  (get-session-data-in ctx))
+
 ;; ============================================================
 ;; Journal append helper
 ;; ============================================================
@@ -418,7 +436,7 @@
        (:journal-atom ctx)
        (:flush-state-atom ctx)
        (:session-id sd)
-       (:cwd ctx)
+       (effective-cwd-in ctx)
        (:parent-session-id sd)
        (:session-file sd)))))
 
@@ -532,7 +550,7 @@
          ;; Reset journal and flush state for the new session
          (reset! (:journal-atom ctx) [])
          (when (:persist? ctx)
-           (let [session-dir (persist/session-dir-for (:cwd ctx))
+           (let [session-dir (persist/session-dir-for (effective-cwd-in ctx))
                  file        (persist/new-session-file-path session-dir new-session-id)]
              (swap-session! ctx assoc :session-file (str file))
              (reset! (:flush-state-atom ctx) {:flushed? false :session-file file})))
@@ -592,6 +610,7 @@
                            :session-name   (some #(when (= :session-info (:kind %))
                                                     (get-in % [:data :name]))
                                                  (rseq (vec entries)))
+                           :worktree-path  (or (:worktree-path header) (:cwd header))
                            :parent-session-id (:parent-session-id header)
                            :parent-session-path (:parent-session header)
                            :interrupt-pending false
@@ -644,12 +663,12 @@
 
       ;; Fork persistence: create/write child file immediately with lineage header.
       (when (:persist? ctx)
-        (let [session-dir (persist/session-dir-for (:cwd ctx))
+        (let [session-dir (persist/session-dir-for (effective-cwd-in ctx))
               file        (persist/new-session-file-path session-dir new-session-id)]
           (swap-session! ctx assoc :session-file (str file))
           (persist/flush-journal! file
                                   new-session-id
-                                  (:cwd ctx)
+                                  (effective-cwd-in ctx)
                                   parent-session-id
                                   parent-session-file
                                   branch-entries)
@@ -816,7 +835,7 @@
     (journal-append! ctx (persist/model-entry (:provider model) (:id model)))
     (try
       (project-prefs/update-agent-session!
-       (:cwd ctx)
+       (effective-cwd-in ctx)
        {:model-provider (:provider model)
         :model-id (:id model)
         :thinking-level clamped-level})
@@ -968,7 +987,7 @@
     (journal-append! ctx (persist/thinking-level-entry clamped))
     (try
       (project-prefs/update-agent-session!
-       (:cwd ctx)
+       (effective-cwd-in ctx)
        {:thinking-level clamped})
       (catch Exception _
         nil))
@@ -1637,7 +1656,7 @@
                      "Tool execution was blocked by an extension")
        :is-error true
        :details  {:blocked true}}
-      (let [opts      {:cwd          (:cwd ctx)
+      (let [opts      {:cwd          (effective-cwd-in ctx)
                        :overrides    (:tool-output-overrides @(:session-data-atom ctx))
                        :tool-call-id tool-call-id}
             result    (try

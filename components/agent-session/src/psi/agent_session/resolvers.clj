@@ -362,6 +362,7 @@
                 :sessions {(:session-id sd) {:session-id (:session-id sd)
                                              :session-file (:session-file sd)
                                              :session-name (:session-name sd)
+                                             :worktree-path (:worktree-path sd)
                                              :parent-session-id (:parent-session-id sd)
                                              :parent-session-path (:parent-session-path sd)}}})
         hs   (->> (:sessions host) vals (sort-by :updated-at) vec)]
@@ -1607,7 +1608,7 @@
   [info]
   {:psi.session-info/path                (:path info)
    :psi.session-info/id                  (:id info)
-   :psi.session-info/cwd                 (:cwd info)
+   :psi.session-info/cwd                 (or (:worktree-path info) (:cwd info))
    :psi.session-info/name                (:name info)
    :psi.session-info/parent-session-id   (:parent-session-id info)
    :psi.session-info/parent-session-path (:parent-session-path info)
@@ -1636,7 +1637,9 @@
   {:psi.session/list
    (mapv session-info->eql
          (persist/list-sessions
-          (persist/session-dir-for (:cwd agent-session-ctx))))})
+          (persist/session-dir-for
+           (or (:worktree-path @(:session-data-atom agent-session-ctx))
+               (:cwd agent-session-ctx)))))})
 
 (pco/defresolver session-list-all-resolver
   "Resolve all sessions across all project directories, sorted by modified desc."
@@ -1763,11 +1766,14 @@
     (catch Exception _ nil)))
 
 (pco/defresolver agent-session-cwd
-  "Resolve working directory for the current session context."
+  "Resolve working directory for the current session context.
+   Prefers session-bound worktree-path over process context cwd."
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.agent-session/cwd]}
-  {:psi.agent-session/cwd (:cwd agent-session-ctx)})
+  (let [sd @(:session-data-atom agent-session-ctx)]
+    {:psi.agent-session/cwd (or (:worktree-path sd)
+                                (:cwd agent-session-ctx))}))
 
 (pco/defresolver agent-session-git-branch
   "Resolve current git branch for :psi.agent-session/cwd.

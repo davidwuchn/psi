@@ -97,6 +97,10 @@
     (doseq [r as-resolvers/all-resolvers]
       (register-resolver-if-missing! r))
 
+    ;; History mutations
+    (doseq [m history-resolvers/all-mutations]
+      (register-mutation-if-missing! m))
+
     ;; Recursion mutations
     (doseq [m recursion-resolvers/all-mutations]
       (register-mutation-if-missing! m))
@@ -203,6 +207,10 @@
     (doseq [r resolvers/all-resolvers]
       (query/register-resolver-in! qctx r))
     (memory/register-resolvers-in! qctx false)
+
+    ;; History mutations
+    (doseq [m history-resolvers/all-mutations]
+      (query/register-mutation-in! qctx m))
 
     ;; Recursion resolvers + mutations
     (recursion/register-resolvers-in! qctx false)

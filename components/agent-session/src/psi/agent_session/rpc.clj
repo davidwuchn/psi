@@ -839,7 +839,9 @@
 
 (defn- footer-path-line
   [ctx d]
-  (let [cwd          (or (:psi.agent-session/cwd d) (:cwd ctx) "")
+  (let [cwd          (or (:psi.agent-session/cwd d)
+                         (session/effective-cwd-in ctx)
+                         "")
         git-branch   (:psi.agent-session/git-branch d)
         session-name (:psi.agent-session/session-name d)
         path0        (replace-home-with-tilde cwd)

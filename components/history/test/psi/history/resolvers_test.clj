@@ -7,9 +7,12 @@
    No mocks, no shared state, no dependency on the real project repo."
   (:require
    [clojure.test :refer [deftest testing is]]
+   [com.wsscode.pathom3.connect.operation :as pco]
    [psi.history.resolvers :as resolvers]
    [psi.history.git :as git]
-   [psi.query.core :as query]))
+   [psi.query.core :as query])
+  (:import
+   (java.io File)))
 
 ;;; Seed data for null git repos
 
@@ -27,12 +30,51 @@
 (defn- make-git-ctx []
   (git/create-null-context seed-commits))
 
+(defn- linked-worktree-path
+  [ctx name]
+  (let [repo-file (File. (:repo-dir ctx))
+        parent    (.getCanonicalPath (.getParentFile repo-file))
+        suffix    (.getName repo-file)
+        uniq      (str (java.util.UUID/randomUUID))]
+    (str parent File/separator name "-" suffix "-" uniq)))
+
+(defn- append-and-commit!
+  [repo-dir rel-path content message]
+  (let [f (File. (str repo-dir File/separator rel-path))
+        run! (fn [& args]
+               (let [pb   (ProcessBuilder. ^java.util.List (vec args))
+                     _    (.directory pb (File. ^String repo-dir))
+                     _    (doto (.environment pb)
+                            (.put "GIT_AUTHOR_NAME"     "Test Author")
+                            (.put "GIT_AUTHOR_EMAIL"    "test@example.com")
+                            (.put "GIT_COMMITTER_NAME"  "Test Author")
+                            (.put "GIT_COMMITTER_EMAIL" "test@example.com"))
+                     proc (.start pb)
+                     _    (slurp (.getInputStream proc))
+                     err  (slurp (.getErrorStream proc))
+                     exit (.waitFor proc)]
+                 (when (pos? exit)
+                   (throw (ex-info "git helper failed" {:args args :err err :exit exit})))))]
+    (.mkdirs (.getParentFile f))
+    (spit f content)
+    (run! "git" "add" rel-path)
+    (run! "git" "commit" "-m" message)))
+
 (defn- make-query-ctx []
   (let [ctx (query/create-query-context)]
     (doseq [r resolvers/all-resolvers]
       (query/register-resolver-in! ctx r))
+    (doseq [m resolvers/all-mutations]
+      (query/register-mutation-in! ctx m))
     (query/rebuild-env-in! ctx)
     ctx))
+
+(defn- mutate
+  [qctx git-ctx op params]
+  (get (query/query-in qctx
+                       {:git/context git-ctx}
+                       [(list op (assoc params :git/context git-ctx))])
+       op))
 
 ;;; git-repo-status resolver
 
@@ -232,8 +274,74 @@
     (is (nil? (:git.worktree/current result)))
     (is (= 0 (:git.worktree/count result)))))
 
-;;; Resolver count sanity
+;;; git mutations
+
+(deftest worktree-mutations-roundtrip-via-eql
+  (let [git-ctx   (make-git-ctx)
+        query-ctx (make-query-ctx)
+        wt-path   (linked-worktree-path git-ctx "resolver-feature")
+        added     (mutate query-ctx git-ctx 'git.worktree/add!
+                          {:input {:path wt-path :branch "resolver-feature"}})
+        listed     (query/query-in query-ctx {:git/context git-ctx} [:git.worktree/list])
+        removed   (mutate query-ctx git-ctx 'git.worktree/remove!
+                          {:input {:path wt-path}})]
+    (is (true? (:success added)))
+    (is (some #(= (.getCanonicalPath (File. wt-path))
+                  (.getCanonicalPath (File. (:git.worktree/path %))))
+              (:git.worktree/list listed)))
+    (is (true? (:success removed)))))
+
+(deftest branch-mutations-via-eql
+  (let [git-ctx   (make-git-ctx)
+        query-ctx (make-query-ctx)
+        wt-path   (linked-worktree-path git-ctx "resolver-merge")
+        _         (mutate query-ctx git-ctx 'git.worktree/add!
+                          {:input {:path wt-path :branch "resolver-merge"}})
+        _         (append-and-commit! wt-path "src/resolver_merge.clj" "(ns resolver-merge)\n" "⚒ resolver merge commit")
+        merged    (mutate query-ctx git-ctx 'git.branch/merge!
+                          {:input {:branch "resolver-merge"}})
+        removed   (mutate query-ctx git-ctx 'git.worktree/remove!
+                          {:input {:path wt-path}})
+        deleted   (mutate query-ctx git-ctx 'git.branch/delete!
+                          {:input {:branch "resolver-merge"}})
+        default   (mutate query-ctx git-ctx 'git.branch/default {})]
+    (is (true? (:merged merged)))
+    (is (true? (:success removed)))
+    (is (true? (:deleted deleted)))
+    (is (= "main" (:branch default)))))
+
+(deftest branch-rebase-via-eql
+  (let [git-ctx   (make-git-ctx)
+        query-ctx (make-query-ctx)
+        wt-path   (linked-worktree-path git-ctx "resolver-rebase")
+        _         (mutate query-ctx git-ctx 'git.worktree/add!
+                          {:input {:path wt-path :branch "resolver-rebase"}})
+        _         (append-and-commit! wt-path "src/rebase_from_resolver.clj" "(ns rebase-from-resolver)\n" "⚒ feature before resolver rebase")
+        _         (append-and-commit! (:repo-dir git-ctx) "src/main_for_resolver_rebase.clj" "(ns main-for-resolver-rebase)\n" "⚒ main before resolver rebase")
+        wt-ctx    (git/create-context wt-path)
+        rebased   (mutate query-ctx wt-ctx 'git.branch/rebase!
+                          {:input {:onto "main"}})]
+    (is (true? (:success rebased)))
+    (is (= "resolver-rebase" (:branch rebased)))))
+
+;;; Resolver/mutation count sanity
 
 (deftest all-resolvers-registered
   (testing "all-resolvers count"
     (is (= 11 (count resolvers/all-resolvers)))))
+
+(deftest all-mutations-registered
+  (testing "all-mutations count"
+    (is (= 6 (count resolvers/all-mutations)))))
+
+(deftest resolver-index-contains-mutation-symbols
+  (testing "Pathom index includes history mutation op names"
+    (let [mutation-syms (->> resolvers/all-mutations
+                             (map #(-> % pco/operation-config ::pco/op-name))
+                             set)]
+      (is (contains? mutation-syms 'git.worktree/add!))
+      (is (contains? mutation-syms 'git.worktree/remove!))
+      (is (contains? mutation-syms 'git.branch/merge!))
+      (is (contains? mutation-syms 'git.branch/delete!))
+      (is (contains? mutation-syms 'git.branch/rebase!))
+      (is (contains? mutation-syms 'git.branch/default)))))

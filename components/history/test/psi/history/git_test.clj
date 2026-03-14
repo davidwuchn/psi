@@ -25,6 +25,36 @@
    {:message "⚒ Add another feature"
     :files   {"src/extra.clj" "(ns extra)\n"}}])
 
+(defn- linked-worktree-path
+  [ctx name]
+  (let [repo-file (File. (:repo-dir ctx))
+        parent    (.getCanonicalPath (.getParentFile repo-file))
+        suffix    (.getName repo-file)
+        uniq      (str (java.util.UUID/randomUUID))]
+    (str parent File/separator name "-" suffix "-" uniq)))
+
+(defn- append-and-commit!
+  [repo-dir rel-path content message]
+  (let [f (File. (str repo-dir File/separator rel-path))
+        run! (fn [& args]
+               (let [pb   (ProcessBuilder. ^java.util.List (vec args))
+                     _    (.directory pb (File. ^String repo-dir))
+                     _    (doto (.environment pb)
+                            (.put "GIT_AUTHOR_NAME"     "Test Author")
+                            (.put "GIT_AUTHOR_EMAIL"    "test@example.com")
+                            (.put "GIT_COMMITTER_NAME"  "Test Author")
+                            (.put "GIT_COMMITTER_EMAIL" "test@example.com"))
+                     proc (.start pb)
+                     _    (slurp (.getInputStream proc))
+                     err  (slurp (.getErrorStream proc))
+                     exit (.waitFor proc)]
+                 (when (pos? exit)
+                   (throw (ex-info "git helper failed" {:args args :err err :exit exit})))))]
+    (.mkdirs (.getParentFile f))
+    (spit f content)
+    (run! "git" "add" rel-path)
+    (run! "git" "commit" "-m" message)))
+
 ;;; git/log
 
 (deftest log-returns-commits
@@ -208,6 +238,94 @@
     (is (true? (:git.worktree/current? current)))
     (is (= (.getCanonicalPath (File. root))
            (.getCanonicalPath (File. (:git.worktree/path current)))))))
+
+;;; worktree and branch mutations
+
+(deftest worktree-add-and-remove-roundtrip
+  (let [ctx     (git/create-null-context seed-commits)
+        wt-path (linked-worktree-path ctx "feature-alpha")
+        added   (git/worktree-add ctx {:path wt-path
+                                       :branch "feature-alpha"})
+        listed  (git/worktree-list ctx)
+        removed (git/worktree-remove ctx {:path wt-path})]
+    (testing "worktree add succeeds"
+      (is (true? (:success added)))
+      (is (= wt-path (:path added)))
+      (is (= "feature-alpha" (:branch added)))
+      (is (string? (:head added))))
+    (testing "worktree appears in registry after add"
+      (is (some #(= (.getCanonicalPath (File. wt-path))
+                    (.getCanonicalPath (File. (:git.worktree/path %))))
+                listed)))
+    (testing "worktree remove succeeds"
+      (is (true? (:success removed))))
+    (testing "worktree directory removed"
+      (is (false? (.exists (File. wt-path)))))))
+
+(deftest worktree-add-fails-when-branch-exists
+  (let [ctx     (git/create-null-context seed-commits)
+        wt-path (linked-worktree-path ctx "main-dup")
+        result  (git/worktree-add ctx {:path wt-path
+                                       :branch "main"})]
+    (is (false? (:success result)))
+    (is (= "branch already exists" (:error result)))))
+
+(deftest worktree-remove-fails-for-main-worktree
+  (let [ctx    (git/create-null-context seed-commits)
+        result (git/worktree-remove ctx {:path (:repo-dir ctx)})]
+    (is (false? (:success result)))
+    (is (= "cannot remove main worktree" (:error result)))))
+
+(deftest branch-merge-fast-forward
+  (let [ctx     (git/create-null-context seed-commits)
+        wt-path (linked-worktree-path ctx "feature-merge")
+        _       (git/worktree-add ctx {:path wt-path :branch "feature-merge"})
+        _       (append-and-commit! wt-path "src/merge_feature.clj" "(ns merge-feature)\n" "⚒ feature merge commit")
+        result  (git/branch-merge ctx {:branch "feature-merge"})
+        files   (git/ls-files ctx {})]
+    (is (true? (:merged result)))
+    (is (true? (:fast-forward result)))
+    (is (false? (:conflict result)))
+    (is (some #(= % "src/merge_feature.clj") files))))
+
+(deftest branch-merge-ff-only-fails-when-not-fast-forwardable
+  (let [ctx     (git/create-null-context seed-commits)
+        wt-path (linked-worktree-path ctx "feature-diverged")
+        _       (git/worktree-add ctx {:path wt-path :branch "feature-diverged"})
+        _       (append-and-commit! wt-path "src/diverged_feature.clj" "(ns diverged-feature)\n" "⚒ feature diverged commit")
+        _       (append-and-commit! (:repo-dir ctx) "src/main_side.clj" "(ns main-side)\n" "⚒ main side commit")
+        result  (git/branch-merge ctx {:branch "feature-diverged"
+                                       :strategy :ff_only})]
+    (is (false? (:merged result)))
+    (is (false? (:conflict result)))
+    (is (= "not fast-forwardable; rebase first" (:error result)))))
+
+(deftest branch-rebase-success
+  (let [ctx     (git/create-null-context seed-commits)
+        wt-path (linked-worktree-path ctx "feature-rebase")
+        _       (git/worktree-add ctx {:path wt-path :branch "feature-rebase"})
+        _       (append-and-commit! wt-path "src/rebase_feature.clj" "(ns rebase-feature)\n" "⚒ feature before rebase")
+        _       (append-and-commit! (:repo-dir ctx) "src/main_rebase.clj" "(ns main-rebase)\n" "⚒ main before rebase")
+        wt-ctx  (git/create-context wt-path)
+        result  (git/branch-rebase wt-ctx {:onto "main"})]
+    (is (true? (:success result)))
+    (is (= "feature-rebase" (:branch result)))
+    (is (false? (:conflict result)))))
+
+(deftest branch-delete-success
+  (let [ctx     (git/create-null-context seed-commits)
+        wt-path (linked-worktree-path ctx "feature-delete")
+        _       (git/worktree-add ctx {:path wt-path :branch "feature-delete"})
+        _       (git/worktree-remove ctx {:path wt-path})
+        result  (git/branch-delete ctx {:branch "feature-delete"})]
+    (is (true? (:deleted result)))
+    (is (nil? (:error result)))))
+
+(deftest default-branch-falls-back-to-main
+  (let [ctx    (git/create-null-context seed-commits)
+        result (git/default-branch ctx)]
+    (is (= "main" (:branch result)))
+    (is (= :fallback (:source result)))))
 
 ;;; context isolation
 

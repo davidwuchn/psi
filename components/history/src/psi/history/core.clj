@@ -3,6 +3,7 @@
 
    Public API:
      register-resolvers! — register all git resolvers into the global query graph
+     register-mutations! — register all git mutations into the global query graph
      query-commits       — recent commits (with optional grep/path)
      query-commit        — single commit detail by sha
      query-grep          — grep across HEAD file contents
@@ -24,6 +25,14 @@
   []
   (doseq [r resolvers/all-resolvers]
     (query/register-resolver! r))
+  (query/rebuild-env!))
+
+(defn register-mutations!
+  "Register all history/git mutations into the global query graph.
+   Call once at system startup before executing mutation queries."
+  []
+  (doseq [m resolvers/all-mutations]
+    (query/register-mutation! m))
   (query/rebuild-env!))
 
 ;;; Convenience query API

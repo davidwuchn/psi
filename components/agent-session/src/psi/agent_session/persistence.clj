@@ -224,6 +224,7 @@
    :id                session-id
    :timestamp         (Instant/now)
    :cwd               (str cwd)
+   :worktree-path     (str cwd)
    :parent-session-id (when parent-session-id (str parent-session-id))
    :parent-session    (when parent-session-path (str parent-session-path))})
 
@@ -538,6 +539,7 @@
     {:path                file-path
      :id                  (:id header)
      :cwd                 (:cwd header)
+     :worktree-path       (or (:worktree-path header) (:cwd header))
      :name                name
      :parent-session-id   (:parent-session-id header)
      :parent-session-path (:parent-session header)
