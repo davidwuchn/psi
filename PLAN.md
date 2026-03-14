@@ -450,11 +450,18 @@ Ordered steps toward PSI COMPLETE.
     - result: 8 tests, 30 assertions, 0 failures
 - PSL follow-up landed (2026-03-14, commit `0644903`): `/work-on` now attaches a sibling worktree to an existing branch when the deterministic slug branch already exists, instead of failing.
   - Root cause: the extension treated `branch already exists` from `git.worktree/add!` as a terminal failure even though that error often represents resumable branch state with no linked worktree yet.
-  - Fix: `spec/work-on-extension.allium` now specifies the attach-existing-branch path and the existing-registered-worktree reuse path explicitly; `extensions/src/extensions/work_on.clj` now retries `git.worktree/add!` with `:create_branch false` when the first attempt fails with `branch already exists`.
+  - Fix: `spec/work-on-extension.allium` now specifies the attach-existing-branch path and the existing-registered-worktree reuse path explicitly; `extensions/src/extensions/work_on.clj` now retries `git.worktree/add!` in attach mode when the first attempt fails with `branch already exists`.
   - Regression coverage added in `extensions/test/extensions/work_on_test.clj` for both attach-to-existing-branch and existing-worktree/session reuse behavior.
   - Focused verification green:
     - `clojure -M:test --focus extensions.work-on-test`
     - result: 8 tests, 32 assertions, 0 failures
+- PSL follow-up landed (2026-03-14, commit `5ce1086`): `/work-on` existing-branch attach now survives the real isolated extension mutation path.
+  - Root cause: the extension mutation payload used `:create_branch false` while `history/git.clj` only destructured `:create-branch`, so the explicit attach flag was dropped at the mutation boundary and the git layer defaulted back to branch-creation semantics.
+  - Fix: `history/git.clj` now accepts both `:create-branch` and `:create_branch` as compatibility input, while `/work-on` now emits canonical `:create-branch` in mutation payloads.
+  - Regression coverage added in `components/agent-session/test/psi/agent_session/core_test.clj` to reproduce the real isolated-qctx mutation path and prove attach-to-existing-branch works there, with `extensions/test/extensions/work_on_test.clj` updated to lock the canonical key shape.
+  - Focused verification green:
+    - `clojure -M:test --focus psi.agent-session.core-test/register-mutations-in!-includes-history-mutations-test --focus extensions.work-on-test`
+    - result: 9 tests, 36 assertions, 0 failures
 - No remaining required follow-up for the shipped worktree session workflow; future work is additive UX/documentation polish only.
 
 ### Step 12 — Emacs UI ◇ in progress
