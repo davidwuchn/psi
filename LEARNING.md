@@ -3,6 +3,20 @@
 
 ---
 
+## 2026-03-14 - Worktree-bound prompt metadata should name the worktree explicitly (commit `e33d7bd`)
+
+### λ Session footer truth and prompt truth must converge after worktree switches
+
+After `/work-on`, the footer and session cwd can already reflect the new linked worktree while the prompt still carries older runtime metadata. When those two operator-visible surfaces disagree, freeform questions like `pwd` are more likely to be answered from stale prompt context instead of from the active session state. Worktree session switches should retarget prompt runtime metadata in the same sweep as footer/session updates.
+
+### λ Distinguish process cwd from worktree cwd explicitly in prompt text
+
+A single `Current working directory` line is too easy to interpret as process-global state, especially in a multi-session worktree model where session cwd is the real runtime boundary. Naming `Current worktree directory` explicitly makes the session-scoped filesystem root visible in the prompt itself and teaches future ψ the correct boundary without relying on implicit interpretation.
+
+### λ Runtime metadata footers need a stable replacement shape if prompts are reused across sessions
+
+Worktree sessions can inherit or reuse prompt strings that were assembled under a different cwd. If runtime metadata is embedded as a stable footer shape, session-switch code can retarget those lines deterministically on new-session/resume without rebuilding every prompt layer from scratch. A predictable footer structure is therefore a useful migration boundary when prompt text contains runtime facts.
+
 ## 2026-03-14 - Existing `/work-on` slug collisions should resume work, not fail (commit `d8dedda`)
 
 ### λ Deterministic worktree slugs imply resumable paths, not always-fresh paths
