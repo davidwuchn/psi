@@ -448,6 +448,13 @@ Ordered steps toward PSI COMPLETE.
   - Focused verification green:
     - `clojure -M:test --focus extensions.work-on-test`
     - result: 8 tests, 30 assertions, 0 failures
+- PSL follow-up landed (2026-03-14, commit `0644903`): `/work-on` now attaches a sibling worktree to an existing branch when the deterministic slug branch already exists, instead of failing.
+  - Root cause: the extension treated `branch already exists` from `git.worktree/add!` as a terminal failure even though that error often represents resumable branch state with no linked worktree yet.
+  - Fix: `spec/work-on-extension.allium` now specifies the attach-existing-branch path and the existing-registered-worktree reuse path explicitly; `extensions/src/extensions/work_on.clj` now retries `git.worktree/add!` with `:create_branch false` when the first attempt fails with `branch already exists`.
+  - Regression coverage added in `extensions/test/extensions/work_on_test.clj` for both attach-to-existing-branch and existing-worktree/session reuse behavior.
+  - Focused verification green:
+    - `clojure -M:test --focus extensions.work-on-test`
+    - result: 8 tests, 32 assertions, 0 failures
 - No remaining required follow-up for the shipped worktree session workflow; future work is additive UX/documentation polish only.
 
 ### Step 12 — Emacs UI ◇ in progress
