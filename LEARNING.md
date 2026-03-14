@@ -21,6 +21,34 @@ Once a session can move away from process cwd, `:cwd` in the session header is n
 
 `create-null-context` gives each test its own repo, but sibling linked worktrees can still collide if every test uses the shared JVM temp parent with the same slug path. Deriving test worktree paths from both the repo identity and a unique suffix prevents false failures where git reports an existing path from a different test's worktree.
 
+## 2026-03-14 - Isolated extension query contexts must register the full session resolver surface (commit `4386b98`)
+
+### λ Session-root attrs in extension queries depend on cross-domain resolvers, not only agent-session-local ones
+
+`/work-on` asked the extension API query path for `:psi.agent-session/git-worktree-current`, but the isolated qctx built by `register-resolvers-in!` only loaded `resolvers/all-resolvers`. The bridge resolver for `:psi.agent-session/git-worktree-current` exists there, but its dependency `:git.worktree/current` lives in history resolvers. Registering only the local bridge layer created a graph with the top-level attr name present in code but unreachable at runtime.
+
+### λ Isolated query contexts should reuse the same canonical resolver surface as session-root query-in
+
+`resolvers/build-env` already had the correct rule: the agent-session query surface is the union of agent-session, history, memory, and recursion resolvers. The extension query path drifted because it rebuilt a smaller ad-hoc surface. Making `session-resolver-surface` the shared source of truth keeps isolated qctx behavior aligned with normal session queries and avoids capability holes that only appear inside extensions.
+
+### λ Resolver-registration bugs can masquerade as domain errors at the command layer
+
+The observed failure was `/work-on` reporting `not inside a git repository`, but the repository was fine. The real fault was missing resolver reachability in the extension query graph. When a command reports an impossible domain condition, check whether the query surface behind it is incomplete before debugging the domain logic itself.
+
+## 2026-03-14 - User docs should close the loop after capability promotion (commit `26f1245`)
+
+### λ Capability promotion is incomplete until user docs name the new operator path
+
+Once worktree session lifecycle became a first-class extension surface (`createSession`, `switchSession`) and `/work-on` / `/work-merge` semantics changed, the repo still presented stale operator guidance. The implementation was correct, but users reading `doc/tui.md`, `doc/extensions.md`, or Emacs completion docs would not discover the new workflow shape reliably. A capability is not fully landed until the operator-facing path is named where users actually look.
+
+### λ Workflow docs should describe session consequences, not only commands
+
+Listing `/work-on` and `/work-merge` is not enough. The valuable behavior is that `/work-on` creates a distinct host-peer session bound to a linked worktree, and `/work-merge` returns routing to a main-worktree session while preserving the merged session transcript. Those session consequences are the part most likely to surprise an operator, so they belong in docs alongside the command names.
+
+### λ Extension API docs must evolve when an extension stops using internal reach-through
+
+After replacing direct var resolution with `:create-session` / `:switch-session`, the extension docs needed to explain those helpers explicitly. Otherwise future extension authors would keep cargo-culting `:mutate` calls or internal namespace reach-through even though a better public surface now exists. When a public API replaces an internal workaround, the docs should teach the public API immediately.
+
 ## 2026-03-14 - Extension session lifecycle should be public API, not extension-internal var resolution (commit `3bbb958`)
 
 ### λ Session lifecycle helpers used by extensions should be first-class extension surface
