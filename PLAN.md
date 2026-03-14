@@ -369,6 +369,11 @@ Ordered steps toward PSI COMPLETE.
   - optional follow-up: add richer collapsed/expandable subtree interactions in TUI row model (current model is fully expanded tree-only)
 
 ### Step 11b — Worktree usage (mutations + /work-on extension) ✓ complete
+- Follow-up convergence (2026-03-14):
+  - isolated extension query env now includes the full session resolver surface (`4386b98`)
+  - isolated extension mutation env now includes history git mutations + injected `:git/context` (`700c137`)
+  - deterministic slug collisions now resume existing linked worktrees/sessions instead of failing (`d8dedda`)
+  - `/work-on` no longer carries stale rendered parent-session prompt cwd/worktree metadata into newly-created worktree sessions (`d527981`)
 - Spec: `spec/git-worktree-mutations.allium` (Layer 1) + `spec/work-on-extension.allium` (Layer 2)
 - Meta: worktree usage model added to `META.md` (commit `0673e06`), trimmed to essential shape (commit `23327d7`)
 - Architecture delivered in code:
