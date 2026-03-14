@@ -3,6 +3,33 @@
 
 ---
 
+## 2026-03-13 - Footer state must be saved and restored around transcript reset (commit `e91c490`)
+
+### λ `reset-transcript-state` wipes all session state including already-correct footer
+
+`footer/updated` and `session/updated` events arrive before the RPC response frame on
+`/new` and `switch_session` success paths. By the time the response callback fires, the
+footer is already correctly set. But `reset-transcript-state` clears the entire state
+map including `projection-footer`, so calling it naively discards the correct footer and
+causes visible flicker or blank-footer until the next event.
+
+Fix pattern: save `projection-footer` before reset, call `reset-transcript-state`, then
+restore the saved footer and call `psi-emacs--upsert-projection-block` to re-render.
+
+### λ Event ordering guarantees should be exploited, not worked around
+
+When the protocol guarantees that state-setting events arrive before a response frame,
+the correct design is to trust that ordering and preserve state across any local reset,
+rather than re-seeding placeholder state ("connecting...") that will be immediately
+overwritten. The save-restore pattern is the minimal expression of this trust.
+
+### λ Both `/new` and `switch_session` share the same reset/restore shape
+
+Both handlers (`psi-emacs--handle-new-session-response` and
+`psi-emacs--handle-switch-session-response`) perform the same transcript-reset + UX
+repair sequence. Keeping them structurally identical reduces drift risk when either
+path changes in future.
+
 ## 2026-03-13 - Anthropic thinking deltas are cumulative snapshots, not incremental chunks (commit `9b24637`)
 
 ### λ Thinking-delta consumers must use replace semantics, not append
