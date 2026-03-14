@@ -31,6 +31,20 @@ A deterministic slug branch can exist in two different states: merely present in
 
 In worktree workflows, the linked worktree is the operator’s easiest recovery artifact. Removing it before proving the target branch now contains the feature tip destroys the clearest rollback path. The correct sequencing is: merge → verify target contains source tip → cleanup. If verification fails, preserve the worktree and make the diagnosis explicit.
 
+## 2026-03-14 - Target-branch diagnostics reveal whether a false-positive merge left HEAD unchanged (commit `1c40ffb`)
+
+### λ When a merge mutation reports success but verification fails, the missing fact is usually target-branch state
+
+Once `/work-merge` started preserving the worktree on verification failure, the next blind spot was still the target branch itself: operators could see that safety gating triggered, but not whether the merge had run on the intended branch or whether the target HEAD had moved at all. Capturing `before-branch`, `after-branch`, `before-head`, `after-head`, and `head-changed` around the merge attempt made the failure diagnosable in one transcript turn.
+
+### λ A false-positive merge is easier to reason about when the system shows both branch identity and head movement
+
+`merge-reported=true` alone is ambiguous. Combined with `before-branch=master`, `after-branch=master`, and `head-changed=false`, it becomes clear that the command believed the merge succeeded while the target branch remained unchanged. For orchestration around git, branch identity and HEAD movement are often the shortest path to the root cause.
+
+### λ Diagnostic helpers belong at the substrate edge when higher-level workflows need branch-local truth
+
+The worktree extension needed branch-local diagnostics from the main worktree without shelling out ad hoc in the extension itself. Exposing `psi.history.git/current-branch` as a small helper kept the diagnostic logic rooted in the git substrate while letting `/work-merge` explain target-branch behavior precisely. Small observability helpers at the substrate boundary can unlock much better failure explanations in orchestration code.
+
 ## 2026-03-14 - Mutation boundaries must preserve explicit false flags, especially across snake_case / kebab-case seams (commit `5ce1086`)
 
 ### λ A live integrated failure can survive both spec fixes and unit tests when boundary keys drift
