@@ -4,12 +4,21 @@
    The functions in this namespace operate on operation metadata and return
    deterministic graph shapes for introspection resolvers.
 
+   This is a capability graph, not a full dependency graph:
+   - nodes represent operations and per-domain capabilities
+   - edges represent operation -> capability membership
+   - edge :attribute is annotation metadata, not an endpoint node
+
    Node types in Step 7 are restricted to:
    - :resolver
    - :mutation
    - :capability
 
-   Attribute links are represented as edge metadata (:attribute), not nodes.
+   Edge :attribute values may be:
+   - keyword attr
+   - join map attr
+   - nil, for operations with no IO attrs
+
    Mutation side effects are deferred in Step 7 and are represented as nil.
   "
   (:require
@@ -17,7 +26,11 @@
    [com.wsscode.pathom3.connect.operation :as pco]))
 
 (def required-domains
-  "Required Step 7 domains for graph emergence."
+  "Required Step 7 domains for normalized graph coverage.
+
+   These domains are always present in :psi.graph/domain-coverage, even when
+   they currently have zero operations. They are not guaranteed to appear in
+   :psi.graph/capabilities, which reports only domains present in the graph."
   [:ai :history :agent-session :introspection])
 
 (defn classify-domain
@@ -82,7 +95,10 @@
        vec))
 
 (defn derive-capabilities
-  "Derive capability summaries grouped by domain."
+  "Derive rich capability summaries grouped by domain.
+
+   Reports only domains present in the graph. Each summary includes operation
+   counts plus extra detail such as operation symbols and IO attributes."
   [domain-ops]
   (->> domain-ops
        (group-by :domain)
@@ -111,7 +127,11 @@
          capabilities))))
 
 (defn derive-edges
-  "Derive operation→capability edges with :attribute edge metadata.
+  "Derive operation→capability edges with :attribute annotation metadata.
+
+   These edges do not represent resolver dependency flow or attr reachability.
+   They encode that an operation belongs to a capability/domain, annotated by
+   each IO attr exposed by that operation.
 
    For operations with no IO attrs, emits one edge with nil :attribute so
    graph linkage is still explicit."
@@ -128,9 +148,11 @@
        vec))
 
 (defn derive-domain-coverage
-  "Derive deterministic domain coverage summary.
+  "Derive deterministic normalized domain coverage summary.
 
-   Includes required Step 7 domains even when they have zero operations."
+   Includes required Step 7 domains even when they have zero operations.
+   This differs from derive-capabilities, which reports only domains present in
+   the graph and includes richer per-domain detail."
   [domain-ops]
   (let [grouped        (group-by :domain domain-ops)
         present-domains (set (keys grouped))
@@ -150,6 +172,12 @@
 
    This is a fixed-point reachability pass over resolver operations only:
    if all resolver inputs are already known, all its outputs become known.
+
+   Contract:
+   - only resolvers contribute to reachability; mutations do not
+   - seed attrs are not included in the returned result
+   - only keyword attrs are returned
+   - result is sorted for deterministic discovery
 
    Returns a sorted vector of reachable attrs (excluding the seed attrs)."
   ([resolver-ops]

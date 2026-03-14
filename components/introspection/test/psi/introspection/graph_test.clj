@@ -19,6 +19,13 @@
      :mutation-ops (mapv #(graph/operation->metadata :mutation %)
                          (registry/all-mutations-in (:reg qctx)))}))
 
+(def ^:private operation-metadata-fixture
+  (delay (operation-metadata)))
+
+(defn- cached-operation-metadata
+  []
+  @operation-metadata-fixture)
+
 (deftest classify-domain-test
   (testing "domain classification maps required Step 7 domains"
     (is (= :ai (graph/classify-domain 'psi.ai.core/ai-model-resolver)))
@@ -29,7 +36,7 @@
 
 (deftest derive-capability-graph-deterministic-shape-test
   (testing "capability graph derivation is deterministic and Step 7-constrained"
-    (let [ops    (operation-metadata)
+    (let [ops    (cached-operation-metadata)
           g1     (graph/derive-capability-graph ops)
           g2     (graph/derive-capability-graph ops)
           types  (set (map :type (:nodes g1)))]
@@ -50,7 +57,7 @@
 
 (deftest domain-coverage-includes-required-domains-test
   (testing "domain coverage always includes required Step 7 domains"
-    (let [coverage (-> (operation-metadata)
+    (let [coverage (-> (cached-operation-metadata)
                        (graph/derive-capability-graph)
                        :domain-coverage)
           by-domain (into {} (map (juxt :domain identity) coverage))]

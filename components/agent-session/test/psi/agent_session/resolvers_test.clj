@@ -1,5 +1,14 @@
 (ns psi.agent-session.resolvers-test
-  "Tests for canonical telemetry resolvers (Step 7a) and graph bridge (Step 7).
+  "Behavior and integration tests for agent-session resolvers.
+
+   Scope:
+   - concrete resolver behavior from session root
+   - joins and bridge behavior into adjacent domains
+   - session-specific integrations and regressions
+
+   Non-scope:
+   - graph discovery/introspection contract for :psi.graph/* and
+     root-queryable advertisement; see graph_surface_test.clj
 
    Each test asserts that a direct EQL query against a fresh session context
    returns a well-typed value for the target attribute — no resolver error."
@@ -192,22 +201,6 @@
       (is (every? #(= cwd (:psi.session-info/worktree-path %)) persisted))
       (is (every? integer? (map :psi.session-info/message-count persisted))))))
 
-(deftest host-index-graph-introspection-test
-  (testing "host-index attrs are discoverable in graph root attrs and edges"
-    (let [result     (q [:psi.graph/root-queryable-attrs :psi.graph/edges])
-          root-attrs (:psi.graph/root-queryable-attrs result)
-          edge-attrs (keep :attribute (:psi.graph/edges result))
-          attr-present? (fn [attrs k]
-                          (or (some #(= k %) attrs)
-                              (some #(and (map? %) (contains? % k)) attrs)))]
-      (is (attr-present? root-attrs :psi.agent-session/host-active-session-id))
-      (is (attr-present? root-attrs :psi.agent-session/host-session-count))
-      ;; host-sessions is a join attribute and is represented on graph edges
-      ;; (it may not appear as a scalar key in root-queryable attrs).
-      (is (attr-present? edge-attrs :psi.agent-session/host-active-session-id))
-      (is (attr-present? edge-attrs :psi.agent-session/host-session-count))
-      (is (attr-present? edge-attrs :psi.agent-session/host-sessions)))))
-
 (deftest model-catalog-resolver-test
   (testing "model-catalog is queryable with deterministic model entries"
     (let [result (q [:psi.agent-session/model-catalog])
@@ -370,63 +363,6 @@
       (is (false? (:psi.background-job/is-terminal job)))
       (is (true? (:psi.background-job/is-non-terminal job))))))
 
-(deftest background-jobs-graph-introspection-test
-  (testing "background job attrs are discoverable in graph introspection"
-    (let [result (q [:psi.graph/root-queryable-attrs
-                     :psi.graph/edges])
-          root-attrs (set (:psi.graph/root-queryable-attrs result))
-          edge-attrs (set (keep :attribute (:psi.graph/edges result)))]
-      (is (contains? root-attrs :psi.agent-session/background-job-count))
-      (is (contains? root-attrs :psi.agent-session/background-job-statuses))
-      (is (contains? root-attrs :psi.agent-session/background-jobs))
-      (is (contains? edge-attrs :psi.agent-session/background-job-count))
-      (is (contains? edge-attrs :psi.agent-session/background-job-statuses))
-      (is (contains? edge-attrs :psi.agent-session/background-jobs)))))
-
-;; ── Step 7 graph bridge — :psi.graph/* ───────────────────
-
-(deftest graph-bridge-resolver-count-test
-  (testing "resolver-count is a non-negative integer"
-    (let [result (q [:psi.graph/resolver-count])]
-      (is (integer? (:psi.graph/resolver-count result)))
-      (is (nat-int? (:psi.graph/resolver-count result))))))
-
-(deftest graph-bridge-mutation-count-test
-  (testing "mutation-count is a non-negative integer"
-    (let [result (q [:psi.graph/mutation-count])]
-      (is (integer? (:psi.graph/mutation-count result)))
-      (is (nat-int? (:psi.graph/mutation-count result))))))
-
-(deftest graph-bridge-resolver-syms-test
-  (testing "resolver-syms is a set"
-    (let [result (q [:psi.graph/resolver-syms])]
-      (is (set? (:psi.graph/resolver-syms result))))))
-
-(deftest graph-bridge-mutation-syms-test
-  (testing "mutation-syms is a set"
-    (let [result (q [:psi.graph/mutation-syms])]
-      (is (set? (:psi.graph/mutation-syms result))))))
-
-(deftest graph-bridge-env-built-test
-  (testing "env-built is a boolean"
-    (let [result (q [:psi.graph/env-built])]
-      (is (boolean? (:psi.graph/env-built result))))))
-
-(deftest graph-bridge-nodes-test
-  (testing "nodes is a vector"
-    (let [result (q [:psi.graph/nodes])]
-      (is (vector? (:psi.graph/nodes result))))))
-
-(deftest graph-bridge-edges-test
-  (testing "edges is a vector"
-    (let [result (q [:psi.graph/edges])]
-      (is (vector? (:psi.graph/edges result))))))
-
-(deftest graph-bridge-capabilities-test
-  (testing "capabilities is a vector with at least one entry"
-    (let [result (q [:psi.graph/capabilities])]
-      (is (vector? (:psi.graph/capabilities result))))))
-
 (deftest agent-chain-discovery-resolver-test
   (testing "agent-chain config is queryable from session root"
     (let [tmp (str (java.nio.file.Files/createTempDirectory
@@ -467,87 +403,6 @@
               (.delete psi-dir))
             (when (.exists root-dir)
               (.delete root-dir))))))))
-
-(deftest graph-bridge-domain-coverage-test
-  (testing "domain-coverage includes required Step 7 domains"
-    (let [result   (q [:psi.graph/domain-coverage])
-          coverage (:psi.graph/domain-coverage result)
-          domains  (set (map :domain coverage))]
-      (is (vector? coverage))
-      (is (contains? domains :ai))
-      (is (contains? domains :history))
-      (is (contains? domains :agent-session))
-      (is (contains? domains :introspection)))))
-
-(deftest graph-bridge-all-nine-attrs-test
-  (testing "all 9 required Step 7 graph attrs succeed in one query"
-    (let [result (q [:psi.graph/resolver-count
-                     :psi.graph/mutation-count
-                     :psi.graph/resolver-syms
-                     :psi.graph/mutation-syms
-                     :psi.graph/env-built
-                     :psi.graph/nodes
-                     :psi.graph/edges
-                     :psi.graph/capabilities
-                     :psi.graph/domain-coverage])]
-      (is (integer? (:psi.graph/resolver-count result)))
-      (is (integer? (:psi.graph/mutation-count result)))
-      (is (set? (:psi.graph/resolver-syms result)))
-      (is (set? (:psi.graph/mutation-syms result)))
-      (is (boolean? (:psi.graph/env-built result)))
-      (is (vector? (:psi.graph/nodes result)))
-      (is (vector? (:psi.graph/edges result)))
-      (is (vector? (:psi.graph/capabilities result)))
-      (is (vector? (:psi.graph/domain-coverage result))))))
-
-(deftest root-queryable-attrs-contract-test
-  (testing "every attr advertised as root-queryable resolves from session root"
-    (let [meta       (q [:psi.graph/root-seeds :psi.graph/root-queryable-attrs])
-          root-seeds (:psi.graph/root-seeds meta)
-          root-attrs (:psi.graph/root-queryable-attrs meta)]
-      (is (vector? root-seeds))
-      (is (= [:psi/agent-session-ctx :psi/memory-ctx :psi/recursion-ctx :psi/engine-ctx]
-             root-seeds))
-      (is (vector? root-attrs))
-      (is (seq root-attrs))
-      (doseq [attr root-attrs]
-        (let [result (q [attr])]
-          (is (contains? result attr)
-              (str "expected root-queryable attr to resolve: " attr)))))))
-
-(deftest root-queryable-attrs-clean-contract-test
-  (testing "root-queryable attrs do not expose legacy/compat names"
-    (let [root-attrs (set (:psi.graph/root-queryable-attrs
-                           (q [:psi.graph/root-queryable-attrs])))]
-      (is (not-any? #(re-find #"-compat$" (name %)) root-attrs))
-      (is (not (contains? root-attrs :psi.agent-session/current-request-shape)))
-      (is (not (contains? root-attrs :psi.agent-session/api-error-list)))
-      (is (not (contains? root-attrs :psi.memory/memory-state)))
-      (is (not (contains? root-attrs :psi.memory/memory-store-state)))
-      (is (not (contains? root-attrs :psi.memory/memory-context-state)))
-      (is (not (contains? root-attrs :psi.history/git-repo-status)))
-      (is (not (contains? root-attrs :psi.history/git-repo-commits)))
-      (is (not (contains? root-attrs :psi.history/git-learning-commits)))
-      (is (not (contains? root-attrs :psi.introspection/query-graph-summary)))
-      (is (not (contains? root-attrs :psi.introspection/engine-system-state))))))
-
-(deftest worktree-attr-discovery-and-query-contract-test
-  (testing "worktree attrs are queryable from session root"
-    (let [git-result (q [:git.worktree/list
-                         :git.worktree/current
-                         :git.worktree/count
-                         :git.worktree/inside-repo?])
-          session-result (q [:psi.agent-session/git-worktrees
-                             :psi.agent-session/git-worktree-current
-                             :psi.agent-session/git-worktree-count])]
-      (is (contains? git-result :git.worktree/list))
-      (is (contains? git-result :git.worktree/current))
-      (is (contains? git-result :git.worktree/count))
-      (is (contains? git-result :git.worktree/inside-repo?))
-      (is (contains? session-result :psi.agent-session/git-worktrees))
-      (is (contains? session-result :psi.agent-session/git-worktree-current))
-      (is (contains? session-result :psi.agent-session/git-worktree-count))
-      (is (integer? (:psi.agent-session/git-worktree-count session-result))))))
 
 (deftest register-resolvers-in-includes-history-resolvers-test
   (testing "register-resolvers-in! includes history resolvers so worktree attrs are resolvable

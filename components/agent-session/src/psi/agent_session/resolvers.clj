@@ -2025,22 +2025,27 @@
 
 (pco/defresolver query-graph-bridge
   "Resolve all :psi.graph/* attrs from :psi/agent-session-ctx so app-query-tool can access
-   the full Step 7 capability graph surface without requiring a :psi/query-ctx seed.
+   the Step 7 graph discovery surface without requiring a :psi/query-ctx seed.
 
-   Exposes all 9 required Step 7 graph attrs:
-     :psi.graph/resolver-count   — number of registered resolvers
-     :psi.graph/mutation-count   — number of registered mutations
+   Exposes the canonical graph attrs:
+     :psi.graph/resolver-count   — count of registered resolver operations
+     :psi.graph/mutation-count   — count of registered mutation operations
      :psi.graph/resolver-syms    — set of registered resolver symbols
      :psi.graph/mutation-syms    — set of registered mutation symbols
-     :psi.graph/env-built        — true when Pathom env has been compiled
-     :psi.graph/nodes            — capability graph nodes
-     :psi.graph/edges            — capability graph edges (with :attribute metadata)
-     :psi.graph/capabilities     — domain capability summaries
-     :psi.graph/domain-coverage  — per-domain operation counts
+     :psi.graph/env-built        — true when a non-empty introspection graph/env is available
+     :psi.graph/nodes            — capability graph nodes (:resolver | :mutation | :capability)
+     :psi.graph/edges            — operation->capability edges annotated by :attribute
+     :psi.graph/capabilities     — rich per-domain summaries for domains present in the graph
+     :psi.graph/domain-coverage  — normalized per-domain counts, including required zero-count domains
 
-   Additional diagnostics:
-     :psi.graph/root-seeds           — transparent root seeds injected for session queries
-     :psi.graph/root-queryable-attrs — attrs reachable from session-root seeds"
+   Additional discovery diagnostics:
+     :psi.graph/root-seeds           — root context attrs injected for session-root querying
+     :psi.graph/root-queryable-attrs — keyword attrs reachable from root seeds via resolvers only
+
+   Notes:
+   - :psi.graph/edges are capability-membership edges, not dependency-flow edges
+   - edge :attribute values may be keyword attrs, join-map attrs, or nil
+   - root-queryable attrs exclude the seed attrs themselves"
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.graph/resolver-count
