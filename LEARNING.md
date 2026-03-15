@@ -3,6 +3,24 @@
 
 ---
 
+## 2026-03-15 - Repo-wide lint backlogs are best cleared by fixing root causes, not by suppressing warnings (commit `8039763`)
+
+### λ Third-party `.clj-kondo/imports/` noise should be excluded at the output level, not silenced per-warning
+
+Generated kondo hook files from `clj-kondo --copy-configs` accumulate across every component and produce hundreds of `redefined-var` and `unused-binding` warnings that are not actionable. The right fix is a single root `.clj-kondo/config.edn` with `{:output {:exclude-files [".clj-kondo/imports/"]}}` rather than per-file suppressions or ignoring the warnings entirely. This keeps the lint signal clean for real code while leaving the generated files untouched.
+
+### λ Redundant nested lets are best fixed by merging bindings into the outer let, not by restructuring logic
+
+Clj-kondo's "Redundant let expression" fires when an inner `let` serves no purpose beyond its single binding. The minimal fix is always to lift the binding into the enclosing `let` — no logic changes, no new indirection. Attempting to inline or restructure the expression instead risks semantic drift. For `letfn` bodies that contain an inner `let`, the merge must preserve the `letfn` structure: lift the binding into the outer `let`, not into the `letfn` itself.
+
+### λ Unused private vars and dead requires should be removed, not suppressed
+
+`Unused private var` and `namespace required but never used` warnings always indicate dead code. The correct response is removal, not `^:no-doc` or inline suppression. Dead private fns (`run-by-id`, `non-blank-str`) and stale requires (`clojure.java.io`, `psi.agent-session.tool-output`, `psi.recursion.core`) accumulate silently and make future readers reason about code that has no effect. Removing them immediately keeps the codebase as the source of truth.
+
+### λ `with-redefs` targets must be explicitly required even when referenced by fully-qualified symbol
+
+Clj-kondo reports `Unresolved namespace` for fully-qualified `with-redefs` targets whose namespace is not in the ns `:require` list. The fix is to add a bare require (`[psi.agent-session.startup-prompts]`) so the namespace is loaded and kondo can resolve the var. This also ensures the `with-redefs` target is actually available at runtime, not just syntactically present.
+
 ## 2026-03-15 - Isolated introspection should register the same session resolver surface that live session-root queries use (commit `708d729`)
 
 ### λ Session-backed introspection graphs must mirror live session-root queryability, not a narrower local subset
