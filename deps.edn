@@ -35,6 +35,34 @@
           :jvm-opts    ["--enable-native-access=ALL-UNNAMED"]
           :main-opts   ["-m" "psi.agent-session.main"]}
   :nrepl {:extra-deps {nrepl/nrepl {:mvn/version "1.5.1"}}}
+  :fmt   {:extra-deps {dev.weavejester/cljfmt {:mvn/version "0.13.1"}}
+          :exec-fn    cljfmt.main/check
+          :exec-args  {:paths ["bb.edn"
+                               "deps.edn"
+                               ".lsp/config.edn"
+                               ".psi/startup-prompts.edn"
+                               "components"
+                               "extensions"
+                               "spec"
+                               "specs"
+                               "test"
+                               "tests.edn"
+                               "extensions/tests.edn"]}}
+  :lint  {:extra-deps {clj-kondo/clj-kondo {:mvn/version "2025.09.19"}}
+          :main-opts  ["-m"
+                       "clj-kondo.main"
+                       "--lint"
+                       "bb.edn"
+                       "deps.edn"
+                       ".lsp/config.edn"
+                       ".psi/startup-prompts.edn"
+                       "components"
+                       "extensions"
+                       "spec"
+                       "specs"
+                       "test"
+                       "tests.edn"
+                       "extensions/tests.edn"]}
   :test  {:extra-paths ["test"
                         "components/ai/test"
                         "components/query/test"
