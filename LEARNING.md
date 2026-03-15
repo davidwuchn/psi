@@ -5163,3 +5163,32 @@ Cache `~/.m2/repository`, `~/.gitlibs`, and `~/.clojure` together. Key on
 `deps.edn` + `bb.edn` — both can change dep versions. Use a prefix restore-key
 (`clojure-${{ runner.os }}-`) so partial cache hits still warm the majority of deps
 even after a manifest change.
+
+### λ bb.edn task paths must match actual repo layout
+
+`bb fmt:check` (and similar tasks) pass path arguments directly to the tool CLI.
+If a listed path does not exist, cljfmt aborts with "No such file: <path>" rather
+than silently skipping it. Stale paths (e.g. a `test/` dir that was removed or never
+created) must be pruned from the task definition. Verify locally with `bb fmt:check`
+before pushing to CI.
+
+### λ CI tool binaries: install from GitHub Releases, not bbin
+
+Tools installed locally via bbin (`cljfmt`, `clj-kondo`) are not on the default
+GitHub Actions runner PATH. The correct CI pattern is:
+
+1. Resolve latest tag via GitHub API:
+   `curl -fsSL https://api.github.com/repos/<owner>/<repo>/releases/latest | grep tag_name`
+2. Download the static linux-amd64 binary tarball/zip.
+3. Install to `/usr/local/bin`.
+
+For cljfmt use the `-linux-amd64-static` tarball (no JVM dependency).
+For clj-kondo use the `-linux-amd64.zip`.
+Do not rely on bbin, pipx, or any user-local tool path on CI runners.
+
+### λ Pre-existing test failures surface on CI that pass locally
+
+A test asserting a tilde-shortened path (`~/projects/...`) passes locally because
+the home directory matches, but fails on CI where the runner home is
+`/home/runner/...`. Tests must never hardcode machine-local paths. Use
+`System/getProperty "user.home"` or derive paths from runtime context.
