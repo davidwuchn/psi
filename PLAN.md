@@ -234,6 +234,7 @@ Ordered steps toward PSI COMPLETE.
 - ✓ `bb fmt:check` green (commits `b07bde5` + `8b659c8`).
 - ✓ pre-commit `cljfmt-fix` hook active (commit `b07bde5`).
 - ✓ pre-commit `clj-kondo-lint` hook active (commit `accb233`).
+- ✓ CI `check` job installs `cljfmt` + `clj-kondo` binaries from GitHub Releases (commit `1e363b3`): resolves runner PATH gap for bbin-local tools; both installed to `/usr/local/bin` before `bb fmt:check` / `bb lint` run.
 - Remaining: `bb test` green on CI requires re-baselining test suite (Step 15e).
 
 ### Step 15e — Re-establish post-query/post-memory clean baseline … in progress
