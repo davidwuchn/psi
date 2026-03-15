@@ -246,13 +246,6 @@
                     nil))
     :else nil))
 
-(defn- non-blank-str
-  [v]
-  (when (string? v)
-    (let [s (str/trim v)]
-      (when-not (str/blank? s)
-        s))))
-
 (defn- resolve-runtime-config
   [{:keys [cwd
            history-commit-limit

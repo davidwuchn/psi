@@ -407,17 +407,17 @@
 
                              truncated?
                              (str "\n\n... [truncated, " (:total-lines trunc)
-                                  " total lines] Full output: " spill-path))]
-             (let [result {:content  content
-                           :is-error non-zero?
-                           :details  (when truncated?
-                                       {:truncation       trunc
-                                        :full-output-path spill-path})}]
-               (when on-update
-                 (try
-                   (on-update result)
-                   (catch Exception _ nil)))
-               result))))
+                                  " total lines] Full output: " spill-path))
+                 result    {:content  content
+                            :is-error non-zero?
+                            :details  (when truncated?
+                                        {:truncation       trunc
+                                         :full-output-path spill-path})}]
+             (when on-update
+               (try
+                 (on-update result)
+                 (catch Exception _ nil)))
+             result)))
        (catch Exception e
          (reset! bash-process-atom nil)
          {:content  (str "Command execution error: " (ex-message e))
@@ -505,39 +505,38 @@
          content-norm  (normalize-line-endings no-bom)
          old-norm      (normalize-line-endings oldText)
          new-norm      (normalize-line-endings newText)
-         exact-index   (str/index-of content-norm old-norm)]
-     (let [updated-norm
-           (if (some? exact-index)
-             (str/replace-first content-norm old-norm new-norm)
-             (let [matches (find-fuzzy-window content-norm old-norm)]
-               (cond
-                 (empty? matches)
-                 (throw (ex-info "oldText not found in file"
-                                 {:path fpath :oldText (subs oldText 0 (min 80 (count oldText)))}))
+         exact-index   (str/index-of content-norm old-norm)
+         updated-norm  (if (some? exact-index)
+                         (str/replace-first content-norm old-norm new-norm)
+                         (let [matches (find-fuzzy-window content-norm old-norm)]
+                           (cond
+                             (empty? matches)
+                             (throw (ex-info "oldText not found in file"
+                                             {:path fpath :oldText (subs oldText 0 (min 80 (count oldText)))}))
 
-                 (> (count matches) 1)
-                 (throw (ex-info "Fuzzy match is ambiguous"
-                                 {:path fpath :match-count (count matches)}))
+                             (> (count matches) 1)
+                             (throw (ex-info "Fuzzy match is ambiguous"
+                                             {:path fpath :match-count (count matches)}))
 
-                 :else
-                 (let [start        (first matches)
-                       content-lines (split-lines-preserve content-norm)
-                       old-lines     (split-lines-preserve old-norm)
-                       new-lines     (split-lines-preserve new-norm)
-                       prefix       (subvec content-lines 0 start)
-                       suffix       (subvec content-lines (+ start (count old-lines)))
-                       replaced     (concat prefix new-lines suffix)]
-                   (str/join "\n" replaced)))))
-           updated-out   (-> updated-norm
-                             (str/replace "\n" line-ending)
-                             (#(if has-bom? (str "\uFEFF" %) %)))
-           diff          (simple-diff raw-content updated-out)
-           changed-line  (or (first-changed-line raw-content updated-out) 1)]
-       (spit f updated-out)
-       {:content  (str "Successfully replaced text in " fpath ".")
-        :is-error false
-        :details  {:diff diff
-                   :first-changed-line changed-line}}))))
+                             :else
+                             (let [start         (first matches)
+                                   content-lines (split-lines-preserve content-norm)
+                                   old-lines     (split-lines-preserve old-norm)
+                                   new-lines     (split-lines-preserve new-norm)
+                                   prefix        (subvec content-lines 0 start)
+                                   suffix        (subvec content-lines (+ start (count old-lines)))
+                                   replaced      (concat prefix new-lines suffix)]
+                               (str/join "\n" replaced)))))
+         updated-out   (-> updated-norm
+                           (str/replace "\n" line-ending)
+                           (#(if has-bom? (str "\uFEFF" %) %)))
+         diff          (simple-diff raw-content updated-out)
+         changed-line  (or (first-changed-line raw-content updated-out) 1)]
+     (spit f updated-out)
+     {:content  (str "Successfully replaced text in " fpath ".")
+      :is-error false
+      :details  {:diff diff
+                 :first-changed-line changed-line}})))
 
 (defn execute-write
   "Write content to a file (creates parent dirs if needed).

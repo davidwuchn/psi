@@ -4,7 +4,6 @@
   Every test gets its own isolated context via `create-context` (Nullable
   pattern) — no global-state mutations, no ordering dependencies."
   (:require
-   [clojure.java.io :as io]
    [clojure.string :as str]
    [clojure.test :refer [deftest testing is]]
    [com.fulcrologic.statecharts.chart :as chart]

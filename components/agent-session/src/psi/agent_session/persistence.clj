@@ -534,8 +534,7 @@
                                     :else acc)))
                               nil
                               messages)
-        modified      (or last-activity (:timestamp header))
-        f             (io/file file-path)]
+        modified      (or last-activity (:timestamp header))]
     {:path                file-path
      :id                  (:id header)
      :cwd                 (:cwd header)

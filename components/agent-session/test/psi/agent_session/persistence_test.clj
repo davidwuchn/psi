@@ -2,6 +2,7 @@
   "Tests for NDEDN session persistence — write path, read path, migration,
   session directory layout, and session listing."
   (:require
+   [clojure.edn :as edn]
    [clojure.java.io :as io]
    [clojure.string :as str]
    [clojure.test :refer [deftest testing is]]
@@ -75,7 +76,7 @@
 
   (testing "last-entry-of-kind returns most recent"
     (let [j  (p/create-journal)
-          e1 (p/append-entry! j (p/thinking-level-entry :off))
+          _  (p/append-entry! j (p/thinking-level-entry :off))
           e2 (p/append-entry! j (p/thinking-level-entry :medium))]
       (is (= e2 (p/last-entry-of-kind j :thinking-level))))))
 
@@ -98,7 +99,7 @@
           f   (io/file dir "test.ndedn")]
       (p/write-header! f "sess-1" "/my/project" nil)
       (let [lines  (slurp-lines f)
-            header (clojure.edn/read-string
+            header (edn/read-string
                     {:readers {'inst #(java.util.Date/from
                                        (java.time.Instant/parse %))}}
                     (first lines))]

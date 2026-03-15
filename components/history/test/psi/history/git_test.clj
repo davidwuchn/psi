@@ -272,7 +272,6 @@
 
 (deftest worktree-add-attaches-existing-branch-when-create-branch-false
   (let [ctx      (git/create-null-context seed-commits)
-        base-dir (:repo-dir ctx)
         wt-src   (linked-worktree-path ctx "feature-attached-src")
         wt-path  (linked-worktree-path ctx "feature-attached")
         _        (git/worktree-add ctx {:path wt-src :branch "feature-attached-src"})

@@ -53,7 +53,7 @@
 (defn- run-stream [sse-str model options]
   (let [events (atom [])
         convo  (-> (conv/create "sys") (conv/add-user-message "hi"))]
-    (with-redefs [http/post (fn [_url req]
+    (with-redefs [http/post (fn [_url _req]
                               {:body (stream-body sse-str)})]
       (anthropic/stream-anthropic convo model options
                                   (fn [e] (swap! events conj e))))

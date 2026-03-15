@@ -3,7 +3,6 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
-   [psi.agent-session.tool-output :as tool-output]
    [psi.agent-session.tools :as tools]))
 
 (defn- with-temp-dir

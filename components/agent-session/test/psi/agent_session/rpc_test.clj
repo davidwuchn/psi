@@ -1097,7 +1097,7 @@
     (let [cwd     (str (System/getProperty "java.io.tmpdir") "/psi-rpc-host-" (java.util.UUID/randomUUID))
           _       (.mkdirs (java.io.File. cwd))
           ctx     (session/create-context {:cwd cwd})
-          sid0    (:session-id (session/get-session-data-in ctx))
+          _       (:session-id (session/get-session-data-in ctx))
           state   (atom {:ready? true :pending {}})
           handler (rpc/make-session-request-handler ctx)
           input   (str "{:id \"n1\" :kind :request :op \"new_session\"}\n"
@@ -1384,7 +1384,6 @@
 (deftest rpc-subscribe-emits-host-updated-test
   (testing "subscribe emits host/updated with active-session-id and sessions list"
     (let [ctx     (session/create-context)
-          sid     (:session-id (session/get-session-data-in ctx))
           state   (atom {:ready? true
                          :pending {}
                          :subscribed-topics #{"host/updated"}})

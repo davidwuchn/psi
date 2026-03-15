@@ -430,8 +430,8 @@
           thread-id (:session-id (session/get-session-data-in ctx))
           _     (start-job! store "tc-b4" thread-id "tool-z" "job-b4")
           _     (bj/mark-terminal-in! store {:job-id "job-b4" :outcome :completed :payload {:ok true}})
-          f1    (future (do (session/set-extension-run-fn-in! ctx (fn [_ _] nil)) true))
-          f2    (future (do (session/set-extension-run-fn-in! ctx (fn [_ _] nil)) true))
+          f1    (future (session/set-extension-run-fn-in! ctx (fn [_ _] nil)) true)
+          f2    (future (session/set-extension-run-fn-in! ctx (fn [_ _] nil)) true)
           _     @f1
           _     @f2
           pending (bj/pending-terminal-jobs-in store thread-id)]

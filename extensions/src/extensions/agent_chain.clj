@@ -205,10 +205,6 @@
 (defn- now-ms []
   (System/currentTimeMillis))
 
-(defn- run-by-id [run-id]
-  (when-let [runs-a (:runs @state)]
-    (get @runs-a (str run-id))))
-
 (defn- tracked-runs []
   (if-let [runs-a (:runs @state)]
     (vals @runs-a)

@@ -85,7 +85,7 @@
 (alter-var-root
  #'charm.render.core/update-size!
  (constantly
-  (fn [renderer width height]
+  (fn [renderer width _height]
     (let [{:keys [display height old-height]}
           (assoc @renderer :old-height (:height @renderer))
           height-changed? (not= old-height height)]
@@ -817,40 +817,40 @@
                                           (vec (sort-by #(get input-order (:session-id %) Integer/MAX_VALUE)
                                                         xs))))
         roots              (let [rs (get children-by-parent ::root [])]
-                             (if (seq rs) rs sessions))]
-    (let [emitted (volatile! #{})]
-      (letfn [(tree-prefix [ancestor-has-next last-sibling?]
-                (str (apply str (map #(if % "│ " "  ") ancestor-has-next))
-                     (if last-sibling? "└─ " "├─ ")))
-              (walk [node depth ancestor-has-next last-sibling? visited]
-                (let [sid      (:session-id node)
-                      cycle?   (contains? visited sid)
-                      emitted? (contains? @emitted sid)]
-                  (if (or cycle? emitted?)
-                    []
-                    (let [visited' (conj visited sid)
-                          _        (vswap! emitted conj sid)
-                          node'    (assoc node
-                                          :tree-depth depth
-                                          :tree-prefix (if (zero? depth)
-                                                         ""
-                                                         (tree-prefix ancestor-has-next last-sibling?)))
-                          children (get children-by-parent sid [])
-                          child-path (if (zero? depth)
-                                       ancestor-has-next
-                                       (conj ancestor-has-next (not last-sibling?)))
-                          child-count (count children)]
-                      (reduce (fn [acc [idx child]]
-                                (let [child-last? (= idx (dec child-count))]
-                                  (into acc (walk child (inc depth) child-path child-last? visited'))))
-                              [node']
-                              (map-indexed vector children))))))]
-        (vec
-         (reduce (fn [acc [idx root]]
-                   (let [root-last? (= idx (dec (count roots)))]
-                     (into acc (walk root 0 [] root-last? #{}))))
-                 []
-                 (map-indexed vector roots)))))))
+                             (if (seq rs) rs sessions))
+        emitted            (volatile! #{})]
+    (letfn [(tree-prefix [ancestor-has-next last-sibling?]
+              (str (apply str (map #(if % "│ " "  ") ancestor-has-next))
+                   (if last-sibling? "└─ " "├─ ")))
+            (walk [node depth ancestor-has-next last-sibling? visited]
+              (let [sid      (:session-id node)
+                    cycle?   (contains? visited sid)
+                    emitted? (contains? @emitted sid)]
+                (if (or cycle? emitted?)
+                  []
+                  (let [visited'    (conj visited sid)
+                        _           (vswap! emitted conj sid)
+                        node'       (assoc node
+                                           :tree-depth depth
+                                           :tree-prefix (if (zero? depth)
+                                                          ""
+                                                          (tree-prefix ancestor-has-next last-sibling?)))
+                        children    (get children-by-parent sid [])
+                        child-path  (if (zero? depth)
+                                      ancestor-has-next
+                                      (conj ancestor-has-next (not last-sibling?)))
+                        child-count (count children)]
+                    (reduce (fn [acc [idx child]]
+                              (let [child-last? (= idx (dec child-count))]
+                                (into acc (walk child (inc depth) child-path child-last? visited'))))
+                            [node']
+                            (map-indexed vector children))))))]
+      (vec
+       (reduce (fn [acc [idx root]]
+                 (let [root-last? (= idx (dec (count roots)))]
+                   (into acc (walk root 0 [] root-last? #{}))))
+               []
+               (map-indexed vector roots))))))
 
 (defn- selected-index-for-session-id
   [sessions sid]
@@ -1024,45 +1024,45 @@
                                      :psi.agent-session/skills
                                      :psi.agent-session/extension-summary
                                      :psi.agent-session/session-file
-                                     :psi.extension/command-names]))]
-       (let [queue (or (:event-queue opts) (LinkedBlockingQueue.))]
-         [{:messages              (vec (or (:initial-messages opts) []))
-           :phase                 :idle
-           :error                 nil
-           :input                 (charm/text-input :prompt "刀: "
-                                                    :placeholder "Type a message…"
-                                                    :focused true)
-           :spinner-frame         0
-           :model-name            model-name
-           :prompt-templates      (or (:psi.agent-session/prompt-templates introspected) [])
-           :skills                (or (:psi.agent-session/skills introspected) [])
-           :extension-summary     (or (:psi.agent-session/extension-summary introspected) {})
-           :extension-command-names (vec (:psi.extension/command-names introspected))
-           :query-fn              query-fn
-           :ui-state-atom         ui-state-atom
-           :dispatch-fn           (:dispatch-fn opts)
-           :on-interrupt-fn!      (:on-interrupt-fn! opts)
-           :on-queue-input-fn!    (:on-queue-input-fn! opts)
-           :double-press-window-ms (or (:double-press-window-ms opts) 500)
-           :double-escape-action  (or (:double-escape-action opts) :none)
-           :cwd                   (or (:cwd opts) (System/getProperty "user.dir"))
-           :current-session-file  (or (:current-session-file opts)
-                                      (:psi.agent-session/session-file introspected))
-           :resume-fn!            (:resume-fn! opts)
-           :switch-session-fn!    (:switch-session-fn! opts)
-           :session-selector      nil   ;; non-nil when /resume or /tree picker is active
-           :session-selector-mode nil   ;; :resume | :tree
-           :prompt-input-state    (initial-prompt-input-state)
-           :queue                 queue
-           :width                 80
-           :height                24
+                                     :psi.extension/command-names]))
+           queue        (or (:event-queue opts) (LinkedBlockingQueue.))]
+       [{:messages              (vec (or (:initial-messages opts) []))
+         :phase                 :idle
+         :error                 nil
+         :input                 (charm/text-input :prompt "刀: "
+                                                  :placeholder "Type a message…"
+                                                  :focused true)
+         :spinner-frame         0
+         :model-name            model-name
+         :prompt-templates      (or (:psi.agent-session/prompt-templates introspected) [])
+         :skills                (or (:psi.agent-session/skills introspected) [])
+         :extension-summary     (or (:psi.agent-session/extension-summary introspected) {})
+         :extension-command-names (vec (:psi.extension/command-names introspected))
+         :query-fn              query-fn
+         :ui-state-atom         ui-state-atom
+         :dispatch-fn           (:dispatch-fn opts)
+         :on-interrupt-fn!      (:on-interrupt-fn! opts)
+         :on-queue-input-fn!    (:on-queue-input-fn! opts)
+         :double-press-window-ms (or (:double-press-window-ms opts) 500)
+         :double-escape-action  (or (:double-escape-action opts) :none)
+         :cwd                   (or (:cwd opts) (System/getProperty "user.dir"))
+         :current-session-file  (or (:current-session-file opts)
+                                    (:psi.agent-session/session-file introspected))
+         :resume-fn!            (:resume-fn! opts)
+         :switch-session-fn!    (:switch-session-fn! opts)
+         :session-selector      nil   ;; non-nil when /resume or /tree picker is active
+         :session-selector-mode nil   ;; :resume | :tree
+         :prompt-input-state    (initial-prompt-input-state)
+         :queue                 queue
+         :width                 80
+         :height                24
            ;; Live turn progress
-           :stream-text           nil
-           :stream-thinking       nil
-           :tool-calls            (or (:initial-tool-calls opts) {})
-           :tool-order            (vec (or (:initial-tool-order opts) []))
-           :tools-expanded?       (ext-ui/get-tools-expanded ui-state-atom)}
-          (poll-cmd queue)])))))
+         :stream-text           nil
+         :stream-thinking       nil
+         :tool-calls            (or (:initial-tool-calls opts) {})
+         :tool-order            (vec (or (:initial-tool-order opts) []))
+         :tools-expanded?       (ext-ui/get-tools-expanded ui-state-atom)}
+        (poll-cmd queue)]))))
 
 ;; ── Update helpers ──────────────────────────────────────────
 
@@ -2185,14 +2185,14 @@
                               [j false])
                             (recur (inc j) (+ col cw))))))))
                 chunk-text (subs text start end-idx)
-                next-start (if hard-break? (inc end-idx) end-idx)]
-            (let [chunks' (conj chunks {:text chunk-text
-                                        :start start
-                                        :end end-idx})
-                  chunks' (if (and hard-break? (>= next-start len))
-                            (conj chunks' {:text "" :start len :end len})
-                            chunks')]
-              (recur next-start chunks'))))))))
+                next-start (if hard-break? (inc end-idx) end-idx)
+                chunks'    (conj chunks {:text chunk-text
+                                         :start start
+                                         :end end-idx})
+                chunks'    (if (and hard-break? (>= next-start len))
+                             (conj chunks' {:text "" :start len :end len})
+                             chunks')]
+            (recur next-start chunks')))))))
 
 (defn- wrap-text-input-view
   "Render text input with word wrapping at terminal width.

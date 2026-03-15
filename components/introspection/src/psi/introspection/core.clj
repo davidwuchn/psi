@@ -48,7 +48,6 @@
    [psi.history.resolvers :as history-resolvers]
    [psi.memory.core :as memory]
    [psi.memory.resolvers :as memory-resolvers]
-   [psi.recursion.core :as recursion]
    [psi.recursion.resolvers :as recursion-resolvers]
    [psi.agent-session.core :as agent-session]
    [psi.agent-session.resolvers :as as-resolvers]))

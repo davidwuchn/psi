@@ -1943,7 +1943,7 @@
                   :psi.agent-session/session-name
                   :psi.agent-session/cwd
                   :psi.agent-session/thinking-level]}
-  (let [sd0 (new-session-in! agent-session-ctx {:session-name session-name
+  (let [_   (new-session-in! agent-session-ctx {:session-name session-name
                                                 :worktree-path worktree-path})
         _   (when system-prompt
               (set-system-prompt-in! agent-session-ctx system-prompt))

@@ -437,13 +437,13 @@
     (let [{:keys [api state]} (nullable/create-nullable-extension-api
                                {:path "/test/mcp_tasks_run.clj"})]
       (sut/init api)
-      (let [handler (get-in @state [:commands "mcp-tasks-run" :handler])]
-        (let [out-1 (with-out-str (handler "42"))
-              out-2 (with-out-str (handler "99"))]
-          (is (re-find #"Started mcp-tasks run run-1" out-1))
-          (is (re-find #"Started mcp-tasks run run-2" out-2))
-          (is (contains? (:workflows @state) "run-1"))
-          (is (contains? (:workflows @state) "run-2"))))))
+      (let [handler (get-in @state [:commands "mcp-tasks-run" :handler])
+            out-1   (with-out-str (handler "42"))
+            out-2   (with-out-str (handler "99"))]
+        (is (re-find #"Started mcp-tasks run run-1" out-1))
+        (is (re-find #"Started mcp-tasks run run-2" out-2))
+        (is (contains? (:workflows @state) "run-1"))
+        (is (contains? (:workflows @state) "run-2")))))
 
   (testing "rejects duplicate active run for same task when existing run is running"
     (let [{:keys [api state]} (nullable/create-nullable-extension-api

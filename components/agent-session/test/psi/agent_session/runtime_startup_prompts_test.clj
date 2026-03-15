@@ -2,7 +2,8 @@
   (:require
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.core :as session]
-   [psi.agent-session.runtime :as runtime]))
+   [psi.agent-session.runtime :as runtime]
+   [psi.agent-session.startup-prompts]))
 
 (defn- fake-runner
   [_ai-ctx _ctx _agent-ctx _ai-model _user-messages _opts]
