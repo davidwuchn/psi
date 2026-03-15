@@ -3,6 +3,40 @@
 
 ---
 
+## 2026-03-15 - clj-kondo pre-commit hook requires `--cache false` and root `:lint-as` config (commit `accb233`)
+
+### λ `--cache false` prevents JVM file-lock contention when pre-commit parallelises per-file
+
+pre-commit runs hooks in parallel across staged files by default. clj-kondo
+uses a JVM file lock on its `.clj-kondo/.cache` directory. When multiple
+clj-kondo processes start simultaneously they race for that lock, and the
+losers throw `Clj-kondo cache is locked by other thread or process` and exit
+non-zero. Fix: pass `--cache false` in the hook. Individual staged files are
+small enough that the cache provides no meaningful speedup anyway.
+
+### λ Root `.clj-kondo/config.edn` must carry all `:lint-as` macro aliases for individual-file linting to be correct
+
+When linting a single file (as a pre-commit hook does), clj-kondo only loads
+the nearest `.clj-kondo/config.edn` — it does not traverse
+`components/*/clj-kondo/imports/*/config.edn` (those are gitignored and
+populated only by a full classpath scan with `--copy-configs`). Without the
+root config carrying the `:lint-as` entries, macros like `pco/defresolver`,
+`pco/defmutation`, `>defn`, `promesa.core/let`, and Potemkin's `deftype+`
+family all produce hundreds of false-positive "Unresolved symbol" errors that
+block every commit.
+
+Correct fix: promote all `:lint-as` entries from the gitignored imports configs
+into the root `.clj-kondo/config.edn`. The root config becomes the single
+canonical source of macro-alias hints for both the hook and `bb lint`.
+
+### λ The clj-kondo cache is an analysis artefact, not a macro-expansion source
+
+The `.clj-kondo/.cache/v1/clj/*.transit.json` files record analysis results
+for already-linted namespaces. They do not teach clj-kondo how to parse
+unknown macros in a file being linted for the first time. Macro aliases must
+be declared in a `config.edn` `:lint-as` map — the cache alone is not
+sufficient.
+
 ## 2026-03-15 - pre-commit local hooks with `language: script` are the right fit for CLI tools already on PATH (commits `b07bde5`, `8b659c8`)
 
 ### λ Use `language: script` for pre-commit hooks backed by PATH-resident CLI tools
