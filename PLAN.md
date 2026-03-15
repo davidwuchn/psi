@@ -231,10 +231,10 @@ Ordered steps toward PSI COMPLETE.
   - tests (`bb test`)
 - Runtime target is JDK 25 with latest Clojure CLI and latest Babashka in Actions.
 - ✓ `bb lint` green (2026-03-15, commit `8039763`): 0 errors, 0 warnings across all source/test/extension files. `.clj-kondo/config.edn` suppresses third-party import noise.
+- ✓ `bb fmt:check` green (2026-03-15, commits `b07bde5` + `8b659c8`): pre-commit `cljfmt-fix` hook runs `cljfmt fix` on staged Clojure files, restages changes, and all existing files were reformatted in the initial pass. `doc/develop.md` added for developer onboarding.
 - Remaining convergence order:
-  1. repair `bb fmt:check` (cljfmt task invocation)
-  2. re-baseline `bb test` (stale `psi.memory.datalevin_test` + missing `:test` path)
-  3. only then expect GitHub Actions to go green on `master` and PRs
+  1. re-baseline `bb test` (stale `psi.memory.datalevin_test` + missing `:test` path)
+  2. only then expect GitHub Actions to go green on `master` and PRs
 
 ### Step 15e — Re-establish post-query/post-memory clean baseline … in progress
 - Baseline commit `57e8ab0` keeps the still-relevant likely-good fixes only:
