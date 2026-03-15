@@ -3,6 +3,43 @@
 
 ---
 
+## 2026-03-15 - Emacs streaming buffer writes must suppress undo tracking to avoid undo-outer-limit overflow (commit `0a3ec2c`)
+
+### λ Bind `buffer-undo-list` to `t` for all streaming-path buffer mutations; keep undo enabled for finalize writes
+
+Streaming deltas call `delete-region` + `insert` on every token. Each pair generates an undo entry. For a long response or extended thinking block, accumulated entries quickly exceed `undo-outer-limit` (default 3 MB), producing the "undo info was discarded" warning and silently destroying any prior undo history in the buffer.
+
+**Pattern:**
+```elisp
+;; ✗ streaming path — generates O(n) undo entries, overflows undo-outer-limit
+(defun psi-emacs--set-thinking-line (text)
+  (when psi-emacs--state
+    (let ((follow-anchor ...))
+      ...)))
+
+;; ✓ streaming path — undo suppressed; thinking lines are transient by nature
+(defun psi-emacs--set-thinking-line (text)
+  (when psi-emacs--state
+    (let ((buffer-undo-list t)
+          (follow-anchor ...))
+      ...)))
+
+;; ✓ assistant line — suppress only during streaming; keep undo for finalize
+(defun psi-emacs--set-assistant-line (text &optional stream-verbatim)
+  (when psi-emacs--state
+    (let ((buffer-undo-list (if stream-verbatim t buffer-undo-list))
+          ...)
+      ...)))
+```
+
+Key details:
+- `(let ((buffer-undo-list t)) ...)` is the standard Emacs idiom to suppress undo recording for a dynamic extent; it is buffer-local and does not affect other buffers.
+- Thinking lines are always transient streaming state — they are archived or cleared before the turn ends, so undo tracking is never useful for them.
+- The assistant line has two call sites: the streaming path (`stream-verbatim` non-nil, called on every delta) and the finalize path (`stream-verbatim` nil, called once). Only the streaming path needs suppression; keeping undo for the finalize write means the committed response text remains undoable.
+- The same principle applies to any Emacs buffer that receives high-frequency programmatic writes (progress indicators, log tails, live-updating status lines): suppress undo for the update loop, not for the final committed state.
+
+---
+
 ## 2026-03-15 - Hardcoded home-dir paths in tests break CI (commit `1d9b648`)
 
 ### λ never hardcode user.home in test fixtures — derive it at runtime
