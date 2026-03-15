@@ -1,141 +1,116 @@
 (ns psi.ai.conversation
   "Conversation entity and lifecycle management"
   (:require [psi.ai.schemas :as schemas])
-  (:import [java.util UUID]
-           [java.time Instant]))
+  (:import [java.time Instant]
+           [java.util UUID]))
 
 ;; Conversation state management
+
+(defn- now []
+  (Instant/now))
+
+(defn- new-id []
+  (str (UUID/randomUUID)))
+
+(defn- validate-conversation [conversation]
+  (schemas/validate! schemas/Conversation conversation))
+
+(defn- update-conversation [conversation f]
+  (let [timestamp (now)]
+    (-> conversation
+        f
+        (assoc :updated-at timestamp)
+        validate-conversation)))
+
+(defn- append-message [conversation message]
+  (update-conversation
+   conversation
+   #(update % :messages conj (merge {:id (new-id)
+                                     :timestamp (now)}
+                                    message))))
 
 (defn create
   "Create new conversation with optional system prompt"
   [system-prompt]
-  (let [conversation {:id (str (UUID/randomUUID))
-                      :system-prompt system-prompt
-                      :status :active
-                      :created-at (Instant/now)
-                      :updated-at (Instant/now)
-                      :messages []
-                      :tools #{}}]
-    (schemas/validate! schemas/Conversation conversation)))
+  (let [timestamp (now)]
+    (validate-conversation
+     {:id            (new-id)
+      :system-prompt system-prompt
+      :status        :active
+      :created-at    timestamp
+      :updated-at    timestamp
+      :messages      []
+      :tools         #{}})))
 
 (defn add-user-message
   "Add user message to conversation"
   [conversation content]
   {:pre [(schemas/valid? schemas/Conversation conversation)
          (string? content)]}
-  (let [updated-conversation
-        (-> conversation
-            (update :messages conj {:id (str (UUID/randomUUID))
-                                    :role :user
-                                    :content {:kind :text
-                                              :text content}
-                                    :timestamp (Instant/now)})
-            (assoc :updated-at (Instant/now)))]
-    (schemas/validate! schemas/Conversation updated-conversation)))
+  (append-message conversation
+                  {:role :user
+                   :content {:kind :text
+                             :text content}}))
 
 (defn add-assistant-message
   "Add assistant message to conversation"
   [conversation message-data]
-  (let [message (merge {:id (str (UUID/randomUUID))
-                        :role :assistant
-                        :timestamp (Instant/now)}
-                       message-data)]
-    (-> conversation
-        (update :messages conj message)
-        (assoc :updated-at (Instant/now)))))
+  (append-message conversation
+                  (merge {:role :assistant}
+                         message-data)))
 
 (defn add-tool-result
   "Add tool result message to conversation"
   [conversation tool-call-id tool-name content is-error]
-  (-> conversation
-      (update :messages conj {:id (str (UUID/randomUUID))
-                              :role :tool-result
-                              :tool-call-id tool-call-id
-                              :tool-name tool-name
-                              :content content
-                              :is-error is-error
-                              :timestamp (Instant/now)})
-      (assoc :updated-at (Instant/now))))
+  (append-message conversation
+                  {:role :tool-result
+                   :tool-call-id tool-call-id
+                   :tool-name tool-name
+                   :content content
+                   :is-error is-error}))
 
 (defn add-tool
   "Add tool to conversation"
   [conversation tool]
-  (update conversation :tools conj tool))
-
-(defn complete-conversation
-  "Mark conversation as completed"
-  [conversation]
-  (assoc conversation
-         :status :completed
-         :updated-at (Instant/now)))
-
-(defn error-conversation
-  "Mark conversation as errored"
-  [conversation error-msg]
-  (assoc conversation
-         :status :error
-         :error-message error-msg
-         :updated-at (Instant/now)))
+  (update-conversation conversation #(update % :tools conj tool)))
 
 ;; Derived data
+
+(defn- assistant-messages [conversation]
+  (filter #(= :assistant (:role %)) (:messages conversation)))
+
+(defn- sum-fields [maps totals keys]
+  (reduce (fn [acc m]
+            (reduce (fn [acc k]
+                      (update acc k + (get m k 0)))
+                    acc
+                    keys))
+          totals
+          maps))
 
 (defn total-usage
   "Calculate total token usage across all messages"
   [conversation]
-  (let [messages (:messages conversation)
-        assistant-messages (filter #(= :assistant (:role %)) messages)]
-    (reduce (fn [acc msg]
-              (let [usage (:usage msg)]
-                (when usage
-                  (-> acc
-                      (update :input-tokens + (:input-tokens usage 0))
-                      (update :output-tokens + (:output-tokens usage 0))
-                      (update :cache-read-tokens + (:cache-read-tokens usage 0))
-                      (update :cache-write-tokens + (:cache-write-tokens usage 0))
-                      (update :total-tokens + (:total-tokens usage 0))))))
-            {:input-tokens 0
-             :output-tokens 0
-             :cache-read-tokens 0
-             :cache-write-tokens 0
-             :total-tokens 0}
-            assistant-messages)))
+  (sum-fields (keep :usage (assistant-messages conversation))
+              {:input-tokens 0
+               :output-tokens 0
+               :cache-read-tokens 0
+               :cache-write-tokens 0
+               :total-tokens 0}
+              [:input-tokens
+               :output-tokens
+               :cache-read-tokens
+               :cache-write-tokens
+               :total-tokens]))
 
 (defn total-cost
   "Calculate total cost across all messages"
   [conversation]
-  (let [messages (:messages conversation)
-        assistant-messages (filter #(= :assistant (:role %)) messages)]
-    (reduce (fn [acc msg]
-              (let [usage (:usage msg)
-                    cost (:cost usage)]
-                (when cost
-                  (-> acc
-                      (update :input + (:input cost 0))
-                      (update :output + (:output cost 0))
-                      (update :cache-read + (:cache-read cost 0))
-                      (update :cache-write + (:cache-write cost 0))
-                      (update :total + (:total cost 0))))))
-            {:input 0.0
-             :output 0.0
-             :cache-read 0.0
-             :cache-write 0.0
-             :total 0.0}
-            assistant-messages)))
+  (sum-fields (keep (comp :cost :usage) (assistant-messages conversation))
+              {:input 0.0
+               :output 0.0
+               :cache-read 0.0
+               :cache-write 0.0
+               :total 0.0}
+              [:input :output :cache-read :cache-write :total]))
 
-(defn has-tools?
-  "Check if conversation has tools available"
-  [conversation]
-  (seq (:tools conversation)))
-
-(defn requires-tool-response?
-  "Check if conversation has pending tool calls"
-  [conversation]
-  (some (fn [msg]
-          (and (= :assistant (:role msg))
-               (= :tool-use (:stop-reason msg))))
-        (:messages conversation)))
-
-(defn active?
-  "Check if conversation is active"
-  [conversation]
-  (= :active (:status conversation)))

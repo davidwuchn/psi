@@ -1,0 +1,209 @@
+-- allium: 1
+
+-- conversation.allium
+-- Embedded conversation lifecycle and derived totals for psi.ai.conversation.
+--
+-- Refines ai-abstract-model.allium with:
+--   - embedded message and tool collections on the conversation value
+--   - concrete append operations used by psi.ai.conversation
+--   - derived usage and cost totals across assistant messages
+
+use "./ai-abstract-model.allium" as ai
+
+entity ConversationRecord {
+    id: String
+    system_prompt: String?
+    status: active | completed | error
+    created_at: Timestamp
+    updated_at: Timestamp
+    messages: Set<ConversationMessage>
+    tools: Set<ConversationTool>
+}
+
+entity ConversationMessage {
+    id: String
+    role: user | assistant | tool_result
+    content: Map<String, Any>
+    timestamp: Timestamp
+
+    provider: ai/Provider?
+    model_id: String?
+    api: ai/Api?
+    usage: ai/Usage?
+    stop_reason: stop | length | tool_use | error | aborted
+    error_message: String?
+    tool_call_id: String?
+    tool_name: String?
+    is_error: Boolean?
+}
+
+entity ConversationTool {
+    name: String
+    description: String
+    parameters: Map<String, Any>
+}
+
+value UsageTotals {
+    input_tokens: Integer
+    output_tokens: Integer
+    cache_read_tokens: Integer
+    cache_write_tokens: Integer
+    total_tokens: Integer
+}
+
+value CostTotals {
+    input: Number
+    output: Number
+    cache_read: Number
+    cache_write: Number
+    total: Number
+}
+
+rule ConversationCreated {
+    when: CreateConversation(system_prompt)
+
+    ensures: ConversationRecord.created(
+        id: NewConversationId(),
+        system_prompt: system_prompt,
+        status: active,
+        created_at: now,
+        updated_at: now,
+        messages: {},
+        tools: {}
+    )
+}
+
+rule UserMessageAppended {
+    when: AddUserMessage(conversation, content)
+    requires: conversation.status = active
+    requires: content != null
+
+    ensures: appended = ConversationMessage{
+        id: NewMessageId(),
+        role: user,
+        content: {kind: text, text: content},
+        timestamp: now
+    }
+    ensures: conversation.messages = conversation.messages + {appended}
+    ensures: conversation.updated_at = now
+}
+
+rule AssistantMessageAppended {
+    when: AddAssistantMessage(conversation, message_data)
+    requires: conversation.status = active
+
+    ensures: appended = AssistantMessageWithGeneratedIdentity(message_data)
+    ensures: appended.role = assistant
+    ensures: appended.id != null
+    ensures: appended.timestamp = now
+    ensures: conversation.messages = conversation.messages + {appended}
+    ensures: conversation.updated_at = now
+
+    @guidance
+        -- message_data content, usage, provider metadata, stop_reason, and
+        -- tool-call blocks are preserved; id and timestamp are added by the
+        -- append operation.
+}
+
+rule ToolResultAppended {
+    when: AddToolResult(conversation, tool_call_id, tool_name, content, is_error)
+    requires: conversation.status = active
+
+    ensures: appended = ConversationMessage{
+        id: NewMessageId(),
+        role: tool_result,
+        tool_call_id: tool_call_id,
+        tool_name: tool_name,
+        content: content,
+        is_error: is_error,
+        timestamp: now
+    }
+    ensures: conversation.messages = conversation.messages + {appended}
+    ensures: conversation.updated_at = now
+}
+
+rule ToolAdded {
+    when: AddTool(conversation, tool)
+    requires: conversation.status = active
+
+    ensures: conversation.tools = conversation.tools + {tool}
+    ensures: conversation.updated_at = now
+}
+
+rule TotalUsageAggregatesAssistantUsageOnly {
+    when: CalculateTotalUsage(conversation)
+
+    ensures: result = UsageTotals{
+        input_tokens: AssistantUsageTotal(conversation, "input_tokens"),
+        output_tokens: AssistantUsageTotal(conversation, "output_tokens"),
+        cache_read_tokens: AssistantUsageTotal(conversation, "cache_read_tokens"),
+        cache_write_tokens: AssistantUsageTotal(conversation, "cache_write_tokens"),
+        total_tokens: AssistantUsageTotal(conversation, "total_tokens")
+    }
+
+    @guidance
+        -- Only assistant messages contribute to usage totals.
+        -- Assistant messages without usage are ignored.
+        -- Missing usage subfields contribute 0.
+}
+
+rule TotalCostAggregatesAssistantCostOnly {
+    when: CalculateTotalCost(conversation)
+
+    ensures: result = CostTotals{
+        input: AssistantCostTotal(conversation, "input"),
+        output: AssistantCostTotal(conversation, "output"),
+        cache_read: AssistantCostTotal(conversation, "cache_read"),
+        cache_write: AssistantCostTotal(conversation, "cache_write"),
+        total: AssistantCostTotal(conversation, "total")
+    }
+
+    @guidance
+        -- Only assistant messages with usage.cost contribute to cost totals.
+        -- Assistant messages without usage or without usage.cost are ignored.
+        -- Missing cost subfields contribute 0.
+}
+
+actor ConversationCaller {
+    identified_by: id = "conversation-caller"
+}
+
+surface ConversationApi {
+    facing caller: ConversationCaller
+
+    context conversation: ConversationRecord
+
+    exposes:
+        conversation.id
+        conversation.system_prompt
+        conversation.status
+        conversation.created_at
+        conversation.updated_at
+        conversation.messages
+        conversation.tools
+
+    provides:
+        CreateConversation(system_prompt)
+        AddUserMessage(conversation, content)
+        AddAssistantMessage(conversation, message_data)
+        AddToolResult(conversation, tool_call_id, tool_name, content, is_error)
+        AddTool(conversation, tool)
+        CalculateTotalUsage(conversation)
+        CalculateTotalCost(conversation)
+
+    related:
+        ai/ConversationAPI
+
+    @guarantee MessageAppendAssignsIdentityAndTimestamp
+        -- All appended messages receive a generated id and append-time timestamp.
+
+    @guarantee MutationsRefreshConversationUpdatedAt
+        -- Adding messages or tools refreshes conversation.updated_at.
+
+    @guarantee TotalsAreDerivedOnlyFromAssistantMessages
+        -- User and tool_result messages do not contribute to usage or cost totals.
+
+    @guidance
+        -- This spec narrows ai-abstract-model to the concrete embedded data shape
+        -- and helper operations provided by psi.ai.conversation.
+}
