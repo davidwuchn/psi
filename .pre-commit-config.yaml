@@ -7,3 +7,9 @@ repos:
         entry: .pre-commit-hooks/cljfmt-fix.sh
         types_or: [clojure]
         pass_filenames: true
+      - id: clj-kondo-lint
+        name: clj-kondo lint
+        language: script
+        entry: .pre-commit-hooks/clj-kondo-lint.sh
+        types_or: [clojure]
+        pass_filenames: true
