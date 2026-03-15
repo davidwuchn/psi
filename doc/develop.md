@@ -47,6 +47,29 @@ pre-commit run cljfmt-fix
 pre-commit run cljfmt-fix --files src/foo/bar.clj
 ```
 
+### `clj-kondo-lint`
+
+Runs `clj-kondo --lint` on every staged Clojure file before each commit.
+The commit is blocked if there are any warnings or errors.
+
+- Uses `--cache false` to avoid JVM file-lock contention when pre-commit
+  parallelises the hook across multiple files.
+- Macro aliases for Pathom3, Guardrails, Malli, Promesa, and Potemkin are
+  declared in the root `.clj-kondo/config.edn` so individual-file linting
+  works without a full classpath scan.
+- `clj-kondo` must be on your `PATH` (e.g. installed via
+  [bbin](https://github.com/babashka/bbin): `bbin install clj-kondo/clj-kondo`).
+
+#### Manual run
+
+```bash
+# Run only the clj-kondo hook
+pre-commit run clj-kondo-lint
+
+# Run against specific files
+pre-commit run clj-kondo-lint --files src/foo/bar.clj
+```
+
 ## Formatting
 
 Check formatting without modifying files:
