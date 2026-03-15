@@ -220,9 +220,9 @@ Ordered steps toward PSI COMPLETE.
   - `clojure -M:test` → `912 tests`, `4603 assertions`, `0 failures`
 
 ### Next focused order:
-  1. re-run and trust focused in-memory memory/session/runtime slices as the new baseline
-  2. identify remaining failures unrelated to removed persistent-provider machinery
-  3. then fix remaining behavioural failures one focused namespace at a time (`runtime-test`, `rpc-test`, command/worktree)
+  1. preserve the green in-memory baseline (`912 tests`, `4603 assertions`, `0 failures`) as the new trust point
+  2. converge PSL follow-up memory so PLAN/STATE/LEARNING describe the restored baseline rather than the former failing chase
+  3. resume from intentional product work only after a fresh focused rerun confirms the baseline remains green
 
 ### Step 10 — Remember memory capture ✓ complete
 - Spec: `spec/remember-capture.allium`
