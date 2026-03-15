@@ -207,6 +207,20 @@ Ordered steps toward PSI COMPLETE.
 
 ## Next
 
+### Step 15e — Re-establish post-query/post-memory clean baseline … in progress
+- Baseline commit `57e8ab0` keeps three likely-good fixes only:
+  - isolated introspection/query registration no longer double-registers agent-session-provided surfaces
+  - git merge success now requires actual target HEAD movement
+  - Datalevin provider operations are serialized behind a per-provider lock
+- Current unit-suite state after reverting unstable follow-up churn:
+  - `846 tests`, `4304 assertions`, `21 failures`
+  - latest clean rerun did not crash in native Datalevin code
+- Next convergence order:
+  1. fix `psi.agent-session.runtime-test` git-head sync/recursion follow-ups
+  2. fix `psi.agent-session.rpc-test` handshake/server-info regressions
+  3. fix remaining command/worktree failures from the cleaned baseline
+  4. rerun full unit suite and only then continue broader work
+
 ### Step 10 — Remember memory capture ✓ complete
 - Spec: `spec/remember-capture.allium`
 - Current: command exists; spec now narrowed to manual capture semantics
