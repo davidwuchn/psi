@@ -207,6 +207,18 @@ Ordered steps toward PSI COMPLETE.
 
 ## Next
 
+### Step 15g — Converge graph-emergence Allium spec with implementation/tests/docs ✓ complete
+- `spec/graph-emergence.allium` now reflects the current Step 7 graph discovery surface instead of the older dependency-graph-shaped model.
+- Spec updates include:
+  - capability-membership edge semantics
+  - root discovery attrs (`:psi.graph/root-seeds`, `:psi.graph/root-queryable-attrs`)
+  - normalized `domain-coverage` with `operation_count`
+  - explicit graph invariants for node uniqueness, edge endpoint validity, resolver/mutation symbol-to-node alignment, and capability/domain-coverage alignment
+- Validation now includes the real Allium checker:
+  - `allium check spec/graph-emergence.allium`
+- Outcome: graph spec, implementation, docs, and graph-surface tests now have a shared contract vocabulary.
+- Implementation commit: `fdf7ed0`
+
 ### Step 15f — Converge GitHub CI verification surface … in progress
 - Commit `6cba430` added the first GitHub Actions CI workflow at `.github/workflows/ci.yml`.
 - CI contract currently targets:
