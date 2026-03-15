@@ -594,12 +594,20 @@ Returns a proper list in canonical order, or nil when missing/unreadable."
         ""))
    (t (psi-emacs--assistant-content->text content))))
 
+(defun psi-emacs--role-is-user-p (role-raw)
+  "Return non-nil when ROLE-RAW represents the user role.
+Handles string \"user\", bare symbol \\='user, and keyword :user,
+since the backend serialises role as the string \"user\" which
+`intern' converts to the bare symbol \\='user, not the keyword :user."
+  (or (equal role-raw "user")
+      (eq role-raw 'user)
+      (eq role-raw :user)))
+
 (defun psi-emacs--message->transcript-line (message)
   "Render MESSAGE as one deterministic transcript line."
   (let* ((role-raw (or (alist-get :role message nil nil #'equal)
                        (alist-get 'role message nil nil #'equal)
                        :assistant))
-         (role (if (stringp role-raw) (intern role-raw) role-raw))
          (content (or (alist-get :content message nil nil #'equal)
                       (alist-get 'content message nil nil #'equal)))
          (text (or (alist-get :text message nil nil #'equal)
@@ -609,7 +617,7 @@ Returns a proper list in canonical order, or nil when missing/unreadable."
                    (psi-emacs--message-text-from-content content)
                    "")))
     (format "%s: %s\n"
-            (if (eq role :user) "User" "ψ")
+            (if (psi-emacs--role-is-user-p role-raw) "User" "ψ")
             text)))
 
 (defun psi-emacs--replay-session-messages (messages)
@@ -620,8 +628,7 @@ Returns a proper list in canonical order, or nil when missing/unreadable."
         (when (listp message)
           (let* ((role-raw (or (alist-get :role message nil nil #'equal)
                                (alist-get 'role message nil nil #'equal)
-                               :assistant))
-                 (role (if (stringp role-raw) (intern role-raw) role-raw)))
+                               :assistant)))
             (let ((inhibit-read-only t))
               (psi-emacs--ensure-newline-before-append)
               (let ((line-start (point)))
@@ -629,7 +636,7 @@ Returns a proper list in canonical order, or nil when missing/unreadable."
                 (psi-emacs--mark-region-read-only line-start (point))
                 (save-excursion
                   (goto-char line-start)
-                  (if (eq role :user)
+                  (if (psi-emacs--role-is-user-p role-raw)
                       (psi-emacs--apply-prefix-overlay line-start "User: " 'psi-emacs-user-prompt-face)
                     (psi-emacs--apply-prefix-overlay line-start "ψ: " 'psi-emacs-assistant-reply-face)))))))))
     (when follow-anchor

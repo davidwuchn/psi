@@ -3354,6 +3354,42 @@ full accumulated thinking text rather than append-only chunks."
       (should (< (or (string-match-p "ψ: boot ok" (buffer-string)) 0)
                  sep-pos)))))
 
+(ert-deftest psi-replay-session-messages-string-role-user-renders-as-user ()
+  "String role \"user\" from backend must render as \"User:\", not \"ψ:\".
+Regression: `intern' of \"user\" gives bare symbol `user', not keyword :user,
+so the old `(eq role :user)' check always fell through to the assistant branch."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-draft-anchor psi-emacs--state)
+          (copy-marker (point-max) nil))
+    (psi-emacs--ensure-input-area)
+    (psi-emacs--replay-session-messages
+     ;; Backend sends role as a string "user" / "assistant"
+     '(((:role . "user")      (:content . "hello"))
+       ((:role . "assistant") (:content . "hi there"))))
+    (let ((text (buffer-string)))
+      (should (string-match-p "User: hello"    text))
+      (should (string-match-p "ψ: hi there"    text))
+      ;; Ensure user message is NOT rendered as assistant
+      (should-not (string-match-p "ψ: hello"   text))
+      (should-not (string-match-p "User: hi there" text)))))
+
+(ert-deftest psi-replay-session-messages-keyword-role-user-renders-as-user ()
+  "Keyword :user role must also render as \"User:\" (existing callers)."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-draft-anchor psi-emacs--state)
+          (copy-marker (point-max) nil))
+    (psi-emacs--ensure-input-area)
+    (psi-emacs--replay-session-messages
+     '(((:role . :user)      (:content . "hello"))
+       ((:role . :assistant) (:content . "hi there"))))
+    (let ((text (buffer-string)))
+      (should (string-match-p "User: hello"  text))
+      (should (string-match-p "ψ: hi there"  text)))))
+
 (ert-deftest psi-input-history-m-p-m-n-navigates-submissions ()
   (with-temp-buffer
     (psi-emacs-mode)
