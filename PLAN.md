@@ -207,22 +207,37 @@ Ordered steps toward PSI COMPLETE.
 
 ## Next
 
-### Step 15e — Re-establish post-query/post-memory clean baseline ✓ complete
-- Baseline commit `57e8ab0` kept the still-relevant likely-good fixes only:
+### Step 15f — Converge GitHub CI verification surface … in progress
+- Commit `6cba430` added the first GitHub Actions CI workflow at `.github/workflows/ci.yml`.
+- CI contract currently targets:
+  - manual dispatch
+  - push to `master`
+  - pull requests to `master`
+- Separate jobs now exist for:
+  - formatting (`bb fmt:check`)
+  - lint (`bb lint`)
+  - tests (`bb test`)
+- Runtime target is JDK 25 with latest Clojure CLI and latest Babashka in Actions.
+- Current convergence order:
+  1. keep the new CI/task surface stable as the canonical verification entrypoint
+  2. repair `bb fmt:check` around the actual `cljfmt` CLI/tooling contract
+  3. decide the intended strictness/scope for repo-wide `bb lint` versus currently known backlog
+  4. re-baseline `bb test` after the Datalevin-removal fallout and missing `test` path warning
+  5. only then expect GitHub Actions to go green on `master` and PRs
+
+### Step 15e — Re-establish post-query/post-memory clean baseline … in progress
+- Baseline commit `57e8ab0` keeps the still-relevant likely-good fixes only:
   - isolated introspection/query registration no longer double-registers agent-session-provided surfaces
   - git merge success now requires actual target HEAD movement
-- Follow-up commit `1c916b9` removed the Datalevin memory provider from code/spec/docs/tests, which also removed the native persistence-crash class from the active runtime surface.
-- Convergence outcome:
-  - unit tests now run against the in-memory-only memory runtime by default
-  - `psi.memory.store` remains the provider-extension boundary, but not an active multi-provider commitment
-  - green baseline restored after focused fixes in RPC bootstrap host snapshot handling, runtime git-head-sync behavior/tests, PSL subagent status messaging, temp worktree attach test isolation, and `/tree` single-session command/bootstrap semantics
-- Verification snapshot:
-  - `clojure -M:test` → `912 tests`, `4603 assertions`, `0 failures`
-
-### Next focused order:
-  1. preserve the green in-memory baseline (`912 tests`, `4603 assertions`, `0 failures`) as the new trust point
-  2. converge PSL follow-up memory so PLAN/STATE/LEARNING describe the restored baseline rather than the former failing chase
-  3. resume from intentional product work only after a fresh focused rerun confirms the baseline remains green
+- Follow-up commit `1c916b9` removed the Datalevin memory provider from code/spec/docs/tests, which also removes the native persistence-crash class from the active runtime surface.
+- Current convergence implication:
+  - keep unit tests on in-memory memory storage by default
+  - treat `psi.memory.store` as an extension boundary rather than an active multi-provider roadmap commitment
+  - re-establish a reproducible non-crashing unit baseline from the in-memory-only system before chasing remaining behavioural failures
+- Next focused order:
+  1. re-run and trust focused in-memory memory/session/runtime slices as the new baseline
+  2. identify remaining failures unrelated to removed persistent-provider machinery
+  3. then fix remaining behavioural failures one focused namespace at a time (`runtime-test`, `rpc-test`, command/worktree)
 
 ### Step 10 — Remember memory capture ✓ complete
 - Spec: `spec/remember-capture.allium`
