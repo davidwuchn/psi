@@ -208,22 +208,18 @@ Ordered steps toward PSI COMPLETE.
 ## Next
 
 ### Step 15e — Re-establish post-query/post-memory clean baseline … in progress
-- Baseline commit `57e8ab0` keeps three likely-good fixes only:
+- Baseline commit `57e8ab0` keeps the still-relevant likely-good fixes only:
   - isolated introspection/query registration no longer double-registers agent-session-provided surfaces
   - git merge success now requires actual target HEAD movement
-  - Datalevin provider operations are serialized behind a per-provider lock
-- Reality check after attempted cleanup/re-runs:
-  - the lower-failure snapshots were not stable/reproducible
-  - full unit runs are still intermittently crashing in native Datalevin/LMDB code (`_mdb_txn_abort`, `mdb_txn_end`, `mdb_env_write_meta`)
-  - current full-suite state is not a trustworthy behavioural baseline because persistence crashes corrupt the signal
-- Root conclusion:
-  - persistent-provider test/runtime instability previously obscured the baseline
-  - remaining failures must not be chased from full-suite tails until the memory test environment is stable
-- New convergence order:
-  1. identify all unit-test paths that activate non-default memory providers
-  2. keep unit tests on in-memory storage by default unless a test explicitly targets provider extension behavior
-  3. re-establish a reproducible non-crashing unit baseline
-  4. then fix remaining behavioural failures one focused namespace at a time (`runtime-test`, `rpc-test`, command/worktree)
+- Follow-up commit `1c916b9` removed the Datalevin memory provider from code/spec/docs/tests, which also removes the native persistence-crash class from the active runtime surface.
+- Current convergence implication:
+  - keep unit tests on in-memory memory storage by default
+  - treat `psi.memory.store` as an extension boundary rather than an active multi-provider roadmap commitment
+  - re-establish a reproducible non-crashing unit baseline from the in-memory-only system before chasing remaining behavioural failures
+- Next focused order:
+  1. re-run and trust focused in-memory memory/session/runtime slices as the new baseline
+  2. identify remaining failures unrelated to removed persistent-provider machinery
+  3. then fix remaining behavioural failures one focused namespace at a time (`runtime-test`, `rpc-test`, command/worktree)
 
 ### Step 10 — Remember memory capture ✓ complete
 - Spec: `spec/remember-capture.allium`

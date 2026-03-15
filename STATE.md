@@ -4,7 +4,8 @@ Current truth about the Psi system.
 
 ---
 
-- ✓ Good fix baseline re-established from commit `57e8ab0` (2026-03-15): only three changes from the unstable PSL/debug loop are being carried forward for now — isolated introspection registration deduplication, git merge success verification via target HEAD movement, and Datalevin provider serialization via per-provider locking.
+- ✓ Good fix baseline re-established from commit `57e8ab0` (2026-03-15): only the strongly evidenced fixes from the unstable PSL/debug loop are being carried forward for now — isolated introspection registration deduplication and git merge success verification via target HEAD movement. The former Datalevin-provider stabilization path is no longer part of the active system after provider removal.
+- ✓ PSL follow-up for `1c916b9` converged memory-provider removal into repo state (2026-03-15): Datalevin-backed memory is no longer part of the runtime/spec/docs surface; `psi.memory.store` remains as the provider-extension boundary, but the only supported active store is now `in-memory`.
 - ✓ Agent-session runtime/command/test churn from the follow-up debug loop has been reverted, leaving a cleaner repository state for the next convergence pass.
 - ✓ Current unit-suite baseline after that cleanup is `846 tests`, `4304 assertions`, `21 failures`; this is the checkpoint to converge from next rather than the noisier intermediate states reached during runtime-hook experimentation.
 
