@@ -230,12 +230,11 @@ Ordered steps toward PSI COMPLETE.
   - lint (`bb lint`)
   - tests (`bb test`)
 - Runtime target is JDK 25 with latest Clojure CLI and latest Babashka in Actions.
-- Current convergence order:
-  1. keep the new CI/task surface stable as the canonical verification entrypoint
-  2. repair `bb fmt:check` around the actual `cljfmt` CLI/tooling contract
-  3. decide the intended strictness/scope for repo-wide `bb lint` versus currently known backlog
-  4. re-baseline `bb test` after the Datalevin-removal fallout and missing `test` path warning
-  5. only then expect GitHub Actions to go green on `master` and PRs
+- ✓ `bb lint` green (2026-03-15, commit `8039763`): 0 errors, 0 warnings across all source/test/extension files. `.clj-kondo/config.edn` suppresses third-party import noise.
+- Remaining convergence order:
+  1. repair `bb fmt:check` (cljfmt task invocation)
+  2. re-baseline `bb test` (stale `psi.memory.datalevin_test` + missing `:test` path)
+  3. only then expect GitHub Actions to go green on `master` and PRs
 
 ### Step 15e — Re-establish post-query/post-memory clean baseline … in progress
 - Baseline commit `57e8ab0` keeps the still-relevant likely-good fixes only:
