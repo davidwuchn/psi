@@ -3,6 +3,34 @@
 
 ---
 
+## 2026-03-15 - Hardcoded home-dir paths in tests break CI (commit `1d9b648`)
+
+### λ never hardcode user.home in test fixtures — derive it at runtime
+
+A test that constructs a path from a literal `/Users/duncan/...` prefix and
+then asserts a tilde-shortened form will pass locally but fail on any other
+machine (CI, other devs, other OS). The root cause is encoding an assumption
+about `user.home` into a test fixture instead of reading it from the JVM.
+
+**Pattern:**
+```clojure
+;; ✗ fragile — encodes the developer's home directory
+(let [cwd "/Users/duncan/projects/foo/bar"]
+  (is (= "~/projects/foo/bar" (tilde-shorten cwd))))
+
+;; ✓ portable — derives home from the JVM property
+(let [cwd (str (System/getProperty "user.home") "/projects/foo/bar")]
+  (is (= "~/projects/foo/bar" (tilde-shorten cwd))))
+```
+
+Key details:
+- `(System/getProperty "user.home")` is the canonical JVM way to get the home
+  directory; it works on macOS (`/Users/<name>`), Linux (`/home/<name>`), and CI.
+- The tilde-shortening assertion itself remains correct — only the input cwd
+  needs to be derived rather than hardcoded.
+- The same principle applies to any path fixture that encodes a machine-specific
+  prefix: `user.dir`, `java.io.tmpdir`, etc. are the safe alternatives.
+
 ## 2026-03-15 - bbin-local tools need explicit CI install steps from GitHub Releases (commit `1e363b3`)
 
 ### λ bbin installs are local; CI runners need explicit binary install steps
