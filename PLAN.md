@@ -219,23 +219,22 @@ Ordered steps toward PSI COMPLETE.
 - Outcome: graph spec, implementation, docs, and graph-surface tests now have a shared contract vocabulary.
 - Implementation commit: `fdf7ed0`
 
-### Step 15f — Converge GitHub CI verification surface … in progress
-- Commit `6cba430` added the first GitHub Actions CI workflow at `.github/workflows/ci.yml`.
-- CI contract currently targets:
-  - manual dispatch
-  - push to `master`
-  - pull requests to `master`
-- Separate jobs now exist for:
-  - formatting (`bb fmt:check`)
-  - lint (`bb lint`)
-  - tests (`bb test`)
-- Runtime target is JDK 25 with latest Clojure CLI and latest Babashka in Actions.
-- ✓ `bb lint` green (2026-03-15, commit `8039763`): 0 errors, 0 warnings across all source/test/extension files. `.clj-kondo/config.edn` suppresses third-party import noise.
-- ✓ `bb fmt:check` green (2026-03-15, commits `b07bde5` + `8b659c8`): pre-commit `cljfmt-fix` hook runs `cljfmt fix` on staged Clojure files, restages changes, and all existing files were reformatted in the initial pass. `doc/develop.md` added for developer onboarding.
-- ✓ pre-commit `clj-kondo-lint` hook added (2026-03-15, commits `accb233` + `59282ab`): runs `clj-kondo --cache false --lint` on staged Clojure files; exits non-zero on any warning or error. Root `.clj-kondo/config.edn` now carries all `:lint-as` macro aliases (Pathom3, Guardrails, Malli, Promesa, Potemkin) so individual-file linting is correct without a full classpath scan. `doc/develop.md` updated with hook docs (prerequisites, cache-false rationale, root config note, bbin install command, manual run examples).
-- Remaining convergence order:
-  1. re-baseline `bb test` (stale `psi.memory.datalevin_test` + missing `:test` path)
-  2. only then expect GitHub Actions to go green on `master` and PRs
+### Step 15f — Converge GitHub CI verification surface ✓ complete
+- CI workflow restructured (commit `bace7ca`): `check` (fmt + lint) gates two parallel downstream jobs.
+- Job graph:
+  ```
+  check (bb fmt:check + bb lint)
+  ├── clojure-test (bb clojure:test)
+  └── emacs-test   (bb emacs:check, installs emacs-nox)
+  ```
+- All jobs: JDK 25 (Temurin), latest Clojure CLI + Babashka, Maven/Clojure dep cache keyed on `deps.edn` + `bb.edn`.
+- Triggers: `workflow_dispatch`, push to `master`, PR to `master`.
+- `doc/develop.md` documents the CI job graph, cache strategy, and all pre-commit hooks.
+- ✓ `bb lint` green (commit `8039763`).
+- ✓ `bb fmt:check` green (commits `b07bde5` + `8b659c8`).
+- ✓ pre-commit `cljfmt-fix` hook active (commit `b07bde5`).
+- ✓ pre-commit `clj-kondo-lint` hook active (commit `accb233`).
+- Remaining: `bb test` green on CI requires re-baselining test suite (Step 15e).
 
 ### Step 15e — Re-establish post-query/post-memory clean baseline … in progress
 - Baseline commit `57e8ab0` keeps the still-relevant likely-good fixes only:
