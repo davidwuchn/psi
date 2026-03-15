@@ -3,6 +3,49 @@
 
 ---
 
+## 2026-03-15 - pre-commit local hooks with `language: script` are the right fit for CLI tools already on PATH (commits `b07bde5`, `8b659c8`)
+
+### λ Use `language: script` for pre-commit hooks backed by PATH-resident CLI tools
+
+When a formatter (e.g. `cljfmt`) is already installed as a standalone binary,
+`language: script` in a local pre-commit hook is the minimal correct choice.
+It avoids the overhead of virtualenv/node/system language environments and
+keeps the hook portable: the entry script runs directly, receives staged file
+paths as positional args, and needs no additional pre-commit scaffolding.
+
+### λ Fix-and-restage hooks should compare content hashes, not rely on exit codes
+
+`cljfmt fix` exits 0 whether or not it changed a file. The reliable pattern is:
+1. capture `sha256sum` before
+2. run the formatter
+3. compare hash after
+4. only `git add` files that actually changed
+
+This avoids spurious restages and keeps the changed-file list accurate for the
+exit-1 report.
+
+### λ Exit 1 from a fix-and-restage hook is the correct pre-commit convention
+
+A hook that modifies files should exit 1 so pre-commit surfaces what changed
+and asks the user to re-commit. This is not a failure — it is the standard
+"files were reformatted, please review and commit again" signal. Exiting 0
+after reformatting would silently swallow the notification.
+
+### λ macOS ships a broken Python 2 pre-commit stub; install via pipx
+
+`/usr/local/bin/pre-commit` on macOS (Homebrew legacy) may be a Python 2
+script that cannot execute on modern systems. Install via `pipx install
+pre-commit` to get a working version at `~/.local/bin/pre-commit`. Document
+this caveat in `doc/develop.md` so future contributors do not hit the silent
+failure.
+
+### λ Developer onboarding steps belong in doc/develop.md, not README
+
+`README.md` should remain an entry/index surface. One-time setup steps (hook
+install, pipx dependency, PATH caveats) belong in `doc/develop.md` alongside
+the task/test/lint reference. This keeps README scannable and avoids
+operational detail accumulating there.
+
 ## 2026-03-15 - Repo-wide lint backlogs are best cleared by fixing root causes, not by suppressing warnings (commit `8039763`)
 
 ### λ Third-party `.clj-kondo/imports/` noise should be excluded at the output level, not silenced per-warning
