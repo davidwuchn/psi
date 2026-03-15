@@ -1,11 +1,12 @@
 -- allium: 1
 
 -- graph-emergence.allium
--- Step 7: capability graph emergence from registered resolvers and mutations.
+-- Distilled and aligned to the current Step 7 graph discovery surface.
+-- Scope: capability graph emergence and its session-root EQL discovery contract.
 
 external entity QueryGraphSummary {
-    resolver_symbols: Set<String>
-    mutation_symbols: Set<String>
+    resolver_symbols: List<String>
+    mutation_symbols: List<String>
     resolver_count: Integer
     mutation_count: Integer
     env_built: Boolean
@@ -18,23 +19,24 @@ external entity SystemState {
 }
 
 external entity GraphEqlSurface {
-    attrs: Set<String>
+    attrs: List<String>
 }
 
 value DomainOperation {
     symbol: String
     kind: resolver | mutation
     domain: String
-    input_attrs: Set<String>
-    output_attrs: Set<String>
-    side_effects: Set<String>?
+    input_attrs: List<String>
+    output_attrs: List<String>
+    parameter_attrs: List<String>
+    side_effects: List<String>?
 }
 
 value DomainCoverage {
     domain: String
     resolver_count: Integer
     mutation_count: Integer
-    has_coverage: Boolean
+    operation_count: Integer
 }
 
 value CapabilityGraphSummary {
@@ -43,17 +45,19 @@ value CapabilityGraphSummary {
     node_count: Integer
     edge_count: Integer
     capability_count: Integer
-    domain_coverage: Set<DomainCoverage>
+    domain_coverage: List<DomainCoverage>
 }
 
 entity CapabilityGraph {
     status: emerging | stable | expanding | error
     generated_at: Timestamp?
 
-    operations: Set<DomainOperation>
-    nodes: Set<CapabilityNode>
-    edges: Set<CapabilityEdge>
-    capabilities: Set<DomainCapability>
+    operations: List<DomainOperation>
+    nodes: List<CapabilityNode>
+    edges: List<CapabilityEdge>
+    capabilities: List<DomainCapability>
+    root_seeds: List<String>
+    root_queryable_attrs: List<String>
 
     summary: CapabilityGraphSummary
 
@@ -64,27 +68,39 @@ entity CapabilityNode {
     id: String
     node_type: resolver | mutation | capability
     domain: String
-    metadata: Map<String, Any>
+    symbol: String?
+    operation_count: Integer?
 }
 
 entity CapabilityEdge {
     from_node_id: String
     to_node_id: String
-    relationship: provides | consumes | enables | requires
     attribute: String?
+
+    -- Edge semantics are operation -> capability membership.
+    -- `attribute` annotates the edge and is not itself a node endpoint.
 }
 
 entity DomainCapability {
-    name: String
+    id: String
     domain: String
-    required_node_ids: Set<String>
-
-    is_available: required_node_ids.count > 0
+    operation_count: Integer
+    resolver_count: Integer
+    mutation_count: Integer
+    operation_symbols: List<String>
+    attributes: List<String>
 }
 
 config {
     required_domains: Set<String> = {
         "ai", "history", "agent-session", "introspection"
+    }
+
+    root_seed_attrs: Set<String> = {
+        ":psi/agent-session-ctx",
+        ":psi/memory-ctx",
+        ":psi/recursion-ctx",
+        ":psi/engine-ctx"
     }
 
     ai_prefix: String = "psi.ai."
@@ -101,7 +117,9 @@ config {
         ":psi.graph/nodes",
         ":psi.graph/edges",
         ":psi.graph/capabilities",
-        ":psi.graph/domain-coverage"
+        ":psi.graph/domain-coverage",
+        ":psi.graph/root-seeds",
+        ":psi.graph/root-queryable-attrs"
     }
 }
 
@@ -127,22 +145,29 @@ rule DomainOperationIndexBuilt {
     ensures: graph.summary.mutation_count = summary.mutation_count
 }
 
-rule GraphStructureDerivedFromOperationIO {
+rule CapabilityGraphStructureDerived {
     when: CapabilityGraphRefreshRequested(summary, graph)
     requires: summary.env_built = true
     requires: graph.operations.count > 0
 
-    ensures: graph.nodes = NodesFromOperations(graph.operations)
-    ensures: graph.edges = EdgesFromOperationInputsAndOutputs(graph.operations)
+    ensures: graph.nodes = NodesFromOperationsAndDomains(graph.operations)
+    ensures: graph.edges = CapabilityMembershipEdges(graph.operations)
     ensures: graph.summary.node_count = graph.nodes.count
     ensures: graph.summary.edge_count = graph.edges.count
 }
 
-rule AttributeLinksRemainImplicit {
+rule NodeTypesRemainStep7Constrained {
     when: CapabilityGraphRefreshRequested(summary, graph)
     requires: summary.env_built = true
 
     ensures: OnlyNodeTypes(graph.nodes, {resolver, mutation, capability})
+}
+
+rule EdgeAttributesRemainAnnotated {
+    when: CapabilityGraphRefreshRequested(summary, graph)
+    requires: summary.env_built = true
+
+    ensures: EdgeAttributesAreAnnotations(graph.edges)
     ensures: ExistsEdgeWithAttribute(graph.edges)
 }
 
@@ -150,9 +175,24 @@ rule DomainCapabilitiesDerived {
     when: CapabilityGraphRefreshRequested(summary, graph)
     requires: summary.env_built = true
 
-    ensures: graph.capabilities = CapabilitiesFromGraph(graph.nodes, graph.edges, config.required_domains)
+    ensures: graph.capabilities = CapabilitiesFromGraph(graph.operations)
     ensures: graph.summary.capability_count = graph.capabilities.count
+}
+
+rule NormalizedDomainCoverageDerived {
+    when: CapabilityGraphRefreshRequested(summary, graph)
+    requires: summary.env_built = true
+
     ensures: graph.summary.domain_coverage = DomainCoverageFromOperations(graph.operations, config.required_domains)
+    ensures: IncludesDomains(graph.summary.domain_coverage, config.required_domains)
+}
+
+rule RootDiscoveryDerived {
+    when: CapabilityGraphRefreshRequested(summary, graph)
+    requires: summary.env_built = true
+
+    ensures: graph.root_seeds = config.root_seed_attrs
+    ensures: graph.root_queryable_attrs = RootQueryableAttrsFromResolvers(graph.operations, graph.root_seeds)
 }
 
 rule MutationSideEffectsDeferredForStep7 {
@@ -194,6 +234,39 @@ rule CapabilityGraphSurfacedViaEql {
     ensures: AllAttrsPresent(config.required_graph_eql_attrs, surface.attrs)
 }
 
+invariant GraphNodeIdsAreUnique {
+    for graph in CapabilityGraphs:
+        Distinct(graph.nodes.map(n => n.id))
+}
+
+invariant GraphEdgesPointAtExistingNodes {
+    for graph in CapabilityGraphs:
+        All(graph.edges.map(e => e.from_node_id in graph.nodes.map(n => n.id))) and
+        All(graph.edges.map(e => e.to_node_id in graph.nodes.map(n => n.id)))
+}
+
+invariant ResolverSymbolsMatchResolverNodes {
+    for graph in CapabilityGraphs:
+        Distinct(graph.operations.where(kind = resolver).map(o => o.symbol)) =
+        Distinct(graph.nodes.where(node_type = resolver).map(n => n.symbol))
+}
+
+invariant MutationSymbolsMatchMutationNodes {
+    for graph in CapabilityGraphs:
+        Distinct(graph.operations.where(kind = mutation).map(o => o.symbol)) =
+        Distinct(graph.nodes.where(node_type = mutation).map(n => n.symbol))
+}
+
+invariant CapabilityCountsAlignWithCoverage {
+    for graph in CapabilityGraphs:
+        All(graph.capabilities.map(cap =>
+            Exists(graph.summary.domain_coverage, cov =>
+                cov.domain = cap.domain and
+                cov.operation_count = cap.operation_count and
+                cov.resolver_count = cap.resolver_count and
+                cov.mutation_count = cap.mutation_count)))
+}
+
 actor CapabilityConsumer { identified_by: id = "capability-client" }
 
 surface CapabilityGraphApi {
@@ -205,12 +278,24 @@ surface CapabilityGraphApi {
         graph.status
         graph.summary
         graph.capabilities
+        graph.root_seeds
+        graph.root_queryable_attrs
 
     provides:
         QueryCapabilityGraph(client)
             when graph.summary.resolver_count > 0
         QueryDomainCoverage(client, domain)
             when domain in config.required_domains
+
+    @guarantee CapabilityGraphNotDependencyGraph
+        -- Edges represent operation-to-capability membership only.
+        -- Edge attributes annotate operations with IO attrs.
+        -- This graph is for discovery, not full dependency modelling.
+
+    @guarantee RootQueryableAttrsAreResolverDerived
+        -- Root-queryable attrs are derived from resolver-only reachability.
+        -- Mutations do not contribute to root-queryable discovery.
+        -- Seed attrs themselves are excluded from root-queryable attrs.
 }
 
-open question "When should mutation side-effects evolve from IO-only/null to structured effect entities for memory and API planning?"
+open question "Should edge attributes become a structured union that distinguishes keyword attrs from join-map attrs explicitly?"
