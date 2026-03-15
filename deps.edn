@@ -60,7 +60,6 @@
                        "extensions"
                        "spec"
                        "specs"
-                       "test"
                        "tests.edn"
                        "extensions/tests.edn"]}
   :test  {:extra-paths ["test"
