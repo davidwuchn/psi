@@ -222,6 +222,21 @@ Ordered steps toward PSI COMPLETE.
 
 ## Next
 
+### Step 15h — Converge conversation code/spec/tests/docs ✓ complete
+- `psi.ai.conversation` simplified around shared append/update helpers and unused public functions removed.
+- Conversation-focused tests now live in `components/ai/test/psi/ai/conversation_test.clj` and cover:
+  - creation
+  - user / assistant / tool-result append behavior
+  - tool addition
+  - derived usage / cost totals including missing-usage edge cases
+- Added validated Allium spec: `spec/conversation.allium`
+  - narrows `ai-abstract-model.allium` to the concrete embedded conversation value used by `psi.ai.conversation`
+  - captures append operations, tool addition, and assistant-only totals semantics
+- Verification snapshot:
+  - `allium check spec/conversation.allium`
+  - `clojure -M:test --focus psi.ai.conversation-test --focus psi.ai.core-test`
+- Implementation commit: `14ba6de`
+
 ### Step 15g — Converge graph-emergence Allium spec with implementation/tests/docs ✓ complete
 - `spec/graph-emergence.allium` now reflects the current Step 7 graph discovery surface instead of the older dependency-graph-shaped model.
 - Spec updates include:
