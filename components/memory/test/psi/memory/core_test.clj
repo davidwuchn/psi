@@ -4,27 +4,10 @@
    [psi.engine.core :as engine]
    [psi.history.git :as git]
    [psi.memory.core :as memory]
-   [psi.memory.datalevin :as datalevin]
    [psi.memory.graph-history :as graph-history]
    [psi.memory.ranking :as ranking]
    [psi.memory.store :as store]
    [psi.query.core :as query]))
-
-(defn- temp-dir-path
-  []
-  (-> (java.nio.file.Files/createTempDirectory
-       "psi-memory-core-datalevin-"
-       (make-array java.nio.file.attribute.FileAttribute 0))
-      str))
-
-(defn- delete-recursively!
-  [root]
-  (let [root-path (java.nio.file.Path/of root (make-array String 0))]
-    (when (java.nio.file.Files/exists root-path (make-array java.nio.file.LinkOption 0))
-      (let [paths (with-open [stream (java.nio.file.Files/walk root-path (make-array java.nio.file.FileVisitOption 0))]
-                    (vec (iterator-seq (.iterator stream))))]
-        (run! #(java.nio.file.Files/deleteIfExists %)
-              (reverse paths))))))
 
 (deftest create-context-initializes-required-state-keys
   (let [ctx   (memory/create-context)
@@ -182,47 +165,6 @@
              (get-in failing-provider [:telemetry :last-error :error])))
       (is (= "failing-store"
              (get-in summary [:last-failure :provider-id]))))))
-
-(deftest activation-hydrates-state-from-datalevin-provider
-  (let [db-dir   (temp-dir-path)
-        ts       (java.time.Instant/parse "2026-03-03T12:00:00Z")]
-    (try
-      (let [writer-ctx (memory/create-context)
-            provider-a (datalevin/create-provider {:db-dir db-dir})]
-        (memory/register-store-provider-in! writer-ctx provider-a)
-        (memory/select-store-provider-in! writer-ctx "datalevin")
-        (memory/remember-in! writer-ctx
-                             {:content-type :note
-                              :content "durable memory"
-                              :tags [:persist]
-                              :timestamp ts
-                              :provenance {:source :session}})
-        (is (= 1 (count (:records (memory/get-state-in writer-ctx)))))
-        (store/close-provider! provider-a))
-
-      (let [reader-ctx (memory/create-context)
-            provider-b (datalevin/create-provider {:db-dir db-dir})
-            query-ctx  (doto (query/create-query-context)
-                         (query/rebuild-env-in!))
-            git-ctx    (git/create-null-context)
-            _          (memory/register-store-provider-in! reader-ctx provider-b)
-            _          (memory/select-store-provider-in! reader-ctx "datalevin")
-            activation (memory/activate-in! reader-ctx
-                                            {:query-ctx query-ctx
-                                             :git-ctx git-ctx
-                                             :capability-graph-status :stable})
-            hydrated-records (:records (memory/get-state-in reader-ctx))
-            summary (memory/store-summary-in reader-ctx)
-            datalevin-provider (some #(when (= "datalevin" (:id %)) %)
-                                     (:providers summary))]
-        (is (true? (:ready? activation)))
-        (is (true? (get-in activation [:store-hydration :hydrated?])))
-        (is (= 1 (count hydrated-records)))
-        (is (= "durable memory" (:content (first hydrated-records))))
-        (is (= 1 (get-in datalevin-provider [:telemetry :read-count])))
-        (store/close-provider! provider-b))
-      (finally
-        (delete-recursively! db-dir)))))
 
 (deftest activation-success-sets-ready-status-and-readiness-flags
   (let [memory-ctx (memory/create-context)

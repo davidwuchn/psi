@@ -57,28 +57,28 @@
 
 (deftest register-provider-adds-provider-and-select-provider-makes-it-active
   (let [registry   (store/bootstrap-registry)
-        provider   (test-provider "datalevin")
+        provider   (test-provider "persistent-store")
         registered (store/register-provider registry provider)
-        selected   (store/select-provider registered "datalevin")
+        selected   (store/select-provider registered "persistent-store")
         summary    (store/registry-summary selected)]
     (testing "provider registration"
-      (is (= #{"in-memory" "datalevin"}
+      (is (= #{"in-memory" "persistent-store"}
              (set (map :id (:providers summary))))))
     (testing "selection"
-      (is (= "datalevin" (:active-provider-id summary)))
-      (is (= "datalevin" (get-in summary [:selection :selected-provider-id])))
+      (is (= "persistent-store" (:active-provider-id summary)))
+      (is (= "persistent-store" (get-in summary [:selection :selected-provider-id])))
       (is (false? (true? (get-in summary [:selection :used-fallback])))))))
 
 (deftest record-provider-operation-updates-telemetry-and-last-failure
   (let [registry (-> (store/bootstrap-registry)
-                     (store/register-provider (test-provider "datalevin")))
+                     (store/register-provider (test-provider "persistent-store")))
         updated  (-> registry
-                     (store/record-provider-operation "datalevin" :write {:ok? true})
-                     (store/record-provider-operation "datalevin" :load-state {:ok? false
-                                                                                 :error :provider-load-state-failed
-                                                                                 :message "boom"}))
+                     (store/record-provider-operation "persistent-store" :write {:ok? true})
+                     (store/record-provider-operation "persistent-store" :load-state {:ok? false
+                                                                                       :error :provider-load-state-failed
+                                                                                       :message "boom"}))
         summary  (store/registry-summary updated)
-        provider (some #(when (= "datalevin" (:id %)) %)
+        provider (some #(when (= "persistent-store" (:id %)) %)
                        (:providers summary))]
     (is (= 1 (get-in provider [:telemetry :write-count])))
     (is (= 1 (get-in provider [:telemetry :read-count])))
@@ -126,9 +126,9 @@
 
 (deftest select-provider-falls-back-to-in-memory-when-requested-provider-unavailable
   (let [registry   (-> (store/bootstrap-registry)
-                       (store/register-provider (test-provider "datalevin" :unavailable)
+                       (store/register-provider (test-provider "persistent-store" :unavailable)
                                                 {:open? false}))
-        selected   (store/select-provider registry "datalevin" {:auto-fallback? true})
+        selected   (store/select-provider registry "persistent-store" {:auto-fallback? true})
         summary    (store/registry-summary selected)]
     (is (= "in-memory" (:active-provider-id summary)))
     (is (true? (get-in summary [:selection :used-fallback])))
@@ -137,9 +137,9 @@
 
 (deftest select-provider-keeps-current-active-when-fallback-disabled
   (let [registry   (-> (store/bootstrap-registry)
-                       (store/register-provider (test-provider "datalevin" :unavailable)
+                       (store/register-provider (test-provider "persistent-store" :unavailable)
                                                 {:open? false}))
-        selected   (store/select-provider registry "datalevin" {:auto-fallback? false})
+        selected   (store/select-provider registry "persistent-store" {:auto-fallback? false})
         summary    (store/registry-summary selected)]
     (is (= "in-memory" (:active-provider-id summary)))
     (is (false? (true? (get-in summary [:selection :used-fallback]))))

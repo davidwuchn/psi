@@ -199,17 +199,13 @@
            (get-in tool-calls ["call-1" :details])))))
 
 (deftest memory-runtime-opts-from-args-test
-  (is (= {:store-provider "datalevin"
-          :store-root "/tmp/store"
-          :store-db-dir "/tmp/db.dtlv"
+  (is (= {:store-provider "in-memory"
           :auto-store-fallback? false
           :history-commit-limit 99
           :retention-snapshots 12
           :retention-deltas 34}
          (#'main/memory-runtime-opts-from-args
-          ["--memory-store" "datalevin"
-           "--memory-store-root" "/tmp/store"
-           "--memory-store-db-dir" "/tmp/db.dtlv"
+          ["--memory-store" "in-memory"
            "--memory-store-fallback" "off"
            "--memory-history-limit" "99"
            "--memory-retention-snapshots" "12"
@@ -286,11 +282,11 @@
                             :id "test-model"
                             :name "Test Model"
                             :supports-reasoning false}
-                           {:memory-runtime-opts {:store-provider "datalevin"
+                           {:memory-runtime-opts {:store-provider "in-memory"
                                                   :retention-snapshots 22
                                                   :retention-deltas 44}
                             :session-config {:llm-stream-idle-timeout-ms 54321}})]
-        (is (= "datalevin" (:store-provider @captured)))
+        (is (= "in-memory" (:store-provider @captured)))
         (is (= 22 (:retention-snapshots @captured)))
         (is (= 44 (:retention-deltas @captured)))
         (is (string? (:cwd @captured)))

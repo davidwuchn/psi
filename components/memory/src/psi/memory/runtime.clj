@@ -8,7 +8,6 @@
    [psi.history.git :as git]
    [psi.introspection.graph :as graph]
    [psi.memory.core :as memory]
-   [psi.memory.datalevin :as datalevin]
    [psi.memory.store :as store]
    [psi.query.core :as query]
    [psi.query.registry :as registry]))
@@ -258,78 +257,36 @@
   [{:keys [cwd
            history-commit-limit
            store-provider
-           store-root
-           store-db-dir
            auto-store-fallback?
            retention-snapshots
-           retention-deltas
-           store-migration-hooks]}]
-  (let [store-provider*      (or (parse-store-provider store-provider)
-                                 (parse-store-provider (getenv "PSI_MEMORY_STORE"))
-                                 :datalevin)
-        store-root*          (or (non-blank-str store-root)
-                                 (non-blank-str (getenv "PSI_MEMORY_STORE_ROOT")))
-        store-db-dir*        (or (non-blank-str store-db-dir)
-                                 (non-blank-str (getenv "PSI_MEMORY_STORE_DB_DIR")))
+           retention-deltas]}]
+  (let [store-provider*        (or (parse-store-provider store-provider)
+                                   (parse-store-provider (getenv "PSI_MEMORY_STORE"))
+                                   :in-memory)
         explicit-auto-fallback (parse-bool-value auto-store-fallback?)
         env-auto-fallback      (parse-bool-value (getenv "PSI_MEMORY_STORE_AUTO_FALLBACK"))
         auto-fallback*         (cond
                                  (some? explicit-auto-fallback) explicit-auto-fallback
                                  (some? env-auto-fallback) env-auto-fallback
                                  :else true)
-        history-limit*       (or (parse-positive-int history-commit-limit)
-                                 (parse-positive-int (getenv "PSI_MEMORY_HISTORY_COMMIT_LIMIT"))
-                                 200)
-        retention-snapshots* (or (parse-positive-int retention-snapshots)
-                                 (parse-positive-int (getenv "PSI_MEMORY_RETENTION_SNAPSHOTS")))
-        retention-deltas*    (or (parse-positive-int retention-deltas)
-                                 (parse-positive-int (getenv "PSI_MEMORY_RETENTION_DELTAS")))]
+        history-limit*         (or (parse-positive-int history-commit-limit)
+                                   (parse-positive-int (getenv "PSI_MEMORY_HISTORY_COMMIT_LIMIT"))
+                                   200)
+        retention-snapshots*   (or (parse-positive-int retention-snapshots)
+                                   (parse-positive-int (getenv "PSI_MEMORY_RETENTION_SNAPSHOTS")))
+        retention-deltas*      (or (parse-positive-int retention-deltas)
+                                   (parse-positive-int (getenv "PSI_MEMORY_RETENTION_DELTAS")))]
     (cond-> {:cwd cwd
              :history-commit-limit history-limit*
              :auto-store-fallback? auto-fallback*}
-      store-provider*      (assoc :store-provider store-provider*)
-      store-root*          (assoc :store-root store-root*)
-      store-db-dir*        (assoc :store-db-dir store-db-dir*)
+      store-provider*              (assoc :store-provider store-provider*)
       (some? retention-snapshots*) (assoc :retention-snapshots retention-snapshots*)
-      (some? retention-deltas*)    (assoc :retention-deltas retention-deltas*)
-      (map? store-migration-hooks) (assoc :store-migration-hooks store-migration-hooks))))
+      (some? retention-deltas*)    (assoc :retention-deltas retention-deltas*))))
 
 (defn- maybe-register-store-provider!
-  [memory-ctx {:keys [store-provider cwd store-root store-db-dir auto-store-fallback? store-migration-hooks]}]
+  [memory-ctx {:keys [store-provider auto-store-fallback?]}]
   (let [requested-provider-id (some-> store-provider name)]
     (case store-provider
-      :datalevin
-      (try
-        (let [summary (datalevin/register-in-memory-context! memory-ctx
-                                                              {:cwd cwd
-                                                               :store-root store-root
-                                                               :db-dir store-db-dir
-                                                               :migration-hooks store-migration-hooks
-                                                               :select? true
-                                                               :open? true
-                                                               :auto-fallback? auto-store-fallback?})
-              selected-id (:active-provider-id summary)
-              used-fallback? (true? (get-in summary [:selection :used-fallback]))
-              datalevin-selected? (and (= "datalevin" selected-id)
-                                       (not used-fallback?))]
-          {:ok? datalevin-selected?
-           :provider :datalevin
-           :error (when-not datalevin-selected?
-                    :store-provider-unavailable)
-           :fallback-selected? used-fallback?
-           :store-summary summary})
-        (catch Exception e
-          (let [summary (memory/select-store-provider-in!
-                         memory-ctx
-                         store/+fallback-provider-id+
-                         {:auto-fallback? auto-store-fallback?})]
-            {:ok? false
-             :provider :datalevin
-             :error :store-provider-registration-failed
-             :message (ex-message e)
-             :fallback-selected? (true? (get-in summary [:selection :used-fallback]))
-             :store-summary summary})))
-
       :in-memory
       {:ok? true
        :provider :in-memory
@@ -368,13 +325,10 @@
    Options (explicit opts override env):
    - :cwd — repository root used for git-history activation gate
    - :history-commit-limit — max git commits imported into memory (default 200)
-   - :store-provider — :datalevin or :in-memory (optional)
-   - :store-root — provider-specific store root (datalevin)
-   - :store-db-dir — explicit provider db dir override (datalevin)
+   - :store-provider — :in-memory (optional)
    - :auto-store-fallback? — fallback to in-memory if selected provider unavailable
    - :retention-snapshots — snapshot retention limit override
    - :retention-deltas — delta retention limit override
-   - :store-migration-hooks — optional datalevin migration hook map
 
    Advanced/embedding overrides (primarily for tests/hooks):
    - :memory-ctx — explicit memory context (default memory/global-context)
@@ -383,8 +337,6 @@
 
    Env vars:
    - PSI_MEMORY_STORE
-   - PSI_MEMORY_STORE_ROOT
-   - PSI_MEMORY_STORE_DB_DIR
    - PSI_MEMORY_STORE_AUTO_FALLBACK
    - PSI_MEMORY_HISTORY_COMMIT_LIMIT
    - PSI_MEMORY_RETENTION_SNAPSHOTS

@@ -48,7 +48,7 @@
 
 (deftest runtime-config-resolution-merges-explicit-opts-and-env
   (with-redefs [psi.memory.runtime/getenv (fn [k]
-                                            ({"PSI_MEMORY_STORE" "datalevin"
+                                            ({"PSI_MEMORY_STORE" "in-memory"
                                               "PSI_MEMORY_STORE_AUTO_FALLBACK" "false"
                                               "PSI_MEMORY_HISTORY_COMMIT_LIMIT" "321"
                                               "PSI_MEMORY_RETENTION_SNAPSHOTS" "123"

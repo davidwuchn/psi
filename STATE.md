@@ -254,8 +254,7 @@ Current truth about the Psi system.
 - ✓ Session introspection hardening (Step 7a): messages-count, tool-call-count, start-time, current-time
 - ✓ Graph emergence (Step 7): all 9 :psi.graph/* attrs queryable via app-query-tool from agent-session-ctx
 - ✓ Memory backing-store extension point (Step 9a phase 1): provider protocol + registry (`psi.memory.store`) with in-memory default and `:psi.memory.store/*` EQL attrs
-- ✓ Datalevin persistent memory provider (Step 9a phase 2): `psi.memory.datalevin` + write-through remember/recover/graph artifacts + activation-time hydration
-- ✓ Memory runtime hardening (Step 9.5): CLI/env config surface, provider failure telemetry surfacing, explicit provider selection/fallback reporting, retention overrides, Datalevin schema migration hooks, operator docs
+- ✓ Memory runtime hardening (Step 9.5): CLI/env config surface, provider failure telemetry surfacing, explicit provider selection/fallback reporting, retention overrides, operator docs
 - ✓ OAuth wired into runtime command flow (`/login`, `/logout`)
 - ✓ Session resolvers wired into global query graph
 - ✓ Graph emergence from domain resolvers (`ai`, `history`, `agent-session`, `introspection`)
@@ -269,9 +268,8 @@ Current truth about the Psi system.
 ANTHROPIC_API_KEY=sk-... clojure -M:run
 clojure -M:run --model claude-3-5-sonnet
 clojure -M:run --model gpt-4o --tui
-PSI_MEMORY_STORE=datalevin clojure -M:run  # opt-in persistent memory store
-clojure -M:run --memory-store datalevin --memory-store-db-dir /tmp/psi-memory.dtlv
-clojure -M:run --memory-store datalevin --memory-store-fallback off
+PSI_MEMORY_STORE=in-memory clojure -M:run
+clojure -M:run --memory-store in-memory --memory-store-fallback off
 clojure -M:run --memory-retention-snapshots 500 --memory-retention-deltas 2000
 clojure -M:run --rpc-edn                 # EDN-lines RPC mode (headless/programmatic)
 clojure -M:run --nrepl                   # random port, printed at startup
@@ -416,7 +414,6 @@ Caught by `jline-terminal-keymap-test` smoke test.
 | `graph-emergence.allium`   | `query` + `introspection` | ◇ Step 7 spec authored (attribute links implicit; mutation side-effects deferred) |
 | `memory-layer.allium`      | `query` + `history` + `introspection` | ◇ Step 10 spec authored (provenance, graph snapshots/deltas, recovery over session+history+graph) |
 | `memory-backing-stores.allium` | `memory` | ✓ phase 1 implemented (provider contract + selection/fallback + `:psi.memory.store/*` EQL surface) |
-| `memory-datalevin-store.allium` | `memory` | ✓ phase 2 implemented (Datalevin provider + write-through/hydration + runtime retention/migration hardening + provider failure telemetry surface) |
 | `remember-capture.allium` | `memory` + `introspection` + `engine` | ◇ Step 10 spec authored (manual remember capture + memory writeback) |
 
 ## Step 7 Decisions (Spec)
@@ -434,16 +431,14 @@ Caught by `jline-terminal-keymap-test` smoke test.
 
 ## Step 9a Decisions (Spec)
 
-- Sources: `spec/memory-backing-stores.allium`, `spec/memory-datalevin-store.allium`
-- Default active memory store remains `in-memory` for backward compatibility
-- Persistent stores are selected via provider registry; one active provider at a time
-- Runtime can opt into Datalevin via `PSI_MEMORY_STORE=datalevin`
-- remember/recover/graph artifacts now write-through to active provider; activation hydrates persisted records/snapshots/deltas/recoveries back into memory state
-- Fallback policy defaults to automatic in-memory fallback when persistent provider is unavailable
-- Runtime memory config is now available via CLI/env (store selection, fallback mode, history limit, retention limits)
-- Datalevin open now enforces schema-version checks and optional migration hooks
+- Sources: `spec/memory-backing-stores.allium`
+- Default active memory store is `in-memory`
+- Provider registry remains the extension point; one active provider at a time
+- remember/recover/graph artifacts write through to the active provider
+- Fallback policy defaults to automatic in-memory fallback when provider selection is unavailable
+- Runtime memory config is available via CLI/env (store selection, fallback mode, history limit, retention limits)
 - Provider operation telemetry is surfaced in store summaries/EQL (`write-count`, `read-count`, `failure-count`, `last-error`, `:psi.memory.store/last-failure`)
-- Operator docs now cover fallback triage, retention windows, and migration-hook wiring (`README.md`)
+- Operator docs cover fallback triage and retention windows
 
 ## Step 10 Status
 

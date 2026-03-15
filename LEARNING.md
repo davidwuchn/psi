@@ -3112,10 +3112,10 @@ provider failed. Surfacing `:psi.memory.store/last-failure` + per-provider
 `:telemetry` (failure count + last error payload) closes that gap for runtime
 triage.
 
-### λ Retention/migration docs reduce ambiguity during runtime upgrades
+### λ Retention docs reduce ambiguity during runtime changes
 
 Operational docs should pair config knobs (`--memory-retention-*`,
-`PSI_MEMORY_*`) with migration-hook wiring examples so version upgrades are
+`PSI_MEMORY_*`) with clear runtime examples so memory behavior stays
 observable and repeatable.
 
 ## 2026-03-03 - Memory Runtime Hardening (Step 9.5 initial)
@@ -3132,20 +3132,19 @@ use explicit `some?` precedence (`explicit -> env -> default`) so
 (`:retention {:snapshots ... :deltas ...}`), so runtime config can change
 compaction windows without code changes.
 
-### λ Datalevin schema migration needs explicit hook boundaries
+### λ Provider-specific runtime rules should not leak into generic memory guidance
 
-Version upgrades are now guarded by schema-version metadata in the DB.
-If runtime target version is higher, each step requires a hook; missing
-hooks fail open with clear health/error state instead of silent drift.
+Repository memory is clearer when provider-agnostic guidance stays in shared
+runtime notes and provider-specific details live only while that provider
+exists in the system.
 
-## 2026-03-05 - Datalevin Store Integration (Step 9a Phase 2)
+## 2026-03-05 - Memory Store Integration (Step 9a Phase 2)
 
-### λ Write-through + hydration is a low-risk bridge to persistent memory
+### λ Write-through boundaries should stay separate from ranking semantics
 
-Keeping remember/recover ranking logic in `psi.memory.core` while adding
-provider write-through (`remember`, `recover`, graph snapshot/delta) and
-activation-time hydration from provider state gives persistence without
-rewriting recovery semantics.
+Keeping remember/recover ranking logic in `psi.memory.core` while routing
+provider write-through through the store layer preserves behavior when store
+implementations change.
 
 ### λ Remember command tests should pin memory readiness explicitly
 

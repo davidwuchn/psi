@@ -10,8 +10,7 @@
      clojure -M:run --nrepl            # random port
      clojure -M:run --nrepl 7888       # specific port
      clojure -M:run --tui --nrepl      # TUI + nREPL
-     clojure -M:run --memory-store datalevin
-     clojure -M:run --memory-store datalevin --memory-store-db-dir /tmp/psi-memory.dtlv
+     clojure -M:run --memory-store in-memory
      clojure -M:run --memory-store-fallback off --memory-retention-snapshots 500
 
    What it does:
@@ -29,9 +28,7 @@
      OPENAI_API_KEY       — required for OpenAI models
      PSI_MODEL            — model key override (e.g. claude-3-5-haiku, gpt-4o, gpt-5.4)
      PSI_DEVELOPER_PROMPT — optional developer instruction text
-     PSI_MEMORY_STORE     — optional memory provider (datalevin | in-memory)
-     PSI_MEMORY_STORE_ROOT
-     PSI_MEMORY_STORE_DB_DIR
+     PSI_MEMORY_STORE     — optional memory provider (in-memory)
      PSI_MEMORY_STORE_AUTO_FALLBACK
      PSI_MEMORY_HISTORY_COMMIT_LIMIT
      PSI_MEMORY_RETENTION_SNAPSHOTS
@@ -218,25 +215,19 @@
   "Extract optional memory runtime config flags from CLI args.
 
    CLI flags:
-   - --memory-store <datalevin|in-memory>
-   - --memory-store-root <path>
-   - --memory-store-db-dir <path>
+   - --memory-store <in-memory>
    - --memory-store-fallback <on|off|true|false>
    - --memory-history-limit <positive-int>
    - --memory-retention-snapshots <positive-int>
    - --memory-retention-deltas <positive-int>"
   [args]
   (let [store-provider      (arg-value args "--memory-store")
-        store-root          (arg-value args "--memory-store-root")
-        store-db-dir        (arg-value args "--memory-store-db-dir")
         fallback            (parse-bool-arg (arg-value args "--memory-store-fallback"))
         history-limit       (parse-positive-int-arg (arg-value args "--memory-history-limit"))
         retention-snapshots (parse-positive-int-arg (arg-value args "--memory-retention-snapshots"))
         retention-deltas    (parse-positive-int-arg (arg-value args "--memory-retention-deltas"))]
     (cond-> {}
       (some? store-provider)      (assoc :store-provider store-provider)
-      (some? store-root)          (assoc :store-root store-root)
-      (some? store-db-dir)        (assoc :store-db-dir store-db-dir)
       (some? fallback)            (assoc :auto-store-fallback? fallback)
       (some? history-limit)       (assoc :history-commit-limit history-limit)
       (some? retention-snapshots) (assoc :retention-snapshots retention-snapshots)
@@ -903,9 +894,7 @@
    --tui
    --rpc-edn
    --nrepl [port]
-   --memory-store <datalevin|in-memory>
-   --memory-store-root <path>
-   --memory-store-db-dir <path>
+   --memory-store <in-memory>
    --memory-store-fallback <on|off>
    --memory-history-limit <n>
    --memory-retention-snapshots <n>

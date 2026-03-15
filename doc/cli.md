@@ -29,9 +29,7 @@ clojure -M:psi [flags]
 
 ## Memory runtime flags
 
-- `--memory-store <datalevin|in-memory>`
-- `--memory-store-root <path>`
-- `--memory-store-db-dir <path>`
+- `--memory-store <in-memory>`
 - `--memory-store-fallback <on|off|true|false>`
 - `--memory-history-limit <n>`
 - `--memory-retention-snapshots <n>`
@@ -53,8 +51,6 @@ clojure -M:psi [flags]
 
 Memory-related:
 - `PSI_MEMORY_STORE`
-- `PSI_MEMORY_STORE_ROOT`
-- `PSI_MEMORY_STORE_DB_DIR`
 - `PSI_MEMORY_STORE_AUTO_FALLBACK`
 - `PSI_MEMORY_HISTORY_COMMIT_LIMIT`
 - `PSI_MEMORY_RETENTION_SNAPSHOTS`
@@ -93,9 +89,8 @@ clojure -M:psi --tui --nrepl
 # Pick model key
 clojure -M:psi --model sonnet-4.6
 
-# Memory store selection + retention
-clojure -M:psi --memory-store datalevin \
-  --memory-store-db-dir /tmp/psi-memory.dtlv \
+# Memory retention
+clojure -M:psi --memory-store in-memory \
   --memory-retention-snapshots 500 \
   --memory-retention-deltas 2000
 

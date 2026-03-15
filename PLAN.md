@@ -212,14 +212,18 @@ Ordered steps toward PSI COMPLETE.
   - isolated introspection/query registration no longer double-registers agent-session-provided surfaces
   - git merge success now requires actual target HEAD movement
   - Datalevin provider operations are serialized behind a per-provider lock
-- Current unit-suite state after reverting unstable follow-up churn:
-  - `846 tests`, `4304 assertions`, `21 failures`
-  - latest clean rerun did not crash in native Datalevin code
-- Next convergence order:
-  1. fix `psi.agent-session.runtime-test` git-head sync/recursion follow-ups
-  2. fix `psi.agent-session.rpc-test` handshake/server-info regressions
-  3. fix remaining command/worktree failures from the cleaned baseline
-  4. rerun full unit suite and only then continue broader work
+- Reality check after attempted cleanup/re-runs:
+  - the lower-failure snapshots were not stable/reproducible
+  - full unit runs are still intermittently crashing in native Datalevin/LMDB code (`_mdb_txn_abort`, `mdb_txn_end`, `mdb_env_write_meta`)
+  - current full-suite state is not a trustworthy behavioural baseline because persistence crashes corrupt the signal
+- Root conclusion:
+  - persistent-provider test/runtime instability previously obscured the baseline
+  - remaining failures must not be chased from full-suite tails until the memory test environment is stable
+- New convergence order:
+  1. identify all unit-test paths that activate non-default memory providers
+  2. keep unit tests on in-memory storage by default unless a test explicitly targets provider extension behavior
+  3. re-establish a reproducible non-crashing unit baseline
+  4. then fix remaining behavioural failures one focused namespace at a time (`runtime-test`, `rpc-test`, command/worktree)
 
 ### Step 10 — Remember memory capture ✓ complete
 - Spec: `spec/remember-capture.allium`
