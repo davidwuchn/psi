@@ -3,6 +3,36 @@
 
 ---
 
+## 2026-03-15 - bbin-local tools need explicit CI install steps from GitHub Releases (commit `1e363b3`)
+
+### λ bbin installs are local; CI runners need explicit binary install steps
+
+`cljfmt` and `clj-kondo` are installed locally via `bbin` and live under
+`~/.babashka/bbin/bin/`, which is not on the default GitHub Actions runner
+PATH. The fix is to install static binaries directly from GitHub Releases
+in the CI job before the steps that invoke them.
+
+**Pattern:**
+```yaml
+- name: Install <tool>
+  run: |
+    VERSION=$(curl -fsSL https://api.github.com/repos/<owner>/<repo>/releases/latest \
+      | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": "v\?\(.*\)".*/\1/')
+    curl -fsSL "<release-url-template>" | sudo tar -xz -C /usr/local/bin <binary>
+    <binary> --version
+```
+
+Key details:
+- Use the GitHub Releases API to resolve the latest version tag dynamically (no hardcoding).
+- `cljfmt` ships a `linux-amd64-static` tarball; extract directly to `/usr/local/bin`.
+- `clj-kondo` ships a `linux-amd64` zip; unzip to `/usr/local/bin`.
+- Always verify the install with `--version` to catch PATH/extraction failures early.
+- Install steps belong in the `check` job (before `bb fmt:check` and `bb lint`), not in test jobs.
+
+Generalisation: any bbin-local dev tool used in CI needs an explicit install step. Do not assume PATH parity between local dev and CI runner environments.
+
+---
+
 ## 2026-03-15 - Developer docs for pre-commit hooks belong in `doc/develop.md` alongside the hook itself (commit `59282ab`)
 
 ### λ Document hook rationale in `doc/develop.md`, not only in LEARNING.md
