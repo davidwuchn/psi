@@ -430,10 +430,12 @@
             before-branch (current-branch-name ctx)]
         (try
           (run-git ctx args)
-          (let [after-head (current-commit ctx)
-                verified?  (branch-tip-merged-into-current? ctx branch)
-                changed?   (not= before-head after-head)]
-            (if verified?
+          (let [after-head   (current-commit ctx)
+                verified?    (branch-tip-merged-into-current? ctx branch)
+                changed?     (not= before-head after-head)
+                merged?      (and verified? changed?)
+                target-branch (current-branch-name ctx)]
+            (if merged?
               {:branch branch
                :merged true
                :fast-forward (boolean ff?)
@@ -445,9 +447,11 @@
                :conflict false
                :error (str "merge reported success but target HEAD did not absorb branch"
                            " (current-branch=" before-branch
+                           ", target-branch=" target-branch
                            ", before-head=" before-head
                            ", after-head=" after-head
-                           ", changed=" changed? ")")}))
+                           ", changed=" changed?
+                           ", verified=" verified? ")")}))
           (catch Exception e
             (let [conflict? (merge-in-progress? ctx)]
               (when conflict?

@@ -252,7 +252,14 @@
                 (write-schema-version! conn to)
                 (recur to)))))))))
 
-(defrecord DatalevinProvider [id status-atom health-atom kv-atom config]
+(defn- with-provider-lock
+  [provider f]
+  (let [lock (or (:lock provider)
+                 (throw (ex-info "Datalevin provider missing :lock" {:provider-id (:id provider)})))]
+    (locking lock
+      (f))))
+
+(defrecord DatalevinProvider [id status-atom health-atom kv-atom config lock]
   store/StoreProvider
   (provider-id [_] id)
 
@@ -264,64 +271,68 @@
      :query-mode :indexed})
 
   (open-provider! [provider _opts]
-    (try
-      (if (kv-conn-open? (:conn @kv-atom))
-        (do
-          (reset! status-atom :ready)
-          (reset! health-atom {:status :healthy
-                               :checked-at (now)
-                               :details nil})
-          provider)
-        (let [db-dir  (ensure-parent-dir! (or (:db-dir config)
-                                              (default-db-dir config)))
-              _       (.mkdirs (io/file db-dir))
-              conn    (d/open-kv db-dir {:max-dbs 32})]
-          (try
-            (reset! status-atom :opening)
-            (doseq [dbi all-dbis]
-              (d/open-dbi conn dbi))
-            (reset! status-atom :migrating)
-            (let [migration (ensure-schema-version! conn {:db-dir db-dir
-                                                          :id id
-                                                          :config config})]
-              (when-not (:ok? migration)
-                (throw (ex-info (or (:message migration) "Datalevin schema migration failed")
-                                migration)))
-              (reset! kv-atom {:conn conn
-                               :db-dir db-dir})
+    (with-provider-lock provider
+      (fn []
+        (try
+          (if (kv-conn-open? (:conn @kv-atom))
+            (do
               (reset! status-atom :ready)
               (reset! health-atom {:status :healthy
                                    :checked-at (now)
                                    :details nil})
               provider)
-            (catch Exception e
-              (when (kv-conn-open? conn)
-                (d/close-kv conn))
-              (throw e)))))
-      (catch Exception e
-        (reset! status-atom :error)
-        (reset! health-atom {:status :unavailable
-                             :checked-at (now)
-                             :details (ex-message e)})
-        provider)))
+            (let [db-dir  (ensure-parent-dir! (or (:db-dir config)
+                                                  (default-db-dir config)))
+                  _       (.mkdirs (io/file db-dir))
+                  conn    (d/open-kv db-dir {:max-dbs 32})]
+              (try
+                (reset! status-atom :opening)
+                (doseq [dbi all-dbis]
+                  (d/open-dbi conn dbi))
+                (reset! status-atom :migrating)
+                (let [migration (ensure-schema-version! conn {:db-dir db-dir
+                                                              :id id
+                                                              :config config})]
+                  (when-not (:ok? migration)
+                    (throw (ex-info (or (:message migration) "Datalevin schema migration failed")
+                                    migration)))
+                  (reset! kv-atom {:conn conn
+                                   :db-dir db-dir})
+                  (reset! status-atom :ready)
+                  (reset! health-atom {:status :healthy
+                                       :checked-at (now)
+                                       :details nil})
+                  provider)
+                (catch Exception e
+                  (when (kv-conn-open? conn)
+                    (d/close-kv conn))
+                  (throw e)))))
+          (catch Exception e
+            (reset! status-atom :error)
+            (reset! health-atom {:status :unavailable
+                                 :checked-at (now)
+                                 :details (ex-message e)})
+            provider)))))
 
   (close-provider! [provider]
-    (try
-      (when-let [conn (:conn @kv-atom)]
-        (when (kv-conn-open? conn)
-          (d/close-kv conn)))
-      (reset! kv-atom {})
-      (reset! status-atom :closed)
-      (reset! health-atom {:status :unavailable
-                           :checked-at (now)
-                           :details nil})
-      provider
-      (catch Exception e
-        (reset! status-atom :error)
-        (reset! health-atom {:status :unavailable
-                             :checked-at (now)
-                             :details (ex-message e)})
-        provider)))
+    (with-provider-lock provider
+      (fn []
+        (try
+          (when-let [conn (:conn @kv-atom)]
+            (when (kv-conn-open? conn)
+              (d/close-kv conn)))
+          (reset! kv-atom {})
+          (reset! status-atom :closed)
+          (reset! health-atom {:status :unavailable
+                               :checked-at (now)
+                               :details nil})
+          provider
+          (catch Exception e
+            (reset! status-atom :error)
+            (reset! health-atom {:status :unavailable
+                                 :checked-at (now)
+                                 :details (ex-message e)})
+            provider)))))
 
   (provider-status [_]
     @status-atom)
@@ -334,104 +345,110 @@
          :checked-at (now)
          :details nil})))
 
-  (provider-write! [_ entity-type payload]
-    (if-let [dbi (entity-type->dbi entity-type)]
-      (if-let [conn (:conn @kv-atom)]
-        (try
-          (let [entity-id (id-for-entity entity-type payload)
-                stored-payload (assoc payload
-                                      (case entity-type
-                                        :memory-record :record-id
-                                        :graph-snapshot :snapshot-id
-                                        :graph-delta :delta-id
-                                        :recovery-run :recovery-id
-                                        :capability-history :event-id
-                                        :id)
-                                      entity-id)]
-            (d/transact-kv conn [[:put dbi entity-id stored-payload]])
-            (reset! health-atom {:status :healthy
-                                 :checked-at (now)
-                                 :details nil})
-            {:ok? true
-             :entity-type entity-type
-             :entity-id entity-id
-             :idempotent-replay? false})
-          (catch Exception e
-            (reset! status-atom :degraded)
-            (reset! health-atom {:status :degraded
-                                 :checked-at (now)
-                                 :details (ex-message e)})
+  (provider-write! [provider entity-type payload]
+    (with-provider-lock provider
+      (fn []
+        (if-let [dbi (entity-type->dbi entity-type)]
+          (if-let [conn (:conn @kv-atom)]
+            (try
+              (let [entity-id (id-for-entity entity-type payload)
+                    stored-payload (assoc payload
+                                          (case entity-type
+                                            :memory-record :record-id
+                                            :graph-snapshot :snapshot-id
+                                            :graph-delta :delta-id
+                                            :recovery-run :recovery-id
+                                            :capability-history :event-id
+                                            :id)
+                                          entity-id)]
+                (d/transact-kv conn [[:put dbi entity-id stored-payload]])
+                (reset! health-atom {:status :healthy
+                                     :checked-at (now)
+                                     :details nil})
+                {:ok? true
+                 :entity-type entity-type
+                 :entity-id entity-id
+                 :idempotent-replay? false})
+              (catch Exception e
+                (reset! status-atom :degraded)
+                (reset! health-atom {:status :degraded
+                                     :checked-at (now)
+                                     :details (ex-message e)})
+                {:ok? false
+                 :error :provider-write-failed
+                 :message (ex-message e)
+                 :entity-type entity-type}))
             {:ok? false
-             :error :provider-write-failed
-             :message (ex-message e)
-             :entity-type entity-type}))
-        {:ok? false
-         :error :provider-not-open
-         :entity-type entity-type})
-      {:ok? false
-       :error :unsupported-entity-type
-       :entity-type entity-type}))
-
-  (provider-query! [_ {:keys [tags capability-ids content-types since query-text limit]
-                       :or   {limit 50}}]
-    (if-let [conn (:conn @kv-atom)]
-      (try
-        (let [records (kv-range-values conn +dbi-records+)
-              filtered (filter (partial filter-record? {:tags tags
-                                                        :capability-ids capability-ids
-                                                        :content-types content-types
-                                                        :since since
-                                                        :query-text query-text})
-                               records)
-              results (->> filtered
-                           (take (max 0 limit))
-                           vec)]
-          (reset! health-atom {:status :healthy
-                               :checked-at (now)
-                               :details nil})
-          {:ok? true
-           :results results})
-        (catch Exception e
-          (reset! status-atom :degraded)
-          (reset! health-atom {:status :degraded
-                               :checked-at (now)
-                               :details (ex-message e)})
+             :error :provider-not-open
+             :entity-type entity-type})
           {:ok? false
-           :error :provider-query-failed
-           :message (ex-message e)
-           :results []}))
-      {:ok? false
-       :error :provider-not-open
-       :results []}))
+           :error :unsupported-entity-type
+           :entity-type entity-type}))))
 
-  (provider-load-state [_]
-    (if-let [conn (:conn @kv-atom)]
-      (try
-        (let [records            (kv-range-values conn +dbi-records+)
-              graph-snapshots    (kv-range-values conn +dbi-graph-snapshots+)
-              graph-deltas       (kv-range-values conn +dbi-graph-deltas+)
-              recoveries         (kv-range-values conn +dbi-recoveries+)
-              capability-history (kv-range-values conn +dbi-capability-history+)]
-          (reset! health-atom {:status :healthy
-                               :checked-at (now)
-                               :details nil})
-          {:ok? true
-           :records records
-           :graph-snapshots graph-snapshots
-           :graph-deltas graph-deltas
-           :recoveries recoveries
-           :capability-history capability-history
-           :index-stats (build-index-stats records)})
-        (catch Exception e
-          (reset! status-atom :degraded)
-          (reset! health-atom {:status :degraded
-                               :checked-at (now)
-                               :details (ex-message e)})
+  (provider-query! [provider {:keys [tags capability-ids content-types since query-text limit]
+                              :or   {limit 50}}]
+    (with-provider-lock provider
+      (fn []
+        (if-let [conn (:conn @kv-atom)]
+          (try
+            (let [records (kv-range-values conn +dbi-records+)
+                  filtered (filter (partial filter-record? {:tags tags
+                                                            :capability-ids capability-ids
+                                                            :content-types content-types
+                                                            :since since
+                                                            :query-text query-text})
+                                   records)
+                  results (->> filtered
+                               (take (max 0 limit))
+                               vec)]
+              (reset! health-atom {:status :healthy
+                                   :checked-at (now)
+                                   :details nil})
+              {:ok? true
+               :results results})
+            (catch Exception e
+              (reset! status-atom :degraded)
+              (reset! health-atom {:status :degraded
+                                   :checked-at (now)
+                                   :details (ex-message e)})
+              {:ok? false
+               :error :provider-query-failed
+               :message (ex-message e)
+               :results []}))
           {:ok? false
-           :error :provider-load-state-failed
-           :message (ex-message e)}))
-      {:ok? false
-       :error :provider-not-open})))
+           :error :provider-not-open
+           :results []}))))
+
+  (provider-load-state [provider]
+    (with-provider-lock provider
+      (fn []
+        (if-let [conn (:conn @kv-atom)]
+          (try
+            (let [records            (kv-range-values conn +dbi-records+)
+                  graph-snapshots    (kv-range-values conn +dbi-graph-snapshots+)
+                  graph-deltas       (kv-range-values conn +dbi-graph-deltas+)
+                  recoveries         (kv-range-values conn +dbi-recoveries+)
+                  capability-history (kv-range-values conn +dbi-capability-history+)]
+              (reset! health-atom {:status :healthy
+                                   :checked-at (now)
+                                   :details nil})
+              {:ok? true
+               :records records
+               :graph-snapshots graph-snapshots
+               :graph-deltas graph-deltas
+               :recoveries recoveries
+               :capability-history capability-history
+               :index-stats (build-index-stats records)})
+            (catch Exception e
+              (reset! status-atom :degraded)
+              (reset! health-atom {:status :degraded
+                                   :checked-at (now)
+                                   :details (ex-message e)})
+              {:ok? false
+               :error :provider-load-state-failed
+               :message (ex-message e)}))
+          {:ok? false
+           :error :provider-not-open})))))
 
 (defn create-provider
   "Create Datalevin provider instance.
@@ -452,7 +469,8 @@
                                :checked-at (now)
                                :details "not-open"})
                         (atom {})
-                        opts)))
+                        opts
+                        (Object.))))
 
 (defn register-in-memory-context!
   "Register Datalevin provider in a memory context and optionally select it.

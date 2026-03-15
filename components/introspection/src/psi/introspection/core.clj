@@ -196,30 +196,33 @@
    - :graph-ready true when graph has nodes and edges, else false
    - :evolution-stage set to :integrating when ready, else :developing"
   [ctx]
-  (let [qctx (:query-ctx ctx)]
-    ;; AI resolvers
+  (let [qctx        (:query-ctx ctx)
+        session-ctx (:agent-session-ctx ctx)]
+    ;; AI resolvers are not part of the agent-session resolver surface.
     (doseq [r ai/all-resolvers]
       (query/register-resolver-in! qctx r))
 
-    ;; History + Introspection + Memory resolvers
-    (doseq [r history-resolvers/all-resolvers]
-      (query/register-resolver-in! qctx r))
+    ;; Introspection resolvers are specific to this component.
     (doseq [r resolvers/all-resolvers]
       (query/register-resolver-in! qctx r))
-    (memory/register-resolvers-in! qctx false)
 
-    ;; History mutations
-    (doseq [m history-resolvers/all-mutations]
-      (query/register-mutation-in! qctx m))
-
-    ;; Recursion resolvers + mutations
-    (recursion/register-resolvers-in! qctx false)
-    (recursion/register-mutations-in! qctx false)
-
-    (when (:agent-session-ctx ctx)
-      ;; Pass rebuild?=false — we rebuild once below after all operations are in.
-      (agent-session/register-resolvers-in! qctx false)
-      (agent-session/register-mutations-in! qctx false))
+    (if session-ctx
+      (do
+        ;; Agent-session registration already includes history, memory, and
+        ;; recursion resolver/mutation surfaces. Avoid duplicate registrations.
+        ;; Pass rebuild?=false — we rebuild once below after all operations are in.
+        (agent-session/register-resolvers-in! qctx false)
+        (agent-session/register-mutations-in! qctx false))
+      (do
+        ;; Without an agent-session context we still expose history, memory, and
+        ;; recursion through the isolated introspection graph.
+        (doseq [r history-resolvers/all-resolvers]
+          (query/register-resolver-in! qctx r))
+        (memory/register-resolvers-in! qctx false)
+        (doseq [m history-resolvers/all-mutations]
+          (query/register-mutation-in! qctx m))
+        (recursion/register-resolvers-in! qctx false)
+        (recursion/register-mutations-in! qctx false)))
 
     ;; Single env rebuild after all operations are registered.
     (query/rebuild-env-in! qctx)
