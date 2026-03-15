@@ -7,15 +7,29 @@
 
 ### λ A good fix baseline is often smaller than the set of plausible fixes discovered during debugging
 
-In this PSL/debug loop, many later edits were locally plausible but did not converge under the full suite. The reliable recovery move was to preserve only the changes that had strong direct evidence behind them: duplicate isolated registration removal, merge success verification by target HEAD movement, and Datalevin provider serialization. Everything else had to be treated as suspect until reproven from the cleaned baseline.
+In this PSL/debug loop, many later edits were locally plausible but did not converge under the full suite. The reliable recovery move was to preserve only the changes that had strong direct evidence behind them: duplicate isolated registration removal and merge success verification by target HEAD movement. Everything else had to be treated as suspect until reproven from the cleaned baseline.
 
 ### λ Once full-suite failures start widening, the right operation is subtraction, not more patching
 
-The turning point was not a single red test but the pattern of regressions: fixing one runtime/test path would cause the global failure count to jump and sometimes reintroduce native Datalevin crashes. That is a signal to stop composing more speculative patches and instead subtract changes until the repository returns to a trustworthy checkpoint. Convergence sometimes requires narrowing the delta before continuing to narrow the bug.
+The turning point was not a single red test but the pattern of regressions: fixing one runtime/test path would cause the global failure count to jump and sometimes reintroduce native persistence crashes. That is a signal to stop composing more speculative patches and instead subtract changes until the repository returns to a trustworthy checkpoint. Convergence sometimes requires narrowing the delta before continuing to narrow the bug.
 
 ### λ A clean checkpoint should record both the kept fixes and the exact failure count to resume from
 
 The useful baseline was not just a commit hash — it was a commit plus an observed suite state. Recording that commit `57e8ab0` is the kept-fixes checkpoint and that the cleaned suite state is `846 tests / 4304 assertions / 21 failures` gives future ψ a concrete resume point. Without that explicit state memory, future debugging risks restarting from a noisy intermediate state and repeating the same churn.
+
+## 2026-03-15 - PSL follow-up should remove obsolete learning premises after the triggering subsystem is deleted (commit `1c916b9`)
+
+### λ Repository memory must drop implementation-specific lessons once the implementation is gone
+
+After `1c916b9` removed the Datalevin-backed memory provider, the remaining useful lesson was not about Datalevin locking itself but about preserving only active-system truths in repository memory. Leaving provider-specific debugging conclusions in PLAN/STATE/LEARNING after the provider is removed makes future ψ reason from dead architecture.
+
+### λ Provider extension points and active providers should be remembered separately
+
+`psi.memory.store` still matters as an extension boundary, but that is different from saying multiple providers are part of the current system shape. The durable lesson is to record both facts independently: the abstraction may remain while a concrete provider disappears.
+
+### λ PSL follow-up should collapse removed subsystems out of the baseline narrative immediately
+
+Once a follow-up commit removes a subsystem entirely, subsequent PSL memory should stop describing the old failure class as if it were still an active convergence constraint. Future debugging is faster when baseline docs pivot immediately to the new active surface — here, the in-memory-only memory runtime.
 
 ## 2026-03-14 - Prompt memory for debugging improves when the change loop requires review, simplification, and proof (commit `c75eb04`)
 
