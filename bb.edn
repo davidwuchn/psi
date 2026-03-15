@@ -3,7 +3,7 @@
 
   fmt:check
   {:doc  "Check Clojure and EDN formatting with cljfmt CLI."
-   :task (shell "cljfmt check bb.edn deps.edn .lsp/config.edn .psi/startup-prompts.edn components extensions spec specs test tests.edn extensions/tests.edn")}
+   :task (shell "cljfmt check bb.edn deps.edn .lsp/config.edn .psi/startup-prompts.edn components extensions spec specs tests.edn extensions/tests.edn")}
 
   lint
   {:doc  "Lint repository Clojure and EDN sources with clj-kondo."
