@@ -31,6 +31,7 @@
     "session/updated"
     "host/updated"
     "footer/updated"
+    "command-result"
     "error")
   "Core topic subscription set for Emacs frontend.
 
@@ -38,6 +39,7 @@ Includes only terminal-boundary tool lifecycle topics (no tool/delta).")
 
 (defconst psi-rpc-extension-topics
   '("ui/dialog-requested"
+    "ui/frontend-action-requested"
     "ui/widgets-updated"
     "ui/status-updated"
     "ui/notification")

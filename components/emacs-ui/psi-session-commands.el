@@ -873,39 +873,23 @@ normal prompt dispatch."
          (string-prefix-p "/" trimmed))))
 
 (defun psi-emacs--dispatch-idle-compose-message (message)
-  "Dispatch idle compose MESSAGE through slash interception and fallback.
+  "Dispatch idle compose MESSAGE.
 
-When MESSAGE is a slash command candidate, run
-`psi-emacs--idle-slash-command-handler-function'. If not handled, fall through
-to normal prompt dispatch.
+Slash-prefixed input is sent to backend `command` handling.
+Non-slash input is sent via normal `prompt`.
 
 Returns plist:
-  :dispatched?  non-nil when consumed locally or dispatched remotely
-  :local-only?  non-nil when consumed by local slash interception."
+  :dispatched?  non-nil when dispatched remotely
+  :local-only?  always nil in the backend-owned slash architecture."
   (let* ((slash-candidate? (and psi-emacs--state
                                 (psi-emacs--slash-command-candidate-p message)))
-         (trimmed (string-trim (or message "")))
-         (tree-candidate? (and slash-candidate?
-                               (or (equal trimmed "/tree")
-                                   (string-prefix-p "/tree " trimmed))))
-         (handler psi-emacs--idle-slash-command-handler-function)
-         (default-handler (and (fboundp 'psi-emacs--default-handle-idle-slash-command)
-                               #'psi-emacs--default-handle-idle-slash-command))
-         (handled (and slash-candidate?
-                       (functionp handler)
-                       (funcall handler psi-emacs--state message)))
-         (handled* (or handled
-                       (and tree-candidate?
-                            (not (eq handler default-handler))
-                            (functionp default-handler)
-                            (funcall default-handler psi-emacs--state message)))))
-    (if handled*
-        (list :dispatched? t :local-only? t)
-      (let ((sent? (psi-emacs--dispatch-request "prompt" `((:message . ,message)))))
-        (when sent?
-          (psi-emacs--set-run-state psi-emacs--state 'streaming)
-          (psi-emacs--reset-stream-watchdog psi-emacs--state))
-        (list :dispatched? sent? :local-only? nil)))))
+         (sent? (if slash-candidate?
+                    (psi-emacs--dispatch-request "command" `((:text . ,message)))
+                  (psi-emacs--dispatch-request "prompt" `((:message . ,message))))))
+    (when sent?
+      (psi-emacs--set-run-state psi-emacs--state 'streaming)
+      (psi-emacs--reset-stream-watchdog psi-emacs--state))
+    (list :dispatched? sent? :local-only? nil)))
 
 (provide 'psi-session-commands)
 

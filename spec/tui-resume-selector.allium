@@ -3,7 +3,7 @@
 -- tui-resume-selector.allium
 -- TUI-specific /resume selector workflow for restoring prior sessions.
 
-use "./prompt-slash-commands.allium" as slash
+use "./frontend-action-rpc.allium" as frontend_actions
 use "./session-persistence.allium" as persist
 use "./session-management.allium" as session
 
@@ -41,9 +41,9 @@ value ResumeRestoreState {
     tool_order: Set<String>
 }
 
-rule ResumeSlashResultOpensSelector {
-    when: slash/SlashCommandResultApplied(runtime, result)
-    requires: result.type = resume
+rule ResumeFrontendActionOpensSelector {
+    when: frontend_actions/FrontendActionEventReceived(runtime, request)
+    requires: request.action_name = "resume-selector"
     requires: runtime.supports_resume_selector = true
 
     ensures: runtime.phase = selecting_session
@@ -225,7 +225,7 @@ surface TuiResumeSelectorContract {
     context runtime: TuiResumeRuntime
 
     provides:
-        slash/SlashCommandResultApplied(runtime, result)
+        frontend_actions/FrontendActionEventReceived(runtime, request)
         ResumeSelectorKeyPressed(runtime, key)
         ResumeCallbackReturned(payload)
 
@@ -235,12 +235,12 @@ surface TuiResumeSelectorContract {
         runtime.current_session_file
 
     related:
-        slash/PromptSlashCommandContract
+        frontend_actions/FrontendActionRpcApi
         persist/SessionPersistenceApi
         session/AgentSessionApi
 
     @guidance
-        -- /resume opens selector only for selector-capable runtimes.
+        -- /resume opens from a backend-requested frontend action for selector-capable runtimes.
         -- Selector starts in current-project scope; Tab toggles current/all.
         -- Search is case-insensitive over session name, first message, and worktree_path.
         -- Selection index is clamped after every scope/search/list change.

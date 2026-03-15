@@ -13,6 +13,7 @@ use "./tool-output-rendering.allium" as tool_render
 use "./prompt-input-autocomplete.allium" as prompt_autocomplete
 use "./emacs-prompt-completion.allium" as emacs_prompt_completion
 use "./prompt-slash-commands.allium" as slash_commands
+use "./frontend-action-rpc.allium" as frontend_actions
 use "./emacs-footer.allium" as emacs_footer
 use "./session-management.allium" as session_mgmt
 
@@ -153,11 +154,12 @@ rule ComposeAutocompleteUsesSharedContract {
     ensures: UsesContract(frontend, emacs_prompt_completion/EmacsPromptCompletionArchitecture)
 }
 
-rule SlashExecutionUsesSharedContract {
+rule SlashExecutionUsesSharedContracts {
     when: PromptSubmissionRequested(frontend, text)
     requires: StartsWith(Trim(text), "/")
 
     ensures: UsesContract(frontend, slash_commands/PromptSlashCommandContract)
+    ensures: UsesContract(frontend, frontend_actions/FrontendActionRpcApi)
 }
 
 rule StartupBufferSeedsBannerAndInputFocus {
@@ -252,6 +254,18 @@ rule ExtensionUiUsesSharedContract {
 
     ensures: UsesContract(frontend, ui/ExtensionUI)
     ensures: UsesContract(frontend, ui/ExtensionUIQuery)
+}
+
+rule FrontendActionEventsUseSharedContract {
+    when: RpcEventReceived(frontend.rpc, "ui/frontend-action-requested", payload)
+
+    ensures: UsesContract(frontend, frontend_actions/FrontendActionRpcApi)
+}
+
+rule CommandResultEventsAppendTranscriptOrApplyTerminalAction {
+    when: RpcEventReceived(frontend.rpc, "command-result", payload)
+
+    ensures: CommandResultHandled(frontend, payload)
 }
 
 rule InteractiveWidgetsUseSharedContract {
@@ -376,78 +390,67 @@ rule HostUpdatedOnSubscribeInitializesWidget {
     ensures: SessionTreeWidgetProjected(frontend, payload.sessions, payload.active_session_id)
 }
 
--- ── /tree command ───────────────────────────────────────────────────────────
+-- ── frontend action requests ───────────────────────────────────────────────
 
-rule TreeCommandOpensSessionPicker {
-    when: SlashCommandHandled(frontend, command: "/tree")
+rule SessionTreeFrontendActionUsesCompletingRead {
+    when: frontend_actions/FrontendActionEventReceived(frontend, request)
+    requires: request.action_name = "session-tree-selector"
 
-    ensures: SessionPickerOpened(frontend)
-    ensures: SessionPickerCandidates(frontend) = MapToPickerLabels(frontend.host_snapshot.sessions,
-                                                                    frontend.host_snapshot.active_session_id)
+    ensures: NativeSelectorKind(frontend, request) = completing_read
+    ensures: FrontendActionCandidates(frontend, request) = request.payload.candidates
 }
 
-rule SessionPickerCandidateLabelForStreaming {
-    when: SessionPickerCandidates(frontend)
-    requires: exists slot in frontend.host_snapshot.sessions where slot.is_streaming = true
+rule ResumeFrontendActionUsesCompletingRead {
+    when: frontend_actions/FrontendActionEventReceived(frontend, request)
+    requires: request.action_name = "resume-selector"
 
-    ensures: CandidateLabel(slot) = SessionDisplayName(slot) + " [streaming]"
+    ensures: NativeSelectorKind(frontend, request) = completing_read
+    ensures: FrontendActionCandidates(frontend, request) = request.payload.candidates
 }
 
-rule SessionPickerCandidateLabelForActive {
-    when: SessionPickerCandidates(frontend)
-    requires: exists slot in frontend.host_snapshot.sessions where slot.is_active = true
+rule ModelFrontendActionUsesCompletingRead {
+    when: frontend_actions/FrontendActionEventReceived(frontend, request)
+    requires: request.action_name = "model-picker"
 
-    ensures: CandidateLabel(slot) = SessionDisplayName(slot) + " ← active"
+    ensures: NativeSelectorKind(frontend, request) = completing_read
+    ensures: FrontendActionCandidates(frontend, request) = request.payload.candidates
 }
 
-rule SessionPickerSelectionDispatchesSwitchSession {
-    when: SessionPickerCompleted(frontend, selected_slot_id)
-    requires: selected_slot_id != frontend.host_snapshot.active_session_id
+rule ThinkingFrontendActionUsesCompletingRead {
+    when: frontend_actions/FrontendActionEventReceived(frontend, request)
+    requires: request.action_name = "thinking-picker"
 
-    ensures: RpcRequestSent(frontend.rpc, "switch_session", {session_id: selected_slot_id})
-    ensures: ConnectingAffordancesShown(frontend)
+    ensures: NativeSelectorKind(frontend, request) = completing_read
+    ensures: FrontendActionCandidates(frontend, request) = request.payload.candidates
 }
 
-rule SessionPickerSelectionNoOpWhenAlreadyActive {
-    when: SessionPickerCompleted(frontend, selected_slot_id)
-    requires: selected_slot_id = frontend.host_snapshot.active_session_id
+rule CompletedFrontendActionSendsRpcResult {
+    when: frontend_actions/FrontendActionCompleted(frontend, value)
 
-    ensures: NoRpcRequestSent(frontend.rpc, "switch_session")
+    ensures: RpcRequestSent(frontend.rpc, "frontend_action_result", {value: value})
 }
 
-rule SessionPickerCancelledIsNoOp {
-    when: SessionPickerCancelled(frontend)
+rule CancelledFrontendActionSendsRpcResult {
+    when: frontend_actions/FrontendActionCancelled(frontend)
 
-    ensures: NoRpcRequestSent(frontend.rpc, "switch_session")
+    ensures: RpcRequestSent(frontend.rpc, "frontend_action_result", {value: null, status: "cancelled"})
 }
 
-rule SwitchSessionResponseRehydratesTranscript {
-    when: SessionPickerCompleted(frontend, selected_slot_id)
-    requires: selected_slot_id != frontend.host_snapshot.active_session_id
-
-    ensures: TranscriptResetAndRehydrated(frontend)
-    ensures: frontend.buffer.cursor_in_input_area = true
-}
-
-surface EmacsFrontendSessionTreeApi {
+surface EmacsFrontendActionApi {
     facing client: rpc/RpcClient
 
     context frontend: EmacsFrontend
 
     provides:
-        SessionTreeWidgetProjected(frontend, sessions, active_session_id)
-        SessionPickerOpened(frontend)
-        SessionPickerCompleted(frontend, selected_slot_id)
-        SessionPickerCancelled(frontend)
+        frontend_actions/FrontendActionEventReceived(frontend, request)
+        frontend_actions/FrontendActionCompleted(frontend, value)
+        frontend_actions/FrontendActionCancelled(frontend)
 
     @guidance
-        -- Widget is updated on every `host/updated` event (subscribe + any session state change).
-        -- `/tree` opens completing-read with all live host sessions as candidates.
-        -- Selecting an already-active session is a no-op (no switch_session RPC call).
-        -- After selection, `psi-emacs--show-connecting-affordances` runs before rehydrate events arrive.
-        -- Session display name: use slot.name if non-empty, else "(session <id-prefix-8>)".
-        -- Parent-child nesting uses indentation, not a full interactive tree component.
-        -- A richer interactive session browser (keyboard navigation, fold/unfold) is deferred.
+        -- Emacs renders frontend actions with native completing-read style affordances.
+        -- Candidate lists are supplied entirely by the backend in the action payload.
+        -- Overlapping frontend-action requests are handled by the frontend; the newest request wins.
+        -- This replaces prior frontend-local slash routing for /tree, /resume, /model, and /thinking.
 }
 
 open question "Should reconnect optionally offer session selection before clearing buffer?"

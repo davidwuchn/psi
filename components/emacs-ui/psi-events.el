@@ -180,6 +180,88 @@ Child sessions (non-nil parent-session-id that matches a slot) are indented."
             (psi-emacs--projection-sort-widgets updated))
       (psi-emacs--upsert-projection-block))))
 
+(defun psi-emacs--handle-command-result-event (data)
+  "Handle backend `command-result` event DATA."
+  (let ((type (psi-emacs--event-data-get data '(:type type))))
+    (pcase type
+      ("quit"
+       (psi-emacs--request-frontend-exit))
+      ("session_switch"
+       (let ((sid (psi-emacs--event-data-get data '(:session-id session-id :sessionId sessionId))))
+         (when (and (stringp sid) (not (string-empty-p sid)))
+           (psi-emacs--request-switch-session-by-id psi-emacs--state sid))))
+      (_
+       (let ((message (psi-emacs--event-data-get data '(:message message))))
+         (when (and (stringp message) (not (string-empty-p message)))
+           (psi-emacs--append-assistant-message message))))))
+  (when psi-emacs--state
+    (psi-emacs--set-run-state psi-emacs--state 'idle)))
+
+(defun psi-emacs--frontend-action-map-candidates (action-name payload)
+  "Return completing-read alist candidates for ACTION-NAME from PAYLOAD."
+  (pcase action-name
+    ("resume-selector"
+     (let* ((query (or (alist-get :query payload nil nil #'equal) '()))
+            (result (and (listp query) (alist-get :psi.session/list query nil nil #'equal)))
+            (sessions (cond ((vectorp result) (append result nil))
+                            ((listp result) result)
+                            (t nil))))
+       (when (fboundp 'psi-emacs--resume-session-candidates)
+         (psi-emacs--resume-session-candidates sessions))))
+    ("session-tree-selector"
+     (let ((active-id (psi-emacs--event-data-get payload '(:active-session-id active-session-id :activeSessionId activeSessionId)))
+           (sessions (append (psi-emacs--event-data-get payload '(:sessions sessions)) nil)))
+       (when (fboundp 'psi-emacs--tree-session-candidates)
+         (psi-emacs--tree-session-candidates sessions active-id))))
+    ("model-picker"
+     (let ((models (append (psi-emacs--event-data-get payload '(:models models)) nil)))
+       (mapcar (lambda (m)
+                 (let ((provider (psi-emacs--event-data-get m '(:provider provider)))
+                       (model-id (psi-emacs--event-data-get m '(:id id)))
+                       (reasoning (psi-emacs--event-data-get m '(:reasoning reasoning))))
+                   (cons (format "%s %s%s"
+                                 provider model-id
+                                 (if reasoning " [reasoning]" ""))
+                         `((:provider . ,provider) (:id . ,model-id)))))
+               models)))
+    ("thinking-picker"
+     (let ((levels (append (psi-emacs--event-data-get payload '(:levels levels)) nil)))
+       (mapcar (lambda (level)
+                 (cons (format "%s" level) level))
+               levels)))
+    (_ nil)))
+
+(defun psi-emacs--handle-frontend-action-requested (data)
+  "Handle backend `ui/frontend-action-requested` event DATA."
+  (when psi-emacs--state
+    (setf (psi-emacs-state-pending-frontend-action psi-emacs--state) data)
+    (let* ((action-name (psi-emacs--event-data-get data '(:action-name action-name :actionName actionName)))
+           (request-id (psi-emacs--event-data-get data '(:request-id request-id :requestId requestId)))
+           (prompt (or (psi-emacs--event-data-get data '(:prompt prompt)) "Select:"))
+           (payload (or (psi-emacs--event-data-get data '(:payload payload)) '()))
+           (candidates (psi-emacs--frontend-action-map-candidates action-name payload))
+           (selected (condition-case nil
+                         (when candidates
+                           (let ((label (completing-read (concat prompt " ") candidates nil t)))
+                             (cdr (assoc label candidates))))
+                       (quit :cancelled))))
+      (cond
+       ((eq selected :cancelled)
+        (psi-emacs--dispatch-request
+         "frontend_action_result"
+         `((:request-id . ,request-id)
+           (:action-name . ,action-name)
+           (:status . "cancelled")
+           (:value . nil))))
+       (selected
+        (psi-emacs--dispatch-request
+         "frontend_action_result"
+         `((:request-id . ,request-id)
+           (:action-name . ,action-name)
+           (:status . "submitted")
+           (:value . ,selected))))))
+    (setf (psi-emacs-state-pending-frontend-action psi-emacs--state) nil)))
+
 (defun psi-emacs--handle-rpc-event (frame)
   "Handle inbound rpc-edn event FRAME for transcript rendering."
   (let* ((event (alist-get :event frame nil nil #'equal))
@@ -217,8 +299,12 @@ Child sessions (non-nil parent-session-id that matches a slot) are indented."
               (body-text raw-text))
          (psi-emacs--reset-stream-watchdog psi-emacs--state)
          (psi-emacs--upsert-tool-row tool-id stage body-text tool-name arguments parsed-args is-error details)))
+      ("command-result"
+       (psi-emacs--handle-command-result-event data))
       ("ui/dialog-requested"
        (psi-emacs--handle-dialog-requested data))
+      ("ui/frontend-action-requested"
+       (psi-emacs--handle-frontend-action-requested data))
       ("ui/widgets-updated"
        (when psi-emacs--state
          (setf (psi-emacs-state-projection-widgets psi-emacs--state)

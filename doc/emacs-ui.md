@@ -107,9 +107,8 @@ Compose source rules:
 
 `psi-emacs-mode` installs a CAPF (`psi-emacs-prompt-capf`) for compose input.
 
-- `/...` completes slash commands:
-  - idle-local commands (for example `/resume`, `/new`, `/status`, `/worktree`, `/jobs`, `/model`, `/thinking`, `/help`)
-  - common backend commands (`/history`, `/prompts`, `/skills`, `/login`, `/logout`, `/remember`, `/skill:`)
+- `/...` completes slash commands from a local cache:
+  - built-in backend-owned commands (for example `/resume`, `/new`, `/status`, `/worktree`, `/jobs`, `/model`, `/thinking`, `/help`, `/history`, `/prompts`, `/skills`, `/login`, `/logout`, `/remember`, `/skill:`)
   - extension commands discovered from backend introspection, including worktree workflow commands such as `/work-on`, `/work-merge`, `/work-rebase`, `/work-status` when the extension is loaded
 - `@...` completes file references from cwd/project-root (with configurable hidden/excluded policy)
 
@@ -155,8 +154,8 @@ Reconnect (`C-c C-r`) resets mode to collapsed; `/new` preserves current mode.
 
 Emacs subscribes to the full default topic set (core + extension/footer topics):
 
-- core: `assistant/*`, `tool/*`, `session/updated`, `error`
-- extension/footer: `ui/*`, `footer/updated`
+- core: `assistant/*`, `tool/*`, `session/updated`, `command-result`, `error`
+- extension/footer: `ui/*` (including `ui/frontend-action-requested`), `footer/updated`
 
 ## Reconnect semantics
 
@@ -167,5 +166,5 @@ Emacs subscribes to the full default topic set (core + extension/footer topics):
 ## Still deferred in Emacs frontend
 
 - compaction/auto-compact/auto-retry controls in-buffer UX
-- richer multi-session/fork/tree command discoverability UI
+- richer multi-session/fork/tree command discoverability UI beyond backend-requested frontend actions
 - reconnect-time resume picker / auto-resume

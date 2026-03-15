@@ -990,10 +990,10 @@ text) in long-lived Emacs sessions with overridden slash handlers."
             (psi-emacs-queue-from-buffer))
           (setq slash-calls (nreverse slash-calls))
           (setq rpc-calls (nreverse rpc-calls))
-          (should (equal '("/foo" "/foo") slash-calls))
-          (should (equal '("prompt" "prompt") (mapcar #'car rpc-calls)))
-          (should (equal '((:message . "/foo")) (cadr (car rpc-calls))))
-          (should (equal '((:message . "/foo")) (cadr (cadr rpc-calls)))))
+          (should (equal '() slash-calls))
+          (should (equal '("command" "command") (mapcar #'car rpc-calls)))
+          (should (equal '((:text . "/foo")) (cadr (car rpc-calls))))
+          (should (equal '((:text . "/foo")) (cadr (cadr rpc-calls)))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
@@ -1016,9 +1016,9 @@ text) in long-lived Emacs sessions with overridden slash handlers."
             (psi-emacs-send-from-buffer nil))
           (setq slash-calls (nreverse slash-calls))
           (setq rpc-calls (nreverse rpc-calls))
-          (should (equal '("/remember blocked-path") slash-calls))
-          (should (equal '("prompt") (mapcar #'car rpc-calls)))
-          (should (equal '((:message . "/remember blocked-path"))
+          (should (equal '() slash-calls))
+          (should (equal '("command") (mapcar #'car rpc-calls)))
+          (should (equal '((:text . "/remember blocked-path"))
                          (cadr (car rpc-calls)))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
@@ -1042,9 +1042,9 @@ text) in long-lived Emacs sessions with overridden slash handlers."
             (psi-emacs-send-from-buffer nil))
           (setq slash-calls (nreverse slash-calls))
           (setq rpc-calls (nreverse rpc-calls))
-          (should (equal '("/remember accepted-path") slash-calls))
-          (should (equal '("prompt") (mapcar #'car rpc-calls)))
-          (should (equal '((:message . "/remember accepted-path"))
+          (should (equal '() slash-calls))
+          (should (equal '("command") (mapcar #'car rpc-calls)))
+          (should (equal '((:text . "/remember accepted-path"))
                          (cadr (car rpc-calls)))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
@@ -2760,7 +2760,7 @@ full accumulated thinking text rather than append-only chunks."
     (let ((cmd (get-text-property (max (point-min) (1- (point))) 'psi-widget-command)))
       (should (equal "/chain-rm run-1" cmd)))))
 
-(ert-deftest psi-projection-widget-action-activates-command-via-prompt-op ()
+(ert-deftest psi-projection-widget-action-activates-command-via-command-op ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
@@ -2774,11 +2774,11 @@ full accumulated thinking text rather than append-only chunks."
                             'keymap psi-emacs--projection-widget-action-keymap))
         (goto-char (point-min))
         (psi-emacs--projection-activate-widget-action)
-        (should (equal '(("prompt" ((:message . "/chain-rm run-1"))))
+        (should (equal '(("command" ((:text . "/chain-rm run-1"))))
                        calls))))))
 
-(ert-deftest psi-projection-tree-widget-action-uses-idle-slash-routing ()
-  "Widget action `/tree <id>` should route via idle slash handler (switch_session)."
+(ert-deftest psi-projection-tree-widget-action-uses-command-op ()
+  "Widget action `/tree <id>` should route via backend command dispatch."
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
@@ -2792,7 +2792,7 @@ full accumulated thinking text rather than append-only chunks."
                             'keymap psi-emacs--projection-widget-action-keymap))
         (goto-char (point-min))
         (psi-emacs--projection-activate-widget-action)
-        (should (equal '(("switch_session" ((:session-id . "s2"))))
+        (should (equal '(("command" ((:text . "/tree s2"))))
                        calls))))))
 
 (ert-deftest psi-extension-ui-status-updated-replaces-and-sorts-by-extension-id ()

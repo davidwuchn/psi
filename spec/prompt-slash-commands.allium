@@ -1,24 +1,12 @@
--- allium: 1
+-- allium: 2
 
 -- prompt-slash-commands.allium
+-- Backend-owned slash command grammar and typed dispatch outcomes.
 --
--- Scope: Reusable slash-command execution contract for interactive prompts.
---
--- Source distillation:
---   - components/agent-session/src/psi/agent_session/commands.clj
---   - components/tui/src/psi/tui/app.clj
---
--- Includes:
---   - Built-in slash command dispatch (/quit, /resume, /new, /status, ...)
---   - Shared /model and /thinking command grammar and result typing
---   - Selector-capable vs non-selector-capable runtime behavior
---   - Dispatch-result handling in interactive runtimes
---   - Slash submission fallback to normal agent prompting when not intercepted
---
--- Excludes:
---   - Prompt template and skill expansion internals (coding-agent/skills/prompt-templates)
---   - Session-selector rendering internals (see tui-resume-selector.allium)
---   - Frontend layout/styling details for model/thinking selectors
+-- This contract defines how slash-prefixed text is recognized and mapped
+-- to typed backend command outcomes. Frontend-local UI behavior is
+-- intentionally excluded; selector-capable commands produce a
+-- `frontend_action` result and are completed through the RPC action flow.
 
 ------------------------------------------------------------
 -- Config
@@ -26,7 +14,7 @@
 
 config {
     built_in_slash_commands: Set<String> = {
-        "/quit", "/exit", "/resume", "/new", "/status", "/history",
+        "/quit", "/exit", "/resume", "/tree", "/new", "/status", "/history",
         "/help", "/?", "/prompts", "/skills", "/remember",
         "/login", "/logout", "/model", "/thinking"
     }
@@ -39,76 +27,37 @@ config {
 ------------------------------------------------------------
 
 value SlashCommandDispatchResult {
-    type: quit | resume | new_session | text | login_start | login_error | logout |
-          extension_cmd | model_selector | model_set | thinking_selector | thinking_set | not_command
+    type: quit | new_session | text | login_start | login_error | logout |
+          extension_cmd | frontend_action | session_switch |
+          model_set | thinking_set | not_command
 
     message: String?
 
     -- extension command payload
-    commandName: String?
-    commandArgs: String?
+    command_name: String?
+    command_args: String?
 
     -- login payload
-    providerName: String?
-    loginUrl: String?
-    usesCallbackServer: Boolean?
+    provider_name: String?
+    login_url: String?
+    uses_callback_server: Boolean?
+
+    -- direct session switch payload
+    session_id: String?
 
     -- model/thinking payload
-    modelProvider: String?
-    modelId: String?
-    thinkingLevel: String?
-}
+    model_provider: String?
+    model_id: String?
+    thinking_level: String?
 
-value ModelCandidate {
-    provider: String
-    modelId: String
-    reasoning: Boolean
-}
-
-------------------------------------------------------------
--- Entities
-------------------------------------------------------------
-
-entity PromptRuntime {
-    phase: idle | streaming | selecting_session | selecting_model | selecting_thinking | exiting
-
-    -- Some frontends (e.g. TUI) support dedicated selectors.
-    supportsResumeSelector: Boolean = true
-    supportsModelSelector: Boolean = true
-    supportsThinkingSelector: Boolean = true
-
-    transcriptEditable: Boolean
-
-    -- Session model/thinking projection used by selector and direct command validation.
-    currentModelProvider: String?
-    currentModelId: String?
-    currentModelReasoning: Boolean
-
-    -- Candidate pools for model selection.
-    scopedModels: List<ModelCandidate>
-    runtimeModels: List<ModelCandidate>
-}
-
-entity PromptInput {
-    text: String
-
-    trimmed_text: Trim(text)
-    starts_with_slash: StartsWith(trimmed_text, "/")
+    -- frontend action payload
+    action_name: String?
+    action_prompt: String?
 }
 
 ------------------------------------------------------------
--- Slash Dispatch Rules
+-- Dispatch Rules
 ------------------------------------------------------------
-
-rule SlashSubmissionDispatchesBeforeAgentPrompt {
-    when: PromptSubmitted(runtime, input: PromptInput)
-
-    requires: runtime.phase = idle
-    requires: input.starts_with_slash
-
-    ensures: SlashCommandDispatchRequested(input.trimmed_text)
-    ensures: AgentPromptNotYetDispatched(input.trimmed_text)
-}
 
 rule QuitAndExitCommandsRequestTermination {
     when: SlashCommandDispatchRequested(text)
@@ -117,11 +66,37 @@ rule QuitAndExitCommandsRequestTermination {
     ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{type: quit})
 }
 
-rule ResumeCommandRequestsResumeFlow {
+rule ResumeCommandRequestsFrontendAction {
     when: SlashCommandDispatchRequested(text)
     requires: text = "/resume"
 
-    ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{type: resume})
+    ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{
+        type: frontend_action,
+        action_name: "resume-selector",
+        action_prompt: "Select a session to resume"
+    })
+}
+
+rule TreeWithoutArgsRequestsFrontendAction {
+    when: SlashCommandDispatchRequested(text)
+    requires: text = "/tree"
+
+    ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{
+        type: frontend_action,
+        action_name: "session-tree-selector",
+        action_prompt: "Select a live session"
+    })
+}
+
+rule TreeWithSessionIdRequestsDirectSwitch {
+    when: SlashCommandDispatchRequested(text)
+    requires: StartsWith(text, "/tree ")
+    requires: not IsBlank(Trim(string-remove-prefix("/tree", text)))
+
+    ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{
+        type: session_switch,
+        session_id: Trim(string-remove-prefix("/tree", text))
+    })
 }
 
 rule NewSessionCommandCreatesFreshSession {
@@ -136,14 +111,20 @@ rule InspectionCommandsReturnText {
     when: SlashCommandDispatchRequested(text)
     requires: text in {"/status", "/history", "/help", "/?", "/prompts", "/skills"}
 
-    ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{type: text, message: FormattedCommandText(text)})
+    ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{
+        type: text,
+        message: FormattedCommandText(text)
+    })
 }
 
 rule RememberCommandSupportsOptionalText {
     when: SlashCommandDispatchRequested(text)
     requires: text = "/remember" or StartsWith(text, "/remember ")
 
-    ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{type: text, message: RememberResultText(text)})
+    ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{
+        type: text,
+        message: RememberResultText(text)
+    })
 }
 
 rule LoginAndLogoutCommandsReturnTypedResults {
@@ -153,29 +134,31 @@ rule LoginAndLogoutCommandsReturnTypedResults {
     ensures: SlashCommandDispatchResultProduced(text, LoginLogoutResult(text))
 }
 
-rule ModelNoArgRequestsSelector {
+rule ModelNoArgRequestsFrontendAction {
     when: SlashCommandDispatchRequested(text)
     requires: text = "/model"
 
-    ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{type: model_selector})
+    ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{
+        type: frontend_action,
+        action_name: "model-picker",
+        action_prompt: "Select a model"
+    })
 }
 
 rule ModelWithProviderAndIdRequestsDirectSet {
     when: SlashCommandDispatchRequested(text)
-
     requires: StartsWith(text, "/model ")
     requires: MatchesModelDirectSetSyntax(text)
 
     ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{
         type: model_set,
-        modelProvider: ModelProviderArg(text),
-        modelId: ModelIdArg(text)
+        model_provider: ModelProviderArg(text),
+        model_id: ModelIdArg(text)
     })
 }
 
 rule ModelInvalidArityReturnsDeterministicUsage {
     when: SlashCommandDispatchRequested(text)
-
     requires: StartsWith(text, "/model")
     requires: not (text = "/model")
     requires: not MatchesModelDirectSetSyntax(text)
@@ -186,29 +169,31 @@ rule ModelInvalidArityReturnsDeterministicUsage {
     })
 }
 
-rule ThinkingNoArgRequestsSelector {
+rule ThinkingNoArgRequestsFrontendAction {
     when: SlashCommandDispatchRequested(text)
     requires: text = "/thinking"
 
-    ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{type: thinking_selector})
+    ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{
+        type: frontend_action,
+        action_name: "thinking-picker",
+        action_prompt: "Select a thinking level"
+    })
 }
 
 rule ThinkingWithKnownLevelRequestsDirectSet {
     when: SlashCommandDispatchRequested(text)
-
     requires: StartsWith(text, "/thinking ")
     requires: MatchesThinkingDirectSetSyntax(text)
     requires: IsKnownThinkingLevel(ThinkingLevelArg(text), config.canonical_thinking_levels)
 
     ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{
         type: thinking_set,
-        thinkingLevel: NormalizeThinkingLevel(ThinkingLevelArg(text))
+        thinking_level: NormalizeThinkingLevel(ThinkingLevelArg(text))
     })
 }
 
 rule ThinkingWithUnknownLevelReturnsDeterministicError {
     when: SlashCommandDispatchRequested(text)
-
     requires: StartsWith(text, "/thinking ")
     requires: MatchesThinkingDirectSetSyntax(text)
     requires: not IsKnownThinkingLevel(ThinkingLevelArg(text), config.canonical_thinking_levels)
@@ -222,7 +207,6 @@ rule ThinkingWithUnknownLevelReturnsDeterministicError {
 
 rule ThinkingInvalidArityReturnsDeterministicUsage {
     when: SlashCommandDispatchRequested(text)
-
     requires: StartsWith(text, "/thinking")
     requires: not (text = "/thinking")
     requires: not MatchesThinkingDirectSetSyntax(text)
@@ -240,8 +224,8 @@ rule ExtensionSlashCommandReturnsExtensionResult {
 
     ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{
         type: extension_cmd,
-        commandName: CommandName(text),
-        commandArgs: CommandArgs(text)
+        command_name: CommandName(text),
+        command_args: CommandArgs(text)
     })
 }
 
@@ -253,198 +237,22 @@ rule NonInterceptedSlashInputFallsThrough {
 }
 
 ------------------------------------------------------------
--- Selector Candidate Rules
-------------------------------------------------------------
-
-rule ModelSelectorCandidatesPreferScopedModels {
-    when: ModelSelectorOpened(runtime)
-
-    requires: runtime.scopedModels.count > 0
-
-    ensures: ActiveModelSelectorCandidates(runtime) = runtime.scopedModels
-}
-
-rule ModelSelectorCandidatesFallBackToRuntimeModels {
-    when: ModelSelectorOpened(runtime)
-
-    requires: runtime.scopedModels.count = 0
-
-    ensures: ActiveModelSelectorCandidates(runtime) = runtime.runtimeModels
-}
-
-rule ThinkingSelectorCandidatesUseCanonicalLevelsWhenReasoningSupported {
-    when: ThinkingSelectorOpened(runtime)
-
-    requires: runtime.currentModelReasoning
-
-    ensures: ActiveThinkingSelectorCandidates(runtime) = config.canonical_thinking_levels
-}
-
-rule ThinkingSelectorCandidatesOnlyOffWhenReasoningUnsupported {
-    when: ThinkingSelectorOpened(runtime)
-
-    requires: not runtime.currentModelReasoning
-
-    ensures: ActiveThinkingSelectorCandidates(runtime) = {"off"}
-}
-
-------------------------------------------------------------
--- Dispatch Result Application Rules
-------------------------------------------------------------
-
-rule QuitResultTransitionsRuntimeToExiting {
-    when: SlashCommandResultApplied(runtime, result: SlashCommandDispatchResult)
-    requires: result.type = quit
-
-    ensures: runtime.phase = exiting
-    ensures: FrontendExitRequested(runtime)
-}
-
-rule ResumeResultOpensSelectorWhenSupported {
-    when: SlashCommandResultApplied(runtime, result: SlashCommandDispatchResult)
-    requires: result.type = resume
-    requires: runtime.supportsResumeSelector
-
-    ensures: runtime.phase = selecting_session
-    ensures: SessionSelectorOpened(runtime)
-}
-
-rule ResumeResultFallsBackWhenSelectorUnsupported {
-    when: SlashCommandResultApplied(runtime, result: SlashCommandDispatchResult)
-    requires: result.type = resume
-    requires: not runtime.supportsResumeSelector
-
-    ensures: AssistantMessageAppended(runtime, "Resume selector unavailable in this frontend.")
-}
-
-rule ModelSelectorResultOpensSelectorWhenSupported {
-    when: SlashCommandResultApplied(runtime, result: SlashCommandDispatchResult)
-    requires: result.type = model_selector
-    requires: runtime.supportsModelSelector
-
-    ensures: runtime.phase = selecting_model
-    ensures: ModelSelectorOpened(runtime)
-}
-
-rule ModelSelectorResultFallsBackWhenSelectorUnsupported {
-    when: SlashCommandResultApplied(runtime, result: SlashCommandDispatchResult)
-    requires: result.type = model_selector
-    requires: not runtime.supportsModelSelector
-
-    ensures: AssistantMessageAppended(runtime, "Model selector unavailable in this frontend. Use /model <provider> <model-id>.")
-}
-
-rule ThinkingSelectorResultOpensSelectorWhenSupported {
-    when: SlashCommandResultApplied(runtime, result: SlashCommandDispatchResult)
-    requires: result.type = thinking_selector
-    requires: runtime.supportsThinkingSelector
-
-    ensures: runtime.phase = selecting_thinking
-    ensures: ThinkingSelectorOpened(runtime)
-}
-
-rule ThinkingSelectorResultFallsBackWhenSelectorUnsupported {
-    when: SlashCommandResultApplied(runtime, result: SlashCommandDispatchResult)
-    requires: result.type = thinking_selector
-    requires: not runtime.supportsThinkingSelector
-
-    ensures: AssistantMessageAppended(runtime, "Thinking selector unavailable in this frontend. Use /thinking <level>.")
-}
-
-rule ModelSetResultAllowsAnyKnownRuntimeModel {
-    when: SlashCommandResultApplied(runtime, result: SlashCommandDispatchResult)
-    requires: result.type = model_set
-    requires: KnownRuntimeModel(runtime.runtimeModels, result.modelProvider, result.modelId)
-
-    ensures: ModelSetRequested(runtime, provider: result.modelProvider, modelId: result.modelId, source: slash_direct)
-}
-
-rule ModelSetResultUnknownModelReturnsDeterministicError {
-    when: SlashCommandResultApplied(runtime, result: SlashCommandDispatchResult)
-    requires: result.type = model_set
-    requires: not KnownRuntimeModel(runtime.runtimeModels, result.modelProvider, result.modelId)
-
-    ensures: ModelSetNotRequested(runtime)
-    ensures: AssistantMessageAppended(runtime, UnknownModelText(result.modelProvider, result.modelId))
-}
-
-rule ThinkingSetResultUsesRequestedLevelWhenReasoningSupported {
-    when: SlashCommandResultApplied(runtime, result: SlashCommandDispatchResult)
-    requires: result.type = thinking_set
-    requires: runtime.currentModelReasoning
-
-    ensures: ThinkingLevelSetRequested(runtime, level: result.thinkingLevel, source: slash_direct)
-}
-
-rule ThinkingSetResultClampsToOffWhenReasoningUnsupported {
-    when: SlashCommandResultApplied(runtime, result: SlashCommandDispatchResult)
-    requires: result.type = thinking_set
-    requires: not runtime.currentModelReasoning
-
-    ensures: ThinkingLevelSetRequested(runtime, level: "off", source: slash_direct)
-}
-
-rule TextLikeResultsAppendAssistantMessage {
-    when: SlashCommandResultApplied(runtime, result: SlashCommandDispatchResult)
-    requires: result.type in {text, login_error, logout, new_session}
-
-    ensures: AssistantMessageAppended(runtime, result.message)
-}
-
-rule LoginStartResultShowsProviderUrl {
-    when: SlashCommandResultApplied(runtime, result: SlashCommandDispatchResult)
-    requires: result.type = login_start
-
-    ensures: AssistantMessageAppended(runtime, LoginPromptText(result.providerName, result.loginUrl, result.usesCallbackServer))
-}
-
-rule ExtensionCommandResultExecutesHandlerAndAppendsOutput {
-    when: SlashCommandResultApplied(runtime, result: SlashCommandDispatchResult)
-    requires: result.type = extension_cmd
-
-    ensures: ExtensionCommandHandlerInvoked(result.commandName, result.commandArgs)
-    ensures: AssistantMessageAppended(runtime, CapturedExtensionCommandOutput(result.commandName, result.commandArgs))
-}
-
-rule NotCommandFallsThroughToAgentPrompt {
-    when: SlashCommandResultApplied(runtime, result: SlashCommandDispatchResult)
-    requires: result.type = not_command
-
-    ensures: AgentPromptDispatchedFromLatestSubmission(runtime)
-    ensures: runtime.phase = streaming
-}
-
-------------------------------------------------------------
 -- Surface
 ------------------------------------------------------------
 
 surface PromptSlashCommandContract {
-    facing caller: InteractivePromptRuntime
-
-    context runtime: PromptRuntime
+    facing caller: BackendCommandHandler
 
     provides:
-        PromptSubmitted(runtime, input)
         SlashCommandDispatchRequested(text)
-        SlashCommandResultApplied(runtime, result)
-
-    exposes:
-        runtime.phase
+        SlashCommandDispatchResultProduced(text, result)
 
     @guidance
-        -- This contract is shared across interactive UIs.
-        -- Slash command dispatch runs before normal prompt submission.
-        -- /quit and /exit are equivalent.
-        -- /resume is a runtime capability: selector UIs open selection; others provide fallback messaging.
-        -- /model and /thinking support both selector mode (no args) and direct mode (with args).
-        -- Selector-level /resume behavior for TUI is specified in tui-resume-selector.allium.
-        -- Non-intercepted slash input falls through to normal agent prompting, enabling downstream
-        -- template/skill expansion paths.
+        -- Frontends do not implement per-command semantics.
+        -- Selector-style commands (/resume, /tree, /model, /thinking) produce
+        -- `frontend_action` results and are completed through the frontend action RPC flow.
+        -- `/tree <session-id>` remains a backend-direct command so widgets and
+        -- power users can switch sessions without opening a selector.
+        -- Unknown slash-prefixed input falls through as `not_command`, enabling
+        -- downstream prompt/template handling when desired.
 }
-
-------------------------------------------------------------
--- Open Questions
-------------------------------------------------------------
-
-open question "Should unknown slash commands return immediate user-facing errors, or always fall through for downstream handling?"
-open question "Should /model selector support free-text filtering by provider, model id, and display name in all runtimes?"

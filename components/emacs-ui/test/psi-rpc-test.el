@@ -21,11 +21,13 @@
       "session/updated"
       "host/updated"
       "footer/updated"
+      "command-result"
       "error")
     psi-rpc-core-topics))
   (should
    (equal
     '("ui/dialog-requested"
+      "ui/frontend-action-requested"
       "ui/widgets-updated"
       "ui/status-updated"
       "ui/notification")

@@ -49,15 +49,17 @@ clojure -M:run --tui --nrepl 8888
 
 ### Multi-session commands
 
-- `/resume` opens the persisted-session picker (session files on disk).
-- `/tree` opens the live host session picker (in-process multi-session view).
+- `/resume` dispatches to the backend; when selection is needed, the backend requests
+  a frontend action and TUI renders the persisted-session picker (session files on disk).
+- `/tree` dispatches to the backend; when selection is needed, the backend requests
+  a frontend action and TUI renders the live host session picker (in-process multi-session view).
 - `/tree <session-id|prefix>` switches directly to a live host session by id.
 - In `/tree` picker mode, sessions render in parent/child order with explicit tree
   glyphs (root `●`, branch connectors `├─` / `└─` / `│`).
 - Right-side status cells are column-aligned across rows (`[active] [stream]`) to
   keep deep trees and mixed session states visually stable.
 
-`/tree` is TUI-only; console/RPC surfaces return a deterministic guidance message.
+The selector UI is frontend-native, but candidate lists and command semantics are backend-owned.
 
 ### Worktree commands
 

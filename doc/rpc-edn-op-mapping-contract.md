@@ -4,7 +4,8 @@ Status: normative implementation contract for runtime transport work.
 
 References:
 - `spec/rpc-edn.allium` (canonical wire contract)
-- `spec/coding-agent.allium` (`RpcApi` operation surface)
+- `spec/prompt-slash-commands.allium` (backend-owned slash grammar)
+- `spec/frontend-action-rpc.allium` (backend-requested frontend-native actions)
 - `spec/emacs-frontend.allium` (frontend consumer expectations)
 
 ## 1) Canonical wire envelope rules
@@ -88,6 +89,8 @@ The transport op router MUST remain a thin translation boundary over existing `p
 |---|---|---|---|---|
 | `handshake` | `{:client-info {:name s :version s :protocol-version s :features [s*]?}}` | transport-level negotiation (not session domain op) | `{:server-info {:protocol-version s :features [s*] :session-id s? :model-id s? :thinking-level s?}}` | `protocol/unsupported-version`, `request/invalid-params` |
 | `query_eql` | `{:query <edn-string-vector>}` | `session/query-in` | `{:result any}` | `request/invalid-params`, `request/invalid-query`, `runtime/query-failed` |
+| `command` | `{:text s}` | backend slash-command dispatch | `{:accepted true}` | `transport/not-ready`, `request/invalid-params`, `runtime/failed` |
+| `frontend_action_result` | `{:request-id s :action-name s :status ("submitted"\|"cancelled"\|"failed") :value ? :error-message s?}` | apply/cancel/fail a backend-requested frontend action | `{:accepted true}` | `transport/not-ready`, `request/invalid-params`, `runtime/failed` |
 | `prompt` | `{:message s :images ?}` | `session/prompt-in!` | `{:accepted true}` | `transport/not-ready`, `request/invalid-params`, `request/session-not-idle`, `runtime/failed` |
 | `steer` | `{:message s :images ?}` | `session/steer-in!` | `{:accepted true}` | `transport/not-ready`, `request/invalid-params`, `runtime/failed` |
 | `follow_up` | `{:message s :images ?}` | `session/follow-up-in!` | `{:accepted true}` | `transport/not-ready`, `request/invalid-params`, `runtime/failed` |
@@ -148,10 +151,12 @@ Only catalog topics from `rpc-edn.allium` may be emitted:
 - `tool/update`
 - `tool/result`
 - `ui/dialog-requested`
+- `ui/frontend-action-requested`
 - `ui/widgets-updated`
 - `ui/status-updated`
 - `ui/notification`
 - `footer/updated`
+- `command-result`
 - `error`
 
 Planned source signal exemplars for bridge implementation:
@@ -203,6 +208,6 @@ Bridge requirements:
 ## 10) Out-of-scope reminders (for this task)
 
 - No protocol version bump (stay `1.0`).
-- No new event topics beyond `rpc-edn.allium` catalog.
+- Event topics must remain within the `rpc-edn.allium` catalog.
 - No HTTP transport.
 - No Emacs rendering internals.

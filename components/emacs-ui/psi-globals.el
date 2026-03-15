@@ -39,6 +39,11 @@
 (declare-function psi-emacs--upsert-projection-block "psi-projection")
 (declare-function psi-emacs--projection-widget-content-lines "psi-projection" (widget))
 (declare-function psi-emacs--handle-window-configuration-change "psi-lifecycle")
+(declare-function psi-emacs--request-frontend-exit "psi-session-commands")
+(declare-function psi-emacs--request-switch-session-by-id "psi-session-commands" (state session-id))
+(declare-function psi-emacs--resume-session-candidates "psi-session-commands" (sessions))
+(declare-function psi-emacs--tree-session-candidates "psi-session-commands" (slots active-id))
+(declare-function psi-emacs--append-assistant-message "psi-compose" (text))
 
 (declare-function markdown-mode "markdown-mode")
 (declare-function markdown-fontify-region "markdown-mode" (begin end))

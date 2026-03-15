@@ -108,10 +108,12 @@ config {
         "tool/update",
         "tool/result",
         "ui/dialog-requested",
+        "ui/frontend-action-requested",
         "ui/widgets-updated",
         "ui/status-updated",
         "ui/notification",
         "footer/updated",
+        "command-result",
         "error"
     }
 }
@@ -200,8 +202,8 @@ rule ToolStartPayloadMayCarryTerminalAssemblyArguments {
     requires: frame.event = "tool/start"
 
     ensures: RequiredPayloadKeys(frame.data) = {"tool-id", "tool-name"}
-    ensures: OptionalPayloadKeys(frame.data) includes "arguments"
-    ensures: OptionalPayloadKeys(frame.data) includes "parsed-args"
+    ensures: OptionalPayloadContains(frame.data, "arguments")
+    ensures: OptionalPayloadContains(frame.data, "parsed-args")
 
     @guidance
         -- tool/start is emitted after terminal-boundary tool-call assembly.
@@ -292,6 +294,9 @@ surface RpcEventStream {
     @guidance
         -- Clients should ignore unknown topics and unknown optional keys.
         -- Minor versions add topics/optional keys; major versions may break.
+        -- `ui/frontend-action-requested` carries backend-requested frontend-native
+        -- interactions such as selectors and pickers.
+        -- `command-result` carries slash-command outcome text and terminal actions.
 }
 
 open question "Should strict-mode negotiation be explicit in handshake features or remain client-local behavior?"

@@ -1,0 +1,226 @@
+-- allium: 2
+
+-- frontend-action-rpc.allium
+-- Unified RPC contract for backend-requested frontend actions.
+--
+-- The backend owns slash-command semantics. When a command requires
+-- frontend-native interaction, the backend emits a `ui/frontend-action-requested`
+-- event. The frontend performs the requested action using native affordances
+-- and responds with `frontend_action_result`.
+--
+-- This contract is intentionally more general than selection-only flows.
+
+use "./rpc-edn.allium" as rpc
+use "./prompt-slash-commands.allium" as slash
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value FrontendActionRequest {
+    request_id: String
+    action_name: String
+    prompt: String?
+    payload: Map<String, Any>?
+}
+
+value FrontendActionResult {
+    request_id: String
+    action_name: String
+    status: submitted | cancelled | failed
+    value: Any?
+    error_message: String?
+}
+
+value SelectionCandidate {
+    value: String
+    label: String
+    detail: String?
+    current: Boolean
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    supported_action_names: Set<String> = {
+        "resume-selector",
+        "session-tree-selector",
+        "model-picker",
+        "thinking-picker"
+    }
+}
+
+------------------------------------------------------------
+-- Entities
+------------------------------------------------------------
+
+entity FrontendActionState {
+    pending_request: FrontendActionRequest?
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+rule FrontendActionEventDeliveredToFrontend {
+    when: FrontendActionRequested(endpoint, request: FrontendActionRequest)
+
+    ensures: EventFramePushed(endpoint, rpc/EventFrame {
+        kind: event,
+        event: "ui/frontend-action-requested",
+        data: request
+    })
+}
+
+rule FrontendTracksLatestPendingAction {
+    when: FrontendActionEventReceived(frontend, request: FrontendActionRequest)
+
+    ensures: frontend.pending_request = request
+    ensures: NativeFrontendActionOpened(frontend, request)
+
+    @guidance
+        -- Overlapping action requests are a frontend concern.
+        -- A newly received request replaces the prior pending request.
+}
+
+rule FrontendSubmitsSuccessfulActionResult {
+    when: FrontendActionCompleted(frontend, value)
+    requires: frontend.pending_request != null
+
+    ensures: FrontendActionResultSent(frontend, FrontendActionResult {
+        request_id: frontend.pending_request.request_id,
+        action_name: frontend.pending_request.action_name,
+        status: submitted,
+        value: value,
+        error_message: null
+    })
+    ensures: frontend.pending_request = null
+}
+
+rule FrontendSubmitsCancelledActionResult {
+    when: FrontendActionCancelled(frontend)
+    requires: frontend.pending_request != null
+
+    ensures: FrontendActionResultSent(frontend, FrontendActionResult {
+        request_id: frontend.pending_request.request_id,
+        action_name: frontend.pending_request.action_name,
+        status: cancelled,
+        value: null,
+        error_message: null
+    })
+    ensures: frontend.pending_request = null
+}
+
+rule FrontendSubmitsFailedActionResult {
+    when: FrontendActionFailed(frontend, message)
+    requires: frontend.pending_request != null
+
+    ensures: FrontendActionResultSent(frontend, FrontendActionResult {
+        request_id: frontend.pending_request.request_id,
+        action_name: frontend.pending_request.action_name,
+        status: failed,
+        value: null,
+        error_message: message
+    })
+    ensures: frontend.pending_request = null
+}
+
+rule ResumeSelectorActionUsesFrontendCandidatesPayload {
+    when: FrontendActionEventReceived(frontend, request)
+    requires: request.action_name = "resume-selector"
+
+    ensures: FrontendActionPayloadHasCandidates(request)
+    ensures: FrontendActionPayloadHasScope(request)
+    ensures: NativeFrontendActionOpened(frontend, request)
+}
+
+rule SessionTreeSelectorActionUsesFrontendCandidatesPayload {
+    when: FrontendActionEventReceived(frontend, request)
+    requires: request.action_name = "session-tree-selector"
+
+    ensures: FrontendActionPayloadHasCandidates(request)
+    ensures: NativeFrontendActionOpened(frontend, request)
+}
+
+rule ModelPickerActionUsesFrontendCandidatesPayload {
+    when: FrontendActionEventReceived(frontend, request)
+    requires: request.action_name = "model-picker"
+
+    ensures: FrontendActionPayloadHasCandidates(request)
+    ensures: NativeFrontendActionOpened(frontend, request)
+}
+
+rule ThinkingPickerActionUsesFrontendCandidatesPayload {
+    when: FrontendActionEventReceived(frontend, request)
+    requires: request.action_name = "thinking-picker"
+
+    ensures: FrontendActionPayloadHasCandidates(request)
+    ensures: NativeFrontendActionOpened(frontend, request)
+}
+
+rule BackendAppliesSubmittedFrontendActionResult {
+    when: FrontendActionResultReceived(endpoint, result: FrontendActionResult)
+    requires: result.status = submitted
+
+    ensures: FrontendActionApplied(endpoint, result.action_name, result.value)
+}
+
+rule BackendDropsCancelledFrontendActionResult {
+    when: FrontendActionResultReceived(endpoint, result: FrontendActionResult)
+    requires: result.status = cancelled
+
+    ensures: FrontendActionAbandoned(endpoint, result.request_id)
+}
+
+rule BackendReportsFailedFrontendActionResult {
+    when: FrontendActionResultReceived(endpoint, result: FrontendActionResult)
+    requires: result.status = failed
+
+    ensures: CommandResultEventEmitted(endpoint, {
+        type: error,
+        message: result.error_message
+    })
+}
+
+rule SlashFrontendActionResultMapsToRpcActionRequest {
+    when: slash/SlashCommandDispatchResultProduced(text, result)
+    requires: result.type = frontend_action
+
+    ensures: FrontendActionRequested(endpoint, FrontendActionRequest {
+        request_id: FreshRequestId(),
+        action_name: result.action_name,
+        prompt: result.action_prompt,
+        payload: FrontendActionPayloadFor(result.action_name)
+    })
+}
+
+------------------------------------------------------------
+-- Surface
+------------------------------------------------------------
+
+surface FrontendActionRpcApi {
+    facing frontend: InteractiveFrontend
+
+    context state: FrontendActionState
+
+    provides:
+        FrontendActionEventReceived(frontend, request)
+        FrontendActionCompleted(frontend, value)
+        FrontendActionCancelled(frontend)
+        FrontendActionFailed(frontend, message)
+
+    exposes:
+        state.pending_request
+
+    related:
+        rpc/RpcTransportApi
+        rpc/RpcEventStream
+        slash/PromptSlashCommandContract
+
+    @guidance
+        -- Frontend action requests are backend-initiated and frontend-rendered.
+        -- Candidates and action payload are backend-owned.
+        -- Overlapping requests are resolved by the frontend; the newest request wins.
+}

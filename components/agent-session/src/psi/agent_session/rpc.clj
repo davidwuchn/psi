@@ -33,6 +33,8 @@
   ["handshake"
    "ping"
    "query_eql"
+   "command"
+   "frontend_action_result"
    "prompt"
    "prompt_while_streaming"
    "steer"
@@ -66,6 +68,8 @@
 
 (def ^:private targetable-rpc-ops
   #{"query_eql"
+    "command"
+    "frontend_action_result"
     "prompt"
     "prompt_while_streaming"
     "steer"
@@ -652,10 +656,12 @@
     "tool/update"
     "tool/result"
     "ui/dialog-requested"
+    "ui/frontend-action-requested"
     "ui/widgets-updated"
     "ui/status-updated"
     "ui/notification"
     "footer/updated"
+    "command-result"
     "error"})
 
 (def ^:private required-event-payload-keys
@@ -671,10 +677,12 @@
    "tool/update" #{:tool-id :tool-name :content :result-text :is-error}
    "tool/result" #{:tool-id :tool-name :content :result-text :is-error}
    "ui/dialog-requested" #{:dialog-id :kind :title}
+   "ui/frontend-action-requested" #{:request-id :action-name}
    "ui/widgets-updated" #{:widgets}
    "ui/status-updated" #{:statuses}
    "ui/notification" #{:id :message :level}
    "footer/updated" #{:path-line :stats-line}
+   "command-result" #{:type}
    "error" #{:error-code :error-message}})
 
 (defn- topic-subscribed?
@@ -1218,10 +1226,22 @@
                                            :login-state   login-state})
         (emit-assistant-text! emit! "Paste authorization code as your next prompt message.")))))
 
-(defn- handle-command-result!
-  "Map a commands/dispatch result to canonical RPC event emissions.
-   Emits assistant/message (and session/updated + footer/updated via caller)
-   for each command result type without invoking the agent loop."
+(defn- emit-command-result!
+  [emit! payload]
+  (emit! "command-result" payload))
+
+(defn- emit-frontend-action-request!
+  [emit! request-id cmd-result]
+  (emit! "ui/frontend-action-requested"
+         {:request-id request-id
+          :action-name (some-> (:action-name cmd-result) name)
+          :prompt (:prompt cmd-result)
+          :payload (:payload cmd-result)}))
+
+(defn- handle-prompt-command-result!
+  "Legacy prompt-path slash command event mapping.
+   Keeps existing prompt RPC behavior stable while the new `command` op
+   uses `command-result` and `ui/frontend-action-requested`."
   [cmd-result emit!]
   (let [result-type (:type cmd-result)]
     (case result-type
@@ -1249,6 +1269,18 @@
               :content [{:type :text
                          :text "[/resume is not supported over RPC prompt — use switch_session op]"}]})
 
+      :tree-open
+      (emit! "assistant/message"
+             {:role "assistant"
+              :content [{:type :text
+                         :text "[/tree is only available in TUI mode (--tui)]"}]})
+
+      :tree-switch
+      (emit! "assistant/message"
+             {:role "assistant"
+              :content [{:type :text
+                         :text (str "[session switch requested: " (:session-id cmd-result) "]")}]})
+
       :extension-cmd
       (let [output (try
                      (let [out (with-out-str
@@ -1262,10 +1294,64 @@
                {:role    "assistant"
                 :content [{:type :text :text output}]}))
 
-      ;; Unknown result type — emit a fallback
       (emit! "assistant/message"
              {:role    "assistant"
               :content [{:type :text :text (str "[command result: " result-type "]")}]}))))
+
+(defn- handle-command-result!
+  "Map a commands/dispatch result to canonical RPC event emissions.
+   Emits command-result or ui/frontend-action-requested without invoking the agent loop."
+  [request-id cmd-result emit!]
+  (let [result-type (:type cmd-result)]
+    (case result-type
+      (:text :logout :login-error :new-session)
+      (emit-command-result! emit! {:type (name result-type)
+                                   :message (str (:message cmd-result))})
+
+      :login-start
+      (emit-command-result! emit! {:type "login_start"
+                                   :message (str "Login: " (get-in cmd-result [:provider :name])
+                                                 " — open URL: " (:url cmd-result))
+                                   :provider-name (get-in cmd-result [:provider :name])
+                                   :login-url (:url cmd-result)
+                                   :uses-callback-server (boolean (:uses-callback-server cmd-result))})
+
+      :quit
+      (emit-command-result! emit! {:type "quit"})
+
+      :resume
+      (emit-command-result! emit! {:type "text"
+                                   :message "[/resume requires frontend action handling]"})
+
+      :tree-open
+      (emit-command-result! emit! {:type "text"
+                                   :message "[/tree requires frontend action handling]"})
+
+      :tree-switch
+      (emit-command-result! emit! {:type "session_switch"
+                                   :session-id (:session-id cmd-result)})
+
+      :session-switch
+      (emit-command-result! emit! {:type "session_switch"
+                                   :session-id (:session-id cmd-result)})
+
+      :frontend-action
+      (emit-frontend-action-request! emit! request-id cmd-result)
+
+      :extension-cmd
+      (let [output (try
+                     (let [out (with-out-str
+                                 ((:handler cmd-result) (:args cmd-result)))]
+                       (if (str/blank? out)
+                         "[extension command returned no output]"
+                         out))
+                     (catch Throwable e
+                       (str "[extension command error: " (ex-message e) "]")))]
+        (emit-command-result! emit! {:type "text" :message output}))
+
+      ;; Unknown result type — emit a fallback
+      (emit-command-result! emit! {:type "text"
+                                   :message (str "[command result: " result-type "]")}))))
 
 (defn- valid-target-session-id!
   [session-id]
@@ -1314,6 +1400,171 @@
      (when session-id
        (session/ensure-session-loaded-in! ctx session-id))
      (f))))
+
+(defn- run-command!
+  [ctx request emit-frame! state]
+  (let [text       (req-arg! request (params-map request) :text #(and (string? %) (not (str/blank? %))) "non-empty string")
+        request-id (:id request)
+        emit!      (fn [event payload]
+                     (emit-event! emit-frame! state {:event event :data payload :id request-id}))
+        ai-model   (current-ai-model ctx state)
+        oauth-ctx  (:oauth-ctx ctx)
+        trimmed    (str/trim text)
+        cmd-result (commands/dispatch ctx text {:oauth-ctx oauth-ctx
+                                                :ai-model ai-model
+                                                :supports-session-tree? false
+                                                :on-new-session! (:on-new-session! @state)})]
+    (runtime/journal-user-message-in! ctx text)
+    (cond
+      (= trimmed "/resume")
+      (emit! "ui/frontend-action-requested"
+             {:request-id request-id
+              :action-name "resume-selector"
+              :prompt "Select a session to resume"
+              :payload {:query (session/query-in ctx
+                                                 [{:psi.session/list
+                                                   [:psi.session-info/path
+                                                    :psi.session-info/name
+                                                    :psi.session-info/worktree-path
+                                                    :psi.session-info/first-message
+                                                    :psi.session-info/modified]}])}})
+
+      (= trimmed "/tree")
+      (let [host       (session/get-session-host-in ctx)
+            current-id (:session-id (session/get-session-data-in ctx))
+            active-id  (or (:active-session-id host) current-id)
+            sessions0  (vec (or (session/list-host-sessions-in ctx) []))
+            sessions   (if (seq sessions0)
+                         sessions0
+                         [(select-keys (session/get-session-data-in ctx)
+                                       [:session-id :session-name :worktree-path])])]
+        (emit! "ui/frontend-action-requested"
+               {:request-id request-id
+                :action-name "session-tree-selector"
+                :prompt "Select a live session"
+                :payload {:active-session-id active-id
+                          :sessions sessions}}))
+
+      (= trimmed "/model")
+      (emit! "ui/frontend-action-requested"
+             {:request-id request-id
+              :action-name "model-picker"
+              :prompt "Select a model"
+              :payload {:models (->> ai-models/all-models
+                                     vals
+                                     (sort-by (juxt :provider :id))
+                                     (mapv (fn [m]
+                                             {:provider (name (:provider m))
+                                              :id (:id m)
+                                              :reasoning (boolean (:supports-reasoning m))})))}})
+
+      (= trimmed "/thinking")
+      (emit! "ui/frontend-action-requested"
+             {:request-id request-id
+              :action-name "thinking-picker"
+              :prompt "Select a thinking level"
+              :payload {:levels ["off" "minimal" "low" "medium" "high" "xhigh"]}})
+
+      cmd-result
+      (if (= :login-start (:type cmd-result))
+        (handle-login-start-command! ctx state emit-frame! request-id cmd-result emit!)
+        (handle-command-result! request-id cmd-result emit!))
+
+      :else
+      (emit-command-result! emit! {:type "text"
+                                   :message (str "[not a command] " text)}))
+    (emit! "session/updated" (session-updated-payload ctx))
+    (emit! "footer/updated" (footer-updated-payload ctx))
+    (emit! "host/updated" (host-updated-payload ctx))
+    (response-frame (:id request) "command" true {:accepted true
+                                                  :handled true})))
+
+(defn- handle-frontend-action-result!
+  [ctx request emit-frame! state]
+  (let [params      (params-map request)
+        request-id  (req-arg! request params :request-id #(and (string? %) (not (str/blank? %))) "non-empty string")
+        action-name (req-arg! request params :action-name #(and (string? %) (not (str/blank? %))) "non-empty string")
+        status      (req-arg! request params :status #(and (string? %) (not (str/blank? %))) "non-empty string")
+        value       (:value params)
+        emit!       (fn [event payload]
+                      (emit-event! emit-frame! state {:event event :data payload :id (:id request)}))]
+    (case status
+      "cancelled"
+      (do
+        (emit-command-result! emit! {:type "text"
+                                     :message (str "Cancelled " action-name ".")})
+        (response-frame (:id request) "frontend_action_result" true {:accepted true}))
+
+      "failed"
+      (do
+        (emit-command-result! emit! {:type "error"
+                                     :message (or (:error-message params)
+                                                  (str "Frontend action failed: " action-name))})
+        (response-frame (:id request) "frontend_action_result" true {:accepted true}))
+
+      (do
+        (case action-name
+          "resume-selector"
+          (when (string? value)
+            (when (.exists (io/file value))
+              (let [sd   (session/resume-session-in! ctx value)
+                    msgs (:messages (agent/get-data-in (:agent-ctx ctx)))]
+                (emit-event! emit-frame! state {:event "session/resumed"
+                                                :id (:id request)
+                                                :data {:session-id (:session-id sd)
+                                                       :session-file (:session-file sd)
+                                                       :message-count (count msgs)}})
+                (emit-event! emit-frame! state {:event "session/rehydrated"
+                                                :id (:id request)
+                                                :data {:messages msgs
+                                                       :tool-calls {}
+                                                       :tool-order []}})
+                (emit! "host/updated" (host-updated-payload ctx)))))
+
+          "session-tree-selector"
+          (when (string? value)
+            (session/ensure-session-loaded-in! ctx value)
+            (let [sd   (session/get-session-data-in ctx)
+                  msgs (:messages (agent/get-data-in (:agent-ctx ctx)))]
+              (emit-event! emit-frame! state {:event "session/resumed"
+                                              :id (:id request)
+                                              :data {:session-id (:session-id sd)
+                                                     :session-file (:session-file sd)
+                                                     :message-count (count msgs)}})
+              (emit-event! emit-frame! state {:event "session/rehydrated"
+                                              :id (:id request)
+                                              :data {:messages msgs
+                                                     :tool-calls {}
+                                                     :tool-order []}})
+              (emit! "host/updated" (host-updated-payload ctx))))
+
+          "model-picker"
+          (when (map? value)
+            (let [provider (or (:provider value) (get value "provider"))
+                  model-id (or (:id value) (get value "id"))
+                  resolved (resolve-model provider model-id)]
+              (when resolved
+                (let [provider-str (name (:provider resolved))
+                      model {:provider provider-str :id (:id resolved) :reasoning (:supports-reasoning resolved)}]
+                  (session/set-model-in! ctx model)
+                  (emit-command-result! emit! {:type "text"
+                                               :message (str "✓ Model set to " provider-str " " (:id resolved))})))))
+
+          "thinking-picker"
+          (when (string? value)
+            (let [level (keyword value)
+                  sd    (session/set-thinking-level-in! ctx level)]
+              (emit-command-result! emit! {:type "text"
+                                           :message (str "✓ Thinking level set to " (name (:thinking-level sd)))})))
+
+          nil)
+        (emit! "session/updated" (session-updated-payload ctx))
+        (emit! "footer/updated" (footer-updated-payload ctx))
+        (response-frame (:id request)
+                        "frontend_action_result"
+                        true
+                        {:accepted true
+                         :request-id request-id})))))
 
 (defn- run-prompt-async!
   [ctx request emit-frame! state]
@@ -1391,7 +1642,7 @@
                                                   {:messages (or (:messages rehydrate) [])
                                                    :tool-calls (or (:tool-calls rehydrate) {})
                                                    :tool-order (or (:tool-order rehydrate) [])})))
-                                       (handle-command-result! cmd-result emit!)))
+                                       (handle-prompt-command-result! cmd-result emit!)))
                                    (emit! "session/updated" (session-updated-payload ctx))
                                    (emit! "footer/updated" (footer-updated-payload ctx)))
 
@@ -1473,6 +1724,12 @@
                                                                  {:error-code "runtime/query-failed"}
                                                                  e))))]
                                (response-frame (:id request) op true {:result result}))
+
+                             "command"
+                             (run-command! ctx request emit-frame! state)
+
+                             "frontend_action_result"
+                             (handle-frontend-action-result! ctx request emit-frame! state)
 
                              "prompt"
                              (let [_message (req-arg! request params :message #(and (string? %) (not (str/blank? %))) "non-empty string")]

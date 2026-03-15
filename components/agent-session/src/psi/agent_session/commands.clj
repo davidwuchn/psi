@@ -9,6 +9,8 @@
      :new-session   — {:type :new-session :message string :rehydrate {:messages [...] :tool-calls {...} :tool-order [...]}}
      :quit          — {:type :quit}
      :resume        — {:type :resume}
+     :tree-open     — {:type :tree-open}
+     :tree-switch   — {:type :tree-switch :session-id string}
      :login-start   — {:type :login-start :provider map :url string :login-state map
                         :uses-callback-server bool}
      :login-error   — {:type :login-error :message string}
