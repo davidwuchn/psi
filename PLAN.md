@@ -260,6 +260,9 @@ Ordered steps toward PSI COMPLETE.
   - Emacs regression for cumulative prefix-snapshot replace-in-place rendering
 - Manual live debugging confirmed transcript append/separator markers were healthy; the fault was semantic mismatch at the tool boundary, not stale Emacs buffer positioning.
 - Implementation commit: `42d1788`
+- PSL follow-up landed (2026-03-15, commit `708d729`): isolated introspection contexts with an attached session now register the full `session-resolver-surface`, not only agent-session-local resolvers.
+- Result: `query-agent-session-in` once again exposes session-root memory attrs such as `:psi.memory/status`, and introspection graph summaries include history/worktree resolvers just like live session-root queries.
+- Verification snapshot after the fix: `bb clojure:test:unit` → `851 tests, 5178 assertions, 0 failures`.
 
 ### Step 10 — Remember memory capture ✓ complete
 - Spec: `spec/remember-capture.allium`
