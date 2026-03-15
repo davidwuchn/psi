@@ -114,7 +114,8 @@ Clears stream-time verbatim properties, then applies markdown processing."
 When STREAM-VERBATIM is non-nil, keep the assistant content visually verbatim
 while streaming; markdown processing is deferred until finalization."
   (when psi-emacs--state
-    (let ((follow-anchor (psi-emacs--draft-anchor-at-end-p))
+    (let ((buffer-undo-list (if stream-verbatim t buffer-undo-list))
+          (follow-anchor (psi-emacs--draft-anchor-at-end-p))
           (range (psi-emacs-state-assistant-range psi-emacs--state)))
       (if (psi-emacs--assistant-range-live-p range)
           (save-excursion
@@ -153,7 +154,8 @@ while streaming; markdown processing is deferred until finalization."
 (defun psi-emacs--set-thinking-line (text)
   "Create or update the single assistant thinking line with TEXT."
   (when psi-emacs--state
-    (let ((follow-anchor (psi-emacs--draft-anchor-at-end-p))
+    (let ((buffer-undo-list t)
+          (follow-anchor (psi-emacs--draft-anchor-at-end-p))
           (range (psi-emacs-state-thinking-range psi-emacs--state)))
       (if (psi-emacs--assistant-range-live-p range)
           (save-excursion
