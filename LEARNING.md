@@ -3,6 +3,20 @@
 
 ---
 
+## 2026-03-15 - Distilling from code without checking the existing spec first creates avoidable parallel spec drift (commit `fdf7ed0`)
+
+### λ Before distilling a new spec, inspect `spec/` for the existing contract and refine that artifact in place
+
+The graph work initially drifted because the first instinct was to write a fresh Allium draft in `doc/` from the implementation and tests. The repository already had `spec/graph-emergence.allium`, so the correct move was to refine the canonical spec rather than create a parallel one. In a spec-driven repo, the first distillation question is not "what should this spec say?" but "where is the source-of-truth spec already living?"
+
+### λ Spec drift is often recognizable as a model-shape mismatch rather than a missing rule
+
+The useful review of `spec/graph-emergence.allium` was not about small field omissions first; it was about noticing that the spec still described a richer dependency-style edge model while implementation/tests/docs had converged on operation-to-capability membership edges with annotated attributes. That kind of mismatch is a sign to realign the model vocabulary, not just append more rules.
+
+### λ Run the real spec checker early because style-consistent Allium can still be syntactically wrong
+
+Even after aligning `spec/graph-emergence.allium` to neighboring specs and the live graph contract, the first `allium check` still failed on unsupported list literals in `config`. Repository-local style familiarity was not enough; the parser had the final word. Running the checker early converted speculative syntax into a concrete convergence loop and prevented the repository from carrying an unvalidated spec rewrite.
+
 ## 2026-03-15 - GitHub CI should land as the canonical verification surface before the repo is green (commit `6cba430`)
 
 ### λ Add the CI entrypoints first, then use their failures to define the convergence queue
