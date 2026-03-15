@@ -3,6 +3,20 @@
 
 ---
 
+## 2026-03-15 - GitHub CI should land as the canonical verification surface before the repo is green (commit `6cba430`)
+
+### λ Add the CI entrypoints first, then use their failures to define the convergence queue
+
+The useful first move was not to make formatting, lint, and tests green locally before introducing CI. It was to create the canonical entrypoints first — `.github/workflows/ci.yml`, `bb fmt:check`, `bb lint`, and `bb test` — and then observe the actual failure surface through those commands. That turns a vague "we should have CI" goal into a concrete convergence queue tied to the exact future GitHub contract.
+
+### λ The first CI run is often a baseline-discovery step, not a proof of readiness
+
+Immediately after wiring CI, the repository exposed three different classes of not-ready state: broken task wiring for cljfmt, a large repo-wide clj-kondo backlog, and test fallout from the earlier Datalevin removal. That is still valuable progress. The first CI-shaped verification pass established what "green" now requires and prevented future ψ from assuming the repository had already converged just because the workflow file existed.
+
+### λ Separate jobs help classify maturity gaps instead of collapsing them into one generic red build
+
+Creating distinct `format`, `lint`, and `test` jobs was useful even before they were green because each job surfaced a different kind of work: tool contract repair, accumulated static-analysis debt, and behavioural/test-baseline fallout. For newly introduced CI on an already-evolving repo, separate jobs are not only better operator UX; they are a better learning instrument for sequencing the convergence work.
+
 ## 2026-03-15 - When a debug/fix loop starts widening the failure surface, preserve only the strongly-evidenced fixes and re-baseline (commit `57e8ab0`)
 
 ### λ A good fix baseline is often smaller than the set of plausible fixes discovered during debugging
