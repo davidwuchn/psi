@@ -3,6 +3,20 @@
 
 ---
 
+## 2026-03-15 - When a debug/fix loop starts widening the failure surface, preserve only the strongly-evidenced fixes and re-baseline (commit `57e8ab0`)
+
+### λ A good fix baseline is often smaller than the set of plausible fixes discovered during debugging
+
+In this PSL/debug loop, many later edits were locally plausible but did not converge under the full suite. The reliable recovery move was to preserve only the changes that had strong direct evidence behind them: duplicate isolated registration removal, merge success verification by target HEAD movement, and Datalevin provider serialization. Everything else had to be treated as suspect until reproven from the cleaned baseline.
+
+### λ Once full-suite failures start widening, the right operation is subtraction, not more patching
+
+The turning point was not a single red test but the pattern of regressions: fixing one runtime/test path would cause the global failure count to jump and sometimes reintroduce native Datalevin crashes. That is a signal to stop composing more speculative patches and instead subtract changes until the repository returns to a trustworthy checkpoint. Convergence sometimes requires narrowing the delta before continuing to narrow the bug.
+
+### λ A clean checkpoint should record both the kept fixes and the exact failure count to resume from
+
+The useful baseline was not just a commit hash — it was a commit plus an observed suite state. Recording that commit `57e8ab0` is the kept-fixes checkpoint and that the cleaned suite state is `846 tests / 4304 assertions / 21 failures` gives future ψ a concrete resume point. Without that explicit state memory, future debugging risks restarting from a noisy intermediate state and repeating the same churn.
+
 ## 2026-03-14 - Prompt memory for debugging improves when the change loop requires review, simplification, and proof (commit `c75eb04`)
 
 ### λ Root-cause fixes need an explicit proof step in prompt memory, not just an implementation step
