@@ -17,6 +17,20 @@ The turning point was not a single red test but the pattern of regressions: fixi
 
 The useful baseline was not just a commit hash — it was a commit plus an observed suite state. Recording that commit `57e8ab0` is the kept-fixes checkpoint and that the cleaned suite state is `846 tests / 4304 assertions / 21 failures` gives future ψ a concrete resume point. Without that explicit state memory, future debugging risks restarting from a noisy intermediate state and repeating the same churn.
 
+## 2026-03-15 - Re-establishing a green baseline after subsystem removal requires preserving semantic invariants while moving bootstrap visibility to the edges (commit `9a38b51`)
+
+### λ Empty core registries and visible bootstrap snapshots are different concerns and should not be solved in the same layer
+
+`create-context` is a semantic core boundary: tests and runtime logic relied on it starting with an empty host registry until the first real session mutation occurred. RPC handshake/bootstrap visibility had a different need: frontends needed a usable single-session snapshot immediately. Seeding the core registry fixed RPC, but it violated host-registry invariants and created extra phantom peers in tests. The converged shape was to keep the host registry empty in core and synthesize the one-session bootstrap view at the RPC/command edge.
+
+### λ After architecture simplification, some tests should move up to the stable hook boundary instead of stubbing lower private helpers
+
+The git-head-sync runtime tests originally stubbed a lower internal helper and passed very thin fake contexts. After the runtime shape evolved, those tests stopped exercising the real stable boundary and failed for structural reasons unrelated to behavior. Reframing them around `safe-maybe-sync-on-git-head-change!` and giving them minimal valid ctx shape restored useful coverage. When internals shift, the right repair is often to test at the surviving semantic seam, not to keep chasing renamed internals.
+
+### λ Green-baseline recovery often includes deleting incidental test assumptions, not only fixing code
+
+Several final failures were caused by assumptions that no longer matched the simplified system: expecting the pre-new seed session to remain in the host registry, assuming `/tree` switching required multiple retained host peers, and reusing deterministic temp worktree paths that collided across runs. None of those were product regressions. The real recovery move was to remove or narrow the incidental assumptions so tests locked the intended behavior again. Convergence to green is partly code repair and partly test-memory repair.
+
 ## 2026-03-15 - PSL follow-up should remove obsolete learning premises after the triggering subsystem is deleted (commit `1c916b9`)
 
 ### λ Repository memory must drop implementation-specific lessons once the implementation is gone
