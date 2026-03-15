@@ -3,6 +3,20 @@
 
 ---
 
+## 2026-03-15 - Isolated introspection should register the same session resolver surface that live session-root queries use (commit `708d729`)
+
+### λ Session-backed introspection graphs must mirror live session-root queryability, not a narrower local subset
+
+The failing introspection tests were not about memory behavior itself; they were about a graph-shape mismatch. `query-agent-session-in` seeds a real session context, so isolated introspection should expose the same cross-domain session-root attrs that live session queries do. Registering only agent-session-local resolvers created a narrower graph where `:psi.memory/status` and history/worktree attrs disappeared even though the live session surface still supported them.
+
+### λ A public canonical resolver-surface function is only valuable if every isolated graph builder actually uses it
+
+`session-resolver-surface` already existed in `psi.agent-session.resolvers` as the shared definition for agent-session + history + memory + recursion queryability. The bug survived because `introspection/register-resolvers-in!` bypassed that canonical surface and rebuilt a smaller ad-hoc registration set. When a resolver-surface helper exists, treat any parallel hand-built registration path as suspect until it is collapsed onto the shared function.
+
+### λ Graph-summary failures and missing query attrs can share one root cause: isolated registration drift
+
+Two different symptoms appeared together: graph summary no longer listed expected history/worktree resolvers, and `query-agent-session-in` returned `nil` for `:psi.memory/status`. Those looked like separate regressions, but both came from the same isolated registration drift. When graph introspection and root attr resolution fail together, check whether the isolated graph contains the full intended resolver surface before debugging the individual domain resolvers.
+
 ## 2026-03-15 - Distilling from code without checking the existing spec first creates avoidable parallel spec drift (commit `fdf7ed0`)
 
 ### λ Before distilling a new spec, inspect `spec/` for the existing contract and refine that artifact in place
