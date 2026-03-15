@@ -5078,3 +5078,58 @@ explicit command action metadata (`/subrm <id>`), mirroring agent-chain behavior
 This avoids introducing bespoke row-button semantics, keeps render parity with current
 widget infrastructure, and preserves one operator mental model for run cleanup across
 extensions.
+
+## 2026-03-15 - pre-commit hooks and CI job structure
+
+### λ clj-kondo `--cache false` is required for pre-commit parallelism
+
+pre-commit runs hooks in parallel across staged files by default. clj-kondo's JVM
+process uses a file lock on `.clj-kondo/.cache/`. When multiple processes run
+concurrently against the same cache dir, one throws:
+
+```
+java.lang.Exception: Clj-kondo cache is locked by other thread or process.
+```
+
+Fix: pass `--cache false`. Individual-file linting is fast enough (~30–100ms per file)
+that the cache provides no meaningful speedup in a pre-commit context anyway.
+
+### λ Root `.clj-kondo/config.edn` must carry macro aliases for per-file linting
+
+When linting individual files (as pre-commit does), clj-kondo only reads the nearest
+`.clj-kondo/config.edn`. Macro-expansion hints that live in
+`components/*/clj-kondo/imports/*/config.edn` (gitignored, populated by a full
+classpath scan) are invisible to per-file linting.
+
+Result without root config: hundreds of false-positive "Unresolved symbol" errors from
+Pathom3 `defresolver`/`defmutation`, Guardrails `>defn`, Malli, Promesa, Potemkin.
+
+Fix: promote all `:lint-as` entries into the root `.clj-kondo/config.edn`. This is
+also the right single source of truth — the imports dirs are ephemeral and gitignored.
+
+### λ macOS ships a broken Python 2 `pre-commit` at `/usr/local/bin/pre-commit`
+
+The Homebrew Python 2 stub installed years ago still exists on macOS and shadows
+pipx-installed pre-commit unless `~/.local/bin` appears first on `PATH`. Install via
+pipx and document the caveat; pipx ensures `~/.local/bin` priority.
+
+### λ CI job graph: gate on check, then fan out
+
+Pattern for CI workflows with a cheap gate and expensive parallel jobs:
+
+```
+check (fmt + lint)          ← fast, cheap, blocks everything
+├── clojure-test            ← expensive, independent
+└── emacs-test              ← expensive, independent
+```
+
+`needs: check` on both downstream jobs means formatting/lint failures are caught
+immediately without wasting runner minutes on test jobs. The two test jobs run in
+parallel once the gate passes, minimising wall time.
+
+### λ Cache key should cover all dep manifests
+
+Cache `~/.m2/repository`, `~/.gitlibs`, and `~/.clojure` together. Key on
+`deps.edn` + `bb.edn` — both can change dep versions. Use a prefix restore-key
+(`clojure-${{ runner.os }}-`) so partial cache hits still warm the majority of deps
+even after a manifest change.
