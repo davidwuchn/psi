@@ -51,11 +51,13 @@
 
 (deftest footer-updated-payload-uses-default-footer-projection-values-test
   (testing "footer payload mirrors default footer path/stats/status composition"
-    (let [ctx     (session/create-context {:cwd "/Users/duncan/projects/hugoduncan/psi/psi-main"})
+    (let [home    (System/getProperty "user.home")
+          cwd     (str home "/projects/hugoduncan/psi/psi-main")
+          ctx     (session/create-context {:cwd cwd})
           payload (with-redefs [session/query-in
                                 (fn [_ctx q]
                                   (is (= @#'rpc/footer-query q))
-                                  {:psi.agent-session/cwd "/Users/duncan/projects/hugoduncan/psi/psi-main"
+                                  {:psi.agent-session/cwd cwd
                                    :psi.agent-session/git-branch "master"
                                    :psi.agent-session/session-name "xhig"
                                    :psi.agent-session/usage-input 172000
