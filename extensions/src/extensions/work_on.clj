@@ -154,8 +154,8 @@
             (cond
               (:success add-result)
               (let [sd (create-worktree-session! description*
-                                                worktree-path
-                                                (:psi.agent-session/session-id session))]
+                                                 worktree-path
+                                                 (:psi.agent-session/session-id session))]
                 {:ok? true
                  :worktree-path worktree-path
                  :branch-name branch-name
@@ -175,8 +175,8 @@
                        :session-id (:psi.session-info/id existing-session)
                        :session-name (:psi.session-info/name existing-session)})
                     (let [sd (create-worktree-session! description*
-                                                      worktree-path
-                                                      (:psi.agent-session/session-id session))]
+                                                       worktree-path
+                                                       (:psi.agent-session/session-id session))]
                       {:ok? true
                        :reused? true
                        :worktree-path worktree-path
@@ -356,14 +356,14 @@
          :switch-session-fn (:switch-session api)
          :path (:path api))
   ((:register-command api) "work-on"
-   {:description "Create a sibling git worktree + branch and continue there"
-    :handler handle-work-on-command})
+                           {:description "Create a sibling git worktree + branch and continue there"
+                            :handler handle-work-on-command})
   ((:register-command api) "work-merge"
-   {:description "Merge current worktree branch into main and clean up"
-    :handler handle-work-merge-command})
+                           {:description "Merge current worktree branch into main and clean up"
+                            :handler handle-work-merge-command})
   ((:register-command api) "work-rebase"
-   {:description "Rebase current worktree branch onto main"
-    :handler handle-work-rebase-command})
+                           {:description "Rebase current worktree branch onto main"
+                            :handler handle-work-rebase-command})
   ((:register-command api) "work-status"
-   {:description "Show active worktree overview"
-    :handler handle-work-status-command}))
+                           {:description "Show active worktree overview"
+                            :handler handle-work-status-command}))
