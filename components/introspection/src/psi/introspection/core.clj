@@ -226,10 +226,11 @@
 
     (if session-ctx
       (do
-        ;; Agent-session registration already includes history, memory, and
-        ;; recursion resolver/mutation surfaces. Avoid duplicate registrations.
-        ;; Pass rebuild?=false — we rebuild once below after all operations are in.
-        (doseq [r as-resolvers/all-resolvers]
+        ;; Agent-session queryability uses the canonical session resolver surface,
+        ;; which includes agent-session + history + memory + recursion. Mirror
+        ;; that full surface here so isolated introspection graphs match live
+        ;; session-root queries and graph summaries.
+        (doseq [r (as-resolvers/session-resolver-surface)]
           (register-resolver-if-missing! r))
         (doseq [m agent-session/all-mutations]
           (register-mutation-if-missing! m)))
