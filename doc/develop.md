@@ -91,6 +91,33 @@ cljfmt fix bb.edn deps.edn .lsp/config.edn .psi/startup-prompts.edn \
 bb lint
 ```
 
+## CI
+
+The GitHub Actions workflow (`.github/workflows/ci.yml`) runs on:
+- manual trigger (`workflow_dispatch`)
+- push to `master`
+- pull request targeting `master`
+
+### Jobs
+
+```
+check (fmt + lint)
+├── clojure-test
+└── emacs-test
+```
+
+`check` runs first. `clojure-test` and `emacs-test` run in parallel only
+if `check` passes.
+
+| Job | Tasks |
+|---|---|
+| `check` | `bb fmt:check`, `bb lint` |
+| `clojure-test` | `bb clojure:test` (unit + extensions) |
+| `emacs-test` | `bb emacs:check` (byte-compile + ERT) |
+
+Maven and Clojure deps (`~/.m2`, `~/.gitlibs`, `~/.clojure`) are cached
+and keyed on `deps.edn` + `bb.edn` to speed up subsequent runs.
+
 ## Tests
 
 ```bash
