@@ -40,6 +40,23 @@ jobs:
           cli: latest
           bb: latest
 
+      - name: Install cljfmt
+        run: |
+          VERSION=$(curl -fsSL https://api.github.com/repos/weavejester/cljfmt/releases/latest \
+            | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": "\(.*\)".*/\1/')
+          curl -fsSL "https://github.com/weavejester/cljfmt/releases/download/${VERSION}/cljfmt-${VERSION}-linux-amd64-static.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin cljfmt
+          cljfmt --version
+
+      - name: Install clj-kondo
+        run: |
+          VERSION=$(curl -fsSL https://api.github.com/repos/clj-kondo/clj-kondo/releases/latest \
+            | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": "v\(.*\)".*/\1/')
+          curl -fsSL "https://github.com/clj-kondo/clj-kondo/releases/download/v${VERSION}/clj-kondo-${VERSION}-linux-amd64.zip" \
+            -o /tmp/clj-kondo.zip
+          sudo unzip -q /tmp/clj-kondo.zip -d /usr/local/bin
+          clj-kondo --version
+
       - name: Check formatting
         run: bb fmt:check
 
