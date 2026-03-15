@@ -232,7 +232,7 @@ Ordered steps toward PSI COMPLETE.
 - Runtime target is JDK 25 with latest Clojure CLI and latest Babashka in Actions.
 - ✓ `bb lint` green (2026-03-15, commit `8039763`): 0 errors, 0 warnings across all source/test/extension files. `.clj-kondo/config.edn` suppresses third-party import noise.
 - ✓ `bb fmt:check` green (2026-03-15, commits `b07bde5` + `8b659c8`): pre-commit `cljfmt-fix` hook runs `cljfmt fix` on staged Clojure files, restages changes, and all existing files were reformatted in the initial pass. `doc/develop.md` added for developer onboarding.
-- ✓ pre-commit `clj-kondo-lint` hook added (2026-03-15, commit `accb233`): runs `clj-kondo --cache false --lint` on staged Clojure files; exits non-zero on any warning or error. Root `.clj-kondo/config.edn` now carries all `:lint-as` macro aliases (Pathom3, Guardrails, Malli, Promesa, Potemkin) so individual-file linting is correct without a full classpath scan. `doc/develop.md` updated with hook docs.
+- ✓ pre-commit `clj-kondo-lint` hook added (2026-03-15, commits `accb233` + `59282ab`): runs `clj-kondo --cache false --lint` on staged Clojure files; exits non-zero on any warning or error. Root `.clj-kondo/config.edn` now carries all `:lint-as` macro aliases (Pathom3, Guardrails, Malli, Promesa, Potemkin) so individual-file linting is correct without a full classpath scan. `doc/develop.md` updated with hook docs (prerequisites, cache-false rationale, root config note, bbin install command, manual run examples).
 - Remaining convergence order:
   1. re-baseline `bb test` (stale `psi.memory.datalevin_test` + missing `:test` path)
   2. only then expect GitHub Actions to go green on `master` and PRs
