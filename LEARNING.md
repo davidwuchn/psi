@@ -3,6 +3,20 @@
 
 ---
 
+## 2026-03-15 - Developer docs for pre-commit hooks belong in `doc/develop.md` alongside the hook itself (commit `59282ab`)
+
+### λ Document hook rationale in `doc/develop.md`, not only in LEARNING.md
+
+When a pre-commit hook has non-obvious behaviour (e.g. `--cache false` to
+avoid lock contention, root `:lint-as` to enable individual-file linting),
+that rationale belongs in `doc/develop.md` so contributors encounter it at
+setup time. LEARNING.md is internal ψ memory; `doc/develop.md` is the
+developer-facing surface. Both should be updated together when a hook lands.
+
+Pattern: hook commit → update `doc/develop.md` in the same PR/branch.
+
+---
+
 ## 2026-03-15 - clj-kondo pre-commit hook requires `--cache false` and root `:lint-as` config (commit `accb233`)
 
 ### λ `--cache false` prevents JVM file-lock contention when pre-commit parallelises per-file
