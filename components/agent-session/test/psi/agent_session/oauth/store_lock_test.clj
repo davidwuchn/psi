@@ -37,7 +37,7 @@
     (let [path (temp-path)
           s    (store/create-store {:path path})]
       (store/set-credential! s :anthropic {:type :oauth :refresh "old" :access "old"
-                                            :expires 1000})
+                                           :expires 1000})
       (let [result (store/with-locked-refresh! s :anthropic
                      (fn [current]
                        (is (= "old" (:access current)))
@@ -52,7 +52,7 @@
     (let [path (temp-path)
           s    (store/create-store {:path path})]
       (store/set-credential! s :anthropic {:type :oauth :refresh "orig" :access "orig"
-                                            :expires 1000})
+                                           :expires 1000})
       (store/with-locked-refresh! s :anthropic (fn [_] nil))
       (is (= "orig" (:access (store/get-credential s :anthropic))))))
 
@@ -61,7 +61,7 @@
           s       (store/create-store {:path path})
           counter (atom 0)]
       (store/set-credential! s :anthropic {:type :oauth :refresh "r" :access "a"
-                                            :expires 1000})
+                                           :expires 1000})
       ;; Launch 5 concurrent refreshes — all should serialize
       (let [futures (mapv (fn [_]
                             (future

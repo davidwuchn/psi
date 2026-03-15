@@ -81,7 +81,7 @@
                                            (swap! called? inc)
                                            {:messages [{:role :assistant :text "startup"}]
                                             :tool-calls {"call-1" {:name "read"}}
-                                            :tool-order ["call-1"]}))) ]
+                                            :tool-order ["call-1"]})))]
     (is (= :new-session (:type result)))
     (is (= 1 @called?))
     (is (= [{:role :assistant :text "startup"}]

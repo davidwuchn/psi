@@ -32,32 +32,32 @@
           captured   (atom nil)
           sse        (str
                       "data: " (json/generate-string
-                                 {:type "response.output_item.added"
-                                  :item {:type "message"
-                                         :id "msg_1"
-                                         :role "assistant"
-                                         :status "in_progress"
-                                         :content []}}) "\n\n"
+                                {:type "response.output_item.added"
+                                 :item {:type "message"
+                                        :id "msg_1"
+                                        :role "assistant"
+                                        :status "in_progress"
+                                        :content []}}) "\n\n"
                       "data: " (json/generate-string
-                                 {:type "response.content_part.added"
-                                  :part {:type "output_text" :text ""}}) "\n\n"
+                                {:type "response.content_part.added"
+                                 :part {:type "output_text" :text ""}}) "\n\n"
                       "data: " (json/generate-string
-                                 {:type "response.output_text.delta"
-                                  :delta "Hello"}) "\n\n"
+                                {:type "response.output_text.delta"
+                                 :delta "Hello"}) "\n\n"
                       "data: " (json/generate-string
-                                 {:type "response.output_item.done"
-                                  :item {:type "message"
-                                         :id "msg_1"
-                                         :role "assistant"
-                                         :status "completed"
-                                         :content [{:type "output_text" :text "Hello"}]}}) "\n\n"
+                                {:type "response.output_item.done"
+                                 :item {:type "message"
+                                        :id "msg_1"
+                                        :role "assistant"
+                                        :status "completed"
+                                        :content [{:type "output_text" :text "Hello"}]}}) "\n\n"
                       "data: " (json/generate-string
-                                 {:type "response.completed"
-                                  :response {:status "completed"
-                                             :usage {:input_tokens 5
-                                                     :output_tokens 3
-                                                     :total_tokens 8
-                                                     :input_tokens_details {:cached_tokens 0}}}}) "\n\n")]
+                                {:type "response.completed"
+                                 :response {:status "completed"
+                                            :usage {:input_tokens 5
+                                                    :output_tokens 3
+                                                    :total_tokens 8
+                                                    :input_tokens_details {:cached_tokens 0}}}}) "\n\n")]
       (with-redefs [http/post (fn [url req]
                                 (reset! captured {:url url :req req})
                                 {:body (stream-body sse)})]
@@ -93,15 +93,15 @@
           reply-captures   (atom [])
           sse              (str
                             "data: " (json/generate-string
-                                       {:type "response.output_item.added"
-                                        :item {:type "message"
-                                               :id "msg_1"
-                                               :role "assistant"
-                                               :status "in_progress"
-                                               :content []}}) "\n\n"
+                                      {:type "response.output_item.added"
+                                       :item {:type "message"
+                                              :id "msg_1"
+                                              :role "assistant"
+                                              :status "in_progress"
+                                              :content []}}) "\n\n"
                             "data: " (json/generate-string
-                                       {:type "response.completed"
-                                        :response {:status "completed"}}) "\n\n")]
+                                      {:type "response.completed"
+                                       :response {:status "completed"}}) "\n\n")]
       (with-redefs [http/post (fn [_url _req]
                                 {:body (stream-body sse)})]
         ((:stream openai/provider)
@@ -145,14 +145,14 @@
           events   (atom [])
           sse      (str
                     "data: " (json/generate-string
-                               {:type "response.output_item.added"
-                                :item {:type "reasoning" :id "rs_1"}}) "\n\n"
+                              {:type "response.output_item.added"
+                               :item {:type "reasoning" :id "rs_1"}}) "\n\n"
                     "data: " (json/generate-string
-                               {:type "response.reasoning_text.delta"
-                                :delta "Plan step"}) "\n\n"
+                              {:type "response.reasoning_text.delta"
+                               :delta "Plan step"}) "\n\n"
                     "data: " (json/generate-string
-                               {:type "response.completed"
-                                :response {:status "completed"}}) "\n\n")]
+                              {:type "response.completed"
+                               :response {:status "completed"}}) "\n\n")]
       (with-redefs [http/post (fn [_url _req]
                                 {:body (stream-body sse)})]
         ((:stream openai/provider)
@@ -173,14 +173,14 @@
           events   (atom [])
           sse      (str
                     "data: " (json/generate-string
-                               {:type "response.output_item.added"
-                                :item {:type "reasoning" :id "rs_1"}}) "\n\n"
+                              {:type "response.output_item.added"
+                               :item {:type "reasoning" :id "rs_1"}}) "\n\n"
                     "data: " (json/generate-string
-                               {:type "response.reasoning_summary.delta"
-                                :delta {:text "Plan chunk"}}) "\n\n"
+                              {:type "response.reasoning_summary.delta"
+                               :delta {:text "Plan chunk"}}) "\n\n"
                     "data: " (json/generate-string
-                               {:type "response.completed"
-                                :response {:status "completed"}}) "\n\n")]
+                              {:type "response.completed"
+                               :response {:status "completed"}}) "\n\n")]
       (with-redefs [http/post (fn [_url _req]
                                 {:body (stream-body sse)})]
         ((:stream openai/provider)
@@ -234,24 +234,24 @@
           events (atom [])
           sse    (str
                   "data: " (json/generate-string
-                             {:type "response.output_item.added"
-                              :output_index 0
-                              :item {:type "function_call"
-                                     :id "fc_1"
-                                     :call_id "call_1"
-                                     :name "bash"
-                                     :arguments ""}}) "\n\n"
+                            {:type "response.output_item.added"
+                             :output_index 0
+                             :item {:type "function_call"
+                                    :id "fc_1"
+                                    :call_id "call_1"
+                                    :name "bash"
+                                    :arguments ""}}) "\n\n"
                   "data: " (json/generate-string
-                             {:type "response.output_item.done"
-                              :output_index 0
-                              :item {:type "function_call"
-                                     :id "fc_1"
-                                     :call_id "call_1"
-                                     :name "bash"
-                                     :arguments "{\"command\":\"pwd\"}"}}) "\n\n"
+                            {:type "response.output_item.done"
+                             :output_index 0
+                             :item {:type "function_call"
+                                    :id "fc_1"
+                                    :call_id "call_1"
+                                    :name "bash"
+                                    :arguments "{\"command\":\"pwd\"}"}}) "\n\n"
                   "data: " (json/generate-string
-                             {:type "response.completed"
-                              :response {:status "completed"}}) "\n\n")]
+                            {:type "response.completed"
+                             :response {:status "completed"}}) "\n\n")]
       (with-redefs [http/post (fn [_url _req]
                                 {:body (stream-body sse)})]
         ((:stream openai/provider)
@@ -276,18 +276,18 @@
           events (atom [])
           sse    (str
                   "data: " (json/generate-string
-                             {:choices [{:delta {:role "assistant"}}]}) "\n\n"
+                            {:choices [{:delta {:role "assistant"}}]}) "\n\n"
                   "data: " (json/generate-string
-                             {:choices [{:delta {:tool_calls [{:index 0
-                                                               :function {:name "bash"
-                                                                          :arguments "{\"command\":\"pwd\"}"}}]}}]}) "\n\n"
+                            {:choices [{:delta {:tool_calls [{:index 0
+                                                              :function {:name "bash"
+                                                                         :arguments "{\"command\":\"pwd\"}"}}]}}]}) "\n\n"
                   "data: " (json/generate-string
-                             {:choices [{:delta {:tool_calls [{:index 0
-                                                               :id "call_late"
-                                                               :function {:name "bash"}}]}}]}) "\n\n"
+                            {:choices [{:delta {:tool_calls [{:index 0
+                                                              :id "call_late"
+                                                              :function {:name "bash"}}]}}]}) "\n\n"
                   "data: " (json/generate-string
-                             {:choices [{:finish_reason "tool_calls"}]
-                              :usage {:prompt_tokens 1 :completion_tokens 1 :total_tokens 2}}) "\n\n")]
+                            {:choices [{:finish_reason "tool_calls"}]
+                             :usage {:prompt_tokens 1 :completion_tokens 1 :total_tokens 2}}) "\n\n")]
       (with-redefs [http/post (fn [_url _req]
                                 {:body (stream-body sse)})]
         ((:stream openai/provider)
@@ -319,18 +319,18 @@
           events (atom [])
           sse    (str
                   "data: " (json/generate-string
-                             {:choices [{:delta {:role "assistant"}}]}) "\n\n"
+                            {:choices [{:delta {:role "assistant"}}]}) "\n\n"
                   "data: " (json/generate-string
-                             {:choices [{:delta {:tool_calls [{:index 0
-                                                               :id "call_1"
-                                                               :function {:name "bash"
-                                                                          :arguments "{\"command\""}}]}}]}) "\n\n"
+                            {:choices [{:delta {:tool_calls [{:index 0
+                                                              :id "call_1"
+                                                              :function {:name "bash"
+                                                                         :arguments "{\"command\""}}]}}]}) "\n\n"
                   "data: " (json/generate-string
-                             {:choices [{:delta {:tool_calls [{:index 0
-                                                               :function {:arguments "{\"command\":\"pwd\"}"}}]}}]}) "\n\n"
+                            {:choices [{:delta {:tool_calls [{:index 0
+                                                              :function {:arguments "{\"command\":\"pwd\"}"}}]}}]}) "\n\n"
                   "data: " (json/generate-string
-                             {:choices [{:finish_reason "tool_calls"}]
-                              :usage {:prompt_tokens 1 :completion_tokens 1 :total_tokens 2}}) "\n\n")]
+                            {:choices [{:finish_reason "tool_calls"}]
+                             :usage {:prompt_tokens 1 :completion_tokens 1 :total_tokens 2}}) "\n\n")]
       (with-redefs [http/post (fn [_url _req]
                                 {:body (stream-body sse)})]
         ((:stream openai/provider)
@@ -353,18 +353,18 @@
           events (atom [])
           sse    (str
                   "data: " (json/generate-string
-                             {:choices [{:delta {:role "assistant"}}]}) "\n\n"
+                            {:choices [{:delta {:role "assistant"}}]}) "\n\n"
                   "data: " (json/generate-string
-                             {:choices [{:delta {:tool_calls [{:index 0 :id "call_1"}]}}]}) "\n\n"
+                            {:choices [{:delta {:tool_calls [{:index 0 :id "call_1"}]}}]}) "\n\n"
                   "data: " (json/generate-string
-                             {:choices [{:delta {}
-                                         :message {:tool_calls [{:index 0
-                                                                 :id "call_1"
-                                                                 :type "function"
-                                                                 :function {:name "read"
-                                                                            :arguments "{\"path\":\"README.md\"}"}}]}
-                                         :finish_reason "tool_calls"}]
-                              :usage {:prompt_tokens 1 :completion_tokens 1 :total_tokens 2}}) "\n\n")]
+                            {:choices [{:delta {}
+                                        :message {:tool_calls [{:index 0
+                                                                :id "call_1"
+                                                                :type "function"
+                                                                :function {:name "read"
+                                                                           :arguments "{\"path\":\"README.md\"}"}}]}
+                                        :finish_reason "tool_calls"}]
+                             :usage {:prompt_tokens 1 :completion_tokens 1 :total_tokens 2}}) "\n\n")]
       (with-redefs [http/post (fn [_url _req]
                                 {:body (stream-body sse)})]
         ((:stream openai/provider)
@@ -390,14 +390,14 @@
           events (atom [])
           sse    (str
                   "data: " (json/generate-string
-                             {:choices [{:delta {:role "assistant"}}]}) "\n\n"
+                            {:choices [{:delta {:role "assistant"}}]}) "\n\n"
                   "data: " (json/generate-string
-                             {:choices [{:delta {:function_call {:name "read"}}}]}) "\n\n"
+                            {:choices [{:delta {:function_call {:name "read"}}}]}) "\n\n"
                   "data: " (json/generate-string
-                             {:choices [{:delta {:function_call {:arguments "{\"path\":\"README.md\"}"}}}]}) "\n\n"
+                            {:choices [{:delta {:function_call {:arguments "{\"path\":\"README.md\"}"}}}]}) "\n\n"
                   "data: " (json/generate-string
-                             {:choices [{:finish_reason "function_call"}]
-                              :usage {:prompt_tokens 1 :completion_tokens 1 :total_tokens 2}}) "\n\n")]
+                            {:choices [{:finish_reason "function_call"}]
+                             :usage {:prompt_tokens 1 :completion_tokens 1 :total_tokens 2}}) "\n\n")]
       (with-redefs [http/post (fn [_url _req]
                                 {:body (stream-body sse)})]
         ((:stream openai/provider)
@@ -468,22 +468,22 @@
           events (atom [])
           sse    (str
                   "data: " (json/generate-string
-                             {:choices [{:delta {:role "assistant"}}]}) "\n\n"
+                            {:choices [{:delta {:role "assistant"}}]}) "\n\n"
                   "data: " (json/generate-string
-                             {:choices [{:delta {:reasoning_content "A"}}]}) "\n\n"
+                            {:choices [{:delta {:reasoning_content "A"}}]}) "\n\n"
                   "data: " (json/generate-string
-                             {:choices [{:delta {:reasoning [{:type "reasoning_text" :text "B"}]}}]}) "\n\n"
+                            {:choices [{:delta {:reasoning [{:type "reasoning_text" :text "B"}]}}]}) "\n\n"
                   "data: " (json/generate-string
-                             {:choices [{:delta {:content [{:type "reasoning" :text "C"}]}}]}) "\n\n"
+                            {:choices [{:delta {:content [{:type "reasoning" :text "C"}]}}]}) "\n\n"
                   "data: " (json/generate-string
-                             {:choices [{:delta {:reasoning {:content [{:type "reasoning_text"
+                            {:choices [{:delta {:reasoning {:content [{:type "reasoning_text"
                                                                        :text "D"}]}}}]}) "\n\n"
                   "data: " (json/generate-string
-                             {:choices [{:delta {:reasoning {:summary [{:type "summary_text"
+                            {:choices [{:delta {:reasoning {:summary [{:type "summary_text"
                                                                        :text "E"}]}}}]}) "\n\n"
                   "data: " (json/generate-string
-                             {:choices [{:finish_reason "stop"}]
-                              :usage {:prompt_tokens 1 :completion_tokens 1 :total_tokens 2}}) "\n\n")]
+                            {:choices [{:finish_reason "stop"}]
+                             :usage {:prompt_tokens 1 :completion_tokens 1 :total_tokens 2}}) "\n\n")]
       (with-redefs [http/post (fn [_url _req]
                                 {:body (stream-body sse)})]
         ((:stream openai/provider)

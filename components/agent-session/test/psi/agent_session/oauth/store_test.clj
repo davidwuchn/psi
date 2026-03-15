@@ -45,7 +45,7 @@
 
   (testing "stored oauth access token"
     (let [s (store/create-null-store {:anthropic {:type :oauth :access "tok" :refresh "r"
-                                                   :expires 999999999999999}})]
+                                                  :expires 999999999999999}})]
       (is (= "tok" (store/get-api-key s :anthropic)))))
 
   (testing "runtime override removed falls back to stored"

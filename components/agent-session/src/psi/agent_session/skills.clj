@@ -206,7 +206,7 @@
                      ;; Recurse into child *directories* only (not the same dir)
                      ;; to find nested skills without re-loading this SKILL.md.
                      (let [result    (load-skill-from-file
-                                     (.getAbsolutePath skill-md) source config)
+                                      (.getAbsolutePath skill-md) source config)
                            children  (.listFiles entry)
                            sub-results
                            (for [^java.io.File child children

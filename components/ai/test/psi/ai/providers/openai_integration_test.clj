@@ -106,7 +106,7 @@
             (when tool-start
               (let [idx          (:content-index tool-start)
                     tool-end-i   (event-index evs #(and (= :toolcall-end (:type %))
-                                                       (= idx (:content-index %))))
+                                                        (= idx (:content-index %))))
                     done-i       (event-index evs #(= :done (:type %)))
                     args-json    (tool-args-json evs idx)
                     parsed-args  (try

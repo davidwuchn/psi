@@ -36,7 +36,7 @@
   (testing "login with unknown provider throws"
     (let [ctx (oauth/create-null-context)]
       (is (thrown-with-msg? Exception #"Unknown OAuth provider"
-            (oauth/login! ctx :nonexistent {:on-auth (fn [_]) :on-prompt (fn [_] "")}))))))
+                            (oauth/login! ctx :nonexistent {:on-auth (fn [_]) :on-prompt (fn [_] "")}))))))
 
 (deftest logout-test
   (testing "logout removes credential"
@@ -55,7 +55,7 @@
   (testing "auto-refreshes expired token"
     (let [ctx (oauth/create-null-context
                {:credentials {:anthropic {:type :oauth :refresh "old" :access "old"
-                                           :expires 1000}}})
+                                          :expires 1000}}})
           key (oauth/get-api-key ctx :anthropic)]
       (is (= "refreshed-access" key))
       ;; Store should have the refreshed credential
@@ -82,7 +82,7 @@
   (testing "refresh updates expired credential"
     (let [ctx       (oauth/create-null-context
                      {:credentials {:anthropic {:type :oauth :refresh "old" :access "old"
-                                                 :expires 1000}}})
+                                                :expires 1000}}})
           refreshed (oauth/refresh-token! ctx :anthropic)]
       (is (= "refreshed-access" (:access refreshed)))
       (is (= "refreshed-access"
@@ -91,7 +91,7 @@
   (testing "refresh with no credential throws"
     (let [ctx (oauth/create-null-context)]
       (is (thrown-with-msg? Exception #"No OAuth credential"
-            (oauth/refresh-token! ctx :anthropic))))))
+                            (oauth/refresh-token! ctx :anthropic))))))
 
 (deftest available-providers-test
   (testing "lists registered providers"
@@ -127,7 +127,7 @@
                                                   {:type :oauth :access "custom-tok" :refresh "custom-ref"
                                                    :expires (+ (System/currentTimeMillis) 3600000)})
                                    :refresh-token (fn [_] {:type :oauth :access "new-tok" :refresh "new-ref"
-                                                            :expires (+ (System/currentTimeMillis) 3600000)})
+                                                           :expires (+ (System/currentTimeMillis) 3600000)})
                                    :get-api-key :access}]})
           auth-urls (atom [])]
       (oauth/login! ctx :custom

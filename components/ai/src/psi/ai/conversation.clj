@@ -10,12 +10,12 @@
   "Create new conversation with optional system prompt"
   [system-prompt]
   (let [conversation {:id (str (UUID/randomUUID))
-                     :system-prompt system-prompt
-                     :status :active
-                     :created-at (Instant/now)
-                     :updated-at (Instant/now)
-                     :messages []
-                     :tools #{}}]
+                      :system-prompt system-prompt
+                      :status :active
+                      :created-at (Instant/now)
+                      :updated-at (Instant/now)
+                      :messages []
+                      :tools #{}}]
     (schemas/validate! schemas/Conversation conversation)))
 
 (defn add-user-message
@@ -28,7 +28,7 @@
             (update :messages conj {:id (str (UUID/randomUUID))
                                     :role :user
                                     :content {:kind :text
-                                             :text content}
+                                              :text content}
                                     :timestamp (Instant/now)})
             (assoc :updated-at (Instant/now)))]
     (schemas/validate! schemas/Conversation updated-conversation)))
@@ -65,7 +65,7 @@
 (defn complete-conversation
   "Mark conversation as completed"
   [conversation]
-  (assoc conversation 
+  (assoc conversation
          :status :completed
          :updated-at (Instant/now)))
 

@@ -63,9 +63,9 @@
     (with-redefs [http/post (fn [_url _opts]
                               {:body {:access_token "x" :refresh_token "y" :expires_in 3600}})]
       (is (thrown-with-msg? Exception #"State mismatch"
-            (#'psi.agent-session.oauth.providers/openai-complete-login
-             "code#wrong-state"
-             {:verifier "v" :state "expected"}))))))
+                            (#'psi.agent-session.oauth.providers/openai-complete-login
+                             "code#wrong-state"
+                             {:verifier "v" :state "expected"}))))))
 
 (deftest openai-begin-login-starts-callback-server-test
   (testing "openai begin-login includes callback server in login-state"

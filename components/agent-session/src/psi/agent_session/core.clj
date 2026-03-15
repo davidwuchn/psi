@@ -450,14 +450,14 @@
   (journal-append! ctx entry))
 
 (defn get-session-host-in
-  "Return session host registry snapshot for this process context." 
+  "Return session host registry snapshot for this process context."
   [ctx]
   (if-let [host-atom (:session-host-atom ctx)]
     @host-atom
     (session-host/create-host (get-session-data-in ctx))))
 
 (defn list-host-sessions-in
-  "Return host-tracked sessions metadata entries." 
+  "Return host-tracked sessions metadata entries."
   [ctx]
   (session-host/sessions (get-session-host-in ctx)))
 
@@ -637,8 +637,8 @@
             (agent/set-thinking-level-in! (:agent-ctx ctx) thinking-level)
             (agent/replace-messages-in! (:agent-ctx ctx) (vec messages))
             (retarget-runtime-prompt-metadata-in! ctx)))
-      (ext/dispatch-in reg "session_switch" {:reason :resume})
-      (get-session-data-in ctx)))))
+        (ext/dispatch-in reg "session_switch" {:reason :resume})
+        (get-session-data-in ctx)))))
 
 (defn fork-session-in!
   "Fork the session from `entry-id`, creating a new session branch.

@@ -32,9 +32,7 @@
       (is (empty? (:content-blocks td)))
       (is (nil? (:last-provider-event td)))
       (is (nil? (:final-message td)))
-      (is (nil? (:error-message td)))))
-
-)
+      (is (nil? (:error-message td))))))
 
 ;; ── WM persistence debug ────────────────────────────────────
 

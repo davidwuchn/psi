@@ -241,7 +241,7 @@
 
 (defn pending-terminal-jobs-in
   "Return terminal jobs for thread-id that have not yet emitted synthetic messages,
-   ordered by completion time with deterministic tie-breakers." 
+   ordered by completion time with deterministic tie-breakers."
   [store-atom thread-id]
   (ensure-thread-id! thread-id)
   (->> (vals (:jobs-by-id @store-atom))
@@ -292,7 +292,7 @@
                    :job-id job-id})))
 
 (defn process-restarted-in!
-  "Reset in-memory job tracking as if process restarted." 
+  "Reset in-memory job tracking as if process restarted."
   [store-atom]
   (reset! store-atom (empty-state))
   {:reinitialized? true})

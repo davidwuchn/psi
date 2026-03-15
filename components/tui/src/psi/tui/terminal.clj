@@ -34,11 +34,11 @@
 ;;;; VirtualTerminal (Nullable / in-memory)
 
 (defrecord VirtualTerminal
-  [cols-atom
-   rows-atom
-   output-atom          ; vector of written strings
-   kitty-active-atom
-   running-atom]
+           [cols-atom
+            rows-atom
+            output-atom          ; vector of written strings
+            kitty-active-atom
+            running-atom]
 
   proto/Terminal
   (start! [this on-input on-resize]
@@ -196,12 +196,12 @@
     (catch Exception _e nil)))
 
 (defrecord ProcessTerminal
-  [^PrintStream out
-   cols-atom
-   rows-atom
-   kitty-active-atom
-   running-atom
-   reader-thread-atom]
+           [^PrintStream out
+            cols-atom
+            rows-atom
+            kitty-active-atom
+            running-atom
+            reader-thread-atom]
 
   proto/Terminal
   (start! [this on-input _on-resize]

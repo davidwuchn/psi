@@ -180,8 +180,8 @@
         parent-sd  (session/get-session-data-in ctx)
         parent-file (:session-file parent-sd)
         entry-id   (:id (session/journal-append-in! ctx (persist/message-entry {:role "user"
-                                                                                 :content [{:type :text :text "branch-here"}]
-                                                                                 :timestamp (java.time.Instant/now)})))]
+                                                                                :content [{:type :text :text "branch-here"}]
+                                                                                :timestamp (java.time.Instant/now)})))]
     (session/fork-session-in! ctx entry-id)
     (let [child-sd     (session/get-session-data-in ctx)
           child-file   (:session-file child-sd)

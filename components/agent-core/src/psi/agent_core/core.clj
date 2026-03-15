@@ -99,16 +99,16 @@
 
 (def agent-chart
   (chart/statechart {:id :agent}
-    (ele/state {:id :idle}
-      (ele/transition {:event :start :target :running}))
+                    (ele/state {:id :idle}
+                               (ele/transition {:event :start :target :running}))
 
-    (ele/state {:id :running}
-      (ele/transition {:event :done  :target :idle})
-      (ele/transition {:event :error :target :idle})
-      (ele/transition {:event :abort :target :aborted}))
+                    (ele/state {:id :running}
+                               (ele/transition {:event :done  :target :idle})
+                               (ele/transition {:event :error :target :idle})
+                               (ele/transition {:event :abort :target :aborted}))
 
-    (ele/state {:id :aborted}
-      (ele/transition {:event :reset :target :idle}))))
+                    (ele/state {:id :aborted}
+                               (ele/transition {:event :reset :target :idle}))))
 
 ;; ============================================================
 ;; Isolated context (Nullable pattern)
@@ -160,7 +160,7 @@
   [{:keys [sc-env] :as ctx} event-kw]
   (let [wm  (sc-working-memory ctx)
         wm' (sp/process-event! (::sc/processor sc-env) sc-env wm
-              (evts/new-event {:name event-kw}))]
+                               (evts/new-event {:name event-kw}))]
     (sc-save! ctx wm')
     wm'))
 
@@ -245,7 +245,7 @@
                        {:errors (explain-agent-state data)})))
      ;; Start the statechart session (initial state = :idle)
      (let [wm0 (sp/start! (::sc/processor sc-env) sc-env :agent
-                  {::sc/session-id session-id})]
+                          {::sc/session-id session-id})]
        (sc-save! ctx wm0))
      (reset! (:data-atom ctx) data)
      data)))
@@ -641,17 +641,17 @@
 (defn reset-agent!       []     (reset-agent-in!       (global-context)))
 (defn set-system-prompt! [p]    (set-system-prompt-in! (global-context) p))
 (defn set-model!         [m]    (set-model-in!         (global-context) m))
-(defn set-thinking-level![l]    (set-thinking-level-in!(global-context) l))
+(defn set-thinking-level! [l]    (set-thinking-level-in! (global-context) l))
 (defn set-tools!         [t]    (set-tools-in!         (global-context) t))
 (defn set-steering-mode! [m]    (set-steering-mode-in! (global-context) m))
-(defn set-follow-up-mode![m]    (set-follow-up-mode-in!(global-context) m))
+(defn set-follow-up-mode! [m]    (set-follow-up-mode-in! (global-context) m))
 (defn replace-messages!  [ms]   (replace-messages-in!  (global-context) ms))
 (defn append-message!    [msg]  (append-message-in!    (global-context) msg))
 (defn clear-messages!    []     (clear-messages-in!    (global-context)))
 (defn queue-steering!    [msg]  (queue-steering-in!    (global-context) msg))
 (defn queue-follow-up!   [msg]  (queue-follow-up-in!   (global-context) msg))
 (defn clear-steering!    []     (clear-steering-queue-in! (global-context)))
-(defn clear-follow-up!   []     (clear-follow-up-queue-in!(global-context)))
+(defn clear-follow-up!   []     (clear-follow-up-queue-in! (global-context)))
 (defn drain-events!      []     (drain-events-in! (global-context)))
 (defn abort!             []     (abort-in!             (global-context)))
 

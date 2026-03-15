@@ -163,8 +163,8 @@
               (assoc acc
                      :git.worktree/prunable? true
                      :git.worktree/prunable-reason (some-> (subs line (min (count line) 9))
-                                                          str/trim
-                                                          not-empty))
+                                                           str/trim
+                                                           not-empty))
 
               :else acc))
           {:git.worktree/branch-ref nil
@@ -321,39 +321,39 @@
                           (:create_branch req*)
                           true))]
     (cond
-    (path-exists? path)
-    {:path path
-     :branch branch
-     :head nil
-     :success false
-     :error "worktree path already exists"}
+      (path-exists? path)
+      {:path path
+       :branch branch
+       :head nil
+       :success false
+       :error "worktree path already exists"}
 
-    (and create-branch (branch-exists? ctx branch))
-    {:path path
-     :branch branch
-     :head nil
-     :success false
-     :error "branch already exists"}
+      (and create-branch (branch-exists? ctx branch))
+      {:path path
+       :branch branch
+       :head nil
+       :success false
+       :error "branch already exists"}
 
-    :else
-    (let [base-ref* (or base-ref "HEAD")
-          args      (if create-branch
-                      (cond-> ["worktree" "add" "-b" branch path]
-                        (seq base-ref*) (conj base-ref*))
-                      ["worktree" "add" path branch])]
-      (try
-        (run-git ctx args)
-        {:path path
-         :branch branch
-         :head (current-commit (create-context path))
-         :success true
-         :error nil}
-        (catch Exception e
+      :else
+      (let [base-ref* (or base-ref "HEAD")
+            args      (if create-branch
+                        (cond-> ["worktree" "add" "-b" branch path]
+                          (seq base-ref*) (conj base-ref*))
+                        ["worktree" "add" path branch])]
+        (try
+          (run-git ctx args)
           {:path path
            :branch branch
-           :head nil
-           :success false
-           :error (error-message e)}))))))
+           :head (current-commit (create-context path))
+           :success true
+           :error nil}
+          (catch Exception e
+            {:path path
+             :branch branch
+             :head nil
+             :success false
+             :error (error-message e)}))))))
 
 (defn worktree-remove
   "Remove a linked worktree.

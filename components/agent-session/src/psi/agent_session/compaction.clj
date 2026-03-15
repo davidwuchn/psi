@@ -112,8 +112,8 @@
       :text      (long (Math/ceil (/ (double (count (or (:text block) ""))) 4.0)))
       :thinking  (long (Math/ceil (/ (double (count (or (:thinking block) ""))) 4.0)))
       :tool-call (long (Math/ceil (/ (double (+ (count (str (:name block)))
-                                                 (count (str (:arguments block)))))
-                                  4.0)))
+                                                (count (str (:arguments block)))))
+                                     4.0)))
       :image     1200
       0)))
 

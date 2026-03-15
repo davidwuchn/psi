@@ -171,16 +171,16 @@
                                  :else
                                  (let [remember-result
                                        (memory/remember-in! memory-ctx
-                                                           {:content-type :git-commit
-                                                            :content      (commit->content commit)
-                                                            :tags         (commit->tags commit)
-                                                            :timestamp    (or (parse-commit-date (:git.commit/date commit))
-                                                                              now)
-                                                            :provenance   {:source :history
-                                                                           :source-type :git
-                                                                           :commitSha sha
-                                                                           :author (:git.commit/author commit)
-                                                                           :email (:git.commit/email commit)}})]
+                                                            {:content-type :git-commit
+                                                             :content      (commit->content commit)
+                                                             :tags         (commit->tags commit)
+                                                             :timestamp    (or (parse-commit-date (:git.commit/date commit))
+                                                                               now)
+                                                             :provenance   {:source :history
+                                                                            :source-type :git
+                                                                            :commitSha sha
+                                                                            :author (:git.commit/author commit)
+                                                                            :email (:git.commit/email commit)}})]
                                    (if (:ok? remember-result)
                                      (-> acc
                                          (update :seen conj sha)
@@ -432,9 +432,9 @@
 
            :else
            (let [sync-result (sync-memory-layer! (-> opts
-                                                    (assoc :cwd cwd*)
-                                                    (assoc :git-ctx git-ctx*)
-                                                    (assoc :memory-ctx memory-ctx*)))
+                                                     (assoc :cwd cwd*)
+                                                     (assoc :git-ctx git-ctx*)
+                                                     (assoc :memory-ctx memory-ctx*)))
                  synced-head (or (:git-head sync-result) head)]
              ;; keep cache forward-progress even if sync omitted git-head in future edits
              (cache-head-for-cwd! cwd* synced-head)

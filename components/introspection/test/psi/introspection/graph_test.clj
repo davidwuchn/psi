@@ -88,13 +88,13 @@
           resolver-syms                      (set (map :symbol resolver-ops))
           mutation-syms                      (set (map :symbol mutation-ops))
           resolver-node-syms                 (->> nodes
-                                                 (filter #(= :resolver (:type %)))
-                                                 (map :symbol)
-                                                 set)
+                                                  (filter #(= :resolver (:type %)))
+                                                  (map :symbol)
+                                                  set)
           mutation-node-syms                 (->> nodes
-                                                 (filter #(= :mutation (:type %)))
-                                                 (map :symbol)
-                                                 set)]
+                                                  (filter #(= :mutation (:type %)))
+                                                  (map :symbol)
+                                                  set)]
       (is (= resolver-syms resolver-node-syms))
       (is (= mutation-syms mutation-node-syms)))))
 

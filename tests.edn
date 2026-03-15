@@ -1,28 +1,28 @@
 #kaocha/v1
-{:tests
- [{:id :unit
-   :test-paths ["test" "components/ai/test" "components/engine/test" "components/query/test" "components/history/test"
-               "components/introspection/test" "components/memory/test" "components/recursion/test" "components/tui/test" "components/agent-core/test"
-               "components/agent-session/test"]
-   :source-paths ["src" "components/ai/src" "components/engine/src" "components/query/src" "components/history/src"
-                 "components/introspection/src" "components/memory/src" "components/recursion/src" "components/tui/src" "components/agent-core/src"
-                 "components/agent-session/src"]
-   :ns-patterns [".*-test$"]}
+ {:tests
+  [{:id :unit
+    :test-paths ["test" "components/ai/test" "components/engine/test" "components/query/test" "components/history/test"
+                 "components/introspection/test" "components/memory/test" "components/recursion/test" "components/tui/test" "components/agent-core/test"
+                 "components/agent-session/test"]
+    :source-paths ["src" "components/ai/src" "components/engine/src" "components/query/src" "components/history/src"
+                   "components/introspection/src" "components/memory/src" "components/recursion/src" "components/tui/src" "components/agent-core/src"
+                   "components/agent-session/src"]
+    :ns-patterns [".*-test$"]}
 
-  {:id :extensions
-   :test-paths ["extensions/test"]
-   :source-paths ["extensions/src"]
-   :ns-patterns [".*-test$"]}]
+   {:id :extensions
+    :test-paths ["extensions/test"]
+    :source-paths ["extensions/src"]
+    :ns-patterns [".*-test$"]}]
 
- :color? true
- :fail-fast? false
- :capture-output? true
+  :color? true
+  :fail-fast? false
+  :capture-output? true
 
  ;; Reporters
- :reporter [kaocha.report/documentation]
+  :reporter [kaocha.report/documentation]
 
  ;; Plugins
- :plugins []
+  :plugins []
 
  ;; Skip tests that require API keys unless environment variables are set
- :skip-meta [:integration]}
+  :skip-meta [:integration]}

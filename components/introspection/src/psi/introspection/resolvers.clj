@@ -84,9 +84,9 @@
      :psi.system/mode            (:current-mode state)
      :psi.system/evolution-stage (:evolution-stage state)
      :psi.system/readiness       (select-keys state
-                                               [:engine-ready :query-ready :graph-ready
-                                                :introspection-ready :history-ready
-                                                :knowledge-ready :memory-ready])
+                                              [:engine-ready :query-ready :graph-ready
+                                               :introspection-ready :history-ready
+                                               :knowledge-ready :memory-ready])
      :psi.system/has-interface   (engine/system-has-interface-in? engine-ctx)
      :psi.system/has-substrate   (engine/system-has-substrate-in? engine-ctx)
      :psi.system/has-memory-layer (engine/system-has-memory-layer-in? engine-ctx)

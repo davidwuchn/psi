@@ -10,7 +10,7 @@
 (def Provider
   [:enum :anthropic :openai])
 
-(def Api  
+(def Api
   [:enum :anthropic-messages :openai-completions :openai-codex-responses])
 
 (def MessageRole
@@ -20,7 +20,7 @@
   [:enum :stop :length :tool-use :error :aborted])
 
 (def StreamEventType
-  [:enum :start :text-start :text-delta :text-end 
+  [:enum :start :text-start :text-delta :text-end
    :thinking-start :thinking-delta :thinking-end
    :toolcall-start :toolcall-delta :toolcall-end
    :done :error])
@@ -190,35 +190,35 @@
   (if (m/validate schema data)
     data
     (throw (ex-info "Validation failed"
-                   {:schema schema
-                    :data data
-                    :errors (m/explain schema data)}))))
+                    {:schema schema
+                     :data data
+                     :errors (m/explain schema data)}))))
 
 ;; Transformers
 
 (def string->uuid-transformer
   {:name :string->uuid
    :decoders {:string (fn [_ _]
-                       (fn [x]
-                         (if (string? x)
-                           (UUID/fromString x)
-                           x)))}})
+                        (fn [x]
+                          (if (string? x)
+                            (UUID/fromString x)
+                            x)))}})
 
 (def instant-transformer
   {:name :instant
    :decoders {inst? (fn [_ _]
-                     (fn [x]
-                       (cond
-                         (inst? x) x
-                         (string? x) (Instant/parse x)
-                         (number? x) (Instant/ofEpochMilli x)
-                         :else x)))}})
+                      (fn [x]
+                        (cond
+                          (inst? x) x
+                          (string? x) (Instant/parse x)
+                          (number? x) (Instant/ofEpochMilli x)
+                          :else x)))}})
 
 (def decode-transformer
   (mt/transformer
-    mt/string-transformer
-    string->uuid-transformer
-    instant-transformer))
+   mt/string-transformer
+   string->uuid-transformer
+   instant-transformer))
 
 (defn decode
   "Decode data using transformers"

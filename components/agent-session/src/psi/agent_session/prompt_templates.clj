@@ -215,15 +215,15 @@
         (str/replace "$@" (str/join " " args))
         ;; $N → positional (highest first to avoid $1 matching inside $10)
         (as-> c
-            (let [max-n (or (some->> (re-seq positional-pattern c)
-                                     (map (comp #(Integer/parseInt %) second))
-                                     seq
-                                     (apply max))
-                            0)]
-              (reduce (fn [s n]
-                        (str/replace s (str "$" n) (get-arg args n)))
-                      c
-                      (range max-n 0 -1)))))))
+              (let [max-n (or (some->> (re-seq positional-pattern c)
+                                       (map (comp #(Integer/parseInt %) second))
+                                       seq
+                                       (apply max))
+                              0)]
+                (reduce (fn [s n]
+                          (str/replace s (str "$" n) (get-arg args n)))
+                        c
+                        (range max-n 0 -1)))))))
 
 ;; ============================================================
 ;; Discovery

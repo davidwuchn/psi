@@ -286,7 +286,7 @@
                         effort                 (assoc :reasoning_effort effort))]
     {:headers {"Content-Type"  "application/json"
                "Authorization" (str "Bearer " (:api-key options
-                                                    (System/getenv "OPENAI_API_KEY")))}
+                                                        (System/getenv "OPENAI_API_KEY")))}
      :body    (json/generate-string body)}))
 
 (defn- safe-call!

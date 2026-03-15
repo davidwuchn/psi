@@ -75,8 +75,8 @@
         updated  (-> registry
                      (store/record-provider-operation "persistent-store" :write {:ok? true})
                      (store/record-provider-operation "persistent-store" :load-state {:ok? false
-                                                                                       :error :provider-load-state-failed
-                                                                                       :message "boom"}))
+                                                                                      :error :provider-load-state-failed
+                                                                                      :message "boom"}))
         summary  (store/registry-summary updated)
         provider (some #(when (= "persistent-store" (:id %)) %)
                        (:providers summary))]

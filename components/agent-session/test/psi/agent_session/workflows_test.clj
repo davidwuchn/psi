@@ -7,54 +7,54 @@
 
 (def simple-chart
   (chart/statechart {:id :simple-workflow}
-    (ele/state {:id :idle}
-      (ele/transition {:event :workflow/start :target :running}))
+                    (ele/state {:id :idle}
+                               (ele/transition {:event :workflow/start :target :running}))
 
-    (ele/state {:id :running}
-      (ele/transition {:event :workflow/finish :target :done}
-        (ele/script
-         {:expr (fn [_ data]
-                  [{:op :assign
-                    :data {:result (get-in data [:_event :data :result])}}])})))
+                    (ele/state {:id :running}
+                               (ele/transition {:event :workflow/finish :target :done}
+                                               (ele/script
+                                                {:expr (fn [_ data]
+                                                         [{:op :assign
+                                                           :data {:result (get-in data [:_event :data :result])}}])})))
 
-    (ele/final {:id :done})))
+                    (ele/final {:id :done})))
 
 (def invoke-chart
   (chart/statechart {:id :invoke-workflow}
-    (ele/state {:id :idle}
-      (ele/transition {:event :workflow/start :target :running}))
+                    (ele/state {:id :idle}
+                               (ele/transition {:event :workflow/start :target :running}))
 
-    (ele/state {:id :running}
-      (ele/invoke
-       {:id     :job
-        :type   :future
-        :params (fn [_ data] {:value (:value data)})
-        :src    (fn [{:keys [value]}]
-                  (Thread/sleep 40)
-                  {:value value})})
-      (ele/transition {:event :done.invoke.job :target :done}
-        (ele/script
-         {:expr (fn [_ data]
-                  [{:op :assign
-                    :data {:result (get-in data [:_event :data :value])}}])})))
+                    (ele/state {:id :running}
+                               (ele/invoke
+                                {:id     :job
+                                 :type   :future
+                                 :params (fn [_ data] {:value (:value data)})
+                                 :src    (fn [{:keys [value]}]
+                                           (Thread/sleep 40)
+                                           {:value value})})
+                               (ele/transition {:event :done.invoke.job :target :done}
+                                               (ele/script
+                                                {:expr (fn [_ data]
+                                                         [{:op :assign
+                                                           :data {:result (get-in data [:_event :data :value])}}])})))
 
-    (ele/final {:id :done})))
+                    (ele/final {:id :done})))
 
 (def resumable-chart
   (chart/statechart {:id :resumable-workflow}
-    (ele/state {:id :idle}
-      (ele/transition {:event :workflow/start :target :running}))
+                    (ele/state {:id :idle}
+                               (ele/transition {:event :workflow/start :target :running}))
 
-    (ele/state {:id :running}
-      (ele/transition {:event :workflow/finish :target :done}
-        (ele/script
-         {:expr (fn [_ data]
-                  [{:op :assign
-                    :data {:result (get-in data [:_event :data :result])}}])})))
+                    (ele/state {:id :running}
+                               (ele/transition {:event :workflow/finish :target :done}
+                                               (ele/script
+                                                {:expr (fn [_ data]
+                                                         [{:op :assign
+                                                           :data {:result (get-in data [:_event :data :result])}}])})))
 
     ;; Non-final terminal state: can transition back to running.
-    (ele/state {:id :done}
-      (ele/transition {:event :workflow/continue :target :running}))))
+                    (ele/state {:id :done}
+                               (ele/transition {:event :workflow/continue :target :running}))))
 
 (defn- wait-until-done
   [reg ext-path id]

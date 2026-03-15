@@ -19,7 +19,6 @@
    Fire-and-forget methods (notify, set-widget, set-status) are no-ops."
   (:require [clojure.string :as str]))
 
-
 ;; ============================================================
 ;; UI state structure
 ;; ============================================================

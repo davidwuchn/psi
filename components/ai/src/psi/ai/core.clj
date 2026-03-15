@@ -197,7 +197,7 @@
    See `psi.ai.streaming/stream-response-seq` for event shapes."
   [conversation model options]
   (stream-response-seq-in {:provider-registry provider-registry}
-                           conversation model options))
+                          conversation model options))
 
 ;; ───────────────────────────────────────────────────────────────────────────
 ;; Public API — models

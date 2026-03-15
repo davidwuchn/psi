@@ -290,10 +290,10 @@
                   (when-let [reason (get-in event-data [:delta :stop_reason])]
                     (reset! done? true)
                     (let [usage (-> @usage-acc
-                                   (assoc :total-tokens (+ (:input-tokens @usage-acc)
-                                                           (:output-tokens @usage-acc)
-                                                           (:cache-read-tokens @usage-acc)
-                                                           (:cache-write-tokens @usage-acc))))]
+                                    (assoc :total-tokens (+ (:input-tokens @usage-acc)
+                                                            (:output-tokens @usage-acc)
+                                                            (:cache-read-tokens @usage-acc)
+                                                            (:cache-write-tokens @usage-acc))))]
                       (consume-fn {:type   :done
                                    :reason (keyword reason)
                                    :usage  (assoc usage :cost (models/calculate-cost model usage))}))))

@@ -31,7 +31,7 @@
      (empty-host))))
 
 (defn upsert-session
-  "Insert/update host metadata for a session from session-data map." 
+  "Insert/update host metadata for a session from session-data map."
   [host session-data]
   (if-let [sid (:session-id session-data)]
     (let [existing (get-in host [:sessions sid])
@@ -48,7 +48,7 @@
     host))
 
 (defn set-active-session
-  "Set active session id when it exists in registry. No-op otherwise." 
+  "Set active session id when it exists in registry. No-op otherwise."
   [host session-id]
   (if (contains? (:sessions host) session-id)
     (assoc host :active-session-id session-id)
@@ -61,7 +61,7 @@
   (count (:sessions host)))
 
 (defn sessions
-  "Return host session metadata entries." 
+  "Return host session metadata entries."
   [host]
   (->> (:sessions host)
        vals

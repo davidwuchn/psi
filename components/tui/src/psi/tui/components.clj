@@ -57,8 +57,8 @@
           pad-y  (or padding-y 0)
           lines  (mapv (fn [line]
                          (let [padded (str (apply str (repeat pad-x \space))
-                                          line
-                                          (apply str (repeat pad-x \space)))]
+                                           line
+                                           (apply str (repeat pad-x \space)))]
                            (ansi/truncate-to-width padded width)))
                        (str/split-lines content))
           blank  (apply str (repeat width \space))
@@ -224,11 +224,11 @@
 ;;;; Editor (multi-line)
 
 (defrecord Editor
-  [lines cursor scroll-offset padding-x focused
-   disable-submit autocomplete-active
-   history history-index
-   jump-mode last-action paste-counter
-   invalidated]
+           [lines cursor scroll-offset padding-x focused
+            disable-submit autocomplete-active
+            history history-index
+            jump-mode last-action paste-counter
+            invalidated]
 
   proto/Component
   (render [_this width]
@@ -538,7 +538,7 @@
    Implements SelectListFiltered rule."
   [select-list filter-str]
   (let [filtered (filterv #(str/starts-with? (:label %) filter-str)
-                           (:items select-list))]
+                          (:items select-list))]
     (assoc select-list
            :filtered-items filtered
            :selected-index 0)))

@@ -19,7 +19,7 @@
    :content [{:type :tool-call
               :id (str "tc-" name)
               :name name
-              :arguments (str "{\"path\":\"" path "\"}")}]} )
+              :arguments (str "{\"path\":\"" path "\"}")}]})
 
 (defn- session-with-user-entries
   [n]

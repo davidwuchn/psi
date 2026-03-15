@@ -66,54 +66,54 @@
 (def turn-chart
   (chart/statechart {:id :turn-streaming}
 
-    (ele/state {:id :idle}
-      (ele/transition {:event  :turn/start
-                       :target :text-accumulating}
-        (ele/script {:expr (fn [_env data] (dispatch! data :on-stream-start))})))
+                    (ele/state {:id :idle}
+                               (ele/transition {:event  :turn/start
+                                                :target :text-accumulating}
+                                               (ele/script {:expr (fn [_env data] (dispatch! data :on-stream-start))})))
 
-    (ele/state {:id :text-accumulating}
-      (ele/transition {:event  :turn/text-delta
-                       :target :text-accumulating}
-        (ele/script {:expr (fn [_env data] (dispatch! data :on-text-delta))}))
-      (ele/transition {:event  :turn/toolcall-start
-                       :target :tool-accumulating}
-        (ele/script {:expr (fn [_env data] (dispatch! data :on-toolcall-start))}))
-      (ele/transition {:event  :turn/done
-                       :target :done}
-        (ele/script {:expr (fn [_env data] (dispatch! data :on-done))}))
-      (ele/transition {:event  :turn/error
-                       :target :error}
-        (ele/script {:expr (fn [_env data] (dispatch! data :on-error))})))
+                    (ele/state {:id :text-accumulating}
+                               (ele/transition {:event  :turn/text-delta
+                                                :target :text-accumulating}
+                                               (ele/script {:expr (fn [_env data] (dispatch! data :on-text-delta))}))
+                               (ele/transition {:event  :turn/toolcall-start
+                                                :target :tool-accumulating}
+                                               (ele/script {:expr (fn [_env data] (dispatch! data :on-toolcall-start))}))
+                               (ele/transition {:event  :turn/done
+                                                :target :done}
+                                               (ele/script {:expr (fn [_env data] (dispatch! data :on-done))}))
+                               (ele/transition {:event  :turn/error
+                                                :target :error}
+                                               (ele/script {:expr (fn [_env data] (dispatch! data :on-error))})))
 
-    (ele/state {:id :tool-accumulating}
-      (ele/transition {:event  :turn/toolcall-delta
-                       :target :tool-accumulating}
-        (ele/script {:expr (fn [_env data] (dispatch! data :on-toolcall-delta))}))
-      (ele/transition {:event  :turn/toolcall-end
-                       :target :text-accumulating}
-        (ele/script {:expr (fn [_env data] (dispatch! data :on-toolcall-end))}))
-      (ele/transition {:event  :turn/toolcall-start
-                       :target :tool-accumulating}
-        (ele/script {:expr (fn [_env data] (dispatch! data :on-toolcall-start))}))
-      (ele/transition {:event  :turn/text-delta
-                       :target :text-accumulating}
-        (ele/script {:expr (fn [_env data] (dispatch! data :on-text-delta))}))
-      (ele/transition {:event  :turn/done
-                       :target :done}
-        (ele/script {:expr (fn [_env data] (dispatch! data :on-done))}))
-      (ele/transition {:event  :turn/error
-                       :target :error}
-        (ele/script {:expr (fn [_env data] (dispatch! data :on-error))})))
+                    (ele/state {:id :tool-accumulating}
+                               (ele/transition {:event  :turn/toolcall-delta
+                                                :target :tool-accumulating}
+                                               (ele/script {:expr (fn [_env data] (dispatch! data :on-toolcall-delta))}))
+                               (ele/transition {:event  :turn/toolcall-end
+                                                :target :text-accumulating}
+                                               (ele/script {:expr (fn [_env data] (dispatch! data :on-toolcall-end))}))
+                               (ele/transition {:event  :turn/toolcall-start
+                                                :target :tool-accumulating}
+                                               (ele/script {:expr (fn [_env data] (dispatch! data :on-toolcall-start))}))
+                               (ele/transition {:event  :turn/text-delta
+                                                :target :text-accumulating}
+                                               (ele/script {:expr (fn [_env data] (dispatch! data :on-text-delta))}))
+                               (ele/transition {:event  :turn/done
+                                                :target :done}
+                                               (ele/script {:expr (fn [_env data] (dispatch! data :on-done))}))
+                               (ele/transition {:event  :turn/error
+                                                :target :error}
+                                               (ele/script {:expr (fn [_env data] (dispatch! data :on-error))})))
 
-    (ele/state {:id :done}
-      (ele/transition {:event  :turn/reset
-                       :target :idle}
-        (ele/script {:expr (fn [_env data] (dispatch! data :on-reset))})))
+                    (ele/state {:id :done}
+                               (ele/transition {:event  :turn/reset
+                                                :target :idle}
+                                               (ele/script {:expr (fn [_env data] (dispatch! data :on-reset))})))
 
-    (ele/state {:id :error}
-      (ele/transition {:event  :turn/reset
-                       :target :idle}
-        (ele/script {:expr (fn [_env data] (dispatch! data :on-reset))})))))
+                    (ele/state {:id :error}
+                               (ele/transition {:event  :turn/reset
+                                                :target :idle}
+                                               (ele/script {:expr (fn [_env data] (dispatch! data :on-reset))})))))
 
 ;; ============================================================
 ;; Accumulation actions (pure data, no agent-core dependency)

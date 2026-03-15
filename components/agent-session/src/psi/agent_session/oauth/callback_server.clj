@@ -86,7 +86,7 @@
                                       (.offer result-queue {:code code :state state})))))
                               (send-response exchange 404 "Not found")))))
          server       (doto (HttpServer/create
-                              (InetSocketAddress. "127.0.0.1" (int port)) 0)
+                             (InetSocketAddress. "127.0.0.1" (int port)) 0)
                         (.createContext "/" handler)
                         (.start))
          bound-port   (.getPort (.getAddress server))]

@@ -37,7 +37,7 @@
     :start-event   keyword}
 
    Public accessors (`workflow-in`, `workflows-in`) apply :public-data-fn
-   per type when available." 
+   per type when available."
   (:require
    [clojure.string :as str]
    [com.fulcrologic.statecharts :as sc]
@@ -593,7 +593,7 @@
 
 (defn- clear-extension-workflows-in!
   "Abort and remove all workflows for `ext-path`.
-   Returns the number removed." 
+   Returns the number removed."
   [reg ext-path]
   (let [ids (->> (workflows-in reg ext-path)
                  (map :id)

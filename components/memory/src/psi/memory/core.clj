@@ -232,9 +232,9 @@
     (swap! (:store-registry-atom ctx)
            (fn [registry]
              (store/record-provider-operation registry
-                                             (store/provider-id provider)
-                                             operation
-                                             result)))))
+                                              (store/provider-id provider)
+                                              operation
+                                              result)))))
 
 (defn- fallback-on-store-failure-in!
   [ctx]
