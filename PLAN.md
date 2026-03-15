@@ -236,7 +236,7 @@ Ordered steps toward PSI COMPLETE.
 - ✓ pre-commit `clj-kondo-lint` hook active (commit `accb233`).
 - ✓ CI `check` job installs `cljfmt` + `clj-kondo` binaries from GitHub Releases (commit `1e363b3`): resolves runner PATH gap for bbin-local tools; both installed to `/usr/local/bin` before `bb fmt:check` / `bb lint` run.
 - ✓ `bb.edn` `fmt:check` task stale `test` path removed (commit `721bce0`): `test/` does not exist in this repo; cljfmt was failing with "No such file: test" on CI. `check` job now passes.
-- Remaining: `bb test` green on CI requires re-baselining test suite (Step 15e). One pre-existing test failure remains in `clojure-test`: `footer payload mirrors...` hardcodes a local tilde-shortened path.
+- ✓ `clojure-test` CI failure fixed (commit `1d9b648`): `footer-updated-payload` test was hardcoding `/Users/duncan/...` as cwd; tilde-shortening produced the wrong result on CI where `user.home` is `/home/runner`. Fixed by deriving cwd from `(System/getProperty "user.home")` so the assertion is portable. All three CI jobs now pass.
 
 ### Step 15e — Re-establish post-query/post-memory clean baseline … in progress
 - Baseline commit `57e8ab0` keeps the still-relevant likely-good fixes only:
