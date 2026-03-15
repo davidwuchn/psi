@@ -3,6 +3,20 @@
 
 ---
 
+## 2026-03-15 - Conversation spec convergence works best when the concrete helper surface gets its own focused Allium slice and test namespace (commit `14ba6de`)
+
+### λ Distill the concrete domain helper, not only the broader subsystem abstraction
+
+`psi.ai.conversation` sits below the broader streaming/provider lifecycle described in `ai-abstract-model.allium`. The useful spec move was to add a dedicated `spec/conversation.allium` that narrows the abstract AI model to the concrete embedded conversation value and helper operations actually exposed by the namespace: create, append user/assistant/tool-result messages, add tools, and derive assistant-only totals.
+
+### λ Split wrapper tests from domain tests once the domain has direct public functions
+
+`psi.ai.core-test` had been indirectly asserting conversation behavior through core wrappers. Once `psi.ai.conversation` had a stable public helper surface, the better shape was a dedicated `psi.ai.conversation-test` namespace. That made the tests line up with the real source of behavior and left `psi.ai.core-test` focused on models, streaming, and resolver registration.
+
+### λ Totals edge cases should be covered through public constructors, not by mutating internal collections in tests
+
+The missing-usage bug in `total-usage` / `total-cost` was important, but the strongest regression shape was not direct `update` on `:messages`. Building assistant messages through `add-assistant-message` keeps tests aligned with the public conversation contract while still proving that assistant messages with missing `:usage` or `:usage.cost` are ignored rather than breaking the reduction.
+
 ## 2026-03-15 - Live Emacs E2E should cover one backend-requested frontend action, not only text slash commands (commit `3c0e668`)
 
 ### λ A slash E2E that proves only text output and quit behavior can miss the frontend-action contract
