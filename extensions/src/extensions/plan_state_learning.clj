@@ -114,11 +114,14 @@
               content         (str (or (:content tool-result) ""))
               is-error?       (or (false? plan-succeeded?)
                                   (true? (:is-error tool-result)))
-              status-msg      (when is-error?
+              status-msg      (if is-error?
                                 (str "PSL subagent run failed"
                                      (when (seq content)
+                                       (str ": " content)))
+                                (str "PSL subagent run completed"
+                                     (when (seq content)
                                        (str ": " content))))]
-          (when status-msg
+          (when (seq status-msg)
             (send-message! mutate-fn status-msg))
           {:status          :done
            :accepted?       (not is-error?)

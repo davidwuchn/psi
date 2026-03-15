@@ -754,6 +754,10 @@
 (defn- host-updated-payload
   "Build the `host/updated` event payload from the current host snapshot.
 
+   Includes a synthetic single-session snapshot before the host registry has any
+   real entries, so handshake/bootstrap surfaces still reflect the current live
+   session without changing core host-registry semantics.
+
    Each session slot includes :id :name :worktree-path :is-streaming :is-active :parent-session-id.
    Sessions are ordered by updated-at ascending (oldest first → stable tree order)."
   [ctx]
@@ -761,17 +765,22 @@
         active-id  (:active-session-id host)
         sd         (session/get-session-data-in ctx)
         current-id (:session-id sd)
-        slots      (->> (session/list-host-sessions-in ctx)
-                        (mapv (fn [m]
-                                {:id                (:session-id m)
-                                 :name              (:session-name m)
-                                 :worktree-path     (:worktree-path m)
-                                 :is-streaming      (boolean
-                                                     (and (= (:session-id m) current-id)
-                                                          (:is-streaming sd)))
-                                 :is-active         (= (:session-id m) active-id)
-                                 :parent-session-id (:parent-session-id m)})))]
-    {:active-session-id active-id
+        host-sessions (session/list-host-sessions-in ctx)
+        sessions*  (if (seq host-sessions)
+                     host-sessions
+                     [(select-keys sd [:session-id :session-name :worktree-path :parent-session-id])])
+        active-id* (or active-id current-id)
+        slots      (mapv (fn [m]
+                           {:id                (:session-id m)
+                            :name              (:session-name m)
+                            :worktree-path     (:worktree-path m)
+                            :is-streaming      (boolean
+                                                (and (= (:session-id m) current-id)
+                                                     (:is-streaming sd)))
+                            :is-active         (= (:session-id m) active-id*)
+                            :parent-session-id (:parent-session-id m)})
+                         sessions*)]
+    {:active-session-id active-id*
      :sessions          slots}))
 
 (def ^:private footer-query

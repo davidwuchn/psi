@@ -385,8 +385,13 @@
          :message "[/tree is only available in TUI mode (--tui)]"}
         (let [arg       (-> (str/replace trimmed #"^/tree\s*" "") str/trim)
               host      (session/get-session-host-in ctx)
-              active-id (:active-session-id host)
-              sessions  (vec (or (session/list-host-sessions-in ctx) []))]
+              current-id (:session-id (session/get-session-data-in ctx))
+              active-id (or (:active-session-id host) current-id)
+              sessions0 (vec (or (session/list-host-sessions-in ctx) []))
+              sessions  (if (seq sessions0)
+                          sessions0
+                          [(select-keys (session/get-session-data-in ctx)
+                                        [:session-id :session-name :worktree-path])])]
           (cond
             (str/blank? arg)
             {:type :tree-open}

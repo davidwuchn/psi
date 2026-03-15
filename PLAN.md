@@ -207,16 +207,19 @@ Ordered steps toward PSI COMPLETE.
 
 ## Next
 
-### Step 15e — Re-establish post-query/post-memory clean baseline … in progress
-- Baseline commit `57e8ab0` keeps the still-relevant likely-good fixes only:
+### Step 15e — Re-establish post-query/post-memory clean baseline ✓ complete
+- Baseline commit `57e8ab0` kept the still-relevant likely-good fixes only:
   - isolated introspection/query registration no longer double-registers agent-session-provided surfaces
   - git merge success now requires actual target HEAD movement
-- Follow-up commit `1c916b9` removed the Datalevin memory provider from code/spec/docs/tests, which also removes the native persistence-crash class from the active runtime surface.
-- Current convergence implication:
-  - keep unit tests on in-memory memory storage by default
-  - treat `psi.memory.store` as an extension boundary rather than an active multi-provider roadmap commitment
-  - re-establish a reproducible non-crashing unit baseline from the in-memory-only system before chasing remaining behavioural failures
-- Next focused order:
+- Follow-up commit `1c916b9` removed the Datalevin memory provider from code/spec/docs/tests, which also removed the native persistence-crash class from the active runtime surface.
+- Convergence outcome:
+  - unit tests now run against the in-memory-only memory runtime by default
+  - `psi.memory.store` remains the provider-extension boundary, but not an active multi-provider commitment
+  - green baseline restored after focused fixes in RPC bootstrap host snapshot handling, runtime git-head-sync behavior/tests, PSL subagent status messaging, temp worktree attach test isolation, and `/tree` single-session command/bootstrap semantics
+- Verification snapshot:
+  - `clojure -M:test` → `912 tests`, `4603 assertions`, `0 failures`
+
+### Next focused order:
   1. re-run and trust focused in-memory memory/session/runtime slices as the new baseline
   2. identify remaining failures unrelated to removed persistent-provider machinery
   3. then fix remaining behavioural failures one focused namespace at a time (`runtime-test`, `rpc-test`, command/worktree)

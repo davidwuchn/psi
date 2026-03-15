@@ -1024,8 +1024,9 @@
     (let [git-ctx       (history-git/create-null-context)
           repo-dir      (:repo-dir git-ctx)
           parent-dir    (.getParentFile (File. repo-dir))
-          branch-name   "fix-repeated-thinking-output"
-          source-path   (str parent-dir File/separator "branch-source")
+          suffix        (str (java.util.UUID/randomUUID))
+          branch-name   (str "fix-repeated-thinking-output-" suffix)
+          source-path   (str parent-dir File/separator "branch-source-" suffix)
           worktree-path (str parent-dir File/separator branch-name)
           _             (history-git/worktree-add git-ctx {:path source-path
                                                            :branch branch-name})

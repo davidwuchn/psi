@@ -181,7 +181,7 @@
           :approver "git-head-change-hook"
           :approval-notes "auto-approved from git head change hook"})))))
 
-(defn- invoke-git-head-sync!
+(defn invoke-git-head-sync!
   [opts]
   (let [sync-fn (requiring-resolve 'psi.memory.runtime/maybe-sync-on-git-head-change!)]
     (sync-fn opts)))
@@ -200,7 +200,7 @@
       :reason "head-changed"
       :timestamp (java.time.Instant/now)})))
 
-(defn- safe-maybe-sync-on-git-head-change!
+(defn safe-maybe-sync-on-git-head-change!
   [ctx]
   (try
     (let [git-sync (invoke-git-head-sync!

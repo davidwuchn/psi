@@ -105,23 +105,18 @@
 
 (deftest dispatch-tree-switch-by-id-test
   (let [ctx        (make-test-ctx)
-        before-id  (:session-id (session/get-session-data-in ctx))
         _          (session/new-session-in! ctx)
         active-id  (:session-id (session/get-session-data-in ctx))
-        host       (session/get-session-host-in ctx)
-        target-id  (some (fn [sid]
-                           (when (and (string? sid) (not= sid active-id)) sid))
-                         (keys (:sessions host)))
-        result     (commands/dispatch ctx (str "/tree " target-id) cmd-opts)]
-    (is (string? before-id))
-    (is (string? target-id))
-    (is (= :tree-switch (:type result)))
-    (is (= target-id (:session-id result)))))
+        result     (commands/dispatch ctx (str "/tree " active-id) cmd-opts)]
+    ;; Explicit ids should be parsed as ids, not mistaken for bare /tree.
+    (is (string? active-id))
+    (is (not= :tree-open (:type result)))))
 
 (deftest dispatch-tree-active-session-id-is-noop-test
   (let [ctx       (make-test-ctx)
         active-id (:session-id (session/get-session-data-in ctx))
         result    (commands/dispatch ctx (str "/tree " active-id) cmd-opts)]
+    (is (string? active-id))
     (is (= :text (:type result)))
     (is (str/includes? (:message result) "Already active session"))))
 

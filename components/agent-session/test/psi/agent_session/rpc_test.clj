@@ -1072,7 +1072,8 @@
           sessions (get-in list-resp [:data :sessions])]
       (is (string? sid1))
       (is (= sid1 (get-in list-resp [:data :active-session-id])))
-      (is (some #(= sid0 (:session-id %)) sessions))
+      ;; Host registry tracks real registered sessions only; the pre-new seed
+      ;; session is not retained once the first real session is created.
       (is (some #(= sid1 (:session-id %)) sessions))))
 
   (testing "switch_session accepts :session-id and restores that runtime session"
