@@ -37,25 +37,25 @@
 
 ;; ── Session lifecycle ───────────────────────────────────────────────────────
 
-(deftest session-host-registry-test
-  (testing "create-context starts with an empty host registry"
+(deftest context-index-registry-test
+  (testing "create-context starts with an empty context session index"
     (let [ctx  (session/create-context)
-          host (session/get-session-host-in ctx)]
-      (is (nil? (:active-session-id host)))
-      (is (= {} (:sessions host)))))
+          index (session/get-context-index-in ctx)]
+      (is (nil? (:active-session-id index)))
+      (is (= {} (:sessions index)))))
 
   (testing "new-session-in! registers first real session and sets it active"
     (let [ctx        (session/create-context)
           seed-id    (:session-id (session/get-session-data-in ctx))]
       (session/new-session-in! ctx)
       (let [sid-after (:session-id (session/get-session-data-in ctx))
-            host      (session/get-session-host-in ctx)]
+            index      (session/get-context-index-in ctx)]
         (is (not= seed-id sid-after))
-        (is (= sid-after (:active-session-id host)))
-        (is (= #{sid-after} (set (keys (:sessions host))))))))
+        (is (= sid-after (:active-session-id index)))
+        (is (= #{sid-after} (set (keys (:sessions index))))))))
 
-  (testing "ensure-session-loaded-in! resumes by host session id"
-    (let [cwd   (str (System/getProperty "java.io.tmpdir") "/psi-host-load-" (java.util.UUID/randomUUID))
+  (testing "ensure-session-loaded-in! resumes by context session id"
+    (let [cwd   (str (System/getProperty "java.io.tmpdir") "/psi-context-load-" (java.util.UUID/randomUUID))
           _     (.mkdirs (java.io.File. cwd))
           ctx   (session/create-context {:cwd cwd})
           _     (session/new-session-in! ctx)
@@ -72,20 +72,20 @@
       (is (not= sid1 sid2))
       (session/ensure-session-loaded-in! ctx sid1)
       (is (= sid1 (:session-id (session/get-session-data-in ctx))))
-      (is (= sid1 (:active-session-id (session/get-session-host-in ctx))))))
+      (is (= sid1 (:active-session-id (session/get-context-index-in ctx))))))
 
-  (testing "set-active-session-in! changes active session when id exists"
+  (testing "set-context-active-session-in! changes active session when id exists"
     (let [ctx (session/create-context)]
       (session/new-session-in! ctx)
       (let [first-id (:session-id (session/get-session-data-in ctx))]
         (session/new-session-in! ctx)
         (let [second-id (:session-id (session/get-session-data-in ctx))]
-          (session/set-active-session-in! ctx first-id)
-          (is (= first-id (:active-session-id (session/get-session-host-in ctx))))
-          (session/set-active-session-in! ctx second-id)
-          (is (= second-id (:active-session-id (session/get-session-host-in ctx))))))))
+          (session/set-context-active-session-in! ctx first-id)
+          (is (= first-id (:active-session-id (session/get-context-index-in ctx))))
+          (session/set-context-active-session-in! ctx second-id)
+          (is (= second-id (:active-session-id (session/get-context-index-in ctx))))))))
 
-  (testing "new-session-in! accepts explicit worktree-path and session-name and keeps prior host peer"
+  (testing "new-session-in! accepts explicit worktree-path and session-name and keeps prior context peer"
     (let [ctx (session/create-context {:cwd "/repo/main"
                                        :initial-session {:worktree-path "/repo/main"}})]
       (session/new-session-in! ctx {:session-name "main"
@@ -94,12 +94,12 @@
         (session/new-session-in! ctx {:session-name "feature work"
                                       :worktree-path "/repo/feature-work"})
         (let [sd   (session/get-session-data-in ctx)
-              host (session/get-session-host-in ctx)]
+              index (session/get-context-index-in ctx)]
           (is (= "feature work" (:session-name sd)))
           (is (= "/repo/feature-work" (:worktree-path sd)))
-          (is (= (:session-id sd) (:active-session-id host)))
-          (is (= #{sid-1 (:session-id sd)} (set (keys (:sessions host)))))
-          (is (= "/repo/main" (get-in host [:sessions sid-1 :worktree-path]))))))))
+          (is (= (:session-id sd) (:active-session-id index)))
+          (is (= #{sid-1 (:session-id sd)} (set (keys (:sessions index)))))
+          (is (= "/repo/main" (get-in index [:sessions sid-1 :worktree-path]))))))))
 
 (deftest new-session-test
   (testing "new-session-in! resets session-id"

@@ -153,8 +153,8 @@ Child sessions (non-nil parent-session-id that matches a slot) are indented."
                          (:command . ,(concat "/tree " id))))))))
      slots)))
 
-(defun psi-emacs--handle-host-updated-event (data)
-  "Handle `host/updated` DATA: store snapshot and refresh session tree widget."
+(defun psi-emacs--handle-context-updated-event (data)
+  "Handle `context/updated` DATA: store snapshot and refresh session tree widget."
   (when psi-emacs--state
     (let* ((active-id (psi-emacs--event-data-get data '(:active-session-id active-session-id :activeSessionId activeSessionId)))
            (slots     (append (psi-emacs--event-data-get data '(:sessions sessions)) nil))
@@ -175,7 +175,7 @@ Child sessions (non-nil parent-session-id that matches a slot) are indented."
            (updated   (if (> (length slots) 1)
                           (cons widget others)
                         others)))
-      (setf (psi-emacs-state-host-snapshot psi-emacs--state) snapshot)
+      (setf (psi-emacs-state-context-snapshot psi-emacs--state) snapshot)
       (setf (psi-emacs-state-projection-widgets psi-emacs--state)
             (psi-emacs--projection-sort-widgets updated))
       (psi-emacs--upsert-projection-block))))
@@ -208,7 +208,7 @@ Child sessions (non-nil parent-session-id that matches a slot) are indented."
                             (t nil))))
        (when (fboundp 'psi-emacs--resume-session-candidates)
          (psi-emacs--resume-session-candidates sessions))))
-    ("session-tree-selector"
+    ("context-session-selector"
      (let ((active-id (psi-emacs--event-data-get payload '(:active-session-id active-session-id :activeSessionId activeSessionId)))
            (sessions (append (psi-emacs--event-data-get payload '(:sessions sessions)) nil)))
        (when (fboundp 'psi-emacs--tree-session-candidates)
@@ -280,8 +280,8 @@ Child sessions (non-nil parent-session-id that matches a slot) are indented."
         (or (psi-emacs--event-data-get data '(:text text :delta delta)) "")))
       ("session/updated"
        (psi-emacs--handle-session-updated-event data))
-      ("host/updated"
-       (psi-emacs--handle-host-updated-event data))
+      ("context/updated"
+       (psi-emacs--handle-context-updated-event data))
       ((or "tool/start" "tool/executing" "tool/update" "tool/result")
        (psi-emacs--assistant-before-tool-event)
        (let* ((tool-id (psi-emacs--event-data-get data

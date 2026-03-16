@@ -742,7 +742,7 @@ Failure path appends deterministic assistant-visible feedback, sets
 ;;; ── /tree session picker ─────────────────────────────────────────────────
 
 (defun psi-emacs--tree-session-candidates (slots active-id)
-  "Build completing-read candidates from host session SLOTS with ACTIVE-ID.
+  "Build completing-read candidates from context session SLOTS with ACTIVE-ID.
 
 Returns an alist of (label . session-id)."
   (mapcar
@@ -766,7 +766,7 @@ Returns an alist of (label . session-id)."
    slots))
 
 (defun psi-emacs--request-switch-session-by-id (state session-id)
-  "Dispatch `switch_session` for SESSION-ID (in-process host session) from STATE."
+  "Dispatch `switch_session` for SESSION-ID (in-process context session) from STATE."
   (when (and state
              (stringp session-id)
              (not (string-empty-p session-id)))
@@ -801,7 +801,7 @@ Returns an alist of (label . session-id)."
 
 (defun psi-emacs--handle-idle-tree-command (state)
   "Handle `/tree` command: open completing-read session picker and switch."
-  (let* ((snapshot  (and state (psi-emacs-state-host-snapshot state)))
+  (let* ((snapshot  (and state (psi-emacs-state-context-snapshot state)))
          (active-id (and snapshot
                          (psi-emacs--event-data-get snapshot
                                                     '(:active-session-id active-session-id))))

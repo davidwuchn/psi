@@ -713,7 +713,7 @@
 ;;    :selected     0                   — cursor index into filtered list
 ;;    :loading?     false}
 ;;
-;; Sessions are displayed as a filtered list. In :tree mode, host sessions are
+;; Sessions are displayed as a filtered list. In :tree mode, context sessions are
 ;; arranged into parent/child order with connector prefixes.
 ;; Tab toggles scope (resume mode only). Type to search. ↑/↓ navigate.
 ;; Enter selects. Esc cancels.
@@ -755,8 +755,8 @@
                sessions))))
 
 (def ^:private tree-selector-query
-  [:psi.agent-session/host-active-session-id
-   {:psi.agent-session/host-sessions
+  [:psi.agent-session/context-active-session-id
+   {:psi.agent-session/context-sessions
     [:psi.session-info/id
      :psi.session-info/path
      :psi.session-info/name
@@ -776,7 +776,7 @@
      :current-session-file  current-session-file
      :active-session-id     nil}))
 
-(defn- host-session->selector-session
+(defn- context-session->selector-session
   [cwd m]
   (let [worktree-path (or (:psi.session-info/worktree-path m)
                           (:psi.session-info/cwd m)
@@ -795,8 +795,8 @@
      :tree-depth        0
      :tree-prefix       ""}))
 
-(defn- tree-sort-host-sessions
-  "Return host sessions in tree order with connector metadata.
+(defn- tree-sort-context-sessions
+  "Return context sessions in tree order with connector metadata.
 
    - Root sessions are those with no parent, or with missing parent id.
    - Sibling order is stable based on input order.
@@ -859,8 +859,8 @@
                            sessions))
       0))
 
-(defn- session-selector-init-from-host
-  "Build selector state from the live host snapshot query.
+(defn- session-selector-init-from-context
+  "Build selector state from the live context snapshot query.
    Falls back to persisted /resume-style listing when query is unavailable."
   [state]
   (let [cwd                 (:cwd state)
@@ -870,10 +870,10 @@
       (session-selector-init cwd current-session-file)
       (try
         (let [data      (or (query-fn tree-selector-query) {})
-              active-id (:psi.agent-session/host-active-session-id data)
-              sessions  (->> (or (:psi.agent-session/host-sessions data) [])
-                             (mapv (partial host-session->selector-session cwd))
-                             tree-sort-host-sessions)
+              active-id (:psi.agent-session/context-active-session-id data)
+              sessions  (->> (or (:psi.agent-session/context-sessions data) [])
+                             (mapv (partial context-session->selector-session cwd))
+                             tree-sort-context-sessions)
               selected  (selected-index-for-session-id sessions active-id)]
           {:sessions              sessions
            :all-sessions          nil
@@ -1070,11 +1070,11 @@
   "Enter session-selector phase.
    mode:
    - :resume => persisted session files
-   - :tree   => live host sessions (multi-session surface)"
+   - :tree   => live context sessions (multi-session surface)"
   ([state] (open-session-selector state :resume))
   ([state mode]
    (let [sel (case mode
-               :tree (session-selector-init-from-host state)
+               :tree (session-selector-init-from-context state)
                (session-selector-init (:cwd state) (:current-session-file state)))]
      [(-> state
           (assoc :phase :selecting-session

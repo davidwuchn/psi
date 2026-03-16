@@ -91,16 +91,16 @@
         (str "expected canonical graph root attrs to be advertised, missing: "
              (pr-str (vec missing))))))
 
-(deftest host-index-graph-introspection-test
-  (testing "host-index attrs are discoverable in graph root attrs and edges"
+(deftest context-session-graph-introspection-test
+  (testing "context session attrs are discoverable in graph root attrs and edges"
     (let [result     (q [:psi.graph/root-queryable-attrs :psi.graph/edges])
           root-attrs (:psi.graph/root-queryable-attrs result)
           edge-attrs (keep :attribute (:psi.graph/edges result))]
-      (is (graph-attr-present? root-attrs :psi.agent-session/host-active-session-id))
-      (is (graph-attr-present? root-attrs :psi.agent-session/host-session-count))
-      (is (graph-attr-present? edge-attrs :psi.agent-session/host-active-session-id))
-      (is (graph-attr-present? edge-attrs :psi.agent-session/host-session-count))
-      (is (graph-attr-present? edge-attrs :psi.agent-session/host-sessions)))))
+      (is (graph-attr-present? root-attrs :psi.agent-session/context-active-session-id))
+      (is (graph-attr-present? root-attrs :psi.agent-session/context-session-count))
+      (is (graph-attr-present? edge-attrs :psi.agent-session/context-active-session-id))
+      (is (graph-attr-present? edge-attrs :psi.agent-session/context-session-count))
+      (is (graph-attr-present? edge-attrs :psi.agent-session/context-sessions)))))
 
 (deftest background-jobs-graph-introspection-test
   (testing "background job attrs are discoverable in graph introspection"

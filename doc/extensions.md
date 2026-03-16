@@ -180,8 +180,8 @@ The `init` function receives a map with these keys:
 |----------|-----------------------------|----------------------------------------------|
 | `:query`       | `(fn [eql-query])`          | Run an EQL query through the session runtime |
 | `:mutate`      | `(fn [op-sym params])`      | Run an EQL mutation through the runtime      |
-| `:create-session` | `(fn [opts])`            | Create a new active host-peer session        |
-| `:switch-session` | `(fn [session-id])`      | Switch to an existing host session by id     |
+| `:create-session` | `(fn [opts])`            | Create a new active context-peer session        |
+| `:switch-session` | `(fn [session-id])`      | Switch to an existing context session by id     |
 | `:get-api-key` | `(fn [provider])`           | Resolve provider API key (narrow capability) |
 
 `(:mutate api)` is extension-scoped for `psi.extension/*` mutations:
@@ -257,8 +257,8 @@ use:
 | `:send-user-message` | `(fn [content opts?])`                    | Send a user message                  |
 | `:append-entry`      | `(fn [custom-type data?])`                | Append a custom journal entry        |
 | `:set-session-name`  | `(fn [name])`                             | Set the session name                 |
-| `:create-session`    | `(fn [opts])`                             | Create a new active host-peer session |
-| `:switch-session`    | `(fn [session-id])`                       | Switch to an existing host session by id |
+| `:create-session`    | `(fn [opts])`                             | Create a new active context-peer session |
+| `:switch-session`    | `(fn [session-id])`                       | Switch to an existing context session by id |
 | `:get-session-name`  | `(fn [])`                                 | Get the current session name         |
 | `:set-label`         | `(fn [entry-id label])`                   | Label a journal entry                |
 | `:get-active-tools`  | `(fn [])`                                 | Get active tool names                |
@@ -275,7 +275,7 @@ use:
 | `:list-prompt-contributions`    | `(fn [])`                          | List this extension's prompt contributions |
 
 `:create-session` and `:switch-session` are thin extension-facing wrappers over the session lifecycle surface.
-Use them when an extension needs to create a distinct host session (for example, a new worktree-bound session) or move routing to an existing resumable host session by id.
+Use them when an extension needs to create a distinct context session (for example, a new worktree-bound session) or move routing to an existing resumable context session by id.
 
 Example:
 

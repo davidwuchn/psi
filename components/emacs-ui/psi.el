@@ -95,7 +95,7 @@ Used to detect stalled streaming runs and transition to deterministic recovery."
   header-model-label
   extension-command-names
   transcript-hydrated?
-  host-snapshot
+  context-snapshot
   pending-frontend-action)
 
 (defvar psi-emacs--spawn-process-function #'psi-emacs--default-spawn-process

@@ -385,11 +385,11 @@
       (if-not supports-session-tree?
         {:type :text
          :message "[/tree is only available in TUI mode (--tui)]"}
-        (let [arg       (-> (str/replace trimmed #"^/tree\s*" "") str/trim)
-              host      (session/get-session-host-in ctx)
+        (let [arg        (-> (str/replace trimmed #"^/tree\s*" "") str/trim)
+              index      (session/get-context-index-in ctx)
               current-id (:session-id (session/get-session-data-in ctx))
-              active-id (or (:active-session-id host) current-id)
-              sessions0 (vec (or (session/list-host-sessions-in ctx) []))
+              active-id  (or (:active-session-id index) current-id)
+              sessions0 (vec (or (session/list-context-sessions-in ctx) []))
               sessions  (if (seq sessions0)
                           sessions0
                           [(select-keys (session/get-session-data-in ctx)
@@ -416,7 +416,7 @@
               (cond
                 (nil? chosen)
                 {:type :text
-                 :message (str "Session not found in host: " arg)}
+                 :message (str "Session not found in context: " arg)}
 
                 (= sid active-id)
                 {:type :text

@@ -29,7 +29,7 @@
     "tool/update"
     "tool/result"
     "session/updated"
-    "host/updated"
+    "context/updated"
     "footer/updated"
     "command-result"
     "error")

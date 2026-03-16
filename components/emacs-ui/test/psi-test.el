@@ -937,7 +937,7 @@
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
     (unwind-protect
         (let ((rpc-calls nil))
-          (setf (psi-emacs-state-host-snapshot psi-emacs--state)
+          (setf (psi-emacs-state-context-snapshot psi-emacs--state)
                 '((:active-session-id . "s1")
                   (:sessions . (((:id . "s1") (:name . "main") (:is-active . t))
                                 ((:id . "s2") (:name . "fork-1") (:is-active . nil))))))
@@ -3543,30 +3543,30 @@ so the old `(eq role :user)' check always fell through to the assistant branch."
       (when (file-directory-p tmp)
         (delete-directory tmp t)))))
 
-;;; ── host/updated + session tree widget ─────────────────────────────────────
+;;; ── context/updated + session tree widget ─────────────────────────────────────
 
-(ert-deftest psi-host-updated-stores-snapshot-on-state ()
-  "host/updated stores host snapshot on frontend state."
+(ert-deftest psi-context-updated-stores-snapshot-on-state ()
+  "context/updated stores context snapshot on frontend state."
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
     (psi-emacs--handle-rpc-event
-     '((:event . "host/updated")
+     '((:event . "context/updated")
        (:data . ((:active-session-id . "s1")
                  (:sessions . [((:id . "s1") (:name . "main") (:is-active . t) (:is-streaming . nil) (:parent-session-id . nil))
                                ((:id . "s2") (:name . "fork-1") (:is-active . nil) (:is-streaming . nil) (:parent-session-id . "s1"))
                                ])))))
-    (let ((snap (psi-emacs-state-host-snapshot psi-emacs--state)))
+    (let ((snap (psi-emacs-state-context-snapshot psi-emacs--state)))
       (should (listp snap))
       (should (equal "s1" (alist-get :active-session-id snap nil nil #'equal))))))
 
-(ert-deftest psi-host-updated-renders-session-tree-widget ()
-  "host/updated with multiple sessions adds session-tree widget to projection."
+(ert-deftest psi-context-updated-renders-session-tree-widget ()
+  "context/updated with multiple sessions adds session-tree widget to projection."
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
     (psi-emacs--handle-rpc-event
-     '((:event . "host/updated")
+     '((:event . "context/updated")
        (:data . ((:active-session-id . "s1")
                  (:sessions . [((:id . "s1") (:name . "main") (:is-active . t) (:is-streaming . nil) (:parent-session-id . nil))
                                ((:id . "s2") (:name . "fork-1") (:is-active . nil) (:is-streaming . nil) (:parent-session-id . "s1"))
@@ -3586,13 +3586,13 @@ so the old `(eq role :user)' check always fell through to the assistant branch."
         (should (cl-some (lambda (t) (string-match-p "← active" t)) texts))
         (should (cl-some (lambda (t) (string-match-p "fork-1" t)) texts))))))
 
-(ert-deftest psi-host-updated-single-session-omits-widget ()
-  "host/updated with only one session does not add session-tree widget."
+(ert-deftest psi-context-updated-single-session-omits-widget ()
+  "context/updated with only one session does not add session-tree widget."
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
     (psi-emacs--handle-rpc-event
-     '((:event . "host/updated")
+     '((:event . "context/updated")
        (:data . ((:active-session-id . "s1")
                  (:sessions . [((:id . "s1") (:name . "main") (:is-active . t) (:is-streaming . nil) (:parent-session-id . nil))
                                ])))))
@@ -3643,8 +3643,8 @@ so the old `(eq role :user)' check always fell through to the assistant branch."
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
-    ;; Seed a host snapshot with two sessions
-    (setf (psi-emacs-state-host-snapshot psi-emacs--state)
+    ;; Seed a context snapshot with two sessions
+    (setf (psi-emacs-state-context-snapshot psi-emacs--state)
           '((:active-session-id . "s1")
             (:sessions . (((:id . "s1") (:name . "main")   (:is-active . t)   (:is-streaming . nil) (:parent-session-id . nil))
                           ((:id . "s2") (:name . "fork-1") (:is-active . nil) (:is-streaming . nil) (:parent-session-id . nil))))))
@@ -3663,7 +3663,7 @@ so the old `(eq role :user)' check always fell through to the assistant branch."
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
-    (setf (psi-emacs-state-host-snapshot psi-emacs--state)
+    (setf (psi-emacs-state-context-snapshot psi-emacs--state)
           '((:active-session-id . "s1")
             (:sessions . (((:id . "s1") (:name . "main") (:is-active . t) (:is-streaming . nil) (:parent-session-id . nil))))))
     (let ((calls nil))

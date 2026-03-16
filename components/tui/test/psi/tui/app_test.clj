@@ -314,8 +314,8 @@
   (testing "/tree enters selector in :tree mode"
     (let [update-fn (app/make-update (stub-agent-fn ""))
           qfn       (fn [_q]
-                      {:psi.agent-session/host-active-session-id "s1"
-                       :psi.agent-session/host-sessions
+                      {:psi.agent-session/context-active-session-id "s1"
+                       :psi.agent-session/context-sessions
                        [{:psi.session-info/id "s1"
                          :psi.session-info/path "/tmp/psi-test/a.ndedn"
                          :psi.session-info/name "Root"
@@ -354,8 +354,8 @@
     (let [switched-id (atom nil)
           update-fn   (app/make-update (stub-agent-fn ""))
           qfn         (fn [_q]
-                        {:psi.agent-session/host-active-session-id "s1"
-                         :psi.agent-session/host-sessions
+                        {:psi.agent-session/context-active-session-id "s1"
+                         :psi.agent-session/context-sessions
                          [{:psi.session-info/id "s1"
                            :psi.session-info/path "/tmp/psi-test/a.ndedn"
                            :psi.session-info/name "Root"
@@ -385,9 +385,9 @@
   (testing "tree selector view renders parent-child connectors and active marker"
     (let [update-fn (app/make-update (stub-agent-fn ""))
           qfn       (fn [_q]
-                      {:psi.agent-session/host-active-session-id "s1"
+                      {:psi.agent-session/context-active-session-id "s1"
                        ;; child intentionally appears before parent to verify tree ordering
-                       :psi.agent-session/host-sessions
+                       :psi.agent-session/context-sessions
                        [{:psi.session-info/id "s2"
                          :psi.session-info/path "/tmp/psi-test/b.ndedn"
                          :psi.session-info/name "Child"
@@ -418,8 +418,8 @@
   (testing "tree selector status badges align across rows"
     (let [update-fn (app/make-update (stub-agent-fn ""))
           qfn       (fn [_q]
-                      {:psi.agent-session/host-active-session-id "s1"
-                       :psi.agent-session/host-sessions
+                      {:psi.agent-session/context-active-session-id "s1"
+                       :psi.agent-session/context-sessions
                        [{:psi.session-info/id "s1"
                          :psi.session-info/path "/tmp/psi-test/a.ndedn"
                          :psi.session-info/name "Root"

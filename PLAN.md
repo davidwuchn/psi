@@ -40,13 +40,13 @@ Ordered steps toward PSI COMPLETE.
 
 ### Step 15c — Startup host bootstrap should create exactly one real session ✓ complete
 - Removed phantom startup host entries by aligning session creation with actual runtime intent.
-- `create-context` now starts with an empty host registry instead of seeding it from `initial-session`.
+- `create-context` now starts with an empty context session index instead of seeding it from `initial-session`.
 - `bootstrap-in!` (renamed from `bootstrap-session-in!`) now applies startup wiring to the current context without creating a new session.
 - `bootstrap-runtime-session!` now creates one real session up front, then runs startup prompts in that same session instead of creating a second startup-only branch.
-- Result: startup host snapshot contains exactly one real active session rather than seed/bootstrap/startup artifacts.
+- Result: startup context snapshot contains exactly one real active session rather than seed/bootstrap/startup artifacts.
 - Coverage updated:
-  - core host-registry tests now assert empty host on fresh context and first real registration on `new-session-in!`
-  - runtime bootstrap regression asserts single-session host state
+  - core context-index tests now assert empty context index on fresh context and first real registration on `new-session-in!`
+  - runtime bootstrap regression asserts single-session context state
   - resolver/introspection call sites updated to `bootstrap-in!`
 - Implementation commit: `87a5e77`
 
@@ -56,14 +56,14 @@ Ordered steps toward PSI COMPLETE.
 - This follows the same shape as existing operational principles and makes bug-fix preference explicit for future ψ loops.
 - Implementation commit: `859515c`
 
-### Step 15a — RPC handshake host snapshot bootstrap + `/tree` simplification ✓ complete
-- RPC handshake path now emits a host snapshot event (`host/updated`) during bootstrap in rpc-edn mode.
-  - Wiring: `:handshake-host-updated-payload-fn` in rpc runtime state
-  - Handler: handshake emits `host/updated` before handshake response when configured
-- Emacs `/tree` now relies on bootstrapped host snapshot state and no longer queries `list_sessions` as a fallback.
+### Step 15a — RPC handshake context snapshot bootstrap + `/tree` simplification ✓ complete
+- RPC handshake path now emits a context snapshot event (`context/updated`) during bootstrap in rpc-edn mode.
+  - Wiring: `:handshake-context-updated-payload-fn` in rpc runtime state
+  - Handler: handshake emits `context/updated` before handshake response when configured
+- Emacs `/tree` now relies on bootstrapped context snapshot state and no longer queries `list_sessions` as a fallback.
 - Coverage updated:
-  - RPC handshake tests now assert host snapshot emission when configured.
-  - Emacs suite remains green with `/tree` operating from host snapshot state.
+  - RPC handshake tests now assert context snapshot emission when configured.
+  - Emacs suite remains green with `/tree` operating from context snapshot state.
 - Implementation commit: `a639f3e`
 
 ### Step 15 — Emacs e2e harness assertions + transport timeout stabilization ✓ complete
@@ -222,11 +222,22 @@ Ordered steps toward PSI COMPLETE.
 
 ## Next
 
-### Step 15j — Converge runtime/tests to context-owned resources and session-tree model
-- Align RPC/session-tree events and payload naming with the spec shift from host-owned active session to context-owned session focus.
-- Converge implementation seams that still expose single-active-runtime vocabulary (`host/updated`, host registry wording, nested `session.agent` assumptions).
-- Update session-tree/frontend tests first, then session/runtime code, then extension/session-switch surfaces.
-- Keep the migration incremental: preserve external compatibility only where explicitly intended; otherwise prefer one coherent context/session-tree model.
+### Step 15j — Converge runtime/tests to context-owned resources and session-tree model ✓ complete
+- RPC/session-tree events and payload naming now follow the context-owned session-container model:
+  - `context/updated` → `context/updated`
+  - frontend action `session-tree-selector` → `context-session-selector`
+- Frontend/session-tree state now uses context vocabulary:
+  - Emacs `context-snapshot`
+  - TUI tree selector uses `:psi.agent-session/context-*`
+- EQL/session-tree attrs now use context vocabulary:
+  - `:psi.agent-session/context-active-session-id`
+  - `:psi.agent-session/context-session-count`
+  - `:psi.agent-session/context-sessions`
+- Internal runtime container/index vocabulary also converged:
+  - `context_index.clj` → `context_index.clj`
+  - `:context-index-atom` → `:context-index-atom`
+  - `get-context-index-in`, `list-context-sessions-in`, `set-context-active-session-in!`
+- Focused verification green across rpc/resolvers/tui/emacs/core/main slices.
 
 ### Step 15i — Simplify AI streaming lifecycle ✓ complete
 - `psi.ai.streaming` now has a smaller contract surface:
@@ -398,11 +409,11 @@ Ordered steps toward PSI COMPLETE.
   - `spec/session-core.allium` / `spec/session-management.allium` / `spec/session-forking.allium`
   - `spec/session-persistence.allium` / `spec/session-startup-prompts.allium`
 - Implemented (runtime foundation):
-  - in-process host registry (`components/agent-session/src/psi/agent_session/session_host.clj`)
-  - core wiring (`:session-host-atom`, host upsert on session mutation, active-session pointer)
-  - `ensure-session-loaded-in!` + `set-active-session-in!` in `core.clj`
+  - in-process context session index (`components/agent-session/src/psi/agent_session/context_index.clj`)
+  - core wiring (`:context-index-atom`, context index upsert on session mutation, active-session focus pointer)
+  - `ensure-session-loaded-in!` + `set-context-active-session-in!` in `core.clj`
   - RPC `switch_session` supports `:session-id` (in addition to legacy `:session-path`)
-  - RPC added `list_sessions` op (host snapshot)
+  - RPC added `list_sessions` op (context snapshot)
   - targetable RPC ops now accept optional `:session-id` and load/switch before execution
 - Implemented (supporting convergence):
   - persistence header v4 (`:parent-session-id` + `:parent-session`), v3→v4 read migration
@@ -424,17 +435,17 @@ Ordered steps toward PSI COMPLETE.
     - `clojure -M:test --focus psi.agent-session.core-test` → 32 tests, 272 assertions, 0 failures
 - Progress (2026-03-13): multi-session test hardening completed for routing + introspection
   - RPC coverage added in `rpc_test.clj` for `list_sessions`, `switch_session(:session-id)`, targetable `:session-id` routing, and invalid `:session-id` rejection.
-  - Resolver coverage added in `resolvers_test.clj` for host-index process view + persisted session list view.
-  - Graph introspection coverage added for host-index attrs (`:psi.agent-session/host-active-session-id`, `:psi.agent-session/host-session-count`, `:psi.agent-session/host-sessions`) across `:psi.graph/root-queryable-attrs`/`:psi.graph/edges` surfaces.
+  - Resolver coverage added in `resolvers_test.clj` for context-session process view + persisted session list view.
+  - Graph introspection coverage added for context-session attrs (`:psi.agent-session/context-active-session-id`, `:psi.agent-session/context-session-count`, `:psi.agent-session/context-sessions`) across `:psi.graph/root-queryable-attrs`/`:psi.graph/edges` surfaces.
   - Verification snapshot:
     - `clojure -M:test --focus psi.agent-session.rpc-test` → 32 tests, 316 assertions, 0 failures
     - `clojure -M:test --focus psi.agent-session.resolvers-test` → 32 tests, 304 assertions, 0 failures
-  - Contract nuance locked by tests: `:psi.agent-session/host-sessions` is a join attr and should be validated via graph edges (it is not guaranteed to appear as a scalar in `:psi.graph/root-queryable-attrs`).
+  - Contract nuance locked by tests: `:psi.agent-session/context-sessions` is a join attr and should be validated via graph edges (it is not guaranteed to appear as a scalar in `:psi.graph/root-queryable-attrs`).
   - PSL follow-up for `fc1aa93` converged docs + tests so this slice is now explicitly tracked in plan memory.
 - Progress (2026-03-13, commit `b1fef75`): session-work sweep committed as one converged delta (runtime + specs + tests + UI)
-  - Added `session_host.clj` and wired host registry/routing through session core, resolvers, and RPC surfaces.
+  - Added `context_index.clj` and wired context session index/routing through session core, resolvers, and RPC surfaces.
   - Added/updated Allium contracts for session core/forking/management/persistence/startup and UI interaction surfaces.
-  - Stabilized host/session tests by persisting switch targets explicitly in fixtures where lazy flush would otherwise make session-id resume nondeterministic.
+  - Stabilized context/session tests by persisting switch targets explicitly in fixtures where lazy flush would otherwise make session-id resume nondeterministic.
   - Regression suites are green for the session slice:
     - `core-test`, `persistence-test`, `rpc-test`, `resolvers-test`, `runtime-startup-prompts-test`, `startup-prompts-test`
     - aggregate verification run: 116 tests, 1000 assertions, 0 failures.
@@ -443,29 +454,29 @@ Ordered steps toward PSI COMPLETE.
   - `run-prompt-async!` acquires/releases `:session-route-lock` scoped to request-id + target session.
   - `session-resolver-surface` extracted in `resolvers.clj` so graph introspection uses a stable locally-composed set independent of global registry state.
 - Progress (2026-03-13, commit `62f46cd`): multi-session UI spec landed
-  - `session-management.allium`: `SessionHostSnapshot` + `SessionSlot` values; `host/updated` event rules (on subscribe + host state change); slot active/streaming projection rules; guidance in `AgentSessionApi` surface.
+  - `session-management.allium`: `ContextSessionSnapshot` + `SessionSlot` values; `context/updated` event rules (on subscribe + context state change); slot active/streaming projection rules; guidance in `AgentSessionApi` surface.
   - `emacs-frontend.allium`: session tree widget rules (`psi-session/session-tree`, placement `left`); display name fallback rules; parent-child indent rule; `/tree` completing-read picker rules; switch dispatch + connecting affordances + transcript rehydrate rules; `EmacsFrontendSessionTreeApi` surface.
 - Progress (2026-03-13, commit `16ce8ed`): multi-session UI implementation complete
-  - Backend: `host/updated` added to event-topics + required-payload-keys; `host-updated-payload` builds `SessionHostSnapshot` with per-slot `{id name is-streaming is-active parent-session-id}`; emitted on subscribe, `new_session`, and both `switch_session` branches.
-  - Emacs (`psi-events.el`): `psi-emacs--session-display-name` (name or id-prefix fallback); `psi-emacs--session-tree-widget-lines` (active marker, streaming badge, parent-child indent, `/tree <id>` actions); `psi-emacs--handle-host-updated-event` injects `psi-session/session-tree` widget (hidden when ≤1 session); `host/updated` wired into `handle-rpc-event`.
-  - Emacs (`psi-session-commands.el`): `psi-emacs--request-switch-session-by-id` (`:session-id` path); `psi-emacs--handle-idle-tree-command` (completing-read picker from host snapshot); `/tree <id>` direct dispatch for widget click; `/tree` wired into idle slash handler and help text.
+  - Backend: `context/updated` added to event-topics + required-payload-keys; `context-updated-payload` builds `ContextSessionSnapshot` with per-slot `{id name is-streaming is-active parent-session-id}`; emitted on subscribe, `new_session`, and both `switch_session` branches.
+  - Emacs (`psi-events.el`): `psi-emacs--session-display-name` (name or id-prefix fallback); `psi-emacs--session-tree-widget-lines` (active marker, streaming badge, parent-child indent, `/tree <id>` actions); `psi-emacs--handle-context-updated-event` injects `psi-session/session-tree` widget (hidden when ≤1 session); `context/updated` wired into `handle-rpc-event`.
+  - Emacs (`psi-session-commands.el`): `psi-emacs--request-switch-session-by-id` (`:session-id` path); `psi-emacs--handle-idle-tree-command` (completing-read picker from context snapshot); `/tree <id>` direct dispatch for widget click; `/tree` wired into idle slash handler and help text.
   - Emacs (`psi-completion.el`): `/tree` added to slash CAPF specs.
-  - Emacs (`psi.el`): `host-snapshot` slot added to `psi-emacs-state`.
+  - Emacs (`psi.el`): `context-snapshot` slot added to `psi-emacs-state`.
   - Tests: 12 new ERT tests; 204/204 passing.
 - Progress (2026-03-13, commit `7ab1277`): fork gap closed
-  - `fork` RPC op now emits `host/updated` after `fork-session-in!`; session tree widget reflects forked session immediately.
-  - Subagent creation intentionally excluded — subagents use isolated contexts and are not host peers.
-  - Three new rpc_test assertions: subscribe, fork, and new_session `host/updated` coverage.
-- Progress (2026-03-13, commit `92fc518`): TUI multi-session surface landed (`/tree` + host-backed picker)
+  - `fork` RPC op now emits `context/updated` after `fork-session-in!`; session tree widget reflects forked session immediately.
+  - Subagent creation intentionally excluded — subagents use isolated contexts and are not context peers.
+  - Three new rpc_test assertions: subscribe, fork, and new_session `context/updated` coverage.
+- Progress (2026-03-13, commit `92fc518`): TUI multi-session surface landed (`/tree` + context-backed picker)
   - Commands: `/tree` added to central dispatch with runtime gating (`:supports-session-tree?`), direct switch via session id/prefix (`:tree-switch`), and consistent no-op/error messaging.
-  - TUI: selector now supports `:session-selector-mode` (`:resume|:tree`), host-backed initialization from `:psi.agent-session/host-sessions` + `:psi.agent-session/host-active-session-id`, tree-aware rendering (active highlight, parent indent, streaming badge, session-id suffix), and mode-specific key hints/Tab behavior.
+  - TUI: selector now supports `:session-selector-mode` (`:resume|:tree`), context-backed initialization from `:psi.agent-session/context-sessions` + `:psi.agent-session/context-active-session-id`, tree-aware rendering (active highlight, parent indent, streaming badge, session-id suffix), and mode-specific key hints/Tab behavior.
   - Runtime wiring: TUI `run-tui-session` now passes `switch-session-fn!` (calls `session/ensure-session-loaded-in!` + rehydrate), plus `:supports-session-tree? true`; console/RPC explicitly pass `:supports-session-tree? false` for deterministic fallback text.
   - Slash UX: `/tree` included in builtin slash candidates and help text.
   - Verification snapshot:
     - `clojure -M:test --focus psi.agent-session.commands-test --focus psi.tui.app-test` → 115 tests, 338 assertions, 0 failures
     - `clojure -M:test --focus psi.agent-session.main-test --focus psi.agent-session.rpc-test` → 51 tests, 398 assertions, 0 failures
 - Progress (2026-03-13, commit `3c1c385`): TUI `/tree` hierarchy + alignment polish complete
-  - Row model now computes explicit tree order from host lineage (stable siblings; cycle/duplicate guard) instead of flat insertion order.
+  - Row model now computes explicit tree order from context lineage (stable siblings; cycle/duplicate guard) instead of flat insertion order.
   - Tree iconography added: root `●`, branch connectors `├─` / `└─`, and carry-through `│` for nested sibling context.
   - Right-side status cells are fixed-slot aligned (`[active] [stream]`) with consistent session-id suffix column alignment.
   - Verification snapshot:
@@ -478,7 +489,7 @@ Ordered steps toward PSI COMPLETE.
     - `clojure -M:test --focus psi.agent-session.rpc-test` → 35 tests, 336 assertions, 0 failures
     - `clojure -M:test --focus psi.agent-session.core-test/send-workflow-event-track-background-job-gated-test --focus psi.agent-session.rpc-test/rpc-prompt-passes-resolved-api-key-to-agent-loop-test` → 2 tests, 7 assertions, 0 failures
 - Progress (2026-03-13, commit `d869843`): changelog memory synced for `/tree` rollout
-  - Added explicit `CHANGELOG.md` entry documenting command semantics (`/tree`, `/tree <id|prefix>`), runtime gating (`supports-session-tree?`), TUI host-backed selector mode, switch callback wiring, and validation snapshot.
+  - Added explicit `CHANGELOG.md` entry documenting command semantics (`/tree`, `/tree <id|prefix>`), runtime gating (`supports-session-tree?`), TUI context-backed selector mode, switch callback wiring, and validation snapshot.
   - Keeps internal plan/state narrative aligned with user-facing release memory for the same feature delta.
 - Progress (2026-03-13, commit `1613f5f`): TUI tmux integration harness baseline added for live-surface verification
   - Added reusable tmux harness utilities (`components/tui/test/psi/tui/test_harness/tmux.clj`) and one detached-session end-to-end scenario test (`components/tui/test/psi/tui/tmux_integration_harness_test.clj`).
@@ -514,7 +525,7 @@ Ordered steps toward PSI COMPLETE.
   - `clojure -M:test --focus psi.history.git-test --focus psi.history.resolvers-test --focus psi.introspection.agent-session-test --focus psi.agent-session.core-test --focus psi.agent-session.resolvers-test --focus extensions.work-on-test`
   - result: 118 tests, 817 assertions, 0 failures
 - Follow-up convergence landed (post-`ad691d4`, commit `3bbb958`):
-  - `/work-on` now creates a distinct host peer session explicitly instead of rebinding the active runtime session in place
+  - `/work-on` now creates a distinct context peer session explicitly instead of rebinding the active runtime session in place
   - `/work-merge` now auto-switches back to an existing main-worktree session when present, or creates one when absent
   - extension session lifecycle surface now exists as first-class mutations/API (`psi.extension/create-session`, `psi.extension/switch-session`; `createSession`, `switchSession`)
   - session and extension Allium surfaces synchronized (`spec/session-core.allium`, `spec/extension-system.allium`, `spec/work-on-extension.allium`)
@@ -541,7 +552,7 @@ Ordered steps toward PSI COMPLETE.
     - result: 6 tests, 21 assertions, 0 failures
 - PSL follow-up landed (2026-03-14, commit `d8dedda`): `/work-on` now reuses existing sibling worktrees when the deterministic slug path already exists.
   - Root cause: the first shipped implementation treated `worktree path already exists` as a hard error even when the path was an already-registered linked worktree representing resumable branch state.
-  - Fix: `/work-on` now checks the known git worktree list for the slug path, switches to an existing host session for that worktree when present, or creates a fresh worktree-bound session when absent.
+  - Fix: `/work-on` now checks the known git worktree list for the slug path, switches to an existing context session for that worktree when present, or creates a fresh worktree-bound session when absent.
   - Regression coverage added in `extensions/test/extensions/work_on_test.clj` for existing-worktree reuse + session switching.
   - Focused verification green:
     - `clojure -M:test --focus extensions.work-on-test`
@@ -553,9 +564,9 @@ Ordered steps toward PSI COMPLETE.
   - Focused verification green:
     - `clojure -M:test --focus psi.agent-session.system-prompt-test --focus psi.agent-session.core-test/query-in-test`
     - result: 3 tests, 40 assertions, 0 failures
-- PSL follow-up landed (2026-03-14, commit `62c03f7`): worktree identity is now exposed coherently across persisted listings, resolver joins, RPC host snapshots, and TUI/Emacs session selectors.
+- PSL follow-up landed (2026-03-14, commit `62c03f7`): worktree identity is now exposed coherently across persisted listings, resolver joins, RPC context snapshots, and TUI/Emacs session selectors.
   - Root cause: `worktree-path` existed in persistence/runtime state but was not propagated consistently through `:psi.session-info/*` joins or UI-facing selector payloads, so resume/tree flows still forced operators to infer worktree identity indirectly from session files or session names.
-  - Fix: resolvers now expose explicit `:psi.session-info/worktree-path` and normalize `:psi.session-info/cwd` to the worktree path; `host/updated` now includes per-session `:worktree-path`; TUI tree rows render worktree paths inline; Emacs `/resume` queries/labels now include worktree path.
+  - Fix: resolvers now expose explicit `:psi.session-info/worktree-path` and normalize `:psi.session-info/cwd` to the worktree path; `context/updated` now includes per-session `:worktree-path`; TUI tree rows render worktree paths inline; Emacs `/resume` queries/labels now include worktree path.
   - Regression coverage added in `components/agent-session/test/psi/agent_session/persistence_test.clj`, `core_test.clj`, `resolvers_test.clj`, `rpc_test.clj`, `components/tui/test/psi/tui/app_test.clj`, and `components/emacs-ui/test/psi-test.el`.
   - Focused verification green:
     - `clojure -M:test --focus psi.agent-session.persistence-test --focus psi.agent-session.core-test/resume-session-model-fallback-test --focus psi.agent-session.resolvers-test/multi-session-host-eql-process-and-persisted-test`

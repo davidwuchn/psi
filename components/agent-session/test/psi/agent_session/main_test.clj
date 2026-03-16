@@ -238,7 +238,7 @@
              (#'main/session-runtime-config-from-args
               ["--llm-idle-timeout-ms" "not-a-number"]))))))
 
-(deftest bootstrap-runtime-session-initial-host-has-single-session-test
+(deftest bootstrap-runtime-session-initial-context-index-has-single-session-test
   (with-redefs [oauth/create-context (fn [] nil)
                 pt/discover-templates (fn [] [])
                 skills/discover-skills (fn [] {:skills [] :diagnostics []})
@@ -256,11 +256,11 @@
                           :name "Test Model"
                           :supports-reasoning false}
                          {})
-          host (session/get-session-host-in ctx)
+          index (session/get-context-index-in ctx)
           sd   (session/get-session-data-in ctx)]
-      (is (= 1 (count (:sessions host))))
-      (is (= (:session-id sd) (:active-session-id host)))
-      (is (= [(:session-id sd)] (vec (keys (:sessions host))))))))
+      (is (= 1 (count (:sessions index))))
+      (is (= (:session-id sd) (:active-session-id index)))
+      (is (= [(:session-id sd)] (vec (keys (:sessions index))))))))
 
 (deftest bootstrap-runtime-session-passes-memory-runtime-opts-to-sync-test
   (let [captured (atom nil)]

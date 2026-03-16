@@ -286,18 +286,18 @@
       :else
       (let [server-info-fn (or (:handshake-server-info-fn @state)
                                (fn [] {:protocol-version protocol-version}))
-            host-payload-fn (:handshake-host-updated-payload-fn @state)
-            server-info    (merge {:protocol-version protocol-version}
-                                  (or (server-info-fn) {}))]
+            context-payload-fn (:handshake-context-updated-payload-fn @state)
+            server-info       (merge {:protocol-version protocol-version}
+                                     (or (server-info-fn) {}))]
         (swap! state assoc
                :ready? true
                :negotiated-protocol-version protocol-version)
-        ;; Optional bootstrap host snapshot event for frontends that need
+        ;; Optional bootstrap context snapshot event for frontends that need
         ;; immediate session-tree state before subscribe lifecycle completes.
-        (when (fn? host-payload-fn)
-          (emit-event! emit-frame! state {:event "host/updated"
+        (when (fn? context-payload-fn)
+          (emit-event! emit-frame! state {:event "context/updated"
                                           :id (:id request)
-                                          :data (or (host-payload-fn)
+                                          :data (or (context-payload-fn)
                                                     {:active-session-id nil
                                                      :sessions []})}))
         (response-frame (:id request)
@@ -647,7 +647,7 @@
   #{"session/updated"
     "session/resumed"
     "session/rehydrated"
-    "host/updated"
+    "context/updated"
     "assistant/delta"
     "assistant/thinking-delta"
     "assistant/message"
@@ -668,7 +668,7 @@
   {"session/updated" #{:session-id :phase :is-streaming :is-compacting :pending-message-count :retry-attempt :interrupt-pending}
    "session/resumed" #{:session-id :session-file :message-count}
    "session/rehydrated" #{:messages :tool-calls :tool-order}
-   "host/updated" #{:active-session-id :sessions}
+   "context/updated" #{:active-session-id :sessions}
    "assistant/delta" #{:text}
    "assistant/thinking-delta" #{:text}
    "assistant/message" #{:role :content}
@@ -759,23 +759,23 @@
      :thinking-level              (some-> thinking-level name)
      :effective-reasoning-effort  effective-effort}))
 
-(defn- host-updated-payload
-  "Build the `host/updated` event payload from the current host snapshot.
+(defn- context-updated-payload
+  "Build the `context/updated` event payload from the current context session snapshot.
 
-   Includes a synthetic single-session snapshot before the host registry has any
-   real entries, so handshake/bootstrap surfaces still reflect the current live
-   session without changing core host-registry semantics.
+   Includes a synthetic single-session snapshot before the runtime context index
+   has any real entries, so handshake/bootstrap surfaces still reflect the
+   current live session.
 
    Each session slot includes :id :name :worktree-path :is-streaming :is-active :parent-session-id.
    Sessions are ordered by updated-at ascending (oldest first → stable tree order)."
   [ctx]
-  (let [host       (session/get-session-host-in ctx)
-        active-id  (:active-session-id host)
-        sd         (session/get-session-data-in ctx)
-        current-id (:session-id sd)
-        host-sessions (session/list-host-sessions-in ctx)
-        sessions*  (if (seq host-sessions)
-                     host-sessions
+  (let [index            (session/get-context-index-in ctx)
+        active-id        (:active-session-id index)
+        sd               (session/get-session-data-in ctx)
+        current-id       (:session-id sd)
+        context-sessions (session/list-context-sessions-in ctx)
+        sessions*  (if (seq context-sessions)
+                     context-sessions
                      [(select-keys sd [:session-id :session-name :worktree-path :parent-session-id])])
         active-id* (or active-id current-id)
         slots      (mapv (fn [m]
@@ -1430,17 +1430,17 @@
                                                     :psi.session-info/modified]}])}})
 
       (= trimmed "/tree")
-      (let [host       (session/get-session-host-in ctx)
+      (let [index      (session/get-context-index-in ctx)
             current-id (:session-id (session/get-session-data-in ctx))
-            active-id  (or (:active-session-id host) current-id)
-            sessions0  (vec (or (session/list-host-sessions-in ctx) []))
+            active-id  (or (:active-session-id index) current-id)
+            sessions0  (vec (or (session/list-context-sessions-in ctx) []))
             sessions   (if (seq sessions0)
                          sessions0
                          [(select-keys (session/get-session-data-in ctx)
                                        [:session-id :session-name :worktree-path])])]
         (emit! "ui/frontend-action-requested"
                {:request-id request-id
-                :action-name "session-tree-selector"
+                :action-name "context-session-selector"
                 :prompt "Select a live session"
                 :payload {:active-session-id active-id
                           :sessions sessions}}))
@@ -1475,7 +1475,7 @@
                                    :message (str "[not a command] " text)}))
     (emit! "session/updated" (session-updated-payload ctx))
     (emit! "footer/updated" (footer-updated-payload ctx))
-    (emit! "host/updated" (host-updated-payload ctx))
+    (emit! "context/updated" (context-updated-payload ctx))
     (response-frame (:id request) "command" true {:accepted true
                                                   :handled true})))
 
@@ -1519,9 +1519,9 @@
                                                 :data {:messages msgs
                                                        :tool-calls {}
                                                        :tool-order []}})
-                (emit! "host/updated" (host-updated-payload ctx)))))
+                (emit! "context/updated" (context-updated-payload ctx)))))
 
-          "session-tree-selector"
+          "context-session-selector"
           (when (string? value)
             (session/ensure-session-loaded-in! ctx value)
             (let [sd   (session/get-session-data-in ctx)
@@ -1536,7 +1536,7 @@
                                               :data {:messages msgs
                                                      :tool-calls {}
                                                      :tool-order []}})
-              (emit! "host/updated" (host-updated-payload ctx))))
+              (emit! "context/updated" (context-updated-payload ctx))))
 
           "model-picker"
           (when (map? value)
@@ -1823,9 +1823,9 @@
                                (emit-event! emit-frame! state {:event "footer/updated"
                                                                :id (:id request)
                                                                :data (footer-updated-payload ctx)})
-                               (emit-event! emit-frame! state {:event "host/updated"
+                               (emit-event! emit-frame! state {:event "context/updated"
                                                                :id (:id request)
-                                                               :data (host-updated-payload ctx)})
+                                                               :data (context-updated-payload ctx)})
                                (response-frame (:id request) op true {:session-id (:session-id sd)
                                                                       :session-file (:session-file sd)}))
 
@@ -1854,9 +1854,9 @@
                                    (emit-event! emit-frame! state {:event "footer/updated"
                                                                    :id (:id request)
                                                                    :data (footer-updated-payload ctx)})
-                                   (emit-event! emit-frame! state {:event "host/updated"
+                                   (emit-event! emit-frame! state {:event "context/updated"
                                                                    :id (:id request)
-                                                                   :data (host-updated-payload ctx)})
+                                                                   :data (context-updated-payload ctx)})
                                    (response-frame (:id request) op true {:session-id (:session-id sd)
                                                                           :session-file (:session-file sd)})))
                                (let [session-path (req-arg! request params :session-path #(and (string? %) (not (str/blank? %))) "non-empty path string")]
@@ -1881,22 +1881,22 @@
                                    (emit-event! emit-frame! state {:event "footer/updated"
                                                                    :id (:id request)
                                                                    :data (footer-updated-payload ctx)})
-                                   (emit-event! emit-frame! state {:event "host/updated"
+                                   (emit-event! emit-frame! state {:event "context/updated"
                                                                    :id (:id request)
-                                                                   :data (host-updated-payload ctx)})
+                                                                   :data (context-updated-payload ctx)})
                                    (response-frame (:id request) op true {:session-id (:session-id sd)
                                                                           :session-file (:session-file sd)}))))
 
                              "list_sessions"
-                             (response-frame (:id request) op true {:active-session-id (:active-session-id (session/get-session-host-in ctx))
-                                                                    :sessions (session/list-host-sessions-in ctx)})
+                             (response-frame (:id request) op true {:active-session-id (:active-session-id (session/get-context-index-in ctx))
+                                                                    :sessions (session/list-context-sessions-in ctx)})
 
                              "fork"
                              (let [entry-id (req-arg! request params :entry-id #(and (string? %) (not (str/blank? %))) "non-empty entry id")
                                    sd       (session/fork-session-in! ctx entry-id)]
-                               (emit-event! emit-frame! state {:event "host/updated"
+                               (emit-event! emit-frame! state {:event "context/updated"
                                                                :id (:id request)
-                                                               :data (host-updated-payload ctx)})
+                                                               :data (context-updated-payload ctx)})
                                (response-frame (:id request) op true {:session-id (:session-id sd)
                                                                       :session-file (:session-file sd)}))
 
@@ -1988,7 +1988,7 @@
                                                            state
                                                            {}
                                                            (or (ext-ui/snapshot (:ui-state-atom ctx)) {})))
-             ;; Emit current session/footer/host snapshots immediately on subscription
+             ;; Emit current session/footer/context snapshots immediately on subscription
              ;; so frontends render baseline status without waiting for prompt activity.
                                (emit-event! emit-frame! state {:event "session/updated"
                                                                :id (:id request)
@@ -1996,9 +1996,9 @@
                                (emit-event! emit-frame! state {:event "footer/updated"
                                                                :id (:id request)
                                                                :data (footer-updated-payload ctx)})
-                               (emit-event! emit-frame! state {:event "host/updated"
+                               (emit-event! emit-frame! state {:event "context/updated"
                                                                :id (:id request)
-                                                               :data (host-updated-payload ctx)})
+                                                               :data (context-updated-payload ctx)})
                                (response-frame (:id request) op true {:subscribed (->> (:subscribed-topics @state) sort vec)}))
 
                              "unsubscribe"

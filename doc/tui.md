@@ -52,8 +52,8 @@ clojure -M:run --tui --nrepl 8888
 - `/resume` dispatches to the backend; when selection is needed, the backend requests
   a frontend action and TUI renders the persisted-session picker (session files on disk).
 - `/tree` dispatches to the backend; when selection is needed, the backend requests
-  a frontend action and TUI renders the live host session picker (in-process multi-session view).
-- `/tree <session-id|prefix>` switches directly to a live host session by id.
+  a frontend action and TUI renders the live context session picker (in-process multi-session view).
+- `/tree <session-id|prefix>` switches directly to a live context session by id.
 - In `/tree` picker mode, sessions render in parent/child order with explicit tree
   glyphs (root `●`, branch connectors `├─` / `└─` / `│`).
 - Right-side status cells are column-aligned across rows (`[active] [stream]`) to
@@ -65,7 +65,7 @@ The selector UI is frontend-native, but candidate lists and command semantics ar
 
 - `/worktree` shows git worktree context for the current session worktree.
 - `/work-on <description>` creates a sibling git worktree + branch and moves you into
-  a distinct new host session bound to that worktree.
+  a distinct new context session bound to that worktree.
 - `/work-merge` fast-forward merges the current linked-worktree branch into the default
   branch, removes the linked worktree, deletes the branch, and switches back to an
   existing main-worktree session when possible.
@@ -78,7 +78,7 @@ Operational notes:
 - `/work-on` uses a mechanical slug from the description.
 - Tool operations in a worktree session run with that session's `worktree_path` as cwd.
 - After `/work-merge`, the transcript of the linked-worktree session is preserved in the
-  host session tree even though the branch/worktree are removed.
+  context session tree even though the branch/worktree are removed.
 
 `/remember` performs a single manual memory capture from the runtime command surface.
 It writes one memory artifact with the provided text (or a default note when blank).

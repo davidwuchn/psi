@@ -73,7 +73,7 @@
    [psi.agent-session.project-preferences :as project-prefs]
    [psi.agent-session.resolvers :as resolvers]
    [psi.agent-session.session :as session]
-   [psi.agent-session.session-host :as session-host]
+   [psi.agent-session.context-index :as context-index]
    [psi.agent-session.system-prompt :as sys-prompt]
    [psi.agent-session.statechart :as sc]
    [psi.history.git :as history-git]
@@ -288,13 +288,13 @@
          flush-state-atom  (persist/create-flush-state)
          ui-state-atom     (ext-ui/create-ui-state)
          merged-config     (merge session/default-config (or config {}))
-         host-atom         (atom (session-host/empty-host))
+         context-index-atom (atom (context-index/empty-index))
          ;; Build ctx without actions-fn so we can close over it
          ctx               {:sc-env                sc-env
                             :sc-session-id         sc-session-id
                             :started-at            (java.time.Instant/now)
                             :session-data-atom      session-data-atom
-                            :session-host-atom      host-atom
+                            :context-index-atom      context-index-atom
                             :tool-output-stats-atom  (atom {:calls []
                                                             :aggregates {:total-context-bytes 0
                                                                          :by-tool {}
@@ -390,24 +390,24 @@
 (defn get-session-data-in
   "Return the current AgentSession data map from `ctx`.
 
-   If `session-id` is provided and host metadata knows that id, returns that
-   host session metadata entry (read-only listing projection)."
+   If `session-id` is provided and context index metadata knows that id, returns that
+   context-session metadata entry (read-only listing projection)."
   ([ctx]
    @(:session-data-atom ctx))
   ([ctx session-id]
-   (if-let [host-atom (:session-host-atom ctx)]
-     (or (get-in @host-atom [:sessions session-id])
+   (if-let [context-index-atom (:context-index-atom ctx)]
+     (or (get-in @context-index-atom [:sessions session-id])
          @(:session-data-atom ctx))
      @(:session-data-atom ctx))))
 
 (defn- swap-session! [ctx f & args]
   (let [sd (apply swap! (:session-data-atom ctx) f args)]
-    (when-let [host-atom (:session-host-atom ctx)]
-      (swap! host-atom
-             (fn [host]
-               (-> host
-                   (session-host/upsert-session sd)
-                   (session-host/set-active-session (:session-id sd))))))
+    (when-let [context-index-atom (:context-index-atom ctx)]
+      (swap! context-index-atom
+             (fn [index]
+               (-> index
+                   (context-index/upsert-session sd)
+                   (context-index/set-active-session (:session-id sd))))))
     sd))
 
 (defn effective-cwd-in
@@ -449,48 +449,48 @@
   [ctx entry]
   (journal-append! ctx entry))
 
-(defn get-session-host-in
-  "Return session host registry snapshot for this process context."
+(defn get-context-index-in
+  "Return the context session index snapshot for this runtime context."
   [ctx]
-  (if-let [host-atom (:session-host-atom ctx)]
-    @host-atom
-    (session-host/create-host (get-session-data-in ctx))))
+  (if-let [context-index-atom (:context-index-atom ctx)]
+    @context-index-atom
+    (context-index/create-index (get-session-data-in ctx))))
 
-(defn list-host-sessions-in
-  "Return host-tracked sessions metadata entries."
+(defn list-context-sessions-in
+  "Return context-tracked sessions metadata entries."
   [ctx]
-  (session-host/sessions (get-session-host-in ctx)))
+  (context-index/sessions (get-context-index-in ctx)))
 
-(defn set-active-session-in!
-  "Set active default-routing session id in host registry when known.
-   Returns host snapshot after update."
+(defn set-context-active-session-in!
+  "Set active default-routing session id in context session index when known.
+   Returns context session index snapshot after update."
   [ctx session-id]
-  (if-let [host-atom (:session-host-atom ctx)]
-    (do (swap! host-atom session-host/set-active-session session-id)
-        @host-atom)
-    (get-session-host-in ctx)))
+  (if-let [context-index-atom (:context-index-atom ctx)]
+    (do (swap! context-index-atom context-index/set-active-session session-id)
+        @context-index-atom)
+    (get-context-index-in ctx)))
 
 (defn ensure-session-loaded-in!
   "Ensure `session-id` is loaded as the active runtime session in this context.
 
    Behavior:
    - if session-id is nil, no-op
-   - if already current, only updates host active pointer
-   - if known in host registry with a session-file path, resumes that file and
+   - if already current, only updates the context active pointer
+   - if known in context session index with a session-file path, resumes that file and
      marks it active
    - otherwise throws ex-info with :error-code request/not-found"
   [ctx session-id]
   (when session-id
     (let [current-id (:session-id (get-session-data-in ctx))]
       (if (= current-id session-id)
-        (do (set-active-session-in! ctx session-id)
+        (do (set-context-active-session-in! ctx session-id)
             (get-session-data-in ctx))
-        (let [host (get-session-host-in ctx)
-              target (get-in host [:sessions session-id])
+        (let [index  (get-context-index-in ctx)
+              target (get-in index [:sessions session-id])
               path   (:session-file target)]
           (cond
             (nil? target)
-            (throw (ex-info "session id not found in host registry"
+            (throw (ex-info "session id not found in context session index"
                             {:error-code "request/not-found"
                              :session-id session-id}))
 
@@ -502,7 +502,7 @@
             :else
             (do
               (resume-session-in! ctx path)
-              (set-active-session-in! ctx session-id)
+              (set-context-active-session-in! ctx session-id)
               (get-session-data-in ctx))))))))
 
 (defn sc-phase-in

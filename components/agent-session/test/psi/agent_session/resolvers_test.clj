@@ -139,9 +139,9 @@
 
 ;; ── Model selector bridge attrs ──────────────────────────
 
-(deftest multi-session-host-eql-process-and-persisted-test
-  (testing "host index attrs expose process sessions and persisted session list remains queryable"
-    (let [cwd      (str (System/getProperty "java.io.tmpdir") "/psi-resolvers-host-" (java.util.UUID/randomUUID))
+(deftest multi-session-context-eql-process-and-persisted-test
+  (testing "context session attrs expose process sessions and persisted session list remains queryable"
+    (let [cwd      (str (System/getProperty "java.io.tmpdir") "/psi-resolvers-context-" (java.util.UUID/randomUUID))
           _        (.mkdirs (java.io.File. cwd))
           ctx      (session/create-context {:cwd cwd})
           _        (session/new-session-in! ctx)
@@ -165,9 +165,9 @@
                                            [(persist/thinking-level-entry :off)
                                             (persist/session-info-entry "beta")])
           process-result
-          (q-in ctx [:psi.agent-session/host-active-session-id
-                     :psi.agent-session/host-session-count
-                     {:psi.agent-session/host-sessions
+          (q-in ctx [:psi.agent-session/context-active-session-id
+                     :psi.agent-session/context-session-count
+                     {:psi.agent-session/context-sessions
                       [:psi.session-info/id
                        :psi.session-info/path
                        :psi.session-info/cwd
@@ -181,16 +181,16 @@
                        :psi.session-info/worktree-path
                        :psi.session-info/name
                        :psi.session-info/message-count]}])
-          host-sessions (:psi.agent-session/host-sessions process-result)
+          context-sessions (:psi.agent-session/context-sessions process-result)
           persisted    (:psi.session/list persisted-result)]
-      (is (= sid-2 (:psi.agent-session/host-active-session-id process-result)))
-      (is (= 2 (:psi.agent-session/host-session-count process-result)))
-      (is (some #(= sid-1 (:psi.session-info/id %)) host-sessions))
-      (is (some #(= sid-2 (:psi.session-info/id %)) host-sessions))
-      (is (some #(= path-1 (:psi.session-info/path %)) host-sessions))
-      (is (some #(= path-2 (:psi.session-info/path %)) host-sessions))
-      (is (every? #(= cwd (:psi.session-info/cwd %)) host-sessions))
-      (is (every? #(= cwd (:psi.session-info/worktree-path %)) host-sessions))
+      (is (= sid-2 (:psi.agent-session/context-active-session-id process-result)))
+      (is (= 2 (:psi.agent-session/context-session-count process-result)))
+      (is (some #(= sid-1 (:psi.session-info/id %)) context-sessions))
+      (is (some #(= sid-2 (:psi.session-info/id %)) context-sessions))
+      (is (some #(= path-1 (:psi.session-info/path %)) context-sessions))
+      (is (some #(= path-2 (:psi.session-info/path %)) context-sessions))
+      (is (every? #(= cwd (:psi.session-info/cwd %)) context-sessions))
+      (is (every? #(= cwd (:psi.session-info/worktree-path %)) context-sessions))
 
       (is (vector? persisted))
       (is (some #(= sid-1 (:psi.session-info/id %)) persisted))

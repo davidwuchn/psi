@@ -84,7 +84,7 @@ rule TreeWithoutArgsRequestsFrontendAction {
 
     ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{
         type: frontend_action,
-        action_name: "session-tree-selector",
+        action_name: "context-session-selector",
         action_prompt: "Select a live session"
     })
 }
