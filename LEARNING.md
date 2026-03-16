@@ -48,6 +48,17 @@ The durable layering for Anthropic prompt caching was:
 
 That is more stable than teaching the provider about session-local breakpoint semantics directly. The provider stays wire-focused, while the session/executor layers own policy and projection.
 
+### λ Provider diagnostics only work when telemetry parity exists across providers
+
+The recent Anthropic failure looked like it should have been visible in the live provider-request surface because it was still within the recent session window, but the request was invisible for a different reason: OpenAI emitted `:on-provider-request` / `:on-provider-response` captures while Anthropic did not. A capped debug surface is only comparable across providers when each provider participates in the same capture contract.
+
+The reusable rule is:
+- treat request/reply telemetry as part of the provider boundary, not as optional debugging garnish
+- when one provider has live capture hooks, keep peer providers at telemetry parity
+- redact secrets at capture time so the shared introspection surface is safe to inspect directly
+
+Without that parity, live debugging drifts into false explanations like buffer eviction when the real problem is missing instrumentation.
+
 ### λ Optional provider metadata in shared schemas must be omitted unless concrete
 
 The initial cache-breakpoint wiring failed broadly because the executor projected `{:cache-control nil}` into schema-validated conversation blocks. In shared prompt/message shapes, optional metadata keys are not nullable by default just because they are optional. The safe rule is:
