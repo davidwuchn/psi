@@ -3,6 +3,24 @@
 
 ---
 
+## 2026-03-16 - Anthropic prompt caching should isolate volatile runtime metadata into a separate uncached tail (commit `f28c93f`)
+
+### λ Visible runtime metadata and cacheable prompt identity should not share the same Anthropic cache unit
+
+The captured Anthropic request made the real failure mode obvious: the system prompt contained a volatile `Current date and time:` line, so any rebuild of the prompt at a later second would change the bytes of the cached system block and defeat prompt-cache reuse. The right fix was not to remove runtime metadata, but to split the system prompt into two ordered units:
+- stable prompt body
+- runtime metadata tail
+
+For Anthropic, only the stable body should carry `{:cache-control {:type :ephemeral}}`; the runtime tail should stay visible but uncached.
+
+### λ The useful split point is after extension prompt contributions, not before them
+
+Extension prompt contributions are part of the durable instruction surface and belong with the stable cached body. The volatile cutoff is after those contributions and before runtime metadata like current time and cwd/worktree lines. That preserves the existing prompt reading order while keeping cache identity tied to the instruction content rather than to session-clock noise.
+
+### λ Shared prompt assembly should own volatile-tail detection so executor policy stays structural
+
+Once the prompt was split in `system_prompt.clj`, the executor no longer needed to know how to parse runtime metadata lines itself. It could just ask for Anthropic system prompt blocks and apply cache policy structurally. The reusable lesson is to keep provider/executor cache logic working over explicit shared prompt units rather than over ad hoc string surgery at the call site.
+
 ## 2026-03-16 - Provider simplification holds better when the file is split by runtime phase, not by arbitrary helper extraction (commit `d06c475`)
 
 ### λ The useful provider boundaries are message shaping, request assembly, stream-event translation, and terminal accounting
