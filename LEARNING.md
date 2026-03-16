@@ -56,6 +56,26 @@ The initial cache-breakpoint wiring failed broadly because the executor projecte
 
 That one bad `nil` propagated as wide executor/RPC failure, so optional metadata handling is a high-leverage boundary.
 
+## 2026-03-16 - Session selector labels should accept both live-event and backend-command payload vocabularies (commit `a210c7c`)
+
+### λ Frontend selectors should normalize display identity at the boundary, not assume one payload shape
+
+The Emacs `/tree` selector was correct when fed from `context/updated` event slots (`:id`, `:name`) but failed when the same conceptual session data arrived from backend command/frontend-action payloads (`:session-id`, `:session-name`). That produced indistinguishable fallback labels because the display helper silently missed the alternate keys.
+
+The reusable rule is: if the frontend renders one domain object through multiple transport paths, normalize the identity fields in one boundary helper and make all selectors/widgets depend on that helper instead of re-assuming a single wire shape.
+
+### λ Session selectors need a second distinguishing axis beyond human-assigned names
+
+Even with correct key decoding, session names are not guaranteed to exist or be unique. For multi-session work, `worktree-path` is a high-value discriminator because it reflects the actual execution context the user cares about. Adding worktree path to the `/tree` selector made unnamed sibling sessions usable again without inventing extra UI concepts.
+
+### λ Regressions are easiest to prevent when tests cover both semantic source paths for the same UI surface
+
+A UI surface like `/tree` can be fed by:
+- live event snapshots
+- backend command/frontend-action payloads
+
+If tests cover only one source path, the other can drift while the UI still appears locally healthy in one mode. The stronger regression shape is to lock both payload vocabularies for the same rendering helper and selector candidate builder.
+
 ## 2026-03-16 - Slash-command routing should be shaped by input kind, not frontend phase (commit `1bd1f17`)
 
 ### λ Remove the frontend concept when the dispatch rule can be expressed more directly
