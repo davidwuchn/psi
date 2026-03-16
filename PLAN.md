@@ -222,6 +222,31 @@ Ordered steps toward PSI COMPLETE.
 
 ## Next
 
+### Step 15i — Simplify AI streaming lifecycle ✓ complete
+- `psi.ai.streaming` now has a smaller contract surface:
+  - session tracks lifecycle metadata only
+  - emitted provider events flow directly to consumers
+  - lazy-seq streaming remains a queue-backed wrapper over the callback API
+- Removed unused/partial stream-session event accumulation:
+  - deleted stored `StreamEvent` / `:events` session modeling from code and schema
+  - removed the unobserved `:starting` session state
+- Simplified control flow:
+  - unified completion/failure bookkeeping through shared helpers
+  - made seq termination deterministic by enqueueing a sentinel when the background future completes
+  - factored queue bridging into small helpers so `stream-response-seq` is mostly composition
+- Synced artifacts:
+  - `components/ai/src/psi/ai/streaming.clj`
+  - `components/ai/src/psi/ai/schemas.clj`
+  - `components/ai/src/psi/ai/core.clj`
+  - `components/ai/test/psi/ai/core_test.clj`
+  - `components/ai/README.md`
+  - `spec/ai-abstract-model.allium`
+- Added regression coverage for provider return without terminal event.
+- Verification snapshot:
+  - `bb fmt:check`
+  - `clojure -M:test --focus :unit --focus psi.ai.core-test`
+- Implementation commit: `58ca3da`
+
 ### Step 15h — Converge conversation code/spec/tests/docs ✓ complete
 - `psi.ai.conversation` simplified around shared append/update helpers and unused public functions removed.
 - Conversation-focused tests now live in `components/ai/test/psi/ai/conversation_test.clj` and cover:
