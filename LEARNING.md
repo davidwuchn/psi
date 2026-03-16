@@ -3,6 +3,27 @@
 
 ---
 
+## 2026-03-15 - Shared append timestamps remove avoidable temporal skew in conversation mutations (commit `d561c02`)
+
+### λ One mutation should usually produce one timestamp when both fields describe the same event
+
+`psi.ai.conversation` was calling `Instant/now` once for the appended message timestamp and again for conversation `:updated-at`. That made a single append mutation produce two slightly different instants even though both fields described the same append event. The cleaner shape is to allocate one timestamp per mutation and thread it through the updater.
+
+**Pattern:**
+```clojure
+(defn- update-conversation [conversation f]
+  (let [timestamp (now)]
+    (-> (f conversation timestamp)
+        (assoc :updated-at timestamp)
+        validate-conversation)))
+```
+
+Key details:
+- Shared timestamps reduce needless temporal skew in tests, logs, and downstream consumers.
+- The helper boundary should carry the timestamp into the mutation callback rather than forcing nested helpers to call `now` again.
+- This is most worthwhile when multiple fields are intended to describe the same boundary event, not when they intentionally capture different phases.
+- Regression tests should lock the equality directly at the public append surface.
+
 ## 2026-03-15 - Conversation spec convergence works best when the concrete helper surface gets its own focused Allium slice and test namespace (commit `14ba6de`)
 
 ### λ Distill the concrete domain helper, not only the broader subsystem abstraction
