@@ -237,6 +237,11 @@ Ordered steps toward PSI COMPLETE.
 
 ## Next
 
+### Step 15l — Apply the LEARNING.md inclusion rule during future follow-up memory updates
+- When a change teaches a project-specific, non-trivial operational lesson, record it in `LEARNING.md` as part of the follow-up chain.
+- Skip entries that merely restate code/doc contents or commit facts without a reusable lesson.
+- Keep `PLAN.md`/`STATE.md`/`LEARNING.md` synchronized so repo memory stays useful rather than repetitive.
+
 ### Step 15k — Sweep remaining historical memory/docs drift after context-session convergence
 - Continue targeted cleanup of older historical narrative that still uses pre-convergence host-era terms when referring to the session container model.
 - Keep distinguishing true network-host usage (`localhost`, nREPL host) from obsolete session-container usage.

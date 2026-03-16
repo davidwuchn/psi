@@ -4,6 +4,8 @@ Current truth about the Psi system.
 
 ---
 
+- ✓ Prompt memory now includes an explicit `LEARNING.md` inclusion rule (2026-03-16, commit `6ab9a31`): `AGENTS.md` now states that `LEARNING.md` should contain actual learned context that is informative and not trivially inferable from the repository contents. Follow-up memory updates should therefore prefer reusable project-specific lessons over rote restatement of code or commit facts.
+
 - ✓ PSL follow-up for `16cb376` converged plan/state/docs memory to the implemented context-session-container model (2026-03-16): historical repo memory and user docs now describe the same runtime shape as the code — context snapshots/events (`context/updated`), context session selectors/pickers, context-peer worktree sessions, and the internal context session index (`context_index.clj`, `:context-index-atom`). Focused verification across core/main/rpc/resolvers/graph/TUI remains green at 200 tests / 2157 assertions.
 
 - ✓ Context/session-tree Allium model is now implemented across the live runtime/query/frontend surface (2026-03-15/16): the spec set treats context as the owner of shared resources (tools, prompt templates, skills, extensions) and sessions as the unit of conversation, execution, and lineage within that context, and the code now matches that framing across RPC (`context/updated`), Emacs context snapshots/selectors, TUI tree selectors, EQL attrs (`:psi.agent-session/context-*`), and the internal runtime container/index (`context_index.clj`, `:context-index-atom`, context-active routing helpers). Subagents remain modeled as child sessions; startup prompts remain context/session bootstrap; focused rpc/resolver/tui/emacs/core/main verification is green.
