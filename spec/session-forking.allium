@@ -1,5 +1,4 @@
 -- allium: 2
-module session-forking
 
 use "./session-management.allium" as session
 use "./session-core.allium" as core
@@ -42,7 +41,7 @@ rule ForkSessionAcceptedAtHead {
     ensures: core/SessionForkRequested(
         parent_session_id: parent_session_id,
         worktree_path: worktree_path_for(parent_session_id),
-        system_prompt: system_prompt_for(parent_session_id),
+        system_prompt: session_prompt_for(parent_session_id),
         name: session_name_for(parent_session_id)
     )
 
@@ -70,7 +69,7 @@ rule ForkSessionAcceptedAtEntry {
     ensures: core/SessionForkRequested(
         parent_session_id: parent_session_id,
         worktree_path: worktree_path_for(parent_session_id),
-        system_prompt: system_prompt_for(parent_session_id),
+        system_prompt: session_prompt_for(parent_session_id),
         name: session_name_for(parent_session_id)
     )
 
@@ -127,6 +126,7 @@ contract SessionForkMutationEql {
     @invariant ForkMutationOutputShape
         -- successful output includes:
         -- {:session/id <SessionId>
+        --  :session/context-id <ContextId>
         --  :session/parent-id <SessionId>
         --  :session/intent <String>
         --  :session/inheritance <Map>
@@ -139,11 +139,13 @@ contract SessionLineageQueryEql {
     @invariant LineageQueryOutputShape
         -- output includes at minimum:
         -- {:session/id <SessionId>
+        --  :session/context-id <ContextId>
         --  :session/parent-id <SessionId?>
         --  :session/children [{:session/id <SessionId>} ...]}
 
     @invariant LineageSourceOfTruth
-        -- lineage is resolved from core session containment and persisted parent_session headers.
+        -- lineage is resolved from core session containment within a context
+        -- and persisted parent_session headers.
 }
 
 actor EqlClient {
@@ -165,6 +167,9 @@ surface SessionForkMutationApi {
         -- On successful fork, the child session file is created immediately.
         -- Child file header carries parent_session pointing to the parent session file path (when available).
         -- Child file entries are branched from parent history up to and including the fork entry.
+
+    @guarantee ForkStaysWithinContext
+        -- A fork creates a child session within the same context as the parent.
 }
 
 surface SessionLineageQueryApi {
@@ -175,6 +180,7 @@ surface SessionLineageQueryApi {
     exposes:
         for s in core/AgentSessions:
             s.id
+            s.context_id
             s.parent_session_id
 
     @guarantee LineageIsNavigableAsGraph
@@ -186,6 +192,3 @@ surface SessionLineageQueryApi {
 -- Decision: merge-back is a separate capability, not part of core session-forking semantics.
 -- Decision: fork budget constraints are optional policy (no mandatory baseline token/time/tool limits).
 -- Decision: lineage retention mode is archival.
--- TTL is current psi process lifetime.
--- Archived lineage is never garbage collected.
--- Decision: active session switch does not interrupt non-target session runs.

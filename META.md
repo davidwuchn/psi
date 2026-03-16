@@ -25,6 +25,9 @@ A meta model for psi.
 - psi interacts with AI LLM models via sessions
 - psi hosts multiple sessions concurrently inside one process
 - psi has a session host registry and one active session pointer
+- psi Context owns resources and a tree of sessions.
+- Sessions are the unit of conversation, execution, and lineage.
+
 - active session selection controls default routing for prompts/mutations when session id is omitted
 - switching active session does not stop or block in-flight runs in other sessions
 - a session has a system prompt

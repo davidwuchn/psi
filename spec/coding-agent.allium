@@ -1,10 +1,11 @@
--- allium: 1
+-- allium: 2
 
 -- coding-agent.allium
 -- High-level coding-agent orchestration contract.
 
 use "./agent.allium" as agent
 use "./session-management.allium" as session
+use "./session-core.allium" as core
 use "./skills.allium" as skills
 use "./prompt-templates.allium" as templates
 use "./extension-system.allium" as ext
@@ -15,7 +16,7 @@ use "./tools.allium" as tools
 use "./project-preferences.allium" as prefs
 
 entity CodingAgentRuntime {
-    session: session/AgentSession
+    context: core/AgentContext
     started: Boolean
     ui_type: console | tui | emacs | rpc
 }
@@ -24,71 +25,82 @@ rule RuntimeStarted {
     when: RuntimeStarted(runtime)
 
     ensures: runtime.started = true
-    ensures: session/NewSessionStarted(runtime.session, input: null)
+    ensures: skills/SkillsDiscoveryRequested(sources: RuntimeSkillSources(runtime))
+    ensures: templates/TemplateDiscoveryRequested(sources: RuntimeTemplateSources(runtime))
+    ensures: ext/ExtensionsLoaded(runtime.context, ExtensionPaths(runtime))
+    ensures: core/ContextResourcesRegistered(
+        context_id: runtime.context.id,
+        tools: tools/DefaultActiveToolSet(),
+        prompt_templates: DiscoveredTemplateNames(runtime),
+        skills: DiscoveredSkillNames(runtime),
+        extensions: LoadedExtensionPaths(runtime)
+    )
+}
+
+rule RuntimeCreatesRootSessionOnDemand {
+    when: StartRootSessionRequested(runtime, name)
+    requires: runtime.started = true
+
+    ensures: session/NewSessionStarted(RootSessionFor(runtime.context, name), input: {
+        project_id: runtime.context.project_id,
+        worktree_path: runtime.context.worktree_path,
+        spawn_mode: new_root
+    })
 }
 
 rule PromptSubmissionFromIdle {
-    when: PromptSubmitted(runtime, text, images)
+    when: PromptSubmitted(runtime, text, images, session_id)
+    requires: SessionForPrompt(runtime.context, session_id).is_idle
+    requires: SessionForPrompt(runtime.context, session_id).model != null
 
-    requires: runtime.session.is_idle
-    requires: runtime.session.model != null
-
-    ensures: session/UserPrompts(runtime.session, text, images)
+    ensures: session/UserPrompts(SessionForPrompt(runtime.context, session_id), text, images)
 }
 
 rule PromptSubmissionWhileStreaming {
-    when: PromptSubmitted(runtime, text, images)
-    requires: runtime.session.is_streaming
+    when: PromptSubmitted(runtime, text, images, session_id)
+    requires: SessionForPrompt(runtime.context, session_id).is_streaming
 
-    ensures: session/UserPromptsWhileStreaming(runtime.session, text, behavior: follow_up)
+    ensures: session/UserPromptsWhileStreaming(SessionForPrompt(runtime.context, session_id), text, behavior: follow_up)
 }
 
 rule SlashCommandSubmission {
-    when: PromptSubmitted(runtime, text, images)
+    when: PromptSubmitted(runtime, text, images, session_id)
     requires: StartsWith(text, "/")
 
-    ensures: SlashDispatchRequested(runtime.session, text)
+    ensures: SlashDispatchRequested(SessionForPrompt(runtime.context, session_id), text)
 }
 
-rule SkillsAndTemplatesAvailable {
+rule ActiveToolsDerivedFromContext {
     when: RuntimeStarted(runtime)
 
-    ensures: skills/SkillsDiscoveryRequested(sources: RuntimeSkillSources(runtime))
-    ensures: templates/TemplateDiscoveryRequested(sources: RuntimeTemplateSources(runtime))
-}
-
-rule ExtensionsLoaded {
-    when: RuntimeStarted(runtime)
-
-    ensures: ext/ExtensionsLoaded(runtime.session, ExtensionPaths(runtime))
-}
-
-rule ActiveToolsInitialized {
-    when: RuntimeStarted(runtime)
-
-    ensures: runtime.session.active_tools = tools/DefaultActiveToolSet()
+    ensures: runtime.context.available_tools = tools/DefaultActiveToolSet()
 }
 
 rule FooterProjectionUpdated {
-    when: SessionChanged(runtime.session)
+    when: SessionChanged(runtime.context, session_id)
 
     ensures: footer/FooterRenderRequested(CurrentFooter(runtime), width: CurrentViewportWidth(runtime))
 }
 
 rule AuthenticationRequiredBeforeRun {
-    when: PromptSubmitted(runtime, text, images)
+    when: PromptSubmitted(runtime, text, images, session_id)
 
-    requires: runtime.session.model != null
-    requires: auth/HasAuthChecked(CurrentCredentialStore(runtime), runtime.session.model.provider)
+    requires: SessionForPrompt(runtime.context, session_id).model != null
+    requires: auth/HasAuthChecked(CurrentCredentialStore(runtime), SessionForPrompt(runtime.context, session_id).model.provider)
 
     ensures: PromptAuthorizationSatisfied(runtime)
 }
 
-rule ProjectPreferencesAppliedOnStartup {
+rule ProjectPreferencesAppliedOnContextStartup {
     when: RuntimeStarted(runtime)
 
-    ensures: prefs/BootstrapReadsProjectPreferences(runtime.session)
-    ensures: prefs/BootstrapAppliesPersistedThinkingLevelWithClamping(runtime.session)
+    ensures: prefs/BootstrapReadsProjectPreferences(runtime.context)
+}
+
+rule ProjectPreferencesAppliedToSessionOnCreate {
+    when: StartRootSessionRequested(runtime, name)
+
+    ensures: prefs/BootstrapAppliesPersistedThinkingLevelWithClamping(RootSessionFor(runtime.context, name))
 }
 
 surface CodingAgentApi {
@@ -99,19 +111,29 @@ surface CodingAgentApi {
     exposes:
         runtime.started
         runtime.ui_type
-        runtime.session
+        runtime.context
 
     provides:
         RuntimeStarted(runtime)
-        PromptSubmitted(runtime, text, images)
-        SessionChanged(runtime.session)
+        StartRootSessionRequested(runtime, name)
+        PromptSubmitted(runtime, text, images, session_id)
+        SessionChanged(runtime.context, session_id)
 
     related:
         session/AgentSessionApi
+        core/SessionCoreApi
         agent/AgentApi
         ext/ExtensionApi
         auth/CredentialStoreApi
         footer/DefaultFooterView
+
+    @guarantee RuntimeOwnsContext
+        -- A runtime owns one context.
+        -- The context owns shared resources and a tree of sessions.
+
+    @guarantee AgentIsOperationalViewOfSession
+        -- Agent execution is routed to a target session within the context.
+        -- Subagents are child sessions, not a separate top-level concept.
 }
 
 open question "Should prompt submission while streaming default to steer or follow_up by ui_type?"

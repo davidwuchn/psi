@@ -1,4 +1,4 @@
--- allium: 1
+-- allium: 2
 
 -- subagent-widget-ui.allium
 -- Subagent widget UI projection and result-message rendering semantics.
@@ -54,10 +54,12 @@ rule VisibleSubagentWidgetsAreChildSessionsOfCurrentSession {
     when: SubagentWidgetsRefreshed(session, extension_id)
 
     ensures: ForEach(VisibleSubagentWorkflowIds(session, extension_id),
-                     sid -> session_core/ChildSessionRelation(
-                              parent: CurrentSession(session),
-                              child: SubagentSessionForWorkflow(extension_id, sid),
-                              relation: subagent))
+                     sid -> session_core/SessionContainment(
+                              context_id: session.context_id,
+                              parent_session_id: session.id,
+                              child_session_id: SubagentSessionForWorkflow(extension_id, sid),
+                              relation: subagent,
+                              created_at: AnyTimestamp()))
 }
 
 rule OneWidgetPerVisibleSubagentWorkflow {
@@ -85,7 +87,7 @@ rule SessionSwitchReprojectsOnlyChildSubagentWidgets {
     ensures: ForEach(WidgetIdsForExtension(session.ui_state.widgets, any_extension),
                      wid -> wid startsWith "sub-" implies
                             WidgetReferencesVisibleChildWorkflow(session, any_extension, wid))
-    ensures: NoWidgetForNonChildSubagentWorkflow(session.ui_state.widgets, CurrentSession(session))
+    ensures: NoWidgetForNonChildSubagentWorkflow(session.ui_state.widgets, session.id)
 }
 
 rule SubagentWidgetPlacementByUiKind {
@@ -118,154 +120,4 @@ rule SubagentWidgetStatusIconMapping {
         else if phase = error: StatusIcon(phase) = "✗"
         else if phase = idle: StatusIcon(phase) = "○"
         else: StatusIcon(phase) = "?"
-}
-
-rule RunningSubagentElapsedSecondsFromNow {
-    when: ElapsedSecondsRequested(workflow)
-    requires: workflow.running = true
-    requires: workflow.started_at != null
-
-    ensures: ElapsedSeconds(workflow) = floor((now - workflow.started_at) / 1000)
-}
-
-rule TerminalSubagentElapsedSecondsFromSnapshot {
-    when: ElapsedSecondsRequested(workflow)
-    requires: workflow.running = false or workflow.started_at = null
-
-    ensures: ElapsedSeconds(workflow) = floor(workflow.elapsed_ms / 1000)
-}
-
-rule SubagentWidgetHeaderLineFormat {
-    when: SubagentWidgetLineComposed(workflow, line_index: 0, render_options)
-
-    ensures: line =
-      StatusIcon(workflow.phase)
-      + " Subagent #" + workflow.id
-      + " [" + PhaseLabel(workflow.phase) + "]"
-      + " · T" + ToString(workflow.turn_count)
-      + " · " + ToString(ElapsedSeconds(workflow)) + "s"
-      + Optional(" · @" + workflow.agent_name)
-      + Optional(" · fork" when workflow.fork_session = true)
-      + " · " + TaskPreview(workflow.task, render_options.task_preview_chars)
-}
-
-rule SubagentWidgetErrorSummaryLinePrecedence {
-    when: ErrorSummaryLineRequested(workflow)
-
-    ensures: ErrorSummaryLine(workflow) =
-             FirstNonBlank({
-               CleanErrorPrefix(workflow.error_message),
-               CleanErrorPrefix(LastNonBlankLine(workflow.last_text))
-             })
-}
-
-rule SubagentWidgetErrorDetailLine {
-    when: SubagentWidgetDetailLineComposed(workflow, render_options)
-    requires: workflow.error = true
-    requires: ErrorSummaryLine(workflow) != ""
-
-    ensures: DetailLine(workflow) =
-             "  ! " + TaskPreview(ErrorSummaryLine(workflow), render_options.detail_preview_chars)
-}
-
-rule SubagentWidgetProgressOrResultDetailLine {
-    when: SubagentWidgetDetailLineComposed(workflow, render_options)
-    requires: workflow.error = false
-    requires: LastNonBlankLine(workflow.last_text) != ""
-
-    ensures:
-        if workflow.done = true:
-            DetailLine(workflow) = "  ↳ " + TaskPreview(LastNonBlankLine(workflow.last_text), render_options.detail_preview_chars)
-        else:
-            DetailLine(workflow) = "  … " + TaskPreview(LastNonBlankLine(workflow.last_text), render_options.detail_preview_chars)
-}
-
-rule SubagentWidgetActionLineForTerminalStates {
-    when: SubagentWidgetActionLineComposed(workflow)
-    requires: workflow.running = false
-    requires: workflow.done = true or workflow.error = true
-
-    ensures: ActionLine(workflow).text = "  /subcont " + workflow.id + " <prompt> · ✕ remove"
-    ensures: ActionLine(workflow).action.type = command
-    ensures: ActionLine(workflow).action.command = "/subrm " + workflow.id
-}
-
-rule SubagentWidgetActionLineAbsentWhileRunning {
-    when: SubagentWidgetActionLineComposed(workflow)
-    requires: workflow.running = true
-
-    ensures: ActionLine(workflow) = null
-}
-
-rule TerminalSubagentWidgetsPersistUntilExplicitRemove {
-    when: SubagentWidgetsRefreshed(session, extension_id)
-
-    ensures: ForEach(SubagentWorkflowsInPhase(session, extension_id, {done, error}),
-                     wf -> WidgetExists(session.ui_state.widgets, extension_id, "sub-" + wf.id)
-                           until subagent/SubagentToolCalled(action: remove, args: {id: ParseInt(wf.id)}))
-}
-
-rule SubagentWidgetActionDispatchRemovesWorkflow {
-    when: ui_widgets/WidgetActionActivated(session, ui_runtime, extension_id, widget_id, line_index)
-    requires: line = WidgetLine(session.ui_state.widgets, extension_id, widget_id, line_index)
-    requires: line.action.command startsWith "/subrm "
-
-    ensures: subagent/SubagentToolCalled(action: remove, args: {id: ParseInt(CommandTail(line.action.command))})
-}
-
-rule SubagentWidgetRefreshAfterWorkflowCallbacks {
-    when: SubagentWorkflowCallbackFired(session, extension_id, workflow_id, kind)
-    requires: kind in {on_start, on_finished}
-
-    ensures: SubagentWidgetsRefreshScheduled(session, extension_id, delay_ms: config.refresh_after_workflow_callback_ms)
-}
-
-rule SubagentWidgetRefreshUsesCommittedWorkflowSnapshot {
-    when: SubagentWidgetsRefreshScheduled(session, extension_id, delay_ms)
-    requires: delay_ms >= config.refresh_after_workflow_callback_ms
-
-    ensures: WidgetProjectionUsesCommittedWorkflowPhase(session, extension_id)
-}
-
-rule TuiKeepsTextOnlyWidgetSemanticsForSubagents {
-    when: SubagentWidgetProjected(session, ui_runtime, extension_id, subagent_id)
-    requires: ui_runtime.ui_kind = tui
-
-    ensures: ui_runtime.capability.kind = text_only
-    ensures: ForEach(WidgetLines(session.ui_state.widgets, extension_id, "sub-" + subagent_id),
-                     line -> line.action = null or ActionBindingNotCreated(ui_runtime, extension_id, "sub-" + subagent_id, line))
-}
-
-rule SubagentResultMessageHeadingIncludesAgentAndForkWhenPresent {
-    when: SubagentResultMessageEmitted(subagent_id, prompt, turn_count, elapsed_ms, result_text, agent_name, fork_session)
-
-    ensures: HeadingLine =
-             "Subagent #" + ToString(subagent_id)
-             + Optional(" (Turn " + ToString(turn_count) + ")" when turn_count > 1)
-             + Optional(" (@" + agent_name + ")" when agent_name != null and agent_name != "")
-             + Optional(" [fork]" when fork_session = true)
-             + " finished \"" + prompt + "\" in " + ToString(floor(elapsed_ms / 1000)) + "s"
-}
-
-rule SubagentResultMessageContainsCanonicalBody {
-    when: SubagentResultMessageEmitted(subagent_id, prompt, turn_count, elapsed_ms, result_text, agent_name, fork_session)
-
-    ensures: MessageText startsWith HeadingLine
-    ensures: MessageText contains "\n\nResult:\n"
-}
-
-rule SubagentResultMessageAppliesPerRequestBodyLimit {
-    when: SubagentResultMessageEmitted(subagent_id, prompt, turn_count, elapsed_ms, result_text, agent_name, fork_session)
-
-    ensures: MessageText = TruncateBody(MessageText, EffectiveRenderOptions(CurrentRenderRequest()).result_text_max_chars)
-}
-
-rule SubagentResultMessageRenderedRichlyInTui {
-    when: TuiMessageRenderRequested(tui_runtime, message, width)
-    requires: message.role = assistant
-    requires: message.custom_type = "subagent-result"
-
-    ensures: RenderedTitle(message) = "ψ: ⎇ Subagent Result"
-    ensures: RenderedHeading(message) = FirstLineOrDefault(message.text, "Subagent result")
-    ensures: RenderedBody(message) = MarkdownRender(RemainingLinesAfterHeading(message.text), max_width: width - 4)
 }

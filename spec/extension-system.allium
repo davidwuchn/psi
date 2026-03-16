@@ -1,53 +1,35 @@
 -- allium: 2
 
 -- extension-system.allium
---
 -- Scope: Extension system — registration, event dispatch, tool wrapping,
---        commands, flags, shortcuts, custom messages, and resource discovery.
+-- commands, flags, shortcuts, custom messages, and prompt contributions.
 --
--- Extensions are TypeScript modules that extend the agent's behaviour.
--- They subscribe to lifecycle events, register custom tools callable
--- by the LLM, add commands, and manage persistent state.
---
--- Includes:
---   Extension entity — registration, handler/tool/command/flag/shortcut sets
---   RegisteredCommand, RegisteredTool, ExtensionFlag, WrappedTool entities
---   Extension lifecycle — load, reload, factory invocation
---   Tool wrapping — pre/post call hooks on built-in and extension tools
---   Event dispatch — named events, handler ordering, cancel semantics
---   Custom messages — extension-injected messages with LLM trigger options
---   Prompt contributions — extension-provided fragments merged into system prompt
---   Resource discovery trigger — notifies extensions to contribute paths
---   Prompt contribution render ordering and rebuild triggers
---
--- Excludes:
---   Skill entity, discovery, invocation (see skills.allium)
---   Prompt template entity, discovery, expansion (see prompt-templates.allium)
---   AgentSession lifecycle and prompting (see coding-agent.allium)
---   Compaction algorithm (see compaction.allium)
---   Session management (see session-management.allium)
---   TUI rendering, RPC protocol, OAuth, shell internals
+-- Extensions are context resources. A context loads extensions once;
+-- sessions in that context observe and use the resulting commands, tools,
+-- handlers, and prompt contributions.
 
 use "./agent.allium" as agent
-use "./skills.allium" as skills
-use "./prompt-templates.allium" as prompts
+use "./session-core.allium" as core
 
-------------------------------------------------------------
--- External Entities
-------------------------------------------------------------
+external entity AgentContext {
+    id: String
+    project_id: String
+    worktree_path: String
+    baseline_system_prompt: String
+    loaded_extensions: Set<String>
+    active_session_id: String?
+}
 
 external entity AgentSession {
-    -- The central orchestrator/session context.
     id: String
+    context_id: String
     name: String?
     worktree_path: String?
     model: Model?
     thinking_level: String
     is_streaming: Boolean
-    system_prompt: String
+    effective_system_prompt: String
     retry_attempt: Integer
-    extensions: List<Extension>
-    extension_paths: List<String>
 }
 
 external entity Model {
@@ -56,426 +38,201 @@ external entity Model {
     reasoning: Boolean
 }
 
-------------------------------------------------------------
--- Extension Entities
-------------------------------------------------------------
-
 entity Extension {
     path: String
-    resolvedPath: String
-    -- Collections populated at registration time
-    handlers: Set<String>       -- event names with at least one handler
-    tools: Set<String>          -- registered tool names
-    commands: Set<String>       -- registered command names
-    flags: Set<String>          -- registered flag names
-    shortcuts: Set<String>      -- registered keybinding ids
+    resolved_path: String
+    handlers: Set<String>
+    tools: Set<String>
+    commands: Set<String>
+    flags: Set<String>
+    shortcuts: Set<String>
+    context_id: String
 }
 
 entity RegisteredCommand {
     name: String
     description: String?
-    extensionPath: String
+    extension_path: String
 }
 
 entity RegisteredTool {
     name: String
     label: String
     description: String
-    parameters: String          -- JSON Schema (TypeBox)
-    extensionPath: String
+    parameters: String
+    extension_path: String
 }
 
 entity ExtensionFlag {
     name: String
     type: boolean | string
-    defaultValue: String?
-    currentValue: String?
-    extensionPath: String
+    default_value: String?
+    current_value: String?
+    extension_path: String
 }
 
 entity WrappedTool {
     inner: RegisteredTool
-    onCall: ToolCallDispatched
-    onResult: ToolResultDispatched
+    on_call: ToolCallDispatched
+    on_result: ToolResultDispatched
 }
 
-------------------------------------------------------------
--- Config
-------------------------------------------------------------
+entity PromptContribution {
+    id: String
+    extension_path: String
+    context_id: String
+    section: String?
+    content: String
+    priority: Integer
+    enabled: Boolean
+    created_at: Timestamp
+    updated_at: Timestamp
+}
 
 config {
     global_extension_dirs: Set<String> = {"~/.psi/agent/extensions"}
     project_extension_dirs: Set<String> = {".psi/extensions"}
     extension_event_ordering: registration_order
-    -- Handlers fire in registration order.
-    -- For session_before_* events, the first handler returning {cancel: true}
-    -- short-circuits remaining handlers and aborts the session action.
-    -- When no cancellation occurs, non-void session_before_* handler results
-    -- are last-writer-wins (the last returned value is observed by caller).
 }
 
-------------------------------------------------------------
--- Extension Lifecycle
-------------------------------------------------------------
-
-rule ExtensionsLoaded {
-    -- At startup, extension modules are loaded and registered.
-    -- Each module exports a default function receiving ExtensionAPI.
-    when: ExtensionsLoaded(session, extension_paths)
+rule ExtensionsLoadedForContext {
+    when: ExtensionsLoaded(context, extension_paths)
 
     ensures:
         for path in extension_paths:
-            let ext = Extension.created(path: path)
+            let ext = Extension.created(path: path, context_id: context.id)
             ExtensionFactoryInvoked(ext)
-    ensures: ResourcesDiscoverDispatched(session, reason: startup)
-}
 
-rule ExtensionsReloaded {
-    -- /reload reloads all resources and extensions.
-    when: ExtensionsReloaded(session)
-
-    ensures:
-        for ext in session.extensions:
-            not exists ext
-    ensures: ExtensionsLoaded(session, session.extension_paths)
-    ensures: SystemPromptRebuilt(session)
-}
-
-rule ExtensionToolWrapped {
-    -- Extension tools are combined with built-in tools, with pre/post hooks.
-    when: ExtensionToolWrapped(session, tool, ext)
-
-    ensures: WrappedTool.created(
-        inner: tool,
-        onCall: ToolCallDispatched(session, tool),
-        onResult: ToolResultDispatched(session, tool)
+    ensures: core/ContextResourcesRegistered(
+        context_id: context.id,
+        tools: ContextToolsWithExtensions(context.id),
+        prompt_templates: context.available_prompt_templates,
+        skills: context.available_skills,
+        extensions: extension_paths
     )
 }
 
-------------------------------------------------------------
--- Extension Command Dispatch
-------------------------------------------------------------
+rule ExtensionsReloadedForContext {
+    when: ExtensionsReloaded(context)
+
+    ensures:
+        for ext in ExtensionsForContext(context.id):
+            not exists ext
+    ensures: ExtensionsLoaded(context, ContextExtensionPaths(context.id))
+}
+
+rule ExtensionToolWrapped {
+    when: ExtensionToolWrapped(context, tool, ext)
+
+    ensures: WrappedTool.created(
+        inner: tool,
+        on_call: ToolCallDispatched(context, tool),
+        on_result: ToolResultDispatched(context, tool)
+    )
+}
 
 rule ExtensionCommandExecuted {
-    -- /command text is intercepted before agent invocation.
-    -- Extension commands take priority over prompt templates.
     when: UserPrompts(session, text, _)
 
     requires: text.startsWith("/")
     requires: exists RegisteredCommand{name: text.commandName}
 
     ensures: ExtensionCommandHandlerCalled(command_name: text.commandName, command_args: text.args)
-    -- agent is NOT invoked; command handler manages its own LLM interaction
 }
 
-------------------------------------------------------------
--- Custom Messages
-------------------------------------------------------------
-
 rule CustomMessageSent {
-    -- Extension injects a custom assistant/transcript message.
     when: CustomMessageSent(session, message)
 
-    ensures: session.agent.appendMessage(message)
-    ensures: CustomMessageEntry.created(customType: message.customType, content: message.content, display: message.display)
+    ensures: agent/AppendMessage(SessionAgent(session.id), message)
+    ensures: CustomMessageEntry.created(custom_type: message.customType, content: message.content, display: message.display)
 }
 
 rule ExtensionPromptSent {
-    -- Extension submits a user-style prompt that should invoke/queue agent work.
-    when: ExtensionPromptSent(session, promptText)
+    when: ExtensionPromptSent(session, prompt_text)
 
     ensures:
         if session.is_streaming:
-            agent/FollowUp(session.agent, promptText)
+            agent/FollowUp(SessionAgent(session.id), prompt_text)
         else:
-            agent/Prompt(session.agent, promptText)
-}
-
-------------------------------------------------------------
--- Prompt Contributions
-------------------------------------------------------------
-
-entity PromptContribution {
-    id: String
-    extensionPath: String
-    section: String?
-    content: String
-    priority: Integer            -- lower value renders earlier
-    enabled: Boolean
-    createdAt: Timestamp
-    updatedAt: Timestamp
+            agent/Prompt(SessionAgent(session.id), prompt_text)
 }
 
 rule PromptContributionRegistered {
-    -- Extension registers a reusable fragment to be merged into session.system_prompt.
-    when: PromptContributionRegistered(session, extensionPath, contribution)
+    when: PromptContributionRegistered(session, extension_path, contribution)
 
     ensures: exists PromptContribution {
-        id: contribution.id
-        extensionPath: extensionPath
-        section: contribution.section
-        content: contribution.content
-        priority: contribution.priority
-        enabled: true
+        id: contribution.id,
+        extension_path: extension_path,
+        context_id: session.context_id,
+        section: contribution.section,
+        content: contribution.content,
+        priority: contribution.priority,
+        enabled: true,
+        created_at: now,
+        updated_at: now
     }
-    ensures: SystemPromptRebuilt(session)
+
+    ensures: SessionPromptRecomposeRequested(session.id)
 }
 
 rule PromptContributionUpdated {
-    -- Extension updates an existing contribution by id.
-    when: PromptContributionUpdated(session, extensionPath, contributionId, patch)
+    when: PromptContributionUpdated(session, extension_path, contribution_id, patch)
 
-    requires: exists PromptContribution {id: contributionId, extensionPath: extensionPath}
+    requires: exists PromptContribution {id: contribution_id, extension_path: extension_path, context_id: session.context_id}
 
-    ensures: PromptContribution{contributionId}.updatedWith(patch)
-    ensures: PromptContribution{contributionId}.updatedAt = Now()
-    ensures: SystemPromptRebuilt(session)
+    ensures: PromptContribution{contribution_id}.updatedWith(patch)
+    ensures: PromptContribution{contribution_id}.updated_at = now
+    ensures: SessionPromptRecomposeRequested(session.id)
 }
 
 rule PromptContributionRemoved {
-    -- Extension removes a previously registered contribution.
-    when: PromptContributionRemoved(session, extensionPath, contributionId)
+    when: PromptContributionRemoved(session, extension_path, contribution_id)
 
-    requires: exists PromptContribution {id: contributionId, extensionPath: extensionPath}
+    requires: exists PromptContribution {id: contribution_id, extension_path: extension_path, context_id: session.context_id}
 
-    ensures: not exists PromptContribution {id: contributionId, extensionPath: extensionPath}
-    ensures: SystemPromptRebuilt(session)
+    ensures: not exists PromptContribution {id: contribution_id, extension_path: extension_path, context_id: session.context_id}
+    ensures: SessionPromptRecomposeRequested(session.id)
 }
 
 rule PromptContributionRenderOrder {
-    -- Rebuild renders enabled contributions deterministically.
-    when: SystemPromptRebuilt(session)
+    when: SessionPromptRecomposeRequested(session_id)
 
-    ensures: session.promptContributionLayers = RenderPromptContributionsOrdered(
-        contributions: PromptContribution where enabled = true,
-        order: "priority,extensionPath,id"
+    ensures: PromptContributionLayers(session_id) = RenderPromptContributionsOrdered(
+        contributions: PromptContribution where context_id = context_id_for_session(session_id) and enabled = true,
+        order: "priority,extension_path,id"
     )
 }
 
-------------------------------------------------------------
--- Extension Event Dispatch
-------------------------------------------------------------
-
--- These rules capture when extension event handlers fire.
--- Each corresponds to a named event in the extension API.
--- Handlers fire in registration order. session_before_* events may
--- short-circuit on cancel.
-
--- ── Resource events ─────────────────────────────────────
-
-rule ResourcesDiscoverDispatched {
-    -- Extensions may contribute additional resource paths.
-    when: ResourcesDiscoverDispatched(session, reason)
-    ensures: ExtensionEvent.emitted(session, {type: resources_discover, worktree_path: session.worktree_path, reason: reason})
-}
-
--- ── Session events ──────────────────────────────────────
-
-rule SessionBeforeSwitchDispatched {
-    when: SessionBeforeSwitchDispatched(session, reason)
-    ensures: ExtensionEvent.emitted(session, {type: session_before_switch, reason: reason})
-    -- Handler may return cancel: true, which aborts the switch
-}
-
-rule SessionSwitchDispatched {
-    when: SessionSwitchDispatched(session, reason)
-    ensures: ExtensionEvent.emitted(session, {type: session_switch, reason: reason})
-}
-
-rule SessionBeforeForkDispatched {
-    when: SessionBeforeForkDispatched(session, entry_id)
-    ensures: ExtensionEvent.emitted(session, {type: session_before_fork, entry_id: entry_id})
-}
-
-rule SessionForkDispatched {
-    when: SessionForkDispatched(session)
-    ensures: ExtensionEvent.emitted(session, {type: session_fork})
-}
-
-rule SessionBeforeCompactDispatched {
-    when: SessionBeforeCompactDispatched(session, preparation, branchEntries, customInstructions)
-    ensures: ExtensionEvent.emitted(session, {
-        type: session_before_compact,
-        preparation: preparation,
-        branchEntries: branchEntries,
-        customInstructions: customInstructions
-    })
-    -- Handler may return cancel: true or supply its own CompactionResult
-}
-
-rule SessionCompactDispatched {
-    when: SessionCompactDispatched(session, compactionEntry, fromExtension)
-    ensures: ExtensionEvent.emitted(session, {
-        type: session_compact,
-        compactionEntry: compactionEntry,
-        fromExtension: fromExtension
-    })
-}
-
-rule SessionBeforeTreeDispatched {
-    when: SessionBeforeTreeDispatched(session, target_id, summarize, custom_instructions, label)
-    ensures: ExtensionEvent.emitted(session, {type: session_before_tree, target_id: target_id})
-    -- Handler may cancel, supply a summary, or override instructions
-}
-
-rule SessionTreeDispatched {
-    when: SessionTreeDispatched(session, target_id)
-    ensures: ExtensionEvent.emitted(session, {type: session_tree, new_leaf_id: target_id})
-}
-
--- ── Model events ────────────────────────────────────────
-
-rule ModelSelectDispatched {
-    when: ModelSelectDispatched(session, model, source)
-    ensures: ExtensionEvent.emitted(session, {type: model_select, model: model, source: source})
-}
-
--- ── Agent events ────────────────────────────────────────
-
-rule AutoCompactionStartDispatched {
-    when: AutoCompactionStartDispatched(session, reason)
-    ensures: AgentSessionEvent.emitted(session, {type: auto_compaction_start, reason: reason})
-}
-
-rule AutoCompactionEndDispatched {
-    when: AutoCompactionEndDispatched(session, result, aborted, willRetry, errorMessage?)
-    ensures: AgentSessionEvent.emitted(session, {
-        type: auto_compaction_end,
-        result: result,
-        aborted: aborted,
-        willRetry: willRetry,
-        errorMessage: errorMessage
-    })
-}
-
-rule AutoRetryStartDispatched {
-    when: AutoRetryStartDispatched(session, attempt, delay)
-    ensures: AgentSessionEvent.emitted(session, {type: auto_retry_start, attempt: attempt, delayMs: delay})
-}
-
-rule AutoRetryEndDispatched {
-    when: AutoRetryEndDispatched(session, success)
-    ensures: AgentSessionEvent.emitted(session, {type: auto_retry_end, success: success, attempt: session.retry_attempt})
-}
-
--- ── Tool events ─────────────────────────────────────────
-
-rule ToolCallDispatched {
-    when: ToolCallDispatched(session, tool, args)
-    ensures: ExtensionEvent.emitted(session, {type: tool_call, toolName: tool.name, args: args})
-    -- Handler may return block: true to prevent execution
-}
-
-rule ToolResultDispatched {
-    when: ToolResultDispatched(session, tool, result)
-    ensures: ExtensionEvent.emitted(session, {type: tool_result, toolName: tool.name, result: result})
-    -- Handler may modify content, details, or isError
-}
-
-------------------------------------------------------------
--- Actor Declarations
-------------------------------------------------------------
-
-actor ExtensionModule {
-    identified_by: Extension
-}
-
-------------------------------------------------------------
--- Surfaces
-------------------------------------------------------------
-
 surface ExtensionApi {
-    -- API surface for extension modules.
-    facing ext: ExtensionModule
-
-    context session: AgentSession
+    facing caller: core/EqlClient
 
     exposes:
-        session.id
-        session.name
-        session.model
-        session.thinking_level
-        session.is_streaming
-
-    requires:
-        -- Extensions must register handlers, tools, commands, shortcuts, and flags
-        -- during the factory invocation phase (synchronously).
+        Extension.path
+        Extension.handlers
+        Extension.tools
+        Extension.commands
+        Extension.flags
+        Extension.shortcuts
+        PromptContribution.id
+        PromptContribution.extension_path
+        PromptContribution.context_id
+        PromptContribution.section
+        PromptContribution.priority
+        PromptContribution.enabled
 
     provides:
-        -- Lifecycle hooks
-        on(event_name, handler)             -- subscribe to any extension event
+        ExtensionsLoaded(context, extension_paths)
+        ExtensionsReloaded(context)
+        PromptContributionRegistered(session, extension_path, contribution)
+        PromptContributionUpdated(session, extension_path, contribution_id, patch)
+        PromptContributionRemoved(session, extension_path, contribution_id)
+        ExtensionPromptSent(session, prompt_text)
+        CustomMessageSent(session, message)
 
-        -- Tool registration
-        registerTool(tool_definition)
+    @guarantee ContextOwnsExtensions
+        -- Extensions are loaded once per context and shared by sessions in that context.
 
-        -- Command / shortcut / flag registration
-        registerCommand(name, options)
-        registerShortcut(key, options)
-        registerFlag(name, options)
-
-        -- Prompt contribution registration
-        registerPromptContribution(id, contribution)
-        updatePromptContribution(id, patch)
-        unregisterPromptContribution(id)
-        listPromptContributions()
-
-        -- Message actions
-        sendMessage(message, options?)
-        sendUserMessage(content, options?)
-        appendEntry(customType, data?)
-
-        -- Session metadata and lifecycle
-        setSessionName(name)
-        createSession(options)
-        switchSession(session_id)
-        setLabel(entry_id, label?)
-
-        -- Tool management
-        getActiveTools()
-        setActiveTools(toolNames)
-
-        -- Model
-        setModel(model)
-        getThinkingLevel()
-        setThinkingLevel(level)
-
-        -- Provider registration
-        registerProvider(name, config)
-
-        -- Shared event bus
-        events.emit(channel, data)
-        events.on(channel, handler)
-
-    @guidance
-        -- Extension handlers receive an ExtensionContext with session state.
-        -- Command handlers receive an ExtensionCommandContext with session control.
-        -- Handlers fire in registration order (first registered, first called).
-        -- session_before_* events are cancellable and short-circuit on first cancel.
-        -- session_before_* result payloads are last-writer-wins when not cancelled.
-        -- session_before_compact may supply a custom CompactionResult to replace
-        --   the default LLM-based summarisation.
-        -- Prompt contributions are merged into the system prompt as an ordered
-        --   extension-managed layer (generic mechanism, not domain-specific).
-        -- createSession(options) creates a new active host-peer session using
-        --   the session lifecycle surface, optionally setting worktree_path,
-        --   system_prompt, and thinking_level.
-        -- switchSession(session_id) switches to an existing resumable host session by id.
-        -- Extension commands shadow prompt templates with the same name.
+    @guarantee SessionsConsumeExtensionEffects
+        -- Sessions receive extension commands, prompt contributions, and messages
+        -- as context-derived behavior plus session-local prompt recomposition.
 }
-
-------------------------------------------------------------
--- Deferred Specifications
-------------------------------------------------------------
-
-deferred ExtensionLoader.resolve        -- filesystem path resolution, npm/git
-deferred ResourceDiscovery.scan         -- skill/template/theme path scanning
-
-------------------------------------------------------------
--- Open Questions
-------------------------------------------------------------
-
-open question "Session-before handler composition: beyond last-writer-wins, should the runner support explicit merge strategies for handler results (e.g. deep-merge for options objects)?"
-
-open question "Tool wrapping: should ToolCallDispatched be able to replace tool arguments (not just block), enabling extension-level argument transformation?"
-
-open question "Extension reload: should /reload preserve handler state, or is a clean teardown-and-rebuild always correct?"

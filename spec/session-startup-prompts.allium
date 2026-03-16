@@ -1,7 +1,7 @@
 -- allium: 2
 
 -- session-startup-prompts.allium
--- Configurable startup prompts for new AgentSession bootstrap.
+-- Configurable startup prompts for new root sessions within a context.
 
 use "./session-management.allium" as session
 use "./session-core.allium" as core
@@ -47,8 +47,8 @@ config {
     run_on_subagent: Boolean = false
 }
 
-rule StartupPromptConfigLoaded {
-    when: session/NewSessionStarted(s, input)
+rule StartupPromptConfigLoadedForContext {
+    when: core/ContextInitializeRequested(project_id, worktree_path, baseline_system_prompt)
     requires: config.startup_prompts_enabled = true
 
     ensures: StartupPromptConfig.created(

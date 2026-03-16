@@ -1,12 +1,14 @@
 -- allium: 2
 
 -- session-management.allium
--- AgentSession orchestration: lifecycle, prompting, model/thinking, and persistence hooks.
+-- Session orchestration: prompting, model/thinking, prompt overlays, and persistence hooks.
 
 use "./agent.allium" as agent
 use "./extension-system.allium" as ext
 use "./compaction.allium" as compact
 use "./session-core.allium" as core
+use "./skills.allium" as skills
+use "./prompt-templates.allium" as templates
 
 external entity Model {
     provider: String
@@ -43,25 +45,6 @@ value ContextUsage {
     percent: Decimal?
 }
 
-entity SessionHostRuntime {
-    host_id: String
-    active_session_id: String?
-    sessions: Set<AgentSession>
-}
-
-value SessionHostSnapshot {
-    active_session_id: String?
-    sessions: List<SessionSlot>
-}
-
-value SessionSlot {
-    id: String
-    name: String?
-    is_streaming: Boolean
-    is_active: Boolean
-    parent_session_id: String?
-}
-
 entity SessionEntry {
     id: String
     parent_id: String?
@@ -72,6 +55,7 @@ entity SessionEntry {
 
 entity AgentSession {
     id: String
+    context_id: String
     session_file: String?
     name: String?
     worktree_path: String?
@@ -92,7 +76,8 @@ entity AgentSession {
     retry_attempt: Integer
 
     active_tools: Set<String>
-    system_prompt: String
+    effective_system_prompt: String
+    prompt_overlays: Set<String>
 
     journal: Set<SessionEntry>
     leaf_entry_id: String?
@@ -108,7 +93,6 @@ config {
     auto_retry_max_retries: Integer = 3
     auto_retry_base_delay_seconds: Integer = 2
     auto_retry_max_delay_seconds: Integer = 60
-    default_active_tools: Set<String> = {"read", "bash", "edit", "write"}
 }
 
 rule NewSessionStarted {
@@ -117,7 +101,7 @@ rule NewSessionStarted {
     ensures: core/SessionCreateRequested(
         project_id: input.project_id,
         worktree_path: session.worktree_path ?? input.worktree_path,
-        system_prompt: session.system_prompt,
+        system_prompt: session.effective_system_prompt,
         name: session.name
     )
 
@@ -129,7 +113,29 @@ rule NewSessionStarted {
     ensures: session.follow_up_messages = {}
     ensures: session.retry_attempt = 0
     ensures: session.auto_retry_enabled = config.auto_retry_enabled
-    ensures: session.active_tools = config.default_active_tools
+}
+
+rule SessionConfigDerivedFromContextOnCreate {
+    when: core/SessionCreateRequested(project_id, worktree_path, system_prompt, name)
+    requires: exists c in core/AgentContexts where c.project_id = project_id and c.worktree_path = worktree_path
+
+    ensures: CreatedSession(project_id, worktree_path).active_tools = ContextTools(c.id)
+    ensures: CreatedSession(project_id, worktree_path).effective_system_prompt = ComposeSessionPromptFromContext(
+        context_id: c.id,
+        requested_system_prompt: system_prompt,
+        parent_session_id: null
+    )
+}
+
+rule SpawnedSessionInheritsThenDiverges {
+    when: SessionSpawnedFromParent(child, parent, spawn_mode)
+    requires: spawn_mode in {fork_head, fork_at_entry, subagent}
+
+    ensures: child.active_tools = parent.active_tools
+    ensures: child.effective_system_prompt = parent.effective_system_prompt
+    ensures: child.model = parent.model
+
+    ensures: ParentAndChildConfigsCanDivergeAfterSpawn(parent.id, child.id)
 }
 
 rule UserPrompts {
@@ -138,8 +144,8 @@ rule UserPrompts {
     requires: session.is_idle
     requires: session.model != null
 
-    ensures: expanded = SkillAndTemplateExpanded(session, text)
-    ensures: agent/Prompt(session.agent, expanded, images)
+    ensures: expanded = SkillAndTemplateExpanded(ContextFor(session.context_id), text)
+    ensures: agent/Prompt(SessionAgent(session.id), expanded, images)
     ensures: SessionEntry.created(
         id: NewEntryId(),
         parent_id: session.leaf_entry_id,
@@ -149,20 +155,20 @@ rule UserPrompts {
     )
 }
 
-rule PromptRoutingDefaultsToActiveSession {
-    when: PromptRequested(host, text, images, session_id)
+rule PromptRoutingDefaultsToContextActiveSession {
+    when: PromptRequested(context, text, images, session_id)
     requires: session_id = null
-    requires: host.active_session_id != null
+    requires: context.active_session_id != null
 
-    ensures: UserPrompts(SessionById(host, host.active_session_id), text, images)
+    ensures: UserPrompts(SessionById(context, context.active_session_id), text, images)
 }
 
 rule PromptRoutingUsesExplicitSession {
-    when: PromptRequested(host, text, images, session_id)
+    when: PromptRequested(context, text, images, session_id)
     requires: session_id != null
-    requires: SessionById(host, session_id) != null
+    requires: SessionById(context, session_id) != null
 
-    ensures: UserPrompts(SessionById(host, session_id), text, images)
+    ensures: UserPrompts(SessionById(context, session_id), text, images)
 }
 
 rule UserPromptsWhileStreaming {
@@ -174,10 +180,10 @@ rule UserPromptsWhileStreaming {
     ensures:
         if behavior = steer:
             session.steering_messages = session.steering_messages + {text}
-            agent/Steer(session.agent, text)
+            agent/Steer(SessionAgent(session.id), text)
         else:
             session.follow_up_messages = session.follow_up_messages + {text}
-            agent/FollowUp(session.agent, text)
+            agent/FollowUp(SessionAgent(session.id), text)
 }
 
 rule PromptWhileStreamingQueueModePersistsFollowUp {
@@ -242,38 +248,32 @@ rule SessionThinkingLevelSelected {
     )
 }
 
+rule SessionPromptOverlayAdded {
+    when: SessionPromptOverlayAdded(session, overlay_text)
+
+    ensures: session.prompt_overlays = session.prompt_overlays + {overlay_text}
+    ensures: session.effective_system_prompt = RecomposeSessionPrompt(session.context_id, session.id)
+}
+
+rule SessionPromptOverlayRemoved {
+    when: SessionPromptOverlayRemoved(session, overlay_text)
+    requires: overlay_text in session.prompt_overlays
+
+    ensures: session.prompt_overlays = session.prompt_overlays - {overlay_text}
+    ensures: session.effective_system_prompt = RecomposeSessionPrompt(session.context_id, session.id)
+}
+
 rule SessionForked {
     when: SessionForked(session, entry_id)
 
     ensures: core/SessionForkRequested(
         parent_session_id: session.id,
         worktree_path: worktree_path_for(session.id),
-        system_prompt: session.system_prompt,
+        system_prompt: session.effective_system_prompt,
         name: session.name
     )
     ensures: session.leaf_entry_id = entry_id
     ensures: session.retry_attempt = 0
-}
-
-rule NewRootSessionUsesGlobalBaseline {
-    when: NewSessionStarted(session, input)
-    requires: input.spawn_mode = new_root
-
-    ensures: session.active_tools = config.default_active_tools
-    ensures: session.system_prompt = GlobalBaselineSystemPrompt()
-    ensures: session.extensions = GlobalBaselineExtensions()
-}
-
-rule SpawnedSessionInheritsThenDiverges {
-    when: SessionSpawnedFromParent(child, parent, spawn_mode)
-    requires: spawn_mode in {fork_head, fork_at_entry, subagent}
-
-    ensures: child.active_tools = parent.active_tools
-    ensures: child.system_prompt = parent.system_prompt
-    ensures: child.extensions = parent.extensions
-    ensures: child.model = parent.model
-
-    ensures: ParentAndChildConfigsCanDivergeAfterSpawn(parent.id, child.id)
 }
 
 rule SessionResumed {
@@ -310,7 +310,7 @@ rule SessionStatsComputed {
 rule SessionUsageTotalsAreSessionScoped {
     when: SessionStatsRequested(session)
 
-    ensures: SessionTokenUsageTotals(session) aggregates only entries where entry.session = session.id
+    ensures: SessionTokenUsageTotals(session) = AggregateEntriesForSession(session.id)
 }
 
 actor User {
@@ -324,6 +324,7 @@ surface AgentSessionApi {
 
     exposes:
         session.id
+        session.context_id
         session.session_file
         session.name
         session.worktree_path
@@ -331,63 +332,41 @@ surface AgentSessionApi {
         session.thinking_level
         session.is_streaming
         session.is_compacting
-        session.pending_message_count
+        session.interrupt_pending
+        session.steering_messages
+        session.follow_up_messages
+        session.auto_compaction_enabled
+        session.auto_retry_enabled
+        session.retry_attempt
         session.active_tools
+        session.effective_system_prompt
+        session.prompt_overlays
+        session.pending_message_count
+        session.has_pending_messages
 
     provides:
         NewSessionStarted(session, input)
-        SessionResumed(session, session_path)
-        SessionForked(session, entry_id)
         UserPrompts(session, text, images)
         UserPromptsWhileStreaming(session, text, behavior)
+        PromptWhileStreamingRequested(session, text, behavior)
         SessionModelSelected(session, model)
         SessionThinkingLevelSelected(session, level)
+        SessionPromptOverlayAdded(session, overlay_text)
+        SessionPromptOverlayRemoved(session, overlay_text)
+        SessionForked(session, entry_id)
+        SessionResumed(session, session_path)
         SessionEntryAppended(session, entry)
         SessionStatsRequested(session)
 
-    @guidance
-        -- Session orchestrates agent turns, queue semantics, and lifecycle state.
-        -- Slash commands may be intercepted before prompt dispatch.
-        -- Persistence adapters append journal entries and restore session state.
-        -- Core session identity and lineage are delegated to session-core.
-        -- Session host routes prompt/mutation requests to explicit session id, else active session.
-        -- Multiple sessions may stream concurrently; active-session switch is routing-only.
-        -- `host/updated` is the single source of truth for the live session list in UIs.
-        -- Emitted on subscribe (initial state) and whenever host session set or active_session_id changes.
-        -- New session, fork, switch_session, and new_session all trigger HostUpdatedEmitted.
-        -- Session slot name falls back to id prefix when name is null.
+    @guarantee ContextOwnsSharedResources
+        -- Skills, prompt templates, tools, and extensions are context resources.
+        -- Session behavior may reference and compose them, but does not own them.
+
+    @guarantee SessionOwnsConversationAndExecution
+        -- A session owns its journal, prompt overlays, model selection, queues,
+        -- and execution lifecycle.
+
+    @guarantee EffectivePromptIsContextPlusSession
+        -- effective_system_prompt is derived from context baseline/resources plus
+        -- session-specific overlays and inheritance.
 }
-
-rule HostUpdatedEmittedOnSessionChange {
-    when: SessionHostStateChanged(host)
-
-    ensures: HostUpdatedEmitted(host, SessionHostSnapshot {
-        active_session_id: host.active_session_id,
-        sessions: MapToSlots(host.sessions, host.active_session_id)
-    })
-}
-
-rule HostUpdatedEmittedOnSubscribe {
-    when: RpcSubscribeCompleted(host)
-
-    ensures: HostUpdatedEmitted(host, SessionHostSnapshot {
-        active_session_id: host.active_session_id,
-        sessions: MapToSlots(host.sessions, host.active_session_id)
-    })
-}
-
-rule SessionSlotIsActiveWhenMatchesHost {
-    when: SessionSlotProjected(host, slot)
-
-    ensures: slot.is_active = (slot.id = host.active_session_id)
-}
-
-rule SessionSlotStreamingReflectsLivePhase {
-    when: SessionSlotProjected(host, slot)
-    requires: exists s in host.sessions where s.id = slot.id
-
-    ensures: slot.is_streaming = SessionById(host, slot.id).is_streaming
-}
-
-open question "Should tree navigation branch-summary be synchronous or background async?"
-open question "Should duplicate skill/template names be configurable (warn, error, or first-wins)?"

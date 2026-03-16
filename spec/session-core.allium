@@ -1,6 +1,6 @@
 -- allium: 2
-module session-core
 
+value ContextId { value: String }
 value SessionId { value: String }
 value MessageId { value: String }
 value WorktreePath { value: String }
@@ -22,20 +22,36 @@ external entity GitWorktree {
     head_sha: String?
 }
 
+entity AgentContext {
+    id: ContextId
+    project_id: ProjectId
+    worktree_path: WorktreePath
+
+    baseline_system_prompt: String
+    available_tools: Set<ToolName>
+    available_prompt_templates: Set<String>
+    available_skills: Set<String>
+    loaded_extensions: Set<String>
+
+    active_session_id: SessionId?
+    status: active | closed
+}
+
 entity AgentSession {
     id: SessionId
+    context_id: ContextId
     parent_session_id: SessionId?
     project_id: ProjectId
     worktree_path: WorktreePath
 
-    system_prompt: String
+    effective_system_prompt: String
+    active_tools: Set<ToolName>
+
     start_instant: Timestamp
     ended_at: Timestamp?
 
     name: String?
     summary_line: String?
-
-    active_tools: Set<ToolName>
 
     streaming_state: idle | streaming_assistant | streaming_tool
     status: active | paused | completed | failed
@@ -60,73 +76,109 @@ entity SessionMessage {
 }
 
 entity SessionContainment {
+    context_id: ContextId
     parent_session_id: SessionId
     child_session_id: SessionId
-    relation: fork | fork_at_entry | subagent
+    relation: fork | fork_at_entry | subagent | automation
     created_at: Timestamp
 }
 
-entity SessionHost {
-    id: String
-    project_id: ProjectId
-    worktree_path: WorktreePath
-    active_session_id: SessionId?
-}
+rule ContextInitializedExplicitly {
+    when: ContextInitializeRequested(project_id, worktree_path, baseline_system_prompt)
 
-rule SessionHostInitialized {
-    when: SessionHostInitialized(project_id, worktree_path)
+    requires: not exists c in AgentContexts where c.project_id = project_id and c.worktree_path = worktree_path
 
-    ensures: SessionHost.created(
-        id: host_id_for(project_id, worktree_path),
+    ensures: AgentContext.created(
+        id: context_id_for(project_id, worktree_path),
         project_id: project_id,
         worktree_path: worktree_path,
-        active_session_id: null
+        baseline_system_prompt: baseline_system_prompt,
+        available_tools: {},
+        available_prompt_templates: {},
+        available_skills: {},
+        loaded_extensions: {},
+        active_session_id: null,
+        status: active
     )
 }
 
-rule SessionCreated {
+rule ContextMaterializedForSessionCreate {
+    when: SessionCreateRequested(project_id, worktree_path, system_prompt, name)
+
+    ensures:
+        if not exists c in AgentContexts where c.project_id = project_id and c.worktree_path = worktree_path:
+            ContextInitializeRequested(project_id, worktree_path, baseline_system_prompt: system_prompt)
+}
+
+rule ContextResourceSetUpdated {
+    when: ContextResourcesRegistered(context_id, tools, prompt_templates, skills, extensions)
+    requires: exists c in AgentContexts where c.id = context_id and c.status = active
+
+    ensures:
+        for c in AgentContexts where c.id = context_id:
+            c.available_tools = tools
+    ensures:
+        for c in AgentContexts where c.id = context_id:
+            c.available_prompt_templates = prompt_templates
+    ensures:
+        for c in AgentContexts where c.id = context_id:
+            c.available_skills = skills
+    ensures:
+        for c in AgentContexts where c.id = context_id:
+            c.loaded_extensions = extensions
+}
+
+rule RootSessionCreatedInContext {
     when: SessionCreateRequested(project_id, worktree_path, system_prompt, name)
 
     ensures: AgentSession.created(
         id: new_session_id(),
+        context_id: context_id_for(project_id, worktree_path),
         parent_session_id: null,
         project_id: project_id,
         worktree_path: worktree_path,
-        system_prompt: system_prompt,
+        effective_system_prompt: ComposeSessionPromptFromContext(
+            context_id: context_id_for(project_id, worktree_path),
+            requested_system_prompt: system_prompt,
+            parent_session_id: null
+        ),
+        active_tools: context_tools_for(context_id_for(project_id, worktree_path)),
         start_instant: now,
         ended_at: null,
         name: name,
         summary_line: null,
-        active_tools: {},
         streaming_state: idle,
         status: active
     )
 
     ensures:
-        for h in SessionHosts where h.project_id = project_id and h.worktree_path = worktree_path:
-            h.active_session_id = created_session_id()
+        for c in AgentContexts where c.id = context_id_for(project_id, worktree_path):
+            c.active_session_id = created_session_id()
 }
 
-rule SessionForked {
+rule SessionForkedInContext {
     when: SessionForkRequested(parent_session_id, worktree_path, system_prompt, name)
     requires: exists p in AgentSessions where p.id = parent_session_id and p.status = active
+    requires: worktree_path = worktree_path_for(parent_session_id)
 
     ensures: AgentSession.created(
         id: new_session_id(),
+        context_id: context_id_for_session(parent_session_id),
         parent_session_id: parent_session_id,
         project_id: project_id_for(parent_session_id),
         worktree_path: worktree_path,
-        system_prompt: system_prompt,
+        effective_system_prompt: system_prompt ?? session_prompt_for(parent_session_id),
+        active_tools: active_tools_for(parent_session_id),
         start_instant: now,
         ended_at: null,
-        name: name,
+        name: name ?? session_name_for(parent_session_id),
         summary_line: null,
-        active_tools: active_tools_for(parent_session_id),
         streaming_state: idle,
         status: active
     )
 
     ensures: SessionContainment.created(
+        context_id: context_id_for_session(parent_session_id),
         parent_session_id: parent_session_id,
         child_session_id: child_session_id,
         relation: fork,
@@ -134,30 +186,32 @@ rule SessionForked {
     )
 
     ensures:
-        for h in SessionHosts where h.project_id = project_id_for(parent_session_id) and h.worktree_path = worktree_path:
-            h.active_session_id = child_session_id
+        for c in AgentContexts where c.id = context_id_for_session(parent_session_id):
+            c.active_session_id = child_session_id
 }
 
-rule SubagentSessionCreated {
+rule SubagentSessionCreatedInContext {
     when: SubagentSessionRequested(parent_session_id, system_prompt, name)
     requires: exists p in AgentSessions where p.id = parent_session_id and p.status = active
 
     ensures: AgentSession.created(
         id: new_session_id(),
+        context_id: context_id_for_session(parent_session_id),
         parent_session_id: parent_session_id,
         project_id: project_id_for(parent_session_id),
         worktree_path: worktree_path_for(parent_session_id),
-        system_prompt: system_prompt,
+        effective_system_prompt: system_prompt ?? session_prompt_for(parent_session_id),
+        active_tools: active_tools_for(parent_session_id),
         start_instant: now,
         ended_at: null,
         name: name,
         summary_line: null,
-        active_tools: active_tools_for(parent_session_id),
         streaming_state: idle,
         status: active
     )
 
     ensures: SessionContainment.created(
+        context_id: context_id_for_session(parent_session_id),
         parent_session_id: parent_session_id,
         child_session_id: child_session_id,
         relation: subagent,
@@ -165,8 +219,8 @@ rule SubagentSessionCreated {
     )
 
     ensures:
-        for h in SessionHosts where h.project_id = project_id_for(parent_session_id) and h.worktree_path = worktree_path_for(parent_session_id):
-            h.active_session_id = child_session_id
+        for c in AgentContexts where c.id = context_id_for_session(parent_session_id):
+            c.active_session_id = c.active_session_id
 }
 
 rule MessageAppended {
@@ -211,17 +265,18 @@ rule SessionSummaryUpdated {
             s.summary_line = SummarizeSessionLine(id)
 }
 
-rule ActiveSessionSwitched {
+rule ActiveSessionSwitchedWithinContext {
     when: SessionSwitchRequested(project_id, worktree_path, session_id)
+    requires: exists c in AgentContexts where c.project_id = project_id and c.worktree_path = worktree_path and c.status = active
     requires: exists s in AgentSessions where s.id = session_id and s.project_id = project_id and s.worktree_path = worktree_path
 
     ensures:
-        for h in SessionHosts where h.project_id = project_id and h.worktree_path = worktree_path:
-            h.active_session_id = session_id
+        for c in AgentContexts where c.project_id = project_id and c.worktree_path = worktree_path:
+            c.active_session_id = session_id
 
     ensures:
-        for r in AgentSessions where r.project_id = project_id and r.worktree_path = worktree_path and r.id != session_id:
-            r.streaming_state = r.streaming_state
+        for s in AgentSessions where s.project_id = project_id and s.worktree_path = worktree_path and s.id != session_id:
+            s.streaming_state = s.streaming_state
 }
 
 rule SessionCompleted {
@@ -238,20 +293,31 @@ rule SessionCompleted {
             s.streaming_state = idle
 }
 
-invariant ParentSessionExists {
+invariant SessionBelongsToExistingContext {
     for s in AgentSessions:
-        (s.parent_session_id = null) or exists p in AgentSessions where p.id = s.parent_session_id
+        exists c in AgentContexts where c.id = s.context_id
 }
 
-invariant SessionHasStableProject {
+invariant SessionProjectAndWorktreeMatchContext {
     for s in AgentSessions:
-        exists p in Projects where p.id = s.project_id
+        exists c in AgentContexts where c.id = s.context_id and c.project_id = s.project_id and c.worktree_path = s.worktree_path
 }
 
-invariant ActiveSessionBelongsToHost {
-    for h in SessionHosts:
-        (h.active_session_id = null) or
-        exists s in AgentSessions where s.id = h.active_session_id and s.project_id = h.project_id and s.worktree_path = h.worktree_path
+invariant ActiveSessionBelongsToContext {
+    for c in AgentContexts:
+        (c.active_session_id = null) or
+        exists s in AgentSessions where s.id = c.active_session_id and s.context_id = c.id
+}
+
+invariant ParentSessionExistsInSameContext {
+    for s in AgentSessions:
+        (s.parent_session_id = null) or exists p in AgentSessions where p.id = s.parent_session_id and p.context_id = s.context_id
+}
+
+invariant ContainmentLinksStayWithinContext {
+    for rel in SessionContainments:
+        exists p in AgentSessions where p.id = rel.parent_session_id and p.context_id = rel.context_id
+        and exists c in AgentSessions where c.id = rel.child_session_id and c.context_id = rel.context_id
 }
 
 invariant ParentSessionIsImmutable {
@@ -260,6 +326,7 @@ invariant ParentSessionIsImmutable {
 }
 
 contract SessionCoreEql {
+    create_context: (input: JsonMap) -> JsonMap
     create_session: (input: JsonMap) -> JsonMap
     fork_session: (input: JsonMap) -> JsonMap
     create_subagent_session: (input: JsonMap) -> JsonMap
@@ -270,40 +337,26 @@ contract SessionCoreEql {
     extension_create_session: (session_name: String?, worktree_path: WorktreePath?, system_prompt: String?, thinking_level: String?) -> JsonMap
     extension_switch_session: (session_id: SessionId) -> JsonMap
 
-    @invariant SessionIdentityAttrs
-        -- session attrs include:
-        -- {:session/id :session/parent-id :session/project-id :session/worktree-path :session/start-instant}
+    @invariant ContextAttrs
+        -- context attrs include:
+        -- {:context/id :context/project-id :context/worktree-path
+        --  :context/baseline-system-prompt :context/available-tools
+        --  :context/available-prompt-templates :context/available-skills
+        --  :context/loaded-extensions :context/active-session-id}
 
-    @invariant SessionPromptAndSummaryAttrs
+    @invariant SessionAttrs
         -- session attrs include:
-        -- {:session/system-prompt :session/name :session/summary-line}
-
-    @invariant SessionMessageAttrs
-        -- message attrs include:
-        -- {:session.message/id :session.message/session :session.message/role :session.message/content :session.message/sequence-no}
+        -- {:session/id :session/context-id :session/parent-id
+        --  :session/project-id :session/worktree-path
+        --  :session/effective-system-prompt :session/active-tools}
 
     @invariant SessionContainmentAttrs
         -- lineage attrs include:
         -- {:session/children [{:session/id :session/relation}]}
 
-    @invariant SessionHostAttrs
-        -- host attrs include:
-        -- {:session.host/id :session.host/project-id :session.host/worktree-path :session.host/active-session-id}
-
-    @invariant SessionListAndSwitchAttrs
+    @invariant ActiveSessionRoutingAttrs
         -- list/switch attrs include:
-        -- {:session/list [{:session/id :session/name :session/status :session/streaming-state}]
-        --  :session/active-id}
-
-    @invariant ExtensionCreateSessionAttrs
-        -- extension create-session attrs include:
-        -- {:psi.agent-session/session-id :psi.agent-session/session-name
-        --  :psi.agent-session/cwd :psi.agent-session/thinking-level}
-
-    @invariant ExtensionSwitchSessionAttrs
-        -- extension switch-session attrs include:
-        -- {:psi.agent-session/session-id :psi.agent-session/session-name
-        --  :psi.agent-session/cwd}
+        -- {:context/active-session-id :context/session-count}
 }
 
 actor EqlClient {
@@ -317,13 +370,25 @@ surface SessionCoreApi {
         fulfils SessionCoreEql
 
     exposes:
+        for c in AgentContexts:
+            c.id
+            c.project_id
+            c.worktree_path
+            c.baseline_system_prompt
+            c.available_tools
+            c.available_prompt_templates
+            c.available_skills
+            c.loaded_extensions
+            c.active_session_id
+
         for s in AgentSessions:
             s.id
+            s.context_id
             s.parent_session_id
             s.project_id
             s.worktree_path
             s.start_instant
-            s.system_prompt
+            s.effective_system_prompt
             s.name
             s.summary_line
             s.active_tools
@@ -331,7 +396,8 @@ surface SessionCoreApi {
             s.status
 
     provides:
-        SessionHostInitialized(project_id, worktree_path)
+        ContextInitializeRequested(project_id, worktree_path, baseline_system_prompt)
+        ContextResourcesRegistered(context_id, tools, prompt_templates, skills, extensions)
         SessionCreateRequested(project_id, worktree_path, system_prompt, name)
         SessionForkRequested(parent_session_id, worktree_path, system_prompt, name)
         SubagentSessionRequested(parent_session_id, system_prompt, name)
@@ -344,26 +410,26 @@ surface SessionCoreApi {
         SessionSummaryRequested(id)
         SessionCompletionRequested(id)
 
+    @guarantee ContextOwnsSharedResources
+        -- Tools, prompt templates, skills, and extensions are loaded onto the context.
+        -- Sessions use these shared resources; they do not own independent copies.
+
+    @guarantee SessionsFormATreeWithinContext
+        -- Every forked or subagent session is represented as a child session in the same context.
+
+    @guarantee AgentIsASession
+        -- A subagent is modeled as just another session in the context tree.
+        -- The distinction is recorded by SessionContainment.relation = subagent.
+
+    @guarantee ActiveSessionIsFocusNotExistence
+        -- active_session_id is the default routing focus for prompts and UI selection.
+        -- Switching focus does not destroy or reset sibling sessions.
+
     @guarantee SessionRunsInWorktreeContext
-        -- Every session is bound to a project and a git worktree path.
-
-    @guarantee SessionCanContainSessions
-        -- Fork and subagent relations are represented as explicit parent-child containment.
-
-    @guarantee ActiveSessionRoutesByDefault
-        -- Prompts/mutations without explicit session id route to the host active session.
-
-    @guarantee SessionSwitchDoesNotInterruptOthers
-        -- Switching active session does not force non-target sessions to idle.
-        -- In-flight runs in non-target sessions continue.
-
-    @guarantee ExtensionSessionMutationsReuseCoreLifecycle
-        -- Extension-facing session create/switch mutations are thin wrappers over
-        -- the same core session lifecycle semantics.
-        -- create-session creates a distinct host peer session and makes it active.
-        -- switch-session routes to a resumable host session by id and makes it active.
+        -- Every context is bound to exactly one project/worktree pair.
+        -- All sessions inside that context inherit that project/worktree binding.
 }
 
-open question "Should SessionMessage.content allow structured multimodal content in addition to String?"
-open question "Should system and extension messages be persisted in the same stream as user/assistant/tool messages?"
--- Decision: forked sessions inherit parent system prompt by default.
+open question "Should contexts be persisted directly, or rebuilt from project/worktree plus discovered resources at runtime?"
+open question "Should a context permit multiple simultaneously focused sessions for multi-pane UIs, or remain single-focus with many live sessions?"
+open question "Should root session creation always move active focus to the new session, or be policy-controlled by the caller?"

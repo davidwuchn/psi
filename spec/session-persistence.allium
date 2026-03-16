@@ -2,6 +2,7 @@
 
 -- session-persistence.allium
 -- Session journal disk I/O for append-only session files.
+-- Context resources are reconstructed at runtime; persisted artifacts focus on session lineage and transcript.
 
 use "./session-management.allium" as session
 use "./session-core.allium" as core
@@ -16,6 +17,7 @@ value SessionHeader {
     version: Integer
     id: String
     timestamp: Timestamp
+    context_id: String?
     worktree_path: String
     parent_session_id: String?
     parent_session: String?
@@ -24,6 +26,7 @@ value SessionHeader {
 value SessionInfo {
     path: String
     id: String
+    context_id: String?
     worktree_path: String
     name: String?
     parent_session_id: String?
@@ -35,9 +38,9 @@ value SessionInfo {
     all_messages_text: String
 }
 
-value SessionHostIndexEntry {
-    host_id: String
-    project_id: String
+value ContextIndexEntry {
+    context_id: String
+    project_id: String?
     worktree_path: String
     active_session_id: String?
     session_count: Integer
@@ -57,8 +60,8 @@ entity SessionDirectory {
     path: String
 }
 
-entity SessionHostIndex {
-    entries: Set<SessionHostIndexEntry>
+entity ContextIndex {
+    entries: Set<ContextIndexEntry>
 }
 
 rule SessionFileCreated {
@@ -74,6 +77,7 @@ rule SessionFileCreated {
             version: config.current_version,
             id: s.id,
             timestamp: now,
+            context_id: s.context_id,
             worktree_path: s.worktree_path,
             parent_session_id: null,
             parent_session: null
@@ -87,6 +91,7 @@ rule ForkedSessionFileCreated {
     when: session/SessionForked(s, entry_id)
 
     ensures: core/SessionContainment.created(
+        context_id: ContextIdForSession(s.id),
         parent_session_id: SessionId{value: parent_session_id_for_fork(s.id, entry_id)},
         child_session_id: SessionId{value: s.id},
         relation: fork_at_entry,
@@ -106,6 +111,7 @@ rule ForkedSessionFileCreated {
             version: config.current_version,
             id: s.id,
             timestamp: now,
+            context_id: s.context_id,
             worktree_path: s.worktree_path,
             parent_session_id: parent_id,
             parent_session: parent_path
@@ -137,6 +143,7 @@ rule SessionLoaded {
 
     let migrated = MigratedToCurrentVersion(raw_entries)
     ensures: s.id = HeaderSessionId(migrated)
+    ensures: s.context_id = HeaderContextId(migrated) ?? ContextIdForHeader(migrated)
     ensures: s.worktree_path = HeaderWorktreePath(migrated)
     ensures: s.parent_session_id = HeaderParentSessionId(migrated)
     ensures: s.parent_session_path = HeaderParentSessionPath(migrated)
@@ -205,20 +212,20 @@ rule AllSessionsListed {
     ensures: result = SortSessionInfoByModifiedDesc(result)
 }
 
-rule SessionHostIndexBuilt {
-    when: SessionHostIndexRequested()
+rule ContextIndexBuilt {
+    when: ContextIndexRequested()
 
-    ensures: SessionHostIndex.created(
-        entries: BuildSessionHostIndexFromSessionHeaders(config.sessions_root)
+    ensures: ContextIndex.created(
+        entries: BuildContextIndexFromSessionHeaders(config.sessions_root)
     )
 }
 
-rule SessionHostIndexResolvesActiveSession {
-    when: SessionHostIndexRequested()
+rule ContextIndexResolvesActiveSession {
+    when: ContextIndexRequested()
 
     ensures:
-        for e in SessionHostIndex.entries:
-            e.active_session_id = ResolveActiveSessionForHost(e.host_id)
+        for e in ContextIndex.entries:
+            e.active_session_id = ResolveActiveSessionForContext(e.context_id)
 }
 
 surface SessionPersistenceApi {
@@ -237,15 +244,16 @@ surface SessionPersistenceApi {
         MostRecentSessionFound(s.worktree_path)
         SessionsListed(s.worktree_path, null)
         AllSessionsListed()
-        SessionHostIndexRequested()
+        ContextIndexRequested()
 
     @guidance
-        -- Disk operations are mediated through this surface.
+        -- Disk operations persist session lineage and transcript.
+        -- Context resources are rebuilt from project/worktree plus discovery at runtime.
         -- Initial session file write is lazy until first assistant message.
         -- Fork writes immediately with branch history.
         -- parent_session_id is canonical lineage identity in file header.
         -- parent_session_path is an optional denormalized lookup hint.
-        -- Host/session index enables process-level multi-session listing and switching.
+        -- Context/session index enables multi-session listing and switching.
 }
 
 open question "Should the on-disk format stay NDJSON or move to EDN?"

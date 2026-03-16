@@ -322,8 +322,8 @@ surface EmacsFrontendApi {
 
 -- ── Session tree widget ────────────────────────────────────────────────────
 
-rule HostUpdatedRendersSessionTreeWidget {
-    when: RpcEventReceived(frontend.rpc, "host/updated", payload)
+rule ContextUpdatedRendersSessionTreeWidget {
+    when: RpcEventReceived(frontend.rpc, "context/updated", payload)
 
     ensures: SessionTreeWidgetProjected(frontend, payload.sessions, payload.active_session_id)
     ensures: ui/WidgetSet(
@@ -384,8 +384,8 @@ rule SessionTreeWidgetReflectsParentChildIndent {
     ensures: SlotLineIndent(slot) = SlotLineIndent(s) + 2
 }
 
-rule HostUpdatedOnSubscribeInitializesWidget {
-    when: RpcEventReceived(frontend.rpc, "host/updated", payload)
+rule ContextUpdatedOnSubscribeInitializesWidget {
+    when: RpcEventReceived(frontend.rpc, "context/updated", payload)
     requires: frontend.run_state = connecting
 
     ensures: SessionTreeWidgetProjected(frontend, payload.sessions, payload.active_session_id)
@@ -393,9 +393,9 @@ rule HostUpdatedOnSubscribeInitializesWidget {
 
 -- ── frontend action requests ───────────────────────────────────────────────
 
-rule SessionTreeFrontendActionUsesCompletingRead {
+rule ContextSessionFrontendActionUsesCompletingRead {
     when: frontend_actions/FrontendActionEventReceived(frontend, request)
-    requires: request.action_name = "session-tree-selector"
+    requires: request.action_name = "context-session-selector"
 
     ensures: NativeSelectorKind(frontend, request) = completing_read
     ensures: FrontendActionCandidates(frontend, request) = request.payload.candidates

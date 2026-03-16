@@ -1,10 +1,10 @@
--- allium: 1
+-- allium: 2
 
 -- plan-state-learning-extension.allium
 -- Post-commit automation extension for PLAN/STATE/LEARNING synchronization.
 
 use "./extension-system.allium" as ext
-use "./session-management.allium" as session
+use "./session-core.allium" as core
 
 value GitHeadChangedEvent {
     worktree_path: String
@@ -71,11 +71,22 @@ rule PlanStateLearningHandlesHeadChange {
             )
 }
 
+rule PlanStateLearningCreatesChildSessionWhenNeeded {
+    when: PlanStateLearningRunStarted(run)
+    requires: run.skipped = false
+
+    ensures: core/SubagentSessionRequested(
+        parent_session_id: CurrentActiveSessionIdForWorktree(CurrentProjectId(), CurrentWorktreePath()),
+        system_prompt: CurrentEffectiveSessionPrompt(),
+        name: "plan-state-learning"
+    )
+}
+
 rule PlanStateLearningCreatesAgentTurn {
     when: PlanStateLearningRunStarted(run)
     requires: run.skipped = false
 
-    ensures: ext/ExtensionPromptSent(source: "plan-state-learning", role: "user")
+    ensures: ext/ExtensionPromptSent(SessionNamed("plan-state-learning"), PromptTextForPlanStateLearning(run))
     ensures: AgentTurnStartedFromExtensionPrompt("plan-state-learning")
 }
 
@@ -103,7 +114,12 @@ rule PlanStateLearningAgentExecutesPhase2 {
 rule PlanStateLearningMessagesVisibleInTranscript {
     when: ext/ExtensionEventReceived(name: "git_head_changed", payload)
 
-    ensures: ext/ExtensionMessageAppended(role: "assistant", custom_type: "plan-state-learning", visible_in_ui: true)
+    ensures: ext/CustomMessageSent(SessionForWorktree(payload.worktree_path), Message{
+        role: "assistant",
+        customType: "plan-state-learning",
+        content: "PLAN/STATE/LEARNING update considered",
+        display: visible
+    })
 }
 
 rule PlanStateLearningPromptTelemetryVisible {

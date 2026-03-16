@@ -1,7 +1,7 @@
--- allium: 1
+-- allium: 2
 
 -- compaction.allium
--- Context compaction and branch summarisation for AgentSession.
+-- Context compaction and branch summarisation for sessions.
 
 use "./agent.allium" as agent
 use "./extension-system.allium" as ext
@@ -13,14 +13,9 @@ external entity Model {
     context_window: Integer
 }
 
-external entity Agent {
-    state: agent/AgentState
-    is_streaming: Boolean
-}
-
 external entity AgentSession {
+    id: String
     model: Model?
-    agent: Agent
     is_compacting: Boolean
     auto_compaction_enabled: Boolean
     is_idle: Boolean
@@ -172,7 +167,7 @@ rule ManualCompaction {
     requires: preparation != null
     requires: PreparationError(session) = null
 
-    ensures: session.agent.abort()
+    ensures: SessionAbortRequested(session)
     ensures: session.is_compacting = true
     ensures: ext/SessionBeforeCompactDispatched(session, preparation, EntriesOnActivePath(session), custom_instructions)
 
@@ -190,13 +185,13 @@ rule ManualCompaction {
                 details: result.details,
                 from_hook: from_extension
             }
-            agent/ReplaceMessages(session.agent, RebuildFromEntries(session))
+            SessionMessagesRebuiltFromEntries(session)
             session.is_compacting = false
             ext/SessionCompactDispatched(session, saved, from_extension)
 }
 
 rule AutoCompactionTriggered {
-    when: agent/AgentEndEventEmitted(session.agent)
+    when: SessionAgentEndEventEmitted(session)
 
     requires: session.auto_compaction_enabled
     requires: LastAssistantStopReason(session) != error
@@ -206,7 +201,7 @@ rule AutoCompactionTriggered {
 }
 
 rule AutoCompactionOnOverflow {
-    when: agent/AgentEndEventEmitted(session.agent)
+    when: SessionAgentEndEventEmitted(session)
 
     requires: session.auto_compaction_enabled
     requires: LastAssistantStopReason(session) = error
@@ -214,7 +209,7 @@ rule AutoCompactionOnOverflow {
     requires: MessageModelMatchesCurrentModel(LastAssistantMessage(session), session.model)
     requires: not MessagePredatesLatestCompaction(LastAssistantMessage(session), EntriesOnActivePath(session))
 
-    ensures: agent/ReplaceMessages(session.agent, RemoveTrailingOverflowError(session.agent.state.messages))
+    ensures: TrailingOverflowErrorRemoved(session)
     ensures: AutoCompactionRun(session, reason: overflow, will_retry: true)
 }
 
@@ -231,8 +226,8 @@ rule AutoCompactionRun {
             ext/AutoCompactionEndDispatched(session, result: null, aborted: true, will_retry: false)
         else:
             ext/AutoCompactionEndDispatched(session, result: result, aborted: false, will_retry: will_retry)
-            if will_retry or session.has_pending_messages or AgentHasQueuedMessages(session.agent):
-                agent/Continue(session.agent)
+            if will_retry or session.has_pending_messages or SessionHasQueuedMessages(session):
+                SessionContinueRequested(session)
 }
 
 rule ContextUsageUnknownAfterCompaction {

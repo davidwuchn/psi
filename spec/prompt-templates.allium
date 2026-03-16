@@ -1,7 +1,9 @@
--- allium: 1
+-- allium: 2
 
 -- prompt-templates.allium
--- Prompt template discovery, parsing, argument expansion, and invocation.
+-- Prompt template discovery, parsing, argument expansion, and invocation as context resources.
+
+use "./session-core.allium" as core
 
 value TemplateFrontmatter {
     description: String?
@@ -29,8 +31,8 @@ config {
     discovery_recursive: Boolean = false
 }
 
-rule TemplatesDiscovered {
-    when: TemplateDiscoveryRequested(sources)
+rule TemplatesDiscoveredForContext {
+    when: TemplateDiscoveryRequested(context, sources)
 
     let paths = OrderedUnion(
         GlobalTemplates(config.global_prompts_dir),
@@ -52,10 +54,18 @@ rule TemplatesDiscovered {
                     source: path.source,
                     file_path: path.absolute
                 )
+
+    ensures: core/ContextResourcesRegistered(
+        context_id: context.id,
+        tools: context.available_tools,
+        prompt_templates: TemplateNamesDiscoveredFor(context),
+        skills: context.available_skills,
+        extensions: context.loaded_extensions
+    )
 }
 
 rule TemplatesDisabledByFlag {
-    when: TemplateDiscoveryRequested(sources)
+    when: TemplateDiscoveryRequested(context, sources)
     requires: sources.no_prompt_templates = true
 
     ensures: OnlyCliTemplatesLoaded()
@@ -89,7 +99,7 @@ rule PlaceholdersExpanded {
 }
 
 rule PromptTemplateInvoked {
-    when: PromptTemplateInvocationRequested(text)
+    when: PromptTemplateInvocationRequested(context, text)
     requires: StartsWith(text, "/")
     requires: exists PromptTemplate with name = CommandName(text)
     requires: not exists RegisteredCommand with name = CommandName(text)
@@ -104,7 +114,7 @@ rule PromptTemplateInvoked {
 }
 
 rule PromptTemplateNotFound {
-    when: PromptTemplateInvocationRequested(text)
+    when: PromptTemplateInvocationRequested(context, text)
     requires: StartsWith(text, "/")
     requires: not exists PromptTemplate with name = CommandName(text)
     requires: not exists RegisteredCommand with name = CommandName(text)
@@ -120,7 +130,7 @@ rule TemplateNameCollision {
 }
 
 rule CommandTakesPriority {
-    when: PromptTemplateInvocationRequested(text)
+    when: PromptTemplateInvocationRequested(context, text)
     requires: exists RegisteredCommand with name = CommandName(text)
 
     ensures: result = CommandDispatched(text)
@@ -139,11 +149,11 @@ surface PromptTemplateApi {
         PromptTemplate.source
 
     provides:
-        PromptTemplateInvocationRequested(text)
-        TemplateDiscoveryRequested(sources)
+        PromptTemplateInvocationRequested(context, text)
+        TemplateDiscoveryRequested(context, sources)
 
     @guidance
-        -- Autocomplete lists template names and descriptions.
+        -- Prompt templates are loaded once onto the context and reused by sessions in that context.
         -- Templates are invoked by /name followed by arguments.
         -- Extension commands with the same name take priority over templates.
         -- Discovery is non-recursive in prompts directories unless explicitly configured.

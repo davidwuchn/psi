@@ -46,7 +46,7 @@ value SelectionCandidate {
 config {
     supported_action_names: Set<String> = {
         "resume-selector",
-        "session-tree-selector",
+        "context-session-selector",
         "model-picker",
         "thinking-picker"
     }
@@ -136,9 +136,9 @@ rule ResumeSelectorActionUsesFrontendCandidatesPayload {
     ensures: NativeFrontendActionOpened(frontend, request)
 }
 
-rule SessionTreeSelectorActionUsesFrontendCandidatesPayload {
+rule ContextSessionSelectorActionUsesFrontendCandidatesPayload {
     when: FrontendActionEventReceived(frontend, request)
-    requires: request.action_name = "session-tree-selector"
+    requires: request.action_name = "context-session-selector"
 
     ensures: FrontendActionPayloadHasCandidates(request)
     ensures: NativeFrontendActionOpened(frontend, request)

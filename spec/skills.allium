@@ -1,7 +1,9 @@
--- allium: 1
+-- allium: 2
 
 -- skills.allium
--- Skill discovery, validation, progressive disclosure, and invocation.
+-- Skill discovery, validation, progressive disclosure, and invocation as context resources.
+
+use "./session-core.allium" as core
 
 value SkillFrontmatter {
     name: String
@@ -47,8 +49,8 @@ config {
     compatibility_max_length: Integer = 500
 }
 
-rule SkillsDiscovered {
-    when: SkillsDiscoveryRequested(sources)
+rule SkillsDiscoveredForContext {
+    when: SkillsDiscoveryRequested(context, sources)
 
     let paths = OrderedUnion(
         GlobalSkills(config.global_skills_dirs),
@@ -75,10 +77,18 @@ rule SkillsDiscovered {
                         compatibility: parsed.compatibility,
                         allowed_tools: parsed.allowed_tools
                     )
+
+    ensures: core/ContextResourcesRegistered(
+        context_id: context.id,
+        tools: context.available_tools,
+        prompt_templates: context.available_prompt_templates,
+        skills: SkillNamesDiscoveredFor(context),
+        extensions: context.loaded_extensions
+    )
 }
 
 rule SkillsDisabledByFlag {
-    when: SkillsDiscoveryRequested(sources)
+    when: SkillsDiscoveryRequested(context, sources)
     requires: sources.no_skills = true
 
     ensures: OnlyCliSkillsLoaded()
@@ -153,15 +163,15 @@ rule SkillNameCollision {
     ensures: Warning.emitted("Skill name collision: " + name)
 }
 
-rule SkillsInSystemPrompt {
-    when: SystemPromptSkillsAssembled(skills)
+rule SkillsInContextPrompt {
+    when: ContextPromptSkillsAssembled(context)
 
-    let visible = skills where is_available_to_model
+    let visible = SkillsVisibleToContext(context)
     ensures: result = VisibleSkillDescriptors(visible)
 }
 
 rule SkillCommandExpanded {
-    when: SkillCommandExpansionRequested(text)
+    when: SkillCommandExpansionRequested(context, text)
     requires: StartsWith(text, "/skill:")
 
     let skill_name = SkillNameFromCommand(text)
@@ -178,7 +188,7 @@ rule SkillCommandExpanded {
 }
 
 rule SkillNotFound {
-    when: SkillCommandExpansionRequested(text)
+    when: SkillCommandExpansionRequested(context, text)
     requires: StartsWith(text, "/skill:")
 
     let skill_name = SkillNameFromCommand(text)
@@ -202,12 +212,13 @@ surface SkillApi {
         Skill.disable_model_invocation
 
     provides:
-        SkillCommandExpansionRequested(text)
-        SkillsDiscoveryRequested(sources)
+        SkillCommandExpansionRequested(context, text)
+        SkillsDiscoveryRequested(context, sources)
 
     @guidance
-        -- /skill:name is available with autocomplete.
-        -- disable_model_invocation hides a skill from system prompt but keeps direct invocation.
+        -- Skills are loaded onto the context once and reused by sessions in that context.
+        -- /skill:name expands full SKILL.md content on demand for the targeted session.
+        -- disable_model_invocation hides a skill from the context prompt but keeps direct invocation.
         -- Discovery supports direct .md files at root and recursive SKILL.md files in subdirs.
         -- --no-skills disables discovery except explicit CLI skill paths.
 }

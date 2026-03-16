@@ -1,10 +1,12 @@
--- allium: 1
+-- allium: 2
 
 -- subagent-widget-extension.allium
 -- Subagent widget/tool behavior with dual-mode create semantics.
+-- Subagents are child sessions in the same context.
 
 use "./extension-system.allium" as ext
 use "./background-tool-jobs.allium" as background_jobs
+use "./session-core.allium" as core
 
 value SubagentCreateArgs {
     task: String
@@ -24,6 +26,7 @@ value SubagentCreateResponse {
     workflow_id: String
     mode: sync | async
     job_id: String?
+    session_id: core/SessionId?
     is_error: Boolean
     content: String
 }
@@ -87,6 +90,13 @@ rule SubagentCreateDefaultsForkSessionToFalse {
     ensures: EffectiveForkSession(args) = false
 }
 
+rule SubagentCreateCreatesChildSession {
+    when: SubagentToolCalled(action: create, args, tool_call_id, thread_id)
+
+    ensures: core/SubagentSessionRequested(CurrentSessionId(), CurrentEffectiveSessionPrompt(), args.task)
+    ensures: ChildSessionRelation(CurrentSessionId(), created_session_id(), relation: subagent)
+}
+
 rule SubagentCreatePropagatesForkSessionFlag {
     when: SubagentToolCalled(action: create, args, tool_call_id, thread_id)
 
@@ -122,6 +132,7 @@ rule SubagentCreateSyncPersistsWorkflowAndRunsToTerminal {
         workflow_id: workflow_id,
         mode: sync,
         job_id: null,
+        session_id: SessionForWorkflow(workflow_id),
         is_error: phase = error,
         content: SubagentTerminalText(workflow_id)
     }
@@ -147,27 +158,27 @@ rule SubagentCreateSyncEmitsResultMessageWhenContextInjectionDisabled {
     requires: SubagentWorkflowReachedTerminalPhase(workflow_id, phase)
     requires: (args.include_result_in_context ?? false) = false
 
-    ensures: ext/CustomMessageSent(session, message)
+    ensures: ext/CustomMessageSent(SessionByWorkflow(workflow_id), message)
     ensures: message.customType = "subagent-result"
     ensures: message.role = "assistant"
     ensures: message.content != ""
 }
 
-rule SubagentResultInjectedIntoContextWhenEnabled {
+rule SubagentResultInjectedIntoSessionWhenEnabled {
     when: SubagentWorkflowReachedTerminalPhase(workflow_id, phase)
     requires: SubagentWorkflow(workflow_id).input.include_result_in_context = true
 
-    ensures: not ext/CustomMessageSent(session, message where message.customType = "subagent-result")
+    ensures: not ext/CustomMessageSent(SessionByWorkflow(workflow_id), message where message.customType = "subagent-result")
 
-    ensures: ext/MessageSent(session, user_message)
+    ensures: ext/MessageSent(SessionByWorkflow(workflow_id), user_message)
     ensures: user_message.role = "user"
-    ensures: user_message.content contains "Subagent job id:"
+    ensures: Contains(user_message.content, "Subagent job id:")
 
-    ensures: ext/MessageSent(session, assistant_message)
+    ensures: ext/MessageSent(SessionByWorkflow(workflow_id), assistant_message)
     ensures: assistant_message.role = "assistant"
     ensures: assistant_message.content = SubagentTerminalText(workflow_id)
 
-    ensures: PreservesRoleAlternation(session, after: assistant_message)
+    ensures: PreservesRoleAlternation(SessionByWorkflow(workflow_id), after: assistant_message)
 }
 
 rule SubagentCreateAsyncCreatesWorkflowAndBackgroundJob {
@@ -186,6 +197,7 @@ rule SubagentCreateAsyncCreatesWorkflowAndBackgroundJob {
         workflow_id: workflow_id,
         mode: async,
         job_id: job_id,
+        session_id: SessionForWorkflow(workflow_id),
         is_error: false,
         content: Contains("spawned in background")
     }
@@ -234,6 +246,7 @@ surface SubagentWidgetApi {
     related:
         ext/ExtensionApi
         background_jobs/BackgroundToolJobsApi
+        core/SessionCoreApi
 
     @guidance
         -- create supports mode=sync|async; default mode is async.
@@ -243,5 +256,6 @@ surface SubagentWidgetApi {
         -- create mode=sync persists a workflow id and returns terminal output with no job_id.
         -- create mode=async returns both workflow id and background job_id.
         -- continue remains background-only and returns a background job_id.
+        -- A subagent is a child session in the same context as the current session.
         -- slash command supports /sub [--fork|-f] [@agent] <task>.
 }
