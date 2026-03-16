@@ -21,6 +21,45 @@ value SystemPromptBlock {
     cache_control: CacheControl?
 }
 
+value ThinkingBlock {
+    kind: thinking
+    text: String
+    provider: Provider?
+    signature: String?
+}
+
+value TextBlock {
+    kind: text
+    text: String
+    cache_control: CacheControl?
+}
+
+value ToolCallBlock {
+    kind: tool_call
+    id: String?
+    name: String
+    input: Map<String, Any>?
+}
+
+value ImageBlock {
+    kind: image
+    mime_type: String
+    data: String
+}
+
+value ErrorBlock {
+    kind: error
+    text: String
+}
+
+value AssistantContentBlock = ThinkingBlock | TextBlock | ToolCallBlock | ImageBlock | ErrorBlock
+
+value AssistantContent {
+    kind: text | structured
+    text: String?
+    blocks: List<AssistantContentBlock>?
+}
+
 value CostBreakdown {
     input: Number
     output: Number
@@ -57,7 +96,7 @@ entity Message {
     id: String
     conversation_id: String
     role: user | assistant | tool_result
-    content: String
+    content: String | AssistantContent
     timestamp: Timestamp
 
     provider: Provider?
@@ -171,6 +210,33 @@ rule CompleteStream {
         timestamp: now
     )
     ensures: ConversationUpdatedAt(session.conversation_id, now)
+}
+
+rule ReasoningBlocksMayBePersistedForRoundTrip {
+    when: StreamCompleted(session)
+
+    ensures: BuildAssistantContent(session) may include AssistantContentBlock.kind = thinking
+
+    @guidance
+        -- Reasoning output is not uniformly replayed across providers.
+        -- The abstract model permits persisted assistant thinking blocks so
+        -- provider-specific projections can round-trip them when required.
+}
+
+rule ProviderProjectionChoosesReasoningRoundTripPolicy {
+    when: RequestStream(conversation, model, options)
+
+    ensures:
+        if model.provider.kind = anthropic:
+            ProviderProjectionMayIncludePersistedThinkingBlocks(conversation)
+        else if model.provider.kind = openai:
+            ProviderProjectionMayOmitPersistedThinkingBlocks(conversation)
+
+    @guidance
+        -- Anthropic extended thinking may require exact round-trip of the last
+        -- assistant thinking blocks during tool-use continuation. OpenAI
+        -- reasoning continuity is carried by standard conversation items and
+        -- tool outputs in the current integration.
 }
 
 rule HandleStreamError {

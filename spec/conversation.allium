@@ -35,7 +35,7 @@ entity ConversationRecord {
 entity ConversationMessage {
     id: String
     role: user | assistant | tool_result
-    content: Map<String, Any>
+    content: Map<String, Any> | ai/AssistantContent
     timestamp: Timestamp
 
     provider: ai/Provider?
@@ -123,6 +123,19 @@ rule AssistantMessageAppended {
     ensures: appended.timestamp = now
     ensures: conversation.messages = conversation.messages + {appended}
     ensures: conversation.updated_at = now
+}
+
+rule AssistantMessagesMayPreserveProviderThinkingBlocks {
+    when: AddAssistantMessage(conversation, message_data)
+    requires: conversation.status = active
+    requires: message_data.content.kind = structured
+
+    ensures: message_data.content.blocks may include ai/ThinkingBlock
+
+    @guidance
+        -- The conversation model preserves provider-roundtrippable assistant
+        -- thinking blocks without requiring all providers to project them back
+        -- into future requests.
 }
 
 rule ToolResultAppended {
@@ -213,6 +226,11 @@ surface ConversationApi {
 
     @guarantee SystemPromptBlocksCarryRequestMetadata
         -- system_prompt_blocks preserve request-shaping metadata such as cache_control.
+
+    @guarantee AssistantThinkingBlocksCanBeStoredLosslessly
+        -- assistant structured content may preserve provider thinking blocks and
+        -- their round-trip metadata (for example provider provenance or signature)
+        -- so provider projections can re-emit them when required.
 
     @guarantee TotalsAreDerivedOnlyFromAssistantMessages
         -- User and tool_result messages do not contribute to usage or cost totals.

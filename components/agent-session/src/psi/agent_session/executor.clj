@@ -92,28 +92,35 @@
                          (str (:content msg))))
 
                     "assistant"
-                    (let [text-parts (keep #(when (= :text (:type %)) (:text %))
-                                           (:content msg))
-                          tool-calls (filter #(= :tool-call (:type %))
-                                             (:content msg))
-                          text       (str/join "\n" text-parts)]
-                      (if (seq tool-calls)
-                      ;; Structured content with tool calls
+                    (let [thinking-blocks (->> (:content msg)
+                                               (keep (fn [block]
+                                                       (when (= :thinking (:type block))
+                                                         (cond-> {:kind :thinking
+                                                                  :text (or (:text block) "")}
+                                                           (:provider block) (assoc :provider (:provider block))
+                                                           (:signature block) (assoc :signature (:signature block)))))))
+                          text-parts       (keep #(when (= :text (:type %)) (:text %))
+                                                 (:content msg))
+                          tool-calls       (filter #(= :tool-call (:type %))
+                                                   (:content msg))
+                          text             (str/join "\n" text-parts)
+                          structured-blocks (vec
+                                             (concat
+                                              thinking-blocks
+                                              (when (seq text)
+                                                [{:kind :text :text text}])
+                                              (map (fn [tc]
+                                                     {:kind  :tool-call
+                                                      :id    (:id tc)
+                                                      :name  (:name tc)
+                                                      :input (parse-args (:arguments tc))})
+                                                   tool-calls)))]
+                      (if (seq structured-blocks)
                         (conv/add-assistant-message
                          conv
                          {:content
                           {:kind   :structured
-                           :blocks (vec
-                                    (concat
-                                     (when (seq text)
-                                       [{:kind :text :text text}])
-                                     (map (fn [tc]
-                                            {:kind  :tool-call
-                                             :id    (:id tc)
-                                             :name  (:name tc)
-                                             :input (parse-args (:arguments tc))})
-                                          tool-calls)))}})
-                      ;; Text only
+                           :blocks structured-blocks}})
                         (conv/add-assistant-message
                          conv
                          {:content {:kind :text :text text}})))
@@ -307,22 +314,35 @@ Also tolerates cumulative snapshots that differ near previous tail
 
       :else nil)))
 
+(defn- thinking-blocks-in-order
+  [thinking-blocks]
+  (->> thinking-blocks
+       vals
+       (sort-by :content-index)
+       (mapv (fn [{:keys [text provider signature]}]
+               (cond-> {:type :thinking
+                        :text (or text "")}
+                 provider (assoc :provider provider)
+                 signature (assoc :signature signature))))))
+
 (defn- build-final-content
-  [text-buffer tool-calls]
-  (let [invalids     (keep invalid-tool-call tool-calls)
-        valid-calls  (->> tool-calls (remove invalid-tool-call))
-        text-blocks  (cond-> []
-                       (seq text-buffer) (conj {:type :text :text text-buffer}))
-        error-blocks (mapv (fn [invalid]
-                             {:type :error :text (:message invalid)})
-                           invalids)
-        tool-blocks  (mapv (fn [tc]
-                             {:type      :tool-call
-                              :id        (:id tc)
-                              :name      (:name tc)
-                              :arguments (:arguments tc)})
-                           valid-calls)]
-    (-> text-blocks
+  [thinking-blocks text-buffer tool-calls]
+  (let [invalids       (keep invalid-tool-call tool-calls)
+        valid-calls    (->> tool-calls (remove invalid-tool-call))
+        thinking-parts (thinking-blocks-in-order thinking-blocks)
+        text-blocks    (cond-> []
+                         (seq text-buffer) (conj {:type :text :text text-buffer}))
+        error-blocks   (mapv (fn [invalid]
+                               {:type :error :text (:message invalid)})
+                             invalids)
+        tool-blocks    (mapv (fn [tc]
+                               {:type      :tool-call
+                                :id        (:id tc)
+                                :name      (:name tc)
+                                :arguments (:arguments tc)})
+                             valid-calls)]
+    (-> thinking-parts
+        (into text-blocks)
         (into error-blocks)
         (into tool-blocks))))
 
@@ -441,9 +461,9 @@ Also tolerates cumulative snapshots that differ near previous tail
           (end-content-block! td (:content-index data)))
 
         :on-done
-        (let [{:keys [text-buffer tool-calls]} @td
+        (let [{:keys [thinking-blocks text-buffer tool-calls]} @td
               completed (complete-tool-calls tool-calls)
-              content   (build-final-content text-buffer completed)
+              content   (build-final-content thinking-blocks text-buffer completed)
               usage     (:usage data)
               final     (cond-> {:role        "assistant"
                                  :content     content
@@ -657,11 +677,7 @@ Also tolerates cumulative snapshots that differ near previous tail
                       (end-content-block! (:turn-data turn-ctx) (or (:content-index event) 0)))
 
                     :thinking-start
-                    (do
-                      (note-last-provider-event! (:turn-data turn-ctx) :thinking-start event)
-                      (begin-content-block! (:turn-data turn-ctx) (or (:content-index event) 0))
-                      (update-content-block! (:turn-data turn-ctx) (or (:content-index event) 0)
-                                             #(assoc % :kind :thinking)))
+                    nil
 
                     :thinking-delta
                     (let [idx    (or (:content-index event) 0)
@@ -674,6 +690,9 @@ Also tolerates cumulative snapshots that differ near previous tail
                                       {:event-kind    :thinking-delta
                                        :content-index idx
                                        :text          merged}))
+
+                    :thinking-signature-delta
+                    nil
 
                     :thinking-end
                     (do

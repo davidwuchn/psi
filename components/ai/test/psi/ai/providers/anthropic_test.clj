@@ -162,13 +162,16 @@
           sse   (str (sse-line "message_start" {:type "message_start"})
                      (sse-line "content_block_start"
                                {:type "content_block_start" :index 0
-                                :content_block {:type "thinking"}})
+                                :content_block {:type "thinking" :thinking "" :signature ""}})
                      (sse-line "content_block_delta"
                                {:type "content_block_delta" :index 0
                                 :delta {:type "thinking_delta" :thinking "I think"}})
                      (sse-line "content_block_delta"
                                {:type "content_block_delta" :index 0
                                 :delta {:type "thinking_delta" :thinking " therefore"}})
+                     (sse-line "content_block_delta"
+                               {:type "content_block_delta" :index 0
+                                :delta {:type "signature_delta" :signature "sig-1"}})
                      (sse-line "content_block_stop"
                                {:type "content_block_stop" :index 0})
                      (sse-line "content_block_start"
@@ -181,6 +184,8 @@
                                {:type "content_block_stop" :index 1})
                      (sse-line "message_stop" {:type "message_stop"}))
           events (run-stream sse model {:api-key "test-key"})]
+      (is (some #(= :thinking-start (:type %)) events)
+          "should emit a thinking-start event")
       (is (some #(= :thinking-delta (:type %)) events)
           "should emit at least one :thinking-delta")
       (is (= ["I think" " therefore"]
@@ -188,6 +193,11 @@
                   (filter #(= :thinking-delta (:type %)))
                   (mapv :delta)))
           "thinking deltas carry incremental text")
+      (is (= "sig-1"
+             (some #(when (= :thinking-signature-delta (:type %))
+                      (:signature %))
+                   events))
+          "signature deltas are surfaced separately")
       (is (some #(= :text-delta (:type %)) events)
           "text block after thinking block still emits :text-delta")
       (is (not-any? #(and (= :text-delta (:type %))

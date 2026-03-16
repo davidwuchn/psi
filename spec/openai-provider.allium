@@ -456,6 +456,18 @@ rule ConversationMessageTransformsAreDeterministic {
         --   tool-result -> function_call_output using call_id prefix before "|"
 }
 
+rule OpenAIReasoningRemainsProjectionLocal {
+    when: ProviderRequestBuilt(stream, request)
+
+    ensures: OpenAIProjectionDoesNotRequirePriorReasoningBlocks(stream.conversation)
+
+    @guidance
+        -- Current OpenAI integrations carry continuity through standard
+        -- assistant text, tool calls, and tool results. Prior reasoning output
+        -- is normalized to thinking-delta events for UI/progress but is not
+        -- required as a replayed conversation block in subsequent requests.
+}
+
 ------------------------------------------------------------
 -- Capture Callbacks
 ------------------------------------------------------------

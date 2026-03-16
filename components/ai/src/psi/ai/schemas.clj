@@ -69,10 +69,43 @@
    [:text string?]
    [:cache-control {:optional true} CacheControl]])
 
+(def ThinkingContentBlock
+  [:map {:closed true}
+   [:kind [:= :thinking]]
+   [:text string?]
+   [:provider {:optional true} [:or Provider string? keyword?]]
+   [:signature {:optional true} string?]])
+
+(def StructuredTextBlock
+  [:map {:closed true}
+   [:kind [:= :text]]
+   [:text string?]
+   [:cache-control {:optional true} CacheControl]])
+
+(def ToolCallContentBlock
+  [:map {:closed true}
+   [:kind [:= :tool-call]]
+   [:id {:optional true} string?]
+   [:name string?]
+   [:input {:optional true} map?]])
+
+(def ImageContentBlock
+  [:map {:closed true}
+   [:kind [:= :image]]
+   [:mime-type string?]
+   [:data string?]])
+
+(def ContentBlock
+  [:multi {:dispatch :kind}
+   [:text StructuredTextBlock]
+   [:thinking ThinkingContentBlock]
+   [:tool-call ToolCallContentBlock]
+   [:image ImageContentBlock]])
+
 (def StructuredContent
   [:map {:closed true}
    [:kind [:= :structured]]
-   [:blocks [:vector any?]]])  ;; ContentBlocks defined below
+   [:blocks [:vector ContentBlock]]])
 
 (def MessageContent
   [:multi {:dispatch :kind}

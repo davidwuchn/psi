@@ -42,6 +42,7 @@
   "Return a fresh turn data map."
   []
   {:text-buffer         ""
+   :thinking-blocks     (sorted-map)
    :tool-calls          (sorted-map)
    :content-blocks      (sorted-map)
    :last-provider-event nil

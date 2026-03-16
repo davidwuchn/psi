@@ -76,6 +76,11 @@
 (defn- assistant-block
   [canonical-id block]
   (case (:kind block)
+    :thinking
+    (cond-> {:type     "thinking"
+             :thinking (or (:text block) "")}
+      (some? (:signature block)) (assoc :signature (:signature block)))
+
     :text
     (with-cache-control {:type "text"
                          :text (:text block)}
@@ -334,11 +339,19 @@
 
 (defn- content-block-start-event
   [idx block]
-  (if (= "tool_use" (:type block))
+  (case (:type block)
+    "tool_use"
     {:type          :toolcall-start
      :content-index idx
      :id            (:id block)
      :name          (:name block)}
+
+    "thinking"
+    {:type          :thinking-start
+     :content-index idx
+     :thinking      (:thinking block)
+     :signature     (:signature block)}
+
     {:type          :text-start
      :content-index idx}))
 
@@ -352,10 +365,17 @@
        :delta         json-delta})
 
     "thinking"
-    (when-let [text (or (:thinking delta) (:text delta))]
-      {:type          :thinking-delta
+    (cond
+      (some? (:signature delta))
+      {:type          :thinking-signature-delta
        :content-index idx
-       :delta         text})
+       :signature     (:signature delta)}
+
+      :else
+      (when-let [text (or (:thinking delta) (:text delta))]
+        {:type          :thinking-delta
+         :content-index idx
+         :delta         text}))
 
     (when-let [text (:text delta)]
       {:type          :text-delta
@@ -395,7 +415,9 @@
      {:type :text-start      :content-index n}
      {:type :text-delta      :content-index n  :delta \"...\"}
      {:type :text-end        :content-index n}
+     {:type :thinking-start  :content-index n  :thinking \"\" :signature \"\"}
      {:type :thinking-delta  :content-index n  :delta \"...\"}
+     {:type :thinking-signature-delta :content-index n :signature \"...\"}
      {:type :toolcall-start  :content-index n :id \"toolu_...\" :name \"tool-name\"}
      {:type :toolcall-delta  :content-index n :delta \"partial-json\"}
      {:type :toolcall-end    :content-index n}

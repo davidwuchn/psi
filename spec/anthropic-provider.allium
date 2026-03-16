@@ -222,6 +222,8 @@ rule AssistantStructuredMessageTransformed {
     ensures: AnthropicMessage({
         role: "assistant",
         content: ForEachBlock(message.content.blocks,
+            if block.kind = :thinking:
+                {type: "thinking", thinking: block.text, signature: block.signature when non-null}
             if block.kind = :text:
                 {type: "text", text: block.text, cache_control: block.cache_control when non-null}
             if block.kind = :tool-call:
@@ -310,6 +312,23 @@ rule ThinkingParamPresentForActiveLevel {
     ensures: ThinkingParam({type: "enabled", budget_tokens: BudgetForLevel(options.thinking_level)})
 }
 
+rule LastAssistantThinkingBlocksMustRoundTripDuringToolContinuation {
+    when: TransformingMessages(conversation)
+    requires: message.role = :assistant
+    requires: message.content.kind = :structured
+    requires: Exists(block in message.content.blocks where block.kind = :thinking)
+    requires: NextMessageIsToolResultUserMessageOrConversationContinuesToolLoop(message)
+
+    ensures: AnthropicProjectionPreservesThinkingBlockOrder(message)
+    ensures: AnthropicProjectionPreservesThinkingBlockText(message)
+    ensures: AnthropicProjectionPreservesThinkingBlockSignature(message)
+
+    @guidance
+        -- Anthropic extended thinking requires the last assistant thinking blocks
+        -- to be passed back unchanged during tool-use continuation so the model
+        -- can continue the same assistant turn.
+}
+
 rule TemperatureExcludedWhenThinkingActive {
     when: RequestBodyBuilt(stream)
     requires: ThinkingParam(stream) != null
@@ -352,6 +371,22 @@ rule MessageStartEmitsStartEvent {
         cache_write_tokens: event_data.message.usage.cache_creation_input_tokens ?? 0
     })
     ensures: Emit(StreamEvent{event_type: start})
+}
+
+rule AnthropicThinkingStreamingIncludesSignatureMaterial {
+    when: SseEventReceived(stream, "content_block_delta", event_data)
+    requires: CurrentContentBlockType(stream, event_data.index) = "thinking"
+
+    ensures:
+        if event_data.delta.type = "thinking_delta":
+            Emit(StreamEvent{event_type: thinking_delta, content_index: event_data.index, delta: event_data.delta.thinking})
+        else if event_data.delta.type = "signature_delta":
+            SignatureFragmentObserved(stream, event_data.index, event_data.delta.signature)
+
+    @guidance
+        -- The provider must preserve enough thinking-block material to round-trip
+        -- the final assistant thinking block, including signature, in a later
+        -- tool-use continuation request.
 }
 
 rule MessageDeltaAccumulatesOutputUsage {
