@@ -6,6 +6,25 @@ Ordered steps toward PSI COMPLETE.
 
 ## Done
 
+### Step 15i — Emacs session rehydrate lifecycle clears stale buffer state ✓ complete
+- Commit `b3a5769` converges `/new`, `/tree`, and `/resume` on the canonical `session/resumed` + `session/rehydrated` lifecycle.
+- Emacs changes:
+  - subscribes to `session/resumed` and `session/rehydrated`
+  - clears stale transcript/render state on `session/resumed`
+  - replays rehydrated messages directly on `session/rehydrated`
+  - handles RPC event mutations under read-only-safe buffer mutation context
+- Backend changes:
+  - `/new` via backend `command` now emits `session/resumed` and `session/rehydrated`
+  - `/new` command-result type is normalized to `new_session`
+- Regression coverage added:
+  - Emacs topic subscription locks
+  - Emacs transcript-clear + replay event tests
+  - backend RPC test for `/new` command canonical rehydrate events
+- Verification:
+  - `bb emacs:test`
+  - `bb emacs:e2e`
+  - `bb clojure:test:unit`
+
 ### Step 15h — Emacs `/tree` shows session age from canonical session timestamps ✓ complete
 - Commit `51b669f` adds stable session creation timestamps to the live `context/updated` payload and uses them to render compact relative age labels in Emacs `/tree`.
 - Backend/runtime changes:
