@@ -56,6 +56,28 @@ The initial cache-breakpoint wiring failed broadly because the executor projecte
 
 That one bad `nil` propagated as wide executor/RPC failure, so optional metadata handling is a high-leverage boundary.
 
+## 2026-03-16 - Session rehydrate flows should clear stale frontend state from canonical events, not from fallback fetch paths (commit `b3a5769`)
+
+### λ Session transitions need one canonical clear+rehydrate lifecycle across `/new`, `/tree`, and `/resume`
+
+The stable frontend model is not a mix of special-case reset paths (`/new` callback reset here, `/tree` switch callback fetch there, startup hydration elsewhere). It is:
+- `session/resumed` means clear stale transcript/render state for the next session
+- `session/rehydrated` means replay the canonical messages for that session
+
+Once those two events are treated as the source of truth, frontend behavior becomes simpler and the same buffer-reset rule can cover new-session, switch-session, and resume flows.
+
+### λ Backend command paths should emit the same canonical session events as direct RPC session ops
+
+The bug persisted because `/new` through backend `command` did not emit `session/resumed` + `session/rehydrated`, even though direct `new_session` and session-switch paths already did. That left the frontend with inconsistent lifecycle signals depending on how the same user intent reached the backend.
+
+Reusable rule:
+- if two entrypoints represent the same domain transition, they should emit the same canonical events
+- command wrappers should not quietly bypass the domain event contract used by the direct RPC op
+
+### λ Read-only terminal buffers are safer when inbound event handling assumes mutation up front
+
+Emacs frontend buffer code has many helpers that mutate transcript, tool rows, and projection/footer regions. Even if many helpers already bind `inhibit-read-only`, process-filter/event-handler code is more robust when the top-level RPC event dispatcher enters a read-only-safe mutation context before branching into event-specific rendering logic. That reduces the chance that a new event path will accidentally mutate a protected region without the required binding.
+
 ## 2026-03-16 - Session age is best transported as raw timestamp and rendered at the UI boundary (commit `51b669f`)
 
 ### λ Put canonical time in the backend payload and relative time in the frontend
