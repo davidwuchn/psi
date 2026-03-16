@@ -222,6 +222,11 @@ Ordered steps toward PSI COMPLETE.
 
 ## Next
 
+### Step 15k — Sweep remaining historical memory/docs drift after context-session convergence
+- Continue targeted cleanup of older historical narrative that still uses pre-convergence host-era terms when referring to the session container model.
+- Keep distinguishing true network-host usage (`localhost`, nREPL host) from obsolete session-container usage.
+- Sync README/doc/spec/internal memory incrementally when these remnants are touched.
+
 ### Step 15j — Converge runtime/tests to context-owned resources and session-tree model ✓ complete
 - RPC/session-tree events and payload naming now follow the context-owned session-container model:
   - `context/updated` → `context/updated`
