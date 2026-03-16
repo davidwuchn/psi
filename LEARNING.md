@@ -172,6 +172,9 @@ Resolving the default branch only through a mutation worked mechanically, but it
 
 The worktree/default-branch bridge attrs in `:psi.agent-session/*` were useful while the query surface was settling, but once session-root queries could resolve `:git.worktree/*` and `:git.branch/default-branch` directly they became duplicate names with extra maintenance cost. Moving runtime consumers to the canonical attrs and deleting the bridge resolvers simplified the graph surface, tests, and extension code without losing capability.
 
+### λ PSL follow-up should rewrite repo memory to the surviving vocabulary, not merely mention the refactor
+
+After the bridge attrs were removed, plan/state memory still had to stop talking about them as if they were the active surface. The durable lesson is that a cleanup is incomplete until repo memory names the same canonical vocabulary as the runtime. Otherwise future searches keep finding deleted compatibility terms and waste time reconstructing whether they are still live.
 
 The best final shape was not “always mutate to resolve the default branch,” but “read the current default branch from queryable session state, and only fall back to the mutation path if the query surface is absent.” That keeps the orchestration code aligned with the model: the default branch is context/session state first, imperative git discovery second.
 
