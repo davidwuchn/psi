@@ -3,6 +3,32 @@
 
 ---
 
+## 2026-03-16 - Explicit session-targeting slash commands must emit the same canonical rehydrate events as selector-driven flows (commit `7383729`)
+
+### λ Command wrappers for domain transitions should not bypass the transition event contract
+
+The Emacs bug persisted because explicit `/resume <path>` and `/tree <id>` went through backend `command` handling but did not reliably drive the same canonical `session/resumed` + `session/rehydrated` lifecycle as selector-driven resume/tree flows. The stable rule is:
+- if a command performs a real session transition
+- it should emit the same domain events as the direct/session-op path for that transition
+- command acknowledgement alone is not a sufficient frontend contract
+
+That keeps frontends from having to special-case "selector path" versus "explicit argument path" for the same user intent.
+
+### λ Frontend transcript clearing should key off canonical transition events, not transport-specific success callbacks
+
+The robust boundary is:
+- send command/request
+- wait for `session/resumed` to clear stale transcript/render state
+- wait for `session/rehydrated` to replay the canonical messages
+
+When clearing depends on callback-local success handling instead, widget actions and explicit slash forms can drift from picker-driven flows even though they represent the same session change.
+
+### λ Session switches need a visual hard-redraw policy in TUIs even when state replacement is already correct
+
+The TUI `/tree` bug was not that session state failed to switch; the state had already changed. The missing piece was a one-shot hard redraw so stale terminal rows disappeared when the new render was shorter than the previous one. The reusable lesson is that terminal UIs need both:
+- correct state replacement
+- explicit screen-clearing policy for view contractions after large transcript changes
+
 ## 2026-03-16 - Anthropic prompt caching should isolate volatile runtime metadata into a separate uncached tail (commit `f28c93f`)
 
 ### λ Visible runtime metadata and cacheable prompt identity should not share the same Anthropic cache unit
