@@ -3,6 +3,20 @@
 
 ---
 
+## 2026-03-16 - `LEARNING.md` stays useful only when it records non-trivial learned context rather than repo facts (commit `6ab9a31`)
+
+### λ Record the reusable lesson, not the obvious repository fact
+
+A repo-memory file becomes noisy when entries merely restate what a commit changed or what a reader can already see directly in code/docs. The more useful boundary is:
+- include project-specific lessons that would help future ψ make better decisions faster
+- skip facts that are already obvious from the repository contents alone
+
+This makes `LEARNING.md` an index of distilled operational understanding rather than a second changelog.
+
+### λ Treat inferability as the filter for whether a learning belongs in repo memory
+
+The practical question is not "did something change?" but "would future ψ learn something non-obvious by reading this entry?" If the answer is no, the entry is probably just duplicated repository state. If the answer is yes, it belongs in `LEARNING.md` even when the triggering change was small.
+
 ## 2026-03-16 - `/work-done` should own the linear-history workflow, and the default branch should be queryable state
 
 ### λ One obvious completion command beats split merge/rebase choreography
