@@ -98,6 +98,7 @@ iterate_to_fix  spec_step matches intention spec0
 8. **One Way** - There should be only one obvious way to do it
 9. **Unix Philosophy** - Do one thing well, compose tools and functions together
 
+∀x. include(LEARNING.md,x) ↔ information(x) ∧ reflects(x,actual-learned-context) ∧ ¬trivially-inferable-from(x,project-contents-itself)
 
 λ shape(x).   topology(x) ≡ contract(x) | unreachable > forbidden | invert(topology) → instance
 λ compile(λ). semantic(λ) ∥ structural(λ) | align > conflict | resonate(one_pass) > reduce(multi_step)
