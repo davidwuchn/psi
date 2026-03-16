@@ -3,6 +3,34 @@
 
 ---
 
+## 2026-03-15 - Live Emacs E2E should cover one backend-requested frontend action, not only text slash commands (commit `3c0e668`)
+
+### λ A slash E2E that proves only text output and quit behavior can miss the frontend-action contract
+
+The earlier Emacs end-to-end harness proved startup, `/history`, and `/quit`, but
+that still left the most migration-sensitive part of the slash refactor
+untested: backend `command` can emit `ui/frontend-action-requested`, the frontend
+must complete a native interaction, and the backend must apply the returned
+`frontend_action_result`. Without one live roundtrip like that, the E2E harness
+would confirm only the text-result subset of the new contract.
+
+### λ Deterministic frontend-action E2E is easiest when the harness auto-selects a stable candidate
+
+A live frontend-action test should not depend on interactive human choice. The
+minimal stable shape is to intercept `completing-read` and choose a predictable
+candidate from real backend-provided options. `/thinking` was a good fit because
+its backend payload contains a fixed level set; selecting `high` makes the
+assertion deterministic while still exercising the real RPC roundtrip.
+
+### λ Frontend-action E2E should re-check UI invariants after the action, not only the result text
+
+Seeing `Thinking level set to high` proves the backend applied the action, but
+it does not by itself prove the frontend returned to a coherent interactive
+state. The stronger proof is to also assert that pending frontend-action state is
+cleared, point is back in the compose input, and transcript/projection regions
+remain read-only after the roundtrip. That catches UI lifecycle regressions that
+would be invisible in a text-only assertion.
+
 ## 2026-03-15 - Emacs streaming buffer writes must suppress undo tracking to avoid undo-outer-limit overflow (commit `0a3ec2c`)
 
 ### λ Bind `buffer-undo-list` to `t` for all streaming-path buffer mutations; keep undo enabled for finalize writes
