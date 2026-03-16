@@ -895,10 +895,10 @@
           (conj (str "↓" (format-token-count usage-output)))
 
           (positive-number? usage-cache-read)
-          (conj (str "R" (format-token-count usage-cache-read)))
+          (conj (str "CR" (format-token-count usage-cache-read)))
 
           (positive-number? usage-cache-write)
-          (conj (str "W" (format-token-count usage-cache-write)))
+          (conj (str "CW" (format-token-count usage-cache-write)))
 
           (positive-number? usage-cost-total)
           (conj (format "$%.3f" (double usage-cost-total)))

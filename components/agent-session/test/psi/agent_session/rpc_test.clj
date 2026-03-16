@@ -63,7 +63,7 @@
                                    :psi.agent-session/usage-input 172000
                                    :psi.agent-session/usage-output 17000
                                    :psi.agent-session/usage-cache-read 5200000
-                                   :psi.agent-session/usage-cache-write 0
+                                   :psi.agent-session/usage-cache-write 1200
                                    :psi.agent-session/usage-cost-total 1.444
                                    :psi.agent-session/context-fraction 0.319
                                    :psi.agent-session/context-window 272000
@@ -80,7 +80,8 @@
              (:path-line payload)))
       (is (str/includes? (:stats-line payload) "↑172k"))
       (is (str/includes? (:stats-line payload) "↓17k"))
-      (is (str/includes? (:stats-line payload) "R5.2M"))
+      (is (str/includes? (:stats-line payload) "CR5.2M"))
+      (is (str/includes? (:stats-line payload) "CW1.2k"))
       (is (str/includes? (:stats-line payload) "$1.444"))
       (is (str/includes? (:stats-line payload) "31.9%/272k (auto)"))
       (is (str/includes? (:stats-line payload) "(openai-codex) gpt-5.3-codex • thinking high"))
