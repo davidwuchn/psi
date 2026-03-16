@@ -6,6 +6,7 @@ Ordered steps toward PSI COMPLETE.
 
 ## Done
 
+<<<<<<< HEAD
 ### Step 15i — Emacs session rehydrate lifecycle clears stale buffer state ✓ complete
 - Commit `b3a5769` converges `/new`, `/tree`, and `/resume` on the canonical `session/resumed` + `session/rehydrated` lifecycle.
 - Emacs changes:
@@ -59,6 +60,22 @@ Ordered steps toward PSI COMPLETE.
 
 ---
 
+=======
+### Step 15g — Anthropic cache should exclude volatile runtime metadata ✓ complete
+- Commit `f28c93f` separates the prompt into a stable body and a runtime metadata tail so Anthropic system caching applies only to the stable body.
+- The runtime tail still appears after extension prompt contributions and still includes:
+  - current date/time
+  - current working directory
+  - current worktree directory
+- `components/agent-session/src/psi/agent_session/executor.clj` now emits Anthropic system prompt blocks as:
+  - cached stable block
+  - uncached runtime metadata block
+- Shared runtime metadata refresh logic now lives in `components/agent-session/src/psi/agent_session/system_prompt.clj` and is reused by session retargeting in `core.clj`.
+- Verification:
+  - `clojure -M:test --focus psi.agent-session.core-test`
+  - focused `bb test` slices for system prompt / executor / Anthropic provider
+  - `clj-kondo --lint components/agent-session/src/psi/agent_session/system_prompt.clj components/agent-session/src/psi/agent_session/core.clj components/agent-session/src/psi/agent_session/executor.clj components/agent-session/test/psi/agent_session/system_prompt_test.clj components/agent-session/test/psi/agent_session/executor_test.clj components/agent-session/test/psi/agent_session/core_test.clj`
+>>>>>>> 85d871d (λ Record Anthropic runtime-tail cache split in plan/state [psi:psl-auto])
 
 ### Step 15f — `/work-done` linear-history workflow ✓ complete
 - Commit `7757920` replaces `/work-merge` with `/work-done` as the user-facing worktree completion command.
@@ -309,7 +326,12 @@ Ordered steps toward PSI COMPLETE.
 - Reproduce the `messages: text content blocks must be non-empty` failure and confirm which reconstructed conversation message emits an empty Anthropic text block.
 - Keep capture parity across providers when extending diagnostics, so live introspection remains provider-agnostic.
 
-### Step 15n.2 — Continue simplifying provider implementations around small phase helpers
+### Step 15n.2 — Keep Anthropic runtime metadata outside cached system prompt units
+- Anthropic prompt caching should treat the stable system prompt body and volatile runtime footer as distinct prompt units.
+- Keep the date/time + cwd/worktree metadata emitted after extension prompt contributions, but outside the cached system block so prompt-cache reuse is not poisoned by per-refresh runtime changes.
+- Preserve current block order and make the runtime tail separable/rewriteable in one shared helper rather than duplicating the regex/tail logic across prompt assembly and executor projection.
+
+### Step 15n.3 — Continue simplifying provider implementations around small phase helpers
 - Anthropic provider refactor (commit `d06c475`) split the file more cleanly into four phases:
   - request/message shaping
   - request header/body assembly
