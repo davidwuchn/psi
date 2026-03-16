@@ -3,6 +3,42 @@
 
 ---
 
+## 2026-03-15 - Stream sessions should not model stored events unless the implementation actually maintains a full event log (commit `58ca3da`)
+
+### λ Remove partial duplicate models when only one event surface is truly live
+
+`psi.ai.streaming` had two different event shapes in play:
+- provider-emitted streaming events flowing to consumers as `{:type ...}`
+- stored session events shaped as `{:event-type ...}` inside `StreamSession`
+
+But the session-side model was only partially maintained: it initialized `:events`, defined `add-event`, and recorded only a synthetic start entry. All other provider events bypassed the session log entirely. That made the extra model misleading rather than useful.
+
+The cleaner shape was to pick one live event surface:
+- provider events remain the observable stream contract
+- `StreamSession` now tracks lifecycle metadata only (`:status`, timestamps, options, error)
+
+Key details:
+- If a stored event log is part of the domain contract, every emitted event should be normalized into it through one shared path.
+- If the implementation does not need or maintain that log, remove it instead of keeping a half-real schema around.
+- Parallel models with different keys (`:type` vs `:event-type`) are a drift magnet unless one is clearly derived and fully maintained.
+
+### λ Queue-backed seq wrappers should terminate from producer lifecycle, not consumer timeout heuristics
+
+The earlier lazy-seq bridge ended on either terminal events or a queue timeout. That means normal provider completion without `:done`/`:error` looked the same as “nothing arrived for 30 seconds”. The simpler and more accurate contract is to terminate from the producer lifecycle itself: once the background future completes, enqueue one sentinel and let the seq drain until it sees that sentinel.
+
+Pattern:
+```clojure
+(let [{bg :future} (stream-response ... #(.put queue %))]
+  (future
+    @bg
+    (.put queue sentinel)))
+```
+
+Key details:
+- producer completion is the real end-of-stream signal for the wrapper
+- deterministic termination removes timeout-driven control flow from the consumer path
+- a queue bridge becomes easier to reason about when its only end marker is an explicit sentinel
+
 ## 2026-03-15 - Shared append timestamps remove avoidable temporal skew in conversation mutations (commit `d561c02`)
 
 ### λ One mutation should usually produce one timestamp when both fields describe the same event
