@@ -2,19 +2,24 @@
   "Anthropic provider implementation.
 
    The provider exposes a single `:stream` fn that accepts a conversation,
-   model, options, and a `consume-fn` callback.  Events are delivered
-   synchronously on a dedicated thread so callers are not forced to use
+   model, options, and a `consume-fn` callback. Events are delivered
+   synchronously on the current thread so callers are not forced to use
    core.async."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clj-http.client :as http]
             [cheshire.core :as json]
             [psi.ai.models :as models])
-  (:import [java.util UUID]))
+  (:import [java.io InputStream]
+           [java.util UUID]))
 
 (def ^:private anthropic-tool-id-pattern
   "Anthropic requires tool_use.id to match ^[a-zA-Z0-9_-]+$."
   #"^[a-zA-Z0-9_-]+$")
+
+(def ^:private anthropic-version "2023-06-01")
+(def ^:private interleaved-thinking-beta "interleaved-thinking-2025-05-14")
+(def ^:private oauth-beta "claude-code-20250219,oauth-2025-04-20")
 
 (defn- valid-anthropic-tool-id?
   [id]
@@ -27,7 +32,7 @@
 
 (defn- ensure-anthropic-tool-id
   "Return an Anthropic-safe tool id (alnum, underscore, hyphen only).
-   Uses a deterministic fallback when id is nil/blank/invalid."
+   Generates a fallback when id is nil/blank/invalid."
   [id]
   (let [s (str (or id ""))
         sanitized (-> s
@@ -35,15 +40,88 @@
                       (str/replace #"_+" "_")
                       (str/replace #"-+" "-")
                       (str/replace #"^[_-]+|[_-]+$" ""))]
-    (cond
-      (valid-anthropic-tool-id? s)
-      s
+    (or (when (valid-anthropic-tool-id? s)
+          s)
+        (when (valid-anthropic-tool-id? sanitized)
+          sanitized)
+        (fallback-anthropic-tool-id))))
 
-      (valid-anthropic-tool-id? sanitized)
-      sanitized
+(defn- canonical-tool-id-fn
+  []
+  (let [tool-id-map (atom {})]
+    (fn [raw-id]
+      (let [key (str (or raw-id ""))]
+        (or (get @tool-id-map key)
+            (let [canonical-id (ensure-anthropic-tool-id raw-id)]
+              (swap! tool-id-map assoc key canonical-id)
+              canonical-id))))))
 
-      :else
-      (fallback-anthropic-tool-id))))
+(defn- user-content
+  [msg]
+  [{:type "text"
+    :text (get-in msg [:content :text]
+                  (str (:content msg)))}])
+
+(defn- assistant-block
+  [canonical-id block]
+  (case (:kind block)
+    :text
+    {:type "text"
+     :text (:text block)}
+
+    :tool-call
+    {:type  "tool_use"
+     :id    (canonical-id (:id block))
+     :name  (:name block)
+     :input (if (map? (:input block))
+              (:input block)
+              {})}
+
+    {:type "text"
+     :text (str block)}))
+
+(defn- assistant-content
+  [msg canonical-id]
+  (if (= :structured (get-in msg [:content :kind]))
+    (mapv (partial assistant-block canonical-id)
+          (get-in msg [:content :blocks]))
+    [{:type "text"
+      :text (get-in msg [:content :text] "")}]))
+
+(defn- tool-result-block
+  [msg canonical-id]
+  (let [text (if (map? (:content msg))
+               (get-in msg [:content :text] "")
+               (str (:content msg)))]
+    (cond-> {:type        "tool_result"
+             :tool_use_id (canonical-id (:tool-call-id msg))
+             :content     text}
+      (:is-error msg) (assoc :is_error true))))
+
+(defn- append-tool-result
+  [acc block]
+  (let [last-msg (peek acc)]
+    (if (and (= "user" (:role last-msg))
+             (every? #(= "tool_result" (:type %))
+                     (:content last-msg)))
+      (conj (pop acc) (update last-msg :content conj block))
+      (conj acc {:role "user" :content [block]}))))
+
+(defn- transform-message
+  [canonical-id acc msg]
+  (case (:role msg)
+    :user
+    (conj acc {:role "user"
+               :content (user-content msg)})
+
+    :assistant
+    (conj acc {:role "assistant"
+               :content (assistant-content msg canonical-id)})
+
+    :tool-result
+    (append-tool-result acc (tool-result-block msg canonical-id))
+
+    acc))
 
 (defn transform-messages
   "Transform conversation messages to Anthropic API format.
@@ -54,69 +132,10 @@
    Also normalizes tool IDs to Anthropic's required pattern.
    See: messages.*.content.*.tool_use.id must match ^[a-zA-Z0-9_-]+$."
   [conversation]
-  (let [tool-id-map (atom {})
-        canonical-id (fn [raw-id]
-                       (let [key (str (or raw-id ""))]
-                         (or (get @tool-id-map key)
-                             (let [cid (ensure-anthropic-tool-id raw-id)]
-                               (swap! tool-id-map assoc key cid)
-                               cid))))]
-    (->> (:messages conversation)
-         (reduce
-          (fn [acc msg]
-            (case (:role msg)
-              :user
-              (conj acc {:role    "user"
-                         :content [{:type "text"
-                                    :text (get-in msg [:content :text]
-                                                  (str (:content msg)))}]})
-
-              :assistant
-              (let [content
-                    (case (get-in msg [:content :kind])
-                      :structured
-                      (mapv (fn [block]
-                              (case (:kind block)
-                                :text
-                                {:type "text" :text (:text block)}
-
-                                :tool-call
-                                {:type  "tool_use"
-                                 :id    (canonical-id (:id block))
-                                 :name  (:name block)
-                                 :input (let [inp (:input block)]
-                                          (if (map? inp) inp {}))}
-
-                                ;; fallback
-                                {:type "text" :text (str block)}))
-                            (get-in msg [:content :blocks]))
-
-                      ;; :text or default
-                      [{:type "text"
-                        :text (get-in msg [:content :text] "")}])]
-                (conj acc {:role "assistant" :content content}))
-
-              :tool-result
-              (let [text  (if (map? (:content msg))
-                            (get-in msg [:content :text] "")
-                            (str (:content msg)))
-                    block (cond-> {:type        "tool_result"
-                                   :tool_use_id (canonical-id (:tool-call-id msg))
-                                   :content     text}
-                            (:is-error msg) (assoc :is_error true))
-                    last-msg (peek acc)]
-                (if (and last-msg
-                         (= "user" (:role last-msg))
-                         (every? #(= "tool_result" (:type %))
-                                 (:content last-msg)))
-                  ;; Merge into existing tool-result user message
-                  (conj (pop acc) (update last-msg :content conj block))
-                  ;; Start new tool-result user message
-                  (conj acc {:role "user" :content [block]})))
-
-              ;; unknown role — skip
-              acc))
-          []))))
+  (let [canonical-id (canonical-tool-id-fn)]
+    (reduce (partial transform-message canonical-id)
+            []
+            (:messages conversation))))
 
 (def ^:private thinking-level->budget
   "Map thinking-level keyword to Anthropic extended-thinking budget_tokens.
@@ -132,11 +151,43 @@
   "Return the Anthropic `thinking` request param map for OPTIONS, or nil when disabled."
   [model options]
   (when (:supports-reasoning model)
-    (let [level  (:thinking-level options)
-          budget (get thinking-level->budget level)]
-      (when budget
-        {:type          "enabled"
-         :budget_tokens budget}))))
+    (when-let [budget (get thinking-level->budget (:thinking-level options))]
+      {:type          "enabled"
+       :budget_tokens budget})))
+
+(defn- tool-definitions
+  [conversation]
+  (when (seq (:tools conversation))
+    (mapv (fn [tool]
+            {:name         (:name tool)
+             :description  (:description tool)
+             :input_schema (:parameters tool)})
+          (:tools conversation))))
+
+(defn- oauth-api-key?
+  [api-key]
+  (and api-key (str/includes? api-key "sk-ant-oat")))
+
+(defn- beta-header
+  [oauth? thinking]
+  (cond
+    (and oauth? thinking) (str oauth-beta "," interleaved-thinking-beta)
+    oauth?                oauth-beta
+    thinking              interleaved-thinking-beta))
+
+(defn- request-headers
+  [api-key thinking]
+  (let [oauth?  (oauth-api-key? api-key)
+        headers (if oauth?
+                  {"Content-Type"      "application/json"
+                   "Authorization"     (str "Bearer " api-key)
+                   "anthropic-version" anthropic-version}
+                  {"Content-Type"      "application/json"
+                   "x-api-key"         api-key
+                   "anthropic-version" anthropic-version})
+        beta    (beta-header oauth? thinking)]
+    (cond-> headers
+      beta (assoc "anthropic-beta" beta))))
 
 (defn build-request
   "Build Anthropic API request map.
@@ -144,53 +195,106 @@
    When the model supports reasoning and thinking-level is set (non-:off),
    adds the extended-thinking param and the required interleaved-thinking beta header."
   [conversation model options]
-  (let [tool-defs (when (seq (:tools conversation))
-                    (mapv (fn [t]
-                            {:name         (:name t)
-                             :description  (:description t)
-                             :input_schema (:parameters t)})
-                          (:tools conversation)))
-        thinking  (thinking-param model options)
+  (let [thinking  (thinking-param model options)
         api-key   (or (:api-key options) (System/getenv "ANTHROPIC_API_KEY"))
-        oauth?    (and api-key (str/includes? api-key "sk-ant-oat"))
-        base-beta (if oauth?
-                    "claude-code-20250219,oauth-2025-04-20"
-                    nil)
-        beta      (cond
-                    (and thinking base-beta)
-                    (str base-beta ",interleaved-thinking-2025-05-14")
-                    thinking
-                    "interleaved-thinking-2025-05-14"
-                    :else
-                    base-beta)
-        headers   (cond-> (if oauth?
-                            {"Content-Type"      "application/json"
-                             "Authorization"     (str "Bearer " api-key)
-                             "anthropic-version" "2023-06-01"}
-                            {"Content-Type"      "application/json"
-                             "x-api-key"         api-key
-                             "anthropic-version" "2023-06-01"})
-                    beta (assoc "anthropic-beta" beta))]
-    {:headers headers
-     :body    (json/generate-string
-               (cond-> {:model      (:id model)
-                        :max_tokens (or (:max-tokens options) (:max-tokens model))
-                        :system     (:system-prompt conversation)
-                        :messages   (transform-messages conversation)
-                        :stream     true}
-                 ;; temperature is incompatible with extended thinking
-                 (not thinking) (assoc :temperature (or (:temperature options) 0.7))
-                 thinking       (assoc :thinking thinking)
-                 (seq tool-defs) (assoc :tools tool-defs)))}))
+        tool-defs (tool-definitions conversation)
+        body      (cond-> {:model      (:id model)
+                           :max_tokens (or (:max-tokens options) (:max-tokens model))
+                           :system     (:system-prompt conversation)
+                           :messages   (transform-messages conversation)
+                           :stream     true}
+                    ;; temperature is incompatible with extended thinking
+                    (not thinking)  (assoc :temperature (or (:temperature options) 0.7))
+                    thinking        (assoc :thinking thinking)
+                    (seq tool-defs) (assoc :tools tool-defs))]
+    {:headers (request-headers api-key thinking)
+     :body    (json/generate-string body)}))
 
 (defn parse-sse-line
   "Parse a Server-Sent Events `data:` line; returns nil for non-data lines."
   [line]
-  (when (and line (.startsWith ^String line "data: "))
-    (let [data (.substring ^String line 6)]
+  (when (str/starts-with? (or line "") "data: ")
+    (let [data (subs line 6)]
       (when (not= data "[DONE]")
-        (try (json/parse-string data true)
-             (catch Exception _ nil))))))
+        (try
+          (json/parse-string data true)
+          (catch Exception _
+            nil))))))
+
+(defn- update-start-usage!
+  [usage-acc usage]
+  (when usage
+    (swap! usage-acc assoc
+           :input-tokens       (or (:input_tokens usage) 0)
+           :cache-read-tokens  (or (:cache_read_input_tokens usage) 0)
+           :cache-write-tokens (or (:cache_creation_input_tokens usage) 0))))
+
+(defn- update-output-usage!
+  [usage-acc usage]
+  (when usage
+    (swap! usage-acc assoc
+           :output-tokens (or (:output_tokens usage) 0))))
+
+(defn- usage-with-cost
+  [model usage-acc]
+  (let [usage @usage-acc
+        usage (assoc usage :total-tokens (+ (:input-tokens usage)
+                                            (:output-tokens usage)
+                                            (:cache-read-tokens usage)
+                                            (:cache-write-tokens usage)))]
+    (assoc usage :cost (models/calculate-cost model usage))))
+
+(defn- content-block-start-event
+  [idx block]
+  (if (= "tool_use" (:type block))
+    {:type          :toolcall-start
+     :content-index idx
+     :id            (:id block)
+     :name          (:name block)}
+    {:type          :text-start
+     :content-index idx}))
+
+(defn- content-block-delta-event
+  [btype idx delta]
+  (case btype
+    "tool_use"
+    (when-let [json-delta (:partial_json delta)]
+      {:type          :toolcall-delta
+       :content-index idx
+       :delta         json-delta})
+
+    "thinking"
+    (when-let [text (or (:thinking delta) (:text delta))]
+      {:type          :thinking-delta
+       :content-index idx
+       :delta         text})
+
+    (when-let [text (:text delta)]
+      {:type          :text-delta
+       :content-index idx
+       :delta         text})))
+
+(defn- content-block-stop-event
+  [btype idx]
+  {:type          (if (= "tool_use" btype)
+                    :toolcall-end
+                    :text-end)
+   :content-index idx})
+
+(defn- consume-event!
+  [consume-fn event]
+  (when event
+    (consume-fn event)))
+
+(defn- parse-api-error
+  [body-stream]
+  (when (instance? InputStream body-stream)
+    (try
+      (let [body-str (slurp (io/reader body-stream))]
+        (or (get-in (json/parse-string body-str true) [:error :message])
+            body-str))
+      (catch Exception _
+        nil))))
 
 (defn stream-anthropic
   "Stream response from Anthropic API.
@@ -211,11 +315,8 @@
      {:type :error           :error-message \"...\"}
    "
   [conversation model options consume-fn]
-  (let [request (build-request conversation model options)
-        ;; Track content block types by index to route deltas correctly
-        ;; Values: \"text\" | \"thinking\" | \"tool_use\"
+  (let [request     (build-request conversation model options)
         block-types (atom {})
-        ;; Accumulate usage across message_start (input) and message_delta (output)
         usage-acc   (atom {:input-tokens       0
                            :output-tokens      0
                            :cache-read-tokens  0
@@ -229,96 +330,49 @@
             (when-let [event-data (parse-sse-line line)]
               (case (:type event-data)
                 "message_start"
-                (let [msg-usage (get-in event-data [:message :usage])]
-                  (when msg-usage
-                    (swap! usage-acc assoc
-                           :input-tokens       (or (:input_tokens msg-usage) 0)
-                           :cache-read-tokens  (or (:cache_read_input_tokens msg-usage) 0)
-                           :cache-write-tokens (or (:cache_creation_input_tokens msg-usage) 0)))
+                (do
+                  (update-start-usage! usage-acc (get-in event-data [:message :usage]))
                   (consume-fn {:type :start}))
 
                 "content_block_start"
                 (let [idx   (:index event-data)
-                      block (:content_block event-data)
-                      btype (:type block)]
-                  (swap! block-types assoc idx btype)
-                  (case btype
-                    "tool_use"
-                    (consume-fn {:type          :toolcall-start
-                                 :content-index idx
-                                 :id            (:id block)
-                                 :name          (:name block)})
-                    ;; thinking and text both get a text-start marker
-                    (consume-fn {:type          :text-start
-                                 :content-index idx})))
+                      block (:content_block event-data)]
+                  (swap! block-types assoc idx (:type block))
+                  (consume-fn (content-block-start-event idx block)))
 
                 "content_block_delta"
-                (let [idx   (:index event-data)
-                      btype (get @block-types idx)
-                      delta (:delta event-data)]
-                  (case btype
-                    "tool_use"
-                    (when-let [json-delta (:partial_json delta)]
-                      (consume-fn {:type          :toolcall-delta
-                                   :content-index idx
-                                   :delta         json-delta}))
-                    "thinking"
-                    ;; Anthropic sends delta.type="thinking_delta", delta.thinking=<str>
-                    (when-let [text (or (:thinking delta) (:text delta))]
-                      (consume-fn {:type          :thinking-delta
-                                   :content-index idx
-                                   :delta         text}))
-                    ;; "text" and any unknown block type
-                    (when-let [text (:text delta)]
-                      (consume-fn {:type          :text-delta
-                                   :content-index idx
-                                   :delta         text}))))
+                (consume-event! consume-fn
+                                (content-block-delta-event (get @block-types (:index event-data))
+                                                           (:index event-data)
+                                                           (:delta event-data)))
 
                 "content_block_stop"
-                (let [idx   (:index event-data)
-                      btype (get @block-types idx)]
-                  (consume-fn {:type          (if (= "tool_use" btype)
-                                                :toolcall-end
-                                                :text-end)
-                               :content-index idx}))
+                (consume-fn (content-block-stop-event (get @block-types (:index event-data))
+                                                      (:index event-data)))
 
                 "message_delta"
-                (let [delta-usage (:usage event-data)]
-                  (when delta-usage
-                    (swap! usage-acc assoc
-                           :output-tokens (or (:output_tokens delta-usage) 0)))
+                (do
+                  (update-output-usage! usage-acc (:usage event-data))
                   (when-let [reason (get-in event-data [:delta :stop_reason])]
                     (reset! done? true)
-                    (let [usage (-> @usage-acc
-                                    (assoc :total-tokens (+ (:input-tokens @usage-acc)
-                                                            (:output-tokens @usage-acc)
-                                                            (:cache-read-tokens @usage-acc)
-                                                            (:cache-write-tokens @usage-acc))))]
-                      (consume-fn {:type   :done
-                                   :reason (keyword reason)
-                                   :usage  (assoc usage :cost (models/calculate-cost model usage))}))))
+                    (consume-fn {:type   :done
+                                 :reason (keyword reason)
+                                 :usage  (usage-with-cost model usage-acc)})))
 
                 "message_stop"
                 (when-not @done?
                   (consume-fn {:type :done :reason :stop}))
 
-                ;; Unknown event — ignore
                 nil)))))
       (catch Exception e
-        (let [data       (ex-data e)
+        (let [data        (ex-data e)
               http-status (:status data)
-              body-stream (:body data)
-              api-error  (when (and body-stream (instance? java.io.InputStream body-stream))
-                           (try
-                             (let [body-str (slurp (io/reader body-stream))]
-                               (or (get-in (json/parse-string body-str true) [:error :message])
-                                   body-str))
-                             (catch Exception _ nil)))
-              msg        (or api-error (ex-message e) (str e))]
+              msg         (or (parse-api-error (:body data))
+                              (ex-message e)
+                              (str e))]
           (consume-fn (cond-> {:type :error :error-message msg}
                         http-status (assoc :http-status http-status))))))))
 
-;; Provider implementation
 (def provider
   {:name   :anthropic
    :stream stream-anthropic})
