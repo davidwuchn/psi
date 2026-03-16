@@ -232,10 +232,11 @@ Ordered steps toward PSI COMPLETE.
 - Added validated Allium spec: `spec/conversation.allium`
   - narrows `ai-abstract-model.allium` to the concrete embedded conversation value used by `psi.ai.conversation`
   - captures append operations, tool addition, and assistant-only totals semantics
+- Follow-up refinement (commit `d561c02`): append mutations now use a single shared timestamp for both message `:timestamp` and conversation `:updated-at`, with regression tests locking that equality for user, assistant, and tool-result appends.
 - Verification snapshot:
   - `allium check spec/conversation.allium`
   - `clojure -M:test --focus psi.ai.conversation-test --focus psi.ai.core-test`
-- Implementation commit: `14ba6de`
+- Implementation commits: `14ba6de`, `d561c02`
 
 ### Step 15g — Converge graph-emergence Allium spec with implementation/tests/docs ✓ complete
 - `spec/graph-emergence.allium` now reflects the current Step 7 graph discovery surface instead of the older dependency-graph-shaped model.
