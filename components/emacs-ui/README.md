@@ -42,13 +42,15 @@ Emacs subscribes to the default topic set (`psi-rpc-default-topics`):
 
 - core topics:
   - `assistant/delta`
+  - `assistant/thinking-delta`
   - `assistant/message`
   - `tool/start`
-  - `tool/executing`
   - `tool/executing`
   - `tool/update`
   - `tool/result`
   - `session/updated`
+  - `session/resumed`
+  - `session/rehydrated`
   - `error`
 - extension/footer topics:
   - `ui/dialog-requested`
@@ -70,7 +72,7 @@ Common backend-owned slash commands include:
 - `/quit`, `/exit` — backend emits `command-result` type `quit`; Emacs closes the frontend buffer/process when that result arrives
 - `/resume` — backend requests a resume selector for `/resume`, or handles direct `/resume <path>` through backend command dispatch
 - `/tree` — backend requests a live-session selector for `/tree`, or switches directly for `/tree <session-id>`
-- `/new` — backend starts a fresh session and emits canonical command/session/footer/context updates
+- `/new` — backend starts a fresh session and emits canonical session rehydrate + session/footer/context updates
 - `/status`, `/history`, `/help`, `/?`, `/prompts`, `/skills`, `/worktree` — backend returns deterministic text
 - `/jobs`, `/job`, `/cancel-job` — backend returns deterministic background-job text/usage results
 - `/model` — backend requests a model picker for `/model`, or handles `/model <provider> <model-id>` directly

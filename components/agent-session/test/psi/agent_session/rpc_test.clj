@@ -1093,7 +1093,25 @@
       (is (contains? event-topics "session/resumed"))
       (is (contains? event-topics "session/rehydrated"))
       (is (some #(contains? (:data %) :session-id) events))
-      (is (some #(contains? (:data %) :messages) events)))))
+      (is (some #(contains? (:data %) :messages) events))))
+
+  (testing "command /new emits session/resumed and session/rehydrated canonical events"
+    (let [ctx (session/create-context)
+          state (atom {:ready? true
+                       :pending {}
+                       :subscribed-topics #{"session/resumed" "session/rehydrated" "command-result"}})
+          handler (rpc/make-session-request-handler ctx)
+          input (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                     "{:id \"c1\" :kind :request :op \"command\" :params {:text \"/new\"}}\n")
+          {:keys [out-lines]} (run-loop input handler state)
+          frames (parse-frames out-lines)
+          events (filter #(= :event (:kind %)) frames)
+          event-topics (set (map :event events))
+          command-result (some #(when (= "command-result" (:event %)) %) events)]
+      (is (contains? event-topics "session/resumed"))
+      (is (contains? event-topics "session/rehydrated"))
+      (is (some? command-result))
+      (is (= "new_session" (get-in command-result [:data :type]))))))
 
 (deftest rpc-multi-session-context-routing-test
   (testing "list_sessions returns context snapshot with active-session-id"

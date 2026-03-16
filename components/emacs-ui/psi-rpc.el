@@ -29,6 +29,8 @@
     "tool/update"
     "tool/result"
     "session/updated"
+    "session/resumed"
+    "session/rehydrated"
     "context/updated"
     "footer/updated"
     "command-result"

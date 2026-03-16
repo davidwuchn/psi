@@ -43,8 +43,11 @@
 (declare-function psi-emacs--request-switch-session-by-id "psi-session-commands" (state session-id))
 (declare-function psi-emacs--resume-session-candidates "psi-session-commands" (sessions))
 (declare-function psi-emacs--tree-session-candidates "psi-session-commands" (slots active-id))
+(declare-function psi-emacs--replay-session-messages "psi-session-commands" (messages))
 (declare-function psi-emacs--session-tree-line-label "psi-events" (slot))
 (declare-function psi-emacs--append-assistant-message "psi-compose" (text))
+(declare-function psi-emacs--focus-input-area "psi-entry" (&optional buffer window))
+(declare-function psi-emacs--reset-transcript-state "psi-lifecycle" (&optional preserve-tool-output-view-mode))
 
 (declare-function markdown-mode "markdown-mode")
 (declare-function markdown-fontify-region "markdown-mode" (begin end))

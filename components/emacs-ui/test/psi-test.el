@@ -1391,6 +1391,61 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
+(ert-deftest psi-session-rehydrated-topics-are-subscribed ()
+  "Emacs must subscribe to session rehydrate topics so /new, /tree and /resume can clear and rebuild transcript state."
+  (should (member "session/resumed" psi-rpc-core-topics))
+  (should (member "session/rehydrated" psi-rpc-core-topics))
+  (should (member "session/resumed" psi-rpc-default-topics))
+  (should (member "session/rehydrated" psi-rpc-default-topics)))
+
+(ert-deftest psi-session-resumed-event-clears-transcript-before-rehydrate ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (progn
+          (insert "old transcript")
+          (setf (psi-emacs-state-draft-anchor psi-emacs--state)
+                (copy-marker (1+ (length "old transcript")) nil))
+          (setf (psi-emacs-state-projection-footer psi-emacs--state) "footer")
+          (puthash "stale-tool" (list :id "stale-tool" :stage "result" :text "stale")
+                   (psi-emacs-state-tool-rows psi-emacs--state))
+          (psi-emacs--handle-rpc-event
+           '((:event . "session/resumed")
+             (:data . ((:session-id . "s-new")
+                       (:session-file . "/tmp/s-new.ndedn")
+                       (:message-count . 1)))))
+          (should-not (string-match-p "old transcript" (buffer-string)))
+          (should (zerop (hash-table-count (psi-emacs-state-tool-rows psi-emacs--state))))
+          (should (equal "footer" (psi-emacs-state-projection-footer psi-emacs--state)))
+          (should (psi-emacs--input-separator-marker-valid-p)))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
+(ert-deftest psi-session-rehydrated-event-replays-messages-without-get-messages ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (progn
+          (psi-emacs--handle-rpc-event
+           '((:event . "session/resumed")
+             (:data . ((:session-id . "s-new")
+                       (:session-file . "/tmp/s-new.ndedn")
+                       (:message-count . 2)))))
+          (psi-emacs--handle-rpc-event
+           '((:event . "session/rehydrated")
+             (:data . ((:messages . [((:role . :user) (:text . "First"))
+                                     ((:role . :assistant) (:text . "Second"))])
+                       (:tool-calls . ())
+                       (:tool-order . ())))))
+          (should (string-match-p "User: First
+ψ: Second
+" (buffer-string)))
+          (should (psi-emacs--input-separator-marker-valid-p)))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
 (ert-deftest psi-new-slash-dispatch-failure-sets-command-error ()
   (with-temp-buffer
     (psi-emacs-mode)

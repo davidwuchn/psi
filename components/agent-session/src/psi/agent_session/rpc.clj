@@ -1307,7 +1307,9 @@
   (let [result-type (:type cmd-result)]
     (case result-type
       (:text :logout :login-error :new-session)
-      (emit-command-result! emit! {:type (name result-type)
+      (emit-command-result! emit! {:type (if (= :new-session result-type)
+                                           "new_session"
+                                           (name result-type))
                                    :message (str (:message cmd-result))})
 
       :login-start
@@ -1470,7 +1472,21 @@
       cmd-result
       (if (= :login-start (:type cmd-result))
         (handle-login-start-command! ctx state emit-frame! request-id cmd-result emit!)
-        (handle-command-result! request-id cmd-result emit!))
+        (do
+          (when (= :new-session (:type cmd-result))
+            (let [rehydrate (:rehydrate cmd-result)
+                  sd        (session/get-session-data-in ctx)
+                  msgs      (or (:agent-messages rehydrate)
+                                (:messages (agent/get-data-in (:agent-ctx ctx))))]
+              (emit! "session/resumed"
+                     {:session-id   (:session-id sd)
+                      :session-file (:session-file sd)
+                      :message-count (count msgs)})
+              (emit! "session/rehydrated"
+                     {:messages   (or (:messages rehydrate) [])
+                      :tool-calls (or (:tool-calls rehydrate) {})
+                      :tool-order (or (:tool-order rehydrate) [])})))
+          (handle-command-result! request-id cmd-result emit!)))
 
       :else
       (emit-command-result! emit! {:type "text"

@@ -317,9 +317,10 @@ Child sessions (non-nil parent-session-id that matches a slot) are indented."
 
 (defun psi-emacs--handle-rpc-event (frame)
   "Handle inbound rpc-edn event FRAME for transcript rendering."
-  (let* ((event (alist-get :event frame nil nil #'equal))
-         (data (or (alist-get :data frame nil nil #'equal) '())))
-    (pcase event
+  (let ((inhibit-read-only t))
+    (let* ((event (alist-get :event frame nil nil #'equal))
+           (data (or (alist-get :data frame nil nil #'equal) '())))
+      (pcase event
       ("assistant/delta"
        (psi-emacs--assistant-delta
         (or (psi-emacs--event-data-get data '(:text text :delta delta)) "")))
@@ -331,6 +332,32 @@ Child sessions (non-nil parent-session-id that matches a slot) are indented."
       ("assistant/thinking-delta"
        (psi-emacs--assistant-thinking-delta
         (or (psi-emacs--event-data-get data '(:text text :delta delta)) "")))
+      ("session/resumed"
+       ;; Session transitions (/new, /tree, /resume) emit resumed/rehydrated as the
+       ;; canonical clear+rebuild lifecycle. Clear stale transcript immediately so
+       ;; previous session content disappears before replayed messages arrive.
+       (when psi-emacs--state
+         (let ((saved-footer (psi-emacs-state-projection-footer psi-emacs--state))
+               (preserve-tool-view (not (eq (psi-emacs-state-tool-output-view-mode psi-emacs--state)
+                                            'collapsed)))
+               (inhibit-read-only t))
+           (psi-emacs--reset-transcript-state preserve-tool-view)
+           (when saved-footer
+             (setf (psi-emacs-state-projection-footer psi-emacs--state) saved-footer)
+             (psi-emacs--upsert-projection-block))
+           (when (fboundp 'psi-emacs--focus-input-area)
+             (psi-emacs--focus-input-area (current-buffer))))))
+      ("session/rehydrated"
+       (when psi-emacs--state
+         (let ((messages (or (psi-emacs--event-data-get data '(:messages messages)) '()))
+               (inhibit-read-only t))
+           (psi-emacs--replay-session-messages
+            (cond
+             ((vectorp messages) (append messages nil))
+             ((listp messages) messages)
+             (t nil))))
+         (when (fboundp 'psi-emacs--focus-input-area)
+           (psi-emacs--focus-input-area (current-buffer)))))
       ("session/updated"
        (psi-emacs--handle-session-updated-event data))
       ("context/updated"
@@ -381,7 +408,7 @@ Child sessions (non-nil parent-session-id that matches a slot) are indented."
          (setf (psi-emacs-state-projection-footer psi-emacs--state)
                (psi-emacs--projection-footer-text data))
          (psi-emacs--upsert-projection-block)))
-      (_ nil))))
+      (_ nil)))))
 
 (provide 'psi-events)
 
