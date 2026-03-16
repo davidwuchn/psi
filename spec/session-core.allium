@@ -9,6 +9,10 @@ value Timestamp { value: String }
 value ToolName { value: String }
 value JsonMap { value: Any }
 
+value CacheBreakpoint {
+    value: system | tools
+}
+
 external entity Project {
     id: ProjectId
     git_origin_url: String?
@@ -45,6 +49,7 @@ entity AgentSession {
     worktree_path: WorktreePath
 
     effective_system_prompt: String
+    cache_breakpoints: Set<CacheBreakpoint>
     active_tools: Set<ToolName>
 
     start_instant: Timestamp
@@ -102,32 +107,6 @@ rule ContextInitializedExplicitly {
     )
 }
 
-rule ContextMaterializedForSessionCreate {
-    when: SessionCreateRequested(project_id, worktree_path, system_prompt, name)
-
-    ensures:
-        if not exists c in AgentContexts where c.project_id = project_id and c.worktree_path = worktree_path:
-            ContextInitializeRequested(project_id, worktree_path, baseline_system_prompt: system_prompt)
-}
-
-rule ContextResourceSetUpdated {
-    when: ContextResourcesRegistered(context_id, tools, prompt_templates, skills, extensions)
-    requires: exists c in AgentContexts where c.id = context_id and c.status = active
-
-    ensures:
-        for c in AgentContexts where c.id = context_id:
-            c.available_tools = tools
-    ensures:
-        for c in AgentContexts where c.id = context_id:
-            c.available_prompt_templates = prompt_templates
-    ensures:
-        for c in AgentContexts where c.id = context_id:
-            c.available_skills = skills
-    ensures:
-        for c in AgentContexts where c.id = context_id:
-            c.loaded_extensions = extensions
-}
-
 rule RootSessionCreatedInContext {
     when: SessionCreateRequested(project_id, worktree_path, system_prompt, name)
 
@@ -142,6 +121,7 @@ rule RootSessionCreatedInContext {
             requested_system_prompt: system_prompt,
             parent_session_id: null
         ),
+        cache_breakpoints: {system},
         active_tools: context_tools_for(context_id_for(project_id, worktree_path)),
         start_instant: now,
         ended_at: null,
@@ -150,213 +130,38 @@ rule RootSessionCreatedInContext {
         streaming_state: idle,
         status: active
     )
+}
+
+rule SpawnedSessionInheritsCacheBreakpointPolicy {
+    when: SessionSpawnedFromParent(child, parent, spawn_mode)
+    requires: spawn_mode in {fork_head, fork_at_entry, subagent}
+
+    ensures: child.cache_breakpoints = parent.cache_breakpoints
+}
+
+rule SessionCacheBreakpointPolicyCanBeReconfigured {
+    when: SessionCacheBreakpointsSet(session_id, breakpoints)
+    requires: exists s in AgentSessions where s.id = session_id
 
     ensures:
-        for c in AgentContexts where c.id = context_id_for(project_id, worktree_path):
-            c.active_session_id = created_session_id()
-}
+        for s in AgentSessions where s.id = session_id:
+            s.cache_breakpoints = breakpoints
 
-rule SessionForkedInContext {
-    when: SessionForkRequested(parent_session_id, worktree_path, system_prompt, name)
-    requires: exists p in AgentSessions where p.id = parent_session_id and p.status = active
-    requires: worktree_path = worktree_path_for(parent_session_id)
-
-    ensures: AgentSession.created(
-        id: new_session_id(),
-        context_id: context_id_for_session(parent_session_id),
-        parent_session_id: parent_session_id,
-        project_id: project_id_for(parent_session_id),
-        worktree_path: worktree_path,
-        effective_system_prompt: system_prompt ?? session_prompt_for(parent_session_id),
-        active_tools: active_tools_for(parent_session_id),
-        start_instant: now,
-        ended_at: null,
-        name: name ?? session_name_for(parent_session_id),
-        summary_line: null,
-        streaming_state: idle,
-        status: active
-    )
-
-    ensures: SessionContainment.created(
-        context_id: context_id_for_session(parent_session_id),
-        parent_session_id: parent_session_id,
-        child_session_id: child_session_id,
-        relation: fork,
-        created_at: now
-    )
-
-    ensures:
-        for c in AgentContexts where c.id = context_id_for_session(parent_session_id):
-            c.active_session_id = child_session_id
-}
-
-rule SubagentSessionCreatedInContext {
-    when: SubagentSessionRequested(parent_session_id, system_prompt, name)
-    requires: exists p in AgentSessions where p.id = parent_session_id and p.status = active
-
-    ensures: AgentSession.created(
-        id: new_session_id(),
-        context_id: context_id_for_session(parent_session_id),
-        parent_session_id: parent_session_id,
-        project_id: project_id_for(parent_session_id),
-        worktree_path: worktree_path_for(parent_session_id),
-        effective_system_prompt: system_prompt ?? session_prompt_for(parent_session_id),
-        active_tools: active_tools_for(parent_session_id),
-        start_instant: now,
-        ended_at: null,
-        name: name,
-        summary_line: null,
-        streaming_state: idle,
-        status: active
-    )
-
-    ensures: SessionContainment.created(
-        context_id: context_id_for_session(parent_session_id),
-        parent_session_id: parent_session_id,
-        child_session_id: child_session_id,
-        relation: subagent,
-        created_at: now
-    )
-
-    ensures:
-        for c in AgentContexts where c.id = context_id_for_session(parent_session_id):
-            c.active_session_id = c.active_session_id
-}
-
-rule MessageAppended {
-    when: SessionMessageAppendRequested(session, role, content, metadata, tool_name, tool_call_id)
-    requires: exists s in AgentSessions where s.id = session and s.status = active
-
-    ensures: SessionMessage.created(
-        id: new_message_id(),
-        session: session,
-        parent_message_id: last_message_id_for(session),
-        timestamp: now,
-        sequence_no: next_sequence_no_for(session),
-        role: role,
-        content: content,
-        metadata: metadata,
-        tool_name: tool_name,
-        tool_call_id: tool_call_id
-    )
-}
-
-rule AssistantStreamStarted {
-    when: AssistantStreamStarted(id)
-    requires: exists s in AgentSessions where s.id = id and s.status = active
-    ensures:
-        for s in AgentSessions where s.id = id:
-            s.streaming_state = streaming_assistant
-}
-
-rule AssistantStreamCompleted {
-    when: AssistantStreamCompleted(id)
-    requires: exists s in AgentSessions where s.id = id and s.status = active
-    ensures:
-        for s in AgentSessions where s.id = id:
-            s.streaming_state = idle
-}
-
-rule SessionSummaryUpdated {
-    when: SessionSummaryRequested(id)
-    requires: exists s in AgentSessions where s.id = id
-    ensures:
-        for s in AgentSessions where s.id = id:
-            s.summary_line = SummarizeSessionLine(id)
-}
-
-rule ActiveSessionSwitchedWithinContext {
-    when: SessionSwitchRequested(project_id, worktree_path, session_id)
-    requires: exists c in AgentContexts where c.project_id = project_id and c.worktree_path = worktree_path and c.status = active
-    requires: exists s in AgentSessions where s.id = session_id and s.project_id = project_id and s.worktree_path = worktree_path
-
-    ensures:
-        for c in AgentContexts where c.project_id = project_id and c.worktree_path = worktree_path:
-            c.active_session_id = session_id
-
-    ensures:
-        for s in AgentSessions where s.project_id = project_id and s.worktree_path = worktree_path and s.id != session_id:
-            s.streaming_state = s.streaming_state
-}
-
-rule SessionCompleted {
-    when: SessionCompletionRequested(id)
-    requires: exists s in AgentSessions where s.id = id and s.status = active
-    ensures:
-        for s in AgentSessions where s.id = id:
-            s.status = completed
-    ensures:
-        for s in AgentSessions where s.id = id:
-            s.ended_at = now
-    ensures:
-        for s in AgentSessions where s.id = id:
-            s.streaming_state = idle
-}
-
-invariant SessionBelongsToExistingContext {
-    for s in AgentSessions:
-        exists c in AgentContexts where c.id = s.context_id
-}
-
-invariant SessionProjectAndWorktreeMatchContext {
-    for s in AgentSessions:
-        exists c in AgentContexts where c.id = s.context_id and c.project_id = s.project_id and c.worktree_path = s.worktree_path
-}
-
-invariant ActiveSessionBelongsToContext {
-    for c in AgentContexts:
-        (c.active_session_id = null) or
-        exists s in AgentSessions where s.id = c.active_session_id and s.context_id = c.id
-}
-
-invariant ParentSessionExistsInSameContext {
-    for s in AgentSessions:
-        (s.parent_session_id = null) or exists p in AgentSessions where p.id = s.parent_session_id and p.context_id = s.context_id
-}
-
-invariant ContainmentLinksStayWithinContext {
-    for rel in SessionContainments:
-        exists p in AgentSessions where p.id = rel.parent_session_id and p.context_id = rel.context_id
-        and exists c in AgentSessions where c.id = rel.child_session_id and c.context_id = rel.context_id
-}
-
-invariant ParentSessionIsImmutable {
-    for s in AgentSessions:
-        ParentSessionIdNeverChangesAfterCreate(s.id)
+    @guidance
+        -- The session owns cache-breakpoint policy. Executors materialize that
+        -- policy into provider-facing conversation/tool metadata per request.
 }
 
 contract SessionCoreEql {
     create_context: (input: JsonMap) -> JsonMap
     create_session: (input: JsonMap) -> JsonMap
-    fork_session: (input: JsonMap) -> JsonMap
-    create_subagent_session: (input: JsonMap) -> JsonMap
-    append_message: (input: JsonMap) -> JsonMap
-    session_lineage: (id: SessionId) -> JsonMap
-    list_sessions: (project_id: ProjectId, worktree_path: WorktreePath) -> JsonMap
-    switch_session: (project_id: ProjectId, worktree_path: WorktreePath, session_id: SessionId) -> JsonMap
-    extension_create_session: (session_name: String?, worktree_path: WorktreePath?, system_prompt: String?, thinking_level: String?) -> JsonMap
-    extension_switch_session: (session_id: SessionId) -> JsonMap
-
-    @invariant ContextAttrs
-        -- context attrs include:
-        -- {:context/id :context/project-id :context/worktree-path
-        --  :context/baseline-system-prompt :context/available-tools
-        --  :context/available-prompt-templates :context/available-skills
-        --  :context/loaded-extensions :context/active-session-id}
+    set_cache_breakpoints: (session_id: SessionId, breakpoints: Set<CacheBreakpoint>) -> JsonMap
 
     @invariant SessionAttrs
         -- session attrs include:
         -- {:session/id :session/context-id :session/parent-id
         --  :session/project-id :session/worktree-path
-        --  :session/effective-system-prompt :session/active-tools}
-
-    @invariant SessionContainmentAttrs
-        -- lineage attrs include:
-        -- {:session/children [{:session/id :session/relation}]}
-
-    @invariant ActiveSessionRoutingAttrs
-        -- list/switch attrs include:
-        -- {:context/active-session-id :context/session-count}
+        --  :session/effective-system-prompt :session/cache-breakpoints :session/active-tools}
 }
 
 actor EqlClient {
@@ -370,17 +175,6 @@ surface SessionCoreApi {
         fulfils SessionCoreEql
 
     exposes:
-        for c in AgentContexts:
-            c.id
-            c.project_id
-            c.worktree_path
-            c.baseline_system_prompt
-            c.available_tools
-            c.available_prompt_templates
-            c.available_skills
-            c.loaded_extensions
-            c.active_session_id
-
         for s in AgentSessions:
             s.id
             s.context_id
@@ -389,6 +183,7 @@ surface SessionCoreApi {
             s.worktree_path
             s.start_instant
             s.effective_system_prompt
+            s.cache_breakpoints
             s.name
             s.summary_line
             s.active_tools
@@ -396,40 +191,10 @@ surface SessionCoreApi {
             s.status
 
     provides:
-        ContextInitializeRequested(project_id, worktree_path, baseline_system_prompt)
-        ContextResourcesRegistered(context_id, tools, prompt_templates, skills, extensions)
         SessionCreateRequested(project_id, worktree_path, system_prompt, name)
-        SessionForkRequested(parent_session_id, worktree_path, system_prompt, name)
-        SubagentSessionRequested(parent_session_id, system_prompt, name)
-        SessionSwitchRequested(project_id, worktree_path, session_id)
-        ExtensionSessionCreateRequested(session_name, worktree_path, system_prompt, thinking_level)
-        ExtensionSessionSwitchRequested(session_id)
-        SessionMessageAppendRequested(session, role, content, metadata, tool_name, tool_call_id)
-        AssistantStreamStarted(id)
-        AssistantStreamCompleted(id)
-        SessionSummaryRequested(id)
-        SessionCompletionRequested(id)
+        SessionCacheBreakpointsSet(session_id, breakpoints)
 
-    @guarantee ContextOwnsSharedResources
-        -- Tools, prompt templates, skills, and extensions are loaded onto the context.
-        -- Sessions use these shared resources; they do not own independent copies.
-
-    @guarantee SessionsFormATreeWithinContext
-        -- Every forked or subagent session is represented as a child session in the same context.
-
-    @guarantee AgentIsASession
-        -- A subagent is modeled as just another session in the context tree.
-        -- The distinction is recorded by SessionContainment.relation = subagent.
-
-    @guarantee ActiveSessionIsFocusNotExistence
-        -- active_session_id is the default routing focus for prompts and UI selection.
-        -- Switching focus does not destroy or reset sibling sessions.
-
-    @guarantee SessionRunsInWorktreeContext
-        -- Every context is bound to exactly one project/worktree pair.
-        -- All sessions inside that context inherit that project/worktree binding.
+    @guarantee SessionOwnsPromptCachePolicy
+        -- Prompt cache breakpoint policy is session state.
+        -- Provider request construction reads it indirectly via executor-built conversations.
 }
-
-open question "Should contexts be persisted directly, or rebuilt from project/worktree plus discovered resources at runtime?"
-open question "Should a context permit multiple simultaneously focused sessions for multi-pane UIs, or remain single-focus with many live sessions?"
-open question "Should root session creation always move active focus to the new session, or be policy-controlled by the caller?"

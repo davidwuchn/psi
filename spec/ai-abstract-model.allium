@@ -1,4 +1,4 @@
--- allium: 1
+-- allium: 2
 
 -- ai-abstract-model.allium
 -- Unified multi-provider AI model behavior.
@@ -8,7 +8,17 @@ value Provider {
 }
 
 value Api {
-    kind: anthropic_messages | openai_completions
+    kind: anthropic_messages | openai_completions | openai_codex_responses
+}
+
+value CacheControl {
+    type: ephemeral
+}
+
+value SystemPromptBlock {
+    kind: text
+    text: String
+    cache_control: CacheControl?
 }
 
 value CostBreakdown {
@@ -37,6 +47,7 @@ value StreamOptions {
 entity Conversation {
     id: String
     system_prompt: String?
+    system_prompt_blocks: List<SystemPromptBlock>?
     status: active | completed | error
     created_at: Timestamp
     updated_at: Timestamp
@@ -61,6 +72,7 @@ entity Tool {
     name: String
     description: String
     parameters: String
+    cache_control: CacheControl?
 }
 
 entity Model {
@@ -106,11 +118,12 @@ entity StreamEvent {
 }
 
 rule StartConversation {
-    when: CreateConversation(system_prompt)
+    when: CreateConversation(system_prompt, system_prompt_blocks)
 
     ensures: conversation = Conversation{
         id: NewConversationId(),
         system_prompt: system_prompt,
+        system_prompt_blocks: system_prompt_blocks,
         status: active,
         created_at: now,
         updated_at: now
@@ -190,7 +203,7 @@ surface ConversationAPI {
     facing client: APIClient
 
     provides:
-        CreateConversation(system_prompt)
+        CreateConversation(system_prompt, system_prompt_blocks)
         SendMessage(conversation, content)
             when conversation.status = active
         RequestStream(conversation, model, options)

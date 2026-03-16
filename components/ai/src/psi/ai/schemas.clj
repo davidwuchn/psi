@@ -50,6 +50,10 @@
    [:cache-write number?]
    [:total number?]])
 
+(def CacheControl
+  [:map {:closed true}
+   [:type [:= :ephemeral]]])
+
 (def Usage
   [:map {:closed true}
    [:input-tokens {:optional true} nat-int?]
@@ -62,7 +66,8 @@
 (def TextContent
   [:map {:closed true}
    [:kind [:= :text]]
-   [:text string?]])
+   [:text string?]
+   [:cache-control {:optional true} CacheControl]])
 
 (def StructuredContent
   [:map {:closed true}
@@ -78,7 +83,8 @@
   [:map {:closed true}
    [:name string?]
    [:description string?]
-   [:parameters map?]])  ;; JSON schema
+   [:parameters map?]
+   [:cache-control {:optional true} CacheControl]])  ;; JSON schema
 
 (def Model
   [:map {:closed true}
@@ -117,6 +123,7 @@
   [:map {:closed true}
    [:id string?]
    [:system-prompt {:optional true} [:maybe string?]]
+   [:system-prompt-blocks {:optional true} [:vector TextContent]]
    [:status ConversationStatus]
    [:created-at inst?]
    [:updated-at inst?]

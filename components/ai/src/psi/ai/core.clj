@@ -110,11 +110,15 @@
 ;; ───────────────────────────────────────────────────────────────────────────
 
 (defn create-conversation
-  "Create a new conversation with optional system prompt."
-  ([system-prompt]
-   (conversation/create system-prompt))
+  "Create a new conversation.
+
+   Accepts either:
+   - a system prompt string
+   - an options map supported by psi.ai.conversation/create"
+  ([system-prompt-or-options]
+   (conversation/create system-prompt-or-options))
   ([]
-   (conversation/create nil)))
+   (conversation/create {:system-prompt nil})))
 
 (defn send-message
   "Add a user message to a conversation."

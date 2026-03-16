@@ -2,6 +2,15 @@
 
 ## 2026-03-16
 
+- λ Δ Added Anthropic prompt caching wiring:
+  - session cache breakpoint policy (`:system`, `:tools`) now projects through executor-built conversations into Anthropic `cache_control` request fields.
+  - conversations now support `:system-prompt-blocks` so provider request shaping can attach prompt metadata without losing the flat `:system-prompt` view.
+  - Anthropic request building now prefers block-form system prompts when present and emits `cache_control` only for supported directives (`{:type :ephemeral}`).
+- λ Δ Fixed executor conversation reconstruction to omit `:cache-control` when unset, avoiding invalid `nil` values in schema-validated conversation shapes.
+- ✓ Verification:
+  - `bb clojure:test:unit`
+  - `bb test`
+
 - λ Δ Renamed the worktree completion command from `/work-merge` to `/work-done` and removed `/work-merge`.
 - λ Δ `/work-done` now preserves linear history by checking fast-forwardability onto the cached default branch, auto-rebasing via a forked sync subagent when needed, then fast-forward merging and cleaning up the worktree/branch.
 - λ Δ Added default-branch query surfaces:

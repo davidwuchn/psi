@@ -24,6 +24,7 @@
       (is (false? (:is-compacting s)))
       (is (= "" (:base-system-prompt s)))
       (is (= "" (:system-prompt s)))
+      (is (= #{:system} (:cache-breakpoints s)))
       (is (= :console (:ui-type s)))
       (is (= [] (:prompt-contributions s)))
       (is (= [] (:steering-messages s)))

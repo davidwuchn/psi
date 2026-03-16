@@ -29,18 +29,40 @@
                                                  :timestamp timestamp}
                                                 message)))))
 
+(defn- normalize-system-prompt-blocks
+  [system-prompt system-prompt-blocks]
+  (cond
+    (seq system-prompt-blocks)
+    (vec system-prompt-blocks)
+
+    (some? system-prompt)
+    [{:kind :text :text system-prompt}]
+
+    :else
+    nil))
+
 (defn create
-  "Create new conversation with optional system prompt"
-  [system-prompt]
-  (let [timestamp (now)]
+  "Create new conversation with optional system prompt.
+
+   Accepts either a system prompt string/nil or an options map with:
+   - :system-prompt string
+   - :system-prompt-blocks vector of text blocks"
+  [system-prompt-or-options]
+  (let [{:keys [system-prompt system-prompt-blocks]}
+        (if (map? system-prompt-or-options)
+          system-prompt-or-options
+          {:system-prompt system-prompt-or-options})
+        timestamp             (now)
+        normalized-blocks     (normalize-system-prompt-blocks system-prompt system-prompt-blocks)]
     (validate-conversation
-     {:id            (new-id)
-      :system-prompt system-prompt
-      :status        :active
-      :created-at    timestamp
-      :updated-at    timestamp
-      :messages      []
-      :tools         #{}})))
+     (cond-> {:id            (new-id)
+              :system-prompt system-prompt
+              :status        :active
+              :created-at    timestamp
+              :updated-at    timestamp
+              :messages      []
+              :tools         #{}}
+       (some? normalized-blocks) (assoc :system-prompt-blocks normalized-blocks)))))
 
 (defn add-user-message
   "Add user message to conversation"

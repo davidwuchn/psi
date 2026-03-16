@@ -106,6 +106,9 @@
    [:created-at inst?]
    [:updated-at inst?]])
 
+(def cache-breakpoint-schema
+  [:enum :system :tools])
+
 (def agent-session-schema
   [:map
    [:session-id :string]
@@ -123,6 +126,7 @@
    [:interrupt-requested-at {:optional true} [:maybe inst?]]
    [:base-system-prompt :string]
    [:system-prompt :string]
+   [:cache-breakpoints {:optional true} [:set cache-breakpoint-schema]]
    [:developer-prompt {:optional true} [:maybe :string]]
    [:developer-prompt-source {:optional true} [:enum :fallback :env :explicit]]
    [:steering-messages [:vector :string]]
@@ -214,6 +218,7 @@
      :interrupt-requested-at  nil
      :base-system-prompt      ""
      :system-prompt           ""
+     :cache-breakpoints       #{:system}
      :developer-prompt        nil
      :developer-prompt-source :fallback
      :steering-messages       []

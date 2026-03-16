@@ -934,6 +934,16 @@
     (agent/set-system-prompt-in! (:agent-ctx ctx) prompt)
     (get-session-data-in ctx)))
 
+(defn set-cache-breakpoints-in!
+  "Replace the session cache breakpoint set.
+
+   Supported breakpoints:
+   - :system  cache the effective system prompt in Anthropic requests
+   - :tools   cache tool definitions in Anthropic requests"
+  [ctx breakpoints]
+  (swap-session! ctx assoc :cache-breakpoints (set (or breakpoints #{})))
+  (get-session-data-in ctx))
+
 (defn set-system-prompt-in!
   "Set the base system prompt for this session and refresh runtime prompt.
 

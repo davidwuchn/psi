@@ -56,6 +56,17 @@
               (swap! tool-id-map assoc key canonical-id)
               canonical-id))))))
 
+(defn- anthropic-cache-control
+  [cache-control]
+  (when (= :ephemeral (:type cache-control))
+    {:type "ephemeral"}))
+
+(defn- with-cache-control
+  [payload cache-control]
+  (if-let [cache-control* (anthropic-cache-control cache-control)]
+    (assoc payload :cache_control cache-control*)
+    payload))
+
 (defn- user-content
   [msg]
   [{:type "text"
@@ -66,16 +77,18 @@
   [canonical-id block]
   (case (:kind block)
     :text
-    {:type "text"
-     :text (:text block)}
+    (with-cache-control {:type "text"
+                         :text (:text block)}
+      (:cache-control block))
 
     :tool-call
-    {:type  "tool_use"
-     :id    (canonical-id (:id block))
-     :name  (:name block)
-     :input (if (map? (:input block))
-              (:input block)
-              {})}
+    (with-cache-control {:type  "tool_use"
+                         :id    (canonical-id (:id block))
+                         :name  (:name block)
+                         :input (if (map? (:input block))
+                                  (:input block)
+                                  {})}
+      (:cache-control block))
 
     {:type "text"
      :text (str block)}))
@@ -159,9 +172,11 @@
   [conversation]
   (when (seq (:tools conversation))
     (mapv (fn [tool]
-            {:name         (:name tool)
-             :description  (:description tool)
-             :input_schema (:parameters tool)})
+            (with-cache-control
+              {:name         (:name tool)
+               :description  (:description tool)
+               :input_schema (:parameters tool)}
+              (:cache-control tool)))
           (:tools conversation))))
 
 (defn- oauth-api-key?
@@ -189,6 +204,23 @@
     (cond-> headers
       beta (assoc "anthropic-beta" beta))))
 
+(defn- system-prompt-body
+  [conversation]
+  (let [blocks (:system-prompt-blocks conversation)]
+    (cond
+      (seq blocks)
+      (mapv (fn [block]
+              (with-cache-control {:type "text"
+                                   :text (:text block)}
+                (:cache-control block)))
+            blocks)
+
+      (some? (:system-prompt conversation))
+      (:system-prompt conversation)
+
+      :else
+      nil)))
+
 (defn build-request
   "Build Anthropic API request map.
    Includes tools from conversation when present.
@@ -200,9 +232,9 @@
         tool-defs (tool-definitions conversation)
         body      (cond-> {:model      (:id model)
                            :max_tokens (or (:max-tokens options) (:max-tokens model))
-                           :system     (:system-prompt conversation)
                            :messages   (transform-messages conversation)
                            :stream     true}
+                    (some? (system-prompt-body conversation)) (assoc :system (system-prompt-body conversation))
                     ;; temperature is incompatible with extended thinking
                     (not thinking)  (assoc :temperature (or (:temperature options) 0.7))
                     thinking        (assoc :thinking thinking)

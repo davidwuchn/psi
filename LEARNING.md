@@ -5476,3 +5476,14 @@ A test asserting a tilde-shortened path (`~/projects/...`) passes locally becaus
 the home directory matches, but fails on CI where the runner home is
 `/home/runner/...`. Tests must never hardcode machine-local paths. Use
 `System/getProperty "user.home"` or derive paths from runtime context.
+
+### λ Optional map fields must be omitted, not populated with nil, in schema-validated prompt shapes
+
+For Malli maps with optional keys like `:cache-control`, explicit `nil` is still a
+present value and must satisfy the nested schema. That broke the executor's
+conversation reconstruction when prompt caching was added: it emitted
+`{:cache-control nil}` inside `:system-prompt-blocks`, which failed validation and
+caused broad cascading executor/RPC test failures.
+
+Rule: when projecting optional provider metadata into shared conversation shapes,
+`assoc` the key only when a concrete value exists. Omit the key otherwise.

@@ -349,7 +349,7 @@
             :custom-type "plan-state-learning"}
            {:role "user"    :content [{:type :text :text "PSL follow-up"}]}]
           conv (#'psi.agent-session.executor/agent-messages->ai-conversation
-                "sys" messages [])
+                "sys" messages [] {})
           roles (mapv :role (:messages conv))]
       (is (= [:user :assistant :user] roles)
           "custom-type assistant message is excluded; no consecutive assistant messages")
@@ -362,9 +362,23 @@
            {:role "assistant" :content [{:type :text :text "a"}]}
            {:role "user"      :content [{:type :text :text "q2"}]}]
           conv (#'psi.agent-session.executor/agent-messages->ai-conversation
-                "sys" messages [])
+                "sys" messages [] {})
           roles (mapv :role (:messages conv))]
       (is (= [:user :assistant :user] roles)))))
+
+(deftest cache-breakpoints-are-projected-into-ai-conversation-test
+  (let [messages []
+        tools    [{:name "read"
+                   :description "Read file"
+                   :parameters "{:type \"object\"}"}]
+        conv     (#'psi.agent-session.executor/agent-messages->ai-conversation
+                  "sys" messages tools {:cache-breakpoints #{:system :tools}})]
+    (is (= [{:kind :text
+             :text "sys"
+             :cache-control {:type :ephemeral}}]
+           (:system-prompt-blocks conv)))
+    (is (= {:type :ephemeral}
+           (:cache-control (first (:tools conv)))))))
 
 (deftest tool-output-accounting-test
   (testing "captures per-call stats and aggregates, including limit-hit"

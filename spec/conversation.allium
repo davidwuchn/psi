@@ -1,18 +1,30 @@
--- allium: 1
+-- allium: 2
 
 -- conversation.allium
 -- Embedded conversation lifecycle and derived totals for psi.ai.conversation.
 --
 -- Refines ai-abstract-model.allium with:
 --   - embedded message and tool collections on the conversation value
+--   - system prompt block support for request-time metadata such as cache directives
 --   - concrete append operations used by psi.ai.conversation
 --   - derived usage and cost totals across assistant messages
 
 use "./ai-abstract-model.allium" as ai
 
+value CacheControl {
+    type: ephemeral
+}
+
+value SystemPromptBlock {
+    kind: text
+    text: String
+    cache_control: CacheControl?
+}
+
 entity ConversationRecord {
     id: String
     system_prompt: String?
+    system_prompt_blocks: List<SystemPromptBlock>?
     status: active | completed | error
     created_at: Timestamp
     updated_at: Timestamp
@@ -41,6 +53,7 @@ entity ConversationTool {
     name: String
     description: String
     parameters: Map<String, Any>
+    cache_control: CacheControl?
 }
 
 value UsageTotals {
@@ -60,17 +73,29 @@ value CostTotals {
 }
 
 rule ConversationCreated {
-    when: CreateConversation(system_prompt)
+    when: CreateConversation(system_prompt, system_prompt_blocks)
 
     ensures: ConversationRecord.created(
         id: NewConversationId(),
         system_prompt: system_prompt,
+        system_prompt_blocks:
+            if system_prompt_blocks non-empty:
+                system_prompt_blocks
+            else if system_prompt != null:
+                [{kind: text, text: system_prompt}]
+            else:
+                null,
         status: active,
         created_at: now,
         updated_at: now,
         messages: {},
         tools: {}
     )
+
+    @guidance
+        -- Explicit block form is preserved as-is so provider request builders can
+        -- attach request-time metadata such as Anthropic cache directives.
+        -- Flat system_prompt remains available for introspection and compatibility.
 }
 
 rule UserMessageAppended {
@@ -98,11 +123,6 @@ rule AssistantMessageAppended {
     ensures: appended.timestamp = now
     ensures: conversation.messages = conversation.messages + {appended}
     ensures: conversation.updated_at = now
-
-    @guidance
-        -- message_data content, usage, provider metadata, stop_reason, and
-        -- tool-call blocks are preserved; id and timestamp are added by the
-        -- append operation.
 }
 
 rule ToolResultAppended {
@@ -140,11 +160,6 @@ rule TotalUsageAggregatesAssistantUsageOnly {
         cache_write_tokens: AssistantUsageTotal(conversation, "cache_write_tokens"),
         total_tokens: AssistantUsageTotal(conversation, "total_tokens")
     }
-
-    @guidance
-        -- Only assistant messages contribute to usage totals.
-        -- Assistant messages without usage are ignored.
-        -- Missing usage subfields contribute 0.
 }
 
 rule TotalCostAggregatesAssistantCostOnly {
@@ -157,11 +172,6 @@ rule TotalCostAggregatesAssistantCostOnly {
         cache_write: AssistantCostTotal(conversation, "cache_write"),
         total: AssistantCostTotal(conversation, "total")
     }
-
-    @guidance
-        -- Only assistant messages with usage.cost contribute to cost totals.
-        -- Assistant messages without usage or without usage.cost are ignored.
-        -- Missing cost subfields contribute 0.
 }
 
 actor ConversationCaller {
@@ -176,6 +186,7 @@ surface ConversationApi {
     exposes:
         conversation.id
         conversation.system_prompt
+        conversation.system_prompt_blocks
         conversation.status
         conversation.created_at
         conversation.updated_at
@@ -183,7 +194,7 @@ surface ConversationApi {
         conversation.tools
 
     provides:
-        CreateConversation(system_prompt)
+        CreateConversation(system_prompt, system_prompt_blocks)
         AddUserMessage(conversation, content)
         AddAssistantMessage(conversation, message_data)
         AddToolResult(conversation, tool_call_id, tool_name, content, is_error)
@@ -200,10 +211,9 @@ surface ConversationApi {
     @guarantee MutationsRefreshConversationUpdatedAt
         -- Adding messages or tools refreshes conversation.updated_at.
 
+    @guarantee SystemPromptBlocksCarryRequestMetadata
+        -- system_prompt_blocks preserve request-shaping metadata such as cache_control.
+
     @guarantee TotalsAreDerivedOnlyFromAssistantMessages
         -- User and tool_result messages do not contribute to usage or cost totals.
-
-    @guidance
-        -- This spec narrows ai-abstract-model to the concrete embedded data shape
-        -- and helper operations provided by psi.ai.conversation.
 }

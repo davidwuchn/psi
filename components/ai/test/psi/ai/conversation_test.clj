@@ -13,6 +13,8 @@
     (let [conversation (conversation/create "You are a helpful assistant")]
       (is (schemas/valid? schemas/Conversation conversation))
       (is (= "You are a helpful assistant" (:system-prompt conversation)))
+      (is (= [{:kind :text :text "You are a helpful assistant"}]
+             (:system-prompt-blocks conversation)))
       (is (= :active (:status conversation)))
       (is (empty? (:messages conversation)))
       (is (empty? (:tools conversation)))))
@@ -21,7 +23,19 @@
     (let [conversation (conversation/create nil)]
       (is (schemas/valid? schemas/Conversation conversation))
       (is (nil? (:system-prompt conversation)))
-      (is (= :active (:status conversation))))))
+      (is (nil? (:system-prompt-blocks conversation)))
+      (is (= :active (:status conversation)))))
+
+  (testing "Creating a conversation with explicit system prompt blocks"
+    (let [conversation (conversation/create {:system-prompt "joined"
+                                             :system-prompt-blocks [{:kind :text
+                                                                     :text "base"
+                                                                     :cache-control {:type :ephemeral}}]})]
+      (is (schemas/valid? schemas/Conversation conversation))
+      (is (= [{:kind :text
+               :text "base"
+               :cache-control {:type :ephemeral}}]
+             (:system-prompt-blocks conversation))))))
 
 (deftest test-message-handling
   (testing "Adding user message"

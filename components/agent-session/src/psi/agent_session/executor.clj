@@ -59,6 +59,14 @@
   [params]
   (if (string? params) (edn/read-string params) params))
 
+(def ^:private ephemeral-cache-control
+  {:type :ephemeral})
+
+(defn- maybe-cache-control
+  [enabled?]
+  (when enabled?
+    ephemeral-cache-control))
+
 (defn- agent-messages->ai-conversation
   "Rebuild an ai/conversation from agent-core message history.
   Used to reconstruct the conversation context before each LLM call.
@@ -67,8 +75,10 @@
   Messages with :custom-type are extension transcript markers (e.g. PSL status
   messages) and are excluded — they must not be sent to the LLM because they
   can produce consecutive same-role messages that cause provider 400 errors."
-  [system-prompt messages agent-tools]
-  (let [conv (reduce
+  [system-prompt messages agent-tools {:keys [cache-breakpoints]}]
+  (let [system-cache? (contains? (set (or cache-breakpoints #{})) :system)
+        tools-cache?  (contains? (set (or cache-breakpoints #{})) :tools)
+        conv (reduce
               (fn [conv msg]
                 (if (:custom-type msg)
                   conv ;; skip extension transcript markers
@@ -119,13 +129,21 @@
 
                   ;; unknown roles — skip
                     conv)))
-              (conv/create system-prompt)
+              (conv/create {:system-prompt system-prompt
+                            :system-prompt-blocks (when (some? system-prompt)
+                                                    [(cond-> {:kind :text
+                                                              :text system-prompt}
+                                                       system-cache?
+                                                       (assoc :cache-control (maybe-cache-control system-cache?)))])})
               messages)]
     ;; Add agent tools to conversation so the provider includes them in the request
     (reduce (fn [c tool]
-              (conv/add-tool c {:name        (:name tool)
-                                :description (:description tool)
-                                :parameters  (parse-tool-parameters (:parameters tool))}))
+              (conv/add-tool c
+                             (cond-> {:name        (:name tool)
+                                      :description (:description tool)
+                                      :parameters  (parse-tool-parameters (:parameters tool))}
+                               tools-cache?
+                               (assoc :cache-control (maybe-cache-control tools-cache?)))))
             conv
             agent-tools)))
 
@@ -582,7 +600,8 @@ Also tolerates cumulative snapshots that differ near previous tail
         system-prompt    (:system-prompt data)
         messages         (:messages data)
         agent-tools      (:tools data)
-        ai-conv          (agent-messages->ai-conversation system-prompt messages agent-tools)
+        ai-conv          (agent-messages->ai-conversation system-prompt messages agent-tools
+                                                          {:cache-breakpoints (:cache-breakpoints @(:session-data-atom agent-session-ctx))})
         base-ai-options  (or extra-ai-options {})
         ai-options       (-> base-ai-options
                              (assoc :on-provider-request
@@ -664,11 +683,6 @@ Also tolerates cumulative snapshots that differ near previous tail
 
                     :toolcall-start
                     (do
-                      ;; Thinking deltas are emitted to frontends as cumulative snapshots.
-                      ;; Reset the per-content-index thinking accumulator when a tool call
-                      ;; starts so post-tool thinking becomes a fresh cumulative segment.
-                      ;; This keeps frontend tool-boundary thinking splits from replaying
-                      ;; pre-tool thinking text on the next thinking delta.
                       (swap! thinking-buffers dissoc (or (:content-index event) 0))
                       (append-tool-call-attempt!
                        agent-session-ctx

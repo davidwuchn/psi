@@ -48,6 +48,26 @@
       (is (some? (re-find #"interleaved-thinking" (get headers "anthropic-beta")))
           "interleaved-thinking beta header required"))))
 
+(deftest build-request-with-cache-breakpoints-test
+  (testing "system prompt blocks and tools emit Anthropic cache_control when marked ephemeral"
+    (let [model (models/get-model :sonnet-4.6)
+          convo (-> (conv/create {:system-prompt "sys"
+                                  :system-prompt-blocks [{:kind :text
+                                                          :text "sys"
+                                                          :cache-control {:type :ephemeral}}]})
+                    (conv/add-tool {:name "read"
+                                    :description "Read a file"
+                                    :parameters {:type "object"}
+                                    :cache-control {:type :ephemeral}}))
+          req   (#'anthropic/build-request convo model {:api-key "test-key"})
+          body  (json/parse-string (:body req) true)]
+      (is (= [{:type "text"
+               :text "sys"
+               :cache_control {:type "ephemeral"}}]
+             (:system body)))
+      (is (= {:type "ephemeral"}
+             (get-in body [:tools 0 :cache_control]))))))
+
 ;; ── SSE parser — thinking block routing ─────────────────────────────────────
 
 (defn- run-stream [sse-str model options]
