@@ -141,6 +141,13 @@
    ::pco/output [:git.worktree/inside-repo?]}
   {:git.worktree/inside-repo? (boolean (git/inside-repo? context))})
 
+(pco/defresolver git-default-branch
+  "Resolve :git.branch/default-branch for the current git context."
+  [{:keys [git/context]}]
+  {::pco/input  [:git/context]
+   ::pco/output [:git.branch/default-branch]}
+  {:git.branch/default-branch (git/default-branch context)})
+
 ;;; Git mutations
 
 (pco/defmutation git-worktree-add!
@@ -198,7 +205,8 @@
    git-worktree-list
    git-worktree-current
    git-worktree-count
-   git-worktree-inside-repo])
+   git-worktree-inside-repo
+   git-default-branch])
 
 (def all-mutations
   [git-worktree-add!

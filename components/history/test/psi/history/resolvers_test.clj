@@ -250,12 +250,15 @@
                                   [:git.worktree/list
                                    :git.worktree/current
                                    :git.worktree/count
-                                   :git.worktree/inside-repo?])]
+                                   :git.worktree/inside-repo?
+                                   :git.branch/default-branch])]
     (is (true? (:git.worktree/inside-repo? result)))
     (is (vector? (:git.worktree/list result)))
     (is (map? (:git.worktree/current result)))
     (is (= (count (:git.worktree/list result))
-           (:git.worktree/count result)))))
+           (:git.worktree/count result)))
+    (is (map? (:git.branch/default-branch result)))
+    (is (string? (get-in result [:git.branch/default-branch :branch])))))
 
 (deftest worktree-resolvers-outside-repo
   (let [tmp       (str (java.nio.file.Files/createTempDirectory
@@ -329,7 +332,7 @@
 
 (deftest all-resolvers-registered
   (testing "all-resolvers count"
-    (is (= 11 (count resolvers/all-resolvers)))))
+    (is (= 12 (count resolvers/all-resolvers)))))
 
 (deftest all-mutations-registered
   (testing "all-mutations count"

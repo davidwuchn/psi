@@ -515,7 +515,7 @@ Ordered steps toward PSI COMPLETE.
 - Architecture delivered in code:
   - Layer 0 (✓): read-only resolvers + `/worktree` command
   - Layer 1 (✓, commit `ad691d4`): git worktree/branch mutations implemented in history component and exposed as EQL mutations
-  - Layer 2 (✓, commit `ad691d4`): `/work-on`, `/work-merge`, `/work-rebase`, `/work-status` implemented in `extensions/src/extensions/work_on.clj`
+  - Layer 2 (✓, commit `ad691d4`, evolved 2026-03-16): `/work-on`, `/work-done`, `/work-rebase`, `/work-status` implemented in `extensions/src/extensions/work_on.clj`
 - Runtime convergence delivered:
   - session data now carries session-scoped `:worktree-path`
   - effective cwd for tools/git/persistence/runtime hooks now prefers session `:worktree-path` over process cwd
@@ -531,14 +531,14 @@ Ordered steps toward PSI COMPLETE.
   - result: 118 tests, 817 assertions, 0 failures
 - Follow-up convergence landed (post-`ad691d4`, commit `3bbb958`):
   - `/work-on` now creates a distinct context peer session explicitly instead of rebinding the active runtime session in place
-  - `/work-merge` now auto-switches back to an existing main-worktree session when present, or creates one when absent
+  - `/work-done` now auto-switches back to an existing main-worktree session when present, or creates one when absent
   - extension session lifecycle surface now exists as first-class mutations/API (`psi.extension/create-session`, `psi.extension/switch-session`; `createSession`, `switchSession`)
   - session and extension Allium surfaces synchronized (`spec/session-core.allium`, `spec/extension-system.allium`, `spec/work-on-extension.allium`)
   - focused verification green:
     - `clojure -M:test --focus psi.agent-session.extensions-test --focus extensions.work-on-test --focus psi.agent-session.core-test`
     - result: 64 tests, 405 assertions, 0 failures
 - Follow-up docs sync landed (commit `26f1245`):
-  - `doc/tui.md` now documents `/worktree`, `/work-on`, `/work-merge`, `/work-rebase`, and `/work-status`
+  - `doc/tui.md` now documents `/worktree`, `/work-on`, `/work-done`, `/work-rebase`, and `/work-status`
   - `doc/extensions.md` now documents `:create-session` / `:switch-session` and their worktree-session use
   - `doc/emacs-ui.md` now notes `/work-*` command discovery in slash completion
 - PSL follow-up landed (2026-03-14, commit `4386b98`): isolated extension query contexts now register the full session resolver surface, not only agent-session-local resolvers.

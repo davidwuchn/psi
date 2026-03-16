@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-03-16
+
+- λ Δ Renamed the worktree completion command from `/work-merge` to `/work-done` and removed `/work-merge`.
+- λ Δ `/work-done` now preserves linear history by checking fast-forwardability onto the cached default branch, auto-rebasing via a forked sync subagent when needed, then fast-forward merging and cleaning up the worktree/branch.
+- λ Δ Added default-branch query surfaces:
+  - history resolver `:git.branch/default-branch`
+  - agent-session bridge attr `:psi.agent-session/git-default-branch`
+- λ Δ Synced worktree docs/spec/tests to the `/work-done` workflow.
+- ✓ Verification:
+  - `bb clojure:test:extensions --focus extensions.work-on-test`
+  - `bb clojure:test:unit`
+  - `bb lint`
+
 ## 2026-03-13
 
 - λ Δ Added tmux-backed TUI integration harness baseline:

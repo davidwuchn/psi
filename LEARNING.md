@@ -3,6 +3,20 @@
 
 ---
 
+## 2026-03-16 - `/work-done` should own the linear-history workflow, and the default branch should be queryable state
+
+### λ One obvious completion command beats split merge/rebase choreography
+
+Once the desired operator intent became "finish this worktree while preserving linear history," `/work-merge` was the wrong surface. It encoded only the final merge step and pushed the operator to remember when a manual rebase was required. Renaming the workflow to `/work-done` made the command describe the whole outcome: ensure the branch is based on the default branch, fast-forward merge it, then clean up the worktree and branch.
+
+### λ Fast-forwardability is a repository state check, not just a merge-mutation error path
+
+The useful precondition is whether the current linked branch already contains the default branch HEAD. That is what determines whether a `--ff-only` merge onto the default branch can succeed while preserving linear history. Modeling that check explicitly made the workflow simpler: if true, merge; if false, rebase first; if still false afterward, stop and preserve recovery state.
+
+### λ Default branch belongs on the query surface when workflows depend on it repeatedly
+
+Resolving the default branch only through a mutation worked mechanically, but it was the wrong shape for a value that the extension wants to cache and re-read on init/session-switch. Exposing it as `:git.branch/default-branch` and bridging that to `:psi.agent-session/git-default-branch` turned it into readable session state instead of an ad hoc imperative lookup.
+
 ## 2026-03-16 - Historical memory should be converged after vocabulary migrations or the repo starts lying about itself (commit `16cb376` / PSL `f013f62`)
 
 ### λ Repo memory becomes misleading fast when architectural terms change in code but not in the accumulated narrative

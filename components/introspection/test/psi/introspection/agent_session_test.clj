@@ -77,6 +77,8 @@
             "history worktree resolver should appear in graph summary")
         (is (contains? r-syms 'psi.agent-session.resolvers/agent-session-git-worktrees)
             "session worktree bridge resolver should appear in graph summary")
+        (is (contains? r-syms 'psi.agent-session.resolvers/agent-session-git-default-branch)
+            "session default-branch bridge resolver should appear in graph summary")
         (is (contains? m-syms 'psi.extension/add-prompt-template)
             "startup prompt mutation should appear in graph summary")
         (is (contains? m-syms 'psi.extension.tool/read)

@@ -111,6 +111,7 @@ rule WorktreeAttrsBridgeToSessionRoot {
     ensures: EqlAttributeResolvable(":psi.agent-session/git-worktrees")
     ensures: EqlAttributeResolvable(":psi.agent-session/git-worktree-current")
     ensures: EqlAttributeResolvable(":psi.agent-session/git-worktree-count")
+    ensures: EqlAttributeResolvable(":psi.agent-session/git-default-branch")
 }
 
 rule WorktreeAttrsDiscoverableInGraph {
@@ -122,7 +123,8 @@ rule WorktreeAttrsDiscoverableInGraph {
         ":git.worktree/count",
         ":psi.agent-session/git-worktrees",
         ":psi.agent-session/git-worktree-current",
-        ":psi.agent-session/git-worktree-count"
+        ":psi.agent-session/git-worktree-count",
+        ":psi.agent-session/git-default-branch"
     })
 
     ensures: GraphEdgesContainAttributes({
@@ -131,7 +133,8 @@ rule WorktreeAttrsDiscoverableInGraph {
         ":git.worktree/count",
         ":psi.agent-session/git-worktrees",
         ":psi.agent-session/git-worktree-current",
-        ":psi.agent-session/git-worktree-count"
+        ":psi.agent-session/git-worktree-count",
+        ":psi.agent-session/git-default-branch"
     })
 }
 

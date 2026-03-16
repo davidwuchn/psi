@@ -1840,6 +1840,13 @@
    ::pco/output [:psi.agent-session/git-worktree-count]}
   {:psi.agent-session/git-worktree-count (or count 0)})
 
+(pco/defresolver agent-session-git-default-branch
+  "Bridge git default branch into agent-session namespace."
+  [{:keys [git.branch/default-branch]}]
+  {::pco/input  [:git.branch/default-branch]
+   ::pco/output [:psi.agent-session/git-default-branch]}
+  {:psi.agent-session/git-default-branch default-branch})
+
 (pco/defresolver agent-session-usage-input
   "Resolve cumulative input tokens across assistant messages in the session journal."
   [{:keys [psi/agent-session-ctx]}]
@@ -2111,6 +2118,7 @@
    agent-session-git-worktrees
    agent-session-git-worktree-current
    agent-session-git-worktree-count
+   agent-session-git-default-branch
    agent-session-usage-input
    agent-session-usage-output
    agent-session-usage-cache-read

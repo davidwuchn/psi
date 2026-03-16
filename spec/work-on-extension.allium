@@ -26,10 +26,11 @@ value WorkOnResult {
     error: String?
 }
 
-value WorkMergeResult {
+value WorkDoneResult {
     success: Boolean
     branch_merged: String?
     into_branch: String?
+    auto_rebased: Boolean
     worktree_removed: Boolean
     branch_deleted: Boolean
     switched_to_session: core/SessionId?
@@ -217,13 +218,21 @@ rule WorkOnFailsOutsideGitRepo {
     )
 }
 
-rule WorkMergeRequested {
-    when: SlashCommandDispatched("/work-merge")
+rule DefaultBranchCachedForContext {
+    when: ExtensionInitialized("work-on") or SessionSwitchCompleted()
+    requires: worktrees/GitWorktreeRegistry.has_current
+
+    ensures: CachedDefaultBranch() = git/DefaultBranchRequested().branch
+}
+
+rule WorkDoneFastForwardsAlreadyBasedBranch {
+    when: SlashCommandDispatched("/work-done")
     requires: CurrentWorktreeIsLinked()
+    requires: CurrentWorktreeBranchContainsDefaultBranchHead()
 
     let current_wt = worktrees/GitWorktreeRegistry.current
     let current_branch = current_wt.branch_name
-    let default_branch = git/DefaultBranchRequested().branch
+    let default_branch = CachedDefaultBranch()
     let main_wt = worktrees/GitWorktreeRegistry.main
 
     ensures: git/BranchMergeRequested(
@@ -247,62 +256,127 @@ rule WorkMergeRequested {
         session_id: FindOrCreateSessionForWorktree(main_wt.path).id
     )
 
-    ensures: WorkMergeResult.created(
+    ensures: WorkDoneResult.created(
         success: true,
         branch_merged: current_branch,
         into_branch: default_branch,
+        auto_rebased: false,
         worktree_removed: true,
         branch_deleted: true,
         switched_to_session: FindOrCreateSessionForWorktree(main_wt.path).id,
         error: null
     )
 
-    ensures: AssistantMessage("Merged `{current_branch}` into `{default_branch}`, removed worktree, switched to main session")
+    ensures: AssistantMessage("Fast-forwarded `{current_branch}` into `{default_branch}`, removed worktree, switched to main session")
 }
 
-rule WorkMergeFailsOnMainWorktree {
-    when: SlashCommandDispatched("/work-merge")
+rule WorkDoneAutoRebasesBeforeFastForward {
+    when: SlashCommandDispatched("/work-done")
+    requires: CurrentWorktreeIsLinked()
+    requires: not CurrentWorktreeBranchContainsDefaultBranchHead()
+
+    let current_wt = worktrees/GitWorktreeRegistry.current
+    let current_branch = current_wt.branch_name
+    let default_branch = CachedDefaultBranch()
+    let main_wt = worktrees/GitWorktreeRegistry.main
+
+    ensures: ForkedSubagentRequested(
+        mode: sync,
+        purpose: "rebase current worktree onto default branch",
+        preserve_context: true
+    )
+
+    requires: ForkedSubagentResult().success = true
+    requires: CurrentWorktreeBranchContainsDefaultBranchHead()
+
+    ensures: git/BranchMergeRequested(
+        branch: current_branch,
+        strategy: ff_only
+    )
+
+    ensures: git/WorktreeRemoveRequested(
+        path: current_wt.path,
+        force: false
+    )
+
+    ensures: git/BranchDeleteRequested(
+        branch: current_branch,
+        force: false
+    )
+
+    ensures: core/SessionSwitchRequested(
+        project_id: CurrentProjectId(),
+        worktree_path: main_wt.path,
+        session_id: FindOrCreateSessionForWorktree(main_wt.path).id
+    )
+
+    ensures: WorkDoneResult.created(
+        success: true,
+        branch_merged: current_branch,
+        into_branch: default_branch,
+        auto_rebased: true,
+        worktree_removed: true,
+        branch_deleted: true,
+        switched_to_session: FindOrCreateSessionForWorktree(main_wt.path).id,
+        error: null
+    )
+
+    ensures: AssistantMessage("Fast-forwarded `{current_branch}` into `{default_branch}` after automatic rebase, removed worktree, switched to main session")
+}
+
+rule WorkDoneStopsWhenAutomaticRebaseFails {
+    when: SlashCommandDispatched("/work-done")
+    requires: CurrentWorktreeIsLinked()
+    requires: not CurrentWorktreeBranchContainsDefaultBranchHead()
+    requires: ForkedSubagentRequested(
+        mode: sync,
+        purpose: "rebase current worktree onto default branch",
+        preserve_context: true
+    )
+    requires: ForkedSubagentResult().success = false
+
+    ensures: WorkDoneResult.created(
+        success: false,
+        branch_merged: null,
+        into_branch: CachedDefaultBranch(),
+        auto_rebased: false,
+        worktree_removed: false,
+        branch_deleted: false,
+        switched_to_session: null,
+        error: "automatic rebase onto `{CachedDefaultBranch()}` failed: {ForkedSubagentResult().error}"
+    )
+}
+
+rule WorkDoneFailsOnMainWorktree {
+    when: SlashCommandDispatched("/work-done")
     requires: not CurrentWorktreeIsLinked()
 
-    ensures: WorkMergeResult.created(
+    ensures: WorkDoneResult.created(
         success: false,
         branch_merged: null,
         into_branch: null,
+        auto_rebased: false,
         worktree_removed: false,
         branch_deleted: false,
         switched_to_session: null,
-        error: "already on main worktree; nothing to merge"
+        error: "already on main worktree; nothing to do"
     )
 }
 
-rule WorkMergeFailsNotFastForward {
-    when: SlashCommandDispatched("/work-merge")
-    requires: BranchMergeResult().merged = false
-    requires: Contains(BranchMergeResult().error, "not fast-forwardable")
+rule WorkDonePreservesWorktreeWhenMergeVerificationFails {
+    when: SlashCommandDispatched("/work-done")
+    requires: BranchMergeResult().merged = true
+    requires: not TargetHeadAbsorbedCurrentBranchTip()
 
-    ensures: WorkMergeResult.created(
+    ensures: WorkDoneResult.created(
         success: false,
         branch_merged: null,
-        into_branch: git/DefaultBranchRequested().branch,
+        into_branch: CachedDefaultBranch(),
+        auto_rebased: false,
         worktree_removed: false,
         branch_deleted: false,
         switched_to_session: null,
-        error: "branch is not fast-forwardable onto {default_branch}; rebase first with /work-rebase"
-    )
-}
-
-rule WorkMergeFailsConflict {
-    when: SlashCommandDispatched("/work-merge")
-    requires: BranchMergeResult().conflict = true
-
-    ensures: WorkMergeResult.created(
-        success: false,
-        branch_merged: null,
-        into_branch: null,
-        worktree_removed: false,
-        branch_deleted: false,
-        switched_to_session: null,
-        error: "merge conflict; resolve manually or rebase first"
+        error: "merge did not update `{CachedDefaultBranch()}`; worktree preserved for safety"
     )
 }
 
@@ -311,7 +385,7 @@ rule WorkRebaseRequested {
     requires: CurrentWorktreeIsLinked()
 
     let current_branch = worktrees/GitWorktreeRegistry.current.branch_name
-    let default_branch = git/DefaultBranchRequested().branch
+    let default_branch = CachedDefaultBranch()
 
     ensures: git/BranchRebaseRequested(
         onto: default_branch,
@@ -352,32 +426,32 @@ surface WorkOnExtensionApi {
 
     provides:
         SlashCommandDispatched("/work-on", description)
-        SlashCommandDispatched("/work-merge")
+        SlashCommandDispatched("/work-done")
         SlashCommandDispatched("/work-rebase")
         SlashCommandDispatched("/work-status")
 
     @guarantee MinimalCeremony
         -- /work-on creates worktree + context + session in one command.
-        -- /work-merge merges + cleans up in one command.
+        -- /work-done completes the linked worktree and cleans up in one command.
 
     @guarantee WorktreeContextBinding
         -- The session created by /work-on belongs to the context for the new worktree.
         -- Its worktree_path is the new worktree, and its name is the description.
         -- All tool operations run in that worktree context.
 
-    @guarantee MergePreservesSessionTranscript
-        -- After /work-merge, the worktree session transcript remains queryable.
+    @guarantee DonePreservesSessionTranscript
+        -- After /work-done, the worktree session transcript remains queryable.
         -- Only the worktree directory and git branch are removed.
 
     @guarantee NestedWorkAllowed
         -- /work-on may be invoked from any worktree (main or linked).
         -- Each invocation creates a new sibling worktree off the current HEAD.
 
-    @guarantee SafeMergeFailure
-        -- /work-merge never leaves the working tree dirty.
+    @guarantee SafeDoneFailure
+        -- /work-done never removes the worktree unless the default branch absorbed the branch tip.
+        -- Automatic rebase failures stop before merge and report actionable guidance.
         -- Merge conflicts are aborted, and the operator receives actionable guidance.
-        -- Worktree removal only happens after merge success is verified.
 }
 
 open question "Should /work-on always create a new root session in the target context, or optionally reuse the current session tree via fork semantics?"
-open question "Should /work-merge automatically focus the main-worktree context when multiple main sessions exist?"
+open question "Should /work-done automatically focus the main-worktree context when multiple main sessions exist?"

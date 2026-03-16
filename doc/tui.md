@@ -45,7 +45,7 @@ clojure -M:run --tui --nrepl 8888
 ## In-session commands
 
 `/status` `/history` `/new` `/resume` `/tree [session-id]` `/worktree` `/help` `/quit` `/skills` `/prompts` `/remember [text]`
-`/skill:<name>` plus any extension commands such as `/work-on`, `/work-merge`, `/work-rebase`, `/work-status`
+`/skill:<name>` plus any extension commands such as `/work-on`, `/work-done`, `/work-rebase`, `/work-status`
 
 ### Multi-session commands
 
@@ -66,18 +66,24 @@ The selector UI is frontend-native, but candidate lists and command semantics ar
 - `/worktree` shows git worktree context for the current session worktree.
 - `/work-on <description>` creates a sibling git worktree + branch and moves you into
   a distinct new context session bound to that worktree.
-- `/work-merge` fast-forward merges the current linked-worktree branch into the default
-  branch, removes the linked worktree, deletes the branch, and switches back to an
-  existing main-worktree session when possible.
-- If no main-worktree session exists, `/work-merge` creates one and switches to it.
+- `/work-done` completes the current linked worktree onto the default branch.
+- It uses the cached default branch for the context.
+- If the current branch is not yet fast-forwardable onto the default branch, `/work-done`
+  runs a forked sync subagent to rebase first.
+- If that rebase fails, `/work-done` stops and preserves the worktree.
+- On success, `/work-done` fast-forward merges from the main worktree context, removes the
+  linked worktree, deletes the branch, and switches back to an existing main-worktree
+  session when possible.
+- If no main-worktree session exists, `/work-done` creates one and switches to it.
 - `/work-rebase` rebases the current linked-worktree branch onto the default branch.
 - `/work-status` shows the active linked worktree overview.
 
 Operational notes:
 - Worktree paths are sibling directories of the main worktree.
 - `/work-on` uses a mechanical slug from the description.
-- Tool operations in a worktree session run with that session's `worktree_path` as cwd.
-- After `/work-merge`, the transcript of the linked-worktree session is preserved in the
+- `/work-done` caches the default branch on init/session switch.
+- Tool operations in a worktree session run with that session's `worktree-path`/`worktree_path` as cwd.
+- After `/work-done`, the transcript of the linked-worktree session is preserved in the
   context session tree even though the branch/worktree are removed.
 
 `/remember` performs a single manual memory capture from the runtime command surface.
