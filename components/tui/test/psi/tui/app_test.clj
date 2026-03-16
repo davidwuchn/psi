@@ -347,7 +347,8 @@
       (is (= "s2" @switched-id))
       (is (= :idle (:phase s1)))
       (is (= "switched" (get-in s1 [:messages 0 :text])))
-      (is (= ["t1"] (:tool-order s1))))))
+      (is (= ["t1"] (:tool-order s1)))
+      (is (:force-clear? s1)))))
 
 (deftest tree-selector-enter-switches-via-callback-test
   (testing "enter in :tree selector switches highlighted session"
@@ -379,7 +380,8 @@
           [s3 _]      (update-fn s2 (msg/key-press :enter))]
       (is (= "s2" @switched-id))
       (is (= :idle (:phase s3)))
-      (is (= "switched s2" (get-in s3 [:messages 0 :text]))))))
+      (is (= "switched s2" (get-in s3 [:messages 0 :text])))
+      (is (:force-clear? s3)))))
 
 (deftest tree-selector-view-renders-hierarchy-and-active-badge-test
   (testing "tree selector view renders parent-child connectors and active marker"

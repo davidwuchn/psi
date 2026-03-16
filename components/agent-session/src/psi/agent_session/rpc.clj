@@ -1433,6 +1433,22 @@
                                                     :psi.session-info/first-message
                                                     :psi.session-info/modified]}])}})
 
+      (str/starts-with? trimmed "/resume ")
+      (let [session-path (-> (str/replace trimmed #"^/resume\s+" "") str/trim)]
+        (if-not (.exists (io/file session-path))
+          (emit-command-result! emit! {:type "text"
+                                       :message (str "Session file not found: " session-path)})
+          (let [sd   (session/resume-session-in! ctx session-path)
+                msgs (:messages (agent/get-data-in (:agent-ctx ctx)))]
+            (emit! "session/resumed"
+                   {:session-id   (:session-id sd)
+                    :session-file (:session-file sd)
+                    :message-count (count msgs)})
+            (emit! "session/rehydrated"
+                   {:messages msgs
+                    :tool-calls {}
+                    :tool-order []}))))
+
       (= trimmed "/tree")
       (let [index      (session/get-context-index-in ctx)
             current-id (:session-id (session/get-session-data-in ctx))
@@ -1448,6 +1464,53 @@
                 :prompt "Select a live session"
                 :payload {:active-session-id active-id
                           :sessions sessions}}))
+
+      (str/starts-with? trimmed "/tree ")
+      (let [arg        (-> (str/replace trimmed #"^/tree\s+" "") str/trim)
+            index      (session/get-context-index-in ctx)
+            current-id (:session-id (session/get-session-data-in ctx))
+            active-id  (or (:active-session-id index) current-id)
+            sessions0  (vec (or (session/list-context-sessions-in ctx) []))
+            sessions   (if (seq sessions0)
+                         sessions0
+                         [(select-keys (session/get-session-data-in ctx)
+                                       [:session-id :session-name :worktree-path])])
+            match-by-id
+            (some (fn [m]
+                    (when (= arg (:session-id m))
+                      m))
+                  sessions)
+            match-by-prefix
+            (when-not match-by-id
+              (let [matches (filterv (fn [m]
+                                       (str/starts-with? (or (:session-id m) "") arg))
+                                     sessions)]
+                (when (= 1 (count matches))
+                  (first matches))))
+            chosen (or match-by-id match-by-prefix)
+            sid    (:session-id chosen)]
+        (cond
+          (nil? chosen)
+          (emit-command-result! emit! {:type "text"
+                                       :message (str "Session not found in context: " arg)})
+
+          (= sid active-id)
+          (emit-command-result! emit! {:type "text"
+                                       :message (str "Already active session: " sid)})
+
+          :else
+          (do
+            (session/ensure-session-loaded-in! ctx sid)
+            (let [sd   (session/get-session-data-in ctx)
+                  msgs (:messages (agent/get-data-in (:agent-ctx ctx)))]
+              (emit! "session/resumed"
+                     {:session-id   (:session-id sd)
+                      :session-file (:session-file sd)
+                      :message-count (count msgs)})
+              (emit! "session/rehydrated"
+                     {:messages msgs
+                      :tool-calls {}
+                      :tool-order []})))))
 
       (= trimmed "/model")
       (emit! "ui/frontend-action-requested"

@@ -1235,6 +1235,46 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
+(ert-deftest psi-resume-explicit-path-command-clears-transcript-via-rehydrate-events ()
+  "Explicit `/resume <path>` should clear stale transcript and replay resumed messages."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (progn
+          (insert "old transcript\n/resume /tmp/sessions/a.ndedn")
+          (setf (psi-emacs-state-draft-anchor psi-emacs--state)
+                (copy-marker (+ (length "old transcript\n") 1) nil))
+          (setf (psi-emacs-state-projection-footer psi-emacs--state) "footer")
+          (puthash "stale-tool" (list :id "stale-tool" :stage "result" :text "stale")
+                   (psi-emacs-state-tool-rows psi-emacs--state))
+          (let ((rpc-calls nil))
+            (cl-letf (((symbol-value 'psi-emacs--send-request-function)
+                       (lambda (_state op params &optional _callback)
+                         (push (list op params) rpc-calls)
+                         t)))
+              (psi-emacs-send-from-buffer nil))
+            (setq rpc-calls (nreverse rpc-calls))
+            (should (equal '("command") (mapcar #'car rpc-calls)))
+            (psi-emacs--handle-rpc-event
+             '((:event . "session/resumed")
+               (:data . ((:session-id . "s-resumed")
+                         (:session-file . "/tmp/sessions/a.ndedn")
+                         (:message-count . 2)))))
+            (psi-emacs--handle-rpc-event
+             '((:event . "session/rehydrated")
+               (:data . ((:messages . [((:role . :user) (:text . "First"))
+                                       ((:role . :assistant) (:text . "Second"))])
+                         (:tool-calls . ())
+                         (:tool-order . ())))))
+            (should-not (string-match-p "old transcript" (buffer-string)))
+            (should (string-match-p "User: First\nψ: Second\n" (buffer-string)))
+            (should (equal "footer" (psi-emacs-state-projection-footer psi-emacs--state)))
+            (should (zerop (hash-table-count (psi-emacs-state-tool-rows psi-emacs--state))))
+            (should (psi-emacs--input-separator-marker-valid-p))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
 (ert-deftest psi-command-result-session-switch-requests-switch-and-replays-order ()
   (with-temp-buffer
     (psi-emacs-mode)
@@ -2830,6 +2870,43 @@ full accumulated thinking text rather than append-only chunks."
         (psi-emacs--projection-activate-widget-action)
         (should (equal '(("command" ((:text . "/tree s2"))))
                        calls))))))
+
+(ert-deftest psi-projection-tree-widget-action-clears-transcript-via-rehydrate-events ()
+  "Widget `/tree <id>` activation should clear stale transcript when rehydrate events arrive."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (insert "old transcript")
+    (setf (psi-emacs-state-draft-anchor psi-emacs--state)
+          (copy-marker (1+ (length "old transcript")) nil))
+    (setf (psi-emacs-state-projection-footer psi-emacs--state) "footer")
+    (puthash "stale-tool" (list :id "stale-tool" :stage "result" :text "stale")
+             (psi-emacs-state-tool-rows psi-emacs--state))
+    (cl-letf (((symbol-value 'psi-emacs--send-request-function)
+               (lambda (_state op params &optional _callback)
+                 (when (equal op "command")
+                   (should (equal '((:text . "/tree s2")) params)))
+                 t)))
+      (insert (propertize "switch to s2"
+                          'psi-widget-command "/tree s2"
+                          'keymap psi-emacs--projection-widget-action-keymap))
+      (goto-char (point-max))
+      (psi-emacs--projection-activate-widget-action)
+      (psi-emacs--handle-rpc-event
+       '((:event . "session/resumed")
+         (:data . ((:session-id . "s2")
+                   (:session-file . "/tmp/s2.ndedn")
+                   (:message-count . 1)))))
+      (psi-emacs--handle-rpc-event
+       '((:event . "session/rehydrated")
+         (:data . ((:messages . [((:role . :assistant) (:text . "switched"))])
+                   (:tool-calls . ())
+                   (:tool-order . ())))))
+      (should-not (string-match-p "old transcript" (buffer-string)))
+      (should (string-match-p "ψ: switched\n" (buffer-string)))
+      (should (equal "footer" (psi-emacs-state-projection-footer psi-emacs--state)))
+      (should (zerop (hash-table-count (psi-emacs-state-tool-rows psi-emacs--state))))
+      (should (psi-emacs--input-separator-marker-valid-p)))))
 
 (ert-deftest psi-extension-ui-status-updated-replaces-and-sorts-by-extension-id ()
   (with-temp-buffer

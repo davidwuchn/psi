@@ -1111,7 +1111,72 @@
       (is (contains? event-topics "session/resumed"))
       (is (contains? event-topics "session/rehydrated"))
       (is (some? command-result))
-      (is (= "new_session" (get-in command-result [:data :type]))))))
+      (is (= "new_session" (get-in command-result [:data :type])))))
+
+  (testing "command /resume <path> emits session/resumed and session/rehydrated canonical events"
+    (let [cwd     (str (System/getProperty "java.io.tmpdir") "/psi-rpc-resume-" (java.util.UUID/randomUUID))
+          _       (.mkdirs (java.io.File. cwd))
+          ctx     (session/create-context {:cwd cwd})
+          _       (session/new-session-in! ctx)
+          path1   (:session-file (session/get-session-data-in ctx))
+          _       (persist/flush-journal! (java.io.File. path1)
+                                          (:session-id (session/get-session-data-in ctx))
+                                          cwd
+                                          nil
+                                          nil
+                                          [(persist/message-entry {:role "user" :content "hi"})
+                                           (persist/message-entry {:role "assistant" :content [{:type :text :text "there"}]})])
+          state   (atom {:ready? true
+                         :pending {}
+                         :subscribed-topics #{"session/resumed" "session/rehydrated" "command-result"}})
+          handler (rpc/make-session-request-handler ctx)
+          input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                       "{:id \"c1\" :kind :request :op \"command\" :params {:text \"/resume " path1 "\"}}\n")
+          {:keys [out-lines]} (run-loop input handler state)
+          frames (parse-frames out-lines)
+          events (filter #(= :event (:kind %)) frames)
+          event-topics (set (map :event events))]
+      (is (contains? event-topics "session/resumed"))
+      (is (contains? event-topics "session/rehydrated"))
+      (is (= path1 (get-in (some #(when (= "session/resumed" (:event %)) %) events)
+                           [:data :session-file])))
+      (is (= [{:role "user" :content "hi"}
+              {:role "assistant" :content [{:type :text :text "there"}]}]
+             (get-in (some #(when (= "session/rehydrated" (:event %)) %) events)
+                     [:data :messages])))))
+
+  (testing "command /tree <session-id> emits session/resumed and session/rehydrated canonical events"
+    (let [cwd     (str (System/getProperty "java.io.tmpdir") "/psi-rpc-tree-" (java.util.UUID/randomUUID))
+          _       (.mkdirs (java.io.File. cwd))
+          ctx     (session/create-context {:cwd cwd})
+          _       (session/new-session-in! ctx)
+          sid1    (:session-id (session/get-session-data-in ctx))
+          path1   (:session-file (session/get-session-data-in ctx))
+          _       (persist/flush-journal! (java.io.File. path1)
+                                          sid1
+                                          cwd
+                                          nil
+                                          nil
+                                          [(persist/message-entry {:role "assistant" :content [{:type :text :text "root"}]})])
+          _       (session/new-session-in! ctx)
+          state   (atom {:ready? true
+                         :pending {}
+                         :subscribed-topics #{"session/resumed" "session/rehydrated" "command-result"}})
+          handler (rpc/make-session-request-handler ctx)
+          input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                       "{:id \"c1\" :kind :request :op \"command\" :params {:text \"/tree " sid1 "\"}}\n")
+          {:keys [out-lines]} (run-loop input handler state)
+          frames (parse-frames out-lines)
+          events (filter #(= :event (:kind %)) frames)
+          event-topics (set (map :event events))]
+      (is (contains? event-topics "session/resumed"))
+      (is (contains? event-topics "session/rehydrated"))
+      (is (= sid1 (get-in (some #(when (= "session/resumed" (:event %)) %) events)
+                          [:data :session-id])))
+      (is (= [{:role "assistant"
+               :content [{:type :text :text "root"}]}]
+             (get-in (some #(when (= "session/rehydrated" (:event %)) %) events)
+                     [:data :messages]))))))
 
 (deftest rpc-multi-session-context-routing-test
   (testing "list_sessions returns context snapshot with active-session-id"

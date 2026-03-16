@@ -1114,7 +1114,8 @@
                         :tool-calls (or restored-tool-calls {})
                         :tool-order (vec (or restored-tool-order []))
                         :session-selector nil
-                        :session-selector-mode nil)
+                        :session-selector-mode nil
+                        :force-clear? true)
                  (set-input-model (charm/text-input-reset (:input state))))
              nil])
           [(-> state
@@ -1246,7 +1247,8 @@
                                              :stream-text nil
                                              :stream-thinking nil
                                              :tool-calls (or restored-tool-calls {})
-                                             :tool-order (vec (or restored-tool-order []))))]
+                                             :tool-order (vec (or restored-tool-order []))
+                                             :force-clear? true))]
               [new-state nil])
             (let [path         (:path chosen)
                   resume-fn    (:resume-fn! state)
