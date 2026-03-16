@@ -16,7 +16,8 @@ config {
     built_in_slash_commands: Set<String> = {
         "/quit", "/exit", "/resume", "/tree", "/new", "/status", "/history",
         "/help", "/?", "/prompts", "/skills", "/remember",
-        "/login", "/logout", "/model", "/thinking"
+        "/login", "/logout", "/model", "/thinking",
+        "/worktree", "/jobs", "/job", "/cancel-job"
     }
 
     canonical_thinking_levels: Set<String> = {"off", "minimal", "low", "medium", "high", "xhigh"}
@@ -109,11 +110,24 @@ rule NewSessionCommandCreatesFreshSession {
 
 rule InspectionCommandsReturnText {
     when: SlashCommandDispatchRequested(text)
-    requires: text in {"/status", "/history", "/help", "/?", "/prompts", "/skills"}
+    requires: text in {"/status", "/history", "/help", "/?", "/prompts", "/skills", "/worktree"}
 
     ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{
         type: text,
         message: FormattedCommandText(text)
+    })
+}
+
+rule BackgroundJobCommandsReturnTextOrUsage {
+    when: SlashCommandDispatchRequested(text)
+    requires: text in {"/jobs", "/job", "/cancel-job"} or
+              StartsWith(text, "/jobs ") or
+              StartsWith(text, "/job ") or
+              StartsWith(text, "/cancel-job ")
+
+    ensures: SlashCommandDispatchResultProduced(text, SlashCommandDispatchResult{
+        type: text,
+        message: BackgroundJobCommandResultText(text)
     })
 }
 
@@ -253,6 +267,8 @@ surface PromptSlashCommandContract {
         -- `frontend_action` results and are completed through the frontend action RPC flow.
         -- `/tree <session-id>` remains a backend-direct command so widgets and
         -- power users can switch sessions without opening a selector.
-        -- Unknown slash-prefixed input falls through as `not_command`, enabling
-        -- downstream prompt/template handling when desired.
+        -- `/quit` and `/exit` remain backend-owned terminal actions; frontends exit
+        -- only after receiving the typed `quit` command result.
+        -- Unknown slash-prefixed input currently returns deterministic backend
+        -- `not_command` handling instead of falling through to prompt execution.
 }

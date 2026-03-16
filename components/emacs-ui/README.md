@@ -59,22 +59,30 @@ Emacs subscribes to the default topic set (`psi-rpc-default-topics`):
 
 ## Idle slash commands
 
-When the frontend is **idle** (not streaming), these built-in slash commands are intercepted locally and do **not** fall through to `prompt` RPC:
+When the frontend is **idle** (not streaming), slash-prefixed input is routed to the backend `command` RPC op instead of `prompt`.
+The backend owns slash parsing and returns either:
 
-- `/quit`, `/exit` — close the frontend buffer/process
-- `/resume` — resume prior session (`/resume <path>`), or open selector when no path is provided
-- `/new` — request `new_session`, reset transcript/session rendering state, and continue in the new session
-- `/status` — append deterministic frontend/session diagnostics text
-- `/model` — no-arg form opens a standard `completing-read` model picker (backed by runtime model catalog query data); `/model <provider> <model-id>` dispatches `set_model`
-- `/thinking` — no-arg form opens thinking-level selector prompt; `/thinking <level>` dispatches `set_thinking_level`
-- `/help`, `/?` — render slash command help
+- `command-result` — terminal actions and text results
+- `ui/frontend-action-requested` — selector/picker flows completed by Emacs and submitted via `frontend_action_result`
 
-Model picker scope can be customized via `psi-emacs-model-selector-provider-scope`:
+Common backend-owned slash commands include:
+
+- `/quit`, `/exit` — backend emits `command-result` type `quit`; Emacs closes the frontend buffer/process when that result arrives
+- `/resume` — backend requests a resume selector for `/resume`, or handles direct `/resume <path>` through backend command dispatch
+- `/tree` — backend requests a live-session selector for `/tree`, or switches directly for `/tree <session-id>`
+- `/new` — backend starts a fresh session and emits canonical command/session/footer/host updates
+- `/status`, `/history`, `/help`, `/?`, `/prompts`, `/skills`, `/worktree` — backend returns deterministic text
+- `/jobs`, `/job`, `/cancel-job` — backend returns deterministic background-job text/usage results
+- `/model` — backend requests a model picker for `/model`, or handles `/model <provider> <model-id>` directly
+- `/thinking` — backend requests a thinking-level picker for `/thinking`, or handles `/thinking <level>` directly
+- `/login`, `/logout`, `/remember`, and extension commands — backend-owned command results
+
+Model picker scope can still be customized via `psi-emacs-model-selector-provider-scope`:
 
 - `all` (default) — show all runtime models
 - `authenticated` — show only models whose providers have configured auth
 
-Unknown slash commands (for example `/foo`) are not handled locally and are sent through the normal `prompt` RPC path.
+Unknown slash commands are currently sent to backend `command` handling as well; the backend responds with deterministic not-a-command feedback rather than falling back to `prompt`.
 
 ## Dedicated input area + history
 
@@ -101,8 +109,8 @@ History behavior:
 `psi-emacs-mode` installs a CAPF (`psi-emacs-prompt-capf`) for compose input.
 
 - `/...` completes slash commands (category `psi_prompt`)
-  - includes idle-local commands (`/resume`, `/new`, `/status`, …)
-  - includes common backend commands (`/history`, `/prompts`, `/skills`, `/login`, `/logout`, `/remember`, `/skill:`)
+  - includes backend-owned built-ins (`/resume`, `/new`, `/status`, `/history`, `/model`, `/thinking`, …)
+  - includes common backend commands (`/prompts`, `/skills`, `/login`, `/logout`, `/remember`, `/skill:`)
   - includes discovered extension commands from backend introspection
 - `@...` completes file references (category `psi_reference`)
   - searches current working directory and project root (when distinct)
@@ -131,13 +139,13 @@ You can tune styles per completion category:
         (psi_reference (styles basic partial-completion substring))))
 ```
 
-Unknown slash commands still fall through to normal `prompt` RPC dispatch when submitted.
+Unknown slash commands do not currently fall through to `prompt`; they are submitted to backend `command` handling.
 
 ## Run-state model
 
 Frontend routing is driven by an explicit run-state:
 
-- `idle` — compose send/queue routes through idle slash interception first, then `prompt`
+- `idle` — non-slash input routes to `prompt`; slash-prefixed input routes to backend `command`
 - `streaming` — compose send/queue routes to `prompt_while_streaming`
 - `reconnecting` — transient state during manual reconnect (cleared to `idle` once transport is ready)
 - `error` — set on RPC errors or streaming watchdog timeout
@@ -152,7 +160,7 @@ and retry attempt. `/status` also includes `last-error: ...` when present.
 
 ### Transition sketch
 
-- `idle -> streaming`: send/queue dispatches `prompt` (non-slash or non-intercepted slash)
+- `idle -> streaming`: send/queue dispatches `prompt` for non-slash input or `command` for slash input
 - `streaming -> idle`: `assistant/message` finalize or explicit abort
 - `streaming -> error`: watchdog timeout (no streaming progress for `psi-emacs-stream-timeout-seconds`)
 - `* -> error`: RPC error event/callback
@@ -179,7 +187,7 @@ Streaming send/queue behavior:
 - streaming progress events reset a watchdog timer
 - watchdog timeout sends `abort`, upserts a deterministic transcript error line, and sets run-state to `error`
 
-Idle slash interception applies only to idle compose send/queue paths.
+Idle slash routing to backend `command` applies only to idle compose send/queue paths.
 
 ## Transport readiness guard
 

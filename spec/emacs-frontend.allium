@@ -275,7 +275,8 @@ rule InteractiveWidgetsUseSharedContract {
 }
 
 rule NewSessionResetPreservesBannerBeforeReplay {
-    when: SlashCommandHandled(frontend, command: "/new")
+    when: RpcEventReceived(frontend.rpc, "command-result", payload)
+    requires: payload.type = "new_session"
 
     ensures: frontend.buffer.transcript_banner = "ψ"
     ensures: frontend.buffer.cursor_in_input_area = true
@@ -451,6 +452,8 @@ surface EmacsFrontendActionApi {
         -- Candidate lists are supplied entirely by the backend in the action payload.
         -- Overlapping frontend-action requests are handled by the frontend; the newest request wins.
         -- This replaces prior frontend-local slash routing for /tree, /resume, /model, and /thinking.
+        -- `/quit` and `/exit` remain backend-owned slash commands whose terminal effect
+        -- is applied only after a `command-result` event with type `quit`.
 }
 
 open question "Should reconnect optionally offer session selection before clearing buffer?"
