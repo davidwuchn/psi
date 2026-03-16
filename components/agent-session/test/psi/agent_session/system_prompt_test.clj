@@ -150,6 +150,20 @@
       (is (str/includes? prompt "<prompt_contribution"))
       (is (str/includes? prompt "Use stable IDs"))))
 
+  (testing "runtime metadata is emitted after extension prompt contributions"
+    (let [prompt (sys-prompt/build-system-prompt
+                  {:cwd "/tmp/worktree-demo"
+                   :prompt-contributions [{:id "x"
+                                           :ext-path "/ext/a"
+                                           :section "Hints"
+                                           :content "Use stable IDs"
+                                           :priority 100
+                                           :enabled true}]})
+          contrib-idx (.indexOf prompt "# Extension Prompt Contributions")
+          time-idx    (.indexOf prompt "Current date and time:")]
+      (is (pos? contrib-idx))
+      (is (> time-idx contrib-idx))))
+
   (testing "custom prompt with skills and context"
     (let [skills [{:name "my-skill" :description "My skill"
                    :file-path "/s/SKILL.md" :base-dir "/s"
@@ -161,6 +175,20 @@
       (is (str/starts-with? prompt "Custom base."))
       (is (str/includes? prompt "Context text"))
       (is (str/includes? prompt "<available_skills>")))))
+
+(deftest split-runtime-metadata-tail-test
+  (testing "splits stable prompt from uncached runtime metadata tail"
+    (let [prompt (str "base prompt"
+                      "\n# Extension Prompt Contributions\n\n"
+                      "<prompt_contribution id=\"x\">x</prompt_contribution>"
+                      "\nCurrent date and time: Friday, March 13, 2026 at 11:00:00 am GMT-04:00"
+                      "\nCurrent working directory: /tmp/main"
+                      "\nCurrent worktree directory: /tmp/main")
+          [stable runtime-tail] (sys-prompt/split-runtime-metadata-tail prompt)]
+      (is (str/includes? stable "# Extension Prompt Contributions"))
+      (is (not (str/includes? stable "Current date and time:")))
+      (is (str/includes? runtime-tail "Current date and time:"))
+      (is (str/includes? runtime-tail "Current worktree directory: /tmp/main")))))
 
 (deftest system-prompt-introspectable-test
   (testing "assembled prompt is a string that can be stored and queried"

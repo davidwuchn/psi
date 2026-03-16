@@ -478,7 +478,8 @@
         (is (str/includes? (:base-system-prompt sd) (str "Current worktree directory: " new-cwd)))
         (is (str/includes? (:system-prompt sd) (str "Current working directory: " new-cwd)))
         (is (str/includes? (:system-prompt sd) (str "Current worktree directory: " new-cwd)))
-        (is (not (str/includes? (:system-prompt sd) (str "Current working directory: " old-cwd)))))))
+        (is (not (str/includes? (:system-prompt sd) (str "Current working directory: " old-cwd))))
+        (is (= (:base-system-prompt sd) (:system-prompt sd))))))
 
   (testing "query-in resolves graph capabilities via agent-session bridge"
     (let [ctx    (session/create-context)

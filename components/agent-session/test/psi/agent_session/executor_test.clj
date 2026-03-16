@@ -371,11 +371,19 @@
         tools    [{:name "read"
                    :description "Read file"
                    :parameters "{:type \"object\"}"}]
+        prompt   (str "stable"
+                      "\nCurrent date and time: Friday, March 13, 2026 at 11:00:00 am GMT-04:00"
+                      "\nCurrent working directory: /tmp/main"
+                      "\nCurrent worktree directory: /tmp/main")
         conv     (#'psi.agent-session.executor/agent-messages->ai-conversation
-                  "sys" messages tools {:cache-breakpoints #{:system :tools}})]
+                  prompt messages tools {:cache-breakpoints #{:system :tools}})]
     (is (= [{:kind :text
-             :text "sys"
-             :cache-control {:type :ephemeral}}]
+             :text "stable"
+             :cache-control {:type :ephemeral}}
+            {:kind :text
+             :text (str "\nCurrent date and time: Friday, March 13, 2026 at 11:00:00 am GMT-04:00"
+                        "\nCurrent working directory: /tmp/main"
+                        "\nCurrent worktree directory: /tmp/main")}]
            (:system-prompt-blocks conv)))
     (is (= {:type :ephemeral}
            (:cache-control (first (:tools conv)))))))

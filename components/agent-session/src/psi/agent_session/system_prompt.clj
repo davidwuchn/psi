@@ -134,6 +134,67 @@
       (str base section)
       base)))
 
+(def ^:private runtime-metadata-tail-re
+  #"\nCurrent date and time: .*\nCurrent working directory: .*\nCurrent worktree directory: .*\z")
+
+(defn- current-datetime-string
+  []
+  (let [now (java.time.ZonedDateTime/now)
+        fmt (java.time.format.DateTimeFormatter/ofPattern
+             "EEEE, MMMM d, yyyy 'at' hh:mm:ss a z")]
+    (.format now fmt)))
+
+(defn runtime-metadata-tail
+  "Return the volatile runtime metadata suffix appended after prompt contributions."
+  [cwd]
+  (str "\nCurrent date and time: " (current-datetime-string)
+       "\nCurrent working directory: " cwd
+       "\nCurrent worktree directory: " cwd))
+
+(defn refresh-runtime-metadata-tail
+  "Replace the runtime metadata tail in `prompt` for `cwd` when present."
+  [prompt cwd]
+  (let [tail (runtime-metadata-tail cwd)]
+    (cond
+      (not (string? prompt)) prompt
+      (str/blank? prompt) prompt
+      (re-find runtime-metadata-tail-re prompt)
+      (str/replace prompt runtime-metadata-tail-re tail)
+      :else prompt)))
+
+(defn split-runtime-metadata-tail
+  "Split a prompt into [stable runtime-tail].
+
+   The runtime tail contains current date/time and cwd metadata so callers can
+   exclude it from cached Anthropic system blocks while preserving prompt order."
+  [prompt]
+  (if (not (string? prompt))
+    [prompt nil]
+    (if-let [tail (re-find runtime-metadata-tail-re prompt)]
+      (let [idx (.lastIndexOf ^String prompt ^String tail)]
+        [(subs prompt 0 idx) tail])
+      [prompt nil])))
+
+(defn system-prompt-blocks
+  "Return Anthropic-compatible system prompt blocks.
+
+   When `cache-system?` is true, the stable prompt body is cached while the
+   runtime metadata tail remains uncached."
+  [prompt cache-system?]
+  (when (string? prompt)
+    (let [[stable runtime-tail] (split-runtime-metadata-tail prompt)
+          stable-block          (when (seq stable)
+                                  (cond-> {:kind :text
+                                           :text stable}
+                                    cache-system?
+                                    (assoc :cache-control {:type :ephemeral})))
+          runtime-block         (when (seq runtime-tail)
+                                  {:kind :text
+                                   :text runtime-tail})
+          blocks                (vec (remove nil? [stable-block runtime-block]))]
+      (when (seq blocks)
+        blocks))))
+
 (defn build-system-prompt
   "Build the complete system prompt from all sources.
 
@@ -157,16 +218,10 @@
          tool-names     (or selected-tools ["read" "bash" "edit" "write" "app-query-tool"])
          has-read?      (some #(= "read" %) tool-names)
          has-app-query? (some #(= "app-query-tool" %) tool-names)
-         loaded-skills  (or skills [])
-         loaded-ctx     (or context-files [])
-         loaded-caps    (or graph-capabilities [])
+         loaded-skills   (or skills [])
+         loaded-ctx      (or context-files [])
+         loaded-caps     (or graph-capabilities [])
          loaded-contribs (or prompt-contributions [])
-
-         ;; Date/time stamp
-         now    (java.time.ZonedDateTime/now)
-         fmt    (java.time.format.DateTimeFormatter/ofPattern
-                 "EEEE, MMMM d, yyyy 'at' hh:mm:ss a z")
-         dt-str (.format now fmt)
 
          ;; Tool list
          tools-section
@@ -261,6 +316,4 @@
           (or context-section "")
           (or skills-section "")
           (or contributions-section "")
-          "\nCurrent date and time: " dt-str
-          "\nCurrent working directory: " resolved-cwd
-          "\nCurrent worktree directory: " resolved-cwd))))
+          (runtime-metadata-tail resolved-cwd)))))

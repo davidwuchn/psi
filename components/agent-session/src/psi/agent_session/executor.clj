@@ -36,6 +36,7 @@
    [psi.ai.core :as ai]
    [psi.ai.conversation :as conv]
    [psi.agent-core.core :as agent]
+   [psi.agent-session.system-prompt :as system-prompt]
    [psi.agent-session.tool-output :as tool-output]
    [psi.agent-session.tools :as tools]
    [psi.agent-session.turn-statechart :as turn-sc]))
@@ -130,11 +131,9 @@
                   ;; unknown roles — skip
                     conv)))
               (conv/create {:system-prompt system-prompt
-                            :system-prompt-blocks (when (some? system-prompt)
-                                                    [(cond-> {:kind :text
-                                                              :text system-prompt}
-                                                       system-cache?
-                                                       (assoc :cache-control (maybe-cache-control system-cache?)))])})
+                            :system-prompt-blocks (system-prompt/system-prompt-blocks
+                                                   system-prompt
+                                                   system-cache?)})
               messages)]
     ;; Add agent tools to conversation so the provider includes them in the request
     (reduce (fn [c tool]

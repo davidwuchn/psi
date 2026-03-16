@@ -894,30 +894,11 @@
   [ctx]
   (sorted-prompt-contributions (:prompt-contributions (get-session-data-in ctx))))
 
-(def ^:private runtime-metadata-tail-re
-  #"\nCurrent date and time: .*\nCurrent working directory: .*\nCurrent worktree directory: .*\z")
-
-(defn- refresh-runtime-metadata-tail
-  [prompt cwd]
-  (let [now    (java.time.ZonedDateTime/now)
-        fmt    (java.time.format.DateTimeFormatter/ofPattern
-                "EEEE, MMMM d, yyyy 'at' hh:mm:ss a z")
-        dt-str (.format now fmt)
-        tail   (str "\nCurrent date and time: " dt-str
-                    "\nCurrent working directory: " cwd
-                    "\nCurrent worktree directory: " cwd)]
-    (cond
-      (not (string? prompt)) prompt
-      (str/blank? prompt) prompt
-      (re-find runtime-metadata-tail-re prompt)
-      (str/replace prompt runtime-metadata-tail-re tail)
-      :else prompt)))
-
 (defn- retarget-runtime-prompt-metadata-in!
   [ctx]
   (let [cwd (effective-cwd-in ctx)]
-    (swap-session! ctx update :base-system-prompt refresh-runtime-metadata-tail cwd)
-    (swap-session! ctx update :system-prompt refresh-runtime-metadata-tail cwd)
+    (swap-session! ctx update :base-system-prompt sys-prompt/refresh-runtime-metadata-tail cwd)
+    (swap-session! ctx update :system-prompt sys-prompt/refresh-runtime-metadata-tail cwd)
     (when-let [prompt (:system-prompt (get-session-data-in ctx))]
       (agent/set-system-prompt-in! (:agent-ctx ctx) prompt))
     (get-session-data-in ctx)))
