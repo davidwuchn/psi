@@ -114,11 +114,18 @@ When MODEL-REASONING is non-nil, append an explicit thinking/effort suffix."
 (defun psi-emacs--session-display-name (slot)
   "Return display name for session SLOT map.
 
-Uses :name if non-empty, else falls back to \"(session <8-char id prefix>)\"."
-  (let ((name (psi-emacs--event-data-get slot '(:name name))))
+Supports both event slots (`:id`/`:name`) and backend command payloads
+(`:session-id`/`:session-name`). Uses name if non-empty, else falls back to
+`(session <8-char id prefix>)`."
+  (let ((name (psi-emacs--event-data-get slot '(:name name
+                                                :session-name session-name
+                                                :sessionName sessionName))))
     (if (and (stringp name) (not (string-empty-p (string-trim name))))
         (string-trim name)
-      (let ((id (or (psi-emacs--event-data-get slot '(:id id)) "")))
+      (let ((id (or (psi-emacs--event-data-get slot '(:id id
+                                                      :session-id session-id
+                                                      :sessionId sessionId))
+                    "")))
         (format "(session %s)" (substring id 0 (min 8 (length id))))))))
 
 (defun psi-emacs--session-tree-widget-lines (slots active-id)

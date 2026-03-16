@@ -3747,6 +3747,31 @@ so the old `(eq role :user)' check always fell through to the assistant branch."
                  (psi-emacs--session-display-name
                   '((:id . "abc123456789") (:name . nil))))))
 
+(ert-deftest psi-session-display-name-supports-command-session-keys ()
+  "psi-emacs--session-display-name supports backend command payload key names."
+  (should (equal "Alpha"
+                 (psi-emacs--session-display-name
+                  '((:session-id . "abc123456789") (:session-name . "Alpha")))))
+  (should (equal "(session abc12345)"
+                 (psi-emacs--session-display-name
+                  '((:session-id . "abc123456789") (:session-name . nil))))))
+
+(ert-deftest psi-tree-session-candidates-include-worktree-and-support-command-keys ()
+  "tree candidates expose worktree path and support backend command payload keys."
+  (should (equal '(("Alpha — /repo/alpha ← active" . "abc123456789")
+                   ("  (session def98765) — /repo/beta" . "def987654321"))
+                 (psi-emacs--tree-session-candidates
+                  '(((:session-id . "abc123456789")
+                     (:session-name . "Alpha")
+                     (:worktree-path . "/repo/alpha")
+                     (:is-active . t)
+                     (:parent-session-id . nil))
+                    ((:session-id . "def987654321")
+                     (:session-name . nil)
+                     (:worktree-path . "/repo/beta")
+                     (:parent-session-id . "abc123456789")))
+                  "abc123456789"))))
+
 (ert-deftest psi-tree-capf-includes-tree-command ()
   "'/tree' appears in slash CAPF candidates."
   (with-temp-buffer

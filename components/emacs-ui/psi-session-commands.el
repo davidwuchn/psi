@@ -747,7 +747,10 @@ Failure path appends deterministic assistant-visible feedback, sets
 Returns an alist of (label . session-id)."
   (mapcar
    (lambda (slot)
-     (let* ((id           (psi-emacs--event-data-get slot '(:id id)))
+     (let* ((id           (or (psi-emacs--event-data-get slot '(:id id
+                                                                :session-id session-id
+                                                                :sessionId sessionId))
+                              ""))
             (is-active*   (psi-emacs--event-data-get slot '(:is-active is-active :isActive isActive)))
             (is-active    (or is-active*
                               (and id active-id (equal id active-id))))
@@ -757,8 +760,15 @@ Returns an alist of (label . session-id)."
                                    (fboundp 'psi-emacs--session-display-name))
                               (psi-emacs--session-display-name slot)
                             (or id "(unknown)")))
+            (worktree     (string-trim
+                           (or (psi-emacs--event-data-get slot '(:worktree-path worktree-path
+                                                                 :worktreePath worktreePath
+                                                                 :cwd cwd))
+                               "")))
             (indent       (if parent-id "  " ""))
             (suffix       (concat
+                           (when (not (string-empty-p worktree))
+                             (format " — %s" worktree))
                            (when is-streaming " [streaming]")
                            (when is-active " ← active")))
             (label        (concat indent name suffix)))
