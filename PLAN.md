@@ -304,6 +304,20 @@ Ordered steps toward PSI COMPLETE.
   (for example via resolvers, commands, or runtime status) instead of remaining internal session state only.
 - Keep the current one-way layering: session policy, executor projection, provider-specific wire translation.
 
+### Step 15n.1 — Use captured Anthropic requests to debug the empty text-block failure path
+- Anthropic request telemetry now lands in the same provider capture surface as OpenAI, so future debugging should inspect the live captured request body first instead of inferring request shape from code alone.
+- Reproduce the `messages: text content blocks must be non-empty` failure and confirm which reconstructed conversation message emits an empty Anthropic text block.
+- Keep capture parity across providers when extending diagnostics, so live introspection remains provider-agnostic.
+
+### Step 15n.2 — Continue simplifying provider implementations around small phase helpers
+- Anthropic provider refactor (commit `d06c475`) split the file more cleanly into four phases:
+  - request/message shaping
+  - request header/body assembly
+  - SSE event translation
+  - usage/error handling
+- Follow the same simplification shape when touching provider code again, and consider converging OpenAI/provider-adjacent code toward the same helper boundaries where that reduces inline branching.
+- Preserve current behavior and keep provider-focused tests green while simplifying.
+
 ### Step 15m — Converge Emacs `/tree` selector labels across backend command and event payload shapes ✓ complete
 - Commit `a210c7c` fixes Emacs `/tree` session labeling when the selector is populated from backend command/frontend-action payloads rather than `context/updated` event slots.
 - `psi-emacs--session-display-name` now accepts both payload vocabularies:
