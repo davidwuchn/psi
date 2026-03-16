@@ -56,6 +56,23 @@ The initial cache-breakpoint wiring failed broadly because the executor projecte
 
 That one bad `nil` propagated as wide executor/RPC failure, so optional metadata handling is a high-leverage boundary.
 
+## 2026-03-16 - Session age is best transported as raw timestamp and rendered at the UI boundary (commit `51b669f`)
+
+### λ Put canonical time in the backend payload and relative time in the frontend
+
+For multi-surface session trees, the backend should expose the stable fact (`:created-at`) and let each frontend render the human-friendly age string it wants. That keeps the transport canonical and lets different clients choose different presentations (`53m`, `2h`, exact timestamp, locale-aware text) without changing the session model.
+
+### λ Preserve creation timestamps in runtime registries; otherwise relative-age UI will drift under normal session updates
+
+A context/session index often updates entries repeatedly as focus or streaming state changes. If the index recomputes creation time on upsert, any UI age derived from that field becomes meaningless. The safer pattern is:
+- set creation time once when the session first appears in the registry
+- preserve it on later updates
+- only refresh `updated-at` for ordering/activity semantics
+
+### λ When one UI label combines identity, location, and age, centralize that composition in one helper and reuse it everywhere
+
+The `/tree` widget rows and `/tree` completing-read candidates needed the same combined label shape: name-or-fallback, worktree path, compact age, then status suffixes like active/streaming. The reusable rule is to build one base label helper and let each surface append only its local status markers. That avoids subtle drift where one selector shows richer context than another.
+
 ## 2026-03-16 - Session selector labels should accept both live-event and backend-command payload vocabularies (commit `a210c7c`)
 
 ### λ Frontend selectors should normalize display identity at the boundary, not assume one payload shape
