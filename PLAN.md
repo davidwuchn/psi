@@ -6,6 +6,21 @@ Ordered steps toward PSI COMPLETE.
 
 ## Done
 
+### Step 15f — `/work-done` linear-history workflow ✓ complete
+- Commit `7757920` replaces `/work-merge` with `/work-done` as the user-facing worktree completion command.
+- The workflow now:
+  - caches the default branch on init/session switch
+  - reads the default branch through queryable attrs (`:git.branch/default-branch`, `:psi.agent-session/git-default-branch`)
+  - checks whether the current linked branch already contains the default-branch HEAD
+  - runs a forked sync subagent rebase when that precondition is not yet true
+  - stops with an informative message if the rebase fails
+  - fast-forward merges from the main worktree context, then removes the worktree and deletes the branch
+- User docs/spec/tests were synchronized to `/work-done`.
+- Verification:
+  - `bb clojure:test:extensions --focus extensions.work-on-test`
+  - `bb clojure:test:unit`
+  - `bb lint`
+
 ### Step 15e — Emacs slash E2E frontend-action roundtrip ✓ complete
 - Live Emacs slash verification now covers a backend-requested frontend action, not just text/quit paths.
 - Commit `3c0e668` extends `components/emacs-ui/test/psi-e2e-test.el` to drive:
