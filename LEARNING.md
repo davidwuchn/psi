@@ -17,6 +17,10 @@ The useful precondition is whether the current linked branch already contains th
 
 Resolving the default branch only through a mutation worked mechanically, but it was the wrong shape for a value that the extension wants to cache and re-read on init/session-switch. Exposing it as `:git.branch/default-branch` and bridging that to `:psi.agent-session/git-default-branch` turned it into readable session state instead of an ad hoc imperative lookup.
 
+### λ Caching should prefer readable session state and only fall back to imperative lookup
+
+The best final shape was not “always mutate to resolve the default branch,” but “read the current default branch from queryable session state, and only fall back to the mutation path if the query surface is absent.” That keeps the orchestration code aligned with the model: the default branch is context/session state first, imperative git discovery second.
+
 ## 2026-03-16 - Historical memory should be converged after vocabulary migrations or the repo starts lying about itself (commit `16cb376` / PSL `f013f62`)
 
 ### λ Repo memory becomes misleading fast when architectural terms change in code but not in the accumulated narrative
