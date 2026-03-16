@@ -6,7 +6,40 @@ Ordered steps toward PSI COMPLETE.
 
 ## Done
 
-<<<<<<< HEAD
+### Step 15k — Explicit Emacs `/resume <path>` and `/tree <id>` now use canonical rehydrate events ✓ complete
+- Commit `7383729` converges explicit session-targeting slash commands with the same canonical lifecycle already used by `/new`, bare `/resume`, and bare `/tree`.
+- Backend/RPC changes:
+  - `command` handling for `/resume <path>` now resumes immediately and emits `session/resumed` + `session/rehydrated`
+  - `command` handling for `/tree <session-id>` now switches immediately and emits `session/resumed` + `session/rehydrated`
+  - explicit session-targeting command flows still emit the normal trailing `session/updated`, `footer/updated`, and `context/updated` snapshots
+- Emacs impact:
+  - explicit `/resume <path>` now clears stale transcript/tool state through the canonical rehydrate event path instead of depending on command-only acknowledgement
+  - `/tree <id>` widget/direct command activation now clears and redraws transcript state through the same canonical event contract
+- TUI follow-up included:
+  - `/tree` session switches now request a hard redraw so the screen clears like `/new`
+- Regression coverage added:
+  - RPC command tests for explicit `/resume <path>` and `/tree <session-id>` canonical event emission
+  - Emacs transcript-clear/replay tests for explicit resume and tree-widget session switches
+  - TUI redraw assertions for `/tree` switching paths
+- Verification:
+  - `bb clojure:test:unit --focus psi.agent-session.rpc-test`
+  - `bb emacs:test`
+
+### Step 15j — Anthropic cache should exclude volatile runtime metadata ✓ complete
+- Commit `f28c93f` separates the prompt into a stable body and a runtime metadata tail so Anthropic system caching applies only to the stable body.
+- The runtime tail still appears after extension prompt contributions and still includes:
+  - current date/time
+  - current working directory
+  - current worktree directory
+- `components/agent-session/src/psi/agent_session/executor.clj` now emits Anthropic system prompt blocks as:
+  - cached stable block
+  - uncached runtime metadata block
+- Shared runtime metadata refresh logic now lives in `components/agent-session/src/psi/agent_session/system_prompt.clj` and is reused by session retargeting in `core.clj`.
+- Verification:
+  - `clojure -M:test --focus psi.agent-session.core-test`
+  - focused `bb test` slices for system prompt / executor / Anthropic provider
+  - `clj-kondo --lint components/agent-session/src/psi/agent_session/system_prompt.clj components/agent-session/src/psi/agent_session/core.clj components/agent-session/src/psi/agent_session/executor.clj components/agent-session/test/psi/agent_session/system_prompt_test.clj components/agent-session/test/psi/agent_session/executor_test.clj components/agent-session/test/psi/agent_session/core_test.clj`
+
 ### Step 15i — Emacs session rehydrate lifecycle clears stale buffer state ✓ complete
 - Commit `b3a5769` converges `/new`, `/tree`, and `/resume` on the canonical `session/resumed` + `session/rehydrated` lifecycle.
 - Emacs changes:
@@ -59,23 +92,6 @@ Ordered steps toward PSI COMPLETE.
   - `bb emacs:test`
 
 ---
-
-=======
-### Step 15g — Anthropic cache should exclude volatile runtime metadata ✓ complete
-- Commit `f28c93f` separates the prompt into a stable body and a runtime metadata tail so Anthropic system caching applies only to the stable body.
-- The runtime tail still appears after extension prompt contributions and still includes:
-  - current date/time
-  - current working directory
-  - current worktree directory
-- `components/agent-session/src/psi/agent_session/executor.clj` now emits Anthropic system prompt blocks as:
-  - cached stable block
-  - uncached runtime metadata block
-- Shared runtime metadata refresh logic now lives in `components/agent-session/src/psi/agent_session/system_prompt.clj` and is reused by session retargeting in `core.clj`.
-- Verification:
-  - `clojure -M:test --focus psi.agent-session.core-test`
-  - focused `bb test` slices for system prompt / executor / Anthropic provider
-  - `clj-kondo --lint components/agent-session/src/psi/agent_session/system_prompt.clj components/agent-session/src/psi/agent_session/core.clj components/agent-session/src/psi/agent_session/executor.clj components/agent-session/test/psi/agent_session/system_prompt_test.clj components/agent-session/test/psi/agent_session/executor_test.clj components/agent-session/test/psi/agent_session/core_test.clj`
->>>>>>> 85d871d (λ Record Anthropic runtime-tail cache split in plan/state [psi:psl-auto])
 
 ### Step 15f — `/work-done` linear-history workflow ✓ complete
 - Commit `7757920` replaces `/work-merge` with `/work-done` as the user-facing worktree completion command.
