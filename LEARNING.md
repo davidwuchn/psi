@@ -3,6 +3,7 @@
 
 ---
 
+<<<<<<< HEAD
 ## 2026-03-16 - Explicit session-targeting slash commands must emit the same canonical rehydrate events as selector-driven flows (commit `7383729`)
 
 ### λ Command wrappers for domain transitions should not bypass the transition event contract
@@ -28,6 +29,30 @@ When clearing depends on callback-local success handling instead, widget actions
 The TUI `/tree` bug was not that session state failed to switch; the state had already changed. The missing piece was a one-shot hard redraw so stale terminal rows disappeared when the new render was shorter than the previous one. The reusable lesson is that terminal UIs need both:
 - correct state replacement
 - explicit screen-clearing policy for view contractions after large transcript changes
+=======
+## 2026-03-16 - Direct provider replay is the fastest way to separate abstraction bugs from provider instability in multi-provider reasoning flows
+
+### λ If the exact captured wire request still fails under replay, the conversation abstraction is probably not the root cause
+
+The strongest discriminator in the Anthropic failure investigation was replaying the captured Anthropic `/v1/messages` body directly with the stored OAuth token. Once the same extracted request body produced intermittent `200` and `500` responses, the current bug stopped looking like a deterministic conversation-rebuild defect. A replay that bypasses the abstraction entirely is a high-value test: if it still fails, focus on provider/runtime behavior before blaming message/history normalization.
+
+### λ Cross-provider reasoning should stay transient unless explicitly promoted into conversation history
+
+OpenAI reasoning/thinking deltas and Anthropic thinking blocks can share one transient progress channel (`:thinking-delta`) without becoming part of persisted conversation state. The important guardrail is that final assistant messages and rebuilt provider conversations must be assembled only from durable text/tool/error content, not from streamed reasoning buffers. The useful regression shape is therefore cross-provider:
+- emit OpenAI-style thinking deltas
+- persist the assistant turn
+- rebuild an Anthropic request
+- prove the prior reasoning text is absent from the later request body
+
+### λ The unstable Anthropic axis was current-request thinking with prior tool history, not prompt caching alone
+
+Live bisect replay showed three useful facts:
+- removing current-request `:thinking` made the replay succeed in that run
+- removing prior tool history also made the replay succeed
+- removing `cache_control` did not eliminate the intermittent `500`
+
+That does not prove a full Anthropic root cause, but it narrows the next move: treat `thinking + prior tool history` as the primary risk combination, and treat prompt caching as orthogonal until new evidence says otherwise.
+>>>>>>> c54343a (λ Record Anthropic replay learning [psi:psl-auto])
 
 ## 2026-03-16 - Anthropic prompt caching should isolate volatile runtime metadata into a separate uncached tail (commit `f28c93f`)
 
