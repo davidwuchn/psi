@@ -4,29 +4,24 @@ Ordered steps toward PSI COMPLETE.
 
 ---
 
-## In Progress
+## Done
 
-### Step 15g — Emacs slash-command routing becomes run-state independent
-- Goal: remove the frontend concept of "idle slash commands" and make slash-prefixed compose input route through backend `command` in both idle and streaming states.
-- Spec updates
-  - Update `spec/emacs-frontend.allium` so slash-prefixed `PromptSubmissionRequested` always maps to RPC `command`, while non-slash streaming input remains `prompt_while_streaming`.
-  - Update `spec/prompt-slash-commands.allium` guidance to make run-state-independent frontend routing explicit.
-  - Keep frontend-action contracts (`/tree`, `/resume`, `/model`, `/thinking`) integrated through the existing `frontend_action_result` flow.
-- Emacs implementation plan
-  - Replace idle-only compose dispatch helper with a single slash-first compose dispatcher.
-  - Route `psi-emacs-send-from-buffer` and `psi-emacs-queue-from-buffer` through that dispatcher.
-  - Rename frontend variables/functions/docs away from `idle-slash-*` vocabulary.
-  - Preserve current non-slash streaming behavior (`prompt_while_streaming` steer/queue).
-  - Preserve `/tree` no-snapshot fallback to backend command flow.
-- Verification plan
-  - Update ERTs to assert slash-prefixed input routes to `command` even while streaming.
-  - Add regression coverage that non-slash streaming input still uses `prompt_while_streaming`.
-  - Run `bb emacs:test`.
-  - Run `allium check` on touched specs, then broader spec check if needed.
+### Step 15g — Emacs slash-command routing becomes run-state independent ✓ complete
+- Commit `1bd1f17` removes the frontend concept of idle-only slash commands.
+- Slash-prefixed compose input now routes to backend `command` in both idle and streaming states.
+- Non-slash streaming input still routes through `prompt_while_streaming` with steer/queue behavior.
+- Spec/docs/code/test surfaces were converged:
+  - `spec/emacs-frontend.allium` now models slash-first compose routing explicitly.
+  - `spec/prompt-slash-commands.allium` now states slash routing is run-state independent in the frontend.
+  - Emacs compose dispatch now uses one slash-first dispatcher for send/queue.
+  - Emacs helper/test/doc vocabulary was renamed away from `idle-slash-*`.
+  - `/tree` preserves backend fallback when no local context snapshot exists.
+- Verification:
+  - `allium check spec/emacs-frontend.allium spec/prompt-slash-commands.allium`
+  - `bb emacs:test`
 
 ---
 
-## Done
 
 ### Step 15f — `/work-done` linear-history workflow ✓ complete
 - Commit `7757920` replaces `/work-merge` with `/work-done` as the user-facing worktree completion command.
