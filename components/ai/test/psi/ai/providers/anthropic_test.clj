@@ -68,6 +68,34 @@
       (is (= {:type "ephemeral"}
              (get-in body [:tools 0 :cache_control]))))))
 
+(deftest stream-anthropic-captures-provider-request-and-response-test
+  (testing "Anthropic streaming emits provider request/response captures"
+    (let [model           (models/get-model :sonnet-4.6)
+          convo           (-> (conv/create "sys")
+                              (conv/add-user-message "hello"))
+          request-capture (atom nil)
+          reply-captures  (atom [])
+          sse             (str (sse-line "message_start" {:type "message_start"})
+                               (sse-line "message_stop" {:type "message_stop"}))]
+      (with-redefs [http/post (fn [_url _req]
+                                {:body (stream-body sse)})]
+        (anthropic/stream-anthropic
+         convo model {:api-key "test-key"
+                      :on-provider-request  #(reset! request-capture %)
+                      :on-provider-response #(swap! reply-captures conj %)}
+         (fn [_] nil)))
+
+      (is (= :anthropic (:provider @request-capture)))
+      (is (= :anthropic-messages (:api @request-capture)))
+      (is (= "claude-sonnet-4-6"
+             (get-in @request-capture [:request :body :model])))
+      (is (= "***REDACTED***"
+             (get-in @request-capture [:request :headers "x-api-key"])))
+      (is (pos? (count @reply-captures)))
+      (is (some #(= "message_start"
+                    (get-in % [:event :type]))
+                @reply-captures)))))
+
 ;; ── SSE parser — thinking block routing ─────────────────────────────────────
 
 (defn- run-stream [sse-str model options]

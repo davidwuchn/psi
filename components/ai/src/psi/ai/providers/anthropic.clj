@@ -242,6 +242,62 @@
     {:headers (request-headers api-key thinking)
      :body    (json/generate-string body)}))
 
+(defn- safe-call!
+  [f payload]
+  (when (fn? f)
+    (try
+      (f payload)
+      (catch Exception _
+        nil))))
+
+(defn- redact-secret
+  [value]
+  (when (string? value)
+    (str "***REDACTED***"
+         (when (> (count value) 20)
+           (str " (len=" (count value) ")")))))
+
+(defn- redact-authorization
+  [value]
+  (when (string? value)
+    (str "Bearer "
+         (redact-secret (str/replace value #"^Bearer\s+" "")))))
+
+(defn- redact-request-headers
+  [headers]
+  (cond-> headers
+    (contains? headers "Authorization")
+    (assoc "Authorization"
+           (redact-authorization (get headers "Authorization")))
+
+    (contains? headers "x-api-key")
+    (assoc "x-api-key"
+           (redact-secret (get headers "x-api-key")))))
+
+(defn- parse-json-body-safe
+  [body]
+  (try
+    (json/parse-string (str (or body "")) true)
+    (catch Exception _
+      (str (or body "")))))
+
+(defn- capture-request!
+  [options url request]
+  (safe-call! (:on-provider-request options)
+              {:provider :anthropic
+               :api :anthropic-messages
+               :url url
+               :request {:headers (redact-request-headers (:headers request))
+                         :body (parse-json-body-safe (:body request))}}))
+
+(defn- capture-response!
+  [options url event]
+  (safe-call! (:on-provider-response options)
+              {:provider :anthropic
+               :api :anthropic-messages
+               :url url
+               :event event}))
+
 (defn parse-sse-line
   "Parse a Server-Sent Events `data:` line; returns nil for non-data lines."
   [line]
@@ -347,7 +403,8 @@
      {:type :error           :error-message \"...\"}
    "
   [conversation model options consume-fn]
-  (let [request     (build-request conversation model options)
+  (let [url         (str (:base-url model) "/v1/messages")
+        request     (build-request conversation model options)
         block-types (atom {})
         usage-acc   (atom {:input-tokens       0
                            :output-tokens      0
@@ -355,11 +412,13 @@
                            :cache-write-tokens 0})
         done?       (atom false)]
     (try
-      (let [response (http/post (str (:base-url model) "/v1/messages")
+      (capture-request! options url request)
+      (let [response (http/post url
                                 (merge request {:as :stream}))]
         (with-open [reader (io/reader (:body response))]
           (doseq [line (line-seq reader)]
             (when-let [event-data (parse-sse-line line)]
+              (capture-response! options url event-data)
               (case (:type event-data)
                 "message_start"
                 (do
@@ -401,9 +460,11 @@
               http-status (:status data)
               msg         (or (parse-api-error (:body data))
                               (ex-message e)
-                              (str e))]
-          (consume-fn (cond-> {:type :error :error-message msg}
-                        http-status (assoc :http-status http-status))))))))
+                              (str e))
+              err         (cond-> {:type :error :error-message msg}
+                            http-status (assoc :http-status http-status))]
+          (capture-response! options url err)
+          (consume-fn err))))))
 
 (def provider
   {:name   :anthropic
