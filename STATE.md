@@ -4,6 +4,8 @@ Current truth about the Psi system.
 
 ---
 
+- ✓ Anthropic prompt caching now flows from session policy to provider wire shape (2026-03-16, commit `0c57fcf`): session state carries `:cache-breakpoints` (default `#{:system}`), executor conversation reconstruction projects that policy into `:system-prompt-blocks` and tool `:cache-control`, and `components/ai/src/psi/ai/providers/anthropic.clj` emits Anthropic `cache_control` only for supported directives (`{:type :ephemeral}`). Shared conversation/schema/spec layers were synchronized around block-form system prompts so provider request metadata can be attached without losing the flat `:system-prompt` view. Full verification green via `bb test`.
+
 - ✓ Anthropic provider control flow is now factored around smaller phase helpers (2026-03-16, commit `d06c475`): `components/ai/src/psi/ai/providers/anthropic.clj` now separates message transformation, request/header assembly, SSE content-block event translation, and usage/API-error handling into dedicated helpers instead of keeping that branching inline inside `transform-messages`, `build-request`, and `stream-anthropic`. Focused provider verification remains green (`psi.ai.providers.anthropic-test`), and lint is clean.
 
 - ✓ Prompt memory now includes an explicit `LEARNING.md` inclusion rule (2026-03-16, commit `6ab9a31`): `AGENTS.md` now states that `LEARNING.md` should contain actual learned context that is informative and not trivially inferable from the repository contents. Follow-up memory updates should therefore prefer reusable project-specific lessons over rote restatement of code or commit facts.

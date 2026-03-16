@@ -237,6 +237,13 @@ Ordered steps toward PSI COMPLETE.
 
 ## Next
 
+### Step 15n — Expose session cache-breakpoint policy on the live query/runtime surface
+- Anthropic prompt caching now works end-to-end in the executor/provider path:
+  session `:cache-breakpoints` → conversation prompt/tool metadata → Anthropic `cache_control`.
+- Follow-up convergence should decide whether that policy needs a first-class user/query surface
+  (for example via resolvers, commands, or runtime status) instead of remaining internal session state only.
+- Keep the current one-way layering: session policy, executor projection, provider-specific wire translation.
+
 ### Step 15m — Continue simplifying provider implementations around small phase helpers
 - Anthropic provider refactor (commit `d06c475`) split the file more cleanly into four phases:
   - request/message shaping
