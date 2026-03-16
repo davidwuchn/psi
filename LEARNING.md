@@ -23,6 +23,20 @@ Pulling values like the Anthropic API version and beta header fragments into nam
 
 The right simplification target was not to invent a new abstraction over provider streaming, but to keep `transform-messages`, `build-request`, and `stream-anthropic` as the public shape while pushing repetitive detail behind small helpers. That keeps provider-focused tests meaningful: they still verify the same observable request/event behavior while the internal branching becomes easier to inspect and change.
 
+## 2026-03-16 - Footer usage labels should become more explicit as provider-specific token classes appear (commit `f8336d4`)
+
+### λ Single-letter footer labels stop scaling once multiple token classes coexist
+
+`↑` and `↓` work because they are visually distinct and already semantically loaded as input/output. Cache token classes were different: single-letter `R` / `W` were short, but too opaque once the footer also had cost, context, provider, and model metadata. Moving to `CR` / `CW` kept the footer compact while making the cache meaning legible without decoding project-specific shorthand.
+
+### λ The right place to clarify provider-specific usage is the final user-facing projection, not the accounting pipeline
+
+The underlying usage model and session resolver surface were already correct: provider code emitted cache-read/cache-write totals, session resolvers aggregated them, and RPC/footer payloads carried them through. The ambiguity lived only in the final display label. That is a useful reminder that some convergence work is projection work, not data-model work.
+
+### λ Footer labels should be terse but self-explanatory under live scanning
+
+A footer is scanned, not studied. Labels therefore need a stronger standard than internal attr names or test fixture keys: they should still be understandable when seen in isolation during live use. `CR` / `CW` hit a better balance than longer prose labels, while staying short enough to preserve footer density.
+
 ## 2026-03-16 - Prompt caching is most stable when cache intent lives in shared prompt units, not provider-local switches (commit `0c57fcf`)
 
 ### λ Session cache policy should project into shared conversation shape before provider translation
