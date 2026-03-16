@@ -164,9 +164,14 @@ The useful precondition is whether the current linked branch already contains th
 
 ### λ Default branch belongs on the query surface when workflows depend on it repeatedly
 
-Resolving the default branch only through a mutation worked mechanically, but it was the wrong shape for a value that the extension wants to cache and re-read on init/session-switch. Exposing it as `:git.branch/default-branch` and bridging that to `:psi.agent-session/git-default-branch` turned it into readable session state instead of an ad hoc imperative lookup.
+Resolving the default branch only through a mutation worked mechanically, but it was the wrong shape for a value that the extension wants to cache and re-read on init/session-switch. Exposing it as `:git.branch/default-branch` turned it into readable session state instead of an ad hoc imperative lookup.
 
 ### λ Caching should prefer readable session state and only fall back to imperative lookup
+
+### λ Remove compatibility bridges once the direct query surface is stable
+
+The worktree/default-branch bridge attrs in `:psi.agent-session/*` were useful while the query surface was settling, but once session-root queries could resolve `:git.worktree/*` and `:git.branch/default-branch` directly they became duplicate names with extra maintenance cost. Moving runtime consumers to the canonical attrs and deleting the bridge resolvers simplified the graph surface, tests, and extension code without losing capability.
+
 
 The best final shape was not “always mutate to resolve the default branch,” but “read the current default branch from queryable session state, and only fall back to the mutation path if the query surface is absent.” That keeps the orchestration code aligned with the model: the default branch is context/session state first, imperative git discovery second.
 
@@ -826,7 +831,7 @@ Once a session can move away from process cwd, `:cwd` in the session header is n
 
 ### λ Session-root attrs in extension queries depend on cross-domain resolvers, not only agent-session-local ones
 
-`/work-on` asked the extension API query path for `:psi.agent-session/git-worktree-current`, but the isolated qctx built by `register-resolvers-in!` only loaded `resolvers/all-resolvers`. The bridge resolver for `:psi.agent-session/git-worktree-current` exists there, but its dependency `:git.worktree/current` lives in history resolvers. Registering only the local bridge layer created a graph with the top-level attr name present in code but unreachable at runtime.
+`/work-on` asked the extension API query path for `:git.worktree/current`, but the isolated qctx built by `register-resolvers-in!` only loaded `resolvers/all-resolvers`. The attr was referenced from agent-session code, but its dependency chain still runs through history resolvers. Registering only the local agent-session layer created a graph with the top-level attr name present in code but unreachable at runtime.
 
 ### λ Isolated query contexts should reuse the same canonical resolver surface as session-root query-in
 

@@ -305,18 +305,18 @@
       (when (:git.worktree/inside-repo? result)
         (is (map? (:git.worktree/current result)))))))
 
-(deftest session-git-worktree-bridge-query-test
-  (testing "session bridge exposes namespaced git worktree attrs"
-    (let [result (q [:psi.agent-session/git-worktrees
-                     :psi.agent-session/git-worktree-current
-                     :psi.agent-session/git-worktree-count
-                     :psi.agent-session/git-default-branch])]
-      (is (vector? (:psi.agent-session/git-worktrees result)))
-      (is (integer? (:psi.agent-session/git-worktree-count result)))
-      (is (map? (:psi.agent-session/git-default-branch result)))
-      (is (string? (get-in result [:psi.agent-session/git-default-branch :branch])))
-      (when (pos? (:psi.agent-session/git-worktree-count result))
-        (is (map? (:psi.agent-session/git-worktree-current result))))))
+(deftest session-git-worktree-query-test
+  (testing "session root resolves git worktree + default-branch attrs directly"
+    (let [result (q [:git.worktree/list
+                     :git.worktree/current
+                     :git.worktree/count
+                     :git.branch/default-branch])]
+      (is (vector? (:git.worktree/list result)))
+      (is (integer? (:git.worktree/count result)))
+      (is (map? (:git.branch/default-branch result)))
+      (is (string? (get-in result [:git.branch/default-branch :branch])))
+      (when (pos? (:git.worktree/count result))
+        (is (map? (:git.worktree/current result))))))
 
   (testing ":psi.agent-session/cwd prefers session worktree-path"
     (let [ctx    (session/create-context {:cwd "/repo/main"
@@ -417,17 +417,17 @@
           _      (session/register-resolvers-in! qctx false)
           _      (session/register-mutations-in! qctx true)
           result (query/query-in qctx {:psi/agent-session-ctx ctx}
-                                 [:psi.agent-session/git-worktrees
-                                  :psi.agent-session/git-worktree-current
-                                  :psi.agent-session/git-worktree-count
-                                  :psi.agent-session/git-default-branch])]
-      (is (contains? result :psi.agent-session/git-worktrees)
-          "git-worktrees resolvable via isolated qctx (requires history resolvers)")
-      (is (contains? result :psi.agent-session/git-worktree-current)
-          "git-worktree-current resolvable via isolated qctx (requires history resolvers)")
-      (is (integer? (:psi.agent-session/git-worktree-count result))
-          "git-worktree-count is an integer via isolated qctx")
-      (is (contains? result :psi.agent-session/git-default-branch)
-          "git-default-branch resolvable via isolated qctx"))))
+                                 [:git.worktree/list
+                                  :git.worktree/current
+                                  :git.worktree/count
+                                  :git.branch/default-branch])]
+      (is (contains? result :git.worktree/list)
+          "git.worktree/list resolvable via isolated qctx (requires history resolvers)")
+      (is (contains? result :git.worktree/current)
+          "git.worktree/current resolvable via isolated qctx (requires history resolvers)")
+      (is (integer? (:git.worktree/count result))
+          "git.worktree/count is an integer via isolated qctx")
+      (is (contains? result :git.branch/default-branch)
+          "git.branch/default-branch resolvable via isolated qctx"))))
 
 

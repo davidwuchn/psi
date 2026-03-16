@@ -24,8 +24,9 @@
 - λ Δ `/work-done` now preserves linear history by checking fast-forwardability onto the cached default branch, auto-rebasing via a forked sync subagent when needed, then fast-forward merging and cleaning up the worktree/branch.
 - λ Δ Added default-branch query surfaces:
   - history resolver `:git.branch/default-branch`
-  - agent-session bridge attr `:psi.agent-session/git-default-branch`
+  - direct root attr `:git.branch/default-branch`
 - λ Δ Synced worktree docs/spec/tests to the `/work-done` workflow.
+- λ Δ Removed redundant `:psi.agent-session/git-*` worktree/default-branch bridge attrs; runtime consumers now query `:git.worktree/*` and `:git.branch/default-branch` directly from session root.
 - ✓ Verification:
   - `bb clojure:test:extensions --focus extensions.work-on-test`
   - `bb clojure:test:unit`
@@ -134,7 +135,7 @@
 - λ Δ Added `spec/git-worktrees.allium` and Step 11a acceptance checklist in `PLAN.md`.
 - λ Δ Implemented git worktree query surface:
   - history attrs: `:git.worktree/list`, `:git.worktree/current`, `:git.worktree/count`, `:git.worktree/inside-repo?`
-  - session bridge attrs: `:psi.agent-session/git-worktrees`, `:psi.agent-session/git-worktree-current`, `:psi.agent-session/git-worktree-count`
+  - direct session-root attrs: `:git.worktree/list`, `:git.worktree/current`, `:git.worktree/count`
 - Δ Added `/worktree` slash command and `/status` worktree identity surfacing.
 - Δ Added graph/introspection coverage tests for worktree resolvers/attrs.
 - Δ Added worktree parse-failure telemetry marker (`git.worktree.parse_failed`) with degradation-to-empty behavior and tests.

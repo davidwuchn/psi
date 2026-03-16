@@ -293,18 +293,12 @@
 
 (deftest worktree-attr-discovery-and-query-contract-test
   (testing "worktree attrs are queryable from session root"
-    (let [git-result (q [:git.worktree/list
-                         :git.worktree/current
-                         :git.worktree/count
-                         :git.worktree/inside-repo?])
-          session-result (q [:psi.agent-session/git-worktrees
-                             :psi.agent-session/git-worktree-current
-                             :psi.agent-session/git-worktree-count])]
-      (is (contains? git-result :git.worktree/list))
-      (is (contains? git-result :git.worktree/current))
-      (is (contains? git-result :git.worktree/count))
-      (is (contains? git-result :git.worktree/inside-repo?))
-      (is (contains? session-result :psi.agent-session/git-worktrees))
-      (is (contains? session-result :psi.agent-session/git-worktree-current))
-      (is (contains? session-result :psi.agent-session/git-worktree-count))
-      (is (integer? (:psi.agent-session/git-worktree-count session-result))))))
+    (let [result (q [:git.worktree/list
+                     :git.worktree/current
+                     :git.worktree/count
+                     :git.worktree/inside-repo?])]
+      (is (contains? result :git.worktree/list))
+      (is (contains? result :git.worktree/current))
+      (is (contains? result :git.worktree/count))
+      (is (contains? result :git.worktree/inside-repo?))
+      (is (integer? (:git.worktree/count result))))))

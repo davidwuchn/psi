@@ -222,6 +222,7 @@ rule DefaultBranchCachedForContext {
     when: ExtensionInitialized("work-on") or SessionSwitchCompleted()
     requires: worktrees/GitWorktreeRegistry.has_current
 
+    ensures: EqlAttributeResolvable(":git.branch/default-branch")
     ensures: CachedDefaultBranch() = git/DefaultBranchRequested().branch
 }
 

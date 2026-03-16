@@ -26,8 +26,8 @@
    :psi.agent-session/cwd
    :psi.agent-session/system-prompt
    :psi.agent-session/host-sessions
-   :psi.agent-session/git-worktree-current
-   :psi.agent-session/git-worktrees])
+   :git.worktree/current
+   :git.worktree/list])
 
 (defn- query!
   [q]
@@ -73,8 +73,8 @@
 (defn- current-main-worktree
   []
   (let [d        (current-session-query)
-        worktrees (or (:psi.agent-session/git-worktrees d) [])
-        current  (:psi.agent-session/git-worktree-current d)]
+        worktrees (or (:git.worktree/list d) [])
+        current  (:git.worktree/current d)]
     (or (some #(when (= (get % :git.worktree/path)
                         (get current :git.worktree/path))
                  %)
@@ -97,7 +97,7 @@
 
 (defn- find-worktree-by-path
   [worktree-path]
-  (let [worktrees (or (:psi.agent-session/git-worktrees (current-session-query)) [])]
+  (let [worktrees (or (:git.worktree/list (current-session-query)) [])]
     (some (fn [wt]
             (when (= worktree-path (:git.worktree/path wt))
               wt))
@@ -137,8 +137,8 @@
         fallback  (or (:git.worktree/branch-name main-wt)
                       (:git.worktree/branch-name current-wt)
                       "main")
-        queried   (:psi.agent-session/git-default-branch
-                   (query! [:psi.agent-session/git-default-branch]))
+        queried   (:git.branch/default-branch
+                   (query! [:git.branch/default-branch]))
         result    (or queried
                       (when (seq main-path)
                         (mutate! 'git.branch/default
@@ -157,7 +157,7 @@
 (defn- refresh-default-branch-cache!
   []
   (let [session    (current-session-query)
-        current-wt (:psi.agent-session/git-worktree-current session)
+        current-wt (:git.worktree/current session)
         main-wt    (or (current-main-worktree) current-wt)]
     (if (or (nil? current-wt) (nil? main-wt))
       (do
@@ -288,7 +288,7 @@
 
       :else
       (let [session    (current-session-query)
-            current-wt (:psi.agent-session/git-worktree-current session)
+            current-wt (:git.worktree/current session)
             main-wt    (or (current-main-worktree)
                            current-wt)]
         (cond
@@ -358,7 +358,7 @@
 (defn work-done!
   []
   (let [session        (current-session-query)
-        current-wt     (:psi.agent-session/git-worktree-current session)
+        current-wt     (:git.worktree/current session)
         current-path   (:git.worktree/path current-wt)
         current-branch (:git.worktree/branch-name current-wt)
         main-wt        (current-main-worktree)]
@@ -396,7 +396,7 @@
 (defn work-rebase!
   []
   (let [session        (current-session-query)
-        current-wt     (:psi.agent-session/git-worktree-current session)
+        current-wt     (:git.worktree/current session)
         current-path   (:git.worktree/path current-wt)
         current-branch (:git.worktree/branch-name current-wt)
         main-wt        (current-main-worktree)
@@ -422,8 +422,8 @@
 (defn work-status-text
   []
   (let [session   (current-session-query)
-        current   (:psi.agent-session/git-worktree-current session)
-        worktrees (or (:psi.agent-session/git-worktrees session) [])
+        current   (:git.worktree/current session)
+        worktrees (or (:git.worktree/list session) [])
         linked    (remove #(= (:git.worktree/path %) (:git.worktree/path (current-main-worktree))) worktrees)]
     (str "Active worktrees:\n"
          (if (seq linked)

@@ -46,7 +46,7 @@
                              :psi.agent-session/context-tokens
                              :psi.agent-session/context-window
                              :psi.agent-session/context-fraction
-                             :psi.agent-session/git-worktree-current
+                             :git.worktree/current
                              :psi.graph/root-seeds])]
     (str "── Session status ─────────────────────\n"
          "  Phase   : " (:psi.agent-session/phase d) "\n"
@@ -61,7 +61,7 @@
          "  Entries : " (:psi.agent-session/session-entry-count d)
          (when-let [frac (:psi.agent-session/context-fraction d)]
            (str "\n  Context : " (int (* 100 frac)) "%"))
-         (when-let [wt-path (get-in d [:psi.agent-session/git-worktree-current :git.worktree/path])]
+         (when-let [wt-path (get-in d [:git.worktree/current :git.worktree/path])]
            (str "\n  Worktree: " wt-path))
          (when-let [root-seeds (:psi.graph/root-seeds d)]
            (str "\n  Roots   : " (str/join ", " (map name root-seeds))))

@@ -64,7 +64,7 @@ Ordered steps toward PSI COMPLETE.
 - Commit `7757920` replaces `/work-merge` with `/work-done` as the user-facing worktree completion command.
 - The workflow now:
   - caches the default branch on init/session switch
-  - reads the default branch through queryable attrs (`:git.branch/default-branch`, `:psi.agent-session/git-default-branch`)
+  - reads the default branch through the queryable attr `:git.branch/default-branch`
   - checks whether the current linked branch already contains the default-branch HEAD
   - runs a forked sync subagent rebase when that precondition is not yet true
   - stops with an informative message if the rebase fails
@@ -476,12 +476,15 @@ Ordered steps toward PSI COMPLETE.
   - (latest run: 9 tests, 35 assertions, 0 failures)
 
 ### Step 11a — Git worktree visibility (read-only) ✓ complete
+
+Note: the final steady-state surface is the canonical root attrs (`:git.worktree/*`, `:git.branch/default-branch`) directly queryable from session root; the earlier `:psi.agent-session/git-*` compatibility bridges were removed after consumers migrated.
+
 - Spec: `spec/git-worktrees.allium`
 - Goal: make worktree context first-class and queryable before adding mutation/switch flows
 - Acceptance checklist:
   - [x] History layer exposes canonical attrs: `:git.worktree/list`, `:git.worktree/current`, `:git.worktree/count`, `:git.worktree/inside-repo?`
   - [x] Worktree parsing handles git porcelain output for main + linked worktrees, detached heads, and non-git cwd
-  - [x] Agent-session root bridge exposes: `:psi.agent-session/git-worktrees`, `:psi.agent-session/git-worktree-current`, `:psi.agent-session/git-worktree-count`
+  - [x] Session-root queries expose: `:git.worktree/list`, `:git.worktree/current`, `:git.worktree/count`
   - [x] `/worktree` built-in slash command returns deterministic text output (header + summary + entries)
   - [x] `/status` includes current worktree identity (path when resolvable)
   - [x] New attrs are discoverable/queryable through session graph surfaces and covered by resolver/introspection tests

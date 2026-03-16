@@ -12,16 +12,16 @@
    :psi.agent-session/cwd
    :psi.agent-session/system-prompt
    :psi.agent-session/host-sessions
-   :psi.agent-session/git-worktree-current
-   :psi.agent-session/git-worktrees])
+   :git.worktree/current
+   :git.worktree/list])
 
 (defn- with-session-query
   [result-map]
   (fn [q]
     (cond
       (= session-query q) result-map
-      (= [:psi.agent-session/git-default-branch] q)
-      {:psi.agent-session/git-default-branch {:branch "main" :source :fallback}}
+      (= [:git.branch/default-branch] q)
+      {:git.branch/default-branch {:branch "main" :source :fallback}}
       :else {})))
 
 (deftest mechanical-slug-test
@@ -61,11 +61,11 @@
                                              :psi.agent-session/host-sessions [{:psi.session-info/id "s-main"
                                                                                 :psi.session-info/cwd "/repo/main"
                                                                                 :psi.session-info/name "main"}]
-                                             :psi.agent-session/git-worktree-current {:git.worktree/path "/repo/main"
-                                                                                      :git.worktree/branch-name "main"}
-                                             :psi.agent-session/git-worktrees [{:git.worktree/path "/repo/main"
-                                                                                :git.worktree/branch-name "main"
-                                                                                :git.worktree/current? true}]})
+                                             :git.worktree/current {:git.worktree/path "/repo/main"
+                                                                    :git.worktree/branch-name "main"}
+                                             :git.worktree/list [{:git.worktree/path "/repo/main"
+                                                                  :git.worktree/branch-name "main"
+                                                                  :git.worktree/current? true}]})
                                 :mutate-fn (fn [op params]
                                              (swap! mutate-calls conj [op params])
                                              (case op
@@ -115,11 +115,11 @@
                                              :psi.agent-session/host-sessions [{:psi.session-info/id "s-main"
                                                                                 :psi.session-info/cwd "/repo/main"
                                                                                 :psi.session-info/name "main"}]
-                                             :psi.agent-session/git-worktree-current {:git.worktree/path "/repo/main"
-                                                                                      :git.worktree/branch-name "main"}
-                                             :psi.agent-session/git-worktrees [{:git.worktree/path "/repo/main"
-                                                                                :git.worktree/branch-name "main"
-                                                                                :git.worktree/current? true}]})
+                                             :git.worktree/current {:git.worktree/path "/repo/main"
+                                                                    :git.worktree/branch-name "main"}
+                                             :git.worktree/list [{:git.worktree/path "/repo/main"
+                                                                  :git.worktree/branch-name "main"
+                                                                  :git.worktree/current? true}]})
                                 :mutate-fn (fn [op params]
                                              (case op
                                                git.branch/default {:branch "main" :source :fallback}
@@ -166,13 +166,13 @@
                                                                                {:psi.session-info/id "s-existing"
                                                                                 :psi.session-info/cwd "/repo/fix-repeated-thinking-output"
                                                                                 :psi.session-info/name "Fix repeated thinking output in emacs"}]
-                                             :psi.agent-session/git-worktree-current {:git.worktree/path "/repo/main"
-                                                                                      :git.worktree/branch-name "main"}
-                                             :psi.agent-session/git-worktrees [{:git.worktree/path "/repo/main"
-                                                                                :git.worktree/branch-name "main"
-                                                                                :git.worktree/current? true}
-                                                                               {:git.worktree/path "/repo/fix-repeated-thinking-output"
-                                                                                :git.worktree/branch-name "fix-repeated-thinking-output"}]})
+                                             :git.worktree/current {:git.worktree/path "/repo/main"
+                                                                    :git.worktree/branch-name "main"}
+                                             :git.worktree/list [{:git.worktree/path "/repo/main"
+                                                                  :git.worktree/branch-name "main"
+                                                                  :git.worktree/current? true}
+                                                                 {:git.worktree/path "/repo/fix-repeated-thinking-output"
+                                                                  :git.worktree/branch-name "fix-repeated-thinking-output"}]})
                                 :mutate-fn (fn [op _params]
                                              (case op
                                                git.branch/default {:branch "main" :source :fallback}
@@ -210,13 +210,13 @@
                                              :psi.agent-session/host-sessions [{:psi.session-info/id "main-s"
                                                                                 :psi.session-info/cwd "/repo/main"
                                                                                 :psi.session-info/name "main"}]
-                                             :psi.agent-session/git-worktree-current {:git.worktree/path "/repo/feature-x"
-                                                                                      :git.worktree/branch-name "feature-x"}
-                                             :psi.agent-session/git-worktrees [{:git.worktree/path "/repo/main"
-                                                                                :git.worktree/branch-name "main"}
-                                                                               {:git.worktree/path "/repo/feature-x"
-                                                                                :git.worktree/branch-name "feature-x"
-                                                                                :git.worktree/current? true}]})
+                                             :git.worktree/current {:git.worktree/path "/repo/feature-x"
+                                                                    :git.worktree/branch-name "feature-x"}
+                                             :git.worktree/list [{:git.worktree/path "/repo/main"
+                                                                  :git.worktree/branch-name "main"}
+                                                                 {:git.worktree/path "/repo/feature-x"
+                                                                  :git.worktree/branch-name "feature-x"
+                                                                  :git.worktree/current? true}]})
                                 :mutate-fn (fn [op params]
                                              (case op
                                                git.branch/default {:branch "main" :source :fallback}
@@ -259,13 +259,13 @@
                                             {:psi.agent-session/session-id "s-feature"
                                              :psi.agent-session/system-prompt "prompt"
                                              :psi.agent-session/host-sessions []
-                                             :psi.agent-session/git-worktree-current {:git.worktree/path "/repo/feature-x"
-                                                                                      :git.worktree/branch-name "feature-x"}
-                                             :psi.agent-session/git-worktrees [{:git.worktree/path "/repo/main"
-                                                                                :git.worktree/branch-name "main"}
-                                                                               {:git.worktree/path "/repo/feature-x"
-                                                                                :git.worktree/branch-name "feature-x"
-                                                                                :git.worktree/current? true}]})
+                                             :git.worktree/current {:git.worktree/path "/repo/feature-x"
+                                                                    :git.worktree/branch-name "feature-x"}
+                                             :git.worktree/list [{:git.worktree/path "/repo/main"
+                                                                  :git.worktree/branch-name "main"}
+                                                                 {:git.worktree/path "/repo/feature-x"
+                                                                  :git.worktree/branch-name "feature-x"
+                                                                  :git.worktree/current? true}]})
                                 :mutate-fn (fn [op params]
                                              (case op
                                                git.branch/default {:branch "main" :source :fallback}
@@ -314,13 +314,13 @@
                                              :psi.agent-session/host-sessions [{:psi.session-info/id "main-s"
                                                                                 :psi.session-info/cwd "/repo/main"
                                                                                 :psi.session-info/name "main"}]
-                                             :psi.agent-session/git-worktree-current {:git.worktree/path "/repo/feature-x"
-                                                                                      :git.worktree/branch-name "feature-x"}
-                                             :psi.agent-session/git-worktrees [{:git.worktree/path "/repo/main"
-                                                                                :git.worktree/branch-name "main"}
-                                                                               {:git.worktree/path "/repo/feature-x"
-                                                                                :git.worktree/branch-name "feature-x"
-                                                                                :git.worktree/current? true}]})
+                                             :git.worktree/current {:git.worktree/path "/repo/feature-x"
+                                                                    :git.worktree/branch-name "feature-x"}
+                                             :git.worktree/list [{:git.worktree/path "/repo/main"
+                                                                  :git.worktree/branch-name "main"}
+                                                                 {:git.worktree/path "/repo/feature-x"
+                                                                  :git.worktree/branch-name "feature-x"
+                                                                  :git.worktree/current? true}]})
                                 :mutate-fn (fn [op params]
                                              (case op
                                                git.branch/default {:branch "main" :source :fallback}
@@ -366,13 +366,13 @@
                                {:path "/test/work_on.clj"
                                 :query-fn (with-session-query
                                             {:psi.agent-session/session-id "s-feature"
-                                             :psi.agent-session/git-worktree-current {:git.worktree/path "/repo/feature-x"
-                                                                                      :git.worktree/branch-name "feature-x"}
-                                             :psi.agent-session/git-worktrees [{:git.worktree/path "/repo/main"
-                                                                                :git.worktree/branch-name "main"}
-                                                                               {:git.worktree/path "/repo/feature-x"
-                                                                                :git.worktree/branch-name "feature-x"
-                                                                                :git.worktree/current? true}]})
+                                             :git.worktree/current {:git.worktree/path "/repo/feature-x"
+                                                                    :git.worktree/branch-name "feature-x"}
+                                             :git.worktree/list [{:git.worktree/path "/repo/main"
+                                                                  :git.worktree/branch-name "main"}
+                                                                 {:git.worktree/path "/repo/feature-x"
+                                                                  :git.worktree/branch-name "feature-x"
+                                                                  :git.worktree/current? true}]})
                                 :mutate-fn (fn [op _params]
                                              (case op
                                                git.branch/default {:branch "main" :source :fallback}
@@ -402,13 +402,13 @@
                                              :psi.agent-session/host-sessions [{:psi.session-info/id "main-s"
                                                                                 :psi.session-info/cwd "/repo/main"
                                                                                 :psi.session-info/name "main"}]
-                                             :psi.agent-session/git-worktree-current {:git.worktree/path "/repo/feature-x"
-                                                                                      :git.worktree/branch-name "feature-x"}
-                                             :psi.agent-session/git-worktrees [{:git.worktree/path "/repo/main"
-                                                                                :git.worktree/branch-name "main"}
-                                                                               {:git.worktree/path "/repo/feature-x"
-                                                                                :git.worktree/branch-name "feature-x"
-                                                                                :git.worktree/current? true}]})
+                                             :git.worktree/current {:git.worktree/path "/repo/feature-x"
+                                                                    :git.worktree/branch-name "feature-x"}
+                                             :git.worktree/list [{:git.worktree/path "/repo/main"
+                                                                  :git.worktree/branch-name "main"}
+                                                                 {:git.worktree/path "/repo/feature-x"
+                                                                  :git.worktree/branch-name "feature-x"
+                                                                  :git.worktree/current? true}]})
                                 :mutate-fn (fn [op _params]
                                              (case op
                                                git.branch/default {:branch "main" :source :fallback}
@@ -453,12 +453,12 @@
                                {:path "/test/work_on.clj"
                                 :query-fn (with-session-query
                                             {:psi.agent-session/session-id "s-main"
-                                             :psi.agent-session/git-worktree-current {:git.worktree/path "/repo/main"
-                                                                                      :git.worktree/branch-name "main"
-                                                                                      :git.worktree/current? true}
-                                             :psi.agent-session/git-worktrees [{:git.worktree/path "/repo/main"
-                                                                                :git.worktree/branch-name "main"
-                                                                                :git.worktree/current? true}]})})]
+                                             :git.worktree/current {:git.worktree/path "/repo/main"
+                                                                    :git.worktree/branch-name "main"
+                                                                    :git.worktree/current? true}
+                                             :git.worktree/list [{:git.worktree/path "/repo/main"
+                                                                  :git.worktree/branch-name "main"
+                                                                  :git.worktree/current? true}]})})]
       (with-redefs [println (fn [& xs] (reset! printed (apply str xs)))]
         (sut/init api)
         ((get-in @state [:commands "work-done" :handler]) "")
@@ -472,12 +472,12 @@
                                {:path "/test/work_on.clj"
                                 :query-fn (with-session-query
                                             {:psi.agent-session/session-id "s-main"
-                                             :psi.agent-session/git-worktree-current {:git.worktree/path "/repo/main"
-                                                                                      :git.worktree/branch-name "main"
-                                                                                      :git.worktree/current? true}
-                                             :psi.agent-session/git-worktrees [{:git.worktree/path "/repo/main"
-                                                                                :git.worktree/branch-name "main"
-                                                                                :git.worktree/current? true}]})})]
+                                             :git.worktree/current {:git.worktree/path "/repo/main"
+                                                                    :git.worktree/branch-name "main"
+                                                                    :git.worktree/current? true}
+                                             :git.worktree/list [{:git.worktree/path "/repo/main"
+                                                                  :git.worktree/branch-name "main"
+                                                                  :git.worktree/current? true}]})})]
       (with-redefs [println (fn [& xs] (reset! printed (apply str xs)))]
         (sut/init api)
         ((get-in @state [:commands "work-rebase" :handler]) "")
@@ -490,16 +490,16 @@
                                {:path "/test/work_on.clj"
                                 :query-fn (with-session-query
                                             {:psi.agent-session/session-id "s-feature"
-                                             :psi.agent-session/git-worktree-current {:git.worktree/path "/repo/feature-x"
-                                                                                      :git.worktree/branch-name "feature-x"
-                                                                                      :git.worktree/current? true}
-                                             :psi.agent-session/git-worktrees [{:git.worktree/path "/repo/main"
-                                                                                :git.worktree/branch-name "main"}
-                                                                               {:git.worktree/path "/repo/feature-x"
-                                                                                :git.worktree/branch-name "feature-x"
-                                                                                :git.worktree/current? true}
-                                                                               {:git.worktree/path "/repo/bug-y"
-                                                                                :git.worktree/branch-name "bug-y"}]})})]
+                                             :git.worktree/current {:git.worktree/path "/repo/feature-x"
+                                                                    :git.worktree/branch-name "feature-x"
+                                                                    :git.worktree/current? true}
+                                             :git.worktree/list [{:git.worktree/path "/repo/main"
+                                                                  :git.worktree/branch-name "main"}
+                                                                 {:git.worktree/path "/repo/feature-x"
+                                                                  :git.worktree/branch-name "feature-x"
+                                                                  :git.worktree/current? true}
+                                                                 {:git.worktree/path "/repo/bug-y"
+                                                                  :git.worktree/branch-name "bug-y"}]})})]
       (with-redefs [println (fn [& xs] (reset! printed (apply str xs)))]
         (sut/init api)
         ((get-in @state [:commands "work-status" :handler]) "")
@@ -514,12 +514,12 @@
                                {:path "/test/work_on.clj"
                                 :query-fn (with-session-query
                                             {:psi.agent-session/session-id "s-main"
-                                             :psi.agent-session/git-worktree-current {:git.worktree/path "/repo/main"
-                                                                                      :git.worktree/branch-name "main"
-                                                                                      :git.worktree/current? true}
-                                             :psi.agent-session/git-worktrees [{:git.worktree/path "/repo/main"
-                                                                                :git.worktree/branch-name "main"
-                                                                                :git.worktree/current? true}]})})]
+                                             :git.worktree/current {:git.worktree/path "/repo/main"
+                                                                    :git.worktree/branch-name "main"
+                                                                    :git.worktree/current? true}
+                                             :git.worktree/list [{:git.worktree/path "/repo/main"
+                                                                  :git.worktree/branch-name "main"
+                                                                  :git.worktree/current? true}]})})]
       (with-redefs [println (fn [& xs] (reset! printed (apply str xs)))]
         (sut/init api)
         ((get-in @state [:commands "work-status" :handler]) "")
