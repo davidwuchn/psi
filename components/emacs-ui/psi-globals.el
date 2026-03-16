@@ -12,7 +12,7 @@
 
 (defvar psi-emacs--send-request-function nil)
 (defvar psi-emacs--spawn-process-function nil)
-(defvar psi-emacs--idle-slash-command-handler-function nil)
+(defvar psi-emacs--slash-command-handler-function nil)
 
 (defvar psi-emacs-command)
 (defvar psi-emacs-buffer-name)

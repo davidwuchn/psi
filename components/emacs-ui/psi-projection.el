@@ -58,11 +58,11 @@
                            "prompt"
                            `((:message . ,command)))))))
         (cond
-         ((fboundp 'psi-emacs--dispatch-idle-compose-message)
-          (psi-emacs--dispatch-idle-compose-message command))
+         ((fboundp 'psi-emacs--dispatch-compose-message)
+          (psi-emacs--dispatch-compose-message command))
          ((and slash-candidate?
-               (functionp psi-emacs--idle-slash-command-handler-function))
-          (unless (funcall psi-emacs--idle-slash-command-handler-function
+               (functionp psi-emacs--slash-command-handler-function))
+          (unless (funcall psi-emacs--slash-command-handler-function
                            psi-emacs--state
                            command)
             (funcall prompt-fallback)))

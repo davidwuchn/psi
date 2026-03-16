@@ -57,9 +57,9 @@ Emacs subscribes to the default topic set (`psi-rpc-default-topics`):
   - `ui/notification`
   - `footer/updated`
 
-## Idle slash commands
+## Slash commands
 
-When the frontend is **idle** (not streaming), slash-prefixed input is routed to the backend `command` RPC op instead of `prompt`.
+Slash-prefixed input is always routed to the backend `command` RPC op, independent of frontend run-state.
 The backend owns slash parsing and returns either:
 
 - `command-result` — terminal actions and text results
@@ -83,6 +83,8 @@ Model picker scope can still be customized via `psi-emacs-model-selector-provide
 - `authenticated` — show only models whose providers have configured auth
 
 Unknown slash commands are currently sent to backend `command` handling as well; the backend responds with deterministic not-a-command feedback rather than falling back to `prompt`.
+
+This routing is run-state independent: the same slash input goes to backend `command` whether the frontend is idle or already streaming.
 
 ## Dedicated input area + history
 
@@ -146,7 +148,7 @@ Unknown slash commands do not currently fall through to `prompt`; they are submi
 Frontend routing is driven by an explicit run-state:
 
 - `idle` — non-slash input routes to `prompt`; slash-prefixed input routes to backend `command`
-- `streaming` — compose send/queue routes to `prompt_while_streaming`
+- `streaming` — slash-prefixed input still routes to backend `command`; non-slash compose send/queue routes to `prompt_while_streaming`
 - `reconnecting` — transient state during manual reconnect (cleared to `idle` once transport is ready)
 - `error` — set on RPC errors or streaming watchdog timeout
 
@@ -161,6 +163,7 @@ and retry attempt. `/status` also includes `last-error: ...` when present.
 ### Transition sketch
 
 - `idle -> streaming`: send/queue dispatches `prompt` for non-slash input or `command` for slash input
+- `streaming -> streaming`: slash input dispatches `command`; non-slash input dispatches `prompt_while_streaming`
 - `streaming -> idle`: `assistant/message` finalize or explicit abort
 - `streaming -> error`: watchdog timeout (no streaming progress for `psi-emacs-stream-timeout-seconds`)
 - `* -> error`: RPC error event/callback
@@ -187,7 +190,7 @@ Streaming send/queue behavior:
 - streaming progress events reset a watchdog timer
 - watchdog timeout sends `abort`, upserts a deterministic transcript error line, and sets run-state to `error`
 
-Idle slash routing to backend `command` applies only to idle compose send/queue paths.
+Slash routing to backend `command` is independent of frontend run-state.
 
 ## Transport readiness guard
 

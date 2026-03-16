@@ -402,7 +402,7 @@ Returns non-nil when the request was dispatched."
   "Apply post-dispatch input lifecycle for USED-REGION-P and MESSAGE.
 
 When LOCAL-ONLY is non-nil, input is still consumed but transcript copy/history
-entry are skipped (idle slash command interception path)."
+entry are skipped (local command interception path)."
   (when (and psi-emacs--state
              (buffer-live-p (current-buffer)))
     (unless local-only
@@ -416,9 +416,9 @@ entry are skipped (idle slash command interception path)."
 (defun psi-emacs-send-from-buffer (prefix)
   "Send composed text using canonical send semantics.
 
-With PREFIX while streaming, queue override is used.
-Without PREFIX while streaming, steer is used.
-When idle, routes through slash interception then normal prompt fallback."
+Slash-prefixed input is always routed to backend `command`.
+With PREFIX, non-slash streaming input uses queue behavior.
+Without PREFIX, non-slash streaming input uses steer behavior."
   (interactive "P")
   (when (and psi-emacs--state
              (not (psi-emacs--input-separator-marker-valid-p)))
@@ -427,25 +427,14 @@ When idle, routes through slash interception then normal prompt fallback."
   (let* ((used-region-p (use-region-p))
          (message (psi-emacs--composed-text))
          (local-only nil)
-         (dispatched?
-          (if (psi-emacs--streaming-p)
-              (let ((sent?
-                     (psi-emacs--dispatch-request
-                      "prompt_while_streaming"
-                      `((:message . ,message)
-                        (:behavior . ,(if prefix "queue" "steer"))))))
-                (when sent?
-                  (psi-emacs--set-run-state psi-emacs--state 'streaming)
-                  (psi-emacs--reset-stream-watchdog psi-emacs--state))
-                sent?)
-            (let ((result (psi-emacs--dispatch-idle-compose-message message)))
-              (setq local-only (plist-get result :local-only?))
-              (plist-get result :dispatched?)))))
+         (result (psi-emacs--dispatch-compose-message message (if prefix "queue" "steer")))
+         (dispatched? (plist-get result :dispatched?)))
+    (setq local-only (plist-get result :local-only?))
     (when dispatched?
       (psi-emacs--consume-dispatched-input used-region-p message local-only))))
 
 (defun psi-emacs-queue-from-buffer ()
-  "Queue composed text while streaming; use idle slash dispatch when idle."
+  "Queue composed text; slash-prefixed input still uses backend `command`."
   (interactive)
   (when (and psi-emacs--state
              (not (psi-emacs--input-separator-marker-valid-p)))
@@ -454,20 +443,9 @@ When idle, routes through slash interception then normal prompt fallback."
   (let* ((used-region-p (use-region-p))
          (message (psi-emacs--composed-text))
          (local-only nil)
-         (dispatched?
-          (if (psi-emacs--streaming-p)
-              (let ((sent?
-                     (psi-emacs--dispatch-request
-                      "prompt_while_streaming"
-                      `((:message . ,message)
-                        (:behavior . "queue")))))
-                (when sent?
-                  (psi-emacs--set-run-state psi-emacs--state 'streaming)
-                  (psi-emacs--reset-stream-watchdog psi-emacs--state))
-                sent?)
-            (let ((result (psi-emacs--dispatch-idle-compose-message message)))
-              (setq local-only (plist-get result :local-only?))
-              (plist-get result :dispatched?)))))
+         (result (psi-emacs--dispatch-compose-message message "queue"))
+         (dispatched? (plist-get result :dispatched?)))
+    (setq local-only (plist-get result :local-only?))
     (when dispatched?
       (psi-emacs--consume-dispatched-input used-region-p message local-only))))
 

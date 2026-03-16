@@ -624,7 +624,7 @@
     (setf (psi-emacs-state-run-state psi-emacs--state) 'streaming)
     (should (psi-emacs--streaming-p))))
 
-(ert-deftest psi-send-routing-idle-and-streaming-steer-queue ()
+(ert-deftest psi-send-routing-slash-first-and-streaming-steer-queue ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -903,7 +903,7 @@
                      (psi-emacs-state-last-error psi-emacs--state)))
       (should (string-match-p "Error: Cannot run `set_model`" (buffer-string))))))
 
-(ert-deftest psi-idle-send-and-queue-share-backend-command-dispatch-path ()
+(ert-deftest psi-slash-send-and-queue-share-backend-command-dispatch-path ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -911,7 +911,7 @@
         (let ((rpc-calls nil))
           (insert "  /handled  ")
           (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker 1 nil))
-          (cl-letf (((symbol-value 'psi-emacs--idle-slash-command-handler-function)
+          (cl-letf (((symbol-value 'psi-emacs--slash-command-handler-function)
                      (lambda (&rest _args) t))
                     ((symbol-value 'psi-emacs--send-request-function)
                      (lambda (_state op params &optional _callback)
@@ -930,7 +930,7 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-tree-dispatch-ignores-custom-slash-handler-and-uses-backend-command ()
+(ert-deftest psi-tree-dispatch-ignores-custom-command-handler-and-uses-backend-command ()
   "`/tree` routes through backend `command`, even when a custom slash handler declines it."
   (with-temp-buffer
     (psi-emacs-mode)
@@ -941,13 +941,13 @@
                 '((:active-session-id . "s1")
                   (:sessions . (((:id . "s1") (:name . "main") (:is-active . t))
                                 ((:id . "s2") (:name . "fork-1") (:is-active . nil))))))
-          (cl-letf (((symbol-value 'psi-emacs--idle-slash-command-handler-function)
+          (cl-letf (((symbol-value 'psi-emacs--slash-command-handler-function)
                      (lambda (&rest _args) nil))
                     ((symbol-value 'psi-emacs--send-request-function)
                      (lambda (_state op params &optional _callback)
                        (push (list op params) rpc-calls)
                        t)))
-            (let ((result (psi-emacs--dispatch-idle-compose-message "/tree s2")))
+            (let ((result (psi-emacs--dispatch-compose-message "/tree s2")))
               (should (eq t (plist-get result :dispatched?)))
               (should-not (plist-get result :local-only?))))
           (setq rpc-calls (nreverse rpc-calls))
@@ -955,7 +955,7 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-idle-unknown-slash-dispatches-backend-command ()
+(ert-deftest psi-unknown-slash-dispatches-backend-command ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -964,7 +964,7 @@
               (rpc-calls nil))
           (insert "/foo")
           (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker 1 nil))
-          (cl-letf (((symbol-value 'psi-emacs--idle-slash-command-handler-function)
+          (cl-letf (((symbol-value 'psi-emacs--slash-command-handler-function)
                      (lambda (_state message)
                        (push message slash-calls)
                        nil))
@@ -987,7 +987,7 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-idle-remember-slash-dispatches-backend-command ()
+(ert-deftest psi-remember-slash-dispatches-backend-command ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -996,7 +996,7 @@
               (rpc-calls nil))
           (insert "/remember blocked-path")
           (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker 1 nil))
-          (cl-letf (((symbol-value 'psi-emacs--idle-slash-command-handler-function)
+          (cl-letf (((symbol-value 'psi-emacs--slash-command-handler-function)
                      (lambda (_state message)
                        (push message slash-calls)
                        nil))
@@ -1013,7 +1013,7 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-idle-remember-slash-accepted-path-dispatches-backend-command ()
+(ert-deftest psi-remember-slash-accepted-path-dispatches-backend-command ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -1022,7 +1022,7 @@
               (rpc-calls nil))
           (insert "/remember accepted-path")
           (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker 1 nil))
-          (cl-letf (((symbol-value 'psi-emacs--idle-slash-command-handler-function)
+          (cl-letf (((symbol-value 'psi-emacs--slash-command-handler-function)
                      (lambda (_state message)
                        (push message slash-calls)
                        nil))
@@ -1039,7 +1039,7 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-idle-quit-slash-dispatches-command-and-exits-on-command-result ()
+(ert-deftest psi-quit-slash-dispatches-command-and-exits-on-command-result ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -1064,7 +1064,7 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-idle-exit-slash-dispatches-command-and-exits-on-command-result ()
+(ert-deftest psi-exit-slash-dispatches-command-and-exits-on-command-result ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -1332,7 +1332,7 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-idle-new-slash-dispatches-backend-command ()
+(ert-deftest psi-new-slash-dispatches-backend-command ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -1352,7 +1352,7 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-idle-new-slash-dispatch-preserves-tool-output-view-mode ()
+(ert-deftest psi-new-slash-dispatch-preserves-tool-output-view-mode ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -1391,7 +1391,7 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-idle-new-slash-dispatch-failure-sets-command-error ()
+(ert-deftest psi-new-slash-dispatch-failure-sets-command-error ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -1410,7 +1410,7 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-idle-status-slash-appends-diagnostics-and-bypasses-prompt ()
+(ert-deftest psi-status-slash-appends-diagnostics-and-bypasses-prompt ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -1430,7 +1430,7 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-idle-help-slash-renders-help-on-send-and-queue ()
+(ert-deftest psi-help-slash-renders-help-on-send-and-queue ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -1455,7 +1455,7 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-idle-question-mark-slash-alias-renders-help-and-bypasses-prompt ()
+(ert-deftest psi-question-mark-slash-alias-renders-help-and-bypasses-prompt ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -1472,7 +1472,7 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-idle-thinking-slash-no-arg-opens-selector-and-bypasses-prompt ()
+(ert-deftest psi-thinking-slash-no-arg-opens-selector-and-bypasses-prompt ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -1496,7 +1496,7 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-idle-model-slash-no-arg-dispatches-backend-command ()
+(ert-deftest psi-model-slash-no-arg-dispatches-backend-command ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -1520,7 +1520,7 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-idle-thinking-slash-direct-dispatches-set-thinking-level ()
+(ert-deftest psi-thinking-slash-direct-dispatches-set-thinking-level ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -1537,7 +1537,7 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-idle-model-slash-direct-dispatches-backend-command ()
+(ert-deftest psi-model-slash-direct-dispatches-backend-command ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -1554,7 +1554,7 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-idle-model-slash-invalid-arity-dispatches-backend-command ()
+(ert-deftest psi-model-slash-invalid-arity-dispatches-backend-command ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -1571,7 +1571,7 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-idle-thinking-slash-invalid-arity-renders-usage-and-bypasses-prompt ()
+(ert-deftest psi-thinking-slash-invalid-arity-renders-usage-and-bypasses-prompt ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -1588,7 +1588,7 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-idle-background-job-slash-commands-dispatch-backend-command ()
+(ert-deftest psi-background-job-slash-commands-dispatch-backend-command ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -1621,7 +1621,7 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-idle-sequential-slash-commands-use-latest-tail-draft ()
+(ert-deftest psi-sequential-slash-commands-use-latest-tail-draft ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -1645,7 +1645,7 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-streaming-bypasses-idle-slash-handler ()
+(ert-deftest psi-streaming-slash-commands-still-use-backend-command ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -1655,7 +1655,7 @@
           (insert "/stream")
           (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker 1 nil))
           (setf (psi-emacs-state-run-state psi-emacs--state) 'streaming)
-          (cl-letf (((symbol-value 'psi-emacs--idle-slash-command-handler-function)
+          (cl-letf (((symbol-value 'psi-emacs--slash-command-handler-function)
                      (lambda (_state message)
                        (push message slash-calls)
                        t))
@@ -1663,11 +1663,49 @@
                      (lambda (_state op params &optional _callback)
                        (push (list op params) rpc-calls))))
             (psi-emacs-send-from-buffer nil)
+            (setf (psi-emacs-state-run-state psi-emacs--state) 'streaming)
+            (let ((inhibit-read-only t))
+              (erase-buffer))
+            (insert "/stream")
+            (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker 1 nil))
             (psi-emacs-queue-from-buffer))
           (setq rpc-calls (nreverse rpc-calls))
           (should (equal '() slash-calls))
+          (should (equal '("command" "command")
+                         (mapcar #'car rpc-calls)))
+          (should (equal '((:text . "/stream"))
+                         (cadr (nth 0 rpc-calls))))
+          (should (equal '((:text . "/stream"))
+                         (cadr (nth 1 rpc-calls)))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
+(ert-deftest psi-streaming-non-slash-send-still-uses-prompt-while-streaming ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (let ((rpc-calls nil))
+          (insert "keep going")
+          (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker 1 nil))
+          (setf (psi-emacs-state-run-state psi-emacs--state) 'streaming)
+          (cl-letf (((symbol-value 'psi-emacs--send-request-function)
+                     (lambda (_state op params &optional _callback)
+                       (push (list op params) rpc-calls))))
+            (psi-emacs-send-from-buffer nil)
+            (setf (psi-emacs-state-run-state psi-emacs--state) 'streaming)
+            (let ((inhibit-read-only t))
+              (erase-buffer))
+            (insert "next")
+            (setf (psi-emacs-state-draft-anchor psi-emacs--state) (copy-marker 1 nil))
+            (psi-emacs-queue-from-buffer))
+          (setq rpc-calls (nreverse rpc-calls))
           (should (equal '("prompt_while_streaming" "prompt_while_streaming")
-                         (mapcar #'car rpc-calls))))
+                         (mapcar #'car rpc-calls)))
+          (should (equal '((:message . "keep going") (:behavior . "steer"))
+                         (cadr (nth 0 rpc-calls))))
+          (should (equal '((:message . "next") (:behavior . "queue"))
+                         (cadr (nth 1 rpc-calls)))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
@@ -3653,7 +3691,7 @@ so the old `(eq role :user)' check always fell through to the assistant branch."
                  (lambda (_state op params &optional _cb)
                    (push (list op params) calls)
                    t)))
-        (psi-emacs--default-handle-idle-slash-command psi-emacs--state "/tree s2"))
+        (psi-emacs--default-handle-slash-command psi-emacs--state "/tree s2"))
       (should (= 1 (length calls)))
       (should (equal "switch_session" (caar calls)))
       (should (equal "s2" (alist-get :session-id (cadar calls) nil nil #'equal))))))
@@ -3671,11 +3709,31 @@ so the old `(eq role :user)' check always fell through to the assistant branch."
                  (lambda (_state op params &optional _cb)
                    (push (list op params) calls)
                    t)))
-        (psi-emacs--default-handle-idle-slash-command psi-emacs--state "/tree s1"))
+        (psi-emacs--default-handle-slash-command psi-emacs--state "/tree s1"))
       ;; Direct /tree <id> dispatches switch_session immediately (no-op message
       ;; only happens from the picker path; direct id dispatch always fires)
       ;; Confirm exactly one call to switch_session was made (session-id branch)
       (should (= 1 (length calls))))))
+
+(ert-deftest psi-tree-command-falls-back-to-backend-when-no-context-snapshot ()
+  "Bare `/tree` should use backend command flow until a context snapshot exists."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (let ((calls nil)
+          (watchdog-reset nil))
+      (cl-letf (((symbol-value 'psi-emacs--send-request-function)
+                 (lambda (_state op params &optional _cb)
+                   (push (list op params) calls)
+                   t))
+                ((symbol-function 'psi-emacs--reset-stream-watchdog)
+                 (lambda (&rest _args)
+                   (setq watchdog-reset t))))
+        (psi-emacs--default-handle-slash-command psi-emacs--state "/tree"))
+      (setq calls (nreverse calls))
+      (should (equal '(("command" ((:text . "/tree")))) calls))
+      (should (eq 'streaming (psi-emacs-state-run-state psi-emacs--state)))
+      (should watchdog-reset))))
 
 (ert-deftest psi-session-display-name-uses-name-slot ()
   "psi-emacs--session-display-name returns slot name when present."

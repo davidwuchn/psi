@@ -4,6 +4,28 @@ Ordered steps toward PSI COMPLETE.
 
 ---
 
+## In Progress
+
+### Step 15g — Emacs slash-command routing becomes run-state independent
+- Goal: remove the frontend concept of "idle slash commands" and make slash-prefixed compose input route through backend `command` in both idle and streaming states.
+- Spec updates
+  - Update `spec/emacs-frontend.allium` so slash-prefixed `PromptSubmissionRequested` always maps to RPC `command`, while non-slash streaming input remains `prompt_while_streaming`.
+  - Update `spec/prompt-slash-commands.allium` guidance to make run-state-independent frontend routing explicit.
+  - Keep frontend-action contracts (`/tree`, `/resume`, `/model`, `/thinking`) integrated through the existing `frontend_action_result` flow.
+- Emacs implementation plan
+  - Replace idle-only compose dispatch helper with a single slash-first compose dispatcher.
+  - Route `psi-emacs-send-from-buffer` and `psi-emacs-queue-from-buffer` through that dispatcher.
+  - Rename frontend variables/functions/docs away from `idle-slash-*` vocabulary.
+  - Preserve current non-slash streaming behavior (`prompt_while_streaming` steer/queue).
+  - Preserve `/tree` no-snapshot fallback to backend command flow.
+- Verification plan
+  - Update ERTs to assert slash-prefixed input routes to `command` even while streaming.
+  - Add regression coverage that non-slash streaming input still uses `prompt_while_streaming`.
+  - Run `bb emacs:test`.
+  - Run `allium check` on touched specs, then broader spec check if needed.
+
+---
+
 ## Done
 
 ### Step 15f — `/work-done` linear-history workflow ✓ complete

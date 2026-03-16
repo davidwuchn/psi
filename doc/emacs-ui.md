@@ -84,9 +84,10 @@ In `psi-emacs-mode`:
 
 - `RET` inserts newline (never sends)
 - `C-c RET` send prompt
-  - while streaming: steer (`prompt_while_streaming` with `behavior=steer`)
-- `C-u C-c RET` queue override while streaming
-- `C-c C-q` queue while streaming; fallback to normal send when idle
+  - slash-prefixed input always uses backend `command`
+  - while streaming, non-slash input uses steer (`prompt_while_streaming` with `behavior=steer`)
+- `C-u C-c RET` queue override for non-slash streaming input
+- `C-c C-q` queue while streaming for non-slash input; slash-prefixed input still uses backend `command`; fallback to normal send when idle
 - `C-c C-k` abort active streaming (`abort`)
 - `C-c C-r` reconnect (prompts before clearing edited buffer)
 - `C-c C-t` toggle tool-output view mode (collapsed ↔ expanded); also available as `M-x psi-emacs-toggle-tool-output-view`

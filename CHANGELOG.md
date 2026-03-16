@@ -11,6 +11,15 @@
   - `bb clojure:test:unit`
   - `bb test`
 
+- λ Δ Emacs slash-command routing is now run-state independent:
+  - Slash-prefixed compose input now routes to backend `command` in both idle and streaming states.
+  - Non-slash streaming input still routes to `prompt_while_streaming` with steer/queue behavior.
+  - Emacs slash dispatch helpers/tests/docs were renamed away from `idle-slash-*` vocabulary.
+  - `/tree` keeps its backend fallback path when no local context snapshot exists.
+  - Verification:
+    - `allium check spec/emacs-frontend.allium spec/prompt-slash-commands.allium`
+    - `bb emacs:test`
+
 - λ Δ Renamed the worktree completion command from `/work-merge` to `/work-done` and removed `/work-merge`.
 - λ Δ `/work-done` now preserves linear history by checking fast-forwardability onto the cached default branch, auto-rebasing via a forked sync subagent when needed, then fast-forward merging and cleaning up the worktree/branch.
 - λ Δ Added default-branch query surfaces:

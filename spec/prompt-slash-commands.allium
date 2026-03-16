@@ -263,6 +263,7 @@ surface PromptSlashCommandContract {
 
     @guidance
         -- Frontends do not implement per-command semantics.
+        -- Slash-prefixed input is always routed to backend command handling, regardless of frontend run-state.
         -- Selector-style commands (/resume, /tree, /model, /thinking) produce
         -- `frontend_action` results and are completed through the frontend action RPC flow.
         -- `/tree <session-id>` remains a backend-direct command so widgets and

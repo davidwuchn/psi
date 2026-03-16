@@ -1,7 +1,7 @@
-;;; psi-session-commands.el --- Idle slash commands and session switching for psi frontend  -*- lexical-binding: t; -*-
+;;; psi-session-commands.el --- Slash commands and session switching for psi frontend  -*- lexical-binding: t; -*-
 
 ;;; Commentary:
-;; Extracted idle slash command routing and session lifecycle helpers used by psi.el.
+;; Extracted slash command routing and session lifecycle helpers used by psi.el.
 
 ;;; Code:
 
@@ -264,8 +264,8 @@ Returns selected MODEL-ENTRY map or nil when cancelled/no selection."
                                  (string-trim (format "%s" (or name ""))))
                                names)))))))))))
 
-(defun psi-emacs--idle-slash-help-text ()
-  "Return deterministic help text for supported idle slash commands."
+(defun psi-emacs--slash-help-text ()
+  "Return deterministic help text for supported slash commands."
   (string-join
    (list "Supported slash commands:"
          "/quit, /exit  Exit this psi buffer"
@@ -800,17 +800,29 @@ Returns an alist of (label . session-id)."
           (psi-emacs--request-switch-session-by-id state selected-id)))))))
 
 (defun psi-emacs--handle-idle-tree-command (state)
-  "Handle `/tree` command: open completing-read session picker and switch."
+  "Handle `/tree` command.
+
+When a live context snapshot is available locally, open the completing-read
+picker immediately. When no snapshot is available yet, fall back to backend
+`command` dispatch so the canonical frontend-action flow can provide the
+selector."
   (let* ((snapshot  (and state (psi-emacs-state-context-snapshot state)))
          (active-id (and snapshot
                          (psi-emacs--event-data-get snapshot
                                                     '(:active-session-id active-session-id))))
          (slots     (and snapshot
                          (append (psi-emacs--event-data-get snapshot '(:sessions sessions)) nil))))
-    (psi-emacs--tree-select-and-switch state active-id slots)))
+    (if slots
+        (psi-emacs--tree-select-and-switch state active-id slots)
+      (let ((sent? (psi-emacs--dispatch-request
+                    "command"
+                    '((:text . "/tree")))))
+        (when sent?
+          (psi-emacs--set-run-state state 'streaming)
+          (psi-emacs--reset-stream-watchdog state))))))
 
-(defun psi-emacs--default-handle-idle-slash-command (state message)
-  "Default idle slash handler.
+(defun psi-emacs--default-handle-slash-command (state message)
+  "Default slash handler.
 
 Return non-nil when MESSAGE is handled and should not fall through to
 normal prompt dispatch."
@@ -862,7 +874,7 @@ normal prompt dispatch."
        t)
       ((or "/help" "/?")
        (psi-emacs--append-assistant-message
-        (psi-emacs--idle-slash-help-text))
+        (psi-emacs--slash-help-text))
        t)
       (_ nil))))
 
@@ -872,20 +884,32 @@ normal prompt dispatch."
     (and (not (string-empty-p trimmed))
          (string-prefix-p "/" trimmed))))
 
-(defun psi-emacs--dispatch-idle-compose-message (message)
-  "Dispatch idle compose MESSAGE.
+(defun psi-emacs--dispatch-compose-message (message &optional behavior)
+  "Dispatch compose MESSAGE using slash-first routing.
 
-Slash-prefixed input is sent to backend `command` handling.
-Non-slash input is sent via normal `prompt`.
+Slash-prefixed input is always sent to backend `command` handling,
+independent of frontend run-state. Non-slash input is sent via normal
+`prompt` when idle, or `prompt_while_streaming` with BEHAVIOR when the
+frontend is streaming.
 
 Returns plist:
   :dispatched?  non-nil when dispatched remotely
   :local-only?  always nil in the backend-owned slash architecture."
   (let* ((slash-candidate? (and psi-emacs--state
                                 (psi-emacs--slash-command-candidate-p message)))
-         (sent? (if slash-candidate?
-                    (psi-emacs--dispatch-request "command" `((:text . ,message)))
-                  (psi-emacs--dispatch-request "prompt" `((:message . ,message))))))
+         (streaming? (and psi-emacs--state
+                          (memq (psi-emacs-state-run-state psi-emacs--state)
+                                '(streaming interrupt_pending))))
+         (sent? (cond
+                 (slash-candidate?
+                  (psi-emacs--dispatch-request "command" `((:text . ,message))))
+                 (streaming?
+                  (psi-emacs--dispatch-request
+                   "prompt_while_streaming"
+                   `((:message . ,message)
+                     (:behavior . ,(or behavior "steer")))))
+                 (t
+                  (psi-emacs--dispatch-request "prompt" `((:message . ,message)))))))
     (when sent?
       (psi-emacs--set-run-state psi-emacs--state 'streaming)
       (psi-emacs--reset-stream-watchdog psi-emacs--state))

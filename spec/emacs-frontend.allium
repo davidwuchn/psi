@@ -162,6 +162,37 @@ rule SlashExecutionUsesSharedContracts {
     ensures: UsesContract(frontend, frontend_actions/FrontendActionRpcApi)
 }
 
+rule SlashPrefixedComposeSubmissionRoutesToBackendCommand {
+    when: PromptSubmissionRequested(frontend, text)
+    requires: StartsWith(Trim(text), "/")
+
+    ensures: RpcRequestSent(frontend.rpc, "command", {text: text})
+
+    @guidance
+        -- Slash-command routing is independent of frontend run-state.
+        -- The frontend does not special-case idle vs streaming for `/...` input.
+}
+
+rule NonSlashIdleComposeSubmissionRoutesToPrompt {
+    when: PromptSubmissionRequested(frontend, text)
+    requires: not StartsWith(Trim(text), "/")
+    requires: frontend.run_state = idle
+
+    ensures: RpcRequestSent(frontend.rpc, "prompt", {message: text})
+}
+
+rule NonSlashStreamingComposeSubmissionRoutesToPromptWhileStreaming {
+    when: PromptSubmissionRequested(frontend, text)
+    requires: not StartsWith(Trim(text), "/")
+    requires: frontend.run_state in {streaming, interrupt_pending}
+
+    ensures: RpcRequestSent(frontend.rpc, "prompt_while_streaming", {message: text})
+
+    @guidance
+        -- Streaming non-slash input still uses the steer/queue path.
+        -- Slash-command routing remains higher priority than streaming prompt routing.
+}
+
 rule StartupBufferSeedsBannerAndInputFocus {
     when: EmacsFrontendInitialized(frontend)
 
@@ -452,6 +483,7 @@ surface EmacsFrontendActionApi {
         -- Candidate lists are supplied entirely by the backend in the action payload.
         -- Overlapping frontend-action requests are handled by the frontend; the newest request wins.
         -- This replaces prior frontend-local slash routing for /tree, /resume, /model, and /thinking.
+        -- Slash-command routing is phase-independent in the frontend: `/...` always goes to backend `command`.
         -- `/quit` and `/exit` remain backend-owned slash commands whose terminal effect
         -- is applied only after a `command-result` event with type `quit`.
 }

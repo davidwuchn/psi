@@ -109,8 +109,8 @@ an Emacs process object.")
 
 Called as (STATE OP PARAMS CALLBACK).")
 
-(defvar psi-emacs--idle-slash-command-handler-function #'psi-emacs--default-handle-idle-slash-command
-  "Function used to handle idle slash command input.
+(defvar psi-emacs--slash-command-handler-function #'psi-emacs--default-handle-slash-command
+  "Function used to handle slash command input.
 
 Called as (STATE MESSAGE). Return non-nil when MESSAGE was handled and should
 not fall through to normal prompt dispatch.")
