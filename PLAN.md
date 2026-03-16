@@ -237,6 +237,11 @@ Ordered steps toward PSI COMPLETE.
 
 ## Next
 
+### Step 15o — Keep footer token labels explicit when provider-specific usage classes surface
+- Cache token classes now render as `CR` / `CW` in the footer rather than single-letter `R` / `W`.
+- Follow the same rule for future provider-specific usage counters: keep labels terse, but explicit enough to be self-explanatory in the live footer.
+- Preserve the current end-to-end path: provider usage → session usage resolvers → RPC footer payload → Emacs/TUI footer rendering.
+
 ### Step 15n — Expose session cache-breakpoint policy on the live query/runtime surface
 - Anthropic prompt caching now works end-to-end in the executor/provider path:
   session `:cache-breakpoints` → conversation prompt/tool metadata → Anthropic `cache_control`.
