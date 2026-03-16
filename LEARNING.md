@@ -3,6 +3,46 @@
 
 ---
 
+## 2026-03-15 - A cleaner architecture emerges when context owns reusable resources and sessions own execution/lineage (commit `b935191`)
+
+### λ Put reusable capability on the context, not on each session
+
+The more coherent model is:
+- context owns shared resources: tools, prompt templates, skills, extensions
+- sessions consume those resources
+- sessions own conversation state, prompt overlays, execution state, and lineage
+
+This removes the awkward question "why are skills/prompts loaded into a session?" Shared capability belongs at the boundary that persists across sibling sessions; session-local state should be only what can diverge per branch.
+
+### λ Multi-session becomes simpler when active session means focus, not sole existence
+
+The important distinction is between:
+- many live/queryable sessions in one context
+- one active session as the default routing focus
+
+Once active-session is treated as focus, not existence, session trees become natural:
+- forked sessions are child sessions
+- subagents are child sessions
+- UI selection is focus routing
+- sibling sessions can remain part of the same context model even if implementation currently runs one active lane at a time
+
+### λ "agent" is clearer as an operational view of a session than as a separate top-level domain object
+
+The original mental model became much cleaner when reframed as:
+- agent ≡ session viewed operationally
+- subagent ≡ child session
+
+That reduces conceptual duplication. Implementation may still use nested agent runtimes internally, but the domain model is easier to understand when the top-level tree contains sessions, not a parallel hierarchy of agents and sessions.
+
+### λ Converging the spec first is useful when the implementation has drifted into a mixed model
+
+The current code still mixes:
+- context/runtime-owned machinery
+- active-session-owned discovered resources
+- host-registry language from an older single-active-session design
+
+Updating the Allium spec first established a clearer target architecture before touching code. This made the remaining drift visible instead of implicit: frontend payloads, RPC events, compaction seams, and host/session terminology now stand out as convergence work rather than hidden assumptions.
+
 ## 2026-03-15 - Stream sessions should not model stored events unless the implementation actually maintains a full event log (commit `58ca3da`)
 
 ### λ Remove partial duplicate models when only one event surface is truly live
