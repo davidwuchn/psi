@@ -6,6 +6,24 @@ Ordered steps toward PSI COMPLETE.
 
 ## Done
 
+### Step 15h — Emacs `/tree` shows session age from canonical session timestamps ✓ complete
+- Commit `51b669f` adds stable session creation timestamps to the live `context/updated` payload and uses them to render compact relative age labels in Emacs `/tree`.
+- Backend/runtime changes:
+  - context session index now preserves session `:created-at` when present
+  - session-root context projections expose `:psi.session-info/created`
+  - RPC `context/updated` session slots now include `:created-at`
+- Emacs changes:
+  - `/tree` labels now include name-or-fallback, worktree path, and compact age (`now`, `53m`, `2h`, ...)
+  - frontend age rendering is derived from raw timestamps rather than preformatted backend strings
+  - `/tree` selector candidates reuse the same richer label helper as the projection widget
+- Spec surfaces synchronized:
+  - `spec/rpc-edn.allium`
+  - `spec/emacs-frontend.allium`
+  - `spec/session-core.allium`
+- Verification:
+  - `bb emacs:test`
+  - `clojure -M:test --focus unit --skip-meta integration --fail-fast`
+
 ### Step 15g — Emacs slash-command routing becomes run-state independent ✓ complete
 - Commit `1bd1f17` removes the frontend concept of idle-only slash commands.
 - Slash-prefixed compose input now routes to backend `command` in both idle and streaming states.
