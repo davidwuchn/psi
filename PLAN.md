@@ -40,6 +40,21 @@ Ordered steps toward PSI COMPLETE.
   - focused `bb test` slices for system prompt / executor / Anthropic provider
   - `clj-kondo --lint components/agent-session/src/psi/agent_session/system_prompt.clj components/agent-session/src/psi/agent_session/core.clj components/agent-session/src/psi/agent_session/executor.clj components/agent-session/test/psi/agent_session/system_prompt_test.clj components/agent-session/test/psi/agent_session/executor_test.clj components/agent-session/test/psi/agent_session/core_test.clj`
 
+### Step 15ja — Anthropic replay diagnostics now have structural regressions for tool-history + cross-provider thinking ✓ complete
+- Commit `ac0efb5` adds two focused regression tests around the live Anthropic failure investigation.
+- Provider request-shape coverage added in `components/ai/test/psi/ai/providers/anthropic_test.clj`:
+  - Anthropic request body with prior `tool_use` / `tool_result`
+  - extended `:thinking`
+  - Anthropic `cache_control`
+  - normalized tool ids and matching `tool_result.tool_use_id`
+- Cross-provider executor coverage added in `components/agent-session/test/psi/agent_session/executor_test.clj`:
+  - OpenAI-style `:thinking-delta` remains transient
+  - persisted assistant messages exclude prior thinking text
+  - rebuilt Anthropic requests do not replay prior OpenAI thinking
+- Verification:
+  - `bb clojure:test:unit --focus psi.ai.providers.anthropic-test`
+  - `bb clojure:test:unit --focus psi.agent-session.executor-test`
+
 ### Step 15i — Emacs session rehydrate lifecycle clears stale buffer state ✓ complete
 - Commit `b3a5769` converges `/new`, `/tree`, and `/resume` on the canonical `session/resumed` + `session/rehydrated` lifecycle.
 - Emacs changes:
