@@ -23,6 +23,25 @@ Pulling values like the Anthropic API version and beta header fragments into nam
 
 The right simplification target was not to invent a new abstraction over provider streaming, but to keep `transform-messages`, `build-request`, and `stream-anthropic` as the public shape while pushing repetitive detail behind small helpers. That keeps provider-focused tests meaningful: they still verify the same observable request/event behavior while the internal branching becomes easier to inspect and change.
 
+## 2026-03-16 - Prompt caching is most stable when cache intent lives in shared prompt units, not provider-local switches (commit `0c57fcf`)
+
+### λ Session cache policy should project into shared conversation shape before provider translation
+
+The durable layering for Anthropic prompt caching was:
+- session state decides cache intent (`:cache-breakpoints` like `:system` / `:tools`)
+- executor projects that intent into shared conversation metadata (`:system-prompt-blocks`, tool `:cache-control`)
+- provider translates only the supported wire directive (`cache_control {:type "ephemeral"}`)
+
+That is more stable than teaching the provider about session-local breakpoint semantics directly. The provider stays wire-focused, while the session/executor layers own policy and projection.
+
+### λ Optional provider metadata in shared schemas must be omitted unless concrete
+
+The initial cache-breakpoint wiring failed broadly because the executor projected `{:cache-control nil}` into schema-validated conversation blocks. In shared prompt/message shapes, optional metadata keys are not nullable by default just because they are optional. The safe rule is:
+- omit absent metadata keys entirely
+- only assoc them when a concrete value exists
+
+That one bad `nil` propagated as wide executor/RPC failure, so optional metadata handling is a high-leverage boundary.
+
 ## 2026-03-16 - `LEARNING.md` stays useful only when it records non-trivial learned context rather than repo facts (commit `6ab9a31`)
 
 ### λ Record the reusable lesson, not the obvious repository fact
