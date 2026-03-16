@@ -68,6 +68,55 @@
       (is (= {:type "ephemeral"}
              (get-in body [:tools 0 :cache_control]))))))
 
+(deftest build-request-with-tool-results-thinking-and-cache-test
+  (testing "tool result history, thinking, and cache breakpoints produce a coherent Anthropic request"
+    (let [model    (models/get-model :sonnet-4.6)
+          convo    (-> (conv/create {:system-prompt "joined"
+                                     :system-prompt-blocks [{:kind :text
+                                                             :text "sys"
+                                                             :cache-control {:type :ephemeral}}]})
+                       (conv/add-user-message "boot")
+                       (conv/add-assistant-message
+                        {:content {:kind :structured
+                                   :blocks [{:kind :tool-call
+                                             :id "call_abc|fc_123"
+                                             :name "read"
+                                             :input {:path "a"}}]}})
+                       (conv/add-tool-result "call_abc|fc_123" "read" {:kind :text :text "ok"} false)
+                       (conv/add-assistant-message {:content {:kind :text :text "ready"}})
+                       (conv/add-user-message "who?")
+                       (conv/add-tool {:name "read"
+                                       :description "Read a file"
+                                       :parameters {:type "object"}
+                                       :cache-control {:type :ephemeral}}))
+          req      (#'anthropic/build-request convo model {:thinking-level :high
+                                                           :api-key "test-key"})
+          body     (json/parse-string (:body req) true)
+          headers  (:headers req)
+          messages (:messages body)
+          asst     (second messages)
+          tool-res (nth messages 2)
+          use-id   (get-in asst [:content 0 :id])
+          res-id   (get-in tool-res [:content 0 :tool_use_id])]
+      (is (= [{:type "text"
+               :text "sys"
+               :cache_control {:type "ephemeral"}}]
+             (:system body)))
+      (is (= {:type "ephemeral"}
+             (get-in body [:tools 0 :cache_control])))
+      (is (= "enabled" (get-in body [:thinking :type])))
+      (is (= 16000 (get-in body [:thinking :budget_tokens])))
+      (is (nil? (:temperature body)) "temperature must be absent with extended thinking")
+      (is (some? (re-find #"interleaved-thinking" (get headers "anthropic-beta")))
+          "interleaved-thinking beta header required")
+      (is (= ["user" "assistant" "user" "assistant" "user"]
+             (mapv :role messages)))
+      (is (= "tool_use" (get-in asst [:content 0 :type])))
+      (is (= "tool_result" (get-in tool-res [:content 0 :type])))
+      (is (= use-id res-id) "tool_result must reference normalized tool_use id")
+      (is (re-matches #"^[a-zA-Z0-9_-]+$" use-id)
+          "normalized id must satisfy Anthropic regex"))))
+
 (deftest stream-anthropic-captures-provider-request-and-response-test
   (testing "Anthropic streaming emits provider request/response captures"
     (let [model           (models/get-model :sonnet-4.6)

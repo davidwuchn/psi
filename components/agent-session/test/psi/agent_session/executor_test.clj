@@ -4,7 +4,10 @@
   Uses with-redefs on private vars to inject stub provider/tool behavior
   (no HTTP calls, no API keys required)."
   (:require
+   [cheshire.core :as json]
    [clojure.test :refer [deftest testing is]]
+   [psi.ai.models :as models]
+   [psi.ai.providers.anthropic :as anthropic]
    [psi.agent-core.core :as agent]
    [psi.agent-session.executor :as executor]
    [psi.agent-session.turn-statechart :as turn-sc])
@@ -207,6 +210,44 @@
                        acc))
             thinking-events (filterv #(= :thinking-delta (:event-kind %)) events)]
         (is (= ["plan-1" "plan-2"] (mapv :text thinking-events)))))))
+
+(deftest cross-provider-thinking-is-not-replayed-into-anthropic-request-test
+  (testing "OpenAI thinking deltas remain transient and are not included in later Anthropic messages"
+    (let [agent-ctx   (setup-agent-ctx!)
+          session-ctx (assoc (setup-session-ctx! agent-ctx)
+                             :session-data-atom (atom {:tool-output-overrides {}
+                                                       :thinking-level :high}))
+          user-msg    {:role "user" :content [{:type :text :text "hi"}]}
+          openai-turn (fn [_ai-ctx _conv _model _opts consume-fn]
+                        (consume-fn {:type :start})
+                        (consume-fn {:type :thinking-delta :content-index 0 :delta "Plan step"})
+                        (consume-fn {:type :text-delta :content-index 1 :delta "Done"})
+                        (consume-fn {:type :done :reason :stop}))]
+      (with-redefs [psi.agent-session.executor/do-stream! openai-turn]
+        (let [result (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg])]
+          (is (= :stop (:stop-reason result)))
+          (is (= "Done"
+                 (some #(when (= :text (:type %)) (:text %))
+                       (:content result))))))
+      (let [messages   (:messages (agent/get-data-in agent-ctx))
+            assistant  (last messages)
+            anthropic-model (models/get-model :sonnet-4.6)
+            conv       (#'executor/agent-messages->ai-conversation
+                        "sys" messages [] {:cache-breakpoints #{:system}})
+            body       (json/parse-string
+                        (:body (#'anthropic/build-request conv anthropic-model {:api-key "test-key"
+                                                                                :thinking-level :high}))
+                        true)]
+        (is (= "assistant" (:role assistant)))
+        (is (= [{:type :text :text "Done"}]
+               (:content assistant))
+            "final persisted assistant message should exclude transient thinking")
+        (is (not (re-find #"Plan step" (pr-str body)))
+            "OpenAI thinking must not be replayed into Anthropic request body")
+        (is (= ["user" "assistant"]
+               (mapv :role (:messages body))))
+        (is (= "Done"
+               (get-in body [:messages 1 :content 0 :text])))))))
 
 (deftest idle-timeout-resets-on-stream-progress-test
   (let [agent-ctx   (setup-agent-ctx!)
