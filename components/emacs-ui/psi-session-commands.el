@@ -757,18 +757,11 @@ Returns an alist of (label . session-id)."
             (is-streaming (psi-emacs--event-data-get slot '(:is-streaming is-streaming :isStreaming isStreaming)))
             (parent-id    (psi-emacs--event-data-get slot '(:parent-session-id parent-session-id :parentSessionId parentSessionId)))
             (name         (if (and (listp slot)
-                                   (fboundp 'psi-emacs--session-display-name))
-                              (psi-emacs--session-display-name slot)
+                                   (fboundp 'psi-emacs--session-tree-line-label))
+                              (psi-emacs--session-tree-line-label slot)
                             (or id "(unknown)")))
-            (worktree     (string-trim
-                           (or (psi-emacs--event-data-get slot '(:worktree-path worktree-path
-                                                                 :worktreePath worktreePath
-                                                                 :cwd cwd))
-                               "")))
             (indent       (if parent-id "  " ""))
             (suffix       (concat
-                           (when (not (string-empty-p worktree))
-                             (format " — %s" worktree))
                            (when is-streaming " [streaming]")
                            (when is-active " ← active")))
             (label        (concat indent name suffix)))

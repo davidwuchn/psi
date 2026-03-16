@@ -172,7 +172,8 @@
                        :psi.session-info/path
                        :psi.session-info/cwd
                        :psi.session-info/worktree-path
-                       :psi.session-info/name]}])
+                       :psi.session-info/name
+                       :psi.session-info/created]}])
           persisted-result
           (q-in ctx [{:psi.session/list
                       [:psi.session-info/id
@@ -191,6 +192,7 @@
       (is (some #(= path-2 (:psi.session-info/path %)) context-sessions))
       (is (every? #(= cwd (:psi.session-info/cwd %)) context-sessions))
       (is (every? #(= cwd (:psi.session-info/worktree-path %)) context-sessions))
+      (is (every? #(instance? java.time.Instant (:psi.session-info/created %)) context-sessions))
 
       (is (vector? persisted))
       (is (some #(= sid-1 (:psi.session-info/id %)) persisted))

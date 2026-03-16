@@ -90,16 +90,23 @@
                                        :initial-session {:worktree-path "/repo/main"}})]
       (session/new-session-in! ctx {:session-name "main"
                                     :worktree-path "/repo/main"})
-      (let [sid-1 (:session-id (session/get-session-data-in ctx))]
+      (let [sid-1 (:session-id (session/get-session-data-in ctx))
+            created-1 (get-in (session/get-context-index-in ctx) [:sessions sid-1 :created-at])]
+        (Thread/sleep 5)
         (session/new-session-in! ctx {:session-name "feature work"
                                       :worktree-path "/repo/feature-work"})
         (let [sd   (session/get-session-data-in ctx)
-              index (session/get-context-index-in ctx)]
+              index (session/get-context-index-in ctx)
+              created-2 (get-in index [:sessions (:session-id sd) :created-at])]
           (is (= "feature work" (:session-name sd)))
           (is (= "/repo/feature-work" (:worktree-path sd)))
           (is (= (:session-id sd) (:active-session-id index)))
           (is (= #{sid-1 (:session-id sd)} (set (keys (:sessions index)))))
-          (is (= "/repo/main" (get-in index [:sessions sid-1 :worktree-path]))))))))
+          (is (= "/repo/main" (get-in index [:sessions sid-1 :worktree-path])))
+          (is (instance? java.time.Instant created-1))
+          (is (instance? java.time.Instant created-2))
+          (is (= created-1 (get-in index [:sessions sid-1 :created-at])) "existing session keeps original created-at")
+          (is (not= created-1 created-2) "new session gets distinct created-at"))))))
 
 (deftest new-session-test
   (testing "new-session-in! resets session-id"

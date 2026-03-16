@@ -75,6 +75,21 @@ value FooterUpdatedPayload {
     status_line: String?
 }
 
+value ContextSessionSlot {
+    id: String
+    name: String?
+    worktree_path: String?
+    is_streaming: Boolean
+    is_active: Boolean
+    parent_session_id: String?
+    created_at: Timestamp?
+}
+
+value ContextUpdatedPayload {
+    active_session_id: String?
+    sessions: List<ContextSessionSlot>
+}
+
 entity RpcEndpoint {
     session: coding/CodingAgentRuntime
     process_state: starting | running | stopping | stopped | crashed
@@ -228,6 +243,17 @@ rule SessionUpdatedPayloadSpecConsistencyGuard {
 
     ensures: EventPayloadType(frame.data) = SessionUpdatedPayload
     ensures: RequiredPayloadKeys(frame.data) = {"id", "phase", "is-streaming", "is-compacting", "pending-message-count", "retry-attempt"}
+}
+
+rule ContextUpdatedPayloadCanonicalAcrossFrontends {
+    when: EventSent(endpoint, frame)
+    requires: frame.kind = event
+    requires: frame.event = "context/updated"
+
+    ensures: EventPayloadType(frame.data) = ContextUpdatedPayload
+    ensures: RequiredPayloadKeys(frame.data) = {"active-session-id", "sessions"}
+    ensures: ForEach(frame.data.sessions, slot => HasKey(slot, "id"))
+    ensures: ForEach(frame.data.sessions, slot => HasKey(slot, "created-at"))
 }
 
 rule UnknownEventTopicsAreForwardCompatible {

@@ -766,7 +766,8 @@
    has any real entries, so handshake/bootstrap surfaces still reflect the
    current live session.
 
-   Each session slot includes :id :name :worktree-path :is-streaming :is-active :parent-session-id.
+   Each session slot includes :id :name :worktree-path :is-streaming :is-active
+   :parent-session-id and :created-at.
    Sessions are ordered by updated-at ascending (oldest first → stable tree order)."
   [ctx]
   (let [index            (session/get-context-index-in ctx)
@@ -776,7 +777,7 @@
         context-sessions (session/list-context-sessions-in ctx)
         sessions*  (if (seq context-sessions)
                      context-sessions
-                     [(select-keys sd [:session-id :session-name :worktree-path :parent-session-id])])
+                     [(select-keys sd [:session-id :session-name :worktree-path :parent-session-id :created-at])])
         active-id* (or active-id current-id)
         slots      (mapv (fn [m]
                            {:id                (:session-id m)
@@ -786,7 +787,8 @@
                                                 (and (= (:session-id m) current-id)
                                                      (:is-streaming sd)))
                             :is-active         (= (:session-id m) active-id*)
-                            :parent-session-id (:parent-session-id m)})
+                            :parent-session-id (:parent-session-id m)
+                            :created-at        (:created-at m)})
                          sessions*)]
     {:active-session-id active-id*
      :sessions          slots}))

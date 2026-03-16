@@ -356,7 +356,8 @@
                    :psi.session-info/worktree-path
                    :psi.session-info/name
                    :psi.session-info/parent-session-id
-                   :psi.session-info/parent-session-path]}]}
+                   :psi.session-info/parent-session-path
+                   :psi.session-info/created]}]}
   (let [sd    @(:session-data-atom agent-session-ctx)
         index (if-let [ia (:context-index-atom agent-session-ctx)]
                 @ia
@@ -366,7 +367,8 @@
                                               :session-name (:session-name sd)
                                               :worktree-path (:worktree-path sd)
                                               :parent-session-id (:parent-session-id sd)
-                                              :parent-session-path (:parent-session-path sd)}}})
+                                              :parent-session-path (:parent-session-path sd)
+                                              :created-at (:created-at sd)}}})
         hs    (->> (:sessions index) vals (sort-by :updated-at) vec)]
     {:psi.agent-session/session-id              (:session-id sd)
      :psi.agent-session/session-file            (:session-file sd)
@@ -381,7 +383,8 @@
               :psi.session-info/worktree-path       (:worktree-path m)
               :psi.session-info/name                (:session-name m)
               :psi.session-info/parent-session-id   (:parent-session-id m)
-              :psi.session-info/parent-session-path (:parent-session-path m)})
+              :psi.session-info/parent-session-path (:parent-session-path m)
+              :psi.session-info/created             (:created-at m)})
            hs)}))
 
 ;; ── Phase and streaming state ───────────────────────────

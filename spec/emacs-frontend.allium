@@ -371,7 +371,7 @@ rule SessionTreeWidgetLineIsActive {
     requires: exists slot in sessions where slot.id = active_session_id
 
     ensures: ActiveSlotLine(slot) = WidgetLine {
-        text: SessionDisplayName(slot) + " ← active",
+        text: SessionTreeLineLabel(slot) + " ← active",
         action: null
     }
 }
@@ -381,7 +381,7 @@ rule SessionTreeWidgetLineIsInactive {
     requires: exists slot in sessions where slot.id != active_session_id
 
     ensures: InactiveSlotLine(slot) = WidgetLine {
-        text: SessionDisplayName(slot),
+        text: SessionTreeLineLabel(slot),
         action: WidgetAction { type: command, command: "/tree " + slot.id }
     }
 }
@@ -390,7 +390,32 @@ rule SessionTreeWidgetLineShowsStreamingState {
     when: SessionTreeWidgetLines(sessions, active_session_id)
     requires: exists slot in sessions where slot.is_streaming = true
 
-    ensures: SlotLineText(slot) = SessionDisplayName(slot) + " [streaming]"
+    ensures: SlotLineText(slot) = SessionTreeLineLabel(slot) + " [streaming]"
+}
+
+rule SessionTreeLineLabelIncludesWorktreeWhenPresent {
+    when: SessionTreeLineLabel(slot)
+    requires: slot.worktree_path != null
+
+    ensures: SessionTreeLineLabel(slot) = SessionDisplayName(slot) + " — " + slot.worktree_path
+}
+
+rule SessionTreeLineLabelIncludesCompactAgeWhenCreationKnown {
+    when: SessionTreeLineLabel(slot)
+    requires: slot.created_at != null
+
+    ensures: SessionTreeLineLabel(slot) contains SessionAgeLabel(slot)
+}
+
+rule SessionAgeLabelUsesCompactRelativeUnits {
+    when: SessionAgeLabel(slot)
+    requires: slot.created_at != null
+
+    ensures: SessionAgeLabel(slot) in {"now", /[0-9]+m/, /[0-9]+h/, /[0-9]+d/, /[0-9]+w/, /[0-9]+mo/, /[0-9]+y/}
+
+    @guidance
+        -- Relative session age is a frontend rendering concern derived from raw timestamp data.
+        -- Frontends may choose compact units like `53m` and `2h`.
 }
 
 rule SessionDisplayNameUsesNameOrFallback {

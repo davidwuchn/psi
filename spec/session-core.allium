@@ -197,4 +197,28 @@ surface SessionCoreApi {
     @guarantee SessionOwnsPromptCachePolicy
         -- Prompt cache breakpoint policy is session state.
         -- Provider request construction reads it indirectly via executor-built conversations.
+
+    @guarantee ContextOwnsSharedResources
+        -- Tools, prompt templates, skills, and extensions are loaded onto the context.
+        -- Sessions use these shared resources; they do not own independent copies.
+
+    @guarantee SessionsFormATreeWithinContext
+        -- Every forked or subagent session is represented as a child session in the same context.
+
+    @guarantee AgentIsASession
+        -- A subagent is modeled as just another session in the context tree.
+        -- The distinction is recorded by SessionContainment.relation = subagent.
+
+    @guarantee SessionStartInstantIsStableForUiProjection
+        -- Every session has a start_instant fixed at creation time.
+        -- UI projections may expose this timestamp so clients can render relative age
+        -- without losing the canonical underlying value.
+
+    @guarantee ActiveSessionIsFocusNotExistence
+        -- active_session_id is the default routing focus for prompts and UI selection.
+        -- Switching focus does not destroy or reset sibling sessions.
+
+    @guarantee SessionRunsInWorktreeContext
+        -- Every context is bound to exactly one project/worktree pair.
+        -- All sessions inside that context inherit that project/worktree binding.
 }

@@ -128,13 +128,56 @@ Supports both event slots (`:id`/`:name`) and backend command payloads
                     "")))
         (format "(session %s)" (substring id 0 (min 8 (length id))))))))
 
+(defun psi-emacs--now-seconds ()
+  "Return current wall-clock time as float seconds."
+  (float-time))
+
+(defun psi-emacs--session-age-label (created-at)
+  "Return compact relative age label for CREATED-AT, or nil when unavailable."
+  (when created-at
+    (let* ((ts (cond
+                ((stringp created-at)
+                 (ignore-errors (float-time (date-to-time created-at))))
+                ((consp created-at)
+                 (ignore-errors (float-time created-at)))
+                (t nil)))
+           (diff (and ts (max 0 (- (psi-emacs--now-seconds) ts)))))
+      (when diff
+        (cond
+         ((< diff 60) "now")
+         ((< diff 3600) (format "%dm" (floor (/ diff 60))))
+         ((< diff 86400) (format "%dh" (floor (/ diff 3600))))
+         ((< diff (* 86400 7)) (format "%dd" (floor (/ diff 86400))))
+         ((< diff (* 86400 30)) (format "%dw" (floor (/ diff (* 86400 7)))))
+         ((< diff (* 86400 365)) (format "%dmo" (floor (/ diff (* 86400 30)))))
+         (t (format "%dy" (floor (/ diff (* 86400 365))))))))))
+
+(defun psi-emacs--session-tree-line-label (slot)
+  "Return the rendered base label for a session tree SLOT."
+  (let* ((base-name (psi-emacs--session-display-name slot))
+         (worktree  (string-trim
+                     (or (psi-emacs--event-data-get slot '(:worktree-path worktree-path
+                                                           :worktreePath worktreePath
+                                                           :cwd cwd))
+                         "")))
+         (created-at (psi-emacs--event-data-get slot '(:created-at created-at :createdAt createdAt)))
+         (age       (psi-emacs--session-age-label created-at)))
+    (concat base-name
+            (when (not (string-empty-p worktree))
+              (format " — %s" worktree))
+            (when age
+              (format " — %s" age)))))
+
 (defun psi-emacs--session-tree-widget-lines (slots active-id)
   "Build structured widget content-lines for SLOTS with ACTIVE-ID marked.
 
 Returns a list of line maps with :text and optionally :action.
 Child sessions (non-nil parent-session-id that matches a slot) are indented."
   (let* ((slot-ids (mapcar (lambda (s)
-                             (psi-emacs--event-data-get s '(:id id)))
+                             (or (psi-emacs--event-data-get s '(:id id
+                                                                :session-id session-id
+                                                                :sessionId sessionId))
+                                 ""))
                            slots))
          (slot-id-set (and (listp slot-ids)
                            (make-hash-table :test 'equal))))
@@ -142,17 +185,20 @@ Child sessions (non-nil parent-session-id that matches a slot) are indented."
       (when id (puthash id t slot-id-set)))
     (mapcar
      (lambda (slot)
-       (let* ((id          (psi-emacs--event-data-get slot '(:id id)))
+       (let* ((id          (or (psi-emacs--event-data-get slot '(:id id
+                                                                 :session-id session-id
+                                                                 :sessionId sessionId))
+                               ""))
               (is-active   (psi-emacs--event-data-get slot '(:is-active is-active :isActive isActive)))
               (is-streaming (psi-emacs--event-data-get slot '(:is-streaming is-streaming :isStreaming isStreaming)))
               (parent-id   (psi-emacs--event-data-get slot '(:parent-session-id parent-session-id :parentSessionId parentSessionId)))
               (indent      (if (and parent-id (gethash parent-id slot-id-set))
                                "  " ""))
-              (base-name   (psi-emacs--session-display-name slot))
+              (base-label  (psi-emacs--session-tree-line-label slot))
               (suffix      (concat
                             (when is-streaming " [streaming]")
                             (when is-active " ← active")))
-              (text        (concat indent base-name suffix)))
+              (text        (concat indent base-label suffix)))
          (if is-active
              `((:text . ,text))
            `((:text . ,text)

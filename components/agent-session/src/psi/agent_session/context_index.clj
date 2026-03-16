@@ -26,7 +26,7 @@
                     :worktree-path (:worktree-path session-data)
                     :parent-session-id (:parent-session-id session-data)
                     :parent-session-path (:parent-session-path session-data)
-                    :created-at (now)
+                    :created-at (or (:created-at session-data) (now))
                     :updated-at (now)}))
      (empty-index))))
 
@@ -35,7 +35,9 @@
   [index session-data]
   (if-let [sid (:session-id session-data)]
     (let [existing (get-in index [:sessions sid])
-          created  (or (:created-at existing) (now))]
+          created  (or (:created-at existing)
+                       (:created-at session-data)
+                       (now))]
       (assoc-in index [:sessions sid]
                 {:session-id sid
                  :session-file (:session-file session-data)
