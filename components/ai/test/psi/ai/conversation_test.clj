@@ -34,7 +34,8 @@
       (is (= "Hello!" (get-in message [:content :text])))
       (is (= :text (get-in message [:content :kind])))
       (is (string? (:id message)))
-      (is (inst? (:timestamp message)))))
+      (is (inst? (:timestamp message)))
+      (is (= (:timestamp message) (:updated-at updated)))))
 
   (testing "Adding assistant message preserves supplied fields and adds identity"
     (let [conversation (conversation/create "Test assistant")
@@ -57,7 +58,8 @@
       (is (= :stop (:stop-reason message)))
       (is (= 5 (get-in message [:usage :total-tokens])))
       (is (string? (:id message)))
-      (is (inst? (:timestamp message)))))
+      (is (inst? (:timestamp message)))
+      (is (= (:timestamp message) (:updated-at updated)))))
 
   (testing "Adding tool result message records tool metadata"
     (let [conversation (conversation/create "Test assistant")
@@ -75,7 +77,8 @@
       (is (= {:kind :text :text "ok"} (:content message)))
       (is (= false (:is-error message)))
       (is (string? (:id message)))
-      (is (inst? (:timestamp message))))))
+      (is (inst? (:timestamp message)))
+      (is (= (:timestamp message) (:updated-at updated))))))
 
 ;; ─────────────────────────────────────────────────────────────────────────────
 ;; Derived data

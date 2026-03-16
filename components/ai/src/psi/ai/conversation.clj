@@ -17,17 +17,17 @@
 
 (defn- update-conversation [conversation f]
   (let [timestamp (now)]
-    (-> conversation
-        f
+    (-> (f conversation timestamp)
         (assoc :updated-at timestamp)
         validate-conversation)))
 
 (defn- append-message [conversation message]
   (update-conversation
    conversation
-   #(update % :messages conj (merge {:id (new-id)
-                                     :timestamp (now)}
-                                    message))))
+   (fn [conversation timestamp]
+     (update conversation :messages conj (merge {:id (new-id)
+                                                 :timestamp timestamp}
+                                                message)))))
 
 (defn create
   "Create new conversation with optional system prompt"
@@ -72,7 +72,8 @@
 (defn add-tool
   "Add tool to conversation"
   [conversation tool]
-  (update-conversation conversation #(update % :tools conj tool)))
+  (update-conversation conversation (fn [conversation _]
+                                      (update conversation :tools conj tool))))
 
 ;; Derived data
 
