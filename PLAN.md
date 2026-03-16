@@ -6,6 +6,21 @@ Ordered steps toward PSI COMPLETE.
 
 ## Done
 
+### Step 15e — Emacs slash E2E frontend-action roundtrip ✓ complete
+- Live Emacs slash verification now covers a backend-requested frontend action, not just text/quit paths.
+- Commit `3c0e668` extends `components/emacs-ui/test/psi-e2e-test.el` to drive:
+  - `/history` for backend-owned slash text output
+  - `/thinking` for `ui/frontend-action-requested` → `frontend_action_result` roundtrip
+  - `/quit` for terminal backend-owned slash behavior
+- The harness now auto-selects a deterministic thinking level (`high`) through `completing-read` and waits for:
+  - visible confirmation text (`Thinking level set to high`)
+  - cleared pending frontend-action state
+  - preserved input focus
+  - preserved read-only transcript/projection boundaries after the action flow
+- `components/emacs-ui/README.md` now documents the expanded `bb emacs:e2e` coverage.
+- Verification:
+  - `bb emacs:e2e` ✓ green
+
 ### Step 15d — Turn-state provider boundary telemetry ✓ complete
 - Executor turn data now records provider boundary lifecycle, not just assembled text/tool results.
 - New turn-state fields:
