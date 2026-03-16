@@ -266,14 +266,17 @@ Ordered steps toward PSI COMPLETE.
   (for example via resolvers, commands, or runtime status) instead of remaining internal session state only.
 - Keep the current one-way layering: session policy, executor projection, provider-specific wire translation.
 
-### Step 15m — Continue simplifying provider implementations around small phase helpers
-- Anthropic provider refactor (commit `d06c475`) split the file more cleanly into four phases:
-  - request/message shaping
-  - request header/body assembly
-  - SSE event translation
-  - usage/error handling
-- Follow the same simplification shape when touching provider code again, and consider converging OpenAI/provider-adjacent code toward the same helper boundaries where that reduces inline branching.
-- Preserve current behavior and keep provider-focused tests green while simplifying.
+### Step 15m — Converge Emacs `/tree` selector labels across backend command and event payload shapes ✓ complete
+- Commit `a210c7c` fixes Emacs `/tree` session labeling when the selector is populated from backend command/frontend-action payloads rather than `context/updated` event slots.
+- `psi-emacs--session-display-name` now accepts both payload vocabularies:
+  - event slots: `:id`, `:name`
+  - command payload slots: `:session-id`, `:session-name`
+- `/tree` completion candidates now include `:worktree-path`, so sibling sessions remain distinguishable even when unnamed.
+- Regression coverage added in `components/emacs-ui/test/psi-test.el` for:
+  - command-payload key support in session display names
+  - worktree-aware `/tree` candidate labels
+- Verification:
+  - `bb emacs:test`
 
 ### Step 15l — Apply the LEARNING.md inclusion rule during future follow-up memory updates
 - When a change teaches a project-specific, non-trivial operational lesson, record it in `LEARNING.md` as part of the follow-up chain.
