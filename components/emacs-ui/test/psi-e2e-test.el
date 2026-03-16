@@ -1,5 +1,6 @@
 ;;; psi-e2e-test.el --- End-to-end harness for psi Emacs frontend -*- lexical-binding: t; -*-
 
+(require 'cl-lib)
 (require 'subr-x)
 
 (add-to-list 'load-path
@@ -115,6 +116,31 @@ verifies the position just before separator start (transcript side)."
       (dolist (check checks)
         (psi-e2e--assert-read-only-at (car check) (cdr check))))))
 
+(defun psi-e2e--candidate-labels (collection)
+  "Return display labels extracted from completing-read COLLECTION."
+  (mapcar (lambda (item)
+            (if (consp item)
+                (car item)
+              item))
+          (cond
+           ((vectorp collection) (append collection nil))
+           ((listp collection) collection)
+           (t nil))))
+
+(defun psi-e2e--auto-select-frontend-choice (prompt collection)
+  "Return deterministic completing-read choice for frontend-action PROMPT.
+
+Prefers a stable thinking-level selection when available; otherwise returns the
+first candidate label." 
+  (let ((labels (delq nil (psi-e2e--candidate-labels collection))))
+    (cond
+     ((and (stringp prompt)
+           (string-match-p "thinking level" (downcase prompt))
+           (member "high" labels))
+      "high")
+     ((consp labels)
+      (car labels)))))
+
 (defun psi-e2e-run ()
   "Run baseline Emacs UI end-to-end scenario.
 
@@ -122,61 +148,95 @@ Scenario:
 1. launch frontend + wait for rpc transport ready
 2. assert focused input, visible footer, and read-only non-input areas
 3. send `/history` and assert backend history output appears
-4. send `/quit` and assert buffer exits"
+4. send `/thinking`, auto-complete backend-requested frontend action, and assert result
+5. send `/quit` and assert buffer exits"
   (let ((psi-emacs-command '("clojure" "-M:psi" "--rpc-edn"))
         (psi-emacs-working-directory default-directory)
         (buffer nil)
+        (frontend-prompts nil)
         (ok t)
         (failure nil))
     (condition-case err
-        (progn
-          (setq buffer (psi-emacs-open-buffer "*psi-e2e*"))
-          (unless (psi-e2e--wait-for
-                   (lambda ()
-                     (and (buffer-live-p buffer)
-                          (with-current-buffer buffer
-                            (and psi-emacs--state
-                                 (eq (psi-emacs-state-transport-state psi-emacs--state) 'ready)))))
-                   psi-e2e-timeout-seconds)
-            (error "transport not ready within timeout"))
+        (cl-letf (((symbol-function 'completing-read)
+                   (lambda (prompt collection &rest _args)
+                     (push prompt frontend-prompts)
+                     (or (psi-e2e--auto-select-frontend-choice prompt collection)
+                         (error "no frontend-action choice available for prompt: %s" prompt)))))
+          (progn
+            (setq buffer (psi-emacs-open-buffer "*psi-e2e*"))
+            (unless (psi-e2e--wait-for
+                     (lambda ()
+                       (and (buffer-live-p buffer)
+                            (with-current-buffer buffer
+                              (and psi-emacs--state
+                                   (eq (psi-emacs-state-transport-state psi-emacs--state) 'ready)))))
+                     psi-e2e-timeout-seconds)
+              (error "transport not ready within timeout"))
 
-          (unless (psi-e2e--wait-for (lambda () (psi-e2e--footer-displayed-p buffer))
-                                     psi-e2e-timeout-seconds)
-            (error "footer not displayed within timeout; snapshot:\n%s"
-                   (psi-e2e--buffer-snapshot buffer)))
+            (unless (psi-e2e--wait-for (lambda () (psi-e2e--footer-displayed-p buffer))
+                                       psi-e2e-timeout-seconds)
+              (error "footer not displayed within timeout; snapshot:\n%s"
+                     (psi-e2e--buffer-snapshot buffer)))
 
-          (unless (psi-e2e--input-focused-p buffer)
-            (error "input area is not focused after startup; snapshot:\n%s"
-                   (psi-e2e--buffer-snapshot buffer)))
+            (unless (psi-e2e--input-focused-p buffer)
+              (error "input area is not focused after startup; snapshot:\n%s"
+                     (psi-e2e--buffer-snapshot buffer)))
 
-          (psi-e2e--assert-non-input-read-only buffer)
+            (psi-e2e--assert-non-input-read-only buffer)
 
-          (with-current-buffer buffer
-            (psi-emacs--replace-input-text "/history")
-            (psi-emacs-send-from-buffer nil))
-
-          (unless (psi-e2e--wait-for
-                   (lambda ()
-                     (and (buffer-live-p buffer)
-                          (with-current-buffer buffer
-                            (string-match-p "Message history" (buffer-string)))))
-                   psi-e2e-timeout-seconds)
-            (error "did not observe history output; snapshot:\n%s"
-                   (psi-e2e--buffer-snapshot buffer)))
-
-          (unless (psi-e2e--input-focused-p buffer)
-            (error "input area lost focus after /history; snapshot:\n%s"
-                   (psi-e2e--buffer-snapshot buffer)))
-
-          (psi-e2e--assert-non-input-read-only buffer)
-
-          (when (buffer-live-p buffer)
             (with-current-buffer buffer
-              (psi-emacs--replace-input-text "/quit")
-              (psi-emacs-send-from-buffer nil)))
+              (psi-emacs--replace-input-text "/history")
+              (psi-emacs-send-from-buffer nil))
 
-          (unless (psi-e2e--wait-for (lambda () (not (buffer-live-p buffer))) 5)
-            (error "buffer did not close after /quit")))
+            (unless (psi-e2e--wait-for
+                     (lambda ()
+                       (and (buffer-live-p buffer)
+                            (with-current-buffer buffer
+                              (string-match-p "Message history" (buffer-string)))))
+                     psi-e2e-timeout-seconds)
+              (error "did not observe history output; snapshot:\n%s"
+                     (psi-e2e--buffer-snapshot buffer)))
+
+            (unless (psi-e2e--input-focused-p buffer)
+              (error "input area lost focus after /history; snapshot:\n%s"
+                     (psi-e2e--buffer-snapshot buffer)))
+
+            (psi-e2e--assert-non-input-read-only buffer)
+
+            (with-current-buffer buffer
+              (psi-emacs--replace-input-text "/thinking")
+              (psi-emacs-send-from-buffer nil))
+
+            (unless (psi-e2e--wait-for
+                     (lambda ()
+                       (and (buffer-live-p buffer)
+                            (with-current-buffer buffer
+                              (and (string-match-p "Thinking level set to high" (buffer-string))
+                                   (null (psi-emacs-state-pending-frontend-action psi-emacs--state))))))
+                     psi-e2e-timeout-seconds)
+              (error "did not observe /thinking frontend-action completion; snapshot:\n%s"
+                     (psi-e2e--buffer-snapshot buffer)))
+
+            (unless (cl-some (lambda (prompt)
+                               (and (stringp prompt)
+                                    (string-match-p "Select a thinking level" prompt)))
+                             frontend-prompts)
+              (error "did not observe thinking-picker frontend prompt; prompts=%S"
+                     (nreverse frontend-prompts)))
+
+            (unless (psi-e2e--input-focused-p buffer)
+              (error "input area lost focus after /thinking; snapshot:\n%s"
+                     (psi-e2e--buffer-snapshot buffer)))
+
+            (psi-e2e--assert-non-input-read-only buffer)
+
+            (when (buffer-live-p buffer)
+              (with-current-buffer buffer
+                (psi-emacs--replace-input-text "/quit")
+                (psi-emacs-send-from-buffer nil)))
+
+            (unless (psi-e2e--wait-for (lambda () (not (buffer-live-p buffer))) 5)
+              (error "buffer did not close after /quit"))))
       (error
        (setq ok nil)
        (setq failure (error-message-string err))))
