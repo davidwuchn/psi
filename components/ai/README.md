@@ -17,7 +17,7 @@ Based on the [Allium specification](../../spec/ai-abstract-model.allium), the co
 
 - `Conversation` - conversation lifecycle with messages and tools
 - `Model` - provider models with capabilities and costs
-- `StreamSession` - streaming response sessions with events
+- `StreamSession` - streaming response session metadata and lifecycle state
 - `Message` - user/assistant/tool messages with usage tracking
 
 ## Usage
@@ -34,28 +34,37 @@ Based on the [Allium specification](../../spec/ai-abstract-model.allium), the co
 ;; Add user message
 (def updated (ai/send-message conversation "What is 2+2?"))
 
-;; Stream response
+;; Stream response via callback
 (def model (models/get-model :claude-3-5-sonnet))
 (def options {:temperature 0.7 :max-tokens 1000})
-(def {:keys [stream session]} (ai/stream-response updated model options))
+(def {:keys [future session]}
+  (ai/stream-response
+   updated model options
+   (fn [event]
+     (case (:type event)
+       :start (println "Response starting...")
+       :text-delta (print (:delta event))
+       :thinking-delta (println "Thinking:" (:delta event))
+       :done (println "\nResponse complete:" (:reason event))
+       :error (println "Error:" (:error-message event))))))
+
+@future
+@session
 ```
 
-### Processing Stream Events
+### Processing Stream Events as a Sequence
 
 ```clojure
-(require '[clojure.core.async :as async])
-
-;; Consume events from stream
-(async/go-loop []
-  (when-let [event (async/<! stream)]
+(let [{:keys [events session]}
+      (ai/stream-response-seq updated model options)]
+  (doseq [event events]
     (case (:type event)
       :start (println "Response starting...")
       :text-delta (print (:delta event))
       :thinking-delta (println "Thinking:" (:delta event))
       :done (println "\nResponse complete:" (:reason event))
-      :error (println "Error:" (:error-message event)))
-    (when (not= (:type event) :done)
-      (recur))))
+      :error (println "Error:" (:error-message event))))
+  @session)
 ```
 
 ### Available Models

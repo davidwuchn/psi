@@ -86,7 +86,7 @@ entity Model {
 entity StreamSession {
     conversation_id: String
     model_id: String
-    status: starting | streaming | completed | failed
+    status: streaming | completed | failed
     started_at: Timestamp
     completed_at: Timestamp?
 

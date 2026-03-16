@@ -101,6 +101,22 @@
           all-events         (doall events)]
       (is (some #(= :text-delta (:type %)) all-events))
       (is (some #(= :done (:type %)) all-events))
+      (is (= :completed (:status @session)))))
+
+  (testing "stream-response-seq-in ends when the provider returns without a terminal event"
+    (let [conversation (-> (core/create-conversation "assistant")
+                           (core/send-message "hi"))
+          model        (models/get-model :claude-3-5-sonnet)
+          options      {:temperature 0.5}
+          provider     {:name   :stub
+                        :stream (fn [_conversation _model _options consume-fn]
+                                  (consume-fn {:type :start})
+                                  (consume-fn {:type :text-delta :content-index 0 :delta "partial"}))}
+          ctx          (core/create-context {:providers {:anthropic provider}})
+          {events :events
+           session :session} (core/stream-response-seq-in ctx conversation model options)
+          all-events         (doall events)]
+      (is (= [:start :text-delta] (mapv :type all-events)))
       (is (= :completed (:status @session))))))
 
 ;; ─────────────────────────────────────────────────────────────────────────────

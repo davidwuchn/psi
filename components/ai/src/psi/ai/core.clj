@@ -192,7 +192,7 @@
   "Stream assistant response as a lazy sequence of events.
 
    Returns {:events lazy-seq :session atom}.
-   Blocks per element until the next event arrives (30-second timeout).
+   Blocks per element until the next event arrives.
 
    See `psi.ai.streaming/stream-response-seq` for event shapes."
   [conversation model options]

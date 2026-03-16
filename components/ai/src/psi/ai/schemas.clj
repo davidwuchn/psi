@@ -35,7 +35,7 @@
   [:enum :active :completed :error])
 
 (def StreamSessionStatus
-  [:enum :starting :streaming :completed :failed])
+  [:enum :streaming :completed :failed])
 
 (def CacheRetention
   [:enum :none :short :long])
@@ -124,15 +124,6 @@
    [:tools [:set Tool]]
    [:error-message {:optional true} string?]])
 
-(def StreamEvent
-  [:map {:closed true}
-   [:sequence nat-int?]
-   [:event-type StreamEventType]
-   [:timestamp inst?]
-   [:content-index {:optional true} nat-int?]
-   [:delta-text {:optional true} string?]
-   [:error-message {:optional true} string?]])
-
 (def StreamSession
   [:map {:closed true}
    [:id string?]
@@ -144,7 +135,6 @@
    [:temperature {:optional true} [:maybe number?]]
    [:max-tokens {:optional true} [:maybe pos-int?]]
    [:cache-retention CacheRetention]
-   [:events [:vector StreamEvent]]
    [:error-message {:optional true} string?]])
 
 ;; Stream options
