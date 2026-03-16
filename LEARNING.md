@@ -3,6 +3,26 @@
 
 ---
 
+## 2026-03-16 - Provider simplification holds better when the file is split by runtime phase, not by arbitrary helper extraction (commit `d06c475`)
+
+### λ The useful provider boundaries are message shaping, request assembly, stream-event translation, and terminal accounting
+
+The Anthropic provider became easier to reason about once the extracted helpers matched the actual runtime phases of the provider rather than miscellaneous local subexpressions. The stable phase boundaries were:
+- message transformation into provider wire format
+- request/header/body assembly
+- SSE content-block event translation
+- usage accumulation and API-error extraction
+
+That shape reduced inline branching in the top-level functions without obscuring the streaming contract.
+
+### λ Simplification is stronger when repeated wire literals become named protocol constants
+
+Pulling values like the Anthropic API version and beta header fragments into named constants did more than shorten lines: it made the protocol surface visible in one place and removed repeated string decisions from request-building branches. For provider code, repeated protocol literals are often hidden control flow and worth naming even when they are used only a few times.
+
+### λ Provider refactors should preserve the observable event contract while moving complexity behind phase helpers
+
+The right simplification target was not to invent a new abstraction over provider streaming, but to keep `transform-messages`, `build-request`, and `stream-anthropic` as the public shape while pushing repetitive detail behind small helpers. That keeps provider-focused tests meaningful: they still verify the same observable request/event behavior while the internal branching becomes easier to inspect and change.
+
 ## 2026-03-16 - `LEARNING.md` stays useful only when it records non-trivial learned context rather than repo facts (commit `6ab9a31`)
 
 ### λ Record the reusable lesson, not the obvious repository fact
