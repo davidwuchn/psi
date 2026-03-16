@@ -3,6 +3,34 @@
 
 ---
 
+## 2026-03-16 - Historical memory should be converged after vocabulary migrations or the repo starts lying about itself (commit `16cb376` / PSL `f013f62`)
+
+### λ Repo memory becomes misleading fast when architectural terms change in code but not in the accumulated narrative
+
+Once the session container model moved from `host/*` to `context/*` in runtime code, RPC events, EQL attrs, Emacs state, and TUI selectors, older memory entries started to read like live truth even though they were only historical waypoints. That is dangerous in a repo that is explicitly used as agent memory: future ψ will search `STATE.md`, `PLAN.md`, and user docs before rediscovering runtime behavior.
+
+The useful follow-up pattern is:
+- converge implementation and tests first
+- then sweep state/plan/docs language for the same conceptual boundary
+- preserve real historical facts, but rename the framing when the old framing would now mislead a reader about the current model
+
+### λ Distinguish domain-container vocabulary from actual network host vocabulary
+
+A broad search/replace over `host` is wrong because some `host` values are real runtime facts:
+- `localhost`
+- nREPL host/port/endpoint
+- network callback hosts
+
+The better rule is:
+- replace `host` only where it names the session container model
+- keep `host` where it names an actual network host
+
+That distinction keeps the architecture coherent without corrupting legitimate runtime/network terminology.
+
+### λ PSL follow-up is part of convergence, not documentation garnish
+
+The plan/state/learning artifacts are not secondary commentary in this repo; they are operational memory for later sessions. After a major vocabulary migration, leaving them stale means the next search loop starts from a mixed model again. The follow-up should therefore be treated as part of the same convergence chain, with its own verification pass.
+
 ## 2026-03-15 - A cleaner architecture emerges when context owns reusable resources and sessions own execution/lineage (commit `b935191`)
 
 ### λ Put reusable capability on the context, not on each session
