@@ -222,6 +222,12 @@ Ordered steps toward PSI COMPLETE.
 
 ## Next
 
+### Step 15j — Converge runtime/tests to context-owned resources and session-tree model
+- Align RPC/session-tree events and payload naming with the spec shift from host-owned active session to context-owned session focus.
+- Converge implementation seams that still expose single-active-runtime vocabulary (`host/updated`, host registry wording, nested `session.agent` assumptions).
+- Update session-tree/frontend tests first, then session/runtime code, then extension/session-switch surfaces.
+- Keep the migration incremental: preserve external compatibility only where explicitly intended; otherwise prefer one coherent context/session-tree model.
+
 ### Step 15i — Simplify AI streaming lifecycle ✓ complete
 - `psi.ai.streaming` now has a smaller contract surface:
   - session tracks lifecycle metadata only
