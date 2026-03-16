@@ -579,7 +579,7 @@ Ordered steps toward PSI COMPLETE.
 - Verification: `bb emacs:test` green at 192/192 after slash-candidate expansion follow-up.
 - Progress: commit `cdfadda` fixes Emacs session-tree widget action routing so projected `/tree <id>` commands follow idle slash interception (`psi-emacs--dispatch-idle-compose-message`) instead of raw `prompt` dispatch; this restores `switch_session` behavior and avoids TUI-only `/tree` fallback text on widget click/RET.
 - PSL follow-up: commit `728cbc6` closes remaining `/tree` fallback drift in long-lived Emacs sessions where custom slash handlers may return nil; widget activation and idle dispatch now preserve frontend `/tree` semantics before backend `prompt` fallback, and `/tree` can fall back to the default idle slash handler for deterministic `switch_session` routing.
-- Verification: `bb emacs:test` green at 206/206 with regressions `psi-projection-tree-widget-action-uses-idle-slash-routing` and `psi-tree-dispatch-uses-default-handler-when-custom-slash-handler-returns-nil`.
+- Verification: `bb emacs:test` green at 206/206 with regressions `psi-projection-tree-widget-action-uses-idle-slash-routing` and `psi-tree-dispatch-ignores-custom-slash-handler-and-uses-backend-command`.
 - Completed in this cycle:
   - [x] Prompt completion architecture added via CAPF (`components/emacs-ui/psi-completion.el`)
   - [x] `/` completion (slash commands) + `@` completion (file references)

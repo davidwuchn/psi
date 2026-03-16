@@ -903,7 +903,7 @@
                      (psi-emacs-state-last-error psi-emacs--state)))
       (should (string-match-p "Error: Cannot run `set_model`" (buffer-string))))))
 
-(ert-deftest psi-idle-send-and-queue-share-slash-handler-path ()
+(ert-deftest psi-idle-send-and-queue-share-backend-command-dispatch-path ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -930,8 +930,8 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-tree-dispatch-uses-default-handler-when-custom-slash-handler-returns-nil ()
-  "`/tree` now routes through backend `command`, even when a custom slash handler declines it."
+(ert-deftest psi-tree-dispatch-ignores-custom-slash-handler-and-uses-backend-command ()
+  "`/tree` routes through backend `command`, even when a custom slash handler declines it."
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -955,7 +955,7 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-idle-unknown-slash-falls-through-to-prompt ()
+(ert-deftest psi-idle-unknown-slash-dispatches-backend-command ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -987,7 +987,7 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-idle-remember-slash-falls-through-to-prompt ()
+(ert-deftest psi-idle-remember-slash-dispatches-backend-command ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -1013,7 +1013,7 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-idle-remember-slash-accepted-path-sends-prompt ()
+(ert-deftest psi-idle-remember-slash-accepted-path-dispatches-backend-command ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -1588,7 +1588,7 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-idle-background-job-slash-commands-forward-to-prompt-op ()
+(ert-deftest psi-idle-background-job-slash-commands-dispatch-backend-command ()
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
