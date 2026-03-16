@@ -56,6 +56,29 @@ The initial cache-breakpoint wiring failed broadly because the executor projecte
 
 That one bad `nil` propagated as wide executor/RPC failure, so optional metadata handling is a high-leverage boundary.
 
+## 2026-03-16 - Slash-command routing should be shaped by input kind, not frontend phase (commit `1bd1f17`)
+
+### λ Remove the frontend concept when the dispatch rule can be expressed more directly
+
+The simpler routing model was not "idle slash commands" plus a separate streaming exception. It was:
+- slash-prefixed input → backend `command`
+- non-slash streaming input → `prompt_while_streaming`
+- other non-slash input → `prompt`
+
+Once the rule is stated that way, the idle-only slash concept becomes accidental complexity in names, docs, and tests. Removing that vocabulary made the implementation easier to reason about and reduced the chance that a command like `/tree` would silently disappear behind a phase-specific path.
+
+### λ Slash-command routing should outrank streaming prompt routing
+
+Streaming is a property of how ordinary prompt text should be injected into an in-flight turn; it is not the primary classifier for compose input. The higher-value discriminator is whether the input is a slash command. If slash detection happens first, command behavior stays uniform across phases and frontend-action commands like `/tree`, `/resume`, `/model`, and `/thinking` keep one path to the backend.
+
+### λ Preserve the non-slash streaming path while simplifying slash handling
+
+The useful simplification was not to collapse all compose traffic onto one RPC op. Non-slash streaming input still needs `prompt_while_streaming` steer/queue semantics. The stable shape is therefore a slash-first dispatcher, not a single universal prompt op.
+
+### λ Tests for phase-independent routing need a fresh slash draft per submission
+
+When asserting slash behavior during streaming send and queue paths, reusing the first submission's consumed draft can produce a false result on the second assertion because the queue path then sees an empty message and correctly takes the non-slash streaming route. The reliable regression test shape is: submit a slash command, then seed a fresh slash draft before the next submission. Otherwise the test can appear to disprove the routing rule while really only observing post-submit input consumption.
+
 ## 2026-03-16 - `LEARNING.md` stays useful only when it records non-trivial learned context rather than repo facts (commit `6ab9a31`)
 
 ### λ Record the reusable lesson, not the obvious repository fact
