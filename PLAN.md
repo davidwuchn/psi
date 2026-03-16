@@ -62,6 +62,7 @@ Ordered steps toward PSI COMPLETE.
 
 ### Step 15f — `/work-done` linear-history workflow ✓ complete
 - Commit `7757920` replaces `/work-merge` with `/work-done` as the user-facing worktree completion command.
+- PSL follow-up `d7e2e28` removed the temporary `:psi.agent-session/git-*` compatibility layer after all runtime consumers had moved to the canonical session-root attrs `:git.worktree/*` and `:git.branch/default-branch`.
 - The workflow now:
   - caches the default branch on init/session switch
   - reads the default branch through the queryable attr `:git.branch/default-branch`
