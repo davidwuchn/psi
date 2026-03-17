@@ -54,6 +54,31 @@ This change stayed small because it preserved the existing sequence:
 
 The refactor only cut the boundary between steps two and three. The useful lesson is that entrypoint simplification often works best by exposing the real phase boundary that already exists, rather than by introducing a larger orchestration abstraction first.
 
+## 2026-03-17 - Canonical root-state migration works best when runtime-visible mutable state and runtime handles are split intentionally (commit `3097239`)
+
+### λ A single mutable root becomes tractable when the migration boundary is runtime-visible state, not every object in the runtime
+
+The successful convergence point was not “put absolutely everything in one atom”. The durable simplification came from moving queryable/runtime-visible mutable state into one canonical root while leaving effectful handles outside it. The reusable rule is:
+- canonical root owns state that should be inspected, queried, or updated atomically
+- runtime handles own opaque integrations like provider clients, queues, registries, and live servers
+- do not force non-serializable control objects into the same state model just to satisfy a slogan
+
+### λ Root-state migrations are safer when old atom-oriented APIs are preserved as adapters during convergence
+
+The agent-session refactor did not require every consumer to change shape at once. Instead, path-based helpers in `core.clj` became the new source of truth and atom-like views were retained where callers still expected them. The practical lesson is:
+- introduce canonical path helpers first
+- migrate core read/write paths onto those helpers
+- keep adapters for legacy atom-shaped surfaces until the surrounding code catches up
+
+That preserves behavior while letting the architecture change underneath.
+
+### λ Specs become more useful when they name the intended state boundary before the code fully converges on it
+
+Adding `spec/system-context-unification.allium` first gave the implementation pass a stable target: one canonical mutable root for runtime-visible state, compatibility projections allowed during migration, runtime handles explicitly out of scope. The reusable lesson is:
+- if the change is architectural, capture the target boundary in spec first
+- then use code changes to converge on that target incrementally
+- use the spec to decide what may stay as a compatibility shim and what must become canonical
+
 ## 2026-03-17 - Anthropic replay failures can come from empty persisted assistant turns, not just from role alternation or tool pairing (commit `8e5da2d`)
 
 ### λ Replayed conversation builders should skip structurally empty assistant turns instead of faithfully serializing them
