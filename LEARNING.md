@@ -25,6 +25,30 @@ The live session had already rotated far enough that the earlier Anthropic failu
 - assume several later turns may happen before someone inspects the failing provider event
 - if a captured failure falls off the tail too quickly, the system effectively did not remember it
 
+## 2026-03-17 - Canonical root-state migrations are safest when code first converges on shared path helpers before removing old shapes completely (commit `3097239`)
+
+### λ A single mutable-root refactor goes smoother when the first stable API is path-based access, not immediate atom elimination
+
+The useful pivot was not "delete every atom-shaped field at once". The stable move was to introduce one canonical `:state*` root and then expose small shared helpers from `core.clj`:
+- read state by path
+- assoc/update state by path
+- expose named path lookup through one function
+
+That gave `runtime.clj`, `executor.clj`, and `resolvers.clj` one migration surface and avoided pushing raw nested-path knowledge into every caller.
+
+### λ Runtime handles should remain outside the canonical mutable root unless they are true queryable state
+
+The simplification target is one canonical mutable state root, not one storage location for every runtime object. Things like agent-core contexts, extension registries, UI integration hooks, OAuth store integrations, and nREPL/server handles are better treated as runtime handles. Trying to force them into the canonical state tree would mix queryable domain state with opaque side-effecting process objects.
+
+### λ Resolver migration is an especially good proving ground for state unification
+
+Resolvers touch almost every observable session/runtime field but mostly read rather than mutate. That makes them a strong convergence surface:
+- if the canonical root can satisfy resolver reads cleanly
+- the external query contract stays stable
+- and many stale internal storage assumptions are exposed quickly
+
+In this pass, moving resolver reads for session data, journal state, provider captures, tool telemetry, turn context, and background jobs was a high-signal way to validate the new root-state model without changing the public EQL surface.
+
 ## 2026-03-17 - Split UI-specific session creation from shared runtime bootstrap in entrypoint code (commit `2368583`)
 
 ### λ Context creation and runtime bootstrap are different responsibilities even when they happen back-to-back
