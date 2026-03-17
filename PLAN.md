@@ -68,6 +68,22 @@ Ordered steps toward PSI COMPLETE.
   - `clj-kondo --lint components/agent-session/src/psi/agent_session/core.clj components/agent-session/src/psi/agent_session/runtime.clj components/agent-session/src/psi/agent_session/executor.clj components/agent-session/src/psi/agent_session/resolvers.clj components/agent-session/src/psi/agent_session/rpc.clj components/agent-session/src/psi/agent_session/persistence.clj`
   - `clj-paren-repair` on the same file set
 
+### Step 15kf.1 — Provider error replies now survive stream churn and are discoverable in the live graph ✓ complete
+- Commit `231477a` retains provider `:error` reply captures in a dedicated error buffer instead of relying on the shared rolling provider reply stream alone.
+- Agent-session capture/runtime changes now:
+  - add `:provider-error-replies-atom` alongside the general provider reply atom
+  - append provider `:error` events into that dedicated buffer with its own retention cap
+  - expose `:psi.agent-session/provider-last-error-reply` and `:psi.agent-session/provider-error-replies` from the dedicated store
+- API error diagnostics now:
+  - enrich assistant-derived API errors from matching provider reply captures when request ids line up
+  - deduplicate assistant-derived and provider-derived views of the same logical failure
+- Graph/introspection changes now:
+  - root-queryable attr discovery flattens join-map outputs, so nested resolver outputs become visible in `:psi.graph/root-queryable-attrs`
+  - the new provider error attrs are now graph-discoverable alongside the broader nested session/query surface
+- Verification:
+  - `clojure -M:test --focus psi.agent-session.core-test --focus psi.ai.providers.anthropic-test`
+  - live reload + graph rebuild confirmed fresh Anthropic errors remain queryable through `:psi.agent-session/provider-last-error-reply`, `:psi.agent-session/provider-error-replies`, and enriched `:psi.agent-session/api-errors`
+
 ### Step 15ke — Anthropic error capture now preserves raw reply bodies and normalized request ids ✓ complete
 - Commit `0bc6fb5` extends Anthropic failure diagnostics so live provider capture retains the actual reply payload, not just the summarized status/request-id string.
 - Provider error handling now:
