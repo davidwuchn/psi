@@ -1546,7 +1546,7 @@
                       :session-file (:session-file sd)
                       :message-count (count msgs)})
               (emit! "session/rehydrated"
-                     {:messages   (or (:messages rehydrate) [])
+                     {:messages   msgs
                       :tool-calls (or (:tool-calls rehydrate) {})
                       :tool-order (or (:tool-order rehydrate) [])})))
           (handle-command-result! request-id cmd-result emit!)))
@@ -1720,7 +1720,7 @@
                                                    :session-file (:session-file sd)
                                                    :message-count (count msgs)})
                                            (emit! "session/rehydrated"
-                                                  {:messages (or (:messages rehydrate) [])
+                                                  {:messages msgs
                                                    :tool-calls (or (:tool-calls rehydrate) {})
                                                    :tool-order (or (:tool-order rehydrate) [])})))
                                        (handle-prompt-command-result! cmd-result emit!)))
@@ -1895,7 +1895,7 @@
                                                                       :message-count (count msgs)}})
                                (emit-event! emit-frame! state {:event "session/rehydrated"
                                                                :id (:id request)
-                                                               :data {:messages (or (:messages rehydrate) [])
+                                                               :data {:messages msgs
                                                                       :tool-calls (or (:tool-calls rehydrate) {})
                                                                       :tool-order (or (:tool-order rehydrate) [])}})
                                (emit-event! emit-frame! state {:event "session/updated"

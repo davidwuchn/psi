@@ -23,7 +23,7 @@
 
   emacs:test
   {:doc  "Run Emacs frontend ERT suites (psi-rpc + psi)."
-   :task (shell "emacs -Q --batch -L components/emacs-ui -l components/emacs-ui/test/psi-rpc-test.el -l components/emacs-ui/test/psi-test.el -f ert-run-tests-batch-and-exit")}
+   :task (shell "emacs -Q --batch -L components/emacs-ui -l components/emacs-ui/test/psi-rpc-test.el -l components/emacs-ui/test/psi-test.el -l components/emacs-ui/test/psi-anthropic-rehydrate-regression-test.el -l components/emacs-ui/test/psi-new-anthropic-flow-regression-test.el -f ert-run-tests-batch-and-exit")}
 
   emacs:byte-compile
   {:doc  "Byte-compile Emacs frontend modules and clean generated .elc artifacts."

@@ -1439,7 +1439,8 @@
           rehydrate-event (some #(when (= "session/rehydrated" (:event %)) %) frames)]
       (is (= 1 @called?))
       (is (some? rehydrate-event))
-      (is (= [{:role :assistant :text "startup reply"}]
+      (is (= [{:role "assistant"
+               :content [{:type :text :text "startup reply"}]}]
              (get-in rehydrate-event [:data :messages])))
       (is (= ["call-1"]
              (get-in rehydrate-event [:data :tool-order]))))))

@@ -1475,8 +1475,10 @@
                        (:message-count . 2)))))
           (psi-emacs--handle-rpc-event
            '((:event . "session/rehydrated")
-             (:data . ((:messages . [((:role . :user) (:text . "First"))
-                                     ((:role . :assistant) (:text . "Second"))])
+             (:data . ((:messages . [((:role . "user")
+                                      (:content . [((:type . "text") (:text . "First"))]))
+                                     ((:role . "assistant")
+                                      (:content . [((:type . "text") (:text . "Second"))]))])
                        (:tool-calls . ())
                        (:tool-order . ())))))
           (should (string-match-p "User: First
