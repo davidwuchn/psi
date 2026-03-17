@@ -6,6 +6,22 @@ Ordered steps toward PSI COMPLETE.
 
 ## Done
 
+### Step 15kh — Canonical-root cleanup docs/tests now match the hosted runtime architecture ✓ complete
+- Commit `d037818` adds canonical-root-backed test helpers and updates subsystem docs to describe adapters as root-backed views rather than separate sources of truth.
+- Cleanup results:
+  - added `components/agent-session/test/psi/agent_session/test_support.clj` with `make-session-ctx`, `set-state!`, and `update-state!`
+  - migrated representative agent-session runtime/executor tests to canonical-root-backed fixtures
+  - updated `statechart.clj` and `extensions.clj` comments to describe `:session-data-atom` and `:ui-state-atom` as adapter-backed compatibility surfaces
+- Converged files:
+  - `components/agent-session/src/psi/agent_session/statechart.clj`
+  - `components/agent-session/src/psi/agent_session/extensions.clj`
+  - `components/agent-session/test/psi/agent_session/test_support.clj`
+  - `components/agent-session/test/psi/agent_session/runtime_test.clj`
+  - `components/agent-session/test/psi/agent_session/executor_test.clj`
+- Verification:
+  - `clj-kondo --lint components/agent-session/src/psi/agent_session/core.clj components/agent-session/src/psi/agent_session/statechart.clj components/agent-session/src/psi/agent_session/extensions.clj components/agent-session/src/psi/agent_session/resolvers.clj components/agent-session/test/psi/agent_session/runtime_test.clj components/agent-session/test/psi/agent_session/executor_test.clj components/agent-session/test/psi/agent_session/test_support.clj`
+  - `clj-paren-repair` on the same file set
+
 ### Step 15kg — Runtime-visible ui/recursion/nrepl/oauth projections now converge on canonical state ✓ complete
 - Commit `a110370` hosts extension UI state, recursion state, canonical nREPL metadata, and runtime-visible OAuth projections inside the session canonical state root while preserving runtime handles for opaque integrations.
 - Phase 2A/2B/2C/2D results:
