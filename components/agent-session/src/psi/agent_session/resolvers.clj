@@ -811,11 +811,17 @@
   (let [store (reify
                 clojure.lang.IDeref
                 (deref [_] (session/get-state-value-in agent-session-ctx (session/state-path :background-jobs)))
-                clojure.lang.IReset
+                clojure.lang.IAtom
+                (compareAndSet [_ oldv newv]
+                  (let [curv (session/get-state-value-in agent-session-ctx (session/state-path :background-jobs))]
+                    (if (= curv oldv)
+                      (do
+                        (session/assoc-state-value-in! agent-session-ctx (session/state-path :background-jobs) newv)
+                        true)
+                      false)))
                 (reset [_ newv]
                   (session/assoc-state-value-in! agent-session-ctx (session/state-path :background-jobs) newv)
                   newv)
-                clojure.lang.ISwap
                 (swap [_ f]
                   (let [newv (f (session/get-state-value-in agent-session-ctx (session/state-path :background-jobs)))]
                     (session/assoc-state-value-in! agent-session-ctx (session/state-path :background-jobs) newv)
@@ -875,11 +881,17 @@
         store     (reify
                     clojure.lang.IDeref
                     (deref [_] (session/get-state-value-in agent-session-ctx (session/state-path :background-jobs)))
-                    clojure.lang.IReset
+                    clojure.lang.IAtom
+                    (compareAndSet [_ oldv newv]
+                      (let [curv (session/get-state-value-in agent-session-ctx (session/state-path :background-jobs))]
+                        (if (= curv oldv)
+                          (do
+                            (session/assoc-state-value-in! agent-session-ctx (session/state-path :background-jobs) newv)
+                            true)
+                          false)))
                     (reset [_ newv]
                       (session/assoc-state-value-in! agent-session-ctx (session/state-path :background-jobs) newv)
                       newv)
-                    clojure.lang.ISwap
                     (swap [_ f]
                       (let [newv (f (session/get-state-value-in agent-session-ctx (session/state-path :background-jobs)))]
                         (session/assoc-state-value-in! agent-session-ctx (session/state-path :background-jobs) newv)

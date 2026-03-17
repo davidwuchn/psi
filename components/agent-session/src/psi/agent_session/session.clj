@@ -346,6 +346,69 @@
   [session entry]
   (update session :session-entries conj entry))
 
+;; ── Canonical-root runtime access helpers ───────────────
+
+(def ^:private session-data-path [:agent-session :data])
+(def ^:private context-index-path [:agent-session :context-index])
+(def ^:private tool-output-stats-path [:telemetry :tool-output-stats])
+(def ^:private tool-call-attempts-path [:telemetry :tool-call-attempts])
+(def ^:private provider-requests-path [:telemetry :provider-requests])
+(def ^:private provider-replies-path [:telemetry :provider-replies])
+(def ^:private nrepl-runtime-path [:runtime :nrepl])
+(def ^:private journal-path [:persistence :journal])
+(def ^:private flush-state-path [:persistence :flush-state])
+(def ^:private turn-ctx-path [:turn :ctx])
+(def ^:private background-jobs-path [:background-jobs :store])
+(def ^:private ui-state-path [:ui :extension-ui])
+(def ^:private recursion-state-path [:recursion])
+(def ^:private oauth-state-path [:oauth])
+
+(defn state-path
+  "Resolve known canonical-root runtime paths by key."
+  [k]
+  (case k
+    :session-data session-data-path
+    :context-index context-index-path
+    :tool-output-stats tool-output-stats-path
+    :tool-call-attempts tool-call-attempts-path
+    :provider-requests provider-requests-path
+    :provider-replies provider-replies-path
+    :nrepl-runtime nrepl-runtime-path
+    :journal journal-path
+    :flush-state flush-state-path
+    :turn-ctx turn-ctx-path
+    :background-jobs background-jobs-path
+    :ui-state ui-state-path
+    :recursion recursion-state-path
+    :oauth oauth-state-path
+    nil))
+
+(defn get-state-value-in
+  "Read `path` from canonical root state in `ctx`."
+  [ctx path]
+  (get-in @(:state* ctx) path))
+
+(defn assoc-state-value-in!
+  "Assoc `value` at `path` in canonical root state in `ctx`."
+  [ctx path value]
+  (swap! (:state* ctx) assoc-in path value))
+
+(defn get-session-data-in
+  "Read active session data from canonical root state in `ctx`.
+
+   If `session-id` is provided and present in context index, returns that
+   context-session projection entry."
+  ([ctx]
+   (get-state-value-in ctx session-data-path))
+  ([ctx session-id]
+   (or (get-in (get-state-value-in ctx context-index-path) [:sessions session-id])
+       (get-state-value-in ctx session-data-path))))
+
+(defn get-context-index-in
+  "Read context session index from canonical root state in `ctx`."
+  [ctx]
+  (get-state-value-in ctx context-index-path))
+
 ;; ── Retry backoff ───────────────────────────────────────
 
 (def ^:private retriable-http-statuses

@@ -236,10 +236,33 @@
                               (reify
                                 clojure.lang.IDeref
                                 (deref [_] (session/get-state-value-in ctx path))
-                                clojure.lang.IReset
+                                clojure.lang.IAtom
+                                (compareAndSet [_ oldv newv]
+                                  (let [curv (session/get-state-value-in ctx path)]
+                                    (if (= curv oldv)
+                                      (do
+                                        (session/assoc-state-value-in! ctx path newv)
+                                        true)
+                                      false)))
                                 (reset [_ newv]
                                   (session/assoc-state-value-in! ctx path newv)
-                                  newv))))
+                                  newv)
+                                (swap [_ f]
+                                  (let [newv (f (session/get-state-value-in ctx path))]
+                                    (session/assoc-state-value-in! ctx path newv)
+                                    newv))
+                                (swap [_ f a]
+                                  (let [newv (f (session/get-state-value-in ctx path) a)]
+                                    (session/assoc-state-value-in! ctx path newv)
+                                    newv))
+                                (swap [_ f a b]
+                                  (let [newv (f (session/get-state-value-in ctx path) a b)]
+                                    (session/assoc-state-value-in! ctx path newv)
+                                    newv))
+                                (swap [_ f a b xs]
+                                  (let [newv (apply f (session/get-state-value-in ctx path) a b xs)]
+                                    (session/assoc-state-value-in! ctx path newv)
+                                    newv)))))
          opts   (cond-> {}
                   turn-ctx-atom*
                   (assoc :turn-ctx-atom turn-ctx-atom*)

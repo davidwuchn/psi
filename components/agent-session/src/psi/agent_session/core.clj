@@ -1194,11 +1194,16 @@
         clojure.lang.IDeref
         (deref [_] (get-state-in* ctx path))
         clojure.lang.IAtom
-        clojure.lang.IReset
+        (compareAndSet [_ oldv newv]
+          (let [curv (get-state-in* ctx path)]
+            (if (= curv oldv)
+              (do
+                (assoc-state-in!* ctx path newv)
+                true)
+              false)))
         (reset [_ newv]
           (assoc-state-in!* ctx path newv)
           newv)
-        clojure.lang.ISwap
         (swap [_ f]
           (let [newv (f (get-state-in* ctx path))]
             (assoc-state-in!* ctx path newv)
