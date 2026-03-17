@@ -6,6 +6,20 @@ Ordered steps toward PSI COMPLETE.
 
 ## Done
 
+### Step 15kc — Emacs Anthropic `/new` rehydrate flow now rides the canonical RPC message shape end-to-end ✓ complete
+- Commit `98fff62` closes the remaining Emacs-specific Anthropic failure path by aligning session rehydrate payloads with canonical agent history instead of TUI display rows.
+- Backend/RPC changes:
+  - `session/rehydrated` now emits canonical `msgs` / `:agent-messages` payloads for `new_session` and `/new` flows instead of display-only `{:role :assistant :text ...}` rows
+  - the emitted payload shape now matches what the agent/executor/provider path expects when rebuilding conversation history
+- Emacs coverage added:
+  - canonical `session/rehydrated` payloads with `:role` + `:content` render correctly in transcript replay
+  - `/new` local echo + `command-result` + `session/resumed` + `session/rehydrated` rebuild path does not leave duplicate assistant turns behind
+- Agent-session coverage added:
+  - RPC regression tests lock canonical rehydrate payloads for both `new_session` and `/resume`
+- Verification:
+  - `bb clojure:test:unit --focus psi.agent-session.rpc-test --focus psi.agent-session.rpc-anthropic-regression-test`
+  - `bb emacs:test`
+
 ### Step 15kb — Anthropic prompt caching now declares its beta contract and preserves provider diagnostics ✓ complete
 - Commit `5f6ec96` closes the gap between emitted Anthropic `cache_control` fields and the required request headers.
 - Provider request shaping now:
