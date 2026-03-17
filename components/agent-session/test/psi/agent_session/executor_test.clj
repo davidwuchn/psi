@@ -451,7 +451,21 @@
           conv (#'psi.agent-session.executor/agent-messages->ai-conversation
                 "sys" messages [] {})
           roles (mapv :role (:messages conv))]
-      (is (= [:user :assistant :user] roles)))))
+      (is (= [:user :assistant :user] roles))))
+
+  (testing "consecutive user messages remain separate conversation messages"
+    (let [messages
+          [{:role "user" :content [{:type :text :text "u1"}]}
+           {:role "user" :content [{:type :text :text "u2"}]}
+           {:role "assistant" :content [{:type :text :text "a"}]}]
+          conv (#'psi.agent-session.executor/agent-messages->ai-conversation
+                "sys" messages [] {})]
+      (is (= [:user :user :assistant]
+             (mapv :role (:messages conv))))
+      (is (= [{:type :text :text "u1"}]
+             (:content (first (:messages conv)))))
+      (is (= [{:type :text :text "u2"}]
+             (:content (second (:messages conv))))))))
 
 (deftest cache-breakpoints-are-projected-into-ai-conversation-test
   (let [messages []

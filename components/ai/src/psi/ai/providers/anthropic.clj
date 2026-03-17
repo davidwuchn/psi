@@ -71,9 +71,27 @@
 
 (defn- user-content
   [msg]
-  [{:type "text"
-    :text (get-in msg [:content :text]
-                  (str (:content msg)))}])
+  (let [content (:content msg)]
+    (cond
+      (and (map? content)
+           (= :text (:kind content)))
+      [{:type "text"
+        :text (or (:text content) "")}]
+
+      (and (sequential? content)
+           (seq content))
+      (->> content
+           (keep (fn [block]
+                   (when (= :text (:type block))
+                     (with-cache-control {:type "text"
+                                          :text (or (:text block) "")}
+                       (:cache-control block)))))
+           vec)
+
+      :else
+      [{:type "text"
+        :text (get-in msg [:content :text]
+                      (str content))}])))
 
 (defn- assistant-block
   [canonical-id block]

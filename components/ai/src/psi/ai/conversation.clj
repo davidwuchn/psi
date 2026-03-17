@@ -65,14 +65,28 @@
        (some? normalized-blocks) (assoc :system-prompt-blocks normalized-blocks)))))
 
 (defn add-user-message
-  "Add user message to conversation"
+  "Add user message to conversation.
+
+   CONTENT may be either:
+   - string text
+   - vector of canonical text blocks {:type :text :text ... [:cache-control ...]}
+
+   The vector form preserves richer user-message metadata until provider-specific
+   transformation."
   [conversation content]
   {:pre [(schemas/valid? schemas/Conversation conversation)
-         (string? content)]}
+         (or (string? content)
+             (and (vector? content)
+                  (every? #(and (map? %)
+                                (= :text (:type %))
+                                (string? (:text %)))
+                          content)))]}
   (append-message conversation
                   {:role :user
-                   :content {:kind :text
-                             :text content}}))
+                   :content (if (string? content)
+                              {:kind :text
+                               :text content}
+                              content)}))
 
 (defn add-assistant-message
   "Add assistant message to conversation"

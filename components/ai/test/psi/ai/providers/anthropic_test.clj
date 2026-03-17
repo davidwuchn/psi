@@ -345,3 +345,27 @@
       (is (= use-id res-id) "tool_result must reference normalized tool_use id")
       (is (re-matches #"^[a-zA-Z0-9_-]+$" use-id)
           "normalized id must satisfy Anthropic regex"))))
+
+(deftest transform-messages-preserves-user-text-shape-test
+  (testing "vector text blocks from agent messages become Anthropic text content, not stringified EDN"
+    (let [convo {:messages [{:role :user
+                             :content [{:type :text :text "who are you?"}]}]}
+          out   (anthropic/transform-messages convo)]
+      (is (= [{:role "user"
+               :content [{:type "text" :text "who are you?"}]}]
+             out))))
+
+  (testing "user text blocks preserve cache_control metadata"
+    (let [convo {:messages [{:role :user
+                             :content [{:type :text
+                                        :text "stable"
+                                        :cache-control {:type :ephemeral}}
+                                       {:type :text
+                                        :text "tail"}]}]}
+          out   (anthropic/transform-messages convo)]
+      (is (= [{:type "text"
+               :text "stable"
+               :cache_control {:type "ephemeral"}}
+              {:type "text"
+               :text "tail"}]
+             (get-in out [0 :content]))))))

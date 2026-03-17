@@ -80,17 +80,29 @@
   [system-prompt messages agent-tools {:keys [cache-breakpoints]}]
   (let [system-cache? (contains? (set (or cache-breakpoints #{})) :system)
         tools-cache?  (contains? (set (or cache-breakpoints #{})) :tools)
+        append-user-message
+        (fn [conv msg]
+          (let [text-blocks (->> (:content msg)
+                                 (keep (fn [block]
+                                         (when (= :text (:type block))
+                                           (cond-> {:type :text
+                                                    :text (or (:text block) "")}
+                                             (:cache-control block)
+                                             (assoc :cache-control (:cache-control block))))))
+                                 vec)
+                user-content (if (seq text-blocks)
+                               text-blocks
+                               (or (some #(when (= :text (:type %)) (:text %))
+                                         (:content msg))
+                                   (str (:content msg))))]
+            (conv/add-user-message conv user-content)))
         conv (reduce
               (fn [conv msg]
                 (if (:custom-type msg)
                   conv ;; skip extension transcript markers
                   (case (:role msg)
                     "user"
-                    (conv/add-user-message
-                     conv
-                     (or (some #(when (= :text (:type %)) (:text %))
-                               (:content msg))
-                         (str (:content msg))))
+                    (append-user-message conv msg)
 
                     "assistant"
                     (let [thinking-blocks (->> (:content msg)
