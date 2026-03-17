@@ -121,9 +121,7 @@
                          {:content
                           {:kind   :structured
                            :blocks structured-blocks}})
-                        (conv/add-assistant-message
-                         conv
-                         {:content {:kind :text :text text}})))
+                        conv))
 
                     "toolResult"
                     (let [text (or (some #(when (= :text (:type %)) (:text %))

@@ -46,7 +46,18 @@
       (is (pos? (get-in body [:thinking :budget_tokens])))
       (is (nil? (:temperature body)) "temperature must be absent with extended thinking")
       (is (some? (re-find #"interleaved-thinking" (get headers "anthropic-beta")))
-          "interleaved-thinking beta header required"))))
+          "interleaved-thinking beta header required")))
+
+  (testing "oauth requests with thinking also include interleaved-thinking beta"
+    (let [model   (models/get-model :sonnet-4.6)
+          convo   (conv/create "sys")
+          req     (#'anthropic/build-request convo model {:thinking-level :medium
+                                                          :api-key "sk-ant-oat-test-token"})
+          headers (:headers req)]
+      (is (some? (re-find #"oauth-2025-04-20" (get headers "anthropic-beta")))
+          "oauth beta header required for oauth auth")
+      (is (some? (re-find #"interleaved-thinking" (get headers "anthropic-beta")))
+          "oauth requests with thinking must include interleaved-thinking beta"))))
 
 (deftest build-request-with-cache-breakpoints-test
   (testing "system prompt blocks and tools emit Anthropic cache_control when marked ephemeral"

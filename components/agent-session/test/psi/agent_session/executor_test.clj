@@ -437,6 +437,17 @@
       (is (not-any? :custom-type (:messages conv))
           "no custom-type keys in LLM conversation messages")))
 
+  (testing "assistant messages with no text, thinking, or tool-call blocks are skipped"
+    (let [messages
+          [{:role "user"      :content [{:type :text :text "q"}]}
+           {:role "assistant" :content [{:type :text :text ""}]}
+           {:role "user"      :content [{:type :text :text "q2"}]}]
+          conv (#'psi.agent-session.executor/agent-messages->ai-conversation
+                "sys" messages [] {})
+          roles (mapv :role (:messages conv))]
+      (is (= [:user :user] roles)
+          "empty assistant text message should not produce an empty text content block")))
+
   (testing "non-custom-type messages are all included"
     (let [messages
           [{:role "user"      :content [{:type :text :text "q"}]}

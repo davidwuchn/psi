@@ -20,7 +20,8 @@
 (def ^:private anthropic-version "2023-06-01")
 (def ^:private interleaved-thinking-beta "interleaved-thinking-2025-05-14")
 (def ^:private prompt-caching-beta "prompt-caching-2024-07-31")
-(def ^:private oauth-beta "claude-code-20250219,oauth-2025-04-20")
+(def ^:private prompt-caching-scope-beta "prompt-caching-scope-2026-01-05")
+(def ^:private context-management-beta "context-management-2025-06-27")
 
 (defn- valid-anthropic-tool-id?
   [id]
@@ -211,11 +212,16 @@
 (defn- beta-header
   [oauth? thinking prompt-caching?]
   (let [betas (cond-> []
-                oauth?           (conj oauth-beta)
-                thinking         (conj interleaved-thinking-beta)
-                prompt-caching?  (conj prompt-caching-beta))]
+                oauth?          (into ["claude-code-20250219"
+                                       "oauth-2025-04-20"
+                                       context-management-beta
+                                       prompt-caching-scope-beta])
+                thinking        (conj interleaved-thinking-beta)
+                prompt-caching? (conj prompt-caching-beta))]
     (when (seq betas)
-      (str/join "," betas))))
+      (->> betas
+           distinct
+           (str/join ",")))))
 
 (defn- request-headers
   [api-key thinking prompt-caching?]
