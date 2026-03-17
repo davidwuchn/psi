@@ -21,7 +21,7 @@
 
 (def StreamEventType
   [:enum :start :text-start :text-delta :text-end
-   :thinking-start :thinking-delta :thinking-end
+   :thinking-start :thinking-delta :thinking-signature-delta :thinking-end
    :toolcall-start :toolcall-delta :toolcall-end
    :done :error])
 
@@ -198,6 +198,8 @@
    [:partial {:optional true} Message]
    [:content-index {:optional true} nat-int?]
    [:delta {:optional true} string?]
+   [:signature {:optional true} string?]
+   [:thinking {:optional true} string?]
    [:reason {:optional true} StopReason]
    [:message {:optional true} Message]
    [:error-message {:optional true} string?]])

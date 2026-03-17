@@ -677,7 +677,19 @@ Also tolerates cumulative snapshots that differ near previous tail
                       (end-content-block! (:turn-data turn-ctx) (or (:content-index event) 0)))
 
                     :thinking-start
-                    nil
+                    (let [idx (or (:content-index event) 0)]
+                      (note-last-provider-event! (:turn-data turn-ctx) :thinking-start event)
+                      (begin-content-block! (:turn-data turn-ctx) idx)
+                      (update-content-block! (:turn-data turn-ctx) idx
+                                             #(assoc % :kind :thinking))
+                      (when (= (:provider ai-model) "anthropic")
+                        (swap! (:turn-data turn-ctx) update :thinking-blocks
+                               (fnil assoc (sorted-map))
+                               idx
+                               {:content-index idx
+                                :provider :anthropic
+                                :text (or (:thinking event) "")
+                                :signature (:signature event)})))
 
                     :thinking-delta
                     (let [idx    (or (:content-index event) 0)
@@ -686,13 +698,29 @@ Also tolerates cumulative snapshots that differ near previous tail
                           merged (get (swap! thinking-buffers update idx merge-stream-text raw) idx)]
                       (note-last-provider-event! (:turn-data turn-ctx) :thinking-delta event)
                       (note-content-delta! (:turn-data turn-ctx) idx :thinking)
+                      (when (= (:provider ai-model) "anthropic")
+                        (swap! (:turn-data turn-ctx) update :thinking-blocks
+                               (fn [blocks]
+                                 (let [blocks* (or blocks (sorted-map))
+                                       current (get blocks* idx {:content-index idx
+                                                                 :provider :anthropic
+                                                                 :signature nil})]
+                                   (assoc blocks* idx (assoc current :text merged))))))
                       (emit-progress! progress-queue
                                       {:event-kind    :thinking-delta
                                        :content-index idx
                                        :text          merged}))
 
                     :thinking-signature-delta
-                    nil
+                    (let [idx (or (:content-index event) 0)]
+                      (when (= (:provider ai-model) "anthropic")
+                        (swap! (:turn-data turn-ctx) update :thinking-blocks
+                               (fn [blocks]
+                                 (let [blocks* (or blocks (sorted-map))
+                                       current (get blocks* idx {:content-index idx
+                                                                 :provider :anthropic
+                                                                 :text ""})]
+                                   (assoc blocks* idx (assoc current :signature (:signature event))))))))
 
                     :thinking-end
                     (do

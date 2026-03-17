@@ -5,6 +5,7 @@
   (no HTTP calls, no API keys required)."
   (:require
    [cheshire.core :as json]
+   [clojure.string :as str]
    [clojure.test :refer [deftest testing is]]
    [psi.ai.models :as models]
    [psi.ai.providers.anthropic :as anthropic]
@@ -218,13 +219,14 @@
                              :session-data-atom (atom {:tool-output-overrides {}
                                                        :thinking-level :high}))
           user-msg    {:role "user" :content [{:type :text :text "hi"}]}
+          openai-model {:provider "openai" :id "gpt-5.4"}
           openai-turn (fn [_ai-ctx _conv _model _opts consume-fn]
                         (consume-fn {:type :start})
                         (consume-fn {:type :thinking-delta :content-index 0 :delta "Plan step"})
                         (consume-fn {:type :text-delta :content-index 1 :delta "Done"})
                         (consume-fn {:type :done :reason :stop}))]
       (with-redefs [psi.agent-session.executor/do-stream! openai-turn]
-        (let [result (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg])]
+        (let [result (executor/run-agent-loop! nil session-ctx agent-ctx openai-model [user-msg])]
           (is (= :stop (:stop-reason result)))
           (is (= "Done"
                  (some #(when (= :text (:type %)) (:text %))
@@ -248,6 +250,44 @@
                (mapv :role (:messages body))))
         (is (= "Done"
                (get-in body [:messages 1 :content 0 :text])))))))
+
+(deftest anthropic-thinking-blocks-roundtrip-into-follow-up-request-test
+  (testing "Anthropic thinking blocks with signatures are preserved for the next Anthropic request"
+    (let [agent-ctx   (setup-agent-ctx!)
+          session-ctx (assoc (setup-session-ctx! agent-ctx)
+                             :session-data-atom (atom {:tool-output-overrides {}
+                                                       :thinking-level :high}))
+          user-msg    {:role "user" :content [{:type :text :text "hi"}]}
+          anthropic-model {:provider "anthropic" :id "claude-sonnet-4-6"}
+          stream-fn   (fn [_ai-ctx _conv _model _opts consume-fn]
+                        (consume-fn {:type :start})
+                        (consume-fn {:type :thinking-start :content-index 0 :thinking "" :signature ""})
+                        (consume-fn {:type :thinking-delta :content-index 0 :delta "Plan"})
+                        (consume-fn {:type :thinking-signature-delta :content-index 0 :signature "sig-1"})
+                        (consume-fn {:type :toolcall-start :content-index 1 :id "call_1" :name "read"})
+                        (consume-fn {:type :toolcall-delta :content-index 1 :delta "{\"path\":\"README.md\"}"})
+                        (consume-fn {:type :toolcall-end :content-index 1})
+                        (consume-fn {:type :done :reason :tool_use}))]
+      (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
+        (agent/start-loop-in! agent-ctx [user-msg])
+        (let [result (#'executor/stream-turn! nil session-ctx agent-ctx anthropic-model nil nil nil)
+              conv   (#'executor/agent-messages->ai-conversation
+                      "sys" (:messages (agent/get-data-in agent-ctx)) [] {:cache-breakpoints #{:system}})
+              body   (json/parse-string
+                      (:body (#'anthropic/build-request conv (models/get-model :sonnet-4.6)
+                                                        {:api-key "test-key"
+                                                         :thinking-level :high}))
+                      true)
+              assistant-blocks (get-in body [:messages 1 :content])]
+          (is (= :tool_use (:stop-reason result)))
+          (is (= "Plan" (some #(when (= :thinking (:type %)) (:text %))
+                              (:content result))))
+          (is (= "thinking" (get-in assistant-blocks [0 :type])))
+          (is (= "Plan" (get-in assistant-blocks [0 :thinking])))
+          (is (= "sig-1" (get-in assistant-blocks [0 :signature])))
+          (is (= "tool_use" (get-in assistant-blocks [1 :type])))
+          (is (= "read" (get-in assistant-blocks [1 :name])))
+          (is (str/includes? (pr-str body) "sig-1")))))))
 
 (deftest idle-timeout-resets-on-stream-progress-test
   (let [agent-ctx   (setup-agent-ctx!)
