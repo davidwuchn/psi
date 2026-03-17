@@ -22,7 +22,10 @@
 
    Working memory keys (stored in the flat data model)
    ─────────────────────────────────────────────────────
-   :session-data-atom  — atom holding the AgentSession data map
+   :session-data-atom  — atom-like view used by the statechart to read current
+                         AgentSession data. In the runtime architecture this is
+                         backed by the canonical root state, not a separate
+                         source of truth.
    :actions-fn         — (fn [key]) — side-effect dispatcher
    :config             — merged config map
    :pending-agent-event — the most recent agent event (set before dispatching

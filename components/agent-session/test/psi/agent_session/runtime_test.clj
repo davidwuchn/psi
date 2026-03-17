@@ -4,6 +4,7 @@
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.core :as session]
    [psi.agent-session.runtime :as runtime]
+   [psi.agent-session.test-support :as test-support]
    [psi.recursion.core :as recursion]))
 
 (def ^:private sync-payload
@@ -25,14 +26,15 @@
   (let [recursion-ctx        (recursion/create-context)
         maybe-sync-calls     (atom [])
         orchestration-calls  (atom [])
-        ctx                  {:cwd "/tmp/psi-runtime-hook-test"
-                              :memory-ctx nil
-                              :recursion-ctx recursion-ctx
-                              :agent-ctx {}
-                              :extension-registry {:state (atom {:registration-order []
-                                                                 :extensions {}})}
-                              :session-data-atom (atom {:worktree-path "/tmp/psi-runtime-hook-test"
-                                                        :session-id "runtime-test-session"})}]
+        ctx                  (assoc (test-support/make-session-ctx
+                                     {:agent-ctx {}
+                                      :session-data {:worktree-path "/tmp/psi-runtime-hook-test"
+                                                     :session-id "runtime-test-session"}})
+                                    :cwd "/tmp/psi-runtime-hook-test"
+                                    :memory-ctx nil
+                                    :recursion-ctx recursion-ctx
+                                    :extension-registry {:state (atom {:registration-order []
+                                                                       :extensions {}})})]
     (with-redefs [runtime/safe-maybe-sync-on-git-head-change!
                   (fn [ctx]
                     (swap! maybe-sync-calls conj ctx)
@@ -75,13 +77,14 @@
 
 (deftest run-agent-loop-without-sync-flag-skips-git-head-hook-test
   (let [calls (atom 0)
-        ctx   {:cwd "/tmp/psi-runtime-no-sync-flag"
-               :agent-ctx {}
-               :recursion-ctx (recursion/create-context)
-               :extension-registry {:state (atom {:registration-order []
-                                                  :extensions {}})}
-               :session-data-atom (atom {:worktree-path "/tmp/psi-runtime-no-sync-flag"
-                                         :session-id "runtime-no-sync"})}]
+        ctx   (assoc (test-support/make-session-ctx
+                      {:agent-ctx {}
+                       :session-data {:worktree-path "/tmp/psi-runtime-no-sync-flag"
+                                      :session-id "runtime-no-sync"}})
+                     :cwd "/tmp/psi-runtime-no-sync-flag"
+                     :recursion-ctx (recursion/create-context)
+                     :extension-registry {:state (atom {:registration-order []
+                                                        :extensions {}})})]
     (with-redefs [runtime/safe-maybe-sync-on-git-head-change!
                   (fn [_]
                     (swap! calls inc)
@@ -94,13 +97,14 @@
 (deftest run-agent-loop-sync-flag-with-unchanged-head-skips-recursion-trigger-test
   (let [orchestration-calls (atom 0)
         extension-events    (atom [])
-        ctx                 {:cwd "/tmp/psi-runtime-unchanged"
-                             :agent-ctx {}
-                             :recursion-ctx (recursion/create-context)
-                             :extension-registry {:state (atom {:registration-order []
-                                                                :extensions {}})}
-                             :session-data-atom (atom {:worktree-path "/tmp/psi-runtime-unchanged"
-                                                       :session-id "runtime-unchanged"})}]
+        ctx                 (assoc (test-support/make-session-ctx
+                                    {:agent-ctx {}
+                                     :session-data {:worktree-path "/tmp/psi-runtime-unchanged"
+                                                    :session-id "runtime-unchanged"}})
+                                   :cwd "/tmp/psi-runtime-unchanged"
+                                   :recursion-ctx (recursion/create-context)
+                                   :extension-registry {:state (atom {:registration-order []
+                                                                      :extensions {}})})]
     (with-redefs [runtime/safe-maybe-sync-on-git-head-change!
                   (fn [_]
                     {:ok? true

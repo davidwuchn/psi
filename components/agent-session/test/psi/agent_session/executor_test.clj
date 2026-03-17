@@ -11,6 +11,7 @@
    [psi.ai.providers.anthropic :as anthropic]
    [psi.agent-core.core :as agent]
    [psi.agent-session.executor :as executor]
+   [psi.agent-session.test-support :as test-support]
    [psi.agent-session.turn-statechart :as turn-sc])
   (:import
    [java.util.concurrent LinkedBlockingQueue TimeUnit]))
@@ -37,13 +38,7 @@
 
 (defn- setup-session-ctx!
   [agent-ctx]
-  {:agent-ctx agent-ctx
-   :session-data-atom (atom {:tool-output-overrides {}
-                             :thinking-level :off})
-   :tool-output-stats-atom (atom {:calls []
-                                  :aggregates {:total-context-bytes 0
-                                               :by-tool {}
-                                               :limit-hits-by-tool {}}})})
+  (test-support/make-session-ctx {:agent-ctx agent-ctx}))
 
 (def ^:private stub-model
   {:provider "stub" :id "stub-model"})

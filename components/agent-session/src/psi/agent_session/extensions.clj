@@ -439,7 +439,8 @@
      :mutate-fn     — (fn [op-sym params])
      :get-api-key-fn — (fn [provider]) ; narrow auth capability
      :ui-type-fn    — (fn [] => :console|:tui|:emacs|nil)
-     :ui-state-atom — atom used to build extension UI context
+     :ui-state-atom — atom-like adapter used to build extension UI context;
+                      backed by canonical session root state
 
    Any missing runtime key throws."
   [reg ext-path runtime-fns]
