@@ -2,6 +2,29 @@
 
 ---
 
+## 2026-03-17 - Anthropic replay failures can come from empty persisted assistant turns, not just from role alternation or tool pairing (commit `8e5da2d`)
+
+### λ Replayed conversation builders should skip structurally empty assistant turns instead of faithfully serializing them
+
+The live Anthropic request capture showed a failure shape that higher-level request diagnostics did not flag: an assistant history entry with no text, no thinking blocks, and no tool calls was being rebuilt as `{:role "assistant" :content [{:type "text" :text ""}]}`. That shape preserves transcript structure mechanically, but it violates Anthropic's wire contract. The reusable rule is:
+- when rebuilding provider history from persisted transcript messages
+- treat structurally empty assistant turns as absent history, not as empty text blocks
+- validate message meaning, not just role alternation
+
+### λ Provider capture is most useful when it is inspected at the exact failing turn, not only through aggregate request-shape diagnostics
+
+The existing request-shape diagnostics correctly reported valid role alternation, matching tool_use/tool_result counts, and no empty top-level message content, yet the actual Anthropic request still failed. The missing signal lived inside a nested content block. The practical lesson is:
+- aggregate diagnostics are good for screening common structural faults
+- provider request capture is necessary to catch invalid nested wire shapes
+- once capture exists, inspect the failing turn before generalizing from summary metrics
+
+### λ OAuth and non-OAuth provider modes should share feature-beta rules unless the provider explicitly documents a divergence
+
+The first Anthropic fix exposed a second lesson: OAuth requests had drifted into a separate beta-composition path where thinking-related beta requirements were easier to omit accidentally. The safer default is:
+- derive feature betas from emitted request capabilities like thinking or prompt caching
+- compose auth-mode betas on top of that
+- avoid making OAuth a separate behavioral branch for feature headers unless the provider protocol requires it
+
 ## 2026-03-16 - Emacs rehydrate consumers must replay canonical agent messages, not display projections (commit `98fff62`)
 
 ### λ When one backend event serves multiple frontends, its payload must stay at the domain layer rather than at a renderer-specific projection layer
