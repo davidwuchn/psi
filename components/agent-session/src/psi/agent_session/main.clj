@@ -493,66 +493,77 @@
   (session/new-session-in! ctx)
   (startup-rehydrate-from-current-session! ctx ai-ctx ai-model))
 
-(defn- bootstrap-runtime-session!
-  "Create and bootstrap a live session context shared by CLI/TUI/RPC modes.
+(defn- create-runtime-session-context
+  "Create a live session context with runtime/session state prepared, but not bootstrapped.
 
    Options:
    - :event-queue optional TUI/RPC event queue
-   - :memory-runtime-opts optional memory/runtime sync opts
    - :session-config optional session config overrides (merged with defaults)
    - :cwd optional cwd override (primarily for tests)
    - :ui-type runtime UI type hint (:console | :tui | :emacs)"
-  [ai-model {:keys [event-queue memory-runtime-opts session-config cwd ui-type]}]
-  (let [oauth-ctx      (oauth/create-context)
-        templates      (pt/discover-templates)
-        {:keys [skills diagnostics]} (skills/discover-skills)
-        _              (doseq [d diagnostics]
-                         (timbre/warn "Skill" (:type d) ":" (:message d) (:path d)))
-        cwd            (or cwd (System/getProperty "user.dir"))
-        ctx-files      (sys-prompt/discover-context-files cwd)
-        effective-model (effective-model-from-project-preferences cwd ai-model)
+  [ai-model {:keys [event-queue session-config cwd ui-type]}]
+  (let [oauth-ctx                (oauth/create-context)
+        cwd                      (or cwd (System/getProperty "user.dir"))
+        effective-model          (effective-model-from-project-preferences cwd ai-model)
         effective-thinking-level (effective-thinking-level-from-project-preferences cwd effective-model)
-        base-prompt    (sys-prompt/build-system-prompt
-                        {:cwd           cwd
-                         :context-files ctx-files
-                         :skills        skills})
+        recursion-ctx            (recursion/create-context)
+        ctx                      (session/create-context
+                                  {:initial-session {:model {:provider  (name (:provider effective-model))
+                                                             :id        (:id effective-model)
+                                                             :reasoning (:supports-reasoning effective-model)}
+                                                     :thinking-level effective-thinking-level
+                                                     :ui-type         (or ui-type :console)}
+                                   :config session-config
+                                   :event-queue event-queue
+                                   :oauth-ctx oauth-ctx
+                                   :recursion-ctx recursion-ctx
+                                   :nrepl-runtime-atom nrepl-runtime
+                                   :ui-type ui-type})]
+    (session/new-session-in! ctx)
+    {:ctx       ctx
+     :oauth-ctx oauth-ctx
+     :cwd       cwd}))
+
+(defn- bootstrap-runtime-session!
+  "Bootstrap a live session context shared by CLI/TUI/RPC modes.
+
+   Options:
+   - :memory-runtime-opts optional memory/runtime sync opts
+   - :cwd optional cwd override (primarily for tests)"
+  [ctx ai-model {:keys [memory-runtime-opts cwd]}]
+  (let [templates        (pt/discover-templates)
+        {:keys [skills diagnostics]} (skills/discover-skills)
+        _                (doseq [d diagnostics]
+                           (timbre/warn "Skill" (:type d) ":" (:message d) (:path d)))
+        cwd              (or cwd (System/getProperty "user.dir"))
+        ctx-files        (sys-prompt/discover-context-files cwd)
+        base-prompt      (sys-prompt/build-system-prompt
+                          {:cwd           cwd
+                           :context-files ctx-files
+                           :skills        skills})
         developer-prompt (developer-prompt-from-env)
-        recursion-ctx  (recursion/create-context)
-        ctx            (session/create-context
-                        {:initial-session {:model {:provider  (name (:provider effective-model))
-                                                   :id        (:id effective-model)
-                                                   :reasoning (:supports-reasoning effective-model)}
-                                           :thinking-level effective-thinking-level
-                                           :system-prompt   base-prompt
-                                           :ui-type         (or ui-type :console)}
-                         :config session-config
-                         :event-queue event-queue
-                         :oauth-ctx oauth-ctx
-                         :recursion-ctx recursion-ctx
-                         :nrepl-runtime-atom nrepl-runtime
-                         :ui-type ui-type})
-        _              (session/new-session-in! ctx)
-        ext-paths      (ext/discover-extension-paths [] cwd)
-        app-query-tool (tools/make-app-query-tool (fn [q] (session/query-in ctx q)))
-        summary        (session/bootstrap-in!
-                        ctx {:register-global-query? false
-                             :base-tools             (conj (vec tools/all-tools) app-query-tool)
-                             :system-prompt          base-prompt
-                             :developer-prompt       developer-prompt
-                             :developer-prompt-source (if developer-prompt :env :fallback)
-                             :templates              templates
-                             :skills                 skills
-                             :extension-paths        ext-paths})
-        _              (introspection/register-resolvers!)
-        graph-caps     (graph-capabilities-in ctx)
-        system-prompt  (sys-prompt/build-system-prompt
-                        {:cwd                cwd
-                         :context-files      ctx-files
-                         :skills             skills
-                         :graph-capabilities graph-caps})
-        _              (session/set-system-prompt-in! ctx system-prompt)
-        _              (memory-runtime/sync-memory-layer! (merge {:cwd cwd}
-                                                                 (or memory-runtime-opts {})))
+        _                (session/set-system-prompt-in! ctx base-prompt)
+        ext-paths        (ext/discover-extension-paths [] cwd)
+        app-query-tool   (tools/make-app-query-tool (fn [q] (session/query-in ctx q)))
+        summary          (session/bootstrap-in!
+                          ctx {:register-global-query? false
+                               :base-tools             (conj (vec tools/all-tools) app-query-tool)
+                               :system-prompt          base-prompt
+                               :developer-prompt       developer-prompt
+                               :developer-prompt-source (if developer-prompt :env :fallback)
+                               :templates              templates
+                               :skills                 skills
+                               :extension-paths        ext-paths})
+        _                (introspection/register-resolvers!)
+        graph-caps       (graph-capabilities-in ctx)
+        system-prompt    (sys-prompt/build-system-prompt
+                          {:cwd                cwd
+                           :context-files      ctx-files
+                           :skills             skills
+                           :graph-capabilities graph-caps})
+        _                (session/set-system-prompt-in! ctx system-prompt)
+        _                (memory-runtime/sync-memory-layer! (merge {:cwd cwd}
+                                                                   (or memory-runtime-opts {})))
         startup-rehydrate (startup-rehydrate-from-current-session! ctx nil ai-model)]
     (doseq [{:keys [path error]} (:extension-errors summary)]
       (timbre/warn "Extension error:" path error))
@@ -561,13 +572,12 @@
     ;; Register extension run-fn so extension-initiated prompts (e.g. PSL)
     ;; actually invoke the LLM instead of orphaning a user message in agent-core.
     (runtime/register-extension-run-fn-in! ctx nil ai-model)
-    {:ctx       ctx
-     :oauth-ctx oauth-ctx
-     :templates templates
-     :skills    skills
-     :summary   summary
+    {:ctx               ctx
+     :templates         templates
+     :skills            skills
+     :summary           summary
      :startup-rehydrate startup-rehydrate
-     :cwd       cwd}))
+     :cwd               cwd}))
 
 ;; ============================================================
 ;; Main prompt loop
@@ -584,10 +594,11 @@
    (let [ai-model  (resolve-model model-key)
          ;; ai context: nil signals the executor to use the public ai/stream-response API
          ai-ctx    nil
-         {:keys [ctx oauth-ctx templates skills startup-rehydrate]}
-         (bootstrap-runtime-session! ai-model {:memory-runtime-opts memory-runtime-opts
-                                               :session-config session-config
-                                               :ui-type :console})]
+         {:keys [ctx oauth-ctx]}
+         (create-runtime-session-context ai-model {:session-config session-config
+                                                   :ui-type :console})
+         {:keys [templates skills startup-rehydrate]}
+         (bootstrap-runtime-session! ctx ai-model {:memory-runtime-opts memory-runtime-opts})]
      ;; Expose state for nREPL introspection
      (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model
                             :oauth-ctx oauth-ctx
@@ -690,15 +701,16 @@
   ([model-key memory-runtime-opts]
    (run-tui-session model-key memory-runtime-opts {}))
   ([model-key memory-runtime-opts session-config]
-   (let [ai-model  (resolve-model model-key)
-         ai-ctx    nil
+   (let [ai-model    (resolve-model model-key)
+         ai-ctx      nil
          event-queue (java.util.concurrent.LinkedBlockingQueue.)
-         {:keys [ctx oauth-ctx cwd startup-rehydrate]} (bootstrap-runtime-session!
-                                                        ai-model
-                                                        {:event-queue event-queue
-                                                         :memory-runtime-opts memory-runtime-opts
-                                                         :session-config session-config
-                                                         :ui-type :tui})
+         {:keys [ctx oauth-ctx cwd]}
+         (create-runtime-session-context ai-model {:event-queue event-queue
+                                                   :session-config session-config
+                                                   :ui-type :tui})
+         {:keys [startup-rehydrate]}
+         (bootstrap-runtime-session! ctx ai-model {:memory-runtime-opts memory-runtime-opts
+                                                   :cwd cwd})
 
          ;; Expose state for nREPL introspection
          _         (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model
@@ -860,13 +872,12 @@
        (binding [*out* *err*]
          (let [ai-model    (resolve-model model-key)
                event-queue (java.util.concurrent.LinkedBlockingQueue.)
-               boot        (bootstrap-runtime-session! ai-model
-                                                       {:event-queue event-queue
-                                                        :memory-runtime-opts memory-runtime-opts
-                                                        :session-config session-config
-                                                        :ui-type :emacs})
-               ctx         (:ctx boot)
-               oauth-ctx   (:oauth-ctx boot)
+               {:keys [ctx oauth-ctx cwd]}
+               (create-runtime-session-context ai-model {:event-queue event-queue
+                                                         :session-config session-config
+                                                         :ui-type :emacs})
+               _           (bootstrap-runtime-session! ctx ai-model {:memory-runtime-opts memory-runtime-opts
+                                                                     :cwd cwd})
                state       (atom {:handshake-server-info-fn (fn [] (assoc (rpc/session->handshake-server-info ctx)
                                                                           :ui-type :emacs))
                                   :handshake-context-updated-payload-fn (fn [] (#'rpc/context-updated-payload ctx))
