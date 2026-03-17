@@ -67,6 +67,8 @@
    :psi.agent-session/provider-requests — [{:psi.provider-request/*}], recent provider requests
    :psi.agent-session/provider-replies — [{:psi.provider-reply/*}], recent provider reply events
    :psi.agent-session/provider-error-replies — [{:psi.provider-reply/*}], recent provider reply events whose type is :error
+   :psi.agent-session/provider-request-for-turn-id — single provider request entity lookup seeded by :psi.agent-session/lookup-turn-id
+   :psi.agent-session/provider-reply-for-turn-id — single provider reply entity lookup seeded by :psi.agent-session/lookup-turn-id
    :psi.agent-session/background-job-count — number of tracked background jobs in current thread
    :psi.agent-session/background-job-statuses — ordered status vocabulary for background jobs
    :psi.agent-session/background-jobs     — [{:psi.background-job/*}], current-thread background jobs
@@ -1257,6 +1259,42 @@
    :psi.provider-reply/timestamp (:timestamp capture)
    :psi.provider-reply/event     (:event capture)})
 
+(pco/defresolver provider-request-by-turn-id
+  "Resolve a single captured provider request by turn-id."
+  [{:keys [psi.agent-session/lookup-turn-id psi/agent-session-ctx]}]
+  {::pco/input  [:psi.agent-session/lookup-turn-id :psi/agent-session-ctx]
+   ::pco/output [{:psi.agent-session/provider-request-for-turn-id
+                  [:psi.provider-request/provider
+                   :psi.provider-request/api
+                   :psi.provider-request/url
+                   :psi.provider-request/turn-id
+                   :psi.provider-request/timestamp
+                   :psi.provider-request/headers
+                   :psi.provider-request/body]}]}
+  {:psi.agent-session/provider-request-for-turn-id
+   (some->> (provider-requests agent-session-ctx)
+            (some (fn [capture]
+                    (when (= lookup-turn-id (:turn-id capture))
+                      (provider-request->eql capture)))))})
+
+(pco/defresolver provider-reply-by-turn-id
+  "Resolve a single captured provider reply by turn-id."
+  [{:keys [psi.agent-session/lookup-turn-id psi/agent-session-ctx]}]
+  {::pco/input  [:psi.agent-session/lookup-turn-id :psi/agent-session-ctx]
+   ::pco/output [{:psi.agent-session/provider-reply-for-turn-id
+                  [:psi.provider-reply/provider
+                   :psi.provider-reply/api
+                   :psi.provider-reply/url
+                   :psi.provider-reply/turn-id
+                   :psi.provider-reply/timestamp
+                   :psi.provider-reply/event]}]}
+  {:psi.agent-session/provider-reply-for-turn-id
+   (some->> (provider-replies agent-session-ctx)
+            reverse
+            (some (fn [capture]
+                    (when (= lookup-turn-id (:turn-id capture))
+                      (provider-reply->eql capture)))))})
+
 (pco/defresolver agent-session-provider-captures
   "Resolve captured outbound provider requests and inbound provider reply events."
   [{:keys [psi/agent-session-ctx]}]
@@ -2318,6 +2356,8 @@
    tool-call-result
    agent-session-tool-call-attempts
    agent-session-provider-captures
+   provider-request-by-turn-id
+   provider-reply-by-turn-id
    ;; API error diagnostics (hierarchical)
    api-error-list
    api-error-detail

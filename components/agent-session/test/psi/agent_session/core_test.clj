@@ -905,7 +905,57 @@
         (is (= 1 (count (:psi.agent-session/provider-error-replies r))))
         (is (= :anthropic
                (get-in r [:psi.agent-session/provider-error-replies 0
-                          :psi.provider-reply/provider])))))))
+                          :psi.provider-reply/provider])))))
+
+    (testing "provider capture lookup by turn-id resolves exact request and reply"
+      (let [ctx (session/create-context)
+            t0  (java.time.Instant/now)
+            t1  (.plusMillis t0 25)]
+        (swap! (:provider-requests-atom ctx)
+               conj
+               {:provider :anthropic
+                :api :anthropic-messages
+                :url "https://api.anthropic.com/v1/messages"
+                :turn-id "turn-ant-lookup"
+                :timestamp t0
+                :request {:headers {"x-test" "1"}
+                          :body {:model "claude-sonnet-4-6"
+                                 :messages [{:role "user" :content [{:type "text" :text "hi"}]}]}}})
+        (swap! (:provider-replies-atom ctx)
+               conj
+               {:provider :anthropic
+                :api :anthropic-messages
+                :url "https://api.anthropic.com/v1/messages"
+                :turn-id "turn-ant-lookup"
+                :timestamp t1
+                :event {:type :error
+                        :error-message "Error (status 400) [request-id req_lookup]"
+                        :http-status 400}})
+
+        (let [req ((resolve 'psi.agent-session.resolvers/provider-request-by-turn-id)
+                   {:psi.agent-session/lookup-turn-id "turn-ant-lookup"
+                    :psi/agent-session-ctx ctx})
+              reply ((resolve 'psi.agent-session.resolvers/provider-reply-by-turn-id)
+                     {:psi.agent-session/lookup-turn-id "turn-ant-lookup"
+                      :psi/agent-session-ctx ctx})]
+          (is (= :anthropic
+                 (get-in req [:psi.agent-session/provider-request-for-turn-id
+                              :psi.provider-request/provider])))
+          (is (= :anthropic-messages
+                 (get-in req [:psi.agent-session/provider-request-for-turn-id
+                              :psi.provider-request/api])))
+          (is (= "claude-sonnet-4-6"
+                 (get-in req [:psi.agent-session/provider-request-for-turn-id
+                              :psi.provider-request/body
+                              :model])))
+          (is (= :error
+                 (get-in reply [:psi.agent-session/provider-reply-for-turn-id
+                                :psi.provider-reply/event
+                                :type])))
+          (is (= 400
+                 (get-in reply [:psi.agent-session/provider-reply-for-turn-id
+                                :psi.provider-reply/event
+                                :http-status]))))))))
 
 (deftest api-error-list-test
   (testing "no errors → count 0, empty list"
