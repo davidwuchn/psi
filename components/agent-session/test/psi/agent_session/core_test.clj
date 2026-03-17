@@ -795,7 +795,8 @@
   (testing "query-in resolves provider request/reply captures"
     (let [ctx (session/create-context)
           t0  (java.time.Instant/now)
-          t1  (.plusMillis t0 25)]
+          t1  (.plusMillis t0 25)
+          t2  (.plusMillis t0 50)]
       (swap! (:provider-requests-atom ctx)
              conj
              {:provider :openai
@@ -806,14 +807,32 @@
               :request {:headers {"Authorization" "Bearer ***REDACTED*** (len=99)"}
                         :body {:model "gpt-5.3-codex" :tool_choice "auto"}}})
       (swap! (:provider-replies-atom ctx)
+             into
+             [{:provider :openai
+               :api :openai-codex-responses
+               :url "https://chatgpt.com/backend-api/codex/responses"
+               :turn-id "turn-123"
+               :timestamp t1
+               :event {:type "response.completed"
+                       :response {:status "completed"}}}
+              {:provider :anthropic
+               :api :anthropic-messages
+               :url "https://api.anthropic.com/v1/messages"
+               :turn-id "turn-ant-1"
+               :timestamp t2
+               :event {:type :error
+                       :error-message "Error (status 400) [request-id req_ant_1]"
+                       :http-status 400}}])
+      (swap! (:provider-error-replies-atom ctx)
              conj
-             {:provider :openai
-              :api :openai-codex-responses
-              :url "https://chatgpt.com/backend-api/codex/responses"
-              :turn-id "turn-123"
-              :timestamp t1
-              :event {:type "response.completed"
-                      :response {:status "completed"}}})
+             {:provider :anthropic
+              :api :anthropic-messages
+              :url "https://api.anthropic.com/v1/messages"
+              :turn-id "turn-ant-1"
+              :timestamp t2
+              :event {:type :error
+                      :error-message "Error (status 400) [request-id req_ant_1]"
+                      :http-status 400}})
 
       (let [r (session/query-in ctx
                                 [:psi.agent-session/provider-request-count
@@ -827,9 +846,19 @@
                                   [:psi.provider-reply/provider
                                    :psi.provider-reply/api
                                    :psi.provider-reply/turn-id
+                                   :psi.provider-reply/event]}
+                                 {:psi.agent-session/provider-last-error-reply
+                                  [:psi.provider-reply/provider
+                                   :psi.provider-reply/api
+                                   :psi.provider-reply/turn-id
+                                   :psi.provider-reply/event]}
+                                 {:psi.agent-session/provider-error-replies
+                                  [:psi.provider-reply/provider
+                                   :psi.provider-reply/api
+                                   :psi.provider-reply/turn-id
                                    :psi.provider-reply/event]}])]
         (is (= 1 (:psi.agent-session/provider-request-count r)))
-        (is (= 1 (:psi.agent-session/provider-reply-count r)))
+        (is (= 2 (:psi.agent-session/provider-reply-count r)))
 
         (is (= :openai
                (get-in r [:psi.agent-session/provider-last-request
@@ -845,19 +874,38 @@
                           :psi.provider-request/body
                           :model])))
 
-        (is (= :openai
+        (is (= :anthropic
                (get-in r [:psi.agent-session/provider-last-reply
                           :psi.provider-reply/provider])))
-        (is (= :openai-codex-responses
+        (is (= :anthropic-messages
                (get-in r [:psi.agent-session/provider-last-reply
                           :psi.provider-reply/api])))
-        (is (= "turn-123"
+        (is (= "turn-ant-1"
                (get-in r [:psi.agent-session/provider-last-reply
                           :psi.provider-reply/turn-id])))
-        (is (= "response.completed"
+        (is (= :error
                (get-in r [:psi.agent-session/provider-last-reply
                           :psi.provider-reply/event
-                          :type])))))))
+                          :type])))
+
+        (is (= :anthropic
+               (get-in r [:psi.agent-session/provider-last-error-reply
+                          :psi.provider-reply/provider])))
+        (is (= :anthropic-messages
+               (get-in r [:psi.agent-session/provider-last-error-reply
+                          :psi.provider-reply/api])))
+        (is (= "turn-ant-1"
+               (get-in r [:psi.agent-session/provider-last-error-reply
+                          :psi.provider-reply/turn-id])))
+        (is (= :error
+               (get-in r [:psi.agent-session/provider-last-error-reply
+                          :psi.provider-reply/event
+                          :type])))
+
+        (is (= 1 (count (:psi.agent-session/provider-error-replies r))))
+        (is (= :anthropic
+               (get-in r [:psi.agent-session/provider-error-replies 0
+                          :psi.provider-reply/provider])))))))
 
 (deftest api-error-list-test
   (testing "no errors → count 0, empty list"
@@ -866,6 +914,49 @@
                              (make-assistant-msg "hello")])
       (let [r (session/query-in ctx [:psi.agent-session/api-error-count])]
         (is (zero? (:psi.agent-session/api-error-count r))))))
+
+  (testing "provider reply error is exposed via api-errors"
+    (let [ctx (session/create-context)
+          t0  (java.time.Instant/now)]
+      (swap! (:provider-replies-atom ctx)
+             conj
+             {:provider :anthropic
+              :api :anthropic-messages
+              :url "https://api.anthropic.com/v1/messages"
+              :turn-id "turn-ant-1"
+              :timestamp t0
+              :event {:type :error
+                      :error-message "Error (status 400) [request-id req_ant_123]"
+                      :http-status 400
+                      :headers {"request-id" "req_ant_123"}
+                      :body-text "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Error\"},\"request_id\":\"req_ant_123\"}"
+                      :body {:type "error"
+                             :error {:type "invalid_request_error"
+                                     :message "Error"}
+                             :request_id "req_ant_123"}}})
+      (let [r (session/query-in ctx
+                                [{:psi.agent-session/api-errors
+                                  [:psi.api-error/http-status
+                                   :psi.api-error/request-id
+                                   :psi.api-error/provider
+                                   :psi.api-error/api
+                                   :psi.api-error/url
+                                   :psi.api-error/turn-id
+                                   :psi.api-error/error-message-full
+                                   :psi.api-error/provider-event]}])
+            err (first (:psi.agent-session/api-errors r))]
+        (is (= 1 (count (:psi.agent-session/api-errors r))))
+        (is (= 400 (:psi.api-error/http-status err)))
+        (is (= "req_ant_123" (:psi.api-error/request-id err)))
+        (is (= :anthropic (:psi.api-error/provider err)))
+        (is (= :anthropic-messages (:psi.api-error/api err)))
+        (is (= "https://api.anthropic.com/v1/messages" (:psi.api-error/url err)))
+        (is (= "turn-ant-1" (:psi.api-error/turn-id err)))
+        (is (= "Error (status 400) [request-id req_ant_123]"
+               (:psi.api-error/error-message-full err)))
+        (is (= :error (get-in err [:psi.api-error/provider-event :type])))
+        (is (= 400 (get-in err [:psi.api-error/provider-event :http-status])))
+        (is (string? (get-in err [:psi.api-error/provider-event :body-text]))))))
 
   (testing "single 400 error → count 1 with correct fields"
     (let [ctx (session/create-context)]
@@ -881,6 +972,46 @@
         (is (= 1 (:psi.api-error/message-index (first errors))))
         (is (= 400 (:psi.api-error/http-status (first errors))))
         (is (string? (:psi.api-error/error-message-brief (first errors)))))))
+
+  (testing "assistant error is enriched from matching provider reply by request-id"
+    (let [ctx (session/create-context)
+          t0  (java.time.Instant/now)]
+      (inject-messages! ctx [(make-user-msg "hi")
+                             (make-error-msg
+                              "Error (status 400) [request-id req_ant_live]"
+                              400)])
+      (swap! (:provider-replies-atom ctx)
+             conj
+             {:provider :anthropic
+              :api :anthropic-messages
+              :url "https://api.anthropic.com/v1/messages"
+              :turn-id "turn-ant-live"
+              :timestamp t0
+              :event {:type :error
+                      :error-message "Error (status 400) [request-id req_ant_live]"
+                      :http-status 400
+                      :headers {"request-id" "req_ant_live"}
+                      :body-text "{\"type\":\"error\",\"request_id\":\"req_ant_live\"}"
+                      :body {:type "error" :request_id "req_ant_live"}}})
+      (let [r (session/query-in ctx
+                                [{:psi.agent-session/api-errors
+                                  [:psi.api-error/message-index
+                                   :psi.api-error/request-id
+                                   :psi.api-error/provider
+                                   :psi.api-error/api
+                                   :psi.api-error/url
+                                   :psi.api-error/turn-id
+                                   :psi.api-error/provider-event]}])
+            errors (:psi.agent-session/api-errors r)
+            err    (first errors)]
+        (is (= 1 (count errors)))
+        (is (= 1 (:psi.api-error/message-index err)))
+        (is (= "req_ant_live" (:psi.api-error/request-id err)))
+        (is (= :anthropic (:psi.api-error/provider err)))
+        (is (= :anthropic-messages (:psi.api-error/api err)))
+        (is (= "https://api.anthropic.com/v1/messages" (:psi.api-error/url err)))
+        (is (= "turn-ant-live" (:psi.api-error/turn-id err)))
+        (is (= :error (get-in err [:psi.api-error/provider-event :type]))))))
 
   (testing "multiple errors → all captured"
     (let [ctx (session/create-context)]

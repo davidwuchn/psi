@@ -63,8 +63,10 @@
    :psi.agent-session/provider-reply-count — captured inbound provider reply events
    :psi.agent-session/provider-last-request — latest provider request entity
    :psi.agent-session/provider-last-reply — latest provider reply entity
+   :psi.agent-session/provider-last-error-reply — latest provider reply entity whose event type is :error
    :psi.agent-session/provider-requests — [{:psi.provider-request/*}], recent provider requests
    :psi.agent-session/provider-replies — [{:psi.provider-reply/*}], recent provider reply events
+   :psi.agent-session/provider-error-replies — [{:psi.provider-reply/*}], recent provider reply events whose type is :error
    :psi.agent-session/background-job-count — number of tracked background jobs in current thread
    :psi.agent-session/background-job-statuses — ordered status vocabulary for background jobs
    :psi.agent-session/background-jobs     — [{:psi.background-job/*}], current-thread background jobs
@@ -1230,6 +1232,12 @@
   (vec (or (session/get-state-value-in agent-session-ctx (session/state-path :provider-replies))
            [])))
 
+(defn- provider-error-replies
+  [agent-session-ctx]
+  (vec (or (some-> (:provider-error-replies-atom agent-session-ctx) deref)
+           (some-> (:session-data-atom agent-session-ctx) deref :provider-error-replies)
+           [])))
+
 (defn- provider-request->eql
   [capture]
   {:psi.provider-request/provider  (:provider capture)
@@ -1270,6 +1278,13 @@
                    :psi.provider-reply/turn-id
                    :psi.provider-reply/timestamp
                    :psi.provider-reply/event]}
+                 {:psi.agent-session/provider-last-error-reply
+                  [:psi.provider-reply/provider
+                   :psi.provider-reply/api
+                   :psi.provider-reply/url
+                   :psi.provider-reply/turn-id
+                   :psi.provider-reply/timestamp
+                   :psi.provider-reply/event]}
                  {:psi.agent-session/provider-requests
                   [:psi.provider-request/provider
                    :psi.provider-request/api
@@ -1284,15 +1299,27 @@
                    :psi.provider-reply/url
                    :psi.provider-reply/turn-id
                    :psi.provider-reply/timestamp
+                   :psi.provider-reply/event]}
+                 {:psi.agent-session/provider-error-replies
+                  [:psi.provider-reply/provider
+                   :psi.provider-reply/api
+                   :psi.provider-reply/url
+                   :psi.provider-reply/turn-id
+                   :psi.provider-reply/timestamp
                    :psi.provider-reply/event]}]}
-  (let [requests* (mapv provider-request->eql (provider-requests agent-session-ctx))
-        replies*  (mapv provider-reply->eql (provider-replies agent-session-ctx))]
-    {:psi.agent-session/provider-request-count (count requests*)
-     :psi.agent-session/provider-reply-count   (count replies*)
-     :psi.agent-session/provider-last-request  (last requests*)
-     :psi.agent-session/provider-last-reply    (last replies*)
-     :psi.agent-session/provider-requests      requests*
-     :psi.agent-session/provider-replies       replies*}))
+  (let [requests*       (mapv provider-request->eql (provider-requests agent-session-ctx))
+        raw-replies     (provider-replies agent-session-ctx)
+        raw-error-replies (provider-error-replies agent-session-ctx)
+        replies*        (mapv provider-reply->eql raw-replies)
+        error-replies*  (mapv provider-reply->eql raw-error-replies)]
+    {:psi.agent-session/provider-request-count   (count requests*)
+     :psi.agent-session/provider-reply-count     (count replies*)
+     :psi.agent-session/provider-last-request    (last requests*)
+     :psi.agent-session/provider-last-reply      (last replies*)
+     :psi.agent-session/provider-last-error-reply (last error-replies*)
+     :psi.agent-session/provider-requests        requests*
+     :psi.agent-session/provider-replies         replies*
+     :psi.agent-session/provider-error-replies   error-replies*}))
 
 ;; ── API error diagnostics (helpers) ─────────────────────
 
@@ -1309,6 +1336,116 @@
   (when error-text
     (or (second (re-find #"\"request-id\"\s+\"([^\"]+)\"" error-text))
         (second (re-find #"\[request-id\s+([^\]\s]+)\]" error-text)))))
+
+(defn- api-errors-from-messages
+  [agent-session-ctx]
+  (if-not (:agent-ctx agent-session-ctx)
+    []
+    (let [msgs (agent-core-messages agent-session-ctx)]
+      (->> msgs
+           (map-indexed vector)
+           (filter (fn [[_ m]]
+                     (and (= "assistant" (:role m))
+                          (= :error (:stop-reason m)))))
+           (mapv (fn [[idx m]]
+                   (let [err-text (error-message-text m)
+                         brief    (when err-text
+                                    (subs err-text
+                                          0 (min 120 (count err-text))))]
+                     {:psi.api-error/message-index idx
+                      :psi.api-error/http-status (:http-status m)
+                      :psi.api-error/timestamp (:timestamp m)
+                      :psi.api-error/error-message-brief brief
+                      :psi.api-error/error-message-full err-text
+                      :psi.api-error/request-id (parse-request-id err-text)
+                      :psi/agent-session-ctx agent-session-ctx})))))))
+
+(defn- provider-error-reply->api-error
+  [agent-session-ctx idx capture]
+  (let [event      (:event capture)
+        err-text   (:error-message event)
+        body       (:body event)
+        body-text  (:body-text event)
+        request-id (or (get-in event [:headers "request-id"])
+                       (:request_id body)
+                       (parse-request-id err-text))
+        brief-src  (or err-text body-text (some-> body pr-str))
+        brief      (when (seq brief-src)
+                     (subs brief-src 0 (min 120 (count brief-src))))]
+    {:psi.api-error/message-index idx
+     :psi.api-error/http-status (:http-status event)
+     :psi.api-error/timestamp (:timestamp capture)
+     :psi.api-error/error-message-brief brief
+     :psi.api-error/error-message-full err-text
+     :psi.api-error/request-id request-id
+     :psi.api-error/provider (:provider capture)
+     :psi.api-error/api (:api capture)
+     :psi.api-error/url (:url capture)
+     :psi.api-error/turn-id (:turn-id capture)
+     :psi.api-error/provider-event event
+     :psi.api-error/provider-reply-capture capture
+     :psi/agent-session-ctx agent-session-ctx}))
+
+(defn- find-provider-reply-by-request-id
+  [agent-session-ctx request-id]
+  (when (seq request-id)
+    (->> (provider-replies agent-session-ctx)
+         reverse
+         (some (fn [capture]
+                 (let [event (:event capture)
+                       body  (:body event)]
+                   (when (= request-id
+                            (or (get-in event [:headers "request-id"])
+                                (:request_id body)
+                                (parse-request-id (:error-message event))))
+                     capture)))))))
+
+(defn- enrich-api-error-from-provider-reply
+  [agent-session-ctx error]
+  (if (or (:psi.api-error/provider-event error)
+          (not (:psi/agent-session-ctx error)))
+    error
+    (if-let [capture (find-provider-reply-by-request-id agent-session-ctx
+                                                        (:psi.api-error/request-id error))]
+      (merge error
+             (dissoc (provider-error-reply->api-error agent-session-ctx
+                                                      (:psi.api-error/message-index error)
+                                                      capture)
+                     :psi.api-error/message-index
+                     :psi/agent-session-ctx))
+      error)))
+
+(defn- api-errors-from-provider-replies
+  [agent-session-ctx]
+  (->> (provider-replies agent-session-ctx)
+       (keep-indexed (fn [idx capture]
+                       (when (= :error (get-in capture [:event :type]))
+                         (provider-error-reply->api-error agent-session-ctx idx capture))))
+       vec))
+
+(defn- dedupe-api-errors
+  [errors]
+  (->> errors
+       (reduce (fn [acc error]
+                 (let [k [(or (:psi.api-error/request-id error) ::no-request-id)
+                          (or (:psi.api-error/error-message-full error)
+                              (:psi.api-error/error-message-brief error)
+                              ::no-message)]
+                       existing (get acc k)]
+                   (assoc acc k
+                          (cond
+                            (nil? existing)
+                            error
+
+                            (and (nil? (:psi.api-error/provider-event existing))
+                                 (:psi.api-error/provider-event error))
+                            (merge existing error)
+
+                            :else
+                            existing))))
+               {})
+       vals
+       vec))
 
 (defn- message-summary
   "Lightweight summary of an agent-core message for context display."
@@ -1428,8 +1565,10 @@
 ;; ── Level 1: API error list (cheap) ────────────────────
 
 (pco/defresolver api-error-list
-  "Extract API errors from assistant messages with :stop-reason :error.
-   Cheap: linear scan for error stop reason, no result loading."
+  "Extract API errors from assistant messages and provider reply captures.
+   Message-derived errors preserve conversation position.
+   Provider reply errors expose raw provider failures even when no assistant
+   error message was persisted."
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.agent-session/api-error-count
@@ -1438,49 +1577,60 @@
                    :psi.api-error/http-status
                    :psi.api-error/timestamp
                    :psi.api-error/error-message-brief
+                   :psi.api-error/error-message-full
+                   :psi.api-error/request-id
+                   :psi.api-error/provider
+                   :psi.api-error/api
+                   :psi.api-error/url
+                   :psi.api-error/turn-id
+                   :psi.api-error/provider-event
                    :psi/agent-session-ctx]}]}
-  (let [msgs   (agent-core-messages agent-session-ctx)
-        errors (->> msgs
-                    (map-indexed vector)
-                    (filter (fn [[_ m]]
-                              (and (= "assistant" (:role m))
-                                   (= :error (:stop-reason m)))))
-                    (mapv (fn [[idx m]]
-                            (let [err-text (error-message-text m)
-                                  brief    (when err-text
-                                             (subs err-text
-                                                   0 (min 120 (count err-text))))]
-                              {:psi.api-error/message-index      idx
-                               :psi.api-error/http-status        (:http-status m)
-                               :psi.api-error/timestamp          (:timestamp m)
-                               :psi.api-error/error-message-brief brief
-                               :psi/agent-session-ctx            agent-session-ctx}))))]
+  (let [message-errors  (mapv #(enrich-api-error-from-provider-reply agent-session-ctx %)
+                              (api-errors-from-messages agent-session-ctx))
+        provider-errors (api-errors-from-provider-replies agent-session-ctx)
+        errors          (dedupe-api-errors (vec (concat message-errors provider-errors)))]
     {:psi.agent-session/api-error-count (count errors)
      :psi.agent-session/api-errors      errors}))
 
 ;; ── Level 2: API error detail (moderate) ────────────────
 
 (pco/defresolver api-error-detail
-  "Resolve full error text, request-id, and surrounding message context.
+  "Resolve full error text, request-id, provider metadata, and surrounding message context.
    Seeded by :psi.api-error/message-index from the list resolver."
-  [{:keys [psi.api-error/message-index psi/agent-session-ctx]}]
+  [{:keys [psi.api-error/message-index psi/agent-session-ctx]
+    :as entity}]
   {::pco/input  [:psi.api-error/message-index :psi/agent-session-ctx]
    ::pco/output [:psi.api-error/error-message-full
                  :psi.api-error/request-id
+                 :psi.api-error/provider
+                 :psi.api-error/api
+                 :psi.api-error/url
+                 :psi.api-error/turn-id
+                 :psi.api-error/provider-event
                  {:psi.api-error/surrounding-messages
                   [:psi.context-message/index
                    :psi.context-message/role
                    :psi.context-message/content-types
                    :psi.context-message/snippet]}]}
-  (let [msgs     (agent-core-messages agent-session-ctx)
-        msg      (nth msgs message-index nil)
-        err-text (when msg (error-message-text msg))
-        ;; 5 before, 2 after the error
-        start    (max 0 (- message-index 5))
-        end      (min (count msgs) (+ message-index 3))
-        surr     (mapv #(message-summary (nth msgs %) %) (range start end))]
+  (let [msgs              (agent-core-messages agent-session-ctx)
+        msg               (nth msgs message-index nil)
+        err-text          (or (:psi.api-error/error-message-full entity)
+                              (when msg (error-message-text msg)))
+        provider-event?   (and (nil? msg)
+                               (some? (:psi.api-error/provider-event entity)))
+        surr              (if provider-event?
+                            []
+                            (let [start (max 0 (- message-index 5))
+                                  end   (min (count msgs) (+ message-index 3))]
+                              (mapv #(message-summary (nth msgs %) %) (range start end))))]
     {:psi.api-error/error-message-full   err-text
-     :psi.api-error/request-id           (parse-request-id err-text)
+     :psi.api-error/request-id           (or (:psi.api-error/request-id entity)
+                                             (parse-request-id err-text))
+     :psi.api-error/provider             (:psi.api-error/provider entity)
+     :psi.api-error/api                  (:psi.api-error/api entity)
+     :psi.api-error/url                  (:psi.api-error/url entity)
+     :psi.api-error/turn-id              (:psi.api-error/turn-id entity)
+     :psi.api-error/provider-event       (:psi.api-error/provider-event entity)
      :psi.api-error/surrounding-messages surr}))
 
 ;; ── Level 3: API error request shape (expensive) ────────

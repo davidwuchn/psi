@@ -167,6 +167,24 @@
                :operation-count (count ops)}))
           ordered-domains)))
 
+(defn- flatten-io-attrs
+  [xs]
+  (mapcat (fn [x]
+            (cond
+              (keyword? x)
+              [x]
+
+              (map? x)
+              (cons (first (keys x))
+                    (flatten-io-attrs (first (vals x))))
+
+              (sequential? x)
+              (flatten-io-attrs x)
+
+              :else
+              []))
+          xs))
+
 (defn derive-root-queryable-attrs
   "Compute attrs reachable from an initial seed set using resolver IO metadata.
 
@@ -186,9 +204,11 @@
    (let [seed-attrs (set seed-attrs)]
      (loop [known seed-attrs]
        (let [known' (reduce (fn [acc {:keys [input output]}]
-                              (if (every? acc input)
-                                (into acc output)
-                                acc))
+                              (let [input*  (vec (flatten-io-attrs input))
+                                    output* (vec (flatten-io-attrs output))]
+                                (if (every? acc input*)
+                                  (into acc output*)
+                                  acc)))
                             known
                             resolver-ops)]
          (if (= known known')
