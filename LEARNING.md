@@ -2,6 +2,29 @@
 
 ---
 
+## 2026-03-17 - Join-map graph discovery and dedicated error retention matter as much as the original error capture (commit `231477a`)
+
+### λ A general rolling provider-event buffer is the wrong retention tier for rare provider failures when normal traffic is dominated by delta events
+
+The live investigation showed that Anthropic error replies were captured correctly and then disappeared after subsequent OpenAI debugging turns. The failure was not explicit clearing; it was eviction by a shared capped buffer full of high-volume stream deltas. The reusable rule is:
+- keep the broad provider event stream for nominal telemetry
+- retain provider `:error` events in a dedicated error buffer with its own cap
+- treat debugging-critical failures as a separate memory tier from routine stream chatter
+
+### λ API error enrichment should join assistant-visible failures back to provider captures, but only one logical error should survive that join
+
+Once assistant-side error messages and provider-side error captures both existed, the same Anthropic failure appeared twice in `:psi.agent-session/api-errors`. The practical lesson is:
+- enrich the assistant-visible error from provider captures using a stable key like request id
+- prefer the enriched version because it keeps the provider payload attached
+- deduplicate the assistant/provider views so downstream diagnostics reason about one failure, not two parallel representations
+
+### λ Graph discovery that ignores join-map outputs under-advertises real query surface area even when the attrs are fully queryable
+
+The new provider error attrs were live and queryable, but they did not appear in `:psi.graph/root-queryable-attrs` because reachability only considered flat keyword outputs. The reusable lesson is:
+- introspection/discovery logic must flatten nested resolver IO shapes, not just top-level keywords
+- otherwise the live graph becomes richer than the advertised graph and tool-guided exploration drifts from reality
+- join-map outputs are part of the graph contract, not a special case to omit from discovery
+
 ## 2026-03-17 - Error capture is only useful when provider diagnostics survive normalization and retention pressure (commit `0bc6fb5`)
 
 ### λ Provider adapters should preserve the raw error payload even when they also emit a normalized user-facing error string
