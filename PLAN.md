@@ -68,6 +68,19 @@ Ordered steps toward PSI COMPLETE.
   - `clj-kondo --lint components/agent-session/src/psi/agent_session/core.clj components/agent-session/src/psi/agent_session/runtime.clj components/agent-session/src/psi/agent_session/executor.clj components/agent-session/src/psi/agent_session/resolvers.clj components/agent-session/src/psi/agent_session/rpc.clj components/agent-session/src/psi/agent_session/persistence.clj`
   - `clj-paren-repair` on the same file set
 
+### Step 15kfa — Provider captures now have narrow turn-id lookup resolvers for exact failing-turn inspection ✓ complete
+- Commit `2413557` adds focused agent-session resolvers to fetch one provider request or one provider reply by turn id instead of forcing full capture-buffer dumps during live debugging.
+- Resolver/query surface changes now:
+  - add `provider-request-by-turn-id` and `provider-reply-by-turn-id` helpers in `components/agent-session/src/psi/agent_session/resolvers.clj`
+  - expose root-style lookup attrs seeded by `:psi.agent-session/lookup-turn-id`:
+    - `:psi.agent-session/provider-request-for-turn-id`
+    - `:psi.agent-session/provider-reply-for-turn-id`
+- Regression coverage now proves exact request/reply lookup by turn id in `components/agent-session/test/psi/agent_session/core_test.clj`.
+- Verification:
+  - `clojure -M:test --focus psi.agent-session.core-test`
+- Follow-up note:
+  - local code/tests now support narrow turn-id lookup, but the currently running live app-query graph still needs a real runtime reload/restart before those attrs become queryable there.
+
 ### Step 15kf.1 — Provider error replies now survive stream churn and are discoverable in the live graph ✓ complete
 - Commit `231477a` retains provider `:error` reply captures in a dedicated error buffer instead of relying on the shared rolling provider reply stream alone.
 - Agent-session capture/runtime changes now:
