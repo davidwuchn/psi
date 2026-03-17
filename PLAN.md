@@ -6,6 +6,35 @@ Ordered steps toward PSI COMPLETE.
 
 ## Done
 
+### Step 15kf — Agent-session mutable runtime state now converges on a canonical root-state model ✓ complete
+- Commit `3097239` adds `spec/system-context-unification.allium` and integrates that model into the existing session/runtime specs.
+- Agent-session implementation now uses a canonical `:state*` root for session-owned mutable state, with path-based helpers exposed from `components/agent-session/src/psi/agent_session/core.clj`.
+- Migrated state domains include:
+  - session data
+  - context index
+  - journal + flush state
+  - turn context
+  - provider request/reply captures
+  - tool-call attempt telemetry
+  - tool-output telemetry
+  - background job state
+- Runtime handles remain outside the canonical mutable root where appropriate:
+  - UI integration handles
+  - agent-core context
+  - extension/workflow registries
+  - OAuth runtime/store integration
+  - nREPL runtime integration
+- Converged files:
+  - `components/agent-session/src/psi/agent_session/core.clj`
+  - `components/agent-session/src/psi/agent_session/runtime.clj`
+  - `components/agent-session/src/psi/agent_session/executor.clj`
+  - `components/agent-session/src/psi/agent_session/resolvers.clj`
+  - `components/agent-session/src/psi/agent_session/persistence.clj`
+- Verification:
+  - `allium check spec/system-context-unification.allium spec/session-core.allium spec/coding-agent.allium spec/rpc-edn.allium`
+  - `clj-kondo --lint components/agent-session/src/psi/agent_session/core.clj components/agent-session/src/psi/agent_session/runtime.clj components/agent-session/src/psi/agent_session/executor.clj components/agent-session/src/psi/agent_session/resolvers.clj components/agent-session/src/psi/agent_session/rpc.clj components/agent-session/src/psi/agent_session/persistence.clj`
+  - `clj-paren-repair` on the same file set
+
 ### Step 15ke — Anthropic error capture now preserves raw reply bodies and normalized request ids ✓ complete
 - Commit `0bc6fb5` extends Anthropic failure diagnostics so live provider capture retains the actual reply payload, not just the summarized status/request-id string.
 - Provider error handling now:
