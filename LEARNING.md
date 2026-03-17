@@ -2,6 +2,29 @@
 
 ---
 
+## 2026-03-16 - Emacs rehydrate consumers must replay canonical agent messages, not display projections (commit `98fff62`)
+
+### λ When one backend event serves multiple frontends, its payload must stay at the domain layer rather than at a renderer-specific projection layer
+
+The Anthropic failure survived until the Emacs path was checked because `session/rehydrated` had quietly drifted into carrying TUI-style display rows (`:role` + `:text`) instead of canonical agent-history messages (`:role` + `:content`). Emacs was not wrong; it was faithfully consuming the event contract it was given. The reusable rule is:
+- transition/rebuild events should carry domain data
+- each frontend should project that data into its own transcript/widget form locally
+- display-shaped payloads in shared transition events create hidden coupling and cross-surface regressions
+
+### λ A frontend local echo is safe only if the canonical resumed/rehydrated lifecycle fully owns the final transcript
+
+Tracing `/new` in Emacs showed a useful pattern:
+- local user echo happens immediately
+- command-result may append temporary assistant feedback
+- `session/resumed` clears stale transcript state
+- `session/rehydrated` rebuilds the durable transcript
+
+That means local frontend affordances are fine as long as the transition lifecycle is authoritative and explicitly clears/rebuilds afterward. The dangerous case is not temporary UI duplication; it is failing to converge back onto the backend-owned canonical transcript.
+
+### λ Test runners should load new regression files explicitly, or green runs can hide missing coverage
+
+The first Emacs regression pass looked green because `bb emacs:test` only loaded the historical test entrypoints. The new regression files existed but were not part of the task, so the passing suite overstated protection. The reusable lesson is simple: when adding standalone test files, update the canonical task/runner immediately and verify the test count changes in the expected direction.
+
 ## 2026-03-16 - Anthropic prompt-cache directives must be coupled to their beta header, and provider errors must preserve wire diagnostics (commit `5f6ec96`)
 
 ### λ Emitting Anthropic `cache_control` without the matching beta turns a request-shape refactor into a provider-wide outage
