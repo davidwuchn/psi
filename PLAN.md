@@ -68,6 +68,16 @@ Ordered steps toward PSI COMPLETE.
   - `clj-kondo --lint components/agent-session/src/psi/agent_session/core.clj components/agent-session/src/psi/agent_session/runtime.clj components/agent-session/src/psi/agent_session/executor.clj components/agent-session/src/psi/agent_session/resolvers.clj components/agent-session/src/psi/agent_session/rpc.clj components/agent-session/src/psi/agent_session/persistence.clj`
   - `clj-paren-repair` on the same file set
 
+### Step 15kfb — Session-debug skill now documents resolver reload + graph rebuild workflow for live debugging ✓ complete
+- Commit `b84f60f` updates `.psi/skills/session-debug/SKILL.md` so future debugging loops use the right live/runtime distinction when code changes touch the query surface.
+- Skill guidance now explicitly covers:
+  - reloading affected namespaces via nREPL
+  - rebuilding the global query env after resolver changes via `psi.agent-session.core/register-resolvers!` and `psi.introspection.core/register-resolvers!`
+  - recognizing when `app-query-tool` is still attached to a stale or different JVM and therefore needs a real process restart
+  - preferring narrow turn-id provider capture lookup over dumping full provider request/reply rings when investigating one failing turn
+- Follow-up note:
+  - local reload instructions alone do not guarantee that the active UI/backend process serving `app-query-tool` has ingested the new graph; future live-debug loops should treat runtime restart as a distinct step when graph introspection remains stale.
+
 ### Step 15kfa — Provider captures now have narrow turn-id lookup resolvers for exact failing-turn inspection ✓ complete
 - Commit `2413557` adds focused agent-session resolvers to fetch one provider request or one provider reply by turn id instead of forcing full capture-buffer dumps during live debugging.
 - Resolver/query surface changes now:
