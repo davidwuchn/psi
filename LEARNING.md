@@ -25,6 +25,28 @@ The live session had already rotated far enough that the earlier Anthropic failu
 - assume several later turns may happen before someone inspects the failing provider event
 - if a captured failure falls off the tail too quickly, the system effectively did not remember it
 
+## 2026-03-17 - Canonical state can absorb UI, recursion, nREPL metadata, and OAuth projections if adapters preserve existing call shapes (commit `a110370`)
+
+### λ A compatibility adapter is the clean bridge when an existing subsystem API is atom-shaped but its source of truth should move into canonical state
+
+The most effective move for UI state and background jobs was not rewriting every consumer at once. It was to keep the public call shape stable and back it with a state-root adapter. That let existing functions keep accepting an atom-like value while the source of truth moved under canonical root paths. The pattern is especially useful when the subsystem API is already stable and widely used.
+
+### λ Recursion state is easier to host in canonical runtime state when the recursion context is treated as an access strategy, not as a mandatory storage container
+
+Adding a hosted recursion context worked because `RecursionContext` was allowed to represent either:
+- standalone storage via `:state-atom`
+- hosted storage via `:host-ctx` + `:host-path`
+
+That kept the recursion API stable while making canonical hosting possible. The useful lesson is to separate the controller interface from the storage location.
+
+### λ OAuth and nREPL are best split into runtime-visible state versus opaque runtime handles
+
+For both subsystems, the valuable distinction is:
+- runtime-visible/queryable state belongs in canonical root
+- opaque/effectful objects stay outside it
+
+For nREPL, endpoint metadata belongs in canonical state while the actual server object does not. For OAuth, authenticated-provider/pending-login/last-login metadata belongs in canonical state while credential stores, token refresh logic, and provider implementations remain runtime-owned.
+
 ## 2026-03-17 - Canonical root-state migrations are safest when code first converges on shared path helpers before removing old shapes completely (commit `3097239`)
 
 ### λ A single mutable-root refactor goes smoother when the first stable API is path-based access, not immediate atom elimination
