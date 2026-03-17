@@ -6,6 +6,23 @@ Ordered steps toward PSI COMPLETE.
 
 ## Done
 
+### Step 15kb — Anthropic prompt caching now declares its beta contract and preserves provider diagnostics ✓ complete
+- Commit `5f6ec96` closes the gap between emitted Anthropic `cache_control` fields and the required request headers.
+- Provider request shaping now:
+  - adds `prompt-caching-2024-07-31` to `anthropic-beta` whenever any prompt unit carries `cache_control`
+  - composes that beta with the existing OAuth and interleaved-thinking betas instead of replacing them
+  - keeps prompt-caching detection structural by deriving it from system prompt blocks, tools, and messages
+- Provider error handling now:
+  - reads error bodies from either strings or input streams
+  - prefers provider-supplied error text over generic exception labels
+  - appends HTTP status and Anthropic request id when present
+- Regression coverage added in `components/ai/test/psi/ai/providers/anthropic_test.clj` for:
+  - prompt-caching beta header presence when `cache_control` is emitted
+  - rich error text including status and request id
+- Verification:
+  - `clj-kondo --lint components/ai/src/psi/ai/providers/anthropic.clj components/ai/test/psi/ai/providers/anthropic_test.clj`
+  - `bb clojure:test:unit --focus psi.ai.providers.anthropic-test`
+
 ### Step 15k — Explicit Emacs `/resume <path>` and `/tree <id>` now use canonical rehydrate events ✓ complete
 - Commit `7383729` converges explicit session-targeting slash commands with the same canonical lifecycle already used by `/new`, bare `/resume`, and bare `/tree`.
 - Backend/RPC changes:
