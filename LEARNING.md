@@ -25,6 +25,20 @@ The live session had already rotated far enough that the earlier Anthropic failu
 - assume several later turns may happen before someone inspects the failing provider event
 - if a captured failure falls off the tail too quickly, the system effectively did not remember it
 
+## 2026-03-17 - Canonical-root cleanup is easiest when tests and docs converge on compatibility adapters as views, not storage (commit `d037818`)
+
+### λ A refactor is not really finished until tests stop teaching the old shape
+
+Even after production code converged on canonical root state, several tests still built synthetic contexts around `:session-data-atom` and similar legacy fields. Adding a small canonical-root fixture helper (`make-session-ctx`, plus focused state update helpers) created a better default for future tests and reduced the chance that new regressions would silently re-entrench the pre-refactor architecture.
+
+### λ Compatibility adapters need explicit documentation or future edits will mistake them for primary state holders
+
+Once `:session-data-atom` and `:ui-state-atom` become adapter-backed views, comments that still describe them as the architecture's real storage become actively misleading. Updating docs/comments in the same refactor pass matters because future changes often follow prose before code. The useful rule is: when a compatibility shim remains by design, document it as a view over canonical state, not as an independent mutable source of truth.
+
+### λ A small test-support namespace is a high-leverage way to lock in a new architectural shape
+
+The most efficient post-refactor cleanup was not converting every old test immediately. It was introducing one helper namespace that encodes the new shape and converting representative tests first. That gives the repository a preferred pattern future tests can copy, which is often enough to bend the rest of the suite gradually toward the new architecture.
+
 ## 2026-03-17 - Canonical state can absorb UI, recursion, nREPL metadata, and OAuth projections if adapters preserve existing call shapes (commit `a110370`)
 
 ### λ A compatibility adapter is the clean bridge when an existing subsystem API is atom-shaped but its source of truth should move into canonical state
