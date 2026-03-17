@@ -2,6 +2,25 @@
 
 ---
 
+## 2026-03-17 - Live query graph reloads must be treated as a separate checkpoint from code reloads (commit `b84f60f`)
+
+### λ Re-registering resolvers in one JVM does not prove that the live app-query graph has ingested them
+
+During the Anthropic investigation, the new turn-id lookup resolvers passed focused tests and local re-registration code ran successfully, yet `app-query-tool` still reported the old resolver set and root-queryable attrs. The reusable lesson is:
+- code reload success is not the same as live graph reload success
+- query-surface debugging needs an explicit checkpoint in the active runtime that serves the user-facing graph
+- when the live graph still reports the old surface, assume a stale or different JVM until proven otherwise
+
+### λ Future debugging guidance should encode the real reload workflow, not the idealized one
+
+The session-debug skill needed to capture the actual sequence that emerged from this investigation:
+- reload changed namespaces
+- rebuild the query env after resolver registration changes
+- verify the live graph advertises the new attrs/resolvers
+- if it does not, restart the actual running psi process
+
+The important rule is that debugging instructions should preserve the failure mode we just hit, so future loops avoid mistaking local REPL work for a live-session graph update.
+
 ## 2026-03-17 - Narrow lookup surfaces beat giant capture dumps when debugging one failing provider turn (commit `2413557`)
 
 ### λ Provider telemetry needs a precise lookup path once retention is deep enough to make full-buffer queries unwieldy
