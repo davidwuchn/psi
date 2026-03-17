@@ -2138,7 +2138,7 @@
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.agent-session/model-reasoning
                  :psi.agent-session/effective-reasoning-effort]}
-  (let [sd    @(:session-data-atom agent-session-ctx)
+  (let [sd    (session/get-session-data-in agent-session-ctx)
         model (:model sd)
         level (:thinking-level sd)]
     {:psi.agent-session/model-reasoning

@@ -1497,6 +1497,27 @@
       (is (not (str/includes? stats-line "↑111")))
       (is (not (str/includes? stats-line "↓22"))))))
 
+(deftest footer-updated-payload-includes-model-and-thinking-when-session-reasoning-enabled-test
+  (testing "footer payload includes model/thinking details from active session query"
+    (let [ctx (session/create-context)
+          _   (session/set-model-in! ctx {:provider "openai"
+                                          :id "gpt-5.3-codex"
+                                          :reasoning true})
+          _   (session/set-thinking-level-in! ctx :high)
+          _   (session/update-context-usage-in! ctx 4000 100000)
+          _   (session/journal-append-in! ctx {:kind :message
+                                               :session-id (:session-id (session/get-session-data-in ctx))
+                                               :data {:message {:role "assistant"
+                                                                :usage {:input-tokens 111
+                                                                        :output-tokens 22}}}})
+          payload (#'rpc/footer-updated-payload ctx)
+          stats-line (:stats-line payload)]
+      (is (string? stats-line))
+      (is (str/includes? stats-line "↑111"))
+      (is (str/includes? stats-line "↓22"))
+      (is (str/includes? stats-line "4.0%/100k"))
+      (is (str/includes? stats-line "(openai) gpt-5.3-codex • thinking high")))))
+
 (deftest rpc-subscribe-emits-context-updated-test
   (testing "subscribe emits context/updated with active-session-id and sessions list"
     (let [ctx     (session/create-context)
