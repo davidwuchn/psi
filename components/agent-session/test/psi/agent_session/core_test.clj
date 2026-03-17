@@ -904,6 +904,18 @@
             err (first (:psi.agent-session/api-errors r))]
         (is (= "req_abc123" (:psi.api-error/request-id err))))))
 
+  (testing "request-id parsed from normalized provider error suffix"
+    (let [ctx (session/create-context)]
+      (inject-messages! ctx [(make-user-msg "hi")
+                             (make-error-msg
+                              "Error (status 400) [request-id req_011CZ8hy9y3kRrVsNfhmugS1]"
+                              400)])
+      (let [r (session/query-in ctx
+                                [{:psi.agent-session/api-errors
+                                  [:psi.api-error/request-id]}])
+            err (first (:psi.agent-session/api-errors r))]
+        (is (= "req_011CZ8hy9y3kRrVsNfhmugS1" (:psi.api-error/request-id err))))))
+
   (testing "surrounding messages include context window"
     (let [ctx (session/create-context)]
       (inject-messages! ctx [(make-user-msg "step 1")

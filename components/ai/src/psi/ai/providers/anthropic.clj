@@ -456,19 +456,30 @@
 
 (defn- exception->error
   [e]
-  (let [data       (ex-data e)
-        status     (:status data)
-        body-text  (body->text (:body data))
-        parsed-msg (parse-error-message body-text)
-        base-msg   (or parsed-msg (ex-message e) (str e))
-        req-id     (request-id-from-headers (:headers data))
-        full-msg   (str base-msg
-                        (when status
-                          (str " (status " status ")"))
-                        (when req-id
-                          (str " [request-id " req-id "]")))]
-    (cond-> {:type :error :error-message full-msg}
-      status (assoc :http-status status))))
+  (let [data        (ex-data e)
+        status      (:status data)
+        headers     (:headers data)
+        body-text   (body->text (:body data))
+        parsed-body (when (seq body-text)
+                      (try
+                        (json/parse-string body-text true)
+                        (catch Exception _ nil)))
+        parsed-msg  (or (get-in parsed-body [:error :message])
+                        (get-in parsed-body [:message])
+                        (parse-error-message body-text))
+        base-msg    (or parsed-msg (ex-message e) (str e))
+        req-id      (request-id-from-headers headers)
+        full-msg    (str base-msg
+                         (when status
+                           (str " (status " status ")"))
+                         (when req-id
+                           (str " [request-id " req-id "]")))]
+    (cond-> {:type :error
+             :error-message full-msg
+             :headers headers}
+      status      (assoc :http-status status)
+      (seq body-text) (assoc :body-text body-text)
+      parsed-body (assoc :body parsed-body))))
 
 (defn stream-anthropic
   "Stream response from Anthropic API.

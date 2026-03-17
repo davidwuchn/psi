@@ -159,10 +159,35 @@
       (is (pos? (count @reply-captures)))
       (is (some #(= "message_start"
                     (get-in % [:event :type]))
-                @reply-captures)))))
+                @reply-captures))))
+
+  (testing "Anthropic error replies capture raw body and headers"
+    (let [model           (models/get-model :sonnet-4.6)
+          convo           (-> (conv/create "sys")
+                              (conv/add-user-message "hello"))
+          reply-captures  (atom [])]
+      (with-redefs [http/post (fn [_url _req]
+                                (throw (ex-info "Error"
+                                                {:status 400
+                                                 :headers {"request-id" "req_ant_456"}
+                                                 :body (stream-body
+                                                        (json/generate-string
+                                                         {:error {:message "prompt is too long"}}))})))]
+        (anthropic/stream-anthropic
+         convo model {:api-key "test-key"
+                      :on-provider-response #(swap! reply-captures conj %)}
+         (fn [_] nil)))
+      (is (= :anthropic (-> @reply-captures last :provider)))
+      (is (= :anthropic-messages (-> @reply-captures last :api)))
+      (is (= 400 (get-in (last @reply-captures) [:event :http-status])))
+      (is (= "req_ant_456"
+             (get-in (last @reply-captures) [:event :headers "request-id"])))
+      (is (= {:error {:message "prompt is too long"}}
+             (get-in (last @reply-captures) [:event :body])))
+      (is (string? (get-in (last @reply-captures) [:event :body-text]))))))
 
 (deftest stream-anthropic-error-includes-status-and-request-id-test
-  (testing "Anthropic HTTP errors preserve provider message, status, and request id"
+  (testing "Anthropic HTTP errors preserve provider message, status, request id, and body"
     (let [model  (models/get-model :sonnet-4.6)
           convo  (-> (conv/create "sys")
                      (conv/add-user-message "hello"))
@@ -176,10 +201,15 @@
                                                          {:error {:message "cache_control requires prompt-caching beta"}}))})))]
         (anthropic/stream-anthropic convo model {:api-key "test-key"}
                                     (fn [e] (swap! events conj e))))
-      (is (= [{:type :error
-               :error-message "cache_control requires prompt-caching beta (status 400) [request-id req_ant_123]"
-               :http-status 400}]
-             @events)))))
+      (is (= 1 (count @events)))
+      (is (= :error (:type (first @events))))
+      (is (= "cache_control requires prompt-caching beta (status 400) [request-id req_ant_123]"
+             (:error-message (first @events))))
+      (is (= 400 (:http-status (first @events))))
+      (is (= "req_ant_123" (get-in (first @events) [:headers "request-id"])))
+      (is (= {:error {:message "cache_control requires prompt-caching beta"}}
+             (:body (first @events))))
+      (is (string? (:body-text (first @events)))))))
 
 ;; ── SSE parser — thinking block routing ─────────────────────────────────────
 

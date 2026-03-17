@@ -1259,10 +1259,13 @@
   (some #(when (= :error (:type %)) (:text %)) (:content msg)))
 
 (defn- parse-request-id
-  "Extract request-id from a clj-http error text string."
+  "Extract request-id from provider error text.
+   Supports both old clj-http header-map formatting and the normalized
+   `... [request-id req_xxx]` suffix emitted by provider adapters."
   [error-text]
   (when error-text
-    (second (re-find #"\"request-id\"\s+\"([^\"]+)\"" error-text))))
+    (or (second (re-find #"\"request-id\"\s+\"([^\"]+)\"" error-text))
+        (second (re-find #"\[request-id\s+([^\]\s]+)\]" error-text)))))
 
 (defn- message-summary
   "Lightweight summary of an agent-core message for context display."

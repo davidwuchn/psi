@@ -515,8 +515,8 @@ Also tolerates cumulative snapshots that differ near previous tail
 (defn- now-ms []
   (System/currentTimeMillis))
 
-(def ^:private provider-request-capture-limit 20)
-(def ^:private provider-reply-capture-limit 400)
+(def ^:private provider-request-capture-limit 100)
+(def ^:private provider-reply-capture-limit 1000)
 
 (defn- append-capped!
   [target-atom entry limit]
