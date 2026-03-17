@@ -6,6 +6,20 @@ Ordered steps toward PSI COMPLETE.
 
 ## Done
 
+### Step 15kd — Anthropic replay now skips empty assistant text turns and always declares OAuth thinking beta when needed ✓ complete
+- Commit `8e5da2d` closes two distinct live Anthropic failure paths found via provider request capture and replay.
+- Executor/conversation rebuild change:
+  - `agent-messages->ai-conversation` no longer replays assistant messages that contain no non-empty text, no thinking blocks, and no tool calls
+  - this prevents Anthropic requests from containing invalid empty assistant text blocks like `{:type "text" :text ""}`
+- Provider header change:
+  - Anthropic OAuth requests now include `interleaved-thinking-2025-05-14` whenever request thinking is enabled
+  - this keeps OAuth request beta composition aligned with non-OAuth thinking requests
+- Regression coverage added:
+  - executor test proving empty assistant messages are skipped during conversation rebuild
+  - provider test proving OAuth + thinking requests include both OAuth and interleaved-thinking betas
+- Verification:
+  - `bb test components/agent-session/test/psi/agent_session/executor_test.clj components/ai/test/psi/ai/providers/anthropic_test.clj`
+
 ### Step 15kc — Emacs Anthropic `/new` rehydrate flow now rides the canonical RPC message shape end-to-end ✓ complete
 - Commit `98fff62` closes the remaining Emacs-specific Anthropic failure path by aligning session rehydrate payloads with canonical agent history instead of TUI display rows.
 - Backend/RPC changes:
