@@ -2,6 +2,22 @@
 
 ---
 
+## 2026-03-17 - Narrow lookup surfaces beat giant capture dumps when debugging one failing provider turn (commit `2413557`)
+
+### λ Provider telemetry needs a precise lookup path once retention is deep enough to make full-buffer queries unwieldy
+
+The Anthropic investigation reached a point where the relevant failing turn was definitely retained, but querying the entire provider request/reply capture tail through the live graph produced unusably large results. The reusable rule is:
+- broad capture buffers are good for retention and timelines
+- failing-turn investigation needs a narrow lookup surface keyed by a stable identifier like turn id
+- exact lookup resolvers reduce both tool output volume and cognitive load during debugging
+
+### λ Code-level queryability and live-session queryability are separate states whenever a long-running runtime owns the active graph
+
+The new turn-id lookup resolvers worked immediately in focused tests and local registration paths, yet the active `app-query-tool` graph still did not advertise them after in-repo reload attempts. The practical lesson is:
+- proving a resolver in unit tests only establishes repository truth
+- proving it in the live graph requires the actual long-running runtime to ingest the updated registrations and rebuild its env
+- when those differ, treat "repo updated" and "live query surface updated" as separate checkpoints in the debugging loop
+
 ## 2026-03-17 - Join-map graph discovery and dedicated error retention matter as much as the original error capture (commit `231477a`)
 
 ### λ A general rolling provider-event buffer is the wrong retention tier for rare provider failures when normal traffic is dominated by delta events
