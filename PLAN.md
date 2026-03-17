@@ -6,6 +6,23 @@ Ordered steps toward PSI COMPLETE.
 
 ## Done
 
+### Step 15kg — Runtime-visible ui/recursion/nrepl/oauth projections now converge on canonical state ✓ complete
+- Commit `a110370` hosts extension UI state, recursion state, canonical nREPL metadata, and runtime-visible OAuth projections inside the session canonical state root while preserving runtime handles for opaque integrations.
+- Phase 2A/2B/2C/2D results:
+  - extension UI state now lives under canonical root state and is surfaced through a compatibility atom adapter
+  - recursion state now runs through `recursion/create-hosted-context` backed by the canonical session root
+  - nREPL endpoint metadata is written to and resolved from canonical runtime-visible state
+  - runtime-visible OAuth state now tracks authenticated providers, pending login, and last login metadata in canonical state while the secure OAuth store remains external
+- Converged files:
+  - `components/agent-session/src/psi/agent_session/core.clj`
+  - `components/agent-session/src/psi/agent_session/main.clj`
+  - `components/agent-session/src/psi/agent_session/resolvers.clj`
+  - `components/agent-session/src/psi/agent_session/rpc.clj`
+  - `components/recursion/src/psi/recursion/core.clj`
+- Verification:
+  - `clj-kondo --lint components/agent-session/src/psi/agent_session/core.clj components/agent-session/src/psi/agent_session/main.clj components/agent-session/src/psi/agent_session/resolvers.clj components/agent-session/src/psi/agent_session/rpc.clj components/recursion/src/psi/recursion/core.clj`
+  - `clj-paren-repair` on the same file set
+
 ### Step 15kf — Agent-session mutable runtime state now converges on a canonical root-state model ✓ complete
 - Commit `3097239` adds `spec/system-context-unification.allium` and integrates that model into the existing session/runtime specs.
 - Agent-session implementation now uses a canonical `:state*` root for session-owned mutable state, with path-based helpers exposed from `components/agent-session/src/psi/agent_session/core.clj`.
