@@ -19,6 +19,7 @@
 
 (def ^:private anthropic-version "2023-06-01")
 (def ^:private interleaved-thinking-beta "interleaved-thinking-2025-05-14")
+(def ^:private prompt-caching-beta "prompt-caching-2024-07-31")
 (def ^:private oauth-beta "claude-code-20250219,oauth-2025-04-20")
 
 (defn- valid-anthropic-tool-id?
@@ -188,15 +189,36 @@
   [api-key]
   (and api-key (str/includes? api-key "sk-ant-oat")))
 
-(defn- beta-header
-  [oauth? thinking]
+(defn- cache-control-present?
+  [x]
   (cond
-    (and oauth? thinking) (str oauth-beta "," interleaved-thinking-beta)
-    oauth?                oauth-beta
-    thinking              interleaved-thinking-beta))
+    (map? x)
+    (or (contains? x :cache-control)
+        (some cache-control-present? (vals x)))
+
+    (sequential? x)
+    (boolean (some cache-control-present? x))
+
+    :else
+    false))
+
+(defn- prompt-caching?
+  [conversation]
+  (or (cache-control-present? (:system-prompt-blocks conversation))
+      (cache-control-present? (:tools conversation))
+      (cache-control-present? (:messages conversation))))
+
+(defn- beta-header
+  [oauth? thinking prompt-caching?]
+  (let [betas (cond-> []
+                oauth?           (conj oauth-beta)
+                thinking         (conj interleaved-thinking-beta)
+                prompt-caching?  (conj prompt-caching-beta))]
+    (when (seq betas)
+      (str/join "," betas))))
 
 (defn- request-headers
-  [api-key thinking]
+  [api-key thinking prompt-caching?]
   (let [oauth?  (oauth-api-key? api-key)
         headers (if oauth?
                   {"Content-Type"      "application/json"
@@ -205,7 +227,7 @@
                   {"Content-Type"      "application/json"
                    "x-api-key"         api-key
                    "anthropic-version" anthropic-version})
-        beta    (beta-header oauth? thinking)]
+        beta    (beta-header oauth? thinking prompt-caching?)]
     (cond-> headers
       beta (assoc "anthropic-beta" beta))))
 
@@ -230,21 +252,24 @@
   "Build Anthropic API request map.
    Includes tools from conversation when present.
    When the model supports reasoning and thinking-level is set (non-:off),
-   adds the extended-thinking param and the required interleaved-thinking beta header."
+   adds the extended-thinking param and the required interleaved-thinking beta header.
+   When prompt cache directives are present, also adds the Anthropic prompt-caching beta header."
   [conversation model options]
-  (let [thinking  (thinking-param model options)
-        api-key   (or (:api-key options) (System/getenv "ANTHROPIC_API_KEY"))
-        tool-defs (tool-definitions conversation)
-        body      (cond-> {:model      (:id model)
-                           :max_tokens (or (:max-tokens options) (:max-tokens model))
-                           :messages   (transform-messages conversation)
-                           :stream     true}
-                    (some? (system-prompt-body conversation)) (assoc :system (system-prompt-body conversation))
-                    ;; temperature is incompatible with extended thinking
-                    (not thinking)  (assoc :temperature (or (:temperature options) 0.7))
-                    thinking        (assoc :thinking thinking)
-                    (seq tool-defs) (assoc :tools tool-defs))]
-    {:headers (request-headers api-key thinking)
+  (let [thinking        (thinking-param model options)
+        api-key         (or (:api-key options) (System/getenv "ANTHROPIC_API_KEY"))
+        tool-defs       (tool-definitions conversation)
+        system-body     (system-prompt-body conversation)
+        prompt-caching? (prompt-caching? conversation)
+        body            (cond-> {:model      (:id model)
+                                 :max_tokens (or (:max-tokens options) (:max-tokens model))
+                                 :messages   (transform-messages conversation)
+                                 :stream     true}
+                          (some? system-body) (assoc :system system-body)
+                          ;; temperature is incompatible with extended thinking
+                          (not thinking)      (assoc :temperature (or (:temperature options) 0.7))
+                          thinking            (assoc :thinking thinking)
+                          (seq tool-defs)     (assoc :tools tool-defs))]
+    {:headers (request-headers api-key thinking prompt-caching?)
      :body    (json/generate-string body)}))
 
 (defn- safe-call!
@@ -394,15 +419,50 @@
   (when event
     (consume-fn event)))
 
-(defn- parse-api-error
-  [body-stream]
-  (when (instance? InputStream body-stream)
+(defn- body->text
+  [body]
+  (try
+    (cond
+      (nil? body) nil
+      (string? body) body
+      (instance? InputStream body) (slurp (io/reader body))
+      :else (str body))
+    (catch Exception _ nil)))
+
+(defn- parse-error-message
+  [body-text]
+  (when (seq body-text)
     (try
-      (let [body-str (slurp (io/reader body-stream))]
-        (or (get-in (json/parse-string body-str true) [:error :message])
-            body-str))
+      (let [m (json/parse-string body-text true)]
+        (or (get-in m [:error :message])
+            (get-in m [:message])
+            body-text))
       (catch Exception _
-        nil))))
+        body-text))))
+
+(defn- request-id-from-headers
+  [headers]
+  (or (get headers "request-id")
+      (get headers "Request-Id")
+      (get headers "x-request-id")
+      (get headers "X-Request-Id")
+      (get headers "X-Request-ID")))
+
+(defn- exception->error
+  [e]
+  (let [data       (ex-data e)
+        status     (:status data)
+        body-text  (body->text (:body data))
+        parsed-msg (parse-error-message body-text)
+        base-msg   (or parsed-msg (ex-message e) (str e))
+        req-id     (request-id-from-headers (:headers data))
+        full-msg   (str base-msg
+                        (when status
+                          (str " (status " status ")"))
+                        (when req-id
+                          (str " [request-id " req-id "]")))]
+    (cond-> {:type :error :error-message full-msg}
+      status (assoc :http-status status))))
 
 (defn stream-anthropic
   "Stream response from Anthropic API.
@@ -478,13 +538,7 @@
 
                 nil)))))
       (catch Exception e
-        (let [data        (ex-data e)
-              http-status (:status data)
-              msg         (or (parse-api-error (:body data))
-                              (ex-message e)
-                              (str e))
-              err         (cond-> {:type :error :error-message msg}
-                            http-status (assoc :http-status http-status))]
+        (let [err (exception->error e)]
           (capture-response! options url err)
           (consume-fn err))))))
 

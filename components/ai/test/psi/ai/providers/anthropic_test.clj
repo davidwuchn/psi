@@ -50,23 +50,26 @@
 
 (deftest build-request-with-cache-breakpoints-test
   (testing "system prompt blocks and tools emit Anthropic cache_control when marked ephemeral"
-    (let [model (models/get-model :sonnet-4.6)
-          convo (-> (conv/create {:system-prompt "sys"
-                                  :system-prompt-blocks [{:kind :text
-                                                          :text "sys"
-                                                          :cache-control {:type :ephemeral}}]})
-                    (conv/add-tool {:name "read"
-                                    :description "Read a file"
-                                    :parameters {:type "object"}
-                                    :cache-control {:type :ephemeral}}))
-          req   (#'anthropic/build-request convo model {:api-key "test-key"})
-          body  (json/parse-string (:body req) true)]
+    (let [model   (models/get-model :sonnet-4.6)
+          convo   (-> (conv/create {:system-prompt "sys"
+                                    :system-prompt-blocks [{:kind :text
+                                                            :text "sys"
+                                                            :cache-control {:type :ephemeral}}]})
+                      (conv/add-tool {:name "read"
+                                      :description "Read a file"
+                                      :parameters {:type "object"}
+                                      :cache-control {:type :ephemeral}}))
+          req     (#'anthropic/build-request convo model {:api-key "test-key"})
+          body    (json/parse-string (:body req) true)
+          headers (:headers req)]
       (is (= [{:type "text"
                :text "sys"
                :cache_control {:type "ephemeral"}}]
              (:system body)))
       (is (= {:type "ephemeral"}
-             (get-in body [:tools 0 :cache_control]))))))
+             (get-in body [:tools 0 :cache_control])))
+      (is (some? (re-find #"prompt-caching" (get headers "anthropic-beta")))
+          "prompt-caching beta header required when cache_control is present"))))
 
 (deftest build-request-with-tool-results-thinking-and-cache-test
   (testing "tool result history, thinking, and cache breakpoints produce a coherent Anthropic request"
@@ -109,6 +112,8 @@
       (is (nil? (:temperature body)) "temperature must be absent with extended thinking")
       (is (some? (re-find #"interleaved-thinking" (get headers "anthropic-beta")))
           "interleaved-thinking beta header required")
+      (is (some? (re-find #"prompt-caching" (get headers "anthropic-beta")))
+          "prompt-caching beta header required when cache_control is present")
       (is (= ["user" "assistant" "user" "assistant" "user"]
              (mapv :role messages)))
       (is (= "tool_use" (get-in asst [:content 0 :type])))
@@ -144,6 +149,26 @@
       (is (some #(= "message_start"
                     (get-in % [:event :type]))
                 @reply-captures)))))
+
+(deftest stream-anthropic-error-includes-status-and-request-id-test
+  (testing "Anthropic HTTP errors preserve provider message, status, and request id"
+    (let [model  (models/get-model :sonnet-4.6)
+          convo  (-> (conv/create "sys")
+                     (conv/add-user-message "hello"))
+          events (atom [])]
+      (with-redefs [http/post (fn [_url _req]
+                                (throw (ex-info "Error"
+                                                {:status 400
+                                                 :headers {"request-id" "req_ant_123"}
+                                                 :body (stream-body
+                                                        (json/generate-string
+                                                         {:error {:message "cache_control requires prompt-caching beta"}}))})))]
+        (anthropic/stream-anthropic convo model {:api-key "test-key"}
+                                    (fn [e] (swap! events conj e))))
+      (is (= [{:type :error
+               :error-message "cache_control requires prompt-caching beta (status 400) [request-id req_ant_123]"
+               :http-status 400}]
+             @events)))))
 
 ;; ── SSE parser — thinking block routing ─────────────────────────────────────
 
