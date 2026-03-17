@@ -2,6 +2,29 @@
 
 ---
 
+## 2026-03-16 - Anthropic prompt-cache directives must be coupled to their beta header, and provider errors must preserve wire diagnostics (commit `5f6ec96`)
+
+### λ Emitting Anthropic `cache_control` without the matching beta turns a request-shape refactor into a provider-wide outage
+
+The breakage was not in the cache-control field shape itself; it was in the missing protocol companion. Once prompt caching became session-default policy, even a trivial Anthropic turn inherited `cache_control`, so omitting the prompt-caching beta converted an optimization feature into a hard failure for the whole provider. The reusable rule is:
+- if a provider field is feature-gated
+- the code path that emits the field should also own the feature-header decision
+- do not rely on distant callers to remember the protocol coupling
+
+### λ Prompt-caching detection is better derived from structural prompt units than from session flags alone
+
+The useful boundary was not "did the session enable caching?" but "does this concrete request contain any prompt units with cache directives?" Detecting prompt caching from system prompt blocks, tool definitions, and message blocks keeps the header logic aligned with the actual wire payload. That avoids both false positives and future drift when more request units learn to carry `cache_control`.
+
+### λ Generic provider exceptions erase the debugging signal users need most
+
+The observed `ψ: [error] Error` symptom came from preserving the exception label while dropping the meaningful provider response. For provider integrations, the stable error policy is:
+- parse the provider body first
+- prefer provider-supplied message text
+- append transport metadata like status and request id
+- only fall back to generic exception text when the wire gives nothing better
+
+That keeps user-visible failures actionable and makes later API-error introspection far more useful.
+
 ## 2026-03-16 - Explicit session-targeting slash commands must emit the same canonical rehydrate events as selector-driven flows (commit `7383729`)
 
 ### λ Command wrappers for domain transitions should not bypass the transition event contract
