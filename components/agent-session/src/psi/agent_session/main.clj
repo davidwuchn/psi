@@ -92,6 +92,13 @@
     (reset! nrepl-runtime {:host host
                            :port (:port server)
                            :endpoint (str host ":" (:port server))})
+    (when-let [ctx (:ctx @session-state)]
+      (psi.agent-session.core/assoc-state-value-in!
+       ctx
+       (psi.agent-session.core/state-path :nrepl-runtime)
+       {:host host
+        :port (:port server)
+        :endpoint (str host ":" (:port server))}))
     (spit port-file (str (:port server)))
     (.deleteOnExit port-file)
     (println (str "  nREPL : " host ":" (:port server)
@@ -103,6 +110,11 @@
     (let [stop-server (requiring-resolve 'nrepl.server/stop-server)
           port-file   (java.io.File. ".nrepl-port")]
       (reset! nrepl-runtime nil)
+      (when-let [ctx (:ctx @session-state)]
+        (psi.agent-session.core/assoc-state-value-in!
+         ctx
+         (psi.agent-session.core/state-path :nrepl-runtime)
+         nil))
       (stop-server server)
       (when (.exists port-file)
         (when (= (str/trim (slurp port-file)) (str (:port server)))
@@ -506,7 +518,6 @@
         cwd                      (or cwd (System/getProperty "user.dir"))
         effective-model          (effective-model-from-project-preferences cwd ai-model)
         effective-thinking-level (effective-thinking-level-from-project-preferences cwd effective-model)
-        recursion-ctx            (recursion/create-context)
         ctx                      (session/create-context
                                   {:initial-session {:model {:provider  (name (:provider effective-model))
                                                              :id        (:id effective-model)
@@ -516,9 +527,14 @@
                                    :config session-config
                                    :event-queue event-queue
                                    :oauth-ctx oauth-ctx
-                                   :recursion-ctx recursion-ctx
                                    :nrepl-runtime-atom nrepl-runtime
-                                   :ui-type ui-type})]
+                                   :ui-type ui-type})
+        _                        (when-not (session/get-state-value-in ctx (session/state-path :recursion))
+                                   (session/assoc-state-value-in! ctx
+                                                                  (session/state-path :recursion)
+                                                                  (recursion/initial-state)))
+        recursion-ctx            (recursion/create-hosted-context ctx (session/state-path :recursion))
+        ctx                      (assoc ctx :recursion-ctx recursion-ctx)]
     (session/new-session-in! ctx)
     {:ctx       ctx
      :oauth-ctx oauth-ctx

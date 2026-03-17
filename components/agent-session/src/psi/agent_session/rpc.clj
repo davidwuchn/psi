@@ -586,6 +586,12 @@
                         {:error-code "request/invalid-params"})))
       (let [{:keys [url login-state]} (oauth/begin-login! oauth-ctx (:id provider))
             callback? (boolean (:uses-callback-server provider))]
+        (session/assoc-state-value-in! ctx
+                                       (session/state-path :oauth)
+                                       (assoc (or (session/get-state-value-in ctx (session/state-path :oauth)) {})
+                                              :pending-login {:provider-id   (:id provider)
+                                                              :provider-name (:name provider)
+                                                              :login-state   login-state}))
         (swap! state assoc :pending-login {:provider-id   (:id provider)
                                            :provider-name (:name provider)
                                            :login-state   login-state})
@@ -613,6 +619,12 @@
       (let [trimmed (some-> (:input params) str/trim)
             input   (when-not (str/blank? trimmed) trimmed)]
         (oauth/complete-login! oauth-ctx provider-id input login-state)
+        (session/assoc-state-value-in! ctx
+                                       (session/state-path :oauth)
+                                       (assoc (or (session/get-state-value-in ctx (session/state-path :oauth)) {})
+                                              :pending-login nil
+                                              :last-login-provider (name provider-id)
+                                              :last-login-at (java.time.Instant/now)))
         (response-frame (:id request) "login_complete" true
                         {:provider {:id (name provider-id)
                                     :name provider-name}

@@ -10,7 +10,7 @@
    [psi.recursion.future-state :as future-state]
    [psi.recursion.policy :as policy]))
 
-(defrecord RecursionContext [state-atom config])
+(defrecord RecursionContext [state-atom config host-ctx host-path])
 
 (defn initial-state
   "Return the initial controller state map."
@@ -56,7 +56,9 @@
                               state-overrides)]
      (->RecursionContext
       (atom state)
-      merged-config))))
+      merged-config
+      nil
+      nil))))
 
 (defonce ^:private global-ctx (atom nil))
 
@@ -77,15 +79,35 @@
   []
   (reset! global-ctx nil))
 
+(defn create-hosted-context
+  "Create a recursion context hosted in an external canonical state root.
+
+   `host-ctx` must support:
+   - (:state* host-ctx) root atom
+   - `host-path` path inside that root for recursion state"
+  [host-ctx host-path]
+  (let [existing (get-in @(:state* host-ctx) host-path)
+        state    (or existing (initial-state))]
+    (swap! (:state* host-ctx) assoc-in host-path state)
+    (->RecursionContext
+     nil
+     (:config state)
+     host-ctx
+     host-path)))
+
 (defn get-state-in
   "Return the full controller state map from `ctx`."
   [ctx]
-  @(:state-atom ctx))
+  (if-let [state-atom (:state-atom ctx)]
+    @state-atom
+    (get-in @(:state* (:host-ctx ctx)) (:host-path ctx))))
 
 (defn swap-state-in!
   "Apply `f` to controller state atom in `ctx`."
   [ctx f & args]
-  (apply swap! (:state-atom ctx) f args))
+  (if-let [state-atom (:state-atom ctx)]
+    (apply swap! state-atom f args)
+    (apply swap! (:state* (:host-ctx ctx)) update-in (:host-path ctx) f args)))
 
 (defn get-state
   "Global wrapper for `get-state-in`."

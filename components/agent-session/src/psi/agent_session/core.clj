@@ -7,48 +7,44 @@
         :idle → :streaming → :idle | :compacting | :retrying
       Guards on agent-end events decide the next phase reactively.
 
-   ② Session data atom (:session-data-atom) holds the full AgentSession
-      map (model, thinking level, queues, config, skills, extensions…).
+   ② Canonical mutable session/runtime-visible state lives under one root atom
+      (:state*). Session data, journal, telemetry, background jobs, turn
+      introspection, UI state, recursion state, nREPL metadata, and runtime-visible
+      OAuth state are stored as paths within that root.
 
-   ③ Agent-core context (:agent-ctx) is owned by the session.  The session
+   ③ Agent-core context (:agent-ctx) is owned by the session. The session
       uses add-watch on the agent-core events atom so that every event
       emitted by agent-core is forwarded to the session statechart as
       :session/agent-event (with the event stored as :pending-agent-event
       in working memory for guards to inspect).
 
-   ④ Extension registry (:extension-registry) holds registered extensions
-      and dispatches named events.
+   ④ Extension and workflow registries remain runtime handles.
 
-   ⑤ Journal atom (:journal-atom) is the append-only session entry log.
+   ⑤ Compatibility adapters may expose atom-like views (for UI/background jobs)
+      but they are backed by the canonical root state, not separate sources of truth.
 
-   ⑥ EQL resolvers (resolvers.clj) expose all of the above via
-      :psi.agent-session/* attributes.
+   ⑥ EQL resolvers (resolvers.clj) expose the runtime-visible state via
+      :psi.agent-session/* and related attrs.
 
    Nullable pattern
    ────────────────
-   `create-context` returns an isolated map with its own atoms.
+   `create-context` returns an isolated map with one canonical mutable root.
    All public *-in functions take a context as first arg.
    Global singleton wrappers delegate to the global context.
 
    Context map keys
    ────────────────
+   :state*              — canonical mutable root atom for runtime-visible state
    :sc-env              — statechart environment
    :sc-session-id       — UUID for this session's statechart session
-   :session-data-atom   — atom holding AgentSession data map
    :agent-ctx           — agent-core context (owns the LLM loop)
    :extension-registry  — ExtensionRegistry record
-   :workflow-registry   — WorkflowRegistry record (extension workflows)
-   :journal-atom        — atom of [SessionEntry]
-   :flush-state-atom    — atom {:flushed? bool :session-file File?}
-   :tool-call-attempts-atom — atom of streamed provider tool-call attempt events
-   :provider-requests-atom — atom of outbound provider request captures (redacted)
-   :provider-replies-atom — atom of inbound provider reply-event captures
-   :nrepl-runtime-atom — atom {:host string :port int :endpoint string} or nil
+   :workflow-registry   — WorkflowRegistry record
    :cwd                 — working directory string (used for session dir layout)
    :compaction-fn       — (fn [session-data preparation instructions]) → CompactionResult
    :branch-summary-fn   — (fn [session-data entries instructions]) → BranchSummaryResult
    :config              — merged config map (global defaults + per-session overrides)
-   :oauth-ctx           — OAuth context (optional; used by extension runtime for auth helpers)
+   :oauth-ctx           — OAuth runtime context (secure store/provider integration)
 
    Global query graph integration
    ──────────────────────────────
@@ -99,6 +95,7 @@
 (declare journal-append!)
 (declare get-session-data-in)
 (declare swap-session!)
+(declare ui-state-atom-in)
 
 ;; ============================================================
 ;; Actions dispatcher
@@ -268,6 +265,9 @@
 (def ^:private flush-state-path [:persistence :flush-state])
 (def ^:private turn-ctx-path [:turn :ctx])
 (def ^:private background-jobs-path [:background-jobs :store])
+(def ^:private ui-state-path [:ui :extension-ui])
+(def ^:private recursion-state-path [:recursion])
+(def ^:private oauth-state-path [:oauth])
 
 (defn- get-state-in*
   [ctx path]
@@ -307,6 +307,9 @@
     :flush-state flush-state-path
     :turn-ctx turn-ctx-path
     :background-jobs background-jobs-path
+    :ui-state ui-state-path
+    :recursion recursion-state-path
+    :oauth oauth-state-path
     nil))
 
 (defn create-context
@@ -323,7 +326,7 @@
     :cwd               — working directory for session file layout (default: process cwd)
     :persist?          — if false, disable all disk I/O (default: true)
     :oauth-ctx         — optional OAuth context for extension auth helpers
-    :nrepl-runtime-atom — optional atom holding {:host :port :endpoint} runtime info
+    :nrepl-runtime-atom — optional runtime metadata atom used only to seed canonical nREPL state
     :ui-type           — runtime UI type hint (:console | :tui | :emacs)"
   ([] (create-context {}))
   ([{:keys [initial-session compaction-fn branch-summary-fn agent-initial config cwd persist? event-queue oauth-ctx recursion-ctx nrepl-runtime-atom ui-type]
@@ -338,7 +341,6 @@
          agent-ctx         (agent/create-context)
          ext-reg           (ext/create-registry)
          wf-reg            (wf/create-registry)
-         ui-state-atom     (ext-ui/create-ui-state)
          merged-config     (merge session/default-config (or config {}))
          state*            (atom {:agent-session {:data (session/initial-session initial-session*)
                                                   :context-index (context-index/empty-index)}
@@ -353,7 +355,12 @@
                                   :persistence {:journal []
                                                 :flush-state {:flushed? false :session-file nil}}
                                   :turn {:ctx nil}
-                                  :background-jobs {:store (bg-jobs/empty-state)}})
+                                  :background-jobs {:store (bg-jobs/empty-state)}
+                                  :ui {:extension-ui @(ext-ui/create-ui-state)}
+                                  :recursion (or (some-> recursion-ctx :state-atom deref) nil)
+                                  :oauth {:authenticated-providers []
+                                          :last-login-provider nil
+                                          :last-login-at nil}})
          ;; Build ctx without actions-fn so we can close over it
          ctx               {:sc-env                sc-env
                             :sc-session-id         sc-session-id
@@ -372,7 +379,7 @@
                             :journal-atom          nil
                             :flush-state-atom      nil
                             :turn-ctx-atom         nil
-                            :ui-state-atom         ui-state-atom
+                            :ui-state-atom         (ui-state-atom-in {:state* state*})
                             :event-queue           event-queue
                             :cwd                   resolved-cwd
                             :persist?              persist?
@@ -1179,35 +1186,43 @@
   [ctx event-name event-data]
   (ext/dispatch-in (:extension-registry ctx) event-name event-data))
 
-(defn- background-jobs-store-in
-  [ctx]
-  (let [store (get-state-in* ctx background-jobs-path)]
-    (when store
+(defn- state-backed-atom-view
+  [ctx path]
+  (let [store (get-state-in* ctx path)]
+    (when (some? store)
       (reify
         clojure.lang.IDeref
-        (deref [_] store)
+        (deref [_] (get-state-in* ctx path))
         clojure.lang.IAtom
         clojure.lang.IReset
         (reset [_ newv]
-          (assoc-state-in!* ctx background-jobs-path newv)
+          (assoc-state-in!* ctx path newv)
           newv)
         clojure.lang.ISwap
         (swap [_ f]
-          (let [newv (f (get-state-in* ctx background-jobs-path))]
-            (assoc-state-in!* ctx background-jobs-path newv)
+          (let [newv (f (get-state-in* ctx path))]
+            (assoc-state-in!* ctx path newv)
             newv))
         (swap [_ f a]
-          (let [newv (f (get-state-in* ctx background-jobs-path) a)]
-            (assoc-state-in!* ctx background-jobs-path newv)
+          (let [newv (f (get-state-in* ctx path) a)]
+            (assoc-state-in!* ctx path newv)
             newv))
         (swap [_ f a b]
-          (let [newv (f (get-state-in* ctx background-jobs-path) a b)]
-            (assoc-state-in!* ctx background-jobs-path newv)
+          (let [newv (f (get-state-in* ctx path) a b)]
+            (assoc-state-in!* ctx path newv)
             newv))
         (swap [_ f a b xs]
-          (let [newv (apply f (get-state-in* ctx background-jobs-path) a b xs)]
-            (assoc-state-in!* ctx background-jobs-path newv)
+          (let [newv (apply f (get-state-in* ctx path) a b xs)]
+            (assoc-state-in!* ctx path newv)
             newv))))))
+
+(defn- background-jobs-store-in
+  [ctx]
+  (state-backed-atom-view ctx background-jobs-path))
+
+(defn- ui-state-atom-in
+  [ctx]
+  (state-backed-atom-view ctx ui-state-path))
 
 (defn- maybe-track-background-workflow-job!
   [ctx op-sym full-params payload]
@@ -2084,7 +2099,8 @@
                   :psi.agent-session/session-entry-count]}
   (manual-compact-in! agent-session-ctx instructions)
   {:psi.agent-session/is-compacting false
-   :psi.agent-session/session-entry-count (count @(:journal-atom agent-session-ctx))})
+   :psi.agent-session/session-entry-count
+   (count (get-state-value-in agent-session-ctx (state-path :journal)))})
 
 (pco/defmutation append-entry
   [_ {:keys [psi/agent-session-ctx custom-type data]}]
@@ -2093,7 +2109,8 @@
    ::pco/output  [:psi.agent-session/session-entry-count]}
   (journal-append! agent-session-ctx
                    (persist/custom-message-entry custom-type (str data) nil false))
-  {:psi.agent-session/session-entry-count (count @(:journal-atom agent-session-ctx))})
+  {:psi.agent-session/session-entry-count
+   (count (get-state-value-in agent-session-ctx (state-path :journal)))})
 
 (pco/defmutation send-message
   [_ {:keys [psi/agent-session-ctx role content custom-type]}]

@@ -580,7 +580,7 @@
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.extension/prompt-contributions
                  :psi.extension/prompt-contribution-count]}
-  (let [contribs (->> (or (:prompt-contributions @(:session-data-atom agent-session-ctx)) [])
+  (let [contribs (->> (or (:prompt-contributions (session/get-session-data-in agent-session-ctx)) [])
                       (filter map?)
                       (sort-by (fn [{:keys [priority ext-path id]}]
                                  [(or priority 1000)
@@ -1415,7 +1415,7 @@
 (defn- resolve-context-window
   "Best-effort context window from session data or model config atom."
   [agent-session-ctx]
-  (or (:context-window @(:session-data-atom agent-session-ctx))
+  (or (:context-window (session/get-session-data-in agent-session-ctx))
       (some-> (:model-config-atom agent-session-ctx) deref :context-window)
       200000))
 
@@ -1766,7 +1766,7 @@
 
 (defn- session-usage-totals
   [agent-session-ctx]
-  (let [current-session-id (:session-id @(:session-data-atom agent-session-ctx))]
+  (let [current-session-id (:session-id (session/get-session-data-in agent-session-ctx))]
     (reduce
      (fn [acc entry]
        (let [msg       (get-in entry [:data :message])
@@ -1785,7 +1785,7 @@
                  (update :cost + (usage-cost-total u))))
            acc)))
      {:input 0 :output 0 :cache-read 0 :cache-write 0 :cost 0.0}
-     @(:journal-atom agent-session-ctx))))
+     (session/get-state-value-in agent-session-ctx (session/state-path :journal)))))
 
 (defn- find-git-head-path
   [cwd]
@@ -1841,14 +1841,14 @@
   {:psi.agent-session/git-branch (git-branch-from-cwd cwd)})
 
 (pco/defresolver runtime-nrepl-info
-  "Expose runtime nREPL endpoint information from :nrepl-runtime-atom on session context.
+  "Expose runtime nREPL endpoint information from canonical runtime metadata on session context.
    Returns nil attrs when nREPL is not running/registered."
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.runtime/nrepl-host
                  :psi.runtime/nrepl-port
                  :psi.runtime/nrepl-endpoint]}
-  (let [runtime* (some-> (:nrepl-runtime-atom agent-session-ctx) deref)
+  (let [runtime* (session/get-state-value-in agent-session-ctx (session/state-path :nrepl-runtime))
         host     (:host runtime*)
         port     (:port runtime*)
         endpoint (or (:endpoint runtime*)
@@ -1958,19 +1958,25 @@
        vec))
 
 (defn- authenticated-provider-ids
-  "Return provider ids with configured auth for this session context."
+  "Return provider ids with configured auth for this session context.
+   Also refresh the canonical runtime-visible oauth projection."
   [agent-session-ctx]
-  (if-let [oauth-ctx (:oauth-ctx agent-session-ctx)]
-    (->> (oauth/available-providers oauth-ctx)
-         (keep (fn [provider]
-                 (let [provider-id (:id provider)]
-                   (when (and provider-id
-                              (oauth/has-auth? oauth-ctx provider-id))
-                     (name provider-id)))))
-         distinct
-         sort
-         vec)
-    []))
+  (let [ids (if-let [oauth-ctx (:oauth-ctx agent-session-ctx)]
+              (->> (oauth/available-providers oauth-ctx)
+                   (keep (fn [provider]
+                           (let [provider-id (:id provider)]
+                             (when (and provider-id
+                                        (oauth/has-auth? oauth-ctx provider-id))
+                               (name provider-id)))))
+                   distinct
+                   sort
+                   vec)
+              [])]
+    (session/assoc-state-value-in! agent-session-ctx
+                                   (session/state-path :oauth)
+                                   (assoc (or (session/get-state-value-in agent-session-ctx (session/state-path :oauth)) {})
+                                          :authenticated-providers ids))
+    ids))
 
 (pco/defresolver agent-session-model-catalog
   "Resolve runtime model catalog for frontend model selectors."
@@ -1984,9 +1990,18 @@
   "Resolve provider ids with configured auth for this session."
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
-   ::pco/output [:psi.agent-session/authenticated-providers]}
-  {:psi.agent-session/authenticated-providers
-   (authenticated-provider-ids agent-session-ctx)})
+   ::pco/output [:psi.agent-session/authenticated-providers
+                 :psi.oauth/authenticated-providers
+                 :psi.oauth/last-login-provider
+                 :psi.oauth/last-login-at
+                 :psi.oauth/pending-login]}
+  (let [ids   (authenticated-provider-ids agent-session-ctx)
+        oauth-state (or (session/get-state-value-in agent-session-ctx (session/state-path :oauth)) {})]
+    {:psi.agent-session/authenticated-providers ids
+     :psi.oauth/authenticated-providers ids
+     :psi.oauth/last-login-provider (:last-login-provider oauth-state)
+     :psi.oauth/last-login-at (:last-login-at oauth-state)
+     :psi.oauth/pending-login (:pending-login oauth-state)}))
 
 (pco/defresolver startup-prompts-resolver
   "Resolve startup prompt execution telemetry for the current session."
