@@ -36,6 +36,7 @@
    [psi.ai.core :as ai]
    [psi.ai.conversation :as conv]
    [psi.agent-core.core :as agent]
+   [psi.agent-session.core :as session]
    [psi.agent-session.system-prompt :as system-prompt]
    [psi.agent-session.tool-output :as tool-output]
    [psi.agent-session.tools :as tools]
@@ -518,51 +519,36 @@ Also tolerates cumulative snapshots that differ near previous tail
 (def ^:private provider-request-capture-limit 100)
 (def ^:private provider-reply-capture-limit 1000)
 
-(defn- append-capped!
-  [target-atom entry limit]
-  (swap! target-atom
-         (fn [entries]
-           (let [entries* (conj (vec (or entries [])) entry)
-                 n        (count entries*)]
-             (if (> n limit)
-               (subvec entries* (- n limit))
-               entries*)))))
-
 (defn- append-tool-call-attempt!
   [agent-session-ctx attempt]
-  (when-let [attempts-atom (:tool-call-attempts-atom agent-session-ctx)]
-    (swap! attempts-atom conj
-           (assoc attempt :timestamp (java.time.Instant/now)))))
+  (session/update-state-value-in! agent-session-ctx
+                                  (session/state-path :tool-call-attempts)
+                                  conj
+                                  (assoc attempt :timestamp (java.time.Instant/now))))
 
 (defn- append-provider-request-capture!
   [agent-session-ctx capture]
   (let [entry (assoc capture :timestamp (java.time.Instant/now))]
-    (if-let [requests-atom (:provider-requests-atom agent-session-ctx)]
-      (append-capped! requests-atom entry provider-request-capture-limit)
-      (when-let [session-data-atom (:session-data-atom agent-session-ctx)]
-        (swap! session-data-atom
-               update :provider-requests
-               (fn [entries]
-                 (let [entries* (conj (vec (or entries [])) entry)
-                       n        (count entries*)]
-                   (if (> n provider-request-capture-limit)
-                     (subvec entries* (- n provider-request-capture-limit))
-                     entries*))))))))
+    (session/update-state-value-in! agent-session-ctx
+                                    (session/state-path :provider-requests)
+                                    (fn [entries]
+                                      (let [entries* (conj (vec (or entries [])) entry)
+                                            n        (count entries*)]
+                                        (if (> n provider-request-capture-limit)
+                                          (subvec entries* (- n provider-request-capture-limit))
+                                          entries*))))))
 
 (defn- append-provider-reply-capture!
   [agent-session-ctx capture]
   (let [entry (assoc capture :timestamp (java.time.Instant/now))]
-    (if-let [replies-atom (:provider-replies-atom agent-session-ctx)]
-      (append-capped! replies-atom entry provider-reply-capture-limit)
-      (when-let [session-data-atom (:session-data-atom agent-session-ctx)]
-        (swap! session-data-atom
-               update :provider-replies
-               (fn [entries]
-                 (let [entries* (conj (vec (or entries [])) entry)
-                       n        (count entries*)]
-                   (if (> n provider-reply-capture-limit)
-                     (subvec entries* (- n provider-reply-capture-limit))
-                     entries*))))))))
+    (session/update-state-value-in! agent-session-ctx
+                                    (session/state-path :provider-replies)
+                                    (fn [entries]
+                                      (let [entries* (conj (vec (or entries [])) entry)
+                                            n        (count entries*)]
+                                        (if (> n provider-reply-capture-limit)
+                                          (subvec entries* (- n provider-reply-capture-limit))
+                                          entries*))))))
 
 (defn- chain-callbacks
   [& callbacks]
@@ -618,7 +604,7 @@ Also tolerates cumulative snapshots that differ near previous tail
         messages         (:messages data)
         agent-tools      (:tools data)
         ai-conv          (agent-messages->ai-conversation system-prompt messages agent-tools
-                                                          {:cache-breakpoints (:cache-breakpoints @(:session-data-atom agent-session-ctx))})
+                                                          {:cache-breakpoints (:cache-breakpoints (session/get-session-data-in agent-session-ctx))})
         base-ai-options  (or extra-ai-options {})
         ai-options       (-> base-ai-options
                              (assoc :on-provider-request
@@ -805,7 +791,7 @@ Also tolerates cumulative snapshots that differ near previous tail
 (defn- effective-tool-output-policy
   [agent-session-ctx tool-name]
   (tool-output/effective-policy
-   (or (:tool-output-overrides @(:session-data-atom agent-session-ctx)) {})
+   (or (:tool-output-overrides (session/get-session-data-in agent-session-ctx)) {})
    tool-name))
 
 (defn- utf8-bytes
@@ -860,14 +846,15 @@ Also tolerates cumulative snapshots that differ near previous tail
                              :effective-max-bytes  (:max-bytes effective-policy)
                              :output-bytes         output-bytes
                              :context-bytes-added  context-bytes-added}]
-    (swap! (:tool-output-stats-atom agent-session-ctx)
-           (fn [state]
-             (-> state
-                 (update :calls (fnil conj []) stat)
-                 (update-in [:aggregates :total-context-bytes] (fnil + 0) context-bytes-added)
-                 (update-in [:aggregates :by-tool tool-name] (fnil + 0) context-bytes-added)
-                 (update-in [:aggregates :limit-hits-by-tool tool-name] (fnil + 0)
-                            (if limit-hit? 1 0)))))))
+    (session/update-state-value-in! agent-session-ctx
+                                    (session/state-path :tool-output-stats)
+                                    (fn [state]
+                                      (-> state
+                                          (update :calls (fnil conj []) stat)
+                                          (update-in [:aggregates :total-context-bytes] (fnil + 0) context-bytes-added)
+                                          (update-in [:aggregates :by-tool tool-name] (fnil + 0) context-bytes-added)
+                                          (update-in [:aggregates :limit-hits-by-tool tool-name] (fnil + 0)
+                                                     (if limit-hit? 1 0)))))))
 
 (defn- execute-tool-with-registry
   "Execute a tool by name, preferring an :execute fn from the current
@@ -893,9 +880,9 @@ Also tolerates cumulative snapshots that differ near previous tail
         call-id  (:id tool-call)
         name     (:name tool-call)
         args     (parse-args (:arguments tool-call))
-        opts     {:cwd         (or (:worktree-path @(:session-data-atom agent-session-ctx))
+        opts     {:cwd         (or (:worktree-path (session/get-session-data-in agent-session-ctx))
                                    (:cwd agent-session-ctx))
-                  :overrides   (:tool-output-overrides @(:session-data-atom agent-session-ctx))
+                  :overrides   (:tool-output-overrides (session/get-session-data-in agent-session-ctx))
                   :tool-call-id call-id
                   :on-update   (fn [{:keys [content details is-error]}]
                                  (let [content-blocks (normalize-tool-content content)
@@ -993,7 +980,7 @@ Also tolerates cumulative snapshots that differ near previous tail
 
 (defn- session-thinking-level
   [agent-session-ctx]
-  (get @(:session-data-atom agent-session-ctx) :thinking-level))
+  (get (session/get-session-data-in agent-session-ctx) :thinking-level))
 
 (defn- session-llm-stream-idle-timeout-ms
   [agent-session-ctx]

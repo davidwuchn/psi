@@ -96,6 +96,9 @@
 (declare send-extension-message-in!)
 (declare maybe-mark-workflow-jobs-terminal!)
 (declare maybe-emit-background-job-terminal-messages!)
+(declare journal-append!)
+(declare get-session-data-in)
+(declare swap-session!)
 
 ;; ============================================================
 ;; Actions dispatcher
@@ -164,31 +167,31 @@
   (letfn [(dispatch-action [action-key data]
             (case action-key
               :on-streaming-entered
-              (swap! (:session-data-atom ctx) assoc :is-streaming true)
+              (swap-session! ctx assoc :is-streaming true)
 
               :on-agent-done
               (do
-                (swap! (:session-data-atom ctx) assoc
-                       :is-streaming false
-                       :retry-attempt 0
-                       :interrupt-pending false
-                       :interrupt-requested-at nil)
+                (swap-session! ctx assoc
+                               :is-streaming false
+                               :retry-attempt 0
+                               :interrupt-pending false
+                               :interrupt-requested-at nil)
                 (maybe-mark-workflow-jobs-terminal! ctx)
                 (maybe-emit-background-job-terminal-messages! ctx))
 
               :on-abort
               (do (agent/abort-in! (:agent-ctx ctx))
-                  (swap! (:session-data-atom ctx) assoc
-                         :is-streaming false
-                         :interrupt-pending false
-                         :interrupt-requested-at nil))
+                  (swap-session! ctx assoc
+                                 :is-streaming false
+                                 :interrupt-pending false
+                                 :interrupt-requested-at nil))
 
               :on-auto-compact-triggered
               (let [reason      (or (some-> data auto-compaction-reason) :threshold)
                     will-retry? (= :overflow reason)
                     continue?   (atom false)
                     reg         (:extension-registry ctx)]
-                (swap! (:session-data-atom ctx) assoc :is-compacting true)
+                (swap-session! ctx assoc :is-compacting true)
                 (ext/dispatch-in reg "auto_compaction_start" {:reason reason})
                 (when will-retry?
                   (drop-trailing-overflow-error! ctx))
@@ -223,18 +226,18 @@
                 nil)
 
               :on-compacting-entered
-              (swap! (:session-data-atom ctx) assoc :is-compacting true)
+              (swap-session! ctx assoc :is-compacting true)
 
               :on-compact-done
-              (swap! (:session-data-atom ctx) assoc :is-compacting false)
+              (swap-session! ctx assoc :is-compacting false)
 
               :on-retry-triggered
-              (let [sd       @(:session-data-atom ctx)
+              (let [sd       (get-session-data-in ctx)
                     attempt  (:retry-attempt sd)
                     base-ms  (get-in ctx [:config :auto-retry-base-delay-ms] 2000)
                     max-ms   (get-in ctx [:config :auto-retry-max-delay-ms] 60000)
                     delay-ms (session/exponential-backoff-ms attempt base-ms max-ms)]
-                (swap! (:session-data-atom ctx) update :retry-attempt inc)
+                (swap-session! ctx update :retry-attempt inc)
                 (future
                   (Thread/sleep ^long delay-ms)
                   (sc/send-event! (:sc-env ctx) (:sc-session-id ctx) :session/retry-done)))
@@ -253,6 +256,58 @@
 ;; ============================================================
 ;; Context creation (Nullable pattern)
 ;; ============================================================
+
+(def ^:private session-data-path [:agent-session :data])
+(def ^:private context-index-path [:agent-session :context-index])
+(def ^:private tool-output-stats-path [:telemetry :tool-output-stats])
+(def ^:private tool-call-attempts-path [:telemetry :tool-call-attempts])
+(def ^:private provider-requests-path [:telemetry :provider-requests])
+(def ^:private provider-replies-path [:telemetry :provider-replies])
+(def ^:private nrepl-runtime-path [:runtime :nrepl])
+(def ^:private journal-path [:persistence :journal])
+(def ^:private flush-state-path [:persistence :flush-state])
+(def ^:private turn-ctx-path [:turn :ctx])
+(def ^:private background-jobs-path [:background-jobs :store])
+
+(defn- get-state-in*
+  [ctx path]
+  (get-in @(:state* ctx) path))
+
+(defn- assoc-state-in!*
+  [ctx path value]
+  (swap! (:state* ctx) assoc-in path value))
+
+(defn- update-state-in!*
+  [ctx path f & args]
+  (apply swap! (:state* ctx) update-in path f args))
+
+(defn get-state-value-in
+  [ctx path]
+  (get-state-in* ctx path))
+
+(defn assoc-state-value-in!
+  [ctx path value]
+  (assoc-state-in!* ctx path value))
+
+(defn update-state-value-in!
+  [ctx path f & args]
+  (apply update-state-in!* ctx path f args))
+
+(defn state-path
+  [k]
+  (case k
+    :session-data session-data-path
+    :context-index context-index-path
+    :tool-output-stats tool-output-stats-path
+    :tool-call-attempts tool-call-attempts-path
+    :provider-requests provider-requests-path
+    :provider-replies provider-replies-path
+    :nrepl-runtime nrepl-runtime-path
+    :journal journal-path
+    :flush-state flush-state-path
+    :turn-ctx turn-ctx-path
+    :background-jobs background-jobs-path
+    nil))
 
 (defn create-context
   "Create an isolated session context.
@@ -280,35 +335,43 @@
                              (not (contains? (or initial-session {}) :worktree-path))
                              (assoc :worktree-path resolved-cwd)
                              (some? ui-type) (assoc :ui-type ui-type))
-         session-data-atom (atom (session/initial-session initial-session*))
          agent-ctx         (agent/create-context)
          ext-reg           (ext/create-registry)
          wf-reg            (wf/create-registry)
-         journal-atom      (persist/create-journal)
-         flush-state-atom  (persist/create-flush-state)
          ui-state-atom     (ext-ui/create-ui-state)
          merged-config     (merge session/default-config (or config {}))
-         context-index-atom (atom (context-index/empty-index))
+         state*            (atom {:agent-session {:data (session/initial-session initial-session*)
+                                                  :context-index (context-index/empty-index)}
+                                  :telemetry {:tool-output-stats {:calls []
+                                                                  :aggregates {:total-context-bytes 0
+                                                                               :by-tool {}
+                                                                               :limit-hits-by-tool {}}}
+                                              :tool-call-attempts []
+                                              :provider-requests []
+                                              :provider-replies []}
+                                  :runtime {:nrepl (or (some-> nrepl-runtime-atom deref) nil)}
+                                  :persistence {:journal []
+                                                :flush-state {:flushed? false :session-file nil}}
+                                  :turn {:ctx nil}
+                                  :background-jobs {:store (bg-jobs/empty-state)}})
          ;; Build ctx without actions-fn so we can close over it
          ctx               {:sc-env                sc-env
                             :sc-session-id         sc-session-id
                             :started-at            (java.time.Instant/now)
-                            :session-data-atom      session-data-atom
-                            :context-index-atom      context-index-atom
-                            :tool-output-stats-atom  (atom {:calls []
-                                                            :aggregates {:total-context-bytes 0
-                                                                         :by-tool {}
-                                                                         :limit-hits-by-tool {}}})
-                            :tool-call-attempts-atom (atom [])
-                            :provider-requests-atom  (atom [])
-                            :provider-replies-atom   (atom [])
-                            :nrepl-runtime-atom      (or nrepl-runtime-atom (atom nil))
+                            :state*                state*
+                            :session-data-atom     nil
+                            :context-index-atom    nil
+                            :tool-output-stats-atom nil
+                            :tool-call-attempts-atom nil
+                            :provider-requests-atom nil
+                            :provider-replies-atom  nil
+                            :nrepl-runtime-atom     nrepl-runtime-atom
                             :agent-ctx               agent-ctx
                             :extension-registry    ext-reg
                             :workflow-registry     wf-reg
-                            :journal-atom          journal-atom
-                            :flush-state-atom      flush-state-atom
-                            :turn-ctx-atom         (atom nil)
+                            :journal-atom          nil
+                            :flush-state-atom      nil
+                            :turn-ctx-atom         nil
                             :ui-state-atom         ui-state-atom
                             :event-queue           event-queue
                             :cwd                   resolved-cwd
@@ -322,7 +385,7 @@
                             ;; Set by the runtime layer (main/RPC) after bootstrap.
                             ;; Extensions use this to submit prompts that trigger real LLM calls.
                             :extension-run-fn-atom (atom nil)
-                            :background-jobs-atom  (bg-jobs/create-store)}
+                            :background-jobs-atom  nil}
          actions-fn        (make-actions-fn ctx)]
 
      ;; Watch agent-core events atom — forward new events to session statechart
@@ -342,20 +405,11 @@
                           (let [msg  (:message ev)
                                 role (:role msg)]
                             (when (contains? #{"assistant" "toolResult" "custom"} role)
-                              (persist/append-entry! journal-atom
-                                                     (persist/message-entry msg))
-                              (when persist?
-                                (persist/persist-entry!
-                                 journal-atom
-                                 flush-state-atom
-                                 (:session-id @session-data-atom)
-                                 resolved-cwd
-                                 (:parent-session-id @session-data-atom)
-                                 (:session-file @session-data-atom)))
+                              (journal-append! ctx (persist/message-entry msg))
                               (try
                                 (memory-runtime/remember-session-message!
                                  msg
-                                 {:session-id (:session-id @session-data-atom)})
+                                 {:session-id (:session-id (get-session-data-in ctx))})
                                 (catch Exception _
                                   nil)))))
                         (sc/send-event! sc-env sc-session-id
@@ -364,7 +418,7 @@
 
      ;; Start the session statechart with working memory containing the actions-fn
      (sc/start-session! sc-env sc-session-id
-                        {:session-data-atom session-data-atom
+                        {:session-data-atom state*
                          :actions-fn        actions-fn
                          :config            merged-config})
 
@@ -393,21 +447,17 @@
    If `session-id` is provided and context index metadata knows that id, returns that
    context-session metadata entry (read-only listing projection)."
   ([ctx]
-   @(:session-data-atom ctx))
+   (get-state-in* ctx session-data-path))
   ([ctx session-id]
-   (if-let [context-index-atom (:context-index-atom ctx)]
-     (or (get-in @context-index-atom [:sessions session-id])
-         @(:session-data-atom ctx))
-     @(:session-data-atom ctx))))
+   (or (get-in (get-state-in* ctx context-index-path) [:sessions session-id])
+       (get-state-in* ctx session-data-path))))
 
 (defn- swap-session! [ctx f & args]
-  (let [sd (apply swap! (:session-data-atom ctx) f args)]
-    (when-let [context-index-atom (:context-index-atom ctx)]
-      (swap! context-index-atom
-             (fn [index]
-               (-> index
-                   (context-index/upsert-session sd)
-                   (context-index/set-active-session (:session-id sd))))))
+  (let [sd (apply update-state-in!* ctx session-data-path f args)]
+    (assoc-state-in!* ctx context-index-path
+                      (-> (get-state-in* ctx context-index-path)
+                          (context-index/upsert-session sd)
+                          (context-index/set-active-session (:session-id sd))))
     sd))
 
 (defn effective-cwd-in
@@ -432,16 +482,21 @@
 (defn- journal-append!
   "Append `entry` to the journal and conditionally persist to disk."
   [ctx entry]
-  (persist/append-entry! (:journal-atom ctx) entry)
+  (update-state-in!* ctx journal-path conj entry)
   (when (:persist? ctx)
-    (let [sd (get-session-data-in ctx)]
-      (persist/persist-entry!
-       (:journal-atom ctx)
-       (:flush-state-atom ctx)
-       (:session-id sd)
-       (effective-cwd-in ctx)
-       (:parent-session-id sd)
-       (:session-file sd)))))
+    (let [sd (get-session-data-in ctx)
+          flush-state (get-state-in* ctx flush-state-path)
+          session-file (:session-file sd)]
+      (when session-file
+        (persist/persist-state-entry!
+         (get-state-in* ctx journal-path)
+         flush-state
+         (:session-id sd)
+         (effective-cwd-in ctx)
+         (:parent-session-id sd)
+         session-file
+         (fn [flush-state']
+           (assoc-state-in!* ctx flush-state-path flush-state')))))))
 
 (defn journal-append-in!
   "Public: append `entry` to the journal and persist.
@@ -452,9 +507,8 @@
 (defn get-context-index-in
   "Return the context session index snapshot for this runtime context."
   [ctx]
-  (if-let [context-index-atom (:context-index-atom ctx)]
-    @context-index-atom
-    (context-index/create-index (get-session-data-in ctx))))
+  (or (get-state-in* ctx context-index-path)
+      (context-index/create-index (get-session-data-in ctx))))
 
 (defn list-context-sessions-in
   "Return context-tracked sessions metadata entries."
@@ -465,10 +519,9 @@
   "Set active default-routing session id in context session index when known.
    Returns context session index snapshot after update."
   [ctx session-id]
-  (if-let [context-index-atom (:context-index-atom ctx)]
-    (do (swap! context-index-atom context-index/set-active-session session-id)
-        @context-index-atom)
-    (get-context-index-in ctx)))
+  (assoc-state-in!* ctx context-index-path
+                    (context-index/set-active-session (get-context-index-in ctx) session-id))
+  (get-context-index-in ctx))
 
 (defn ensure-session-loaded-in!
   "Ensure `session-id` is loaded as the active runtime session in this context.
@@ -556,12 +609,12 @@
                         :startup-bootstrap-completed-at nil
                         :startup-message-ids [])
          ;; Reset journal and flush state for the new session
-         (reset! (:journal-atom ctx) [])
+         (assoc-state-in!* ctx journal-path [])
          (when (:persist? ctx)
            (let [session-dir (persist/session-dir-for (effective-cwd-in ctx))
                  file        (persist/new-session-file-path session-dir new-session-id)]
              (swap-session! ctx assoc :session-file (str file))
-             (reset! (:flush-state-atom ctx) {:flushed? false :session-file file})))
+             (assoc-state-in!* ctx flush-state-path {:flushed? false :session-file file})))
          (retarget-runtime-prompt-metadata-in! ctx)
          (when session-name
            (journal-append! ctx (persist/session-info-entry session-name)))
@@ -586,10 +639,10 @@
         (if-not loaded
           ;; File missing or invalid — treat as new session at that path
           (do (swap-session! ctx assoc :session-file session-path)
-              (reset! (:journal-atom ctx) [])
-              (reset! (:flush-state-atom ctx)
-                      {:flushed? false
-                       :session-file (io/file session-path)}))
+              (assoc-state-in!* ctx journal-path [])
+              (assoc-state-in!* ctx flush-state-path
+                                {:flushed? false
+                                 :session-file (io/file session-path)}))
           (let [{:keys [header entries]} loaded
                 session-id             (:id header)
                 current-sd             (get-session-data-in ctx)
@@ -611,10 +664,10 @@
                                            :off)
                 ;; Rebuild agent messages from journal (handles compaction)
                 messages               (compaction/rebuild-messages-from-journal-entries (vec entries))]
-            (reset! (:journal-atom ctx) (vec entries))
-            (reset! (:flush-state-atom ctx)
-                    {:flushed? true
-                     :session-file (io/file session-path)})
+            (assoc-state-in!* ctx journal-path (vec entries))
+            (assoc-state-in!* ctx flush-state-path
+                              {:flushed? true
+                               :session-file (io/file session-path)})
             (swap-session! ctx assoc
                            :session-id     session-id
                            :session-file   session-path
@@ -650,7 +703,7 @@
     pointing at the parent session file (when available)"
   [ctx entry-id]
   (let [reg     (:extension-registry ctx)
-        journal (:journal-atom ctx)]
+        journal (get-state-in* ctx journal-path)]
     (ext/dispatch-in reg "session_before_fork" {:entry-id entry-id})
     (let [parent-sd           (get-session-data-in ctx)
           parent-session-id   (:session-id parent-sd)
@@ -684,7 +737,7 @@
                                   parent-session-id
                                   parent-session-file
                                   branch-entries)
-          (reset! (:flush-state-atom ctx) {:flushed? true :session-file file})))
+          (assoc-state-in!* ctx flush-state-path {:flushed? true :session-file file})))
 
       (ext/dispatch-in reg "session_fork" {})
       (get-session-data-in ctx))))
@@ -1126,60 +1179,91 @@
   [ctx event-name event-data]
   (ext/dispatch-in (:extension-registry ctx) event-name event-data))
 
+(defn- background-jobs-store-in
+  [ctx]
+  (let [store (get-state-in* ctx background-jobs-path)]
+    (when store
+      (reify
+        clojure.lang.IDeref
+        (deref [_] store)
+        clojure.lang.IAtom
+        clojure.lang.IReset
+        (reset [_ newv]
+          (assoc-state-in!* ctx background-jobs-path newv)
+          newv)
+        clojure.lang.ISwap
+        (swap [_ f]
+          (let [newv (f (get-state-in* ctx background-jobs-path))]
+            (assoc-state-in!* ctx background-jobs-path newv)
+            newv))
+        (swap [_ f a]
+          (let [newv (f (get-state-in* ctx background-jobs-path) a)]
+            (assoc-state-in!* ctx background-jobs-path newv)
+            newv))
+        (swap [_ f a b]
+          (let [newv (f (get-state-in* ctx background-jobs-path) a b)]
+            (assoc-state-in!* ctx background-jobs-path newv)
+            newv))
+        (swap [_ f a b xs]
+          (let [newv (apply f (get-state-in* ctx background-jobs-path) a b xs)]
+            (assoc-state-in!* ctx background-jobs-path newv)
+            newv))))))
+
 (defn- maybe-track-background-workflow-job!
   [ctx op-sym full-params payload]
-  (when (and (contains? #{'psi.extension.workflow/create
-                          'psi.extension.workflow/send-event}
-                        op-sym)
-             (map? payload)
-             (:background-jobs-atom ctx))
-    (let [created-op? (= op-sym 'psi.extension.workflow/create)
-          accepted?   (if created-op?
-                        (:psi.extension.workflow/created? payload)
-                        (:psi.extension.workflow/event-accepted? payload))
-          track?      (if (contains? full-params :track-background-job?)
-                        (true? (:track-background-job? full-params))
-                        created-op?)]
-      (when (and accepted? track?)
-        (let [wf-type  (or (:type full-params)
-                           (:psi.extension.workflow/type payload))
-              wf-id    (or (:id full-params)
-                           (:psi.extension.workflow/id payload))
-              ext-path (:ext-path full-params)
-              tool-call-id (or (get-in full-params [:input :tool-call-id])
-                               (get-in full-params [:data :tool-call-id])
-                               (:tool-call-id full-params)
-                               (str (if created-op? "workflow-create-" "workflow-send-event-")
-                                    (or ext-path "ext") "-" (or wf-id (java.util.UUID/randomUUID))))
-              thread-id (:session-id (get-session-data-in ctx))
-              job-kind  (when wf-type :workflow)
-              tool-name (if wf-type
-                          (str "workflow/" (name wf-type))
-                          "workflow/create")]
-          (try
-            (let [store (:background-jobs-atom ctx)
-                  job-by-call (bg-jobs/find-job-by-tool-call-in store tool-call-id)
-                  job-by-wf   (when created-op?
-                                (bg-jobs/find-job-by-workflow-in
-                                 store
-                                 {:workflow-ext-path ext-path
-                                  :workflow-id       wf-id}))
-                  started     (when-not (or job-by-call job-by-wf)
-                                (bg-jobs/start-background-job-in!
-                                 store
-                                 {:tool-call-id       (str tool-call-id)
-                                  :thread-id          (str thread-id)
-                                  :tool-name          tool-name
-                                  :job-id             (str "job-" (java.util.UUID/randomUUID))
-                                  :job-kind           job-kind
-                                  :workflow-ext-path  ext-path
-                                  :workflow-id        (some-> wf-id str)}))]
-              (or (when-let [jid (:job-id started)]
-                    (bg-jobs/get-job-in store jid))
-                  job-by-call
-                  job-by-wf))
-            (catch Exception _
-              nil)))))))
+  (let [store* (background-jobs-store-in ctx)]
+    (when (and (contains? #{'psi.extension.workflow/create
+                            'psi.extension.workflow/send-event}
+                          op-sym)
+               (map? payload)
+               store*)
+      (let [created-op? (= op-sym 'psi.extension.workflow/create)
+            accepted?   (if created-op?
+                          (:psi.extension.workflow/created? payload)
+                          (:psi.extension.workflow/event-accepted? payload))
+            track?      (if (contains? full-params :track-background-job?)
+                          (true? (:track-background-job? full-params))
+                          created-op?)]
+        (when (and accepted? track?)
+          (let [wf-type      (or (:type full-params)
+                                 (:psi.extension.workflow/type payload))
+                wf-id        (or (:id full-params)
+                                 (:psi.extension.workflow/id payload))
+                ext-path     (:ext-path full-params)
+                tool-call-id (or (get-in full-params [:input :tool-call-id])
+                                 (get-in full-params [:data :tool-call-id])
+                                 (:tool-call-id full-params)
+                                 (str (if created-op? "workflow-create-" "workflow-send-event-")
+                                      (or ext-path "ext") "-" (or wf-id (java.util.UUID/randomUUID))))
+                thread-id    (:session-id (get-session-data-in ctx))
+                job-kind     (when wf-type :workflow)
+                tool-name    (if wf-type
+                               (str "workflow/" (name wf-type))
+                               "workflow/create")]
+            (try
+              (let [store       store*
+                    job-by-call (bg-jobs/find-job-by-tool-call-in store tool-call-id)
+                    job-by-wf   (when created-op?
+                                  (bg-jobs/find-job-by-workflow-in
+                                   store
+                                   {:workflow-ext-path ext-path
+                                    :workflow-id       wf-id}))
+                    started     (when-not (or job-by-call job-by-wf)
+                                  (bg-jobs/start-background-job-in!
+                                   store
+                                   {:tool-call-id      (str tool-call-id)
+                                    :thread-id         (str thread-id)
+                                    :tool-name         tool-name
+                                    :job-id            (str "job-" (java.util.UUID/randomUUID))
+                                    :job-kind          job-kind
+                                    :workflow-ext-path ext-path
+                                    :workflow-id       (some-> wf-id str)}))]
+                (or (when-let [jid (:job-id started)]
+                      (bg-jobs/get-job-in store jid))
+                    job-by-call
+                    job-by-wf))
+              (catch Exception _
+                nil))))))))
 
 (defn- run-extension-mutation-in!
   "Execute a single EQL mutation op against `ctx` and return its payload.
@@ -1200,7 +1284,7 @@
 
 (defn- maybe-emit-background-job-terminal-messages!
   [ctx]
-  (let [store (:background-jobs-atom ctx)
+  (let [store (background-jobs-store-in ctx)
         thread-id (:session-id (get-session-data-in ctx))]
     (when (and store thread-id)
       (doseq [job (bg-jobs/pending-terminal-jobs-in store thread-id)]
@@ -1242,7 +1326,7 @@
 
 (defn- maybe-mark-workflow-jobs-terminal!
   [ctx]
-  (let [store (:background-jobs-atom ctx)]
+  (let [store (background-jobs-store-in ctx)]
     (when store
       (doseq [job (vals (:jobs-by-id @store))]
         (when (and (= :workflow (:job-kind job))
@@ -1276,7 +1360,7 @@
   [ctx thread-id & [statuses]]
   ;; Self-heal stale workflow-backed job statuses before listing.
   (maybe-mark-workflow-jobs-terminal! ctx)
-  (let [store (:background-jobs-atom ctx)]
+  (let [store (background-jobs-store-in ctx)]
     (if statuses
       (bg-jobs/list-jobs-in store thread-id statuses)
       (bg-jobs/list-jobs-in store thread-id))))
@@ -1285,13 +1369,13 @@
   [ctx thread-id job-id]
   ;; Self-heal stale workflow-backed job statuses before inspect.
   (maybe-mark-workflow-jobs-terminal! ctx)
-  (bg-jobs/inspect-job-in (:background-jobs-atom ctx)
+  (bg-jobs/inspect-job-in (background-jobs-store-in ctx)
                           {:thread-id thread-id
                            :job-id job-id}))
 
 (defn cancel-background-job-in!
   [ctx thread-id job-id requested-by]
-  (let [store (:background-jobs-atom ctx)
+  (let [store (background-jobs-store-in ctx)
         job   (bg-jobs/request-cancel-in!
                store
                {:thread-id thread-id
@@ -1466,7 +1550,7 @@
      :extension-count         (ext/extension-count-in (:extension-registry ctx))
      :workflow-count          (wf/workflow-count-in (:workflow-registry ctx))
      :workflow-running-count  (wf/running-count-in (:workflow-registry ctx))
-     :journal-entries         (count @(:journal-atom ctx))
+     :journal-entries         (count (get-state-in* ctx journal-path))
      :agent-diagnostics       (agent/diagnostics-in (:agent-ctx ctx))}))
 
 ;; ============================================================
@@ -1692,7 +1776,7 @@
        :is-error true
        :details  {:blocked true}}
       (let [opts      {:cwd          (effective-cwd-in ctx)
-                       :overrides    (:tool-output-overrides @(:session-data-atom ctx))
+                       :overrides    (:tool-output-overrides (get-session-data-in ctx))
                        :tool-call-id tool-call-id}
             result    (try
                         (execute-tool-with-registry-in! ctx tool-name args opts)

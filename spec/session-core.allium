@@ -168,6 +168,8 @@ actor EqlClient {
     identified_by: "client-id"
 }
 
+use "./system-context-unification.allium" as system_ctx
+
 surface SessionCoreApi {
     facing client: EqlClient
 
@@ -221,4 +223,8 @@ surface SessionCoreApi {
     @guarantee SessionRunsInWorktreeContext
         -- Every context is bound to exactly one project/worktree pair.
         -- All sessions inside that context inherit that project/worktree binding.
+
+    @guarantee ContextIsCanonicalSystemContextProjection
+        -- AgentContext is the session-core projection of the canonical system context.
+        -- Shared mutable runtime state is rooted in system_ctx/SystemContext rather than in multiple independent mutable roots.
 }

@@ -231,9 +231,18 @@
    (run-agent-loop-in! ctx ai-ctx ai-model user-messages nil))
   ([ctx ai-ctx ai-model user-messages {:keys [run-loop-fn turn-ctx-atom api-key progress-queue sync-on-git-head-change?]}]
    (let [runner (or run-loop-fn executor/run-agent-loop!)
+         turn-ctx-atom* (or turn-ctx-atom
+                            (let [path (session/state-path :turn-ctx)]
+                              (reify
+                                clojure.lang.IDeref
+                                (deref [_] (session/get-state-value-in ctx path))
+                                clojure.lang.IReset
+                                (reset [_ newv]
+                                  (session/assoc-state-value-in! ctx path newv)
+                                  newv))))
          opts   (cond-> {}
-                  (or turn-ctx-atom (:turn-ctx-atom ctx))
-                  (assoc :turn-ctx-atom (or turn-ctx-atom (:turn-ctx-atom ctx)))
+                  turn-ctx-atom*
+                  (assoc :turn-ctx-atom turn-ctx-atom*)
 
                   api-key
                   (assoc :api-key api-key)
@@ -295,11 +304,11 @@
   (let [should-run? (startup-prompts/should-run?
                      {:spawn-mode spawn-mode})
         started-at (java.time.Instant/now)
-        _ (swap! (:session-data-atom ctx) assoc
-                 :startup-bootstrap-started-at started-at
-                 :startup-bootstrap-completed? false
-                 :startup-bootstrap-completed-at nil
-                 :startup-message-ids [])
+        _ (session/update-state-value-in! ctx (session/state-path :session-data) assoc
+                                          :startup-bootstrap-started-at started-at
+                                          :startup-bootstrap-completed? false
+                                          :startup-bootstrap-completed-at nil
+                                          :startup-message-ids [])
         rules (if should-run?
                 (startup-prompts/discover-rules
                  {:cwd (session/effective-cwd-in ctx)
@@ -312,10 +321,11 @@
           (if-let [rule (first remaining)]
             (let [text       (:text rule)
                   user-msg   (journal-user-message-in! ctx text)
-                  message-id (some-> @(:journal-atom ctx) last :id)
+                  message-id (some-> (session/get-state-value-in ctx (session/state-path :journal)) last :id)
                   api-key    (resolve-api-key-in ctx ai-model)
                   _          (when message-id
-                               (swap! (:session-data-atom ctx) update :startup-message-ids conj message-id))
+                               (session/update-state-value-in! ctx (session/state-path :session-data)
+                                                               update :startup-message-ids conj message-id))
                   outcome    (try
                                {:status :ok
                                 :assistant-result
@@ -340,10 +350,10 @@
                 (recur (rest remaining) applied' errors')))
             {:applied applied :errors errors}))
         completed-at (java.time.Instant/now)]
-    (swap! (:session-data-atom ctx) assoc
-           :startup-prompts (startup-prompts/applied-view rules)
-           :startup-bootstrap-completed? true
-           :startup-bootstrap-completed-at completed-at)
+    (session/update-state-value-in! ctx (session/state-path :session-data) assoc
+                                    :startup-prompts (startup-prompts/applied-view rules)
+                                    :startup-bootstrap-completed? true
+                                    :startup-bootstrap-completed-at completed-at)
     {:rules rules
      :applied applied
      :errors errors}))

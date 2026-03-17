@@ -358,17 +358,16 @@
                    :psi.session-info/parent-session-id
                    :psi.session-info/parent-session-path
                    :psi.session-info/created]}]}
-  (let [sd    @(:session-data-atom agent-session-ctx)
-        index (if-let [ia (:context-index-atom agent-session-ctx)]
-                @ia
-                {:active-session-id (:session-id sd)
-                 :sessions {(:session-id sd) {:session-id (:session-id sd)
-                                              :session-file (:session-file sd)
-                                              :session-name (:session-name sd)
-                                              :worktree-path (:worktree-path sd)
-                                              :parent-session-id (:parent-session-id sd)
-                                              :parent-session-path (:parent-session-path sd)
-                                              :created-at (:created-at sd)}}})
+  (let [sd    (session/get-session-data-in agent-session-ctx)
+        index (or (session/get-context-index-in agent-session-ctx)
+                  {:active-session-id (:session-id sd)
+                   :sessions {(:session-id sd) {:session-id (:session-id sd)
+                                                :session-file (:session-file sd)
+                                                :session-name (:session-name sd)
+                                                :worktree-path (:worktree-path sd)
+                                                :parent-session-id (:parent-session-id sd)
+                                                :parent-session-path (:parent-session-path sd)
+                                                :created-at (:created-at sd)}}})
         hs    (->> (:sessions index) vals (sort-by :updated-at) vec)]
     {:psi.agent-session/session-id              (:session-id sd)
      :psi.agent-session/session-file            (:session-file sd)
@@ -413,7 +412,7 @@
    ::pco/output [:psi.agent-session/model
                  :psi.agent-session/thinking-level
                  :psi.agent-session/ui-type]}
-  (let [sd @(:session-data-atom agent-session-ctx)]
+  (let [sd (session/get-session-data-in agent-session-ctx)]
     {:psi.agent-session/model          (:model sd)
      :psi.agent-session/thinking-level (:thinking-level sd)
      :psi.agent-session/ui-type        (:ui-type sd)}))
@@ -445,7 +444,7 @@
                  :psi.agent-session/has-pending-messages
                  :psi.agent-session/steering-messages
                  :psi.agent-session/follow-up-messages]}
-  (let [sd         @(:session-data-atom agent-session-ctx)
+  (let [sd         (session/get-session-data-in agent-session-ctx)
         base       (:base-system-prompt sd)
         sys        (:system-prompt sd)
         dev        (:developer-prompt sd)
@@ -476,7 +475,7 @@
                  :psi.agent-session/auto-retry-enabled
                  :psi.agent-session/auto-compaction-enabled
                  :psi.agent-session/scoped-models]}
-  (let [sd @(:session-data-atom agent-session-ctx)]
+  (let [sd (session/get-session-data-in agent-session-ctx)]
     {:psi.agent-session/retry-attempt           (:retry-attempt sd)
      :psi.agent-session/auto-retry-enabled      (:auto-retry-enabled sd)
      :psi.agent-session/auto-compaction-enabled (:auto-compaction-enabled sd)
@@ -490,7 +489,7 @@
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.agent-session/skills
                  :psi.agent-session/prompt-templates]}
-  (let [sd @(:session-data-atom agent-session-ctx)]
+  (let [sd (session/get-session-data-in agent-session-ctx)]
     {:psi.agent-session/skills           (:skills sd)
      :psi.agent-session/prompt-templates (:prompt-templates sd)}))
 
@@ -504,7 +503,7 @@
                  :psi.agent-session/extension-last-prompt-source
                  :psi.agent-session/extension-last-prompt-delivery
                  :psi.agent-session/extension-last-prompt-at]}
-  (let [sd @(:session-data-atom agent-session-ctx)]
+  (let [sd (session/get-session-data-in agent-session-ctx)]
     {:psi.agent-session/extension-summary              (ext/summary-in (:extension-registry agent-session-ctx))
      :psi.agent-session/extension-last-prompt-source   (:extension-last-prompt-source sd)
      :psi.agent-session/extension-last-prompt-delivery (:extension-last-prompt-delivery sd)
@@ -801,11 +800,34 @@
 
 (defn- session-thread-id
   [agent-session-ctx]
-  (:session-id @(:session-data-atom agent-session-ctx)))
+  (:session-id (session/get-session-data-in agent-session-ctx)))
 
 (defn- reconcile-workflow-background-jobs!
   [agent-session-ctx]
-  (let [store (:background-jobs-atom agent-session-ctx)]
+  (let [store (reify
+                clojure.lang.IDeref
+                (deref [_] (session/get-state-value-in agent-session-ctx (session/state-path :background-jobs)))
+                clojure.lang.IReset
+                (reset [_ newv]
+                  (session/assoc-state-value-in! agent-session-ctx (session/state-path :background-jobs) newv)
+                  newv)
+                clojure.lang.ISwap
+                (swap [_ f]
+                  (let [newv (f (session/get-state-value-in agent-session-ctx (session/state-path :background-jobs)))]
+                    (session/assoc-state-value-in! agent-session-ctx (session/state-path :background-jobs) newv)
+                    newv))
+                (swap [_ f a]
+                  (let [newv (f (session/get-state-value-in agent-session-ctx (session/state-path :background-jobs)) a)]
+                    (session/assoc-state-value-in! agent-session-ctx (session/state-path :background-jobs) newv)
+                    newv))
+                (swap [_ f a b]
+                  (let [newv (f (session/get-state-value-in agent-session-ctx (session/state-path :background-jobs)) a b)]
+                    (session/assoc-state-value-in! agent-session-ctx (session/state-path :background-jobs) newv)
+                    newv))
+                (swap [_ f a b xs]
+                  (let [newv (apply f (session/get-state-value-in agent-session-ctx (session/state-path :background-jobs)) a b xs)]
+                    (session/assoc-state-value-in! agent-session-ctx (session/state-path :background-jobs) newv)
+                    newv)))]
     (when store
       (doseq [job (vals (:jobs-by-id @store))]
         (when (and (= :workflow (:job-kind job))
@@ -846,7 +868,30 @@
                  {:psi.agent-session/background-jobs background-job-output}]}
   (reconcile-workflow-background-jobs! agent-session-ctx)
   (let [thread-id (session-thread-id agent-session-ctx)
-        store     (:background-jobs-atom agent-session-ctx)
+        store     (reify
+                    clojure.lang.IDeref
+                    (deref [_] (session/get-state-value-in agent-session-ctx (session/state-path :background-jobs)))
+                    clojure.lang.IReset
+                    (reset [_ newv]
+                      (session/assoc-state-value-in! agent-session-ctx (session/state-path :background-jobs) newv)
+                      newv)
+                    clojure.lang.ISwap
+                    (swap [_ f]
+                      (let [newv (f (session/get-state-value-in agent-session-ctx (session/state-path :background-jobs)))]
+                        (session/assoc-state-value-in! agent-session-ctx (session/state-path :background-jobs) newv)
+                        newv))
+                    (swap [_ f a]
+                      (let [newv (f (session/get-state-value-in agent-session-ctx (session/state-path :background-jobs)) a)]
+                        (session/assoc-state-value-in! agent-session-ctx (session/state-path :background-jobs) newv)
+                        newv))
+                    (swap [_ f a b]
+                      (let [newv (f (session/get-state-value-in agent-session-ctx (session/state-path :background-jobs)) a b)]
+                        (session/assoc-state-value-in! agent-session-ctx (session/state-path :background-jobs) newv)
+                        newv))
+                    (swap [_ f a b xs]
+                      (let [newv (apply f (session/get-state-value-in agent-session-ctx (session/state-path :background-jobs)) a b xs)]
+                        (session/assoc-state-value-in! agent-session-ctx (session/state-path :background-jobs) newv)
+                        newv)))
         jobs      (if (and store thread-id)
                     (bg-jobs/list-jobs-in store thread-id background-job-status-order)
                     [])]
@@ -863,7 +908,7 @@
    ::pco/output [:psi.agent-session/context-tokens
                  :psi.agent-session/context-window
                  :psi.agent-session/context-fraction]}
-  (let [sd @(:session-data-atom agent-session-ctx)]
+  (let [sd (session/get-session-data-in agent-session-ctx)]
     {:psi.agent-session/context-tokens   (:context-tokens sd)
      :psi.agent-session/context-window   (:context-window sd)
      :psi.agent-session/context-fraction (session/context-fraction-used sd)}))
@@ -892,7 +937,7 @@
   {:psi.tool-output/default-max-lines tool-output/default-max-lines
    :psi.tool-output/default-max-bytes tool-output/default-max-bytes
    :psi.tool-output/overrides         (or (:tool-output-overrides
-                                           @(:session-data-atom agent-session-ctx))
+                                           (session/get-session-data-in agent-session-ctx))
                                           {})})
 
 (pco/defresolver tool-output-calls
@@ -911,7 +956,7 @@
                    :psi.tool-output.call/context-bytes-added]}]}
   {:psi.tool-output/calls
    (mapv tool-output-call->eql
-         (or (:calls @(:tool-output-stats-atom agent-session-ctx)) []))})
+         (or (:calls (session/get-state-value-in agent-session-ctx (session/state-path :tool-output-stats))) []))})
 
 (pco/defresolver tool-output-stats
   "Resolve aggregate tool-output telemetry."
@@ -919,7 +964,7 @@
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.tool-output/stats]}
   {:psi.tool-output/stats
-   (let [aggregates (:aggregates @(:tool-output-stats-atom agent-session-ctx))]
+   (let [aggregates (:aggregates (session/get-state-value-in agent-session-ctx (session/state-path :tool-output-stats)))]
      {:total-context-bytes (or (:total-context-bytes aggregates) 0)
       :by-tool             (or (:by-tool aggregates) {})
       :limit-hits-by-tool  (or (:limit-hits-by-tool aggregates) {})})})
@@ -938,8 +983,8 @@
                    :psi.session-entry/timestamp
                    :psi.session-entry/kind
                    :psi.session-entry/data]}]}
-  (let [entries  @(:journal-atom agent-session-ctx)
-        flushed? (:flushed? @(:flush-state-atom agent-session-ctx))]
+  (let [entries  (session/get-state-value-in agent-session-ctx (session/state-path :journal))
+        flushed? (:flushed? (session/get-state-value-in agent-session-ctx (session/state-path :flush-state)))]
     {:psi.agent-session/session-entry-count (count entries)
      :psi.agent-session/journal-flushed?    flushed?
      :psi.agent-session/session-entries
@@ -956,8 +1001,8 @@
 (defn- stats-snapshot
   "Build canonical session telemetry stats from current session/journal state."
   [agent-session-ctx]
-  (let [sd      @(:session-data-atom agent-session-ctx)
-        journal @(:journal-atom agent-session-ctx)
+  (let [sd      (session/get-session-data-in agent-session-ctx)
+        journal (session/get-state-value-in agent-session-ctx (session/state-path :journal))
         msgs    (keep #(when (= :message (:kind %)) (get-in % [:data :message])) journal)]
     {:session-id         (:session-id sd)
      :session-file       (:session-file sd)
@@ -974,9 +1019,9 @@
 
 (defn- canonical-start-time
   [agent-session-ctx]
-  (let [sd      @(:session-data-atom agent-session-ctx)
+  (let [sd      (session/get-session-data-in agent-session-ctx)
         startup (:startup-bootstrap sd)
-        journal @(:journal-atom agent-session-ctx)
+        journal (session/get-state-value-in agent-session-ctx (session/state-path :journal))
         first-ts (:timestamp (first journal))]
     (or (:timestamp startup)
         first-ts
@@ -1071,7 +1116,7 @@
 
 (defn- tool-call-attempt-events
   [agent-session-ctx]
-  (vec (or (some-> (:tool-call-attempts-atom agent-session-ctx) deref)
+  (vec (or (session/get-state-value-in agent-session-ctx (session/state-path :tool-call-attempts))
            [])))
 
 (defn- tool-result-ids
@@ -1177,14 +1222,12 @@
 
 (defn- provider-requests
   [agent-session-ctx]
-  (vec (or (some-> (:provider-requests-atom agent-session-ctx) deref)
-           (some-> (:session-data-atom agent-session-ctx) deref :provider-requests)
+  (vec (or (session/get-state-value-in agent-session-ctx (session/state-path :provider-requests))
            [])))
 
 (defn- provider-replies
   [agent-session-ctx]
-  (vec (or (some-> (:provider-replies-atom agent-session-ctx) deref)
-           (some-> (:session-data-atom agent-session-ctx) deref :provider-replies)
+  (vec (or (session/get-state-value-in agent-session-ctx (session/state-path :provider-replies))
            [])))
 
 (defn- provider-request->eql
@@ -1496,7 +1539,7 @@
                  :psi.turn/is-tool-accumulating
                  :psi.turn/is-done
                  :psi.turn/is-error]}
-  (if-let [turn-ctx (some-> (:turn-ctx-atom agent-session-ctx) deref)]
+  (if-let [turn-ctx (session/get-state-value-in agent-session-ctx (session/state-path :turn-ctx))]
     (let [phase (turn-sc/turn-phase turn-ctx)
           td    (turn-sc/get-turn-data turn-ctx)]
       {:psi.turn/phase                phase
@@ -1536,7 +1579,7 @@
                  :psi.prompt-template/names
                  :psi.prompt-template/count
                  :psi.prompt-template/by-source]}
-  (let [templates (:prompt-templates @(:session-data-atom agent-session-ctx))]
+  (let [templates (:prompt-templates (session/get-session-data-in agent-session-ctx))]
     {:psi.prompt-template/summary   (pt/template-summary templates)
      :psi.prompt-template/names     (pt/template-names templates)
      :psi.prompt-template/count     (count templates)
@@ -1548,7 +1591,7 @@
   [{:keys [psi/agent-session-ctx psi.prompt-template/name]}]
   {::pco/input  [:psi/agent-session-ctx :psi.prompt-template/name]
    ::pco/output [:psi.prompt-template/detail]}
-  (let [templates (:prompt-templates @(:session-data-atom agent-session-ctx))
+  (let [templates (:prompt-templates (session/get-session-data-in agent-session-ctx))
         tpl       (pt/find-template templates name)]
     {:psi.prompt-template/detail
      (when tpl (pt/enrich-template tpl))}))
@@ -1565,7 +1608,7 @@
                  :psi.skill/visible-count
                  :psi.skill/hidden-count
                  :psi.skill/by-source]}
-  (let [all-skills (:skills @(:session-data-atom agent-session-ctx))
+  (let [all-skills (:skills (session/get-session-data-in agent-session-ctx))
         summary    (skills/skill-summary all-skills)]
     {:psi.skill/summary       summary
      :psi.skill/names         (skills/skill-names all-skills)
@@ -1580,7 +1623,7 @@
   [{:keys [psi/agent-session-ctx psi.skill/name]}]
   {::pco/input  [:psi/agent-session-ctx :psi.skill/name]
    ::pco/output [:psi.skill/detail]}
-  (let [all-skills (:skills @(:session-data-atom agent-session-ctx))
+  (let [all-skills (:skills (session/get-session-data-in agent-session-ctx))
         skill      (skills/find-skill all-skills name)]
     {:psi.skill/detail
      (when skill (skills/enrich-skill skill))}))
@@ -1651,7 +1694,7 @@
    (mapv session-info->eql
          (persist/list-sessions
           (persist/session-dir-for
-           (or (:worktree-path @(:session-data-atom agent-session-ctx))
+           (or (:worktree-path (session/get-session-data-in agent-session-ctx))
                (:cwd agent-session-ctx)))))})
 
 (pco/defresolver session-list-all-resolver
@@ -1785,7 +1828,7 @@
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.agent-session/cwd]}
-  (let [sd @(:session-data-atom agent-session-ctx)]
+  (let [sd (session/get-session-data-in agent-session-ctx)]
     {:psi.agent-session/cwd (or (:worktree-path sd)
                                 (:cwd agent-session-ctx))}))
 
@@ -1865,14 +1908,14 @@
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.agent-session/model-provider]}
-  {:psi.agent-session/model-provider (:provider (:model @(:session-data-atom agent-session-ctx)))})
+  {:psi.agent-session/model-provider (:provider (:model (session/get-session-data-in agent-session-ctx)))})
 
 (pco/defresolver agent-session-model-id
   "Resolve active model id from session state."
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.agent-session/model-id]}
-  {:psi.agent-session/model-id (:id (:model @(:session-data-atom agent-session-ctx)))})
+  {:psi.agent-session/model-id (:id (:model (session/get-session-data-in agent-session-ctx)))})
 
 (def ^:private thinking-level->reasoning-effort
   {:off nil
@@ -1954,7 +1997,7 @@
                  :psi.agent-session/startup-bootstrap-started-at
                  :psi.agent-session/startup-bootstrap-completed-at
                  :psi.agent-session/startup-message-ids]}
-  (let [sd @(:session-data-atom agent-session-ctx)]
+  (let [sd (session/get-session-data-in agent-session-ctx)]
     {:psi.agent-session/startup-prompts               (:startup-prompts sd [])
      :psi.agent-session/startup-bootstrap-completed?  (boolean (:startup-bootstrap-completed? sd))
      :psi.agent-session/startup-bootstrap-started-at  (:startup-bootstrap-started-at sd)
@@ -1974,7 +2017,7 @@
                  :psi.startup/extension-error-count
                  :psi.startup/extension-errors
                  :psi.startup/mutations]}
-  (let [summary (:startup-bootstrap @(:session-data-atom agent-session-ctx))]
+  (let [summary (:startup-bootstrap (session/get-session-data-in agent-session-ctx))]
     {:psi.startup/bootstrap-summary      summary
      :psi.startup/bootstrap-timestamp    (:timestamp summary)
      :psi.startup/prompt-count           (:prompt-count summary 0)

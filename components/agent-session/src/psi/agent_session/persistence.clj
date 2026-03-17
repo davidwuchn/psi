@@ -154,6 +154,29 @@
   []
   (atom {:flushed? false :session-file nil}))
 
+(declare append-entry-to-disk!)
+(declare flush-journal!)
+
+(defn persist-state-entry!
+  "Persist journal `entries` using plain flush-state data.
+   Calls `save-flush-state!` with the updated flush-state when it changes."
+  ([entries flush-state session-id cwd parent-session-path save-flush-state!]
+   (persist-state-entry! entries flush-state session-id cwd nil parent-session-path save-flush-state!))
+  ([entries flush-state session-id cwd parent-session-id parent-session-path save-flush-state!]
+   (let [{:keys [flushed? session-file]} flush-state]
+     (when session-file
+       (let [has-assistant (some (fn [e]
+                                   (and (= :message (:kind e))
+                                        (= "assistant" (get-in e [:data :message :role]))))
+                                 entries)]
+         (when has-assistant
+           (if flushed?
+             (append-entry-to-disk! session-file (last entries))
+             (do
+               (flush-journal! session-file session-id cwd parent-session-id parent-session-path entries)
+               (when save-flush-state!
+                 (save-flush-state! (assoc flush-state :flushed? true)))))))))))
+
 ;;; ============================================================
 ;;; NDEDN serialisation
 ;;; ============================================================

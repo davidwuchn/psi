@@ -14,6 +14,7 @@ use "./default-footer.allium" as footer
 use "./compaction.allium" as compact
 use "./tools.allium" as tools
 use "./project-preferences.allium" as prefs
+use "./system-context-unification.allium" as system_ctx
 
 entity CodingAgentRuntime {
     context: core/AgentContext
@@ -130,6 +131,7 @@ surface CodingAgentApi {
     @guarantee RuntimeOwnsContext
         -- A runtime owns one context.
         -- The context owns shared resources and a tree of sessions.
+        -- That context is implemented as the canonical mutable system context described by system_ctx/SystemContext.
 
     @guarantee AgentIsOperationalViewOfSession
         -- Agent execution is routed to a target session within the context.

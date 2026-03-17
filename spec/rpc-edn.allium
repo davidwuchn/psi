@@ -6,6 +6,7 @@
 use "./coding-agent.allium" as coding
 use "./ui-extension-points.allium" as ui
 use "./session-core.allium" as core
+use "./system-context-unification.allium" as system_ctx
 
 value RpcClientInfo {
     name: String
@@ -254,6 +255,7 @@ rule ContextUpdatedPayloadCanonicalAcrossFrontends {
     ensures: RequiredPayloadKeys(frame.data) = {"active-session-id", "sessions"}
     ensures: ForEach(frame.data.sessions, slot => HasKey(slot, "id"))
     ensures: ForEach(frame.data.sessions, slot => HasKey(slot, "created-at"))
+    ensures: system_ctx/QuerySeededByCanonicalRoot(endpoint.session.context.id)
 }
 
 rule UnknownEventTopicsAreForwardCompatible {

@@ -1,0 +1,185 @@
+-- allium: 2
+
+-- system-context-unification.allium
+-- Canonical single-context runtime state for agent-session and related subsystems.
+
+use "./session-core.allium" as session_core
+use "./session-management.allium" as session_mgmt
+use "./ui-extension-points.allium" as ui
+use "./oauth-auth.allium" as oauth
+use "./remember-capture.allium" as remember
+use "./bootstrap-system.allium" as bootstrap
+
+entity SystemContext {
+    id: String
+    cwd: String
+    status: active | closed
+
+    state_root_kind: single_atom
+    mutable_state_roots: Integer
+
+    runtime_handle_kinds: Set<String>
+}
+
+entity RuntimeState {
+    context_id: String
+
+    agent_session_state: session_mgmt/AgentSession
+    session_context_state: session_core/AgentContext
+
+    context_index_present: Boolean
+    journal_present: Boolean
+    flush_state_present: Boolean
+    turn_state_present: Boolean
+
+    telemetry_present: Boolean
+    extension_ui_state_present: Boolean
+    recursion_state_present: Boolean
+    oauth_runtime_state_present: Boolean
+    nrepl_runtime_state_present: Boolean
+    background_jobs_state_present: Boolean
+}
+
+rule SystemContextCreatedWithSingleMutableRoot {
+    when: SystemContextCreated(context, runtime_state)
+
+    ensures: context.state_root_kind = single_atom
+    ensures: context.mutable_state_roots = 1
+    ensures: runtime_state.context_id = context.id
+}
+
+rule AgentSessionMutableStateLivesUnderCanonicalRoot {
+    when: SystemContextCreated(context, runtime_state)
+
+    ensures: runtime_state.context_index_present = true
+    ensures: runtime_state.journal_present = true
+    ensures: runtime_state.flush_state_present = true
+    ensures: runtime_state.turn_state_present = true
+    ensures: runtime_state.telemetry_present = true
+    ensures: runtime_state.background_jobs_state_present = true
+}
+
+rule RuntimeMutableDataUpdatesShareSingleRoot {
+    when: RuntimeStateMutationRequested(context, mutation_scope)
+    requires: context.state_root_kind = single_atom
+
+    ensures: AtomicStateTransition(context.id, mutation_scope)
+    ensures: not AdditionalMutableStateRootCreated(context.id)
+}
+
+rule UiStateBecomesProjectionWithinCanonicalRoot {
+    when: SystemContextCreated(context, runtime_state)
+
+    ensures: runtime_state.extension_ui_state_present = true
+    ensures: "dialog_promise_registry" in context.runtime_handle_kinds
+}
+
+rule RecursionStateBecomesProjectionWithinCanonicalRoot {
+    when: SystemContextCreated(context, runtime_state)
+
+    ensures: runtime_state.recursion_state_present = true
+}
+
+rule RuntimeHandlesRemainOutsideCanonicalState {
+    when: SystemContextCreated(context, runtime_state)
+
+    ensures: "statechart_env" in context.runtime_handle_kinds
+    ensures: "statechart_session" in context.runtime_handle_kinds
+    ensures: "agent_core" in context.runtime_handle_kinds
+    ensures: "extension_registry" in context.runtime_handle_kinds
+    ensures: "workflow_registry" in context.runtime_handle_kinds
+    ensures: "oauth_store" in context.runtime_handle_kinds
+    ensures: "oauth_provider_registry" in context.runtime_handle_kinds
+
+    @guidance
+        -- Opaque or effectful runtime integrations remain outside the mutable state root.
+}
+
+rule QuerySurfaceSeedsCanonicalSystemContext {
+    when: QueryRequested(context, eql)
+
+    ensures: QuerySeededByCanonicalRoot(context.id)
+    ensures: LegacyContextAttrsRemainDerivable(context.id)
+
+    @guidance
+        -- The canonical root seed is the system context.
+        -- Legacy :psi/agent-session-ctx, :psi/recursion-ctx, and related attrs may remain as derived compatibility projections during migration.
+}
+
+rule OAuthSecretStorageRemainsRuntimeBacked {
+    when: SystemContextCreated(context, runtime_state)
+
+    ensures: runtime_state.oauth_runtime_state_present = true
+    ensures: "oauth_store" in context.runtime_handle_kinds
+
+    @guidance
+        -- Runtime-visible OAuth status may be reflected in canonical state.
+        -- Secret credential persistence remains owned by the OAuth runtime store.
+}
+
+rule BootstrapCreatesCanonicalSystemContext {
+    when: BootstrapContextRequested(cwd, ui_type)
+
+    ensures: SystemContext.created(
+        id: NewSystemContextId(),
+        cwd: cwd,
+        status: active,
+        state_root_kind: single_atom,
+        mutable_state_roots: 1,
+        runtime_handle_kinds: RuntimeHandleKindsForBootstrap(cwd, ui_type)
+    )
+    ensures: RuntimeState.created(
+        context_id: CurrentSystemContextId(),
+        agent_session_state: InitialAgentSessionState(cwd, ui_type),
+        session_context_state: InitialAgentContextState(cwd),
+        context_index_present: true,
+        journal_present: true,
+        flush_state_present: true,
+        turn_state_present: true,
+        telemetry_present: true,
+        extension_ui_state_present: InitialExtensionUiStatePresent(ui_type),
+        recursion_state_present: true,
+        oauth_runtime_state_present: true,
+        nrepl_runtime_state_present: true,
+        background_jobs_state_present: true
+    )
+}
+
+actor RuntimeBuilder {
+    identified_by: id = "runtime-builder"
+}
+
+surface CanonicalSystemContextApi {
+    facing builder: RuntimeBuilder
+
+    context context: SystemContext
+
+    exposes:
+        context.id
+        context.cwd
+        context.status
+        context.state_root_kind
+        context.mutable_state_roots
+        context.runtime_handle_kinds
+
+    provides:
+        BootstrapContextRequested(cwd, ui_type)
+        RuntimeStateMutationRequested(context, mutation_scope)
+        QueryRequested(context, eql)
+
+    related:
+        session_core/SessionCoreApi
+        session_mgmt/AgentSessionApi
+        ui/ExtensionUIQuery
+        oauth/CredentialStoreApi
+        remember/RememberMemoryApi
+
+    @guarantee OneCanonicalMutableStateRoot
+        -- Agent-session runtime behavior uses exactly one canonical mutable state root per system context.
+
+    @guarantee RuntimeHandlesAreNotCountedAsStateRoots
+        -- Runtime handles may exist for side-effecting integrations without violating the single mutable state root guarantee.
+
+    @guarantee LegacyContextsMayRemainAsDerivedViewsDuringMigration
+        -- Compatibility projections may remain temporarily while implementation converges on the canonical root.
+}
