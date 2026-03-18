@@ -670,18 +670,6 @@
     (and (string? auth)
          (str/starts-with? auth "Bearer "))))
 
-(defn- request-model-id
-  [request]
-  (let [parsed (parse-json-body-safe (:body request))]
-    (when (map? parsed)
-      (:model parsed))))
-
-(defn- oauth-sonnet-opus-model?
-  [model-id]
-  (and (string? model-id)
-       (or (str/starts-with? model-id "claude-sonnet-4")
-           (str/starts-with? model-id "claude-opus-4"))))
-
 (defn- request-diagnostic-hint
   [request]
   (when (map? request)
@@ -714,11 +702,6 @@
                           fallback-message)
                         (fallback-status-message status))
         oauth?      (oauth-auth-request? request)
-        model-id    (request-model-id request)
-        oauth-model-hint
-        (when (and oauth?
-                   (oauth-sonnet-opus-model? model-id))
-          "; oauth token appears to reject Sonnet/Opus message calls while other models may work — try /model anthropic claude-haiku-4-5-20251001")
         base-msg    (if (and (= 400 status)
                              (= base-msg "Anthropic rejected the request"))
                       (str base-msg
@@ -728,8 +711,7 @@
                              "provider response omitted actionable details")
                            "; possible causes: model access, unsupported beta header, or invalid request payload"
                            (when oauth?
-                             "; oauth token in use (public /v1/messages commonly expects x-api-key auth)")
-                           oauth-model-hint
+                             "; oauth token in use")
                            ")"
                            (or (request-diagnostic-hint request) ""))
                       base-msg)

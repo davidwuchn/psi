@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-03-18
+
+- λ Δ Anthropic OAuth re-auth flow was stabilized:
+  - Switched default Anthropic OAuth app config to current Claude Code values (`client_id a473d7bb-17ac-43a7-abc0-a1343d7c2805`, scopes `user:inference user:file_upload`).
+  - Added env overrides for Anthropic OAuth config (`PSI_ANTHROPIC_OAUTH_*`) and persisted login metadata so refresh uses the same app config that issued the token.
+  - Added refresh fallback for legacy credentials (older client-id) to avoid forced relogin breakage.
+  - Improved auth-code parsing to accept `code=...#state=...` and made state-mismatch guidance explicit.
+- λ Δ Anthropic 400 diagnostics were de-noised by removing the temporary Sonnet/Opus-specific OAuth hint.
+- ✓ Smoke check:
+  - `claude-sonnet-4-6` and `claude-opus-4-6` both returned 200 via `/v1/messages` with the refreshed OAuth token.
+
 ## 2026-03-17
 
 - λ Δ Unified assistant content text extraction across runtime + RPC + TUI for both canonical block vectors and structured content maps:
