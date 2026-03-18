@@ -64,18 +64,48 @@
               :tools         #{}}
        (some? normalized-blocks) (assoc :system-prompt-blocks normalized-blocks)))))
 
+(defn- canonical-text-block->structured-block
+  [block]
+  (cond-> {:kind :text
+           :text (or (:text block) "")}
+    (:cache-control block) (assoc :cache-control (:cache-control block))))
+
+(defn- normalize-user-content
+  [content]
+  (cond
+    (string? content)
+    {:kind :text
+     :text content}
+
+    (and (vector? content)
+         (every? #(and (map? %)
+                       (= :text (:type %))
+                       (string? (:text %)))
+                 content))
+    (let [blocks (mapv canonical-text-block->structured-block content)]
+      (if (= 1 (count blocks))
+        (first blocks)
+        {:kind :structured
+         :blocks blocks}))
+
+    (map? content)
+    content
+
+    :else
+    {:kind :text
+     :text (str content)}))
+
 (defn add-user-message
   "Add user message to conversation.
 
    CONTENT may be either:
    - string text
    - vector of canonical text blocks {:type :text :text ... [:cache-control ...]}
-
-   The vector form preserves richer user-message metadata until provider-specific
-   transformation."
+   - normalized map content {:kind :text ...} or {:kind :structured :blocks [...]}"
   [conversation content]
   {:pre [(schemas/valid? schemas/Conversation conversation)
          (or (string? content)
+             (map? content)
              (and (vector? content)
                   (every? #(and (map? %)
                                 (= :text (:type %))
@@ -83,10 +113,7 @@
                           content)))]}
   (append-message conversation
                   {:role :user
-                   :content (if (string? content)
-                              {:kind :text
-                               :text content}
-                              content)}))
+                   :content (normalize-user-content content)}))
 
 (defn add-assistant-message
   "Add assistant message to conversation"

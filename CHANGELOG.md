@@ -1,5 +1,54 @@
 # Changelog
 
+## 2026-03-17
+
+- λ Δ Unified assistant content text extraction across runtime + RPC + TUI for both canonical block vectors and structured content maps:
+  - Added `psi.agent-session.message-text` helpers and wired them into:
+    - `components/agent-session/src/psi/agent_session/main.clj`
+    - `components/agent-session/src/psi/agent_session/rpc.clj`
+    - `components/tui/src/psi/tui/app.clj`
+  - Added focused coverage in `components/agent-session/test/psi/agent_session/message_text_test.clj`.
+
+- λ Δ Emacs transcript handling now avoids blank `ψ:` finalize rows and surfaces top-level assistant errors:
+  - `assistant/message` with empty content now falls back to `:error-message` when present.
+  - Truly empty finalizations no longer clobber streamed text or inject blank assistant lines.
+  - Replay path now also renders assistant top-level error messages.
+  - Updated tests in `components/emacs-ui/test/psi-test.el`.
+
+- λ Δ Added RPC transport tracing configuration with both CLI and graph control:
+  - New CLI flag: `--rpc-trace-file <path>` (rpc-edn mode).
+  - RPC transport now emits inbound/outbound trace payloads (`:dir`, `:raw`, parsed `:frame`, optional `:parse-error`).
+  - Runtime trace config is now queryable/mutable via graph:
+    - resolver attrs: `:psi.agent-session/rpc-trace-enabled`, `:psi.agent-session/rpc-trace-file`
+    - mutation: `psi.extension/set-rpc-trace`
+  - Runtime state path added: `:rpc-trace` (`[:runtime :rpc-trace]`).
+  - CLI docs updated in `doc/cli.md`.
+
+- λ Δ Improved validation failure diagnostics and fixed canonical user-content normalization:
+  - `psi.ai.schemas/validate!` now includes failing path, error type, compact bad-value snippet, and a targeted hint for legacy canonical `{:type ...}` blocks.
+  - Canonical user text blocks are now normalized to schema-valid `:kind` content in `psi.ai.conversation/add-user-message`.
+  - OpenAI and Anthropic provider user-message transforms now handle structured `{:kind :structured :blocks [...]}` content consistently.
+  - This removes the opaque startup/runtime error shape: `Validation failed: {:messages [{:content ["invalid dispatch value"]}]}`.
+
+- λ Δ Anthropic request/transport error handling is now more actionable and resilient:
+  - `build-request` now fails fast on missing Anthropic API key with explicit guidance.
+  - HTTP non-2xx responses are now handled via `:throw-exceptions false` path so provider error bodies are parsed when available.
+  - Added preflight Anthropic request-body validation (Malli, OpenAPI-derived request/message/tool unions) with path-aware diagnostics to catch malformed payloads before transport.
+  - Anthropic system prompt shaping now prefers plain string form when cache controls are absent (block form remains for prompt-caching).
+  - 400 responses without body now emit actionable fallback text instead of bare `Error (status 400)`.
+  - For status 400, provider now applies a one-shot compatibility retry by stripping optional request features that commonly trip silent 400s:
+    - prompt-caching beta + `cache_control` fields
+    - interleaved-thinking beta + `thinking` request field
+    - all remaining `anthropic-beta` values (final compatibility fallback for non-OAuth auth flows)
+  - OAuth Anthropic initial request headers include `claude-code-20250219`, `oauth-2025-04-20`, `context-management-2025-06-27`, and `prompt-caching-scope-2026-01-05`; OAuth retries keep required OAuth betas.
+  - Generic Anthropic 400 diagnostics now include compact request context (`model`, beta header, message/tool counts, auth mode) and an explicit OAuth hint when bearer auth is in use.
+  - If compatibility retry succeeds, turn proceeds normally; if it still fails, final error remains surfaced with request diagnostics.
+
+- ✓ Verification:
+  - `clojure -M:test --focus psi.agent-session.main-test/rpc-trace-file-from-args-test --focus psi.agent-session.main-test/run-rpc-session-enables-rpc-trace-config-test --focus psi.agent-session.rpc-test/run-stdio-loop-trace-fn-captures-inbound-and-outbound-test --focus psi.agent-session.core-test/rpc-trace-mutation-and-resolver-test --focus psi.agent-session.message-text-test/content-text-parts-supports-canonical-and-structured-shapes-test --focus psi.agent-session.message-text-test/content-display-text-includes-error-blocks-test`
+  - `bb emacs:test`
+  - `bb emacs:e2e`
+
 ## 2026-03-16
 
 - λ Δ Added Anthropic prompt caching wiring:

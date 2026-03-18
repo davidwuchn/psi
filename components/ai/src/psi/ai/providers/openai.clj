@@ -208,6 +208,29 @@
         [{:index 0
           :function message-function}])))))
 
+(defn- user-message-text
+  [msg]
+  (let [content (:content msg)]
+    (cond
+      (string? content)
+      content
+
+      (and (map? content)
+           (= :text (:kind content)))
+      (or (:text content) (get content "text") "")
+
+      (and (map? content)
+           (= :structured (:kind content)))
+      (->> (:blocks content)
+           (keep #(when (= :text (:kind %)) (:text %)))
+           (str/join "\n"))
+
+      (map? content)
+      (or (:text content) (get content "text") "")
+
+      :else
+      (str content))))
+
 (defn transform-messages
   "Transform conversation messages to OpenAI chat completions format.
    Handles user, assistant (with optional tool_calls), and tool-result messages."
@@ -218,7 +241,7 @@
           (case (:role msg)
             :user
             (conj acc {:role    "user"
-                       :content (get-in msg [:content :text] (str (:content msg)))})
+                       :content (user-message-text msg)})
 
             :assistant
             (let [kind (get-in msg [:content :kind])]
@@ -631,11 +654,7 @@
 
 (defn- user-text
   [msg]
-  (let [content (:content msg)]
-    (cond
-      (string? content) content
-      (map? content)    (or (:text content) (get content "text") "")
-      :else             (str content))))
+  (user-message-text msg))
 
 (defn- assistant-content->codex-items
   "Convert one assistant message to Responses API input items."

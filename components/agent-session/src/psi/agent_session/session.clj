@@ -362,6 +362,7 @@
 (def ^:private ui-state-path [:ui :extension-ui])
 (def ^:private recursion-state-path [:recursion])
 (def ^:private oauth-state-path [:oauth])
+(def ^:private rpc-trace-path [:runtime :rpc-trace])
 
 (defn state-path
   "Resolve known canonical-root runtime paths by key."
@@ -381,6 +382,7 @@
     :ui-state ui-state-path
     :recursion recursion-state-path
     :oauth oauth-state-path
+    :rpc-trace rpc-trace-path
     nil))
 
 (defn get-state-value-in

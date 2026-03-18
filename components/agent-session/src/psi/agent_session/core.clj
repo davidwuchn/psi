@@ -268,6 +268,7 @@
 (def ^:private ui-state-path [:ui :extension-ui])
 (def ^:private recursion-state-path [:recursion])
 (def ^:private oauth-state-path [:oauth])
+(def ^:private rpc-trace-path [:runtime :rpc-trace])
 
 (defn- get-state-in*
   [ctx path]
@@ -310,6 +311,7 @@
     :ui-state ui-state-path
     :recursion recursion-state-path
     :oauth oauth-state-path
+    :rpc-trace rpc-trace-path
     nil))
 
 (defn create-context
@@ -351,7 +353,9 @@
                                               :tool-call-attempts []
                                               :provider-requests []
                                               :provider-replies []}
-                                  :runtime {:nrepl (or (some-> nrepl-runtime-atom deref) nil)}
+                                  :runtime {:nrepl (or (some-> nrepl-runtime-atom deref) nil)
+                                            :rpc-trace {:enabled? false
+                                                        :file nil}}
                                   :persistence {:journal []
                                                 :flush-state {:flushed? false :session-file nil}}
                                   :turn {:ctx nil}
@@ -2086,6 +2090,33 @@
     {:psi.agent-session/model          (:model sd)
      :psi.agent-session/thinking-level (:thinking-level sd)}))
 
+(pco/defmutation set-rpc-trace
+  [_ {:keys [psi/agent-session-ctx enabled file] :as params}]
+  {::pco/op-name 'psi.extension/set-rpc-trace
+   ::pco/params  [:psi/agent-session-ctx]
+   ::pco/output  [:psi.agent-session/rpc-trace-enabled
+                  :psi.agent-session/rpc-trace-file]}
+  (let [current        (or (session/get-state-value-in agent-session-ctx
+                                                       (session/state-path :rpc-trace))
+                           {:enabled? false :file nil})
+        enabled?       (if (contains? params :enabled)
+                         (boolean enabled)
+                         (not (boolean (:enabled? current))))
+        file-present?  (contains? params :file)
+        file*          (if file-present?
+                         (when-not (str/blank? file)
+                           file)
+                         (:file current))]
+    (when (and enabled? (str/blank? file*))
+      (throw (ex-info "rpc trace requires a non-empty :file when enabled"
+                      {:error-code "request/invalid-params"})))
+    (session/assoc-state-value-in! agent-session-ctx
+                                   (session/state-path :rpc-trace)
+                                   {:enabled? enabled?
+                                    :file file*})
+    {:psi.agent-session/rpc-trace-enabled enabled?
+     :psi.agent-session/rpc-trace-file file*}))
+
 (pco/defmutation interrupt
   [_ {:keys [psi/agent-session-ctx]}]
   {::pco/op-name 'psi.extension/interrupt
@@ -2562,6 +2593,7 @@
    switch-session
    set-active-tools
    set-model
+   set-rpc-trace
    interrupt
    compact
    append-entry

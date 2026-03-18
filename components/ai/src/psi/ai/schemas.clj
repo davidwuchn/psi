@@ -1,6 +1,7 @@
 (ns psi.ai.schemas
   "Malli schemas for AI entities following allium spec"
   (:require [malli.core :as m]
+            [malli.error :as me]
             [malli.transform :as mt])
   (:import [java.time Instant]
            [java.util UUID]))
@@ -216,15 +217,77 @@
   [schema data]
   (m/explain schema data))
 
+(def ^:private max-validation-summary-chars 600)
+(def ^:private max-validation-value-chars 240)
+
+(defn- truncate-with-ellipsis
+  [s max-chars]
+  (if (and (string? s)
+           (> (count s) max-chars))
+    (str (subs s 0 max-chars) "…")
+    s))
+
+(defn- validation-summary
+  [errors]
+  (try
+    (-> errors
+        me/humanize
+        pr-str
+        (truncate-with-ellipsis max-validation-summary-chars))
+    (catch Throwable _
+      (-> errors
+          pr-str
+          (truncate-with-ellipsis max-validation-summary-chars)))))
+
+(defn- legacy-canonical-blocks?
+  [v]
+  (and (sequential? v)
+       (seq v)
+       (every? map? v)
+       (some #(contains? % :type) v)
+       (not-any? #(contains? % :kind) v)))
+
+(defn- validation-error-type-label
+  [t]
+  (case t
+    :malli.core/invalid-dispatch-value "invalid dispatch value"
+    :malli.core/missing-key "missing required key"
+    :malli.core/extra-key "unexpected key"
+    (if (keyword? t)
+      (name t)
+      (str t))))
+
+(defn- first-error-detail
+  [errors]
+  (when-let [err (first (:errors errors))]
+    (let [path* (if (seq (:path err))
+                  (pr-str (:path err))
+                  "<root>")
+          type* (validation-error-type-label (:type err))
+          value* (-> (:value err)
+                     pr-str
+                     (truncate-with-ellipsis max-validation-value-chars))
+          hint (when (and (= :malli.core/invalid-dispatch-value (:type err))
+                          (legacy-canonical-blocks? (:value err)))
+                 " hint: value looks like canonical blocks {:type ...}; expected a :kind-based content map (e.g. {:kind :text ...} or {:kind :structured :blocks [...]})")]
+      (str "at " path* " (" type* "), value=" value* hint))))
+
 (defn validate!
   "Validate data, throw on failure"
   [schema data]
   (if (m/validate schema data)
     data
-    (throw (ex-info "Validation failed"
-                    {:schema schema
-                     :data data
-                     :errors (m/explain schema data)}))))
+    (let [errors  (m/explain schema data)
+          summary (validation-summary errors)
+          detail  (first-error-detail errors)]
+      (throw (ex-info (if detail
+                        (str "Validation failed " detail ". Summary: " summary)
+                        (str "Validation failed: " summary))
+                      {:schema schema
+                       :data data
+                       :errors errors
+                       :validation-summary summary
+                       :validation-detail detail})))))
 
 ;; Transformers
 

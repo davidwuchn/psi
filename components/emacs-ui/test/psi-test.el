@@ -2073,6 +2073,51 @@ full accumulated thinking text rather than append-only chunks."
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
+(ert-deftest psi-assistant-message-structured-content-finalizes-text ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (progn
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/message")
+             (:data . ((:role . "assistant")
+                       (:content . ((:kind . :structured)
+                                    (:blocks . [((:kind . :text)
+                                                 (:text . "Hello from structured content"))])))))))
+          (should-not (psi-emacs-state-assistant-in-progress psi-emacs--state))
+          (should (equal "ψ: Hello from structured content\n" (buffer-string))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
+(ert-deftest psi-assistant-message-error-message-fallback-renders-text ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (progn
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/message")
+             (:data . ((:role . "assistant")
+                       (:content . [])
+                       (:error-message . "Validation failed")))))
+          (should (equal "ψ: [error] Validation failed\n" (buffer-string))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
+(ert-deftest psi-assistant-message-empty-without-streamed-text-noops ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (progn
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/message")
+             (:data . ((:role . "assistant") (:content . [])))))
+          (should (equal "" (buffer-string))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
 (ert-deftest psi-assistant-message-store-fallback-warning-renders-verbatim ()
   (with-temp-buffer
     (psi-emacs-mode)
@@ -3504,6 +3549,36 @@ so the old `(eq role :user)' check always fell through to the assistant branch."
     (let ((text (buffer-string)))
       (should (string-match-p "User: hello"  text))
       (should (string-match-p "ψ: hi there"  text)))))
+
+(ert-deftest psi-replay-session-messages-structured-assistant-content-renders-text ()
+  "Structured assistant content maps should replay as visible transcript text."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-draft-anchor psi-emacs--state)
+          (copy-marker (point-max) nil))
+    (psi-emacs--ensure-input-area)
+    (psi-emacs--replay-session-messages
+     '(((:role . "assistant")
+        (:content . ((:kind . :structured)
+                     (:blocks . [((:kind . :text)
+                                  (:text . "boot ok"))]))))))
+    (should (string-match-p "ψ: boot ok" (buffer-string)))))
+
+(ert-deftest psi-replay-session-messages-assistant-error-message-renders-text ()
+  "Assistant replay rows with empty content but :error-message should be visible."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-draft-anchor psi-emacs--state)
+          (copy-marker (point-max) nil))
+    (psi-emacs--ensure-input-area)
+    (psi-emacs--replay-session-messages
+     '(((:role . "assistant")
+        (:content . [])
+        (:error-message . "Validation failed"))))
+    (should (string-match-p (regexp-quote "ψ: [error] Validation failed")
+                            (buffer-string)))))
 
 (ert-deftest psi-input-history-m-p-m-n-navigates-submissions ()
   (with-temp-buffer

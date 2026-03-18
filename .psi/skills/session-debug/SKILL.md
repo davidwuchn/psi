@@ -80,6 +80,58 @@ When debugging a live issue, prefer:
 
 If `ANTHROPIC_REQ_COUNT` is zero, the ring buffer may have rolled over. Reproduce and inspect immediately.
 
+## RPC transport tracing (UI/backend boundary)
+
+Use this when the frontend transcript and backend behavior disagree (for example: blank assistant lines, missing events, malformed frames, or parse failures).
+
+### Start with trace enabled from CLI
+
+```bash
+clojure -M:psi --rpc-edn --rpc-trace-file /tmp/psi-rpc.ndedn
+```
+
+### Query live trace config via EQL
+
+```clojure
+[:psi.agent-session/rpc-trace-enabled
+ :psi.agent-session/rpc-trace-file]
+```
+
+### Toggle trace dynamically via graph mutation
+
+Enable:
+
+```clojure
+[(psi.extension/set-rpc-trace {:enabled true
+                               :file "/tmp/psi-rpc.ndedn"})]
+```
+
+Disable:
+
+```clojure
+[(psi.extension/set-rpc-trace {:enabled false})]
+```
+
+Toggle current state (no `:enabled`):
+
+```clojure
+[(psi.extension/set-rpc-trace {})]
+```
+
+Note: enabling trace without a non-blank `:file` returns `request/invalid-params`.
+
+### Trace entry shape
+
+Each line in the trace file is EDN with:
+
+- `:ts` timestamp
+- `:dir` (`:in` or `:out`)
+- `:raw` wire line
+- optional parsed `:frame`
+- optional `:parse-error`
+
+This gives protocol-level evidence for exactly what crossed the stdio boundary.
+
 ## EQL surfaces to use first
 
 ### Session identity / runtime

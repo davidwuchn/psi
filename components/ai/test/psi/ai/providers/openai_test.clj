@@ -22,6 +22,17 @@
   [s]
   (ByteArrayInputStream. (.getBytes s "UTF-8")))
 
+(deftest structured-user-content-renders-as-plain-text-for-chat-and-codex-test
+  (let [convo (-> (conv/create "sys")
+                  (conv/add-user-message [{:type :text :text "line one"}
+                                          {:type :text :text "line two"}]))
+        chat-messages (#'openai/transform-messages convo)
+        codex-items   (#'openai/codex-input-messages convo)]
+    (is (= "line one\nline two"
+           (get-in chat-messages [0 :content])))
+    (is (= "line one\nline two"
+           (get-in codex-items [0 "content" 0 "text"])))))
+
 (deftest codex-streaming-test
   (testing "codex model streams via chatgpt backend and emits normalized events"
     (let [model      (models/get-model :gpt-5.3-codex)

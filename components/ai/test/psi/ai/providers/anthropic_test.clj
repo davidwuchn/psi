@@ -24,6 +24,8 @@
                                                           :api-key "test-key"})
           body    (json/parse-string (:body req) true)]
       (is (nil? (:thinking body)))
+      (is (string? (:system body))
+          "plain system prompts are sent as string when cache controls are absent")
       (is (some? (:temperature body)) "temperature present when thinking off")))
 
   (testing "no thinking param when model does not support reasoning"
@@ -32,7 +34,36 @@
           req     (#'anthropic/build-request convo model {:thinking-level :medium
                                                           :api-key "test-key"})
           body    (json/parse-string (:body req) true)]
-      (is (nil? (:thinking body))))))
+      (is (nil? (:thinking body)))))
+
+  (testing "missing api-key fails early with a clear message"
+    (let [model (models/get-model :sonnet-4.6)
+          convo (conv/create "sys")]
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo
+           #"Missing Anthropic API key"
+           (#'anthropic/build-request convo model {:api-key ""}))))))
+
+(deftest anthropic-request-schema-validation-fails-fast-test
+  (testing "invalid provider request body is rejected with shape diagnostics"
+    (let [invalid-body {:model "claude-sonnet-4-6"
+                        :max_tokens 1024
+                        :messages [{:role "user"
+                                    :content [{:type "text" :text "hello"}]}]
+                        :stream true
+                        :tools [{:name "bad_tool"
+                                 :description "Bad schema"
+                                 :input_schema "not-a-map"}]}]
+      (try
+        (#'anthropic/validate-request-body! invalid-body)
+        (is false "expected validate-request-body! to throw")
+        (catch clojure.lang.ExceptionInfo e
+          (is (= "provider/anthropic-invalid-request-shape"
+                 (:error-code (ex-data e))))
+          (is (re-find #"Anthropic request shape invalid"
+                       (ex-message e)))
+          (is (re-find #"input_schema"
+                       (ex-message e))))))))
 
 (deftest build-request-with-thinking-test
   (testing "thinking param present when level is non-:off and model supports reasoning"
@@ -56,6 +87,12 @@
           headers (:headers req)]
       (is (some? (re-find #"oauth-2025-04-20" (get headers "anthropic-beta")))
           "oauth beta header required for oauth auth")
+      (is (some? (re-find #"claude-code-20250219" (get headers "anthropic-beta")))
+          "claude-code beta header required for oauth auth")
+      (is (some? (re-find #"context-management-2025-06-27" (get headers "anthropic-beta")))
+          "context-management beta header required for oauth auth")
+      (is (some? (re-find #"prompt-caching-scope-2026-01-05" (get headers "anthropic-beta")))
+          "prompt-caching-scope beta retained for oauth compatibility")
       (is (some? (re-find #"interleaved-thinking" (get headers "anthropic-beta")))
           "oauth requests with thinking must include interleaved-thinking beta"))))
 
@@ -210,6 +247,132 @@
       (is (= {:error {:message "cache_control requires prompt-caching beta"}}
              (:body (first @events))))
       (is (string? (:body-text (first @events)))))))
+
+(deftest stream-anthropic-non-2xx-response-map-surfaces-body-message-test
+  (testing "non-2xx response map emits parsed provider error message"
+    (let [model  (models/get-model :sonnet-4.6)
+          convo  (-> (conv/create "sys")
+                     (conv/add-user-message "hello"))
+          events (atom [])]
+      (with-redefs [http/post (fn [_url _req]
+                                {:status 400
+                                 :headers {"request-id" "req_ant_400"}
+                                 :body (stream-body
+                                        (json/generate-string
+                                         {:error {:message "invalid messages payload"}}))})]
+        (anthropic/stream-anthropic convo model {:api-key "test-key"}
+                                    (fn [e] (swap! events conj e))))
+      (is (= 1 (count @events)))
+      (is (= :error (:type (first @events))))
+      (is (= "invalid messages payload (status 400) [request-id req_ant_400]"
+             (:error-message (first @events))))
+      (is (= 400 (:http-status (first @events))))))
+
+  (testing "missing 400 body uses actionable fallback text"
+    (let [model  (models/get-model :sonnet-4.6)
+          convo  (-> (conv/create "sys")
+                     (conv/add-user-message "hello"))
+          events (atom [])]
+      (with-redefs [http/post (fn [_url _req]
+                                {:status 400
+                                 :headers {"request-id" "req_ant_nobody"}
+                                 :body nil})]
+        (anthropic/stream-anthropic convo model {:api-key "test-key"}
+                                    (fn [e] (swap! events conj e))))
+      (is (= 1 (count @events)))
+      (is (re-find #"Anthropic rejected the request"
+                   (:error-message (first @events))))
+      (is (re-find #"no error body returned"
+                   (:error-message (first @events))))
+      (is (re-find #"possible causes"
+                   (:error-message (first @events))))
+      (is (re-find #"request\{model=claude-sonnet-4-6"
+                   (:error-message (first @events))))
+      (is (re-find #"request-id req_ant_nobody"
+                   (:error-message (first @events)))))))
+
+(deftest stream-anthropic-retries-without-prompt-caching-on-400-test
+  (testing "400 with prompt-caching enabled retries once without cache directives"
+    (let [model  (models/get-model :sonnet-4.6)
+          convo  (-> (conv/create {:system-prompt "sys"
+                                   :system-prompt-blocks [{:kind :text
+                                                           :text "sys"
+                                                           :cache-control {:type :ephemeral}}]})
+                     (conv/add-user-message "hello"))
+          calls  (atom [])
+          events (atom [])
+          sse    (str (sse-line "message_start" {:type "message_start"})
+                      (sse-line "message_stop" {:type "message_stop"}))]
+      (with-redefs [http/post (fn [_url req]
+                                (swap! calls conj req)
+                                (if (= 1 (count @calls))
+                                  {:status 400
+                                   :headers {"request-id" "req_ant_first"}
+                                   :body nil}
+                                  {:status 200
+                                   :headers {}
+                                   :body (stream-body sse)}))]
+        (anthropic/stream-anthropic convo model {:api-key "test-key"}
+                                    (fn [e] (swap! events conj e))))
+      (is (= 2 (count @calls)))
+      (is (re-find #"prompt-caching"
+                   (or (get-in (first @calls) [:headers "anthropic-beta"]) "")))
+      (is (not (re-find #"prompt-caching"
+                        (or (get-in (second @calls) [:headers "anthropic-beta"]) ""))))
+      (is (not (re-find #"cache_control"
+                        (or (:body (second @calls)) ""))))
+      (is (= "sys"
+             (:system (json/parse-string (:body (second @calls)) true)))
+          "after prompt-caching fallback, system is collapsed to plain string")
+      (is (some #(= :start (:type %)) @events))
+      (is (some #(= :done (:type %)) @events))
+      (is (not-any? #(= :error (:type %)) @events)))))
+
+(deftest stream-anthropic-retries-without-thinking-on-400-test
+  (testing "oauth + thinking request retries once with compatibility fallbacks on 400"
+    (let [model  (models/get-model :sonnet-4.6)
+          convo  (-> (conv/create "sys")
+                     (conv/add-user-message "hello"))
+          calls  (atom [])
+          events (atom [])
+          sse    (str (sse-line "message_start" {:type "message_start"})
+                      (sse-line "message_stop" {:type "message_stop"}))]
+      (with-redefs [http/post (fn [_url req]
+                                (swap! calls conj req)
+                                (if (= 1 (count @calls))
+                                  {:status 400
+                                   :headers {"request-id" "req_ant_first"}
+                                   :body (stream-body
+                                          (json/generate-string
+                                           {:error {:message "Anthropic rejected the request"}}))}
+                                  {:status 200
+                                   :headers {}
+                                   :body (stream-body sse)}))]
+        (anthropic/stream-anthropic convo model {:api-key "sk-ant-oat-test-token"
+                                                 :thinking-level :medium}
+                                    (fn [e] (swap! events conj e))))
+      (is (= 2 (count @calls)))
+      (let [first-betas  (or (get-in (first @calls) [:headers "anthropic-beta"]) "")
+            second-betas (or (get-in (second @calls) [:headers "anthropic-beta"]) "")
+            second-body  (json/parse-string (:body (second @calls)) true)]
+        (is (re-find #"claude-code" first-betas))
+        (is (re-find #"interleaved-thinking" first-betas))
+        (is (re-find #"context-management" first-betas))
+        (is (re-find #"prompt-caching-scope-2026-01-05" first-betas)
+            "scope beta should be present for oauth")
+        (is (re-find #"oauth-2025-04-20" second-betas)
+            "oauth beta must be preserved")
+        (is (re-find #"claude-code" second-betas)
+            "claude-code beta should remain for oauth compatibility")
+        (is (re-find #"context-management" second-betas)
+            "context-management beta should remain for oauth compatibility")
+        (is (re-find #"prompt-caching-scope-2026-01-05" second-betas)
+            "scope beta should remain for oauth compatibility")
+        (is (not (re-find #"interleaved-thinking" second-betas)))
+        (is (nil? (:thinking second-body))))
+      (is (some #(= :start (:type %)) @events))
+      (is (some #(= :done (:type %)) @events))
+      (is (not-any? #(= :error (:type %)) @events)))))
 
 ;; ── SSE parser — thinking block routing ─────────────────────────────────────
 

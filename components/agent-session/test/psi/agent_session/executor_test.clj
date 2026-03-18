@@ -462,9 +462,9 @@
                 "sys" messages [] {})]
       (is (= [:user :user :assistant]
              (mapv :role (:messages conv))))
-      (is (= [{:type :text :text "u1"}]
+      (is (= {:kind :text :text "u1"}
              (:content (first (:messages conv)))))
-      (is (= [{:type :text :text "u2"}]
+      (is (= {:kind :text :text "u2"}
              (:content (second (:messages conv))))))))
 
 (deftest cache-breakpoints-are-projected-into-ai-conversation-test

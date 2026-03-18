@@ -31,6 +31,12 @@ DATA is expected to be an alist map."
                (not (string-empty-p (string-trim text))))
       (string-trim text))))
 
+(defun psi-emacs--non-blank-text (value)
+  "Return VALUE when it is a non-blank string; otherwise nil."
+  (when (and (stringp value)
+             (not (string-empty-p (string-trim value))))
+    value))
+
 (defun psi-emacs--session-model-label (provider model-id model-reasoning thinking-level effective-effort)
   "Return optional compact model label from session metadata.
 
@@ -325,10 +331,30 @@ Child sessions (non-nil parent-session-id that matches a slot) are indented."
        (psi-emacs--assistant-delta
         (or (psi-emacs--event-data-get data '(:text text :delta delta)) "")))
       ("assistant/message"
-       (psi-emacs--assistant-finalize
-        (or (psi-emacs--event-data-get data '(:text text :message message))
-            (psi-emacs--assistant-content->text
-             (psi-emacs--event-data-get data '(:content content))))))
+       (let* ((explicit-text (psi-emacs--non-blank-text
+                              (psi-emacs--event-data-get data '(:text text :message message))))
+              (content-text  (psi-emacs--non-blank-text
+                              (psi-emacs--assistant-content->text
+                               (psi-emacs--event-data-get data '(:content content)))))
+              (error-text    (psi-emacs--non-blank-text
+                              (psi-emacs--event-data-get data
+                                                         '(:error-message error-message
+                                                           :errorMessage errorMessage
+                                                           :error_message error_message))))
+              (final-text    (or explicit-text
+                                 content-text
+                                 (and error-text (format "[error] %s" error-text))))
+              (has-streamed-text (and psi-emacs--state
+                                      (psi-emacs--non-blank-text
+                                       (psi-emacs-state-assistant-in-progress psi-emacs--state)))))
+         (if (or final-text has-streamed-text)
+             (psi-emacs--assistant-finalize final-text)
+           ;; Empty assistant/message payloads (tool-only or provider-edge events)
+           ;; should not render a blank `ψ:` line.
+           (when psi-emacs--state
+             (psi-emacs--clear-thinking-line)
+             (psi-emacs--disarm-stream-watchdog psi-emacs--state)
+             (psi-emacs--set-run-state psi-emacs--state 'idle)))))
       ("assistant/thinking-delta"
        (psi-emacs--assistant-thinking-delta
         (or (psi-emacs--event-data-get data '(:text text :delta delta)) "")))

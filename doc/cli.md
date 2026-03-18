@@ -14,6 +14,10 @@ clojure -M:psi [flags]
   - Start interactive terminal UI mode.
 - `--rpc-edn`
   - Start EDN-lines RPC mode on stdin/stdout.
+- `--rpc-trace-file <path>`
+  - When used with `--rpc-edn`, append inbound/outbound RPC frames to `<path>` as newline-delimited EDN.
+  - Captures both directions (`:dir :in` and `:dir :out`) with timestamp and raw wire line.
+  - Runtime tracing can also be toggled dynamically via EQL mutation `psi.extension/set-rpc-trace`.
 - `--nrepl [port]`
   - Start nREPL alongside session.
   - If `port` is omitted, a random port is chosen.
@@ -76,6 +80,9 @@ clojure -M:psi --tui
 
 # RPC mode
 clojure -M:psi --rpc-edn
+
+# RPC mode with transport trace file
+clojure -M:psi --rpc-edn --rpc-trace-file /tmp/psi-rpc.ndedn
 
 # nREPL on random port
 clojure -M:psi --nrepl

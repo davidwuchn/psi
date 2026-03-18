@@ -159,6 +159,32 @@
       (is (str/includes? err-text "diagnostic line"))
       (is (= 2 (count out-lines))))))
 
+(deftest run-stdio-loop-trace-fn-captures-inbound-and-outbound-test
+  (let [traces  (atom [])
+        input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                     "{:id \"p1\" :kind :request :op \"ping\"}\n")
+        out     (java.io.StringWriter.)
+        err     (java.io.StringWriter.)
+        handler (fn [request _emit _state]
+                  (rpc/response-frame (:id request) (:op request) true {:pong true}))]
+    (rpc/run-stdio-loop! {:in (java.io.StringReader. input)
+                          :out out
+                          :err err
+                          :state (atom {})
+                          :request-handler handler
+                          :trace-fn #(swap! traces conj %)})
+    (let [in-frames  (filter #(= :in (:dir %)) @traces)
+          out-frames (filter #(= :out (:dir %)) @traces)]
+      (is (= 2 (count in-frames)))
+      (is (every? map? (map :frame in-frames)))
+      (is (= [:request :request]
+             (mapv #(get-in % [:frame :kind]) in-frames)))
+      (is (every? string? (map :raw in-frames)))
+      (is (= 2 (count out-frames)))
+      (is (= [:response :response]
+             (mapv #(get-in % [:frame :kind]) out-frames)))
+      (is (every? string? (map :raw out-frames))))))
+
 (deftest run-stdio-loop-enforces-handshake-gate-test
   (testing "non-handshake requests are rejected before ready"
     (let [{:keys [out-lines]}
@@ -437,7 +463,8 @@
         (.offer ^java.util.concurrent.LinkedBlockingQueue event-queue
                 {:type    :external-message
                  :message {:role "assistant"
-                           :content [{:type :text :text "Subagent result ready"}]
+                           :content {:kind :structured
+                                     :blocks [{:kind :text :text "Subagent result ready"}]}
                            :custom-type "subagent-result"}})
         (Thread/sleep 180)
 
@@ -453,7 +480,9 @@
           (is (some? assistant-evt))
           (is (= "assistant" (get-in assistant-evt [:data :role])))
           (is (= "Subagent result ready"
-                 (get-in assistant-evt [:data :content 0 :text])))
+                 (get-in assistant-evt [:data :text])))
+          (is (= "Subagent result ready"
+                 (get-in assistant-evt [:data :content :blocks 0 :text])))
           (is (= "subagent-result" (get-in assistant-evt [:data :custom-type])))
           (is (contains? topics "session/updated"))
           (is (contains? topics "footer/updated")))

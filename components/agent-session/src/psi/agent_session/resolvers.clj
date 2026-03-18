@@ -290,6 +290,8 @@
    :psi.agent-session/ui-type             — runtime UI type hint (:console | :tui | :emacs)
    :psi.agent-session/model-catalog       — runtime model picker payload [{:provider :id :name :reasoning}]
    :psi.agent-session/authenticated-providers — provider ids with configured auth for this session
+   :psi.agent-session/rpc-trace-enabled   — true when rpc frame tracing is enabled
+   :psi.agent-session/rpc-trace-file      — trace output file path, or nil when unset
 
    Startup bootstrap introspection
    ──────────────────────────────
@@ -2203,6 +2205,16 @@
      :psi.oauth/last-login-at (:last-login-at oauth-state)
      :psi.oauth/pending-login (:pending-login oauth-state)}))
 
+(pco/defresolver agent-session-rpc-trace
+  "Resolve RPC trace runtime config for the current session transport."
+  [{:keys [psi/agent-session-ctx]}]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.agent-session/rpc-trace-enabled
+                 :psi.agent-session/rpc-trace-file]}
+  (let [trace-state (or (session/get-state-value-in agent-session-ctx (session/state-path :rpc-trace)) {})]
+    {:psi.agent-session/rpc-trace-enabled (boolean (:enabled? trace-state))
+     :psi.agent-session/rpc-trace-file (:file trace-state)}))
+
 (pco/defresolver startup-prompts-resolver
   "Resolve startup prompt execution telemetry for the current session."
   [{:keys [psi/agent-session-ctx]}]
@@ -2361,6 +2373,7 @@
    agent-session-model-reasoning
    agent-session-model-catalog
    agent-session-authenticated-providers
+   agent-session-rpc-trace
    startup-prompts-resolver
    startup-bootstrap-resolver
    query-graph-bridge

@@ -324,26 +324,98 @@ so the next thinking delta still starts a fresh block."
           (goto-char (psi-emacs--draft-end-position))
         (goto-char (psi-emacs--transcript-append-position))))))
 
+(defun psi-emacs--assistant-content-kind (value)
+  "Return normalized kind/type token for VALUE, or nil."
+  (let ((raw (and (listp value)
+                  (psi-emacs--event-data-get value '(:type type :kind kind)))))
+    (cond
+     ((keywordp raw) raw)
+     ((symbolp raw) raw)
+     ((stringp raw) (intern (downcase raw)))
+     (t nil))))
+
+(defun psi-emacs--assistant-content-map-p (value)
+  "Return non-nil when VALUE looks like a content alist map."
+  (and (listp value)
+       (or (assoc :kind value)
+           (assoc 'kind value)
+           (assoc :type value)
+           (assoc 'type value)
+           (assoc :blocks value)
+           (assoc 'blocks value)
+           (assoc :content value)
+           (assoc 'content value))))
+
+(defun psi-emacs--assistant-content-blocks (content)
+  "Return CONTENT as a list of block maps when possible."
+  (cond
+   ((vectorp content) (append content nil))
+   ((psi-emacs--assistant-content-map-p content)
+    (let ((kind (psi-emacs--assistant-content-kind content)))
+      (cond
+       ((memq kind '(:structured structured))
+        (psi-emacs--assistant-content-blocks
+         (psi-emacs--event-data-get content '(:blocks blocks))))
+       ((memq kind '(:text text :error error))
+        (list content))
+       ((psi-emacs--event-data-get content '(:content content))
+        (psi-emacs--assistant-content-blocks
+         (psi-emacs--event-data-get content '(:content content))))
+       (t nil))))
+   ((listp content) content)
+   (t nil)))
+
+(defun psi-emacs--assistant-block->text (block)
+  "Render one assistant BLOCK as transcript text, or nil."
+  (when (listp block)
+    (let ((kind (psi-emacs--assistant-content-kind block)))
+      (cond
+       ((memq kind '(:text text))
+        (psi-emacs--event-data-get block '(:text text :message message)))
+       ((memq kind '(:error error))
+        (when-let ((err (psi-emacs--event-data-get block
+                                                   '(:text text :message message :error-message error-message))))
+          (format "[error] %s" err)))
+       ((memq kind '(:structured structured))
+        (psi-emacs--assistant-content->text block))
+       (t nil)))))
+
 (defun psi-emacs--assistant-content->text (content)
-  "Extract assistant display text from CONTENT blocks."
-  (let ((blocks (cond
-                 ((vectorp content) (append content nil))
-                 ((listp content) content)
-                 (t nil))))
+  "Extract assistant display text from CONTENT blocks.
+
+Supports canonical block vectors and structured content maps
+(`:kind :structured :blocks [...]`)."
+  (cond
+   ((stringp content)
+    content)
+
+   ((psi-emacs--assistant-content-map-p content)
+    (let ((kind (psi-emacs--assistant-content-kind content)))
+      (cond
+       ((memq kind '(:text text))
+        (or (psi-emacs--event-data-get content '(:text text :message message)) ""))
+
+       ((memq kind '(:structured structured))
+        (psi-emacs--assistant-content->text
+         (psi-emacs--event-data-get content '(:blocks blocks))))
+
+       ((psi-emacs--event-data-get content '(:content content))
+        (psi-emacs--assistant-content->text
+         (psi-emacs--event-data-get content '(:content content))))
+
+       (t
+        (string-join
+         (delq nil
+               (mapcar #'psi-emacs--assistant-block->text
+                       (or (psi-emacs--assistant-content-blocks content) '())))
+         "")))))
+
+   (t
     (string-join
      (delq nil
-           (mapcar (lambda (block)
-                     (when (listp block)
-                       (let ((type (psi-emacs--event-data-get block '(:type type))))
-                         (cond
-                          ((or (eq type :text) (equal type "text"))
-                           (psi-emacs--event-data-get block '(:text text :message message)))
-                          ((or (eq type :error) (equal type "error"))
-                           (when-let ((err (psi-emacs--event-data-get block
-                                                                      '(:text text :message message :error-message error-message))))
-                             (format "[error] %s" err)))))))
-                   blocks))
-     "")))
+           (mapcar #'psi-emacs--assistant-block->text
+                   (or (psi-emacs--assistant-content-blocks content) '())))
+     ""))))
 
 (provide 'psi-assistant-render)
 

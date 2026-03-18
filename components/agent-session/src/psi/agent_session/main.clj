@@ -45,11 +45,13 @@
      /history — print message history
      /help    — print available commands"
   (:require
+   [clojure.java.io :as io]
    [clojure.string :as str]
    [taoensso.timbre :as timbre]
    [psi.agent-session.commands :as commands]
    [psi.agent-session.core :as session]
    [psi.agent-session.runtime :as runtime]
+   [psi.agent-session.message-text :as message-text]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.prompt-templates :as pt]
@@ -205,6 +207,14 @@
   [args flag]
   (second (drop-while #(not= flag %) args)))
 
+(defn- rpc-trace-file-from-args
+  "Extract optional --rpc-trace-file <path> value.
+   Blank values are treated as nil."
+  [args]
+  (let [v (arg-value args "--rpc-trace-file")]
+    (when-not (str/blank? v)
+      v)))
+
 (defn- parse-bool-arg
   [v]
   (when (string? v)
@@ -322,13 +332,15 @@
   "Print the text content of an assistant message map.
   If the message carries an error, print it clearly instead of (or after) any partial text."
   [msg]
-  (let [text   (str/join (keep #(when (= :text  (:type %)) (:text %)) (:content msg)))
-        errors (keep     #(when (= :error (:type %)) (:text %)) (:content msg))]
+  (let [text   (some->> (message-text/content-text-parts (:content msg))
+                        seq
+                        (str/join ""))
+        errors (message-text/content-error-parts (:content msg))]
     (when (seq text)
       (println (str "\nψ: " text "\n")))
     (doseq [err errors]
       (println (str "\n[Provider error: " err "]\n")))
-    (when (and (empty? text) (empty? errors))
+    (when (and (empty? (or text "")) (empty? errors))
       (println "\nψ: (no response)\n"))))
 
 (defn- print-initial-transcript!
@@ -343,22 +355,44 @@
   "Extract display text from an agent-core message map.
    Includes :text blocks and :error blocks."
   [msg]
-  (let [content (:content msg)]
-    (cond
-      (string? content)
-      content
+  (or (message-text/content-display-text (:content msg))
+      ""))
 
+(defn- ->kw
+  [x]
+  (cond
+    (keyword? x) x
+    (string? x)  (keyword x)
+    :else        nil))
+
+(defn- assistant-tool-call-blocks
+  [content]
+  (letfn [(tool-call? [block]
+            (= :tool-call (->kw (or (:type block)
+                                    (get block "type")
+                                    (:kind block)
+                                    (get block "kind")))))]
+    (cond
       (sequential? content)
       (->> content
-           (keep (fn [block]
-                   (case (:type block)
-                     :text  (:text block)
-                     :error (str "[error] " (:text block))
-                     nil)))
-           (str/join "\n"))
+           (filter map?)
+           (filter tool-call?)
+           (mapv (fn [block]
+                   {:id        (or (:id block) (get block "id"))
+                    :name      (or (:name block) (get block "name"))
+                    :arguments (or (:arguments block)
+                                   (get block "arguments")
+                                   (some-> (or (:input block)
+                                               (get block "input"))
+                                           pr-str)
+                                   "")})))
+
+      (and (map? content)
+           (= :structured (->kw (or (:kind content) (get content "kind")))))
+      (assistant-tool-call-blocks (or (:blocks content) (get content "blocks")))
 
       :else
-      "")))
+      [])))
 
 (defn- tool-result->display-text
   "Best-effort display text for a toolResult message content vector."
@@ -382,12 +416,11 @@
                                      :text (if (str/blank? text) "[user]" text)}))
 
        "assistant"
-       (let [text (message->display-text msg)
-             content (:content msg)
-             tool-blocks (filter #(= :tool-call (:type %)) content)
-             acc' (if (str/blank? text)
-                    acc
-                    (update acc :messages conj {:role :assistant :text text}))]
+       (let [text        (message->display-text msg)
+             tool-blocks (assistant-tool-call-blocks (:content msg))
+             acc'        (if (str/blank? text)
+                           acc
+                           (update acc :messages conj {:role :assistant :text text}))]
          (reduce
           (fn [a block]
             (let [id (:id block)
@@ -875,10 +908,12 @@
    In rpc-edn mode, reserve stdout strictly for protocol frames and route
    incidental println/log output to stderr."
   ([model-key]
-   (run-rpc-edn-session! model-key {} {}))
+   (run-rpc-edn-session! model-key {} {} {}))
   ([model-key memory-runtime-opts]
-   (run-rpc-edn-session! model-key memory-runtime-opts {}))
+   (run-rpc-edn-session! model-key memory-runtime-opts {} {}))
   ([model-key memory-runtime-opts session-config]
+   (run-rpc-edn-session! model-key memory-runtime-opts session-config {}))
+  ([model-key memory-runtime-opts session-config {:keys [rpc-trace-file]}]
    (let [protocol-out       *out*
          original-systemout System/out]
      (try
@@ -886,21 +921,48 @@
        ;; writes (including background threads and library logging) onto stderr.
        (System/setOut (java.io.PrintStream. System/err true))
        (binding [*out* *err*]
-         (let [ai-model    (resolve-model model-key)
-               event-queue (java.util.concurrent.LinkedBlockingQueue.)
+         (let [ai-model      (resolve-model model-key)
+               event-queue   (java.util.concurrent.LinkedBlockingQueue.)
                {:keys [ctx oauth-ctx cwd]}
                (create-runtime-session-context ai-model {:event-queue event-queue
                                                          :session-config session-config
                                                          :ui-type :emacs})
-               _           (bootstrap-runtime-session! ctx ai-model {:memory-runtime-opts memory-runtime-opts
-                                                                     :cwd cwd})
-               state       (atom {:handshake-server-info-fn (fn [] (assoc (rpc/session->handshake-server-info ctx)
-                                                                          :ui-type :emacs))
-                                  :handshake-context-updated-payload-fn (fn [] (#'rpc/context-updated-payload ctx))
-                                  :subscribed-topics #{}
-                                  :rpc-ai-model ai-model
-                                  :on-new-session! (fn []
-                                                     (start-new-session-with-startup! ctx nil ai-model))})
+               _             (bootstrap-runtime-session! ctx ai-model {:memory-runtime-opts memory-runtime-opts
+                                                                       :cwd cwd})
+               trace-file*   (when-not (str/blank? rpc-trace-file)
+                               rpc-trace-file)
+               _             (session/assoc-state-value-in! ctx
+                                                            (session/state-path :rpc-trace)
+                                                            {:enabled? (boolean trace-file*)
+                                                             :file trace-file*})
+               trace-lock    (Object.)
+               trace-fn      (fn [{:keys [dir raw frame parse-error]}]
+                               (try
+                                 (let [cfg      (or (session/get-state-value-in ctx (session/state-path :rpc-trace)) {})
+                                       enabled? (boolean (:enabled? cfg))
+                                       path     (:file cfg)]
+                                   (when (and enabled?
+                                              (string? path)
+                                              (not (str/blank? path)))
+                                     (io/make-parents path)
+                                     (let [entry (cond-> {:ts (str (java.time.Instant/now))
+                                                          :dir dir
+                                                          :raw raw}
+                                                   (map? frame) (assoc :frame frame)
+                                                   (and (string? parse-error)
+                                                        (not (str/blank? parse-error)))
+                                                   (assoc :parse-error parse-error))]
+                                       (locking trace-lock
+                                         (spit path (str (pr-str entry) "\n") :append true)))))
+                                 (catch Throwable t
+                                   (timbre/warn t "Failed to write rpc trace event"))))
+               state         (atom {:handshake-server-info-fn (fn [] (assoc (rpc/session->handshake-server-info ctx)
+                                                                            :ui-type :emacs))
+                                    :handshake-context-updated-payload-fn (fn [] (#'rpc/context-updated-payload ctx))
+                                    :subscribed-topics #{}
+                                    :rpc-ai-model ai-model
+                                    :on-new-session! (fn []
+                                                       (start-new-session-with-startup! ctx nil ai-model))})
                request-handler (rpc/make-session-request-handler ctx)]
            (reset! session-state {:ctx ctx
                                   :ai-model ai-model
@@ -908,7 +970,8 @@
                                   :nrepl-runtime-atom nrepl-runtime})
            (rpc/run-stdio-loop! {:request-handler request-handler
                                  :state state
-                                 :out protocol-out})))
+                                 :out protocol-out
+                                 :trace-fn trace-fn})))
        (finally
          (System/setOut original-systemout))))))
 
@@ -920,6 +983,7 @@
    --log-level <LEVEL>
    --tui
    --rpc-edn
+   --rpc-trace-file <path>
    --nrepl [port]
    --memory-store <in-memory>
    --memory-store-fallback <on|off>
@@ -935,6 +999,7 @@
   (let [model-key            (model-key-from-args args)
         memory-runtime-opts  (memory-runtime-opts-from-args args)
         session-runtime-opts (session-runtime-config-from-args args)
+        rpc-trace-file       (rpc-trace-file-from-args args)
         tui?                 (some #(= "--tui" %) args)
         rpc-edn?             (some #(= "--rpc-edn" %) args)
         nrepl-port           (nrepl-port-from-args args)
@@ -947,7 +1012,10 @@
     (try
       (cond
         rpc-edn?
-        (run-rpc-edn-session! model-key memory-runtime-opts session-runtime-opts)
+        (run-rpc-edn-session! model-key
+                              memory-runtime-opts
+                              session-runtime-opts
+                              {:rpc-trace-file rpc-trace-file})
 
         tui?
         (run-tui-session model-key memory-runtime-opts session-runtime-opts)

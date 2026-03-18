@@ -16,6 +16,7 @@
    [psi.agent-session.executor :as executor]
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.runtime :as runtime]
+   [psi.agent-session.message-text :as message-text]
    [psi.ai.models :as ai-models]
    [psi.tui.extension-ui :as ext-ui]))
 
@@ -98,7 +99,7 @@
     "switch_session"
     "fork"})
 
-(declare emit-event!)
+(declare emit-event! assistant-content-text)
 
 (defn response-frame
   ([id op ok]
@@ -184,15 +185,33 @@
     :else
     (str x)))
 
+(defn- safe-trace!
+  [trace-fn payload]
+  (when trace-fn
+    (try
+      (trace-fn payload)
+      (catch Throwable _
+        nil))))
+
 (defn make-frame-writer
-  "Return a serialized frame emitter writing one EDN map per line to `out-writer`."
-  [^java.io.Writer out-writer]
-  (let [lock   (Object.)
-        writer (java.io.BufferedWriter. out-writer)]
-    (fn emit-frame! [frame]
-      (locking lock
-        (.write writer (str (pr-str (edn-wire-safe (canonicalize-outbound-frame frame))) "\n"))
-        (.flush writer)))))
+  "Return a serialized frame emitter writing one EDN map per line to `out-writer`.
+
+   Optional `trace-fn` receives transport trace payloads:
+   {:dir :out :raw <wire-line> :frame <canonical-frame>}"
+  ([^java.io.Writer out-writer]
+   (make-frame-writer out-writer nil))
+  ([^java.io.Writer out-writer trace-fn]
+   (let [lock   (Object.)
+         writer (java.io.BufferedWriter. out-writer)]
+     (fn emit-frame! [frame]
+       (let [canonical (edn-wire-safe (canonicalize-outbound-frame frame))
+             line      (pr-str canonical)]
+         (locking lock
+           (.write writer (str line "\n"))
+           (.flush writer))
+         (safe-trace! trace-fn {:dir :out
+                                :raw line
+                                :frame canonical}))))))
 
 (defn- invalid-envelope [frame-id frame-op message]
   (error-frame {:id            frame-id
@@ -1109,12 +1128,16 @@
                                 (reset! stop? true)
                                 (deref poll-loop 200 nil)
                                 (emit-progress-queue! progress-q emit!)
-                                (emit! "assistant/message"
-                                       (cond-> {:role    (:role result)
-                                                :content (or (:content result) [])}
-                                         (contains? result :stop-reason)   (assoc :stop-reason (:stop-reason result))
-                                         (contains? result :error-message) (assoc :error-message (:error-message result))
-                                         (contains? result :usage)         (assoc :usage (:usage result))))
+                                (let [content (or (:content result) [])
+                                      text    (assistant-content-text content)]
+                                  (emit! "assistant/message"
+                                         (cond-> {:role    (:role result)
+                                                  :content content}
+                                           (and (string? text) (not (str/blank? text)))
+                                           (assoc :text text)
+                                           (contains? result :stop-reason)   (assoc :stop-reason (:stop-reason result))
+                                           (contains? result :error-message) (assoc :error-message (:error-message result))
+                                           (contains? result :usage)         (assoc :usage (:usage result)))))
                                 (emit! "session/updated" (session-updated-payload ctx))
                                 (emit! "footer/updated"  (footer-updated-payload ctx)))
                               (when (< attempt 1200)
@@ -1143,11 +1166,19 @@
                                 (recur current)))))]
       (swap! state assoc :ui-watch-loop watch-loop))))
 
+(defn- assistant-content-text
+  [content]
+  (or (message-text/content-display-text content)
+      (message-text/content-text content)))
+
 (defn- external-message->assistant-payload
   [message]
-  (let [content (or (:content message) [])]
+  (let [content (or (:content message) [])
+        text    (or (:text message)
+                    (assistant-content-text content))]
     (cond-> {:role    (or (:role message) "assistant")
              :content content}
+      (and (string? text) (not (str/blank? text))) (assoc :text text)
       (contains? message :custom-type) (assoc :custom-type (:custom-type message))
       (contains? message :stop-reason) (assoc :stop-reason (:stop-reason message))
       (contains? message :error-message) (assoc :error-message (:error-message message))
@@ -1182,9 +1213,11 @@
 
 (defn- emit-assistant-text!
   [emit! text]
-  (emit! "assistant/message"
-         {:role    "assistant"
-          :content [{:type :text :text (str text)}]}))
+  (let [text* (str text)]
+    (emit! "assistant/message"
+           {:role    "assistant"
+            :text    text*
+            :content [{:type :text :text text*}]})))
 
 (defn- complete-pending-login!
   [ctx state message emit!]
@@ -1756,12 +1789,16 @@
                                    (reset! progress-stop? true)
                                    (deref progress-loop 200 nil)
                                    (emit-progress-queue! progress-q emit!)
-                                   (emit! "assistant/message"
-                                          (cond-> {:role    (:role result)
-                                                   :content (or (:content result) [])}
-                                            (contains? result :stop-reason)   (assoc :stop-reason (:stop-reason result))
-                                            (contains? result :error-message) (assoc :error-message (:error-message result))
-                                            (contains? result :usage)         (assoc :usage (:usage result))))
+                                   (let [content (or (:content result) [])
+                                         text    (assistant-content-text content)]
+                                     (emit! "assistant/message"
+                                            (cond-> {:role    (:role result)
+                                                     :content content}
+                                              (and (string? text) (not (str/blank? text)))
+                                              (assoc :text text)
+                                              (contains? result :stop-reason)   (assoc :stop-reason (:stop-reason result))
+                                              (contains? result :error-message) (assoc :error-message (:error-message result))
+                                              (contains? result :usage)         (assoc :usage (:usage result)))))
                                    (emit! "session/updated" (session-updated-payload ctx))
                                    (emit! "footer/updated" (footer-updated-payload ctx)))))
                              (catch Throwable t
@@ -2140,12 +2177,13 @@
    - :err              java.io.Writer (default *err*)
    - :request-handler  (fn [request emit-frame! state] -> frame | [frame*] | nil)
    - :state            mutable transport state passed to request-handler
+   - :trace-fn         optional (fn [{:dir :in|:out :raw string :frame map :parse-error string?}])
 
    State keys:
    - :ready?                   handshake readiness gate (default false)
    - :pending                  map of request-id -> op for in-flight requests
    - :max-pending-requests     guard limit (default 64)"
-  [{:keys [in out err request-handler state]
+  [{:keys [in out err request-handler state trace-fn]
     :or   {in *in*
            out *out*
            err *err*
@@ -2153,7 +2191,7 @@
                              (default-request-handler request))
            state (atom {})}}]
   (let [reader      (java.io.BufferedReader. in)
-        emit-frame! (make-frame-writer out)]
+        emit-frame! (make-frame-writer out trace-fn)]
     (swap! state #(merge {:ready? false
                           :pending {}
                           :max-pending-requests default-max-pending-requests
@@ -2170,10 +2208,23 @@
                                                      :error-message error-message})))]
       (doseq [line (line-seq reader)]
         (if (str/blank? line)
-          (emit-error! "transport/invalid-frame" "empty frame")
+          (do
+            (safe-trace! trace-fn {:dir :in
+                                   :raw line
+                                   :parse-error "empty frame"})
+            (emit-error! "transport/invalid-frame" "empty frame"))
           (let [{:keys [ok error]} (parse-request-line line)]
             (if error
-              (emit-frame! error)
-              (process-request! ok {:state           state
-                                    :request-handler request-handler
-                                    :emit-tracked!   emit-tracked!}))))))))
+              (do
+                (safe-trace! trace-fn {:dir :in
+                                       :raw line
+                                       :frame error
+                                       :parse-error (:error-message error)})
+                (emit-frame! error))
+              (do
+                (safe-trace! trace-fn {:dir :in
+                                       :raw line
+                                       :frame ok})
+                (process-request! ok {:state           state
+                                      :request-handler request-handler
+                                      :emit-tracked!   emit-tracked!})))))))))

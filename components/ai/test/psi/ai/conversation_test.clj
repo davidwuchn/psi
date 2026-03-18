@@ -51,6 +51,21 @@
       (is (inst? (:timestamp message)))
       (is (= (:timestamp message) (:updated-at updated)))))
 
+  (testing "Adding canonical user text blocks normalizes to schema-valid content"
+    (let [conversation (conversation/create "Test assistant")
+          updated      (conversation/add-user-message
+                        conversation
+                        [{:type :text
+                          :text "Hello"
+                          :cache-control {:type :ephemeral}}])
+          message      (first (:messages updated))]
+      (is (schemas/valid? schemas/Conversation updated))
+      (is (= :user (:role message)))
+      (is (= :text (get-in message [:content :kind])))
+      (is (= "Hello" (get-in message [:content :text])))
+      (is (= {:type :ephemeral}
+             (get-in message [:content :cache-control])))))
+
   (testing "Adding assistant message preserves supplied fields and adds identity"
     (let [conversation (conversation/create "Test assistant")
           updated      (conversation/add-assistant-message

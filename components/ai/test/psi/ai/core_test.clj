@@ -3,7 +3,8 @@
 
   Uses core/create-context (Nullable pattern) so streaming tests get their
   own isolated provider registry — no global-state mutations."
-  (:require [clojure.test :refer [deftest testing is]]
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest testing is]]
             [psi.ai.core :as core]
             [psi.ai.models :as models]
             [psi.ai.schemas :as schemas]
@@ -60,6 +61,43 @@
     (let [options {:temperature 3.0   ; Too high
                    :max-tokens  -1}]  ; Negative
       (is (not (schemas/valid? schemas/StreamOptions options))))))
+
+(deftest test-validate-bang-includes-humanized-details
+  (testing "validate! error message includes a useful failure summary"
+    (let [e (try
+              (schemas/validate! schemas/StreamOptions {:temperature 3.0})
+              nil
+              (catch Exception ex
+                ex))]
+      (is (some? e))
+      (is (str/includes? (ex-message e) "Validation failed"))
+      (is (str/includes? (ex-message e) "temperature"))
+      (is (string? (:validation-summary (ex-data e)))))))
+
+(deftest test-validate-bang-dispatch-errors-include-path-and-hint
+  (testing "validate! message includes failing path and canonical-block hint"
+    (let [invalid-conversation
+          {:id "c1"
+           :status :active
+           :created-at (java.util.Date.)
+           :updated-at (java.util.Date.)
+           :messages [{:id "m1"
+                       :role :user
+                       :timestamp (java.util.Date.)
+                       :content [{:type :text :text "hello"}]}]
+           :tools #{}}
+          e (try
+              (schemas/validate! schemas/Conversation invalid-conversation)
+              nil
+              (catch Exception ex
+                ex))
+          msg (some-> e ex-message)]
+      (is (some? e))
+      (is (str/includes? msg "[:messages 0 :content]"))
+      (is (str/includes? msg "invalid dispatch value"))
+      (is (str/includes? msg "canonical blocks"))
+      (is (str/includes? msg "kind-based content map"))
+      (is (string? (:validation-detail (ex-data e)))))))
 
 ;; ─────────────────────────────────────────────────────────────────────────────
 ;; Streaming — callback API (isolated context, stub provider)

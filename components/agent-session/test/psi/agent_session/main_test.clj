@@ -169,6 +169,45 @@
       (finally
         (reset! main/session-state orig-state)))))
 
+(deftest run-rpc-session-enables-rpc-trace-config-test
+  (let [orig-state @main/session-state
+        captured   (atom nil)
+        trace-file (str (java.nio.file.Files/createTempFile
+                         "psi-rpc-trace-test-"
+                         ".ndedn"
+                         (make-array java.nio.file.attribute.FileAttribute 0)))]
+    (try
+      (with-main-bootstrap-stubs
+        (fn []
+          (with-redefs [rpc/run-stdio-loop!
+                        (fn [opts]
+                          (reset! captured opts)
+                          :ok)]
+            (#'main/run-rpc-edn-session! :ignored {} {} {:rpc-trace-file trace-file})
+            (let [ctx         (:ctx @main/session-state)
+                  trace-state (session/get-state-value-in ctx (session/state-path :rpc-trace))
+                  trace-fn    (:trace-fn @captured)]
+              (is (fn? trace-fn))
+              (is (= true (:enabled? trace-state)))
+              (is (= trace-file (:file trace-state)))
+
+              (trace-fn {:dir :in
+                         :raw "{:id \"1\" :kind :request :op \"ping\"}"
+                         :frame {:id "1" :kind :request :op "ping"}})
+              (let [before-disable (count (str/split-lines (slurp trace-file)))]
+                (is (pos? before-disable))
+                (session/assoc-state-value-in!
+                 ctx
+                 (session/state-path :rpc-trace)
+                 {:enabled? false :file trace-file})
+                (trace-fn {:dir :out
+                           :raw "{:kind :response :id \"1\" :op \"ping\" :ok true}"
+                           :frame {:kind :response :id "1" :op "ping" :ok true}})
+                (is (= before-disable
+                       (count (str/split-lines (slurp trace-file))))))))))
+      (finally
+        (reset! main/session-state orig-state)))))
+
 (deftest agent-messages->tui-resume-state-rehydrates-tool-rows-test
   (let [messages [{:role "user"
                    :content [{:type :text :text "read file"}]}
@@ -197,6 +236,29 @@
     (is (= "hello" (get-in tool-calls ["call-1" :result])))
     (is (= {:full-output-path "/tmp/all.log"}
            (get-in tool-calls ["call-1" :details])))))
+
+(deftest agent-messages->tui-resume-state-supports-structured-content-test
+  (let [messages [{:role "assistant"
+                   :content {:kind :structured
+                             :blocks [{:kind :text :text "planning"}
+                                      {:kind :tool-call :id "call-2" :name "read" :input {:path "README.md"}}]}}
+                  {:role "toolResult"
+                   :tool-call-id "call-2"
+                   :tool-name "read"
+                   :content [{:type :text :text "ok"}]
+                   :is-error false}
+                  {:role "assistant"
+                   :content {:kind :structured
+                             :blocks [{:kind :text :text "done"}]}}]
+        {:keys [messages tool-calls tool-order]}
+        (#'main/agent-messages->tui-resume-state messages)]
+    (is (= [{:role :assistant :text "planning"}
+            {:role :assistant :text "done"}]
+           messages))
+    (is (= ["call-2"] tool-order))
+    (is (= "read" (get-in tool-calls ["call-2" :name])))
+    (is (= "{:path \"README.md\"}"
+           (get-in tool-calls ["call-2" :args])))))
 
 (deftest memory-runtime-opts-from-args-test
   (is (= {:store-provider "in-memory"
@@ -237,6 +299,14 @@
       (is (= {}
              (#'main/session-runtime-config-from-args
               ["--llm-idle-timeout-ms" "not-a-number"]))))))
+
+(deftest rpc-trace-file-from-args-test
+  (is (= "/tmp/rpc-trace.ndedn"
+         (#'main/rpc-trace-file-from-args
+          ["--rpc-trace-file" "/tmp/rpc-trace.ndedn"])))
+  (is (nil? (#'main/rpc-trace-file-from-args
+             ["--rpc-trace-file" "   "])))
+  (is (nil? (#'main/rpc-trace-file-from-args []))))
 
 (deftest bootstrap-runtime-session-initial-context-index-has-single-session-test
   (with-redefs [oauth/create-context (fn [] nil)

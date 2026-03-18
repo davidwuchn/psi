@@ -1248,6 +1248,35 @@
         (is (true? (:success attach)) (pr-str attach))
         (is (= branch-name (:branch attach)) (pr-str attach))))))
 
+(deftest rpc-trace-mutation-and-resolver-test
+  (let [ctx    (session/create-context {:persist? false})
+        qctx   (query/create-query-context)
+        mutate (fn [op params]
+                 (get (query/query-in qctx
+                                      {:psi/agent-session-ctx ctx}
+                                      [(list op (assoc params :psi/agent-session-ctx ctx))])
+                      op))]
+    (session/register-resolvers-in! qctx false)
+    (session/register-mutations-in! qctx true)
+
+    (is (contains? (query/mutation-syms-in qctx) 'psi.extension/set-rpc-trace))
+    (is (= {:psi.agent-session/rpc-trace-enabled false
+            :psi.agent-session/rpc-trace-file nil}
+           (session/query-in ctx [:psi.agent-session/rpc-trace-enabled
+                                  :psi.agent-session/rpc-trace-file])))
+
+    (let [r1 (mutate 'psi.extension/set-rpc-trace
+                     {:enabled true
+                      :file "/tmp/psi-rpc-trace-from-mutation.ndedn"})]
+      (is (= true (:psi.agent-session/rpc-trace-enabled r1)))
+      (is (= "/tmp/psi-rpc-trace-from-mutation.ndedn"
+             (:psi.agent-session/rpc-trace-file r1))))
+
+    (let [r2 (mutate 'psi.extension/set-rpc-trace {:enabled false})]
+      (is (= false (:psi.agent-session/rpc-trace-enabled r2)))
+      (is (= "/tmp/psi-rpc-trace-from-mutation.ndedn"
+             (:psi.agent-session/rpc-trace-file r2))))))
+
 (deftest session-query-in-exposes-recursion-attrs-test
   (testing "session/query-in can read recursion attrs from live session recursion-ctx"
     (let [rctx (recursion/create-context)

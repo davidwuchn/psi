@@ -31,6 +31,7 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [taoensso.timbre :as timbre]
+   [psi.agent-session.message-text :as message-text]
    [psi.agent-session.persistence :as persist]
    [psi.tui.ansi :as ansi]
    [psi.tui.extension-ui :as ext-ui]
@@ -1430,13 +1431,11 @@
 (defn- handle-agent-result
   "Process completed agent result."
   [state result]
-  (let [text   (str/join
-                (keep #(when (= :text (:type %)) (:text %))
-                      (:content result)))
-        errors (keep #(when (= :error (:type %)) (:text %))
-                     (:content result))
-        error  (first errors)
-        display (if (seq text) text "(no response)")]
+  (let [content (:content result)
+        text    (message-text/content-text content)
+        errors  (message-text/content-error-parts content)
+        error   (first errors)
+        display (if (seq (or text "")) text "(no response)")]
     [(-> state
          (update :messages conj {:role :assistant :text display})
          (assoc :phase           :idle
