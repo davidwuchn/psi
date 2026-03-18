@@ -90,11 +90,26 @@
         (catch Exception _
           {:code value :state nil}))
 
-      ;; code#state format
+      ;; code#state format (also accepts code=...#state=...)
       (str/includes? value "#")
-      (let [[code state] (str/split value #"#" 2)]
-        {:code (not-empty code)
-         :state (not-empty state)})
+      (let [[code-part state-part] (str/split value #"#" 2)
+            parsed                (when (or (str/includes? (or code-part "") "=")
+                                            (str/includes? (or state-part "") "="))
+                                    (parse-query-string (str (or code-part "")
+                                                             "&"
+                                                             (or state-part ""))))
+            code                  (or (get parsed "code")
+                                      (some-> code-part
+                                              str/trim
+                                              (str/replace-first #"^code=" "")
+                                              not-empty))
+            state                 (or (get parsed "state")
+                                      (some-> state-part
+                                              str/trim
+                                              (str/replace-first #"^state=" "")
+                                              not-empty))]
+        {:code code
+         :state state})
 
       ;; key=value&... format
       (or (str/includes? value "code=") (str/includes? value "state="))
@@ -127,29 +142,66 @@
 
 ;;; Anthropic OAuth provider
 
-(def ^:private anthropic-client-id "9d1c250a-e61b-44d9-88ed-5944d1962f5e")
-(def ^:private anthropic-authorize-url "https://claude.ai/oauth/authorize")
-(def ^:private anthropic-token-url "https://console.anthropic.com/v1/oauth/token")
-(def ^:private anthropic-redirect-uri "https://console.anthropic.com/oauth/code/callback")
-(def ^:private anthropic-scopes "org:create_api_key user:profile user:inference")
+(def ^:private anthropic-default-client-id "a473d7bb-17ac-43a7-abc0-a1343d7c2805")
+(def ^:private anthropic-legacy-client-id "9d1c250a-e61b-44d9-88ed-5944d1962f5e")
+(def ^:private anthropic-default-authorize-url "https://claude.ai/oauth/authorize")
+(def ^:private anthropic-default-token-url "https://console.anthropic.com/v1/oauth/token")
+(def ^:private anthropic-default-redirect-uri "https://console.anthropic.com/oauth/code/callback")
+(def ^:private anthropic-default-scopes "user:inference user:file_upload")
+
+(defn- get-env
+  [k]
+  (System/getenv k))
+
+(defn- env-nonblank
+  [k]
+  (some-> (get-env k)
+          str/trim
+          not-empty))
+
+(defn- anthropic-oauth-config
+  []
+  {:client-id (or (env-nonblank "PSI_ANTHROPIC_OAUTH_CLIENT_ID")
+                  (env-nonblank "ANTHROPIC_OAUTH_CLIENT_ID")
+                  anthropic-default-client-id)
+   :authorize-url (or (env-nonblank "PSI_ANTHROPIC_OAUTH_AUTHORIZE_URL")
+                      anthropic-default-authorize-url)
+   :token-url (or (env-nonblank "PSI_ANTHROPIC_OAUTH_TOKEN_URL")
+                  anthropic-default-token-url)
+   :redirect-uri (or (env-nonblank "PSI_ANTHROPIC_OAUTH_REDIRECT_URI")
+                     anthropic-default-redirect-uri)
+   :scopes (or (env-nonblank "PSI_ANTHROPIC_OAUTH_SCOPES")
+               (env-nonblank "ANTHROPIC_OAUTH_SCOPES")
+               anthropic-default-scopes)})
+
+(defn- anthropic-credential-metadata
+  [{:keys [client-id token-url redirect-uri scopes]}]
+  {:client-id client-id
+   :token-url token-url
+   :redirect-uri redirect-uri
+   :scopes scopes})
 
 (defn- anthropic-begin-login
   "Generate PKCE + authorize URL. Returns {:url ... :login-state ...}."
   []
   (let [{:keys [verifier challenge]} (pkce/generate-pkce)
-        auth-url (str anthropic-authorize-url "?"
+        {:keys [client-id authorize-url redirect-uri scopes] :as oauth-config}
+        (anthropic-oauth-config)
+        auth-url (str authorize-url "?"
                       (build-query-string
                        {"code"                  "true"
-                        "client_id"             anthropic-client-id
+                        "client_id"             client-id
                         "response_type"         "code"
-                        "redirect_uri"          anthropic-redirect-uri
-                        "scope"                 anthropic-scopes
+                        "redirect_uri"          redirect-uri
+                        "scope"                 scopes
                         "code_challenge"        challenge
                         "code_challenge_method" "S256"
                         "state"                 verifier}))]
     (open-browser! auth-url)
     {:url         auth-url
-     :login-state {:verifier verifier}}))
+     :login-state (assoc (select-keys oauth-config
+                                      [:client-id :token-url :redirect-uri :scopes])
+                         :verifier verifier)}))
 
 (defn- anthropic-complete-login
   "Exchange authorization code for tokens.
@@ -157,27 +209,35 @@
    `login-state` is the map returned by begin-login."
   [input login-state]
   (let [{:keys [code state]} (parse-authorization-input input)
-        expected-state       (:verifier login-state)]
+        expected-state       (:verifier login-state)
+        oauth-config         (merge (anthropic-oauth-config)
+                                    (select-keys login-state
+                                                 [:client-id :token-url :redirect-uri :scopes]))
+        {:keys [client-id token-url redirect-uri]} oauth-config]
     (when-not (seq code)
       (throw (ex-info "Missing authorization code" {:provider :anthropic})))
     (when (and (seq state) (not= state expected-state))
-      (throw (ex-info "State mismatch" {:provider :anthropic})))
-    (let [response (http/post anthropic-token-url
+      (throw (ex-info "State mismatch (use the most recent /login URL/code and include full code+state)"
+                      {:provider :anthropic
+                       :expected-state expected-state
+                       :received-state state})))
+    (let [response (http/post token-url
                               {:content-type  :json
                                :as            :json
                                :cookie-policy :none
                                :body          (json/generate-string
                                                {"grant_type"    "authorization_code"
-                                                "client_id"     anthropic-client-id
+                                                "client_id"     client-id
                                                 "code"          code
                                                 "state"         (or state expected-state)
-                                                "redirect_uri"  anthropic-redirect-uri
+                                                "redirect_uri"  redirect-uri
                                                 "code_verifier" (:verifier login-state)})})
           {:keys [access_token refresh_token expires_in]} (:body response)]
-      {:type    :oauth
-       :refresh refresh_token
-       :access  access_token
-       :expires (expires-at-from-seconds expires_in)})))
+      {:type     :oauth
+       :refresh  refresh_token
+       :access   access_token
+       :expires  (expires-at-from-seconds expires_in)
+       :metadata (anthropic-credential-metadata oauth-config)})))
 
 (defn- anthropic-login
   "Run Anthropic OAuth authorization code + PKCE flow (callback-based).
@@ -192,22 +252,44 @@
     (let [input ((:on-prompt callbacks) {:message "Paste the authorization code:"})]
       (anthropic-complete-login input login-state))))
 
+(defn- refresh-anthropic-token
+  [{:keys [client-id token-url]} refresh-token]
+  (http/post token-url
+             {:content-type  :json
+              :as            :json
+              :cookie-policy :none
+              :body          (json/generate-string
+                              {"grant_type"    "refresh_token"
+                               "client_id"     client-id
+                               "refresh_token" refresh-token})}))
+
 (defn- anthropic-refresh
   "Refresh an Anthropic OAuth token."
   [credential]
-  (let [response (http/post anthropic-token-url
-                            {:content-type  :json
-                             :as            :json
-                             :cookie-policy :none
-                             :body          (json/generate-string
-                                             {"grant_type"    "refresh_token"
-                                              "client_id"     anthropic-client-id
-                                              "refresh_token" (:refresh credential)})})
+  (let [stored-config   (select-keys (:metadata credential)
+                                     [:client-id :token-url :redirect-uri :scopes])
+        oauth-config    (merge (anthropic-oauth-config) stored-config)
+        refresh-token   (:refresh credential)
+        [response client-id]
+        (try
+          [(refresh-anthropic-token oauth-config refresh-token)
+           (:client-id oauth-config)]
+          (catch Exception e
+            ;; Backward compatibility: refresh legacy credentials that predate
+            ;; metadata pinning by retrying with the old Claude Code client id.
+            (if (and (nil? (:client-id stored-config))
+                     (not= (:client-id oauth-config) anthropic-legacy-client-id))
+              (let [legacy-config (assoc oauth-config :client-id anthropic-legacy-client-id)]
+                [(refresh-anthropic-token legacy-config refresh-token)
+                 anthropic-legacy-client-id])
+              (throw e))))
         {:keys [access_token refresh_token expires_in]} (:body response)]
-    {:type    :oauth
-     :refresh refresh_token
-     :access  access_token
-     :expires (expires-at-from-seconds expires_in)}))
+    {:type     :oauth
+     :refresh  (or refresh_token (:refresh credential))
+     :access   access_token
+     :expires  (expires-at-from-seconds expires_in)
+     :metadata (anthropic-credential-metadata
+                (assoc oauth-config :client-id client-id))}))
 
 (def anthropic-provider
   {:id                   :anthropic
@@ -276,7 +358,10 @@
         (when-not (seq code)
           (throw (ex-info "Missing authorization code" {:provider :openai})))
         (when (and (seq state) (not= state expected-state))
-          (throw (ex-info "State mismatch" {:provider :openai})))
+          (throw (ex-info "State mismatch (use the most recent /login URL/code and include full code+state)"
+                          {:provider :openai
+                           :expected-state expected-state
+                           :received-state state})))
         (let [response (http/post openai-token-url
                                   {:content-type  :x-www-form-urlencoded
                                    :as            :json
