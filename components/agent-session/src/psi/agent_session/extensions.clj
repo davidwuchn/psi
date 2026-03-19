@@ -39,7 +39,7 @@
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [psi.tui.extension-ui :as ext-ui]
+   [psi.ui.state :as ui-state]
    [taoensso.timbre :as timbre]))
 
 ;; ============================================================
@@ -619,7 +619,7 @@
      ;; ── UI context ─────────────────────────────────────
      ;; nil when headless (no TUI); present when TUI is active.
      :ui
-     (ext-ui/create-ui-context (:ui-state-atom runtime-fns) ext-path)}))
+     (ui-state/create-ui-context (:ui-state-atom runtime-fns) ext-path)}))
 
 ;; ============================================================
 ;; Extension loading

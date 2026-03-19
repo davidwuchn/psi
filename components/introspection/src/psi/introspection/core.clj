@@ -38,19 +38,14 @@
      query-engine-detail-in        — single-engine diagnostics (ctx)
      query-agent-session-in        — EQL query over :psi.agent-session/* (ctx, q)"
   (:require
-   [com.wsscode.pathom3.connect.operation :as pco]
-   [psi.introspection.graph :as graph]
-   [psi.introspection.resolvers :as resolvers]
+
+   [psi.graph.analysis :as graph]
+
    [psi.engine.core :as engine]
    [psi.query.core :as query]
    [psi.query.registry :as registry]
-   [psi.ai.core :as ai]
-   [psi.history.resolvers :as history-resolvers]
    [psi.memory.core :as memory]
-   [psi.memory.resolvers :as memory-resolvers]
-   [psi.recursion.resolvers :as recursion-resolvers]
-   [psi.agent-session.core :as agent-session]
-   [psi.agent-session.resolvers :as as-resolvers]))
+   [psi.system-bootstrap.core :as bootstrap]))
 
 ;; ─────────────────────────────────────────────────────────────────────────────
 ;; Global registration
@@ -64,52 +59,13 @@
    - History resolvers
    - Introspection resolvers
    - Memory resolvers
+   - Recursion resolvers
    - Agent-session resolvers + mutations
 
+   Uses common dependency extraction to avoid circular dependencies.
    Idempotent: skips operations already present in the global registry."
   []
-  (let [existing-resolvers (registry/registered-resolver-syms)
-        existing-mutations (registry/registered-mutation-syms)
-        register-resolver-if-missing!
-        (fn [resolver]
-          (let [sym (-> resolver pco/operation-config ::pco/op-name)]
-            (when-not (contains? existing-resolvers sym)
-              (query/register-resolver! resolver))))
-        register-mutation-if-missing!
-        (fn [mutation]
-          (let [sym (-> mutation pco/operation-config ::pco/op-name)]
-            (when-not (contains? existing-mutations sym)
-              (query/register-mutation! mutation))))]
-    ;; AI resolvers (register directly to avoid per-domain env rebuilds)
-    (doseq [r ai/all-resolvers]
-      (register-resolver-if-missing! r))
-
-    ;; History + Introspection + Memory + Recursion + Agent-session resolvers
-    (doseq [r history-resolvers/all-resolvers]
-      (register-resolver-if-missing! r))
-    (doseq [r resolvers/all-resolvers]
-      (register-resolver-if-missing! r))
-    (doseq [r memory-resolvers/all-resolvers]
-      (register-resolver-if-missing! r))
-    (doseq [r recursion-resolvers/all-resolvers]
-      (register-resolver-if-missing! r))
-    (doseq [r as-resolvers/all-resolvers]
-      (register-resolver-if-missing! r))
-
-    ;; History mutations
-    (doseq [m history-resolvers/all-mutations]
-      (register-mutation-if-missing! m))
-
-    ;; Recursion mutations
-    (doseq [m recursion-resolvers/all-mutations]
-      (register-mutation-if-missing! m))
-
-    ;; Agent-session mutations
-    (doseq [m agent-session/all-mutations]
-      (register-mutation-if-missing! m))
-
-    ;; Single env rebuild after all operations are registered.
-    (query/rebuild-env!)))
+  (bootstrap/register-all-domains!))
 
 ;; ─────────────────────────────────────────────────────────────────────────────
 ;; Isolated introspection context (Nullable pattern)
@@ -198,54 +154,10 @@
    - :graph-ready true when graph has nodes and edges, else false
    - :evolution-stage set to :integrating when ready, else :developing"
   [ctx]
-  (let [qctx               (:query-ctx ctx)
-        reg                (:reg qctx)
-        session-ctx        (:agent-session-ctx ctx)
-        existing-resolvers (set (map #(-> % pco/operation-config ::pco/op-name)
-                                     (registry/all-resolvers-in reg)))
-        existing-mutations (set (map #(-> % pco/operation-config ::pco/op-name)
-                                     (registry/all-mutations-in reg)))
-        register-resolver-if-missing!
-        (fn [resolver]
-          (let [sym (-> resolver pco/operation-config ::pco/op-name)]
-            (when-not (contains? existing-resolvers sym)
-              (query/register-resolver-in! qctx resolver))))
-        register-mutation-if-missing!
-        (fn [mutation]
-          (let [sym (-> mutation pco/operation-config ::pco/op-name)]
-            (when-not (contains? existing-mutations sym)
-              (query/register-mutation-in! qctx mutation))))]
-    ;; AI resolvers are not part of the agent-session resolver surface.
-    (doseq [r ai/all-resolvers]
-      (register-resolver-if-missing! r))
-
-    ;; Introspection resolvers are specific to this component.
-    (doseq [r resolvers/all-resolvers]
-      (register-resolver-if-missing! r))
-
-    (if session-ctx
-      (do
-        ;; Agent-session queryability uses the canonical session resolver surface,
-        ;; which includes agent-session + history + memory + recursion. Mirror
-        ;; that full surface here so isolated introspection graphs match live
-        ;; session-root queries and graph summaries.
-        (doseq [r (as-resolvers/session-resolver-surface)]
-          (register-resolver-if-missing! r))
-        (doseq [m agent-session/all-mutations]
-          (register-mutation-if-missing! m)))
-      (do
-        ;; Without an agent-session context we still expose history, memory, and
-        ;; recursion through the isolated introspection graph.
-        (doseq [r history-resolvers/all-resolvers]
-          (register-resolver-if-missing! r))
-        (doseq [r memory-resolvers/all-resolvers]
-          (register-resolver-if-missing! r))
-        (doseq [m history-resolvers/all-mutations]
-          (register-mutation-if-missing! m))
-        (doseq [r recursion-resolvers/all-resolvers]
-          (register-resolver-if-missing! r))
-        (doseq [m recursion-resolvers/all-mutations]
-          (register-mutation-if-missing! m))))
+  (let [qctx        (:query-ctx ctx)
+        session-ctx (:agent-session-ctx ctx)]
+    ;; Use system bootstrap component to register resolvers cleanly
+    (bootstrap/register-domains-in! qctx session-ctx)
 
     ;; Single env rebuild after all operations are registered.
     (query/rebuild-env-in! qctx)

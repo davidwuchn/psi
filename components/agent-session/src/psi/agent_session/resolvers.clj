@@ -320,7 +320,7 @@
    [com.wsscode.pathom3.connect.operation :as pco]
    [com.wsscode.pathom3.connect.indexes :as pci]
    [com.wsscode.pathom3.interface.eql :as p.eql]
-   [psi.introspection.graph :as graph]
+   [psi.graph.analysis :as graph]
    [psi.history.git :as git]
    [psi.history.resolvers :as history-resolvers]
    [psi.engine.core :as engine]
@@ -337,7 +337,7 @@
    [psi.agent-session.skills :as skills]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.workflows :as wf]
-   [psi.tui.extension-ui :as ext-ui]
+   [psi.ui.state :as ui-state]
    [psi.agent-session.statechart :as sc]
    [psi.agent-session.turn-statechart :as turn-sc]
    [psi.agent-session.oauth.core :as oauth]
@@ -1933,7 +1933,7 @@
                  :psi.ui/visible-notifications
                  :psi.ui/tool-renderers
                  :psi.ui/message-renderers]}
-  (let [snap (ext-ui/snapshot (:ui-state-atom agent-session-ctx))]
+  (let [snap (ui-state/snapshot (:ui-state-atom agent-session-ctx))]
     (if snap
       {:psi.ui/dialog-queue-empty?   (:dialog-queue-empty? snap)
        :psi.ui/active-dialog         (:active-dialog snap)

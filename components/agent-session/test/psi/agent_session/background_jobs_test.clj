@@ -14,6 +14,7 @@
    [psi.agent-core.core :as agent-core]
    [psi.agent-session.background-jobs :as bj]
    [psi.agent-session.core :as session]
+   [psi.agent-session.test-support :as test-support]
    [psi.agent-session.tool-output :as tool-output]
    [psi.agent-session.workflows :as wf]
    [psi.query.core :as query]))
@@ -260,8 +261,7 @@
 
 (deftest e7-idle-completion-wakes-turn-boundary-test
   (testing "E7: idle terminal outcome requests next turn boundary"
-    (let [ctx (session/create-context)
-          _   (swap! (:session-data-atom ctx) assoc :startup-bootstrap-completed? true)
+    (let [ctx (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
           store (:background-jobs-atom ctx)
           thread-id (:session-id (session/get-session-data-in ctx))]
       (start-job! store "tc-e7" thread-id "workflow/test" "job-e7")
@@ -342,8 +342,7 @@
 
 (deftest e13-retryable-llm-http-errors-are-internal-test
   (testing "E13: internal retryable LLM HTTP errors do not trigger external injection"
-    (let [ctx (session/create-context)
-          _   (swap! (:session-data-atom ctx) assoc :startup-bootstrap-completed? true)
+    (let [ctx (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
           store (:background-jobs-atom ctx)
           thread-id (:session-id (session/get-session-data-in ctx))]
       (start-job! store "tc-e13" thread-id "workflow/test" "job-e13")
@@ -424,8 +423,7 @@
 
 (deftest b4-at-most-once-under-concurrent-emitters-test
   (testing "B4: concurrent emit attempts still produce one terminal message"
-    (let [ctx (session/create-context)
-          _   (swap! (:session-data-atom ctx) assoc :startup-bootstrap-completed? true)
+    (let [ctx (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
           store (:background-jobs-atom ctx)
           thread-id (:session-id (session/get-session-data-in ctx))
           _     (start-job! store "tc-b4" thread-id "tool-z" "job-b4")
@@ -518,8 +516,7 @@
 
 (deftest send-message-triggers-workflow-job-terminal-detection-test
   (testing "send-message mutation marks workflow-backed background jobs terminal"
-    (let [ctx       (session/create-context)
-          _         (swap! (:session-data-atom ctx) assoc :startup-bootstrap-completed? true)
+    (let [ctx       (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
           ext-path  "/test/send-message-regression.clj"
           wf-id     "wf-sm-1"
           store     (:background-jobs-atom ctx)
@@ -583,8 +580,7 @@
 
 (deftest send-message-terminal-detection-handles-workflow-completion-race-test
   (testing "send-message eventually marks job terminal when workflow completes just after message"
-    (let [ctx       (session/create-context)
-          _         (swap! (:session-data-atom ctx) assoc :startup-bootstrap-completed? true)
+    (let [ctx       (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
           ext-path  "/test/send-message-race.clj"
           wf-id     "wf-sm-race"
           store     (:background-jobs-atom ctx)
@@ -624,8 +620,7 @@
 
 (deftest background-job-resolver-self-heals-stale-workflow-status-test
   (testing "background-job resolver reconciles stale workflow-backed running jobs"
-    (let [ctx       (session/create-context)
-          _         (swap! (:session-data-atom ctx) assoc :startup-bootstrap-completed? true)
+    (let [ctx       (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
           ext-path  "/test/resolver-reconcile.clj"
           wf-id     "wf-resolve-1"
           store     (:background-jobs-atom ctx)

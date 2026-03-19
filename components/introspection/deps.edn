@@ -4,4 +4,6 @@
         psi/engine                  {:local/root "../../components/engine"}
         psi/query                   {:local/root "../../components/query"}
         psi/agent-session           {:local/root "../../components/agent-session"}
-        psi/recursion               {:local/root "../../components/recursion"}}}
+        psi/recursion               {:local/root "../../components/recursion"}
+        psi/graph                   {:local/root "../../components/graph"}
+        psi/system-bootstrap        {:local/root "../../components/system-bootstrap"}}}

@@ -18,9 +18,40 @@
    [psi.agent-session.runtime :as runtime]
    [psi.agent-session.message-text :as message-text]
    [psi.ai.models :as ai-models]
-   [psi.tui.extension-ui :as ext-ui]))
+   [psi.ui.state :as ui-state]))
 
 (def protocol-version "1.0")
+
+(defn- start-daemon-thread!
+  "Start a daemon thread running f with an optional name. Returns the Thread."
+  ([f] (start-daemon-thread! f nil))
+  ([f thread-name]
+   (doto (Thread. ^Runnable f)
+     (.setDaemon true)
+     (cond-> thread-name (.setName thread-name))
+     (.start))))
+
+(defn- stop-managed-thread!
+  [state k]
+  (when-let [x (get @state k)]
+    (cond
+      (instance? java.util.concurrent.Future x)
+      (try (future-cancel x) (catch Throwable _ nil))
+
+      (instance? Thread x)
+      (try (.interrupt ^Thread x) (catch Throwable _ nil))
+
+      :else nil)
+    (swap! state dissoc k)
+    true))
+
+(defn- stop-all-managed-threads!
+  [state]
+  ;; Stop long-lived transport-owned loops. Do not interrupt in-flight prompt
+  ;; workers here: existing RPC contract/tests expect accepted prompt work to
+  ;; continue emitting events briefly after input EOF in harness scenarios.
+  (doseq [k [:ui-watch-loop :external-event-loop]]
+    (stop-managed-thread! state k)))
 (def ^:private default-max-pending-requests 64)
 
 (def ^:private request-required-keys #{:id :kind :op})
@@ -431,7 +462,7 @@
 (defn- active-dialog-or-error!
   [ctx]
   (let [ui-state-atom (:ui-state-atom ctx)
-        active        (when ui-state-atom (ext-ui/active-dialog ui-state-atom))]
+        active        (when ui-state-atom (ui-state/active-dialog ui-state-atom))]
     (when-not (map? active)
       (throw (ex-info "no active dialog"
                       {:error-code "request/no-active-dialog"})))
@@ -452,7 +483,7 @@
     (when-not (= dialog-id active-id)
       (throw (ex-info "dialog-id mismatch"
                       {:error-code "request/dialog-id-mismatch"})))
-    (when-not (ext-ui/resolve-dialog! (:ui-state-atom ctx) dialog-id result)
+    (when-not (ui-state/resolve-dialog! (:ui-state-atom ctx) dialog-id result)
       (throw (ex-info "no active dialog"
                       {:error-code "request/no-active-dialog"})))
     (response-frame (:id request) "resolve_dialog" true {:accepted true})))
@@ -465,7 +496,7 @@
     (when-not (= dialog-id active-id)
       (throw (ex-info "dialog-id mismatch"
                       {:error-code "request/dialog-id-mismatch"})))
-    (when-not (ext-ui/cancel-dialog! (:ui-state-atom ctx))
+    (when-not (ui-state/cancel-dialog! (:ui-state-atom ctx))
       (throw (ex-info "no active dialog"
                       {:error-code "request/no-active-dialog"})))
     (response-frame (:id request) "cancel_dialog" true {:accepted true})))
@@ -805,22 +836,24 @@
         active-id        (:active-session-id index)
         sd               (session/get-session-data-in ctx)
         current-id       (:session-id sd)
-        context-sessions (session/list-context-sessions-in ctx)
-        sessions*  (if (seq context-sessions)
-                     context-sessions
-                     [(select-keys sd [:session-id :session-name :worktree-path :parent-session-id :created-at])])
-        active-id* (or active-id current-id)
-        slots      (mapv (fn [m]
-                           {:id                (:session-id m)
-                            :name              (:session-name m)
-                            :worktree-path     (:worktree-path m)
-                            :is-streaming      (boolean
-                                                (and (= (:session-id m) current-id)
-                                                     (:is-streaming sd)))
-                            :is-active         (= (:session-id m) active-id*)
-                            :parent-session-id (:parent-session-id m)
-                            :created-at        (:created-at m)})
-                         sessions*)]
+        indexed-sessions (or (some-> index :sessions vals seq) [])
+        sessions*        (if (seq indexed-sessions)
+                           (->> indexed-sessions
+                                (sort-by :updated-at)
+                                vec)
+                           [(select-keys sd [:session-id :session-name :worktree-path :parent-session-id :created-at])])
+        active-id*       (or active-id current-id)
+        slots            (mapv (fn [m]
+                                 {:id                (:session-id m)
+                                  :name              (:session-name m)
+                                  :worktree-path     (:worktree-path m)
+                                  :is-streaming      (boolean
+                                                      (and (= (:session-id m) current-id)
+                                                           (:is-streaming sd)))
+                                  :is-active         (= (:session-id m) active-id*)
+                                  :parent-session-id (:parent-session-id m)
+                                  :created-at        (:created-at m)})
+                               sessions*)]
     {:active-session-id active-id*
      :sessions          slots}))
 
@@ -1110,23 +1143,25 @@
                                                 (emit-event! emit-frame! state {:event event :data payload}))
                                     progress-q (java.util.concurrent.LinkedBlockingQueue.)
                                     stop?      (atom false)
-                                    poll-loop  (future
-                                                 (loop []
-                                                   (when-not @stop?
-                                                     (when-let [evt (.poll progress-q 50
-                                                                           java.util.concurrent.TimeUnit/MILLISECONDS)]
-                                                       (when-let [{:keys [event data]} (progress-event->rpc-event evt)]
-                                                         (emit! event data)
-                                                         (when (= :tool-result (:event-kind evt))
-                                                           (emit! "footer/updated" (footer-updated-payload ctx)))))
-                                                     (recur))))
+                                    poll-loop  (start-daemon-thread!
+                                                (fn []
+                                                  (loop []
+                                                    (when-not @stop?
+                                                      (when-let [evt (.poll progress-q 50
+                                                                            java.util.concurrent.TimeUnit/MILLISECONDS)]
+                                                        (when-let [{:keys [event data]} (progress-event->rpc-event evt)]
+                                                          (emit! event data)
+                                                          (when (= :tool-result (:event-kind evt))
+                                                            (emit! "footer/updated" (footer-updated-payload ctx)))))
+                                                      (recur))))
+                                                "rpc-poll-loop")
                                     result    (runtime/run-agent-loop-in!
                                                ctx nil ai-model [user-message]
                                                {:api-key        api-key
                                                 :progress-queue progress-q
                                                 :sync-on-git-head-change? true})]
                                 (reset! stop? true)
-                                (deref poll-loop 200 nil)
+                                (.join ^Thread poll-loop 200)
                                 (emit-progress-queue! progress-q emit!)
                                 (let [content (or (:content result) [])
                                       text    (assistant-content-text content)]
@@ -1159,8 +1194,8 @@
           watch-loop    (future
                           (binding [*out* (:err @state)
                                     *err* (:err @state)]
-                            (loop [last-snap (or (ext-ui/snapshot ui-state-atom) {})]
-                              (let [current (or (ext-ui/snapshot ui-state-atom) {})]
+                            (loop [last-snap (or (ui-state/snapshot ui-state-atom) {})]
+                              (let [current (or (ui-state/snapshot ui-state-atom) {})]
                                 (emit-ui-snapshot-events! emit-frame! state last-snap current)
                                 (Thread/sleep 50)
                                 (recur current)))))]
@@ -1189,27 +1224,33 @@
   (when (and (:event-queue ctx)
              (nil? (:external-event-loop @state)))
     (let [event-queue (:event-queue ctx)
-          loop-fut   (future
-                       (binding [*out* (:err @state)
-                                 *err* (:err @state)]
-                         (loop []
-                           (when-let [evt (.poll ^java.util.concurrent.LinkedBlockingQueue
-                                           event-queue
-                                                 100
-                                                 java.util.concurrent.TimeUnit/MILLISECONDS)]
-                             (when (= :external-message (:type evt))
-                               (let [message (:message evt)]
-                                 (emit-event! emit-frame! state
-                                              {:event "assistant/message"
-                                               :data  (external-message->assistant-payload message)})
-                                 (emit-event! emit-frame! state
-                                              {:event "session/updated"
-                                               :data  (session-updated-payload ctx)})
-                                 (emit-event! emit-frame! state
-                                              {:event "footer/updated"
-                                               :data  (footer-updated-payload ctx)}))))
-                           (recur))))]
-      (swap! state assoc :external-event-loop loop-fut))))
+          loop-fut    (future
+                        (binding [*out* (:err @state)
+                                  *err* (:err @state)]
+                          (loop []
+                            (when-let [evt (.poll ^java.util.concurrent.LinkedBlockingQueue
+                                            event-queue
+                                                  20
+                                                  java.util.concurrent.TimeUnit/MILLISECONDS)]
+                              (when (= :external-message (:type evt))
+                                (let [message (:message evt)]
+                                  (emit-event! emit-frame! state
+                                               {:event "assistant/message"
+                                                :data  (external-message->assistant-payload message)})
+                                  (emit-event! emit-frame! state
+                                               {:event "session/updated"
+                                                :data  (session-updated-payload ctx)})
+                                  (emit-event! emit-frame! state
+                                               {:event "footer/updated"
+                                                :data  (footer-updated-payload ctx)}))))
+                            (recur))))]
+      (swap! state assoc :external-event-loop loop-fut)
+      ;; Emit an immediate footer snapshot after starting the loop so subscribers
+      ;; always observe footer state even if the loop is stopped immediately after
+      ;; a single external assistant message is processed.
+      (emit-event! emit-frame! state
+                   {:event "footer/updated"
+                    :data  (footer-updated-payload ctx)}))))
 
 (defn- emit-assistant-text!
   [emit! text]
@@ -1250,21 +1291,23 @@
       (do
         (emit-assistant-text! emit! "Waiting for browser callback…")
         (if-let [oauth-ctx (:oauth-ctx ctx)]
-          (let [worker (future
-                         (binding [*out* (:err @state)
-                                   *err* (:err @state)]
-                           (let [emit-login! (fn [event payload]
-                                               (emit-event! emit-frame! state {:event event
-                                                                               :data payload
-                                                                               :id request-id}))]
-                             (try
-                               (oauth/complete-login! oauth-ctx provider-id nil login-state)
-                               (emit-assistant-text! emit-login! (str "✓ Logged in to " provider-name))
-                               (catch Throwable e
-                                 (emit-assistant-text! emit-login! (str "✗ Login failed: " (ex-message e))))
-                               (finally
-                                 (emit-login! "session/updated" (session-updated-payload ctx))
-                                 (emit-login! "footer/updated" (footer-updated-payload ctx)))))))]
+          (let [worker (start-daemon-thread!
+                        (fn []
+                          (binding [*out* (:err @state)
+                                    *err* (:err @state)]
+                            (let [emit-login! (fn [event payload]
+                                                (emit-event! emit-frame! state {:event event
+                                                                                :data payload
+                                                                                :id request-id}))]
+                              (try
+                                (oauth/complete-login! oauth-ctx provider-id nil login-state)
+                                (emit-assistant-text! emit-login! (str "✓ Logged in to " provider-name))
+                                (catch Throwable e
+                                  (emit-assistant-text! emit-login! (str "✗ Login failed: " (ex-message e))))
+                                (finally
+                                  (emit-login! "session/updated" (session-updated-payload ctx))
+                                  (emit-login! "footer/updated" (footer-updated-payload ctx)))))))
+                        "rpc-oauth-worker")]
             (swap! state update :inflight-futures (fnil conj []) worker))
           (emit-assistant-text! emit! "OAuth not available.")))
       (do
@@ -1712,111 +1755,114 @@
                                                   :session-id target-session-id})
           true)
         progress-q   (java.util.concurrent.LinkedBlockingQueue.)
-        worker       (future
-                       (binding [*out* (:err @state)
-                                 *err* (:err @state)]
-                         (let [emit! (fn [event payload]
-                                       (emit-event! emit-frame! state {:event event :data payload :id request-id}))
-                               progress-stop? (atom false)
-                               progress-loop (future
-                                               (loop []
-                                                 (when-not @progress-stop?
-                                                   (when-let [evt (.poll progress-q 50 java.util.concurrent.TimeUnit/MILLISECONDS)]
-                                                     (when-let [{:keys [event data]} (progress-event->rpc-event evt)]
-                                                       (emit! event data)
-                                                       (when (= :tool-result (:event-kind evt))
-                                                         (emit! "footer/updated" (footer-updated-payload ctx)))))
-                                                   (recur))))]
-                           (try
-                             (let [ai-model      (current-ai-model ctx state)
-                                   _             (when-not ai-model
-                                                   (throw (ex-info "session model is not configured"
-                                                                   {:error-code "request/invalid-params"})))
-                                   oauth-ctx     (:oauth-ctx ctx)
-                                   pending-login (:pending-login @state)
-                                   cmd-result    (when-not pending-login
-                                                   (commands/dispatch ctx message {:oauth-ctx oauth-ctx
-                                                                                   :ai-model  ai-model
-                                                                                   :supports-session-tree? false
-                                                                                   :on-new-session! on-new-session!}))]
-                               (cond
-                                 pending-login
+        worker       (start-daemon-thread!
+                      (fn []
+                        (binding [*out* (:err @state)
+                                  *err* (:err @state)]
+                          (let [emit! (fn [event payload]
+                                        (emit-event! emit-frame! state {:event event :data payload :id request-id}))
+                                progress-stop? (atom false)
+                                progress-loop (start-daemon-thread!
+                                               (fn []
+                                                 (loop []
+                                                   (when-not @progress-stop?
+                                                     (when-let [evt (.poll progress-q 50 java.util.concurrent.TimeUnit/MILLISECONDS)]
+                                                       (when-let [{:keys [event data]} (progress-event->rpc-event evt)]
+                                                         (emit! event data)
+                                                         (when (= :tool-result (:event-kind evt))
+                                                           (emit! "footer/updated" (footer-updated-payload ctx)))))
+                                                     (recur))))
+                                               "rpc-progress-loop")]
+                            (try
+                              (let [ai-model      (current-ai-model ctx state)
+                                    _             (when-not ai-model
+                                                    (throw (ex-info "session model is not configured"
+                                                                    {:error-code "request/invalid-params"})))
+                                    oauth-ctx     (:oauth-ctx ctx)
+                                    pending-login (:pending-login @state)
+                                    cmd-result    (when-not pending-login
+                                                    (commands/dispatch ctx message {:oauth-ctx oauth-ctx
+                                                                                    :ai-model  ai-model
+                                                                                    :supports-session-tree? false
+                                                                                    :on-new-session! on-new-session!}))]
+                                (cond
+                                  pending-login
                                  ;; Pending two-step OAuth login: next prompt input is the auth code/URL.
-                                 (do
-                                   (runtime/journal-user-message-in! ctx message images)
-                                   (complete-pending-login! ctx state message emit!)
-                                   (emit! "session/updated" (session-updated-payload ctx))
-                                   (emit! "footer/updated" (footer-updated-payload ctx)))
+                                  (do
+                                    (runtime/journal-user-message-in! ctx message images)
+                                    (complete-pending-login! ctx state message emit!)
+                                    (emit! "session/updated" (session-updated-payload ctx))
+                                    (emit! "footer/updated" (footer-updated-payload ctx)))
 
-                                 (some? cmd-result)
+                                  (some? cmd-result)
                                  ;; Slash command matched — journal raw input and skip agent loop.
-                                 (do
-                                   (runtime/journal-user-message-in! ctx message images)
-                                   (if (= :login-start (:type cmd-result))
-                                     (handle-login-start-command! ctx state emit-frame! request-id cmd-result emit!)
-                                     (do
-                                       (when (= :new-session (:type cmd-result))
-                                         (let [rehydrate (:rehydrate cmd-result)
-                                               sd (session/get-session-data-in ctx)
-                                               msgs (or (:agent-messages rehydrate)
-                                                        (:messages (agent/get-data-in (:agent-ctx ctx))))]
-                                           (emit! "session/resumed"
-                                                  {:session-id (:session-id sd)
-                                                   :session-file (:session-file sd)
-                                                   :message-count (count msgs)})
-                                           (emit! "session/rehydrated"
-                                                  {:messages msgs
-                                                   :tool-calls (or (:tool-calls rehydrate) {})
-                                                   :tool-order (or (:tool-order rehydrate) [])})))
-                                       (handle-prompt-command-result! cmd-result emit!)))
-                                   (emit! "session/updated" (session-updated-payload ctx))
-                                   (emit! "footer/updated" (footer-updated-payload ctx)))
+                                  (do
+                                    (runtime/journal-user-message-in! ctx message images)
+                                    (if (= :login-start (:type cmd-result))
+                                      (handle-login-start-command! ctx state emit-frame! request-id cmd-result emit!)
+                                      (do
+                                        (when (= :new-session (:type cmd-result))
+                                          (let [rehydrate (:rehydrate cmd-result)
+                                                sd (session/get-session-data-in ctx)
+                                                msgs (or (:agent-messages rehydrate)
+                                                         (:messages (agent/get-data-in (:agent-ctx ctx))))]
+                                            (emit! "session/resumed"
+                                                   {:session-id (:session-id sd)
+                                                    :session-file (:session-file sd)
+                                                    :message-count (count msgs)})
+                                            (emit! "session/rehydrated"
+                                                   {:messages msgs
+                                                    :tool-calls (or (:tool-calls rehydrate) {})
+                                                    :tool-order (or (:tool-order rehydrate) [])})))
+                                        (handle-prompt-command-result! cmd-result emit!)))
+                                    (emit! "session/updated" (session-updated-payload ctx))
+                                    (emit! "footer/updated" (footer-updated-payload ctx)))
 
-                                 :else
+                                  :else
                                  ;; Not a command — run normal agent loop via shared runtime path.
-                                 (let [_        (emit! "session/updated" (session-updated-payload ctx))
-                                       _        (emit! "footer/updated" (footer-updated-payload ctx))
-                                       {:keys [user-message]} (runtime/prepare-user-message-in! ctx message images)
-                                       api-key  (runtime/resolve-api-key-in ctx ai-model)
-                                       result   (runtime/run-agent-loop-in!
-                                                 ctx nil ai-model [user-message]
-                                                 {:run-loop-fn   run-loop-fn
-                                                  :api-key       api-key
-                                                  :progress-queue progress-q
-                                                  :sync-on-git-head-change? sync-on-git-head-change?})]
+                                  (let [_        (emit! "session/updated" (session-updated-payload ctx))
+                                        _        (emit! "footer/updated" (footer-updated-payload ctx))
+                                        {:keys [user-message]} (runtime/prepare-user-message-in! ctx message images)
+                                        api-key  (runtime/resolve-api-key-in ctx ai-model)
+                                        result   (runtime/run-agent-loop-in!
+                                                  ctx nil ai-model [user-message]
+                                                  {:run-loop-fn   run-loop-fn
+                                                   :api-key       api-key
+                                                   :progress-queue progress-q
+                                                   :sync-on-git-head-change? sync-on-git-head-change?})]
                                    ;; Stop background progress polling, flush any
                                    ;; remaining events, then emit final message.
-                                   (reset! progress-stop? true)
-                                   (deref progress-loop 200 nil)
-                                   (emit-progress-queue! progress-q emit!)
-                                   (let [content (or (:content result) [])
-                                         text    (assistant-content-text content)]
-                                     (emit! "assistant/message"
-                                            (cond-> {:role    (:role result)
-                                                     :content content}
-                                              (and (string? text) (not (str/blank? text)))
-                                              (assoc :text text)
-                                              (contains? result :stop-reason)   (assoc :stop-reason (:stop-reason result))
-                                              (contains? result :error-message) (assoc :error-message (:error-message result))
-                                              (contains? result :usage)         (assoc :usage (:usage result)))))
-                                   (emit! "session/updated" (session-updated-payload ctx))
-                                   (emit! "footer/updated" (footer-updated-payload ctx)))))
-                             (catch Throwable t
-                               (emit! "error" {:error-code "runtime/failed"
-                                               :error-message (or (ex-message t) "prompt execution failed")
-                                               :id request-id
-                                               :op "prompt"})
-                               (emit! "session/updated" (session-updated-payload ctx))
-                               (emit! "footer/updated" (footer-updated-payload ctx)))
-                             (finally
-                               (reset! progress-stop? true)
-                               (deref progress-loop 200 nil)
-                               (when acquired-route-lock?
-                                 (swap! state
-                                        (fn [s]
-                                          (if (= request-id (get-in s [:session-route-lock :request-id]))
-                                            (assoc s :session-route-lock nil)
-                                            s)))))))))]
+                                    (reset! progress-stop? true)
+                                    (.join ^Thread progress-loop 200)
+                                    (emit-progress-queue! progress-q emit!)
+                                    (let [content (or (:content result) [])
+                                          text    (assistant-content-text content)]
+                                      (emit! "assistant/message"
+                                             (cond-> {:role    (:role result)
+                                                      :content content}
+                                               (and (string? text) (not (str/blank? text)))
+                                               (assoc :text text)
+                                               (contains? result :stop-reason)   (assoc :stop-reason (:stop-reason result))
+                                               (contains? result :error-message) (assoc :error-message (:error-message result))
+                                               (contains? result :usage)         (assoc :usage (:usage result)))))
+                                    (emit! "session/updated" (session-updated-payload ctx))
+                                    (emit! "footer/updated" (footer-updated-payload ctx)))))
+                              (catch Throwable t
+                                (emit! "error" {:error-code "runtime/failed"
+                                                :error-message (or (ex-message t) "prompt execution failed")
+                                                :id request-id
+                                                :op "prompt"})
+                                (emit! "session/updated" (session-updated-payload ctx))
+                                (emit! "footer/updated" (footer-updated-payload ctx)))
+                              (finally
+                                (reset! progress-stop? true)
+                                (.join ^Thread progress-loop 200)
+                                (when acquired-route-lock?
+                                  (swap! state
+                                         (fn [s]
+                                           (if (= request-id (get-in s [:session-route-lock :request-id]))
+                                             (assoc s :session-route-lock nil)
+                                             s))))))))))]
     (swap! state update :inflight-futures (fnil conj []) worker)
     (response-frame (:id request) "prompt" true {:accepted true})))
 
@@ -2117,7 +2163,7 @@
                                  (emit-ui-snapshot-events! emit-frame!
                                                            state
                                                            {}
-                                                           (or (ext-ui/snapshot (:ui-state-atom ctx)) {})))
+                                                           (or (ui-state/snapshot (:ui-state-atom ctx)) {})))
              ;; Emit current session/footer/context snapshots immediately on subscription
              ;; so frontends render baseline status without waiting for prompt activity.
                                (emit-event! emit-frame! state {:event "session/updated"
@@ -2206,25 +2252,28 @@
           emit-error!   (fn [error-code error-message]
                           (emit-frame! (error-frame {:error-code error-code
                                                      :error-message error-message})))]
-      (doseq [line (line-seq reader)]
-        (if (str/blank? line)
-          (do
-            (safe-trace! trace-fn {:dir :in
-                                   :raw line
-                                   :parse-error "empty frame"})
-            (emit-error! "transport/invalid-frame" "empty frame"))
-          (let [{:keys [ok error]} (parse-request-line line)]
-            (if error
-              (do
-                (safe-trace! trace-fn {:dir :in
-                                       :raw line
-                                       :frame error
-                                       :parse-error (:error-message error)})
-                (emit-frame! error))
-              (do
-                (safe-trace! trace-fn {:dir :in
-                                       :raw line
-                                       :frame ok})
-                (process-request! ok {:state           state
-                                      :request-handler request-handler
-                                      :emit-tracked!   emit-tracked!})))))))))
+      (try
+        (doseq [line (line-seq reader)]
+          (if (str/blank? line)
+            (do
+              (safe-trace! trace-fn {:dir :in
+                                     :raw line
+                                     :parse-error "empty frame"})
+              (emit-error! "transport/invalid-frame" "empty frame"))
+            (let [{:keys [ok error]} (parse-request-line line)]
+              (if error
+                (do
+                  (safe-trace! trace-fn {:dir :in
+                                         :raw line
+                                         :frame error
+                                         :parse-error (:error-message error)})
+                  (emit-frame! error))
+                (do
+                  (safe-trace! trace-fn {:dir :in
+                                         :raw line
+                                         :frame ok})
+                  (process-request! ok {:state           state
+                                        :request-handler request-handler
+                                        :emit-tracked!   emit-tracked!}))))))
+        (finally
+          (stop-all-managed-threads! state))))))

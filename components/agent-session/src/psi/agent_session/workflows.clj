@@ -61,7 +61,7 @@
           :instances     {}
           :session-index {}
           :order         []
-          :pump-future   nil
+          :pump-thread   nil
           :pump-stop     nil})))
 
 (defn- type-key [ext-path type]
@@ -223,21 +223,29 @@
     (process-event-for-session! reg session-id event)))
 
 (defn- pump-active?
+  [t]
+  (and t (.isAlive ^Thread t)))
+
+(defn- daemon-thread
+  "Start a daemon thread running f. Returns the Thread."
   [f]
-  (and f (not (future-done? f))))
+  (doto (Thread. ^Runnable f)
+    (.setDaemon true)
+    (.start)))
 
 (defn- start-pump!
   [reg]
   (let [stop? (atom false)
         env   (:env reg)
         q     (::sc/event-queue env)
-        f     (future
-                (while (not @stop?)
-                  (try
-                    (sp/receive-events! q env (fn [_ event] (process-queued-event! reg event)))
-                    (catch Exception _ nil))
-                  (Thread/sleep 25)))]
-    (swap! (:state reg) assoc :pump-stop stop? :pump-future f)
+        t     (daemon-thread
+               (fn []
+                 (while (not @stop?)
+                   (try
+                     (sp/receive-events! q env (fn [_ event] (process-queued-event! reg event)))
+                     (catch Exception _ nil))
+                   (Thread/sleep 25))))]
+    (swap! (:state reg) assoc :pump-stop stop? :pump-thread t)
     true))
 
 (defn ensure-pump!
@@ -245,20 +253,20 @@
    Needed for async invoke completion events (e.g. :future invocations)."
   [reg]
   (locking reg
-    (let [{:keys [pump-future]} @(:state reg)]
-      (when-not (pump-active? pump-future)
+    (let [{:keys [pump-thread]} @(:state reg)]
+      (when-not (pump-active? pump-thread)
         (start-pump! reg)))))
 
 (defn shutdown-in!
   "Stop the background event pump."
   [reg]
   (locking reg
-    (let [{:keys [pump-stop pump-future]} @(:state reg)]
+    (let [{:keys [pump-stop pump-thread]} @(:state reg)]
       (when pump-stop
         (reset! pump-stop true))
-      (when pump-future
-        (future-cancel pump-future))
-      (swap! (:state reg) assoc :pump-stop nil :pump-future nil)))
+      (when pump-thread
+        (.interrupt ^Thread pump-thread))
+      (swap! (:state reg) assoc :pump-stop nil :pump-thread nil)))
   true)
 
 (defn register-type-in!

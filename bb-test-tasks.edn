@@ -1,0 +1,47 @@
+{:tasks
+ {:requires ([babashka.tasks :refer [shell]])
+
+  test:agent-core
+  {:doc "Test agent-core component in isolation"
+   :task (shell "clojure -M:test -c tests-component-isolated.edn --focus :agent-core")}
+
+  test:memory
+  {:doc "Test memory component in isolation"
+   :task (shell "clojure -M:test -c tests-component-isolated.edn --focus :memory")}
+
+  test:query
+  {:doc "Test query component in isolation"
+   :task (shell "clojure -M:test -c tests-component-isolated.edn --focus :query")}
+
+  test:engine
+  {:doc "Test engine component in isolation"
+   :task (shell "clojure -M:test -c tests-component-isolated.edn --focus :engine")}
+
+  test:history
+  {:doc "Test history component in isolation"
+   :task (shell "clojure -M:test -c tests-component-isolated.edn --focus :history")}
+
+  test:recursion
+  {:doc "Test recursion component in isolation"
+   :task (shell "clojure -M:test -c tests-component-isolated.edn --focus :recursion")}
+
+  test:ai
+  {:doc "Test ai component in isolation"
+   :task (shell "clojure -M:test -c tests-component-isolated.edn --focus :ai")}
+
+  test:tui
+  {:doc "Test tui component in isolation"
+   :task (shell "clojure -M:test -c tests-component-isolated.edn --focus :tui")}
+
+  test:components:all
+  {:doc "Test all isolated components sequentially"
+   :depends [test:agent-core test:memory test:query test:engine test:history test:recursion test:ai test:tui]}
+
+  ;; Keep existing tasks
+  test:extensions
+  {:doc "Test extensions (already working)"
+   :task (shell "clojure -M:test --focus :extensions")}
+
+  test:emacs
+  {:doc "Test emacs frontend (already working)"
+   :task (shell "emacs -Q --batch -L components/emacs-ui -l components/emacs-ui/test/psi-rpc-test.el -l components/emacs-ui/test/psi-test.el -f ert-run-tests-batch-and-exit")}}}

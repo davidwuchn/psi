@@ -63,11 +63,10 @@
    [psi.agent-session.tools :as tools]
    [psi.agent-core.core :as agent]
    [psi.ai.models :as models]
-   [psi.system-bootstrap.core :as bootstrap]
+   [psi.introspection.core :as introspection]
    [psi.memory.runtime :as memory-runtime]
    [psi.recursion.core :as recursion]
-   ;; [psi.tui.app :as tui-app]  ; Removed - circular dependency fix
-   )
+   [psi.tui.app :as tui-app])
   (:gen-class))
 
 ;; ============================================================
@@ -577,75 +576,57 @@
 (defn- bootstrap-runtime-session!
   "Bootstrap a live session context shared by CLI/TUI/RPC modes.
 
-   Calling forms:
-   - (bootstrap-runtime-session! ai-model opts)
-       creates a fresh runtime session context, bootstraps it, and returns result map
-   - (bootstrap-runtime-session! ctx ai-model)
-       bootstraps an existing ctx with default opts
-   - (bootstrap-runtime-session! ctx ai-model opts)
-       bootstraps an existing ctx with explicit opts
-
    Options:
    - :memory-runtime-opts optional memory/runtime sync opts
    - :cwd optional cwd override (primarily for tests)"
-  ([x y]
-   (if (:state* x)
-     (bootstrap-runtime-session! x y {})
-     (let [ai-model x
-           opts     y
-           {:keys [ctx oauth-ctx cwd]} (create-runtime-session-context ai-model {:cwd (:cwd opts)
-                                                                                 :session-config (:session-config opts)
-                                                                                 :ui-type (or (:ui-type opts) :console)})
-           result (bootstrap-runtime-session! ctx ai-model opts)]
-       (assoc result :ctx ctx :oauth-ctx oauth-ctx :cwd cwd))))
-  ([ctx ai-model {:keys [memory-runtime-opts cwd]}]
-   (let [templates        (pt/discover-templates)
-         {:keys [skills diagnostics]} (skills/discover-skills)
-         _                (doseq [d diagnostics]
-                            (timbre/warn "Skill" (:type d) ":" (:message d) (:path d)))
-         cwd              (or cwd (System/getProperty "user.dir"))
-         ctx-files        (sys-prompt/discover-context-files cwd)
-         base-prompt      (sys-prompt/build-system-prompt
-                           {:cwd           cwd
-                            :context-files ctx-files
-                            :skills        skills})
-         developer-prompt (developer-prompt-from-env)
-         _                (session/set-system-prompt-in! ctx base-prompt)
-         ext-paths        (ext/discover-extension-paths [] cwd)
-         app-query-tool   (tools/make-app-query-tool (fn [q] (session/query-in ctx q)))
-         summary          (session/bootstrap-in!
-                           ctx {:register-global-query? false
-                                :base-tools             (conj (vec tools/all-tools) app-query-tool)
-                                :system-prompt          base-prompt
-                                :developer-prompt       developer-prompt
-                                :developer-prompt-source (if developer-prompt :env :fallback)
-                                :templates              templates
-                                :skills                 skills
-                                :extension-paths        ext-paths})
-         _                (bootstrap/register-all-domains!)
-         graph-caps       (graph-capabilities-in ctx)
-         system-prompt    (sys-prompt/build-system-prompt
-                           {:cwd                cwd
-                            :context-files      ctx-files
-                            :skills             skills
-                            :graph-capabilities graph-caps})
-         _                (session/set-system-prompt-in! ctx system-prompt)
-         _                (memory-runtime/sync-memory-layer! (merge {:cwd cwd}
-                                                                    (or memory-runtime-opts {})))
-         startup-rehydrate (startup-rehydrate-from-current-session! ctx nil ai-model)]
-     (doseq [{:keys [path error]} (:extension-errors summary)]
-       (timbre/warn "Extension error:" path error))
-     (when (pos? (:extension-loaded-count summary))
-       (timbre/debug "Extensions loaded:" (:extension-loaded-count summary)))
+  [ctx ai-model {:keys [memory-runtime-opts cwd]}]
+  (let [templates        (pt/discover-templates)
+        {:keys [skills diagnostics]} (skills/discover-skills)
+        _                (doseq [d diagnostics]
+                           (timbre/warn "Skill" (:type d) ":" (:message d) (:path d)))
+        cwd              (or cwd (System/getProperty "user.dir"))
+        ctx-files        (sys-prompt/discover-context-files cwd)
+        base-prompt      (sys-prompt/build-system-prompt
+                          {:cwd           cwd
+                           :context-files ctx-files
+                           :skills        skills})
+        developer-prompt (developer-prompt-from-env)
+        _                (session/set-system-prompt-in! ctx base-prompt)
+        ext-paths        (ext/discover-extension-paths [] cwd)
+        app-query-tool   (tools/make-app-query-tool (fn [q] (session/query-in ctx q)))
+        summary          (session/bootstrap-in!
+                          ctx {:register-global-query? false
+                               :base-tools             (conj (vec tools/all-tools) app-query-tool)
+                               :system-prompt          base-prompt
+                               :developer-prompt       developer-prompt
+                               :developer-prompt-source (if developer-prompt :env :fallback)
+                               :templates              templates
+                               :skills                 skills
+                               :extension-paths        ext-paths})
+        _                (introspection/register-resolvers!)
+        graph-caps       (graph-capabilities-in ctx)
+        system-prompt    (sys-prompt/build-system-prompt
+                          {:cwd                cwd
+                           :context-files      ctx-files
+                           :skills             skills
+                           :graph-capabilities graph-caps})
+        _                (session/set-system-prompt-in! ctx system-prompt)
+        _                (memory-runtime/sync-memory-layer! (merge {:cwd cwd}
+                                                                   (or memory-runtime-opts {})))
+        startup-rehydrate (startup-rehydrate-from-current-session! ctx nil ai-model)]
+    (doseq [{:keys [path error]} (:extension-errors summary)]
+      (timbre/warn "Extension error:" path error))
+    (when (pos? (:extension-loaded-count summary))
+      (timbre/debug "Extensions loaded:" (:extension-loaded-count summary)))
     ;; Register extension run-fn so extension-initiated prompts (e.g. PSL)
     ;; actually invoke the LLM instead of orphaning a user message in agent-core.
-     (runtime/register-extension-run-fn-in! ctx nil ai-model)
-     {:ctx               ctx
-      :templates         templates
-      :skills            skills
-      :summary           summary
-      :startup-rehydrate startup-rehydrate
-      :cwd               cwd})))
+    (runtime/register-extension-run-fn-in! ctx nil ai-model)
+    {:ctx               ctx
+     :templates         templates
+     :skills            skills
+     :summary           summary
+     :startup-rehydrate startup-rehydrate
+     :cwd               cwd}))
 
 ;; ============================================================
 ;; Main prompt loop
@@ -761,17 +742,14 @@
   [ctx ai-ctx ai-model]
   (start-new-session-with-startup! ctx ai-ctx ai-model))
 
-(defn run-tui-session-with-interface!
-  "Create a session and run it with a provided TUI interface function.
-  This breaks the circular dependency by accepting the TUI interface via dependency injection."
-  ([tui-start-fn! args-or-model]
-   (if (sequential? args-or-model)
-     (let [model-key            (model-key-from-args args-or-model)
-           memory-runtime-opts  (memory-runtime-opts-from-args args-or-model)
-           session-runtime-opts (session-runtime-config-from-args args-or-model)]
-       (run-tui-session-with-interface! tui-start-fn! model-key memory-runtime-opts session-runtime-opts))
-     (run-tui-session-with-interface! tui-start-fn! args-or-model {} {})))
-  ([tui-start-fn! model-key memory-runtime-opts session-config]
+(defn run-tui-session
+  "Create a session and run it as a full-screen TUI via charm.clj.
+  Blocks until the user exits (Ctrl+C second press or Ctrl+D on empty input)."
+  ([model-key]
+   (run-tui-session model-key {} {}))
+  ([model-key memory-runtime-opts]
+   (run-tui-session model-key memory-runtime-opts {}))
+  ([model-key memory-runtime-opts session-config]
    (let [ai-model    (resolve-model model-key)
          ai-ctx      nil
          event-queue (java.util.concurrent.LinkedBlockingQueue.)
@@ -892,30 +870,30 @@
                                  (catch Exception e
                                    (.put queue {:kind :error :message (ex-message e)})))))))]
 
-     (tui-start-fn! (:name ai-model) run-agent-fn!
-                    {:query-fn             (fn [q] (session/query-in ctx q))
-                     :ui-state-atom        (:ui-state-atom ctx)
-                     :dispatch-fn          dispatch-fn
-                     :on-interrupt-fn!     on-interrupt-fn!
-                     :on-queue-input-fn!   (fn [text _state]
-                                             (if (= :streaming (session/sc-phase-in ctx))
-                                               (do
-                                                 (session/steer-in! ctx text)
-                                                 {:message "Queued steering message."})
-                                               (do
-                                                 (session/follow-up-in! ctx text)
-                                                 {:message "Queued follow-up message."})))
-                     :double-press-window-ms 500
-                     :double-escape-action :none
-                     :cwd                  cwd
-                     :current-session-file (:session-file (session/get-session-data-in ctx))
-                     :initial-messages     (vec (or (:messages startup-rehydrate) []))
-                     :initial-tool-calls   (or (:tool-calls startup-rehydrate) {})
-                     :initial-tool-order   (vec (or (:tool-order startup-rehydrate) []))
-                     :resume-fn!           resume-fn!
-                     :switch-session-fn!   switch-session-fn!
-                     :event-queue          event-queue
-                     :alt-screen           false}))))
+     (tui-app/start! (:name ai-model) run-agent-fn!
+                     {:query-fn             (fn [q] (session/query-in ctx q))
+                      :ui-state-atom        (:ui-state-atom ctx)
+                      :dispatch-fn          dispatch-fn
+                      :on-interrupt-fn!     on-interrupt-fn!
+                      :on-queue-input-fn!   (fn [text _state]
+                                              (if (= :streaming (session/sc-phase-in ctx))
+                                                (do
+                                                  (session/steer-in! ctx text)
+                                                  {:message "Queued steering message."})
+                                                (do
+                                                  (session/follow-up-in! ctx text)
+                                                  {:message "Queued follow-up message."})))
+                      :double-press-window-ms 500
+                      :double-escape-action :none
+                      :cwd                  cwd
+                      :current-session-file (:session-file (session/get-session-data-in ctx))
+                      :initial-messages     (vec (or (:messages startup-rehydrate) []))
+                      :initial-tool-calls   (or (:tool-calls startup-rehydrate) {})
+                      :initial-tool-order   (vec (or (:tool-order startup-rehydrate) []))
+                      :resume-fn!           resume-fn!
+                      :switch-session-fn!   switch-session-fn!
+                      :event-queue          event-queue
+                      :alt-screen           false}))))
 
 ;; ============================================================
 ;; -main
@@ -997,41 +975,6 @@
        (finally
          (System/setOut original-systemout))))))
 
-;; ============================================================
-;; Interface-specific entry points (for psi-app launcher)
-;; ============================================================
-
-(defn run-console-session!
-  "Run console session with command line args"
-  [args]
-  (let [model-key            (model-key-from-args args)
-        memory-runtime-opts  (memory-runtime-opts-from-args args)
-        session-runtime-opts (session-runtime-config-from-args args)
-        nrepl-port           (nrepl-port-from-args args)]
-    (when nrepl-port
-      (start-nrepl! nrepl-port))
-    (try
-      (run-session model-key memory-runtime-opts session-runtime-opts)
-      (finally
-        (when nrepl-port (stop-nrepl! nil))))))
-
-(defn run-rpc-interface!
-  "Run RPC EDN session with command line args"
-  [args]
-  (let [model-key            (model-key-from-args args)
-        memory-runtime-opts  (memory-runtime-opts-from-args args)
-        session-runtime-opts (session-runtime-config-from-args args)
-        rpc-trace-file       (rpc-trace-file-from-args args)
-        nrepl-port           (nrepl-port-from-args args)]
-    (when nrepl-port
-      ;; Keep rpc stdout protocol-clean
-      (binding [*out* *err*] (start-nrepl! nrepl-port)))
-    (try
-      (run-rpc-edn-session! model-key memory-runtime-opts session-runtime-opts
-                            {:rpc-trace-file rpc-trace-file})
-      (finally
-        (when nrepl-port (stop-nrepl! nil))))))
-
 (defn -main
   "Entry point.
 
@@ -1075,10 +1018,12 @@
                               {:rpc-trace-file rpc-trace-file})
 
         tui?
-        ;; TUI session now handled by psi-app launcher
-        (throw (ex-info "TUI session should be launched via psi-app, not agent-session directly" {}))
+        (run-tui-session model-key memory-runtime-opts session-runtime-opts)
 
         :else
         (run-session model-key memory-runtime-opts session-runtime-opts))
       (finally
-        (stop-nrepl! nrepl-srv)))))
+        (stop-nrepl! nrepl-srv)))
+    ;; clj-http (Apache HttpClient) parks a non-daemon connection-eviction thread.
+    ;; Explicitly exit so the JVM does not hang after /quit.
+    (System/exit 0)))

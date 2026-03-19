@@ -17,6 +17,10 @@
   {:doc  "Run Clojure extension tests (Kaocha :extensions suite)."
    :task (shell "clojure -M:test --focus extensions")}
 
+  clojure:test:working
+  {:doc  "Run all working component tests individually to avoid loading conflicts."
+   :depends [test:agent-core test:query test:memory test:engine test:ai test:recursion clojure:test:extensions]}
+
   clojure:test
   {:doc     "Run both Clojure unit and extension test suites."
    :depends [clojure:test:unit clojure:test:extensions]}
@@ -39,4 +43,45 @@
 
   test
   {:doc     "Run all repository tests checked in CI."
-   :depends [clojure:test emacs:check]}}}
+   :depends [clojure:test emacs:check]}
+
+  ;; Component-isolated tests to avoid circular dependencies  
+  test:agent-core
+  {:doc "Test agent-core component in isolation"
+   :task (shell "clojure -M:test -c tests-component-isolated.edn --focus :agent-core")}
+
+  test:memory
+  {:doc "Test memory component in isolation"
+   :task (shell "clojure -M:test -c tests-component-isolated.edn --focus :memory")}
+
+  test:query
+  {:doc "Test query component in isolation"
+   :task (shell "clojure -M:test -c tests-component-isolated.edn --focus :query")}
+
+  test:engine
+  {:doc "Test engine component in isolation"
+   :task (shell "clojure -M:test -c tests-component-isolated.edn --focus :engine")}
+
+  test:history
+  {:doc "Test history component in isolation"
+   :task (shell "clojure -M:test -c tests-component-isolated.edn --focus :history")}
+
+  test:recursion
+  {:doc "Test recursion component in isolation"
+   :task (shell "clojure -M:test -c tests-component-isolated.edn --focus :recursion")}
+
+  test:ai
+  {:doc "Test ai component in isolation"
+   :task (shell "clojure -M:test -c tests-component-isolated.edn --focus :ai")}
+
+  test:tui
+  {:doc "Test tui component in isolation"
+   :task (shell "clojure -M:test -c tests-component-isolated.edn --focus :tui")}
+
+  test:components
+  {:doc "Test all components in isolation (bypasses circular dependencies)"
+   :depends [test:agent-core test:memory test:query test:engine test:history test:recursion test:ai test:tui]}
+
+  test:working
+  {:doc "Run all working test suites (components + extensions + emacs)"
+   :depends [test:components clojure:test:extensions emacs:check]}}}

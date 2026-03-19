@@ -64,7 +64,7 @@
    [psi.agent-session.tools :as tools]
    [psi.agent-session.tool-output :as tool-output]
    [psi.agent-session.workflows :as wf]
-   [psi.tui.extension-ui :as ext-ui]
+   [psi.ui.state :as ui-state]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.project-preferences :as project-prefs]
    [psi.agent-session.session :as session]
@@ -95,7 +95,19 @@
 (declare journal-append!)
 (declare get-session-data-in)
 (declare swap-session!)
+(declare state-backed-atom-view)
 (declare ui-state-atom-in)
+
+;; ============================================================
+;; Thread utilities
+;; ============================================================
+
+(defn- daemon-thread
+  "Start a daemon thread running f. Returns the Thread."
+  [f]
+  (doto (Thread. ^Runnable f)
+    (.setDaemon true)
+    (.start)))
 
 ;; ============================================================
 ;; Actions dispatcher
@@ -192,34 +204,35 @@
                 (ext/dispatch-in reg "auto_compaction_start" {:reason reason})
                 (when will-retry?
                   (drop-trailing-overflow-error! ctx))
-                (future
-                  (try
-                    (let [result (execute-compaction-in! ctx nil)]
-                      (if result
-                        (do
-                          (ext/dispatch-in reg "auto_compaction_end"
-                                           {:result     result
-                                            :aborted    false
-                                            :will-retry will-retry?})
-                          (when (or will-retry?
-                                    (agent/has-queued-messages-in? (:agent-ctx ctx)))
-                            (reset! continue? true)))
-                        (ext/dispatch-in reg "auto_compaction_end"
-                                         {:result     nil
-                                          :aborted    true
-                                          :will-retry false})))
-                    (catch Exception e
-                      (ext/dispatch-in reg "auto_compaction_end"
-                                       {:result        nil
-                                        :aborted       false
-                                        :will-retry    false
-                                        :error-message (ex-message e)}))
-                    (finally
-                      (sc/send-event! (:sc-env ctx) (:sc-session-id ctx)
-                                      :session/compact-done)
-                      (when @continue?
-                        (sc/send-event! (:sc-env ctx) (:sc-session-id ctx) :session/prompt)
-                        (agent/start-loop-in! (:agent-ctx ctx) [])))))
+                (daemon-thread
+                 (fn []
+                   (try
+                     (let [result (execute-compaction-in! ctx nil)]
+                       (if result
+                         (do
+                           (ext/dispatch-in reg "auto_compaction_end"
+                                            {:result     result
+                                             :aborted    false
+                                             :will-retry will-retry?})
+                           (when (or will-retry?
+                                     (agent/has-queued-messages-in? (:agent-ctx ctx)))
+                             (reset! continue? true)))
+                         (ext/dispatch-in reg "auto_compaction_end"
+                                          {:result     nil
+                                           :aborted    true
+                                           :will-retry false})))
+                     (catch Exception e
+                       (ext/dispatch-in reg "auto_compaction_end"
+                                        {:result        nil
+                                         :aborted       false
+                                         :will-retry    false
+                                         :error-message (ex-message e)}))
+                     (finally
+                       (sc/send-event! (:sc-env ctx) (:sc-session-id ctx)
+                                       :session/compact-done)
+                       (when @continue?
+                         (sc/send-event! (:sc-env ctx) (:sc-session-id ctx) :session/prompt)
+                         (agent/start-loop-in! (:agent-ctx ctx) []))))))
                 nil)
 
               :on-compacting-entered
@@ -235,9 +248,10 @@
                     max-ms   (get-in ctx [:config :auto-retry-max-delay-ms] 60000)
                     delay-ms (session/exponential-backoff-ms attempt base-ms max-ms)]
                 (swap-session! ctx update :retry-attempt inc)
-                (future
-                  (Thread/sleep ^long delay-ms)
-                  (sc/send-event! (:sc-env ctx) (:sc-session-id ctx) :session/retry-done)))
+                (daemon-thread
+                 (fn []
+                   (Thread/sleep ^long delay-ms)
+                   (sc/send-event! (:sc-env ctx) (:sc-session-id ctx) :session/retry-done))))
 
               :on-retrying-entered
               nil ;; retry-attempt increment handled in :on-retry-triggered
@@ -260,6 +274,7 @@
 (def ^:private tool-call-attempts-path [:telemetry :tool-call-attempts])
 (def ^:private provider-requests-path [:telemetry :provider-requests])
 (def ^:private provider-replies-path [:telemetry :provider-replies])
+(def ^:private provider-error-replies-path [:agent-session :data :provider-error-replies])
 (def ^:private nrepl-runtime-path [:runtime :nrepl])
 (def ^:private journal-path [:persistence :journal])
 (def ^:private flush-state-path [:persistence :flush-state])
@@ -272,7 +287,22 @@
 
 (defn- get-state-in*
   [ctx path]
-  (get-in @(:state* ctx) path))
+  (if-let [state* (:state* ctx)]
+    (get-in @state* path)
+    (cond
+      (= path session-data-path)         (some-> (:session-data-atom ctx) deref)
+      (= path context-index-path)        (some-> (:context-index-atom ctx) deref)
+      (= path tool-output-stats-path)    (some-> (:tool-output-stats-atom ctx) deref)
+      (= path tool-call-attempts-path)   (some-> (:tool-call-attempts-atom ctx) deref)
+      (= path provider-requests-path)    (some-> (:provider-requests-atom ctx) deref)
+      (= path provider-replies-path)     (some-> (:provider-replies-atom ctx) deref)
+      (= path provider-error-replies-path) (some-> (:provider-error-replies-atom ctx) deref)
+      (= path journal-path)              (some-> (:journal-atom ctx) deref)
+      (= path flush-state-path)          (some-> (:flush-state-atom ctx) deref)
+      (= path turn-ctx-path)             (some-> (:turn-ctx-atom ctx) deref)
+      (= path background-jobs-path)      (some-> (:background-jobs-atom ctx) deref)
+      (= path ui-state-path)             (some-> (:ui-state-atom ctx) deref)
+      :else nil)))
 
 (defn- assoc-state-in!*
   [ctx path value]
@@ -344,7 +374,9 @@
          ext-reg           (ext/create-registry)
          wf-reg            (wf/create-registry)
          merged-config     (merge session/default-config (or config {}))
-         state*            (atom {:agent-session {:data (session/initial-session initial-session*)
+         initial-sd        (assoc (session/initial-session initial-session*)
+                                  :provider-error-replies [])
+         state*            (atom {:agent-session {:data initial-sd
                                                   :context-index (context-index/empty-index)}
                                   :telemetry {:tool-output-stats {:calls []
                                                                   :aggregates {:total-context-bytes 0
@@ -360,30 +392,20 @@
                                                 :flush-state {:flushed? false :session-file nil}}
                                   :turn {:ctx nil}
                                   :background-jobs {:store (bg-jobs/empty-state)}
-                                  :ui {:extension-ui @(ext-ui/create-ui-state)}
+                                  :ui {:extension-ui @(ui-state/create-ui-state)}
                                   :recursion (or (some-> recursion-ctx :state-atom deref) nil)
                                   :oauth {:authenticated-providers []
                                           :last-login-provider nil
                                           :last-login-at nil}})
          ;; Build ctx without actions-fn so we can close over it
-         ctx               {:sc-env                sc-env
+         ctx0              {:sc-env                sc-env
                             :sc-session-id         sc-session-id
                             :started-at            (java.time.Instant/now)
                             :state*                state*
-                            :session-data-atom     nil
-                            :context-index-atom    nil
-                            :tool-output-stats-atom nil
-                            :tool-call-attempts-atom nil
-                            :provider-requests-atom nil
-                            :provider-replies-atom  nil
-                            :nrepl-runtime-atom     nrepl-runtime-atom
-                            :agent-ctx               agent-ctx
+                            :nrepl-runtime-atom    nrepl-runtime-atom
+                            :agent-ctx             agent-ctx
                             :extension-registry    ext-reg
                             :workflow-registry     wf-reg
-                            :journal-atom          nil
-                            :flush-state-atom      nil
-                            :turn-ctx-atom         nil
-                            :ui-state-atom         (ui-state-atom-in {:state* state*})
                             :event-queue           event-queue
                             :cwd                   resolved-cwd
                             :persist?              persist?
@@ -392,11 +414,23 @@
                             :compaction-fn         (or compaction-fn compaction/stub-compaction-fn)
                             :branch-summary-fn     (or branch-summary-fn compaction/stub-branch-summary-fn)
                             :config                merged-config
-                            ;; Atom holding (fn [text source]) that actually runs the agent loop.
-                            ;; Set by the runtime layer (main/RPC) after bootstrap.
-                            ;; Extensions use this to submit prompts that trigger real LLM calls.
-                            :extension-run-fn-atom (atom nil)
-                            :background-jobs-atom  nil}
+                           ;; Atom holding (fn [text source]) that actually runs the agent loop.
+                           ;; Set by the runtime layer (main/RPC) after bootstrap.
+                           ;; Extensions use this to submit prompts that trigger real LLM calls.
+                            :extension-run-fn-atom (atom nil)}
+         ctx               (assoc ctx0
+                                  :session-data-atom       (state-backed-atom-view ctx0 session-data-path)
+                                  :context-index-atom      (state-backed-atom-view ctx0 context-index-path)
+                                  :tool-output-stats-atom  (state-backed-atom-view ctx0 tool-output-stats-path)
+                                  :tool-call-attempts-atom (state-backed-atom-view ctx0 tool-call-attempts-path)
+                                  :provider-requests-atom  (state-backed-atom-view ctx0 provider-requests-path)
+                                  :provider-replies-atom   (state-backed-atom-view ctx0 provider-replies-path)
+                                  :provider-error-replies-atom (state-backed-atom-view ctx0 provider-error-replies-path)
+                                  :journal-atom            (state-backed-atom-view ctx0 journal-path)
+                                  :flush-state-atom        (state-backed-atom-view ctx0 flush-state-path)
+                                  :turn-ctx-atom           (state-backed-atom-view ctx0 turn-ctx-path)
+                                  :ui-state-atom           (ui-state-atom-in ctx0)
+                                  :background-jobs-atom    (state-backed-atom-view ctx0 background-jobs-path))
          actions-fn        (make-actions-fn ctx)]
 
      ;; Watch agent-core events atom — forward new events to session statechart
@@ -429,7 +463,7 @@
 
      ;; Start the session statechart with working memory containing the actions-fn
      (sc/start-session! sc-env sc-session-id
-                        {:session-data-atom state*
+                        {:session-data-atom (:session-data-atom ctx)
                          :actions-fn        actions-fn
                          :config            merged-config})
 
@@ -464,7 +498,8 @@
        (get-state-in* ctx session-data-path))))
 
 (defn- swap-session! [ctx f & args]
-  (let [sd (apply update-state-in!* ctx session-data-path f args)]
+  (apply update-state-in!* ctx session-data-path f args)
+  (let [sd (get-state-in* ctx session-data-path)]
     (assoc-state-in!* ctx context-index-path
                       (-> (get-state-in* ctx context-index-path)
                           (context-index/upsert-session sd)
@@ -713,17 +748,17 @@
   - child session file is written immediately with `:parent-session`
     pointing at the parent session file (when available)"
   [ctx entry-id]
-  (let [reg     (:extension-registry ctx)
-        journal (get-state-in* ctx journal-path)]
+  (let [reg        (:extension-registry ctx)
+        journal*   (:journal-atom ctx)]
     (ext/dispatch-in reg "session_before_fork" {:entry-id entry-id})
     (let [parent-sd           (get-session-data-in ctx)
           parent-session-id   (:session-id parent-sd)
           parent-session-file (:session-file parent-sd)
           new-session-id      (str (java.util.UUID/randomUUID))
-          messages            (vec (persist/messages-up-to journal entry-id))
-          branch-entries      (vec (persist/entries-up-to journal entry-id))]
+          messages            (vec (persist/messages-up-to journal* entry-id))
+          branch-entries      (vec (persist/entries-up-to journal* entry-id))]
       ;; Forked runtime state starts from branch-local history.
-      (reset! journal branch-entries)
+      (assoc-state-in!* ctx journal-path branch-entries)
       (swap-session! ctx assoc
                      :session-id new-session-id
                      :parent-session-id parent-session-id

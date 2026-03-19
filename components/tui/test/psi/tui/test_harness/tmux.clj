@@ -7,9 +7,9 @@
    [psi.tui.ansi :as ansi]))
 
 (def default-launch-command
-  "exec clojure -M:psi --tui")
+  "exec clojure -Sdeps '{:deps {psi/psi-app {:local/root \"components/psi-app\"}}}' -M -m psi.app.main --tui")
 
-(def default-startup-timeout-ms 60000)
+(def default-startup-timeout-ms 120000)
 (def default-step-timeout-ms 15000)
 (def default-poll-interval-ms 100)
 (def default-ready-markers ["刀:" "Type a message"])
@@ -121,38 +121,48 @@
            startup-timeout-ms
            step-timeout-ms
            ready-markers
-           help-marker]
+           help-marker
+           keep-session-on-failure?]
     :or {working-dir (str (.getCanonicalPath (io/file ".")))
          launch-command default-launch-command
          startup-timeout-ms default-startup-timeout-ms
          step-timeout-ms default-step-timeout-ms
          ready-markers default-ready-markers
-         help-marker default-help-marker}}]
-  (let [session-name* (or session-name (unique-session-name))]
-    (try
-      (start-session! {:session-name session-name*
-                       :working-dir working-dir
-                       :launch-command launch-command})
-      (if-not (wait-for-any-marker session-name* ready-markers startup-timeout-ms)
-        {:status :failed
-         :reason :startup-timeout
-         :session-name session-name*
-         :pane-snapshot (sanitize-pane-text (capture-pane session-name*))}
-        (do
-          (send-line! session-name* "/help")
-          (if-not (wait-for-marker session-name* help-marker step-timeout-ms)
-            {:status :failed
-             :reason :help-timeout
-             :session-name session-name*
-             :pane-snapshot (sanitize-pane-text (capture-pane session-name*))}
-            (do
-              (send-line! session-name* "/quit")
-              (if (wait-for-java-exit session-name* step-timeout-ms)
-                {:status :passed
-                 :session-name session-name*}
-                {:status :failed
-                 :reason :quit-timeout
-                 :session-name session-name*
-                 :pane-snapshot (sanitize-pane-text (capture-pane session-name*))})))))
-      (finally
-        (kill-session-if-exists! session-name*)))))
+         help-marker default-help-marker
+         keep-session-on-failure? false}}]
+  (let [session-name* (or session-name (unique-session-name))
+        result        (try
+                        (start-session! {:session-name session-name*
+                                         :working-dir working-dir
+                                         :launch-command launch-command})
+                        (if-not (wait-for-any-marker session-name* ready-markers startup-timeout-ms)
+                          {:status :failed
+                           :reason :startup-timeout
+                           :session-name session-name*
+                           :pane-snapshot (sanitize-pane-text (capture-pane session-name*))}
+                          (do
+                            (send-line! session-name* "/help")
+                            (if-not (wait-for-marker session-name* help-marker step-timeout-ms)
+                              {:status :failed
+                               :reason :help-timeout
+                               :session-name session-name*
+                               :pane-snapshot (sanitize-pane-text (capture-pane session-name*))}
+                              (do
+                                (send-line! session-name* "/quit")
+                                (if (wait-for-java-exit session-name* step-timeout-ms)
+                                  {:status :passed
+                                   :session-name session-name*}
+                                  {:status :failed
+                                   :reason :quit-timeout
+                                   :session-name session-name*
+                                   :pane-snapshot (sanitize-pane-text (capture-pane session-name*))})))))
+                        (catch Throwable t
+                          {:status :failed
+                           :reason :exception
+                           :session-name session-name*
+                           :error-message (or (ex-message t) (str t))
+                           :pane-snapshot (sanitize-pane-text (capture-pane session-name*))}))]
+    (when (or (= :passed (:status result))
+              (not keep-session-on-failure?))
+      (kill-session-if-exists! session-name*))
+    result))

@@ -2,6 +2,60 @@
 
 ---
 
+## 2026-03-18 - Circular Dependencies Resolved via Architectural Dependency Inversion (commit `f8a7116`)
+
+### λ The exact circular dependency path: introspection ↔ agent-session at import level
+
+The circular dependency that prevented kaocha from loading all test namespaces was:
+```
+introspection.core → (direct imports) → agent-session.{core,resolvers}
+agent-session.main → (function call) → introspection.core/register-resolvers!
+```
+
+When kaocha loaded both `psi.introspection.agent-session-test` and `psi.agent-session.main-test`, it triggered this cycle.
+
+### λ Solution: Common dependency extraction (proper architectural fix)
+
+**Better approach than dynamic loading**: Extract common bootstrap component:
+- Created `psi/system-bootstrap` component that coordinates all resolver domains
+- Clean dependency graph: `system-bootstrap → all domains`, `agent-session + introspection → system-bootstrap`
+- Single Responsibility: bootstrap owns "wire up the whole system"
+- Explicit compile-time dependencies instead of runtime resolution
+
+Key insight: When A → B and B → A, extract common C where **A → C ← B**. This is dependency inversion via common abstraction extraction.
+
+### λ Verification pattern for circular dependency fixes
+
+1. Test individual namespace loading: `(require 'ns1 'ns2)` 
+2. Test namespace combination that previously failed
+3. Verify functionality still works end-to-end
+4. Update any tests that depended on removed functions (architectural changes)
+
+### λ Architectural pattern: Common Dependency Extraction for Circular Dependencies
+
+**Pattern**: When component A needs component B, and B needs A, extract common component C:
+
+```
+BEFORE (circular):     AFTER (acyclic):
+A → B                  A → C
+B → A                  B → C
+                       C → A + B
+```
+
+**Implementation**:
+- Create `system-bootstrap` component that imports all resolver domains
+- `agent-session` + `introspection` both depend on `system-bootstrap` 
+- `system-bootstrap` coordinates registration without either depending on the other
+- Clean, explicit, testable architecture
+
+**Benefits over dynamic loading**:
+- ✅ Explicit compile-time dependencies (vs. runtime resolution)
+- ✅ Single place for system-wide coordination  
+- ✅ Testable registration logic
+- ✅ Clear architectural intent
+
+---
+
 ## 2026-03-17 - Live query graph reloads must be treated as a separate checkpoint from code reloads (commit `b84f60f`)
 
 ### λ Re-registering resolvers in one JVM does not prove that the live app-query graph has ingested them

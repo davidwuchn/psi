@@ -10,6 +10,7 @@
    [com.fulcrologic.statecharts.elements :as ele]
    [psi.agent-session.core :as session]
    [psi.agent-session.session :as session-data]
+   [psi.agent-session.test-support :as test-support]
    [psi.agent-core.core :as agent-core]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.persistence :as persist]
@@ -144,13 +145,12 @@
                 @(:journal-atom ctx)))))
 
   (testing "new-session-in! resets startup telemetry"
-    (let [ctx (session/create-context)]
-      (swap! (:session-data-atom ctx) assoc
-             :startup-prompts [{:id "engage-nucleus"}]
-             :startup-bootstrap-completed? true
-             :startup-bootstrap-started-at (java.time.Instant/now)
-             :startup-bootstrap-completed-at (java.time.Instant/now)
-             :startup-message-ids ["m1"])
+    (let [ctx (test-support/make-session-ctx
+               {:session-data {:startup-prompts [{:id "engage-nucleus"}]
+                               :startup-bootstrap-completed? true
+                               :startup-bootstrap-started-at (java.time.Instant/now)
+                               :startup-bootstrap-completed-at (java.time.Instant/now)
+                               :startup-message-ids ["m1"]}})]
       (session/new-session-in! ctx)
       (let [sd (session/get-session-data-in ctx)]
         (is (= [] (:startup-prompts sd)))
@@ -160,17 +160,16 @@
         (is (= [] (:startup-message-ids sd)))))))
 
 (deftest fork-session-resets-startup-telemetry-test
-  (let [ctx (session/create-context)]
+  (let [ctx (test-support/make-session-ctx {})]
     (session/new-session-in! ctx)
     (let [entry-id (:id (session/journal-append-in! ctx (persist/message-entry {:role "user"
                                                                                 :content [{:type :text :text "hello"}]
                                                                                 :timestamp (java.time.Instant/now)})))]
-      (swap! (:session-data-atom ctx) assoc
-             :startup-prompts [{:id "engage-nucleus"}]
-             :startup-bootstrap-completed? true
-             :startup-bootstrap-started-at (java.time.Instant/now)
-             :startup-bootstrap-completed-at (java.time.Instant/now)
-             :startup-message-ids ["m1"])
+      (test-support/update-state! ctx :session-data merge {:startup-prompts [{:id "engage-nucleus"}]
+                                                           :startup-bootstrap-completed? true
+                                                           :startup-bootstrap-started-at (java.time.Instant/now)
+                                                           :startup-bootstrap-completed-at (java.time.Instant/now)
+                                                           :startup-message-ids ["m1"]})
       (session/fork-session-in! ctx entry-id)
       (let [sd (session/get-session-data-in ctx)]
         (is (= [] (:startup-prompts sd)))
@@ -468,10 +467,9 @@
                          "\nCurrent date and time: Friday, March 13, 2026 at 11:00:00 am GMT-04:00"
                          "\nCurrent working directory: " old-cwd
                          "\nCurrent worktree directory: " old-cwd)]
-      (swap! (:session-data-atom ctx) assoc
-             :worktree-path old-cwd
-             :base-system-prompt base
-             :system-prompt base)
+      (test-support/update-state! ctx :session-data merge {:worktree-path old-cwd
+                                                           :base-system-prompt base
+                                                           :system-prompt base})
       (session/new-session-in! ctx {:worktree-path new-cwd})
       (let [sd (session/get-session-data-in ctx)]
         (is (str/includes? (:base-system-prompt sd) (str "Current working directory: " new-cwd)))
@@ -1336,7 +1334,7 @@
                :data     {:result {:ok true}}})
 
       ;; Ensure extension-injected messages are persisted into transcript in this test.
-      (swap! (:session-data-atom ctx) assoc :startup-bootstrap-completed? true)
+      (test-support/update-state! ctx :session-data assoc :startup-bootstrap-completed? true)
 
       ;; Turn boundary / idle checkpoint triggers background terminal injection path.
       (session/set-extension-run-fn-in! ctx (fn [_text _source] nil))

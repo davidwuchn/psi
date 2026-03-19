@@ -15,7 +15,9 @@
         psi/tui                                       {:local/root "components/tui"}
         psi/agent-core                                {:local/root "components/agent-core"}
         psi/agent-session                             {:local/root "components/agent-session"}
-        psi/recursion                                 {:local/root "components/recursion"}}
+        psi/recursion                                 {:local/root "components/recursion"}
+        psi/ui-state                                  {:local/root "components/ui-state"}
+        psi/system-bootstrap                          {:local/root "components/system-bootstrap"}}
  :aliases
  {:dev   {:extra-paths ["dev"]}
   :run   {:extra-paths ["components/agent-session/src"
@@ -62,8 +64,7 @@
                        "specs"
                        "tests.edn"
                        "extensions/tests.edn"]}
-  :test  {:extra-paths ["test"
-                        "components/ai/test"
+  :test  {:extra-paths ["components/ai/test"
                         "components/query/test"
                         "components/history/test"
                         "components/introspection/test"
@@ -83,9 +84,22 @@
                         "components/tui/src"
                         "components/agent-core/src"
                         "components/agent-session/src"
+                        "components/ui-state/src"
+                        "components/system-bootstrap/src"
                         "extensions/src"
                         "components/extension-test-helpers/src"]
           :extra-deps  {lambdaisland/kaocha {:mvn/version "1.91.1392"}
                         nrepl/nrepl         {:mvn/version "1.5.1"}}
           :jvm-opts    ["--enable-native-access=ALL-UNNAMED"]
-          :main-opts   ["-m" "kaocha.runner"]}}}
+          :main-opts   ["-m" "kaocha.runner"]}
+  :debug-test {:extra-paths ["test"
+                             "components/ai/test"
+                             "components/engine/test"
+                             "components/query/test"
+                             "components/history/test"
+                             "components/introspection/test"
+                             "components/memory/test"
+                             "components/recursion/test"
+                             "components/tui/test"
+                             "components/agent-core/test"
+                             "components/agent-session/test"]}}}

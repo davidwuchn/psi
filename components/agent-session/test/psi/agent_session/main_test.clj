@@ -14,7 +14,7 @@
    [psi.agent-session.system-prompt :as sys-prompt]
    [psi.introspection.core :as introspection]
    [psi.memory.runtime :as memory-runtime]
-   [psi.tui.app :as tui-app]))
+   #_[psi.tui.app :as tui-app]))
 
 (deftest select-login-provider-test
   (let [providers [{:id :anthropic :name "Anthropic"}
@@ -111,16 +111,16 @@
       (finally
         (reset! main/session-state orig-state)))))
 
-(deftest run-tui-session-passes-current-session-file-test
+(deftest run-tui-session-with-interface-passes-current-session-file-test
   (let [orig-state @main/session-state
         captured   (atom nil)]
     (try
       (with-main-bootstrap-stubs
         (fn []
-          (with-redefs [tui-app/start! (fn [_model-name _run-agent-fn opts]
-                                         (reset! captured opts)
-                                         :ok)]
-            (is (= :ok (main/run-tui-session :ignored)))
+          (let [mock-tui-start! (fn [_model-name _run-agent-fn opts]
+                                  (reset! captured opts)
+                                  :ok)]
+            (is (= :ok (main/run-tui-session-with-interface! mock-tui-start! :ignored)))
             (is (string? (:current-session-file @captured)))
             (is (fn? (:dispatch-fn @captured)))
             (is (fn? (:on-interrupt-fn! @captured)))
@@ -128,15 +128,15 @@
       (finally
         (reset! main/session-state orig-state)))))
 
-(deftest run-tui-dispatch-journals-command-input-test
+(deftest run-tui-dispatch-with-interface-journals-command-input-test
   (let [orig-state @main/session-state]
     (try
       (with-main-bootstrap-stubs
         (fn []
-          (with-redefs [tui-app/start! (fn [_model-name _run-agent-fn opts]
-                                         ((:dispatch-fn opts) "/history")
-                                         :ok)]
-            (is (= :ok (main/run-tui-session :ignored)))
+          (let [mock-tui-start! (fn [_model-name _run-agent-fn opts]
+                                  ((:dispatch-fn opts) "/history")
+                                  :ok)]
+            (is (= :ok (main/run-tui-session-with-interface! mock-tui-start! :ignored)))
             (let [ctx (:ctx @main/session-state)
                   msg-texts (->> @(:journal-atom ctx)
                                  (filter #(= :message (:kind %)))
