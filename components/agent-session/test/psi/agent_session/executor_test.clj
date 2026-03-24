@@ -457,31 +457,84 @@
       (is (= [:user :user :assistant]
              (mapv :role (:messages conv))))
       (is (= {:kind :text :text "u1"}
-             (:content (first (:messages conv)))))
+             (dissoc (:content (first (:messages conv))) :cache-control)))
       (is (= {:kind :text :text "u2"}
-             (:content (second (:messages conv))))))))
+             (dissoc (:content (second (:messages conv))) :cache-control))))))
 
 (deftest cache-breakpoints-are-projected-into-ai-conversation-test
-  (let [messages []
-        tools    [{:name "read"
-                   :description "Read file"
-                   :parameters "{:type \"object\"}"}]
-        prompt   (str "stable"
-                      "\nCurrent date and time: Friday, March 13, 2026 at 11:00:00 am GMT-04:00"
-                      "\nCurrent working directory: /tmp/main"
-                      "\nCurrent worktree directory: /tmp/main")
-        conv     (#'psi.agent-session.executor/agent-messages->ai-conversation
-                  prompt messages tools {:cache-breakpoints #{:system :tools}})]
-    (is (= [{:kind :text
-             :text "stable"
-             :cache-control {:type :ephemeral}}
-            {:kind :text
-             :text (str "\nCurrent date and time: Friday, March 13, 2026 at 11:00:00 am GMT-04:00"
-                        "\nCurrent working directory: /tmp/main"
-                        "\nCurrent worktree directory: /tmp/main")}]
-           (:system-prompt-blocks conv)))
-    (is (= {:type :ephemeral}
-           (:cache-control (first (:tools conv)))))))
+  ;; System and tools cache breakpoints are applied to the provider conversation.
+  ;; The entire system prompt is now one cacheable block (time+cwd frozen).
+  ;; Message breakpoints target the last N user messages.
+  (testing "cache-breakpoints-are-projected-into-ai-conversation"
+    (testing "marks system prompt as single cached block and tools"
+      (let [prompt "stable prompt with frozen time"
+            conv   (#'executor/agent-messages->ai-conversation
+                    prompt [] [{:name "read" :description "Read" :parameters "{:type \"object\"}"}]
+                    {:cache-breakpoints #{:system :tools}})]
+        (is (= [{:kind :text :text prompt :cache-control {:type :ephemeral}}]
+               (:system-prompt-blocks conv)))
+        (is (= {:type :ephemeral}
+               (:cache-control (first (:tools conv)))))))
+
+    (testing "places breakpoints on last 3 user messages with default config"
+      (let [messages [{:role "user" :content [{:type :text :text "u1"}]}
+                      {:role "assistant" :content [{:type :text :text "a1"}]}
+                      {:role "user" :content [{:type :text :text "u2"}]}
+                      {:role "assistant" :content [{:type :text :text "a2"}]}
+                      {:role "user" :content [{:type :text :text "u3"}]}
+                      {:role "assistant" :content [{:type :text :text "a3"}]}
+                      {:role "user" :content [{:type :text :text "u4"}]}]
+            conv     (#'executor/agent-messages->ai-conversation
+                      "prompt" messages [] {:cache-breakpoints #{:system}})]
+        (is (nil? (:cache-control (:content (nth (:messages conv) 0))))
+            "u1 should not have breakpoint")
+        (is (= {:type :ephemeral}
+               (:cache-control (:content (nth (:messages conv) 2))))
+            "u2 should have breakpoint")
+        (is (= {:type :ephemeral}
+               (:cache-control (:content (nth (:messages conv) 4))))
+            "u3 should have breakpoint")
+        (is (= {:type :ephemeral}
+               (:cache-control (:content (nth (:messages conv) 6))))
+            "u4 should have breakpoint")))
+
+    (testing "uses 2 message slots when system+tools cached"
+      (let [messages [{:role "user" :content [{:type :text :text "u1"}]}
+                      {:role "assistant" :content [{:type :text :text "a1"}]}
+                      {:role "user" :content [{:type :text :text "u2"}]}
+                      {:role "assistant" :content [{:type :text :text "a2"}]}
+                      {:role "user" :content [{:type :text :text "u3"}]}]
+            conv     (#'executor/agent-messages->ai-conversation
+                      "prompt" messages [] {:cache-breakpoints #{:system :tools}})]
+        (is (nil? (:cache-control (:content (nth (:messages conv) 0))))
+            "u1 should not have breakpoint")
+        (is (= {:type :ephemeral}
+               (:cache-control (:content (nth (:messages conv) 2))))
+            "u2 should have breakpoint")
+        (is (= {:type :ephemeral}
+               (:cache-control (:content (nth (:messages conv) 4))))
+            "u3 should have breakpoint")))
+
+    (testing "marks all user messages when fewer than available slots"
+      (let [messages [{:role "user" :content [{:type :text :text "u1"}]}]
+            conv     (#'executor/agent-messages->ai-conversation
+                      "prompt" messages [] {:cache-breakpoints #{:system}})]
+        (is (= {:type :ephemeral}
+               (:cache-control (:content (first (:messages conv))))))))
+
+    (testing "all 4 slots on messages when no system/tools caching"
+      (let [messages (vec (mapcat (fn [i]
+                                    [{:role "user" :content [{:type :text :text (str "u" i)}]}
+                                     {:role "assistant" :content [{:type :text :text (str "a" i)}]}])
+                                  (range 1 6)))
+            conv     (#'executor/agent-messages->ai-conversation
+                      "prompt" messages [] {:cache-breakpoints #{}})
+            user-msgs (filterv #(= :user (:role %)) (:messages conv))
+            cached    (filterv #(some? (:cache-control (:content %))) user-msgs)]
+        (is (= 4 (count cached))
+            "last 4 user messages should have breakpoints")
+        (is (nil? (:cache-control (:content (first user-msgs))))
+            "first user message should not have breakpoint")))))
 
 (deftest classify-turn-outcome-test
   (testing "text-only assistant message is terminal stop"

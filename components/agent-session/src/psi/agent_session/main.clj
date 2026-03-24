@@ -609,9 +609,10 @@
          cwd              (or cwd (System/getProperty "user.dir"))
          ctx-files        (sys-prompt/discover-context-files cwd)
          base-prompt      (sys-prompt/build-system-prompt
-                           {:cwd           cwd
-                            :context-files ctx-files
-                            :skills        skills})
+                           {:cwd             cwd
+                            :session-instant (:started-at ctx)
+                            :context-files   ctx-files
+                            :skills          skills})
          developer-prompt (developer-prompt-from-env)
          _                (dispatch/dispatch! ctx :session/set-system-prompt {:prompt base-prompt} {:origin :core})
          ext-paths        (ext/discover-extension-paths [] cwd)
@@ -629,6 +630,7 @@
          graph-caps       (graph-capabilities-in ctx)
          system-prompt    (sys-prompt/build-system-prompt
                            {:cwd                cwd
+                            :session-instant    (:started-at ctx)
                             :context-files      ctx-files
                             :skills             skills
                             :graph-capabilities graph-caps})

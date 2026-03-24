@@ -1,0 +1,313 @@
+-- allium: 2
+
+-- provider-cache-stability.allium
+--
+-- Scope: Cache-stable system prompt and conversation-level cache breakpoints.
+--
+-- Goal: Maximize AI provider prompt-cache reuse across turns by making the
+-- system prompt stable for the session lifetime and placing cache breakpoints
+-- on recent user messages so each new turn re-processes only a small tail.
+--
+-- Includes:
+--   - Session-creation-time injection into system prompt (replacing live clock)
+--   - Working directory injection into system prompt (frozen at session creation)
+--   - Per-message wall-clock timestamps as internal metadata (not sent to LLM)
+--   - Conversation-level cache breakpoint placement on last N user messages
+--   - Breakpoint budget accounting across system, tools, and message slots
+--
+-- Excludes:
+--   - Provider-specific wire format (see anthropic-provider.allium)
+--   - Conversation message lifecycle (see conversation.allium)
+--   - Cache breakpoint persistence across sessions (inherited, see session-core.allium)
+--
+-- Dependencies:
+--   - session-core.allium (AgentSession, CacheBreakpoint, SessionMessage)
+--   - conversation.allium (ConversationRecord, ConversationMessage, CacheControl)
+--   - anthropic-provider.allium (Conversation, TextBlock)
+--
+-- Source distillation:
+--   - system_prompt.clj: current-datetime-string reads ZonedDateTime/now each call;
+--     runtime-metadata-tail appends time + cwd; split-runtime-metadata-tail separates
+--     stable body from volatile tail; system-prompt-blocks caches only the stable part.
+--   - core.clj: ctx :cwd = user.dir at context creation; ctx :started-at = Instant/now
+--     at context creation.  Session start_instant exists on AgentSession but is not
+--     used for prompt time.
+--   - executor.clj: agent-messages->ai-conversation applies cache-control to system
+--     blocks and tools; no message-level cache-control exists today.
+--   - dispatch_handlers.clj: refresh-system-prompt handler re-applies
+--     refresh-runtime-metadata-tail with live clock on each prompt refresh.
+--
+-- Simplification consequence:
+--   Once time and cwd are frozen, the runtime-metadata-tail is no longer volatile.
+--   split-runtime-metadata-tail and the two-block stable/unstable split become
+--   unnecessary — the entire system prompt is one cacheable block.
+
+use "./session-core.allium" as session
+use "./conversation.allium" as conv
+use "./anthropic-provider.allium" as anthropic
+
+------------------------------------------------------------
+-- Constants
+------------------------------------------------------------
+
+config {
+    max_provider_cache_breakpoints: Integer = 4
+}
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value SessionCreationInstant {
+    -- Wall-clock time when the session was created.
+    -- Frozen for the session lifetime.
+    value: Timestamp
+}
+
+value WorkingDirectory {
+    -- Java user.dir, captured at context creation.
+    -- Process-scoped, independent of worktree path.
+    -- Stable for the context lifetime.
+    value: String
+}
+
+------------------------------------------------------------
+-- Session prompt stability
+------------------------------------------------------------
+
+rule SystemPromptUsesSessionCreationTime {
+    when: ComposeSessionPrompt(session)
+    requires: session.status = active
+
+    ensures: prompt_time_component = format_time(session.start_instant)
+
+    @invariant StableAcrossTurns
+        -- The time component of the system prompt is derived from
+        -- session.start_instant, not the wall clock.
+        -- Successive calls within the same session produce identical output.
+}
+
+rule SystemPromptUsesContextWorkingDirectory {
+    when: ComposeSessionPrompt(session)
+    requires: session.status = active
+
+    let context = context_for(session.context_id)
+
+    ensures: prompt_cwd_component = context.working_directory
+
+    @invariant StableAcrossTurns
+        -- The working directory is a context-level property, not session-level.
+        -- It is the JVM user.dir, captured once at context creation.
+        -- All sessions within the context share the same value.
+}
+
+rule ContextCreationCapturesWorkingDirectory {
+    when: ContextInitializeRequested(project_id, worktree_path, baseline_system_prompt)
+
+    ensures: context.working_directory = java_user_dir()
+
+    @guidance
+        -- Already present in code as ctx :cwd (core.clj create-context).
+        -- working_directory is the process working directory (user.dir),
+        -- not the worktree path.  It does not change during the context lifetime.
+}
+
+rule SystemPromptIsFullyStable {
+    when: ComposeSessionPrompt(session)
+
+    ensures:
+        -- The entire system prompt, including the runtime metadata tail,
+        -- is deterministic given the session state.
+        -- No component reads the wall clock or any other non-session source.
+        for any two calls C1, C2 within session:
+            if session state is unchanged between C1 and C2:
+                result(C1) = result(C2)
+
+    @guidance
+        -- This is the key cache property: when the system prompt is stable,
+        -- the provider can cache the full prompt prefix and reuse it across turns.
+        -- The existing split-runtime-metadata-tail / two-block system-prompt-blocks
+        -- pattern becomes unnecessary.  The entire prompt is one cacheable block
+        -- when system caching is enabled.
+}
+
+------------------------------------------------------------
+-- Per-message timestamps (internal metadata)
+------------------------------------------------------------
+
+rule MessageTimestampsAreInternalMetadata {
+    when: RecordMessageTimestamp(message, wall_clock_instant)
+
+    ensures: message.metadata contains {timestamp: wall_clock_instant}
+
+    @invariant NotSentToProvider
+        -- Message timestamps are stored on the internal SessionMessage
+        -- representation only.  They are not included in the content
+        -- sent to the AI provider.
+
+    @invariant QueryableViaEql
+        -- Message timestamps are exposed through the EQL query surface
+        -- so clients can reason about session time, turn duration, etc.
+}
+
+------------------------------------------------------------
+-- Message-level cache breakpoints
+------------------------------------------------------------
+
+rule MessageCacheBreakpointsAreAlwaysOn {
+    -- Message-level cache breakpoints do not require an explicit toggle.
+    -- They are always applied when there are remaining breakpoint slots.
+    when: ProjectConversationToProvider(session, conversation)
+
+    ensures: message_breakpoints_applied = true
+        when available_message_slots(session) > 0
+
+    @guidance
+        -- Unlike :system and :tools breakpoints which are opt-in,
+        -- message breakpoints use all remaining budget automatically.
+}
+
+rule BreakpointBudgetAccounting {
+    when: ProjectConversationToProvider(session, conversation)
+
+    let system_slots = if system in session.cache_breakpoints then 1 else 0
+    let tools_slots = if tools in session.cache_breakpoints then 1 else 0
+    let used_slots = system_slots + tools_slots
+    let available_message_slots = config.max_provider_cache_breakpoints - used_slots
+
+    ensures: available_message_slots >= 0
+    ensures: available_message_slots <= config.max_provider_cache_breakpoints
+
+    @example DefaultConfig
+        -- cache_breakpoints = {system}
+        -- system_slots = 1, tools_slots = 0
+        -- available_message_slots = 4 - 1 = 3
+
+    @example SystemAndToolsCached
+        -- cache_breakpoints = {system, tools}
+        -- system_slots = 1, tools_slots = 1
+        -- available_message_slots = 4 - 2 = 2
+
+    @example NoCaching
+        -- cache_breakpoints = {}
+        -- available_message_slots = 4 - 0 = 4
+}
+
+rule MessageBreakpointsTargetLastNUserMessages {
+    when: ProjectConversationToProvider(session, conversation)
+    requires: available_message_slots(session) > 0
+
+    let N = available_message_slots(session)
+    let user_messages = conversation.messages
+        where role = user
+        ordered by sequence descending
+    let target_messages = user_messages take N
+
+    ensures:
+        for m in target_messages:
+            m.cache_control = {type: ephemeral}
+
+    ensures:
+        for m in conversation.messages where m not in target_messages:
+            m.cache_control = unchanged
+
+    @example FirstTurn
+        -- 1 user message, 3 available slots
+        -- breakpoint placed on that 1 message
+
+    @example ManyTurns
+        -- 20 user messages, 3 available slots
+        -- breakpoints placed on user messages 20, 19, 18
+
+    @guidance
+        -- Targeting user messages (not assistant or tool_result) creates
+        -- natural cache boundaries at turn boundaries.  The provider
+        -- caches the prefix up to each marked message, so assistant
+        -- responses and tool results between them ride the cached prefix.
+}
+
+rule MessageBreakpointsAreProjectionOnly {
+    -- Cache breakpoints on messages are computed at provider projection time.
+    -- They are not stored on the internal SessionMessage or ConversationMessage.
+    when: ProjectConversationToProvider(session, conversation)
+
+    ensures:
+        for m in session.messages:
+            m.cache_control = unchanged in session state
+
+    @invariant EphemeralProjection
+        -- The breakpoint markers exist only in the provider-facing
+        -- conversation projection.  As messages scroll out of the
+        -- last-N window, their breakpoints disappear naturally.
+}
+
+------------------------------------------------------------
+-- Contracts
+------------------------------------------------------------
+
+contract CacheStablePrompt {
+    compose_session_prompt: (session: session/AgentSession) -> String
+
+    @invariant PromptDeterminism
+        -- Given the same session state, compose_session_prompt always
+        -- returns the same string.  No wall-clock or external reads.
+}
+
+contract MessageBreakpointProjection {
+    project_conversation_to_provider:
+        (session: session/AgentSession, conversation: conv/ConversationRecord)
+        -> anthropic/Conversation
+
+    @invariant BudgetRespected
+        -- Total cache_control markers on the projected conversation
+        -- never exceed config.max_provider_cache_breakpoints.
+
+    @invariant BreakpointsOnUserMessagesOnly
+        -- cache_control markers are placed only on user-role messages
+        -- in the projected conversation (apart from system/tool markers).
+}
+
+------------------------------------------------------------
+-- Surface
+------------------------------------------------------------
+
+actor Executor {
+    identified_by: "agent-executor"
+}
+
+surface CacheStabilityApi {
+    facing executor: Executor
+
+    contracts:
+        fulfils CacheStablePrompt
+        fulfils MessageBreakpointProjection
+
+    exposes:
+        for ctx in session/AgentContexts:
+            ctx.working_directory
+
+        for s in session/AgentSessions:
+            s.start_instant
+            s.cache_breakpoints
+
+        for m in session/SessionMessages:
+            m.metadata.timestamp
+
+    @guarantee SystemPromptStableWithinSession
+        -- The system prompt does not change between turns unless session
+        -- state (tools, extensions, skills) changes.  Time and cwd
+        -- components are frozen at session creation.
+
+    @guarantee MessageBreakpointsAreTransparentToAgent
+        -- The agent never sees cache_control markers.  They exist only
+        -- in the provider projection.
+
+    @guarantee BreakpointBudgetIsHonored
+        -- System + tools + message breakpoints never exceed
+        -- max_provider_cache_breakpoints.
+
+    @guarantee StaleBreakpointsDisappearNaturally
+        -- As messages leave the last-N user-message window,
+        -- their breakpoints are not present in the next projection.
+        -- No cleanup or state mutation is needed.
+}

@@ -681,21 +681,13 @@
                                                          :extension-last-prompt-delivery delivery
                                                          :extension-last-prompt-at at))}))
 
+  ;; No-op: prompt time and cwd are frozen at session creation for cache stability.
+  ;; Callers (session-lifecycle new/resume) still dispatch this event; it is harmless.
   (dispatch/register-handler!
    :session/retarget-runtime-prompt-metadata
    {}
-   (fn [ctx _data]
-     (let [sd      (session/get-session-data-in ctx)
-           cwd     (session/effective-cwd-in ctx)
-           base*   (some-> (or (:base-system-prompt sd) "")
-                           (sys-prompt/refresh-runtime-metadata-tail cwd))
-           prompt* (some-> (or (:system-prompt sd) "")
-                           (sys-prompt/refresh-runtime-metadata-tail cwd))]
-       {:root-state-update (session/session-update #(assoc %
-                                                           :base-system-prompt base*
-                                                           :system-prompt prompt*))
-        :effects [{:effect/type :runtime/agent-set-system-prompt
-                   :prompt prompt*}]})))
+   (fn [_ctx _data]
+     {:effects []}))
 
   (dispatch/register-handler!
    :session/set-rpc-trace

@@ -933,24 +933,19 @@
       (is (= prompt (:psi.agent-session/system-prompt result)))
       (is (= prompt (:system-prompt (agent-core/get-data-in (ss/agent-ctx-in ctx)))))))
 
-  (testing "new-session-in! retargets runtime prompt cwd metadata to the new worktree path"
-    (let [ctx       (session/create-context)
-          old-cwd   "/tmp/main"
-          new-cwd   "/tmp/worktree"
+  (testing "new-session-in! preserves stable prompt (cwd frozen at context creation)"
+    (let [ctx       (session/create-context {:cwd "/tmp/main"})
           base      (str "Prompt body"
                          "\nCurrent date and time: Friday, March 13, 2026 at 11:00:00 am GMT-04:00"
-                         "\nCurrent working directory: " old-cwd
-                         "\nCurrent worktree directory: " old-cwd)]
-      (test-support/update-state! ctx :session-data merge {:worktree-path old-cwd
+                         "\nCurrent working directory: /tmp/main"
+                         "\nCurrent worktree directory: /tmp/main")]
+      (test-support/update-state! ctx :session-data merge {:worktree-path "/tmp/main"
                                                            :base-system-prompt base
                                                            :system-prompt base})
-      (session/new-session-in! ctx {:worktree-path new-cwd})
+      (session/new-session-in! ctx {:worktree-path "/tmp/worktree"})
       (let [sd (ss/get-session-data-in ctx)]
-        (is (str/includes? (:base-system-prompt sd) (str "Current working directory: " new-cwd)))
-        (is (str/includes? (:base-system-prompt sd) (str "Current worktree directory: " new-cwd)))
-        (is (str/includes? (:system-prompt sd) (str "Current working directory: " new-cwd)))
-        (is (str/includes? (:system-prompt sd) (str "Current worktree directory: " new-cwd)))
-        (is (not (str/includes? (:system-prompt sd) (str "Current working directory: " old-cwd))))
+        ;; Prompt cwd is frozen at context creation — does not change with worktree
+        (is (str/includes? (:system-prompt sd) "Current working directory: /tmp/main"))
         (is (= (:base-system-prompt sd) (:system-prompt sd))))))
 
   (testing "query-in resolves graph capabilities via agent-session bridge"

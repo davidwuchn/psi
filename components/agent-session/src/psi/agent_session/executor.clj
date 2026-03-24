@@ -65,10 +65,51 @@
 (def ^:private ephemeral-cache-control
   {:type :ephemeral})
 
+(def ^:private max-provider-cache-breakpoints
+  "Maximum cache breakpoints supported by the Anthropic API."
+  4)
+
 (defn- maybe-cache-control
   [enabled?]
   (when enabled?
     ephemeral-cache-control))
+
+(defn- add-cache-control-to-content
+  "Add ephemeral cache-control to a message's normalized content."
+  [content]
+  (case (:kind content)
+    :text       (assoc content :cache-control ephemeral-cache-control)
+    :structured (update content :blocks
+                        (fn [blocks]
+                          (if (seq blocks)
+                            (update blocks (dec (count blocks))
+                                    assoc :cache-control ephemeral-cache-control)
+                            blocks)))
+    content))
+
+(defn- apply-message-cache-breakpoints
+  "Mark the last N user messages with ephemeral cache-control.
+   N = available breakpoint slots after system and tools."
+  [conv system-cache? tools-cache?]
+  (let [system-slots (if system-cache? 1 0)
+        tools-slots  (if tools-cache? 1 0)
+        available    (- max-provider-cache-breakpoints system-slots tools-slots)]
+    (if (pos? available)
+      (let [messages  (:messages conv)
+            user-idxs (->> (range (count messages))
+                           (filterv #(= :user (:role (nth messages %)))))]
+        (if (empty? user-idxs)
+          conv
+          (let [target-idxs (set (take-last available user-idxs))]
+            (assoc conv :messages
+                   (into []
+                         (map-indexed
+                          (fn [i msg]
+                            (if (contains? target-idxs i)
+                              (update msg :content add-cache-control-to-content)
+                              msg)))
+                         messages)))))
+      conv)))
 
 (defn- agent-messages->ai-conversation
   "Rebuild an ai/conversation from agent-core message history.
@@ -153,7 +194,8 @@
                             :system-prompt-blocks (system-prompt/system-prompt-blocks
                                                    system-prompt
                                                    system-cache?)})
-              messages)]
+              messages)
+        conv (apply-message-cache-breakpoints conv system-cache? tools-cache?)]
     ;; Add agent tools to conversation so the provider includes them in the request
     (reduce (fn [c tool]
               (conv/add-tool c

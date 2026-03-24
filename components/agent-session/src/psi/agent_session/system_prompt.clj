@@ -6,7 +6,7 @@
      - Context files (AGENTS.md / CLAUDE.md discovered up directory tree)
      - Skills (progressive disclosure: name + description only)
      - Custom/append prompt overrides
-     - Current date/time and working directory
+     - Session creation time and working directory (frozen, cache-stable)
 
    The assembled prompt is introspectable: stored in session data as
    :system-prompt and queryable via EQL :psi.agent-session/system-prompt.
@@ -134,66 +134,33 @@
       (str base section)
       base)))
 
-(def ^:private runtime-metadata-tail-re
-  #"\nCurrent date and time: .*\nCurrent working directory: .*\nCurrent worktree directory: .*\z")
+(def ^:private datetime-formatter
+  (java.time.format.DateTimeFormatter/ofPattern
+   "EEEE, MMMM d, yyyy 'at' hh:mm:ss a z"))
 
-(defn- current-datetime-string
-  []
-  (let [now (java.time.ZonedDateTime/now)
-        fmt (java.time.format.DateTimeFormatter/ofPattern
-             "EEEE, MMMM d, yyyy 'at' hh:mm:ss a z")]
-    (.format now fmt)))
+(defn format-instant
+  "Format an Instant as a human-readable date/time string in the system default zone."
+  [^java.time.Instant instant]
+  (.format (.atZone instant (java.time.ZoneId/systemDefault))
+           datetime-formatter))
 
 (defn runtime-metadata-tail
-  "Return the volatile runtime metadata suffix appended after prompt contributions."
-  [cwd]
-  (str "\nCurrent date and time: " (current-datetime-string)
+  "Return the runtime metadata suffix for the system prompt.
+   Pure function — uses the provided instant, not the wall clock."
+  [cwd instant]
+  (str "\nCurrent date and time: " (format-instant instant)
        "\nCurrent working directory: " cwd
        "\nCurrent worktree directory: " cwd))
 
-(defn refresh-runtime-metadata-tail
-  "Replace the runtime metadata tail in `prompt` for `cwd` when present."
-  [prompt cwd]
-  (let [tail (runtime-metadata-tail cwd)]
-    (cond
-      (not (string? prompt)) prompt
-      (str/blank? prompt) prompt
-      (re-find runtime-metadata-tail-re prompt)
-      (str/replace prompt runtime-metadata-tail-re tail)
-      :else prompt)))
-
-(defn split-runtime-metadata-tail
-  "Split a prompt into [stable runtime-tail].
-
-   The runtime tail contains current date/time and cwd metadata so callers can
-   exclude it from cached Anthropic system blocks while preserving prompt order."
-  [prompt]
-  (if (not (string? prompt))
-    [prompt nil]
-    (if-let [tail (re-find runtime-metadata-tail-re prompt)]
-      (let [idx (.lastIndexOf ^String prompt ^String tail)]
-        [(subs prompt 0 idx) tail])
-      [prompt nil])))
-
 (defn system-prompt-blocks
   "Return Anthropic-compatible system prompt blocks.
-
-   When `cache-system?` is true, the stable prompt body is cached while the
-   runtime metadata tail remains uncached."
+   The entire prompt is stable (time and cwd are frozen at session creation),
+   so it is returned as a single cacheable block."
   [prompt cache-system?]
-  (when (string? prompt)
-    (let [[stable runtime-tail] (split-runtime-metadata-tail prompt)
-          stable-block          (when (seq stable)
-                                  (cond-> {:kind :text
-                                           :text stable}
-                                    cache-system?
-                                    (assoc :cache-control {:type :ephemeral})))
-          runtime-block         (when (seq runtime-tail)
-                                  {:kind :text
-                                   :text runtime-tail})
-          blocks                (vec (remove nil? [stable-block runtime-block]))]
-      (when (seq blocks)
-        blocks))))
+  (when (and (string? prompt) (seq prompt))
+    [(cond-> {:kind :text :text prompt}
+       cache-system?
+       (assoc :cache-control {:type :ephemeral}))]))
 
 (defn build-system-prompt
   "Build the complete system prompt from all sources.
@@ -212,9 +179,10 @@
 
    The assembled prompt is returned as a string."
   ([] (build-system-prompt {}))
-  ([{:keys [cwd custom-prompt append-prompt selected-tools
+  ([{:keys [cwd session-instant custom-prompt append-prompt selected-tools
             context-files skills graph-capabilities prompt-contributions]}]
-   (let [resolved-cwd   (or cwd (System/getProperty "user.dir"))
+   (let [resolved-cwd     (or cwd (System/getProperty "user.dir"))
+         resolved-instant (or session-instant (java.time.Instant/now))
          tool-names     (or selected-tools ["read" "bash" "edit" "write" "app-query-tool"])
          has-read?      (some #(= "read" %) tool-names)
          has-app-query? (some #(= "app-query-tool" %) tool-names)
@@ -316,4 +284,4 @@
           (or context-section "")
           (or skills-section "")
           (or contributions-section "")
-          (runtime-metadata-tail resolved-cwd)))))
+          (runtime-metadata-tail resolved-cwd resolved-instant)))))

@@ -85,9 +85,18 @@
       (is (str/includes? prompt "- agent-session (ops=10, resolvers=8, mutations=2)"))
       (is (str/includes? prompt "- ai (ops=4, resolvers=4, mutations=0)"))))
 
-  (testing "includes current date/time"
-    (let [prompt (sys-prompt/build-system-prompt {})]
-      (is (str/includes? prompt "Current date and time:"))))
+  (testing "includes session creation time, not wall clock"
+    (let [instant (java.time.Instant/parse "2026-01-15T10:30:00Z")
+          prompt  (sys-prompt/build-system-prompt {:session-instant instant})]
+      (is (str/includes? prompt "Current date and time:"))
+      (is (str/includes? prompt "January 15, 2026"))))
+
+  (testing "is deterministic given the same inputs"
+    (let [instant (java.time.Instant/parse "2026-01-15T10:30:00Z")
+          opts    {:cwd "/test" :session-instant instant}
+          p1      (sys-prompt/build-system-prompt opts)
+          p2      (sys-prompt/build-system-prompt opts)]
+      (is (= p1 p2))))
 
   (testing "includes context files"
     (let [prompt (sys-prompt/build-system-prompt
@@ -176,19 +185,23 @@
       (is (str/includes? prompt "Context text"))
       (is (str/includes? prompt "<available_skills>")))))
 
-(deftest split-runtime-metadata-tail-test
-  (testing "splits stable prompt from uncached runtime metadata tail"
-    (let [prompt (str "base prompt"
-                      "\n# Extension Prompt Contributions\n\n"
-                      "<prompt_contribution id=\"x\">x</prompt_contribution>"
-                      "\nCurrent date and time: Friday, March 13, 2026 at 11:00:00 am GMT-04:00"
-                      "\nCurrent working directory: /tmp/main"
-                      "\nCurrent worktree directory: /tmp/main")
-          [stable runtime-tail] (sys-prompt/split-runtime-metadata-tail prompt)]
-      (is (str/includes? stable "# Extension Prompt Contributions"))
-      (is (not (str/includes? stable "Current date and time:")))
-      (is (str/includes? runtime-tail "Current date and time:"))
-      (is (str/includes? runtime-tail "Current worktree directory: /tmp/main")))))
+(deftest system-prompt-blocks-test
+  ;; system-prompt-blocks returns a single cacheable block
+  ;; since the entire prompt is now stable (time + cwd frozen)
+  (testing "system-prompt-blocks"
+    (testing "returns single cached block when caching enabled"
+      (let [blocks (sys-prompt/system-prompt-blocks "test prompt" true)]
+        (is (= 1 (count blocks)))
+        (is (= "test prompt" (:text (first blocks))))
+        (is (= {:type :ephemeral} (:cache-control (first blocks))))))
+    (testing "returns single uncached block when caching disabled"
+      (let [blocks (sys-prompt/system-prompt-blocks "test prompt" false)]
+        (is (= 1 (count blocks)))
+        (is (= "test prompt" (:text (first blocks))))
+        (is (nil? (:cache-control (first blocks))))))
+    (testing "returns nil for empty prompt"
+      (is (nil? (sys-prompt/system-prompt-blocks "" false)))
+      (is (nil? (sys-prompt/system-prompt-blocks nil false))))))
 
 (deftest system-prompt-introspectable-test
   (testing "assembled prompt is a string that can be stored and queried"
