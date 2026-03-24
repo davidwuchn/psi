@@ -59,8 +59,12 @@ entity RegisteredTool {
     name: String
     label: String
     description: String
+    lambda_description: String?
     parameters: String
     extension_path: String
+
+    -- lambda_description is optional for extension tools.
+    -- In lambda prompt mode, falls back to description when absent.
 }
 
 entity ExtensionFlag {

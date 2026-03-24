@@ -7,7 +7,9 @@
    {:version 1
     :agent-session {:model-provider string?
                     :model-id string?
-                    :thinking-level keyword?}}"
+                    :thinking-level keyword?
+                    :prompt-mode keyword?
+                    :nucleus-prelude-override string?}}"
   (:require
    [clojure.edn :as edn]
    [clojure.java.io :as io]))
@@ -62,4 +64,18 @@
   [prefs]
   (let [v (get-in prefs [:agent-session :thinking-level])]
     (when (keyword? v)
+      v)))
+
+(defn project-prompt-mode
+  "Return the project-configured prompt mode, or nil if unset."
+  [prefs]
+  (let [v (get-in prefs [:agent-session :prompt-mode])]
+    (when (#{:lambda :prose} v)
+      v)))
+
+(defn project-nucleus-prelude-override
+  "Return the project-configured nucleus prelude override, or nil."
+  [prefs]
+  (let [v (get-in prefs [:agent-session :nucleus-prelude-override])]
+    (when (string? v)
       v)))

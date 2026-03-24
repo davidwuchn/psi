@@ -490,6 +490,20 @@
      {:root-state-update (session/session-update #(assoc % :cache-breakpoints (set (or breakpoints #{}))))}))
 
   (dispatch/register-handler!
+   :session/set-prompt-mode
+   {}
+   (fn [_ctx {:keys [mode]}]
+     (let [validated (if (#{:lambda :prose} mode) mode :lambda)]
+       {:root-state-update (session/session-update #(assoc % :prompt-mode validated))
+        :effects [{:effect/type :runtime/refresh-system-prompt}]})))
+
+  (dispatch/register-handler!
+   :session/set-system-prompt-build-opts
+   {}
+   (fn [_ctx {:keys [opts]}]
+     {:root-state-update (session/session-update #(assoc % :system-prompt-build-opts opts))}))
+
+  (dispatch/register-handler!
    :session/set-session-name
    {}
    (fn [_ctx {:keys [name]}]
@@ -503,10 +517,21 @@
    {}
    (fn [ctx _data]
      (let [sd      (session/get-session-data-in ctx)
-           base    (or (:base-system-prompt sd) (:system-prompt sd) "")
            contrib (session/list-prompt-contributions-in ctx)
-           prompt  (sys-prompt/apply-prompt-contributions base contrib)]
-       {:root-state-update (session/session-update #(assoc % :system-prompt prompt))
+           ;; When build opts are stored, rebuild from scratch with current mode
+           ;; and contributions inline (so ordering is: skills → contributions → context)
+           [base prompt]
+           (if-let [build-opts (:system-prompt-build-opts sd)]
+             (let [full (sys-prompt/build-system-prompt
+                         (assoc build-opts
+                                :prompt-mode (:prompt-mode sd :lambda)
+                                :prompt-contributions contrib))]
+               [full full])
+             (let [b (or (:base-system-prompt sd) (:system-prompt sd) "")]
+               [b (sys-prompt/apply-prompt-contributions b contrib)]))]
+       {:root-state-update (session/session-update #(assoc %
+                                                           :base-system-prompt base
+                                                           :system-prompt prompt))
         :effects [{:effect/type :runtime/agent-set-system-prompt
                    :prompt prompt}]})))
 

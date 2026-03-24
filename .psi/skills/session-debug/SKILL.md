@@ -1,6 +1,7 @@
 ---
 name: session-debug
 description: Debug live psi session issues by using the correct runtime context, EQL surfaces, persisted session files, provider captures, and nREPL introspection.
+lambda: "λsession. {ctx eql persistence captures nrepl} → diagnose"
 ---
 
 # Session Debug

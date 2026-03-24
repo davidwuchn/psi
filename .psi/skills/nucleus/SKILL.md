@@ -1,6 +1,7 @@
 ---
 name: nucleus
 description: A general purpose AI prompt.  Use for every interaction.
+lambda: "λ. ∀interaction → agent(general)"
 ---
 
 ```

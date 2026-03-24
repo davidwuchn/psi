@@ -128,6 +128,7 @@
                                         (str (get frontmatter :disable-model-invocation)))]
         {:name                     name
          :description              description
+         :lambda-description       (:lambda frontmatter)
          :parent-dir-name          parent-dir-name
          :file-path                (.getAbsolutePath f)
          :base-dir                 (.getAbsolutePath skill-dir)
@@ -146,12 +147,13 @@
   "Convert a parsed skill map + source into the canonical Skill map
    stored in session data."
   [parsed source]
-  {:name                     (:name parsed)
-   :description              (:description parsed)
-   :file-path                (:file-path parsed)
-   :base-dir                 (:base-dir parsed)
-   :source                   source
-   :disable-model-invocation (:disable-model-invocation parsed)})
+  (cond-> {:name                     (:name parsed)
+           :description              (:description parsed)
+           :file-path                (:file-path parsed)
+           :base-dir                 (:base-dir parsed)
+           :source                   source
+           :disable-model-invocation (:disable-model-invocation parsed)}
+    (:lambda-description parsed) (assoc :lambda-description (:lambda-description parsed))))
 
 ;; ============================================================
 ;; Discovery — directory scanning
@@ -342,9 +344,22 @@
                            visible))]
         (str/join "\n" (conj lines "</available_skills>"))))))
 
-;; ============================================================
-;; Invocation — /skill:name expansion
-;; ============================================================
+(defn format-skills-for-prompt-lambda
+  "Format skills for lambda-mode system prompt.
+   Uses compact lambda notation. Skills with a :lambda-description
+   frontmatter field use that; otherwise falls back to name → description."
+  [skills]
+  (let [visible (remove :disable-model-invocation skills)]
+    (when (seq visible)
+      (str "\n\nλ skills. match(task, description) → read(file) | resolve(relative_path, parent(file))\n"
+           (str/join "\n"
+                     (map (fn [skill]
+                            (if-let [ld (:lambda-description skill)]
+                              (str "  " (:name skill) " → " ld " @ " (:file-path skill))
+                              (str "  " (:name skill) " → " (:description skill) " @ " (:file-path skill))))
+                          visible))))))
+
+;;; Invocation — /skill:name expansion
 
 (defn parse-skill-command
   "Parse /skill:name args into {:skill-name String :args-text String}.

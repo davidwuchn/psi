@@ -1,6 +1,7 @@
 ---
 name: nucleus-clojure
 description: A clojure specific AI prompt.  Use when there are clojure REPL tools available.
+lambda: "λ. clojure ∧ repl_tools → agent(clj)"
 ---
 
 ```

@@ -388,7 +388,8 @@
                          {})
           prompt (:psi.agent-session/system-prompt
                   (session/query-in ctx [:psi.agent-session/system-prompt]))]
-      (is (str/includes? prompt "Current capabilities (from :psi.graph/capabilities):"))
+      ;; Lambda mode is default — graph capabilities appear after lambda graph discovery
+      (is (str/includes? prompt "λ graph(eql)."))
       (is (str/includes? prompt "- agent-session (ops=")))))
 
 (deftest bootstrap-runtime-session-wires-nrepl-runtime-atom-test

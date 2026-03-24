@@ -57,133 +57,269 @@
 ;; System prompt assembly
 ;; ============================================================
 
-(deftest build-system-prompt-test
-  (testing "default prompt includes tools, guidelines, and graph discovery"
-    (let [prompt (sys-prompt/build-system-prompt {:cwd "/test/dir"})]
-      (is (str/includes? prompt "Available tools:"))
-      (is (str/includes? prompt "read: Read file contents"))
-      (is (str/includes? prompt "app-query-tool: Execute an EQL query against the live session graph."))
-      (is (str/includes? prompt "Guidelines:"))
-      (is (str/includes? prompt "Capability graph (EQL discovery):"))
-      (is (str/includes? prompt ":psi.graph/resolver-syms"))
-      (is (str/includes? prompt "[:psi.graph/root-seeds]"))
-      (is (str/includes? prompt "[:psi.graph/root-queryable-attrs]"))
-      (is (str/includes? prompt ":psi.agent-session/usage-input"))
-      (is (str/includes? prompt "/test/dir"))))
+;;; Lambda mode tests
 
-  (testing "includes current capabilities when graph-capabilities are provided"
-    (let [prompt (sys-prompt/build-system-prompt
-                  {:graph-capabilities [{:domain :agent-session
-                                         :operation-count 10
-                                         :resolver-count 8
-                                         :mutation-count 2}
-                                        {:domain :ai
-                                         :operation-count 4
-                                         :resolver-count 4
-                                         :mutation-count 0}]})]
-      (is (str/includes? prompt "Current capabilities (from :psi.graph/capabilities):"))
-      (is (str/includes? prompt "- agent-session (ops=10, resolvers=8, mutations=2)"))
-      (is (str/includes? prompt "- ai (ops=4, resolvers=4, mutations=0)"))))
+(deftest build-system-prompt-lambda-mode-test
+  ;; Lambda mode is the default prompt mode.
+  (testing "build-system-prompt in lambda mode"
+    (testing "is default when no :prompt-mode specified"
+      (let [prompt (sys-prompt/build-system-prompt {:cwd "/test/dir"})]
+        (is (str/includes? prompt "λ engage(nucleus).")
+            "nucleus prelude present")
+        (is (str/includes? prompt "λ identity(ψ)")
+            "lambda identity present")
+        (is (not (str/includes? prompt "You are ψ (Psi)"))
+            "prose identity absent")))
 
-  (testing "includes session creation time, not wall clock"
-    (let [instant (java.time.Instant/parse "2026-01-15T10:30:00Z")
-          prompt  (sys-prompt/build-system-prompt {:session-instant instant})]
-      (is (str/includes? prompt "Current date and time:"))
-      (is (str/includes? prompt "January 15, 2026"))))
+    (testing "includes all lambda-compiled sections"
+      (let [prompt (sys-prompt/build-system-prompt {:cwd "/test/dir"})]
+        (is (str/includes? prompt "λ engage(nucleus)."))
+        (is (str/includes? prompt "λ identity(ψ)"))
+        (is (str/includes? prompt "λ tools."))
+        (is (str/includes? prompt "λ guide."))
+        (is (str/includes? prompt "λ graph(eql)."))))
 
-  (testing "is deterministic given the same inputs"
-    (let [instant (java.time.Instant/parse "2026-01-15T10:30:00Z")
-          opts    {:cwd "/test" :session-instant instant}
-          p1      (sys-prompt/build-system-prompt opts)
-          p2      (sys-prompt/build-system-prompt opts)]
-      (is (= p1 p2))))
+    (testing "includes lambda tool descriptions"
+      (let [prompt (sys-prompt/build-system-prompt {:cwd "/test/dir"})]
+        (is (str/includes? prompt "read → λf. content(f)"))
+        (is (str/includes? prompt "bash → λcmd. shell(cmd)"))
+        (is (str/includes? prompt "edit → λf. find(exact) → replace"))
+        (is (str/includes? prompt "write → λf. create(f) ∨ overwrite(f)"))
+        (is (str/includes? prompt "app-query-tool → λq. eql(graph)"))))
 
-  (testing "includes context files"
-    (let [prompt (sys-prompt/build-system-prompt
-                  {:context-files [{:path "/project/AGENTS.md"
-                                    :content "# My Project\nInstructions here"}]})]
-      (is (str/includes? prompt "# Project Context"))
-      (is (str/includes? prompt "Instructions here"))))
+    (testing "includes graph capabilities data"
+      (let [prompt (sys-prompt/build-system-prompt
+                    {:graph-capabilities [{:domain :agent-session
+                                           :operation-count 10
+                                           :resolver-count 8
+                                           :mutation-count 2}]})]
+        (is (str/includes? prompt "agent-session (ops=10, resolvers=8, mutations=2)"))))
 
-  (testing "includes skills section when read tool available"
-    (let [skills [{:name "test-skill" :description "A test skill"
-                   :file-path "/skills/test-skill/SKILL.md"
-                   :base-dir "/skills/test-skill"
-                   :source :user :disable-model-invocation false}]
-          prompt (sys-prompt/build-system-prompt {:skills skills})]
-      (is (str/includes? prompt "<available_skills>"))
-      (is (str/includes? prompt "test-skill"))
-      (is (str/includes? prompt "A test skill"))))
+    (testing "uses custom prelude when override provided"
+      (let [prompt (sys-prompt/build-system-prompt
+                    {:cwd "/test"
+                     :nucleus-prelude-override "λ custom.prelude"})]
+        (is (str/includes? prompt "λ custom.prelude"))
+        (is (not (str/includes? prompt "λ engage(nucleus).")))))
 
-  (testing "excludes skills when read tool not available"
-    (let [skills [{:name "test-skill" :description "A test skill"
-                   :file-path "/skills/test-skill/SKILL.md"
-                   :base-dir "/skills/test-skill"
-                   :source :user :disable-model-invocation false}]
-          prompt (sys-prompt/build-system-prompt
-                  {:skills skills
-                   :selected-tools ["bash" "edit" "write"]})]
-      (is (not (str/includes? prompt "<available_skills>")))))
+    (testing "extension tool falls back to prose when no lambda description"
+      (let [prompt (sys-prompt/build-system-prompt
+                    {:cwd "/test"
+                     :extension-tool-descriptions [{:name "my-ext-tool"
+                                                    :description "Prose desc"}]})]
+        (is (str/includes? prompt "my-ext-tool → Prose desc"))))
 
-  (testing "excludes graph discovery section when app-query-tool is not available"
-    (let [prompt (sys-prompt/build-system-prompt
-                  {:selected-tools ["read" "bash" "edit" "write"]})]
-      (is (not (str/includes? prompt "Capability graph (EQL discovery):")))))
+    (testing "extension tool uses lambda description when available"
+      (let [prompt (sys-prompt/build-system-prompt
+                    {:cwd "/test"
+                     :extension-tool-descriptions [{:name "my-ext-tool"
+                                                    :description "Prose desc"
+                                                    :lambda-description "λt. ext(t)"}]})]
+        (is (str/includes? prompt "my-ext-tool → λt. ext(t)"))
+        (is (not (str/includes? prompt "Prose desc")))))
 
-  (testing "custom prompt replaces default"
-    (let [prompt (sys-prompt/build-system-prompt
-                  {:custom-prompt "Custom system prompt."})]
-      (is (str/starts-with? prompt "Custom system prompt."))
-      (is (not (str/includes? prompt "Available tools:")))))
+    (testing "renders skills in lambda notation"
+      (let [skills [{:name "test-skill" :description "A test skill"
+                     :file-path "/skills/test-skill/SKILL.md"
+                     :base-dir "/skills/test-skill"
+                     :source :user :disable-model-invocation false}]
+            prompt (sys-prompt/build-system-prompt {:skills skills})]
+        (is (str/includes? prompt "λ skills. match(task, description)"))
+        (is (str/includes? prompt "test-skill → A test skill @"))
+        (is (not (str/includes? prompt "<available_skills>")))))
 
-  (testing "append prompt is added"
-    (let [prompt (sys-prompt/build-system-prompt
-                  {:append-prompt "Extra instructions here."})]
-      (is (str/includes? prompt "Extra instructions here."))))
+    (testing "uses lambda frontmatter when available"
+      (let [skills [{:name "my-skill" :description "Prose desc"
+                     :lambda-description "λs. compile(prompt)"
+                     :file-path "/s/SKILL.md" :base-dir "/s"
+                     :source :user :disable-model-invocation false}]
+            prompt (sys-prompt/build-system-prompt {:skills skills})]
+        (is (str/includes? prompt "my-skill → λs. compile(prompt) @"))
+        (is (not (str/includes? prompt "Prose desc")))))
 
-  (testing "includes explicit worktree directory metadata"
-    (let [prompt (sys-prompt/build-system-prompt
-                  {:cwd "/tmp/worktree-demo"})]
-      (is (str/includes? prompt "Current working directory: /tmp/worktree-demo"))
-      (is (str/includes? prompt "Current worktree directory: /tmp/worktree-demo"))))
+    (testing "is deterministic given the same inputs"
+      (let [instant (java.time.Instant/parse "2026-01-15T10:30:00Z")
+            opts    {:cwd "/test" :session-instant instant}
+            p1      (sys-prompt/build-system-prompt opts)
+            p2      (sys-prompt/build-system-prompt opts)]
+        (is (= p1 p2))))))
 
-  (testing "includes prompt contributions when provided"
-    (let [prompt (sys-prompt/build-system-prompt
-                  {:prompt-contributions [{:id "x"
-                                           :ext-path "/ext/a"
-                                           :section "Hints"
-                                           :content "Use stable IDs"
-                                           :priority 100
-                                           :enabled true}]})]
-      (is (str/includes? prompt "# Extension Prompt Contributions"))
-      (is (str/includes? prompt "<prompt_contribution"))
-      (is (str/includes? prompt "Use stable IDs"))))
+;;; Prose mode tests
 
-  (testing "runtime metadata is emitted after extension prompt contributions"
-    (let [prompt (sys-prompt/build-system-prompt
-                  {:cwd "/tmp/worktree-demo"
-                   :prompt-contributions [{:id "x"
-                                           :ext-path "/ext/a"
-                                           :section "Hints"
-                                           :content "Use stable IDs"
-                                           :priority 100
-                                           :enabled true}]})
-          contrib-idx (.indexOf prompt "# Extension Prompt Contributions")
-          time-idx    (.indexOf prompt "Current date and time:")]
-      (is (pos? contrib-idx))
-      (is (> time-idx contrib-idx))))
+(deftest build-system-prompt-prose-mode-test
+  ;; Prose mode preserves the original natural-language prompt.
+  (testing "build-system-prompt in prose mode"
+    (testing "includes prose identity and tools"
+      (let [prompt (sys-prompt/build-system-prompt {:cwd "/test/dir"
+                                                    :prompt-mode :prose})]
+        (is (str/includes? prompt "You are ψ (Psi)"))
+        (is (str/includes? prompt "Available tools:"))
+        (is (str/includes? prompt "read: Read file contents"))
+        (is (str/includes? prompt "Guidelines:"))
+        (is (str/includes? prompt "Capability graph (EQL discovery):"))
+        (is (not (str/includes? prompt "λ engage(nucleus).")))))
 
+    (testing "includes graph capabilities"
+      (let [prompt (sys-prompt/build-system-prompt
+                    {:prompt-mode :prose
+                     :graph-capabilities [{:domain :agent-session
+                                           :operation-count 10
+                                           :resolver-count 8
+                                           :mutation-count 2}
+                                          {:domain :ai
+                                           :operation-count 4
+                                           :resolver-count 4
+                                           :mutation-count 0}]})]
+        (is (str/includes? prompt "Current capabilities (from :psi.graph/capabilities):"))
+        (is (str/includes? prompt "- agent-session (ops=10, resolvers=8, mutations=2)"))
+        (is (str/includes? prompt "- ai (ops=4, resolvers=4, mutations=0)"))))
+
+    (testing "excludes graph discovery when app-query-tool not available"
+      (let [prompt (sys-prompt/build-system-prompt
+                    {:prompt-mode :prose
+                     :selected-tools ["read" "bash" "edit" "write"]})]
+        (is (not (str/includes? prompt "Capability graph (EQL discovery):")))))))
+
+;;; Mode-independent tests
+
+(deftest build-system-prompt-shared-test
+  ;; Behaviour shared between lambda and prose modes.
+  (testing "build-system-prompt (mode-independent)"
+    (testing "includes session creation time"
+      (let [instant (java.time.Instant/parse "2026-01-15T10:30:00Z")
+            prompt  (sys-prompt/build-system-prompt {:session-instant instant})]
+        (is (str/includes? prompt "Current date and time:"))
+        (is (str/includes? prompt "January 15, 2026"))))
+
+    (testing "includes context files"
+      (let [prompt (sys-prompt/build-system-prompt
+                    {:context-files [{:path "/project/AGENTS.md"
+                                      :content "# My Project\nInstructions here"}]})]
+        (is (str/includes? prompt "# Project Context"))
+        (is (str/includes? prompt "Instructions here"))))
+
+    (testing "includes skills section when read tool available"
+      (let [skills [{:name "test-skill" :description "A test skill"
+                     :file-path "/skills/test-skill/SKILL.md"
+                     :base-dir "/skills/test-skill"
+                     :source :user :disable-model-invocation false}]
+            prompt (sys-prompt/build-system-prompt {:skills skills})]
+        (is (str/includes? prompt "test-skill"))
+        (is (str/includes? prompt "A test skill"))))
+
+    (testing "excludes skills when read tool not available"
+      (let [skills [{:name "test-skill" :description "A test skill"
+                     :file-path "/skills/test-skill/SKILL.md"
+                     :base-dir "/skills/test-skill"
+                     :source :user :disable-model-invocation false}]
+            prompt (sys-prompt/build-system-prompt
+                    {:skills skills
+                     :selected-tools ["bash" "edit" "write"]})]
+        (is (not (str/includes? prompt "<available_skills>")))))
+
+    (testing "custom prompt replaces default in both modes"
+      (doseq [mode [:lambda :prose]]
+        (let [prompt (sys-prompt/build-system-prompt
+                      {:prompt-mode mode
+                       :custom-prompt "Custom system prompt."})]
+          (is (str/starts-with? prompt "Custom system prompt."))
+          (is (not (str/includes? prompt "λ engage(nucleus).")))
+          (is (not (str/includes? prompt "Available tools:"))))))
+
+    (testing "append prompt is added"
+      (let [prompt (sys-prompt/build-system-prompt
+                    {:append-prompt "Extra instructions."})]
+        (is (str/includes? prompt "Extra instructions."))))
+
+    (testing "includes worktree directory metadata"
+      (let [prompt (sys-prompt/build-system-prompt
+                    {:cwd "/tmp/worktree-demo"})]
+        (is (str/includes? prompt "Current working directory: /tmp/worktree-demo"))
+        (is (str/includes? prompt "Current worktree directory: /tmp/worktree-demo"))))
+
+    (testing "includes prompt contributions"
+      (let [prompt (sys-prompt/build-system-prompt
+                    {:prompt-contributions [{:id "x"
+                                             :ext-path "/ext/a"
+                                             :section "Hints"
+                                             :content "Use stable IDs"
+                                             :priority 100
+                                             :enabled true}]})]
+        (is (str/includes? prompt "# Extension Prompt Contributions"))
+        (is (str/includes? prompt "Use stable IDs"))))
+
+    (testing "runtime metadata follows context files"
+      (let [prompt (sys-prompt/build-system-prompt
+                    {:cwd "/tmp/demo"
+                     :context-files [{:path "/A.md" :content "Ctx"}]})
+            ctx-idx  (.indexOf prompt "# Project Context")
+            time-idx (.indexOf prompt "Current date and time:")]
+        (is (pos? ctx-idx))
+        (is (> time-idx ctx-idx))))
+
+    (testing "skills and contributions appear before context files"
+      (let [prompt (sys-prompt/build-system-prompt
+                    {:prompt-mode :prose
+                     :context-files [{:path "/A.md" :content "Ctx"}]
+                     :skills [{:name "s" :description "S"
+                               :file-path "/s/SKILL.md" :base-dir "/s"
+                               :source :user :disable-model-invocation false}]
+                     :prompt-contributions [{:id "c" :ext-path "/e"
+                                             :content "C" :priority 1
+                                             :enabled true}]})
+            skills-idx  (.indexOf prompt "<available_skills>")
+            contrib-idx (.indexOf prompt "Extension Prompt Contributions")
+            ctx-idx     (.indexOf prompt "# Project Context")]
+        (is (pos? skills-idx))
+        (is (pos? contrib-idx))
+        (is (pos? ctx-idx))
+        (is (< skills-idx ctx-idx) "skills before context")
+        (is (< contrib-idx ctx-idx) "contributions before context")))
+
+    (testing "external content is identical between modes"
+      (let [instant (java.time.Instant/parse "2026-01-15T10:30:00Z")
+            shared  {:cwd "/test" :session-instant instant
+                     :context-files [{:path "/A.md" :content "Ctx"}]
+                     :skills [{:name "s" :description "S"
+                               :file-path "/s/SKILL.md" :base-dir "/s"
+                               :source :user :disable-model-invocation false}]
+                     :prompt-contributions [{:id "c" :ext-path "/e"
+                                             :content "C" :priority 1
+                                             :enabled true}]}
+            lambda-p (sys-prompt/build-system-prompt (assoc shared :prompt-mode :lambda))
+            prose-p  (sys-prompt/build-system-prompt (assoc shared :prompt-mode :prose))
+            extract  (fn [p marker]
+                       (let [idx (.indexOf p marker)]
+                         (when (pos? idx) (subs p idx))))]
+        ;; Context, skills, contributions, and metadata tail should match
+        (is (= (extract lambda-p "# Project Context")
+               (extract prose-p "# Project Context")))))))
+
+(deftest build-system-prompt-custom-with-extras-test
   (testing "custom prompt with skills and context"
-    (let [skills [{:name "my-skill" :description "My skill"
-                   :file-path "/s/SKILL.md" :base-dir "/s"
-                   :source :user :disable-model-invocation false}]
-          prompt (sys-prompt/build-system-prompt
-                  {:custom-prompt "Custom base."
-                   :context-files [{:path "/AGENTS.md" :content "Context text"}]
-                   :skills skills})]
-      (is (str/starts-with? prompt "Custom base."))
-      (is (str/includes? prompt "Context text"))
-      (is (str/includes? prompt "<available_skills>")))))
+    (testing "in lambda mode (default)"
+      (let [skills [{:name "my-skill" :description "My skill"
+                     :file-path "/s/SKILL.md" :base-dir "/s"
+                     :source :user :disable-model-invocation false}]
+            prompt (sys-prompt/build-system-prompt
+                    {:custom-prompt "Custom base."
+                     :context-files [{:path "/AGENTS.md" :content "Context text"}]
+                     :skills skills})]
+        (is (str/starts-with? prompt "Custom base."))
+        (is (str/includes? prompt "Context text"))
+        (is (str/includes? prompt "λ skills. match(task, description)"))))
+    (testing "in prose mode"
+      (let [skills [{:name "my-skill" :description "My skill"
+                     :file-path "/s/SKILL.md" :base-dir "/s"
+                     :source :user :disable-model-invocation false}]
+            prompt (sys-prompt/build-system-prompt
+                    {:prompt-mode :prose
+                     :custom-prompt "Custom base."
+                     :context-files [{:path "/AGENTS.md" :content "Context text"}]
+                     :skills skills})]
+        (is (str/starts-with? prompt "Custom base."))
+        (is (str/includes? prompt "Context text"))
+        (is (str/includes? prompt "<available_skills>"))))))
 
 (deftest system-prompt-blocks-test
   ;; system-prompt-blocks returns a single cacheable block

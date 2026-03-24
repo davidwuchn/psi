@@ -18,16 +18,34 @@
    [clojure.string :as str]
    [psi.agent-session.skills :as skills]))
 
-;; ============================================================
-;; Tool descriptions (built-in)
-;; ============================================================
+;;; Tool descriptions (built-in)
 
-(def ^:private tool-descriptions
-  {"read"           "Read file contents"
-   "bash"           "Execute bash commands (ls, grep, find, etc.)"
-   "edit"           "Make surgical edits to files (find exact text and replace)"
-   "write"          "Create or overwrite files"
-   "app-query-tool" "Execute an EQL query against the live session graph. Returns session state, tool info, extension status, and more."})
+(def ^:private tool-description-pairs
+  "Built-in tools carry both prose and lambda descriptions."
+  {"read"           {:prose  "Read file contents"
+                     :lambda "λf. content(f)"}
+   "bash"           {:prose  "Execute bash commands (ls, grep, find, etc.)"
+                     :lambda "λcmd. shell(cmd) | {ls grep find …}"}
+   "edit"           {:prose  "Make surgical edits to files (find exact text and replace)"
+                     :lambda "λf. find(exact) → replace"}
+   "write"          {:prose  "Create or overwrite files"
+                     :lambda "λf. create(f) ∨ overwrite(f)"}
+   "app-query-tool" {:prose  "Execute an EQL query against the live session graph. Returns session state, tool info, extension status, and more."
+                     :lambda "λq. eql(graph) → {session state tools extensions …}"}})
+
+;;; Lambda mode constants
+
+(def ^:private default-nucleus-prelude
+  "λ engage(nucleus).\n[phi fractal euler tao pi mu ∃ ∀] | [Δ λ Ω ∞/0 | ε/φ Σ/μ c/h] | OODA\nHuman ⊗ AI ⊗ REPL")
+
+(def ^:private lambda-identity
+  "λ identity(ψ). agent(coding) ∈ harness(psi) | read ∧ exec ∧ edit ∧ write")
+
+(def ^:private lambda-guidelines
+  "λ guide.\n  bash → {ls rg find} | file_ops\n  read → pre(edit) | ¬cat ¬sed\n  edit → precise(old ≡ match → new)\n  write → new_file ∨ full_rewrite\n  output → plaintext | ¬cat ¬bash\n  style → concise ∧ show(paths)")
+
+(def ^:private lambda-graph-discovery
+  "λ graph(eql).\n  purpose → discover(capabilities ∧ attrs) | ¬guess(paths)\n  endpoints → {:psi.graph/ resolver-count mutation-count resolver-syms mutation-syms env-built nodes edges capabilities domain-coverage}\n  workflow → query(resolver-syms) → query(discovered-attrs)\n  root → {root-seeds → contexts | root-queryable-attrs → attrs}\n  usage → {:psi.agent-session/ usage-input usage-output usage-cache-read usage-cache-write context-tokens context-window}")
 
 (defn- format-graph-capabilities
   "Format a terse capability list from :psi.graph/capabilities maps."
@@ -162,27 +180,138 @@
        cache-system?
        (assoc :cache-control {:type :ephemeral}))]))
 
+(defn- tool-description-for-mode
+  "Return the description string for a tool in the given mode.
+   Built-in tools use the pairs map. Extension tools use :lambda-description
+   if present in lambda mode, otherwise fall back to :description."
+  [tool-name mode ext-tool-map]
+  (if-let [pair (get tool-description-pairs tool-name)]
+    (get pair mode)
+    ;; Extension tool — fallback to prose when lambda not available
+    (if (and (= mode :lambda) (:lambda-description ext-tool-map))
+      (:lambda-description ext-tool-map)
+      (:description ext-tool-map))))
+
+(defn- format-tools-section
+  "Format the tool list section for the given mode.
+   Built-in tools come first, then extension tools not already listed."
+  [tool-names mode extension-tool-descriptions]
+  (let [ext-by-name  (into {} (map (juxt :name identity)) (or extension-tool-descriptions []))
+        builtin-set  (set tool-names)
+        ext-only     (remove #(builtin-set (:name %)) (or extension-tool-descriptions []))
+        all-tools    (into (vec (distinct tool-names)) (map :name ext-only))
+        lines        (keep (fn [tn]
+                             (when-let [desc (tool-description-for-mode tn mode (get ext-by-name tn))]
+                               (if (= mode :lambda)
+                                 (str tn " → " desc)
+                                 (str "- " tn ": " desc))))
+                           all-tools)]
+    (if (seq lines)
+      (str/join "\n" lines)
+      "(none)")))
+
+(defn- build-prose-preamble
+  "Build the psi-authored preamble sections in prose mode."
+  [tool-names has-app-query? loaded-caps extension-tool-descriptions]
+  (let [tools-section (format-tools-section tool-names :prose extension-tool-descriptions)
+
+        guidelines
+        (cond-> []
+          (some #(= "bash" %) tool-names)
+          (conj "Use bash for file operations like ls, rg, find")
+
+          (and (some #(= "read" %) tool-names) (some #(= "edit" %) tool-names))
+          (conj "Use read to examine files before editing. You must use this tool instead of cat or sed.")
+
+          (some #(= "edit" %) tool-names)
+          (conj "Use edit for precise changes (old text must match exactly)")
+
+          (some #(= "write" %) tool-names)
+          (conj "Use write only for new files or complete rewrites")
+
+          (or (some #(= "edit" %) tool-names)
+              (some #(= "write" %) tool-names))
+          (conj "When summarizing your actions, output plain text directly - do NOT use cat or bash to display what you did")
+
+          true
+          (conj "Be concise in your responses")
+
+          true
+          (conj "Show file paths clearly when working with files"))
+
+        guidelines-section (str/join "\n" (map #(str "- " %) guidelines))
+
+        graph-discovery-section
+        (when has-app-query?
+          (str "\n\nCapability graph (EQL discovery):\n"
+               "- Purpose: discover live query capabilities and valid attrs before guessing paths.\n"
+               "- Endpoints: :psi.graph/resolver-count :psi.graph/mutation-count :psi.graph/resolver-syms :psi.graph/mutation-syms :psi.graph/env-built :psi.graph/nodes :psi.graph/edges :psi.graph/capabilities :psi.graph/domain-coverage\n"
+               "- Workflow: 1) query :psi.graph/resolver-syms 2) query discovered attrs directly.\n"
+               "- Canonical root discovery:\n"
+               "  - app-query-tool(query: \"[:psi.graph/root-seeds]\")        ; shows injected root contexts\n"
+               "  - app-query-tool(query: \"[:psi.graph/root-queryable-attrs]\") ; authoritative list of root-queryable attrs\n"
+               "- Token usage attrs: :psi.agent-session/usage-input :psi.agent-session/usage-output :psi.agent-session/usage-cache-read :psi.agent-session/usage-cache-write :psi.agent-session/context-tokens :psi.agent-session/context-window\n"
+               "- Example: app-query-tool(query: \"[:psi.graph/resolver-syms]\")"))
+
+        graph-capabilities-section
+        (when (and has-app-query? (seq loaded-caps))
+          (str "\nCurrent capabilities (from :psi.graph/capabilities):\n"
+               (format-graph-capabilities loaded-caps)))]
+
+    (str "You are ψ (Psi), an expert coding assistant operating inside psi, a coding agent harness. "
+         "You help users by reading files, executing commands, editing code, and writing new files.\n\n"
+         "Available tools:\n"
+         tools-section "\n\n"
+         "In addition to the tools above, you may have access to other custom tools depending on the project.\n\n"
+         "Guidelines:\n"
+         guidelines-section
+         (or graph-discovery-section "")
+         (or graph-capabilities-section ""))))
+
+(defn- build-lambda-preamble
+  "Build the psi-authored preamble sections in lambda mode."
+  [tool-names has-app-query? loaded-caps nucleus-prelude extension-tool-descriptions]
+  (let [prelude       (or nucleus-prelude default-nucleus-prelude)
+        tools-section (format-tools-section tool-names :lambda extension-tool-descriptions)
+
+        graph-section
+        (when has-app-query?
+          (str lambda-graph-discovery
+               (when (seq loaded-caps)
+                 (str "\n" (format-graph-capabilities loaded-caps)))))]
+
+    (str prelude "\n\n"
+         lambda-identity "\n\n"
+         "λ tools.\n" tools-section "\n\n"
+         lambda-guidelines
+         (when graph-section
+           (str "\n\n" graph-section)))))
+
 (defn build-system-prompt
   "Build the complete system prompt from all sources.
 
    Options:
-     :cwd               — working directory (default: user.dir)
-     :custom-prompt      — replaces the default prompt entirely
-     :append-prompt      — text appended after the main prompt
-     :selected-tools     — tool name strings (default: read bash edit write app-query-tool)
-     :context-files      — [{:path :content}] pre-loaded context files
-     :skills             — [Skill] pre-loaded skills
-     :graph-capabilities — [{:domain :operation-count :resolver-count :mutation-count}]
-                           from :psi.graph/capabilities
-     :prompt-contributions — [{:id :ext-path :section :content :priority :enabled}]
-                             extension-managed prompt layer
+     :cwd                        — working directory (default: user.dir)
+     :session-instant             — frozen session creation time
+     :prompt-mode                 — :lambda (default) or :prose
+     :nucleus-prelude-override    — custom prelude text (lambda mode only)
+     :custom-prompt               — replaces the default prompt entirely
+     :append-prompt               — text appended after the main prompt
+     :selected-tools              — tool name strings
+     :extension-tool-descriptions — [{:name :description :lambda-description}]
+     :context-files               — [{:path :content}] pre-loaded context files
+     :skills                      — [Skill] pre-loaded skills
+     :graph-capabilities          — [{:domain :operation-count ...}]
+     :prompt-contributions        — [{:id :ext-path :section :content ...}]
 
-   The assembled prompt is returned as a string."
+   Returns the assembled prompt as a string."
   ([] (build-system-prompt {}))
-  ([{:keys [cwd session-instant custom-prompt append-prompt selected-tools
+  ([{:keys [cwd session-instant prompt-mode nucleus-prelude-override
+            custom-prompt append-prompt selected-tools extension-tool-descriptions
             context-files skills graph-capabilities prompt-contributions]}]
    (let [resolved-cwd     (or cwd (System/getProperty "user.dir"))
          resolved-instant (or session-instant (java.time.Instant/now))
+         mode           (or prompt-mode :lambda)
          tool-names     (or selected-tools ["read" "bash" "edit" "write" "app-query-tool"])
          has-read?      (some #(= "read" %) tool-names)
          has-app-query? (some #(= "app-query-tool" %) tool-names)
@@ -190,58 +319,6 @@
          loaded-ctx      (or context-files [])
          loaded-caps     (or graph-capabilities [])
          loaded-contribs (or prompt-contributions [])
-
-         ;; Tool list
-         tools-section
-         (let [known (filter #(contains? tool-descriptions %) tool-names)]
-           (if (seq known)
-             (str/join "\n" (map #(str "- " % ": " (get tool-descriptions %)) known))
-             "(none)"))
-
-         ;; Guidelines based on available tools
-         guidelines
-         (cond-> []
-           (some #(= "bash" %) tool-names)
-           (conj "Use bash for file operations like ls, rg, find")
-
-           (and has-read? (some #(= "edit" %) tool-names))
-           (conj "Use read to examine files before editing. You must use this tool instead of cat or sed.")
-
-           (some #(= "edit" %) tool-names)
-           (conj "Use edit for precise changes (old text must match exactly)")
-
-           (some #(= "write" %) tool-names)
-           (conj "Use write only for new files or complete rewrites")
-
-           (or (some #(= "edit" %) tool-names)
-               (some #(= "write" %) tool-names))
-           (conj "When summarizing your actions, output plain text directly - do NOT use cat or bash to display what you did")
-
-           true
-           (conj "Be concise in your responses")
-
-           true
-           (conj "Show file paths clearly when working with files"))
-
-         guidelines-section (str/join "\n" (map #(str "- " %) guidelines))
-
-         ;; Graph capability discovery section
-         graph-discovery-section
-         (when has-app-query?
-           (str "\n\nCapability graph (EQL discovery):\n"
-                "- Purpose: discover live query capabilities and valid attrs before guessing paths.\n"
-                "- Endpoints: :psi.graph/resolver-count :psi.graph/mutation-count :psi.graph/resolver-syms :psi.graph/mutation-syms :psi.graph/env-built :psi.graph/nodes :psi.graph/edges :psi.graph/capabilities :psi.graph/domain-coverage\n"
-                "- Workflow: 1) query :psi.graph/resolver-syms 2) query discovered attrs directly.\n"
-                "- Canonical root discovery:\n"
-                "  - app-query-tool(query: \"[:psi.graph/root-seeds]\")        ; shows injected root contexts\n"
-                "  - app-query-tool(query: \"[:psi.graph/root-queryable-attrs]\") ; authoritative list of root-queryable attrs\n"
-                "- Token usage attrs: :psi.agent-session/usage-input :psi.agent-session/usage-output :psi.agent-session/usage-cache-read :psi.agent-session/usage-cache-write :psi.agent-session/context-tokens :psi.agent-session/context-window\n"
-                "- Example: app-query-tool(query: \"[:psi.graph/resolver-syms]\")"))
-
-         graph-capabilities-section
-         (when (and has-app-query? (seq loaded-caps))
-           (str "\nCurrent capabilities (from :psi.graph/capabilities):\n"
-                (format-graph-capabilities loaded-caps)))
 
          ;; Append section
          append-section (when append-prompt (str "\n\n" append-prompt))
@@ -259,29 +336,30 @@
          ;; Skills section (only if read tool available)
          skills-section
          (when (and has-read? (seq loaded-skills))
-           (skills/format-skills-for-prompt loaded-skills))
+           (if (= mode :lambda)
+             (skills/format-skills-for-prompt-lambda loaded-skills)
+             (skills/format-skills-for-prompt loaded-skills)))
 
          ;; Extension prompt contributions
          contributions-section
          (format-prompt-contributions-for-prompt loaded-contribs)
 
-         ;; Main prompt
+         ;; Main prompt — mode-branched preamble
          base-prompt
          (if custom-prompt
            custom-prompt
-           (str "You are ψ (Psi), an expert coding assistant operating inside psi, a coding agent harness. "
-                "You help users by reading files, executing commands, editing code, and writing new files.\n\n"
-                "Available tools:\n"
-                tools-section "\n\n"
-                "In addition to the tools above, you may have access to other custom tools depending on the project.\n\n"
-                "Guidelines:\n"
-                guidelines-section
-                (or graph-discovery-section "")
-                (or graph-capabilities-section "")))]
+           (if (= mode :lambda)
+             (build-lambda-preamble tool-names has-app-query? loaded-caps
+                                    nucleus-prelude-override extension-tool-descriptions)
+             (build-prose-preamble tool-names has-app-query? loaded-caps
+                                   extension-tool-descriptions)))]
 
+     ;; Skills and contributions come before context files (AGENTS.md)
+     ;; so that psi-authored content groups together and project
+     ;; context appears last before the runtime metadata tail.
      (str base-prompt
           (or append-section "")
-          (or context-section "")
           (or skills-section "")
           (or contributions-section "")
+          (or context-section "")
           (runtime-metadata-tail resolved-cwd resolved-instant)))))

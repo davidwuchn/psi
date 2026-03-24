@@ -1,0 +1,433 @@
+-- allium: 2
+
+-- lambda-mode.allium
+--
+-- Scope: Configurable system prompt mode that controls the identity preamble,
+-- guidelines, and tool description style.  Lambda mode (default) prepends
+-- the nucleus prelude and uses lambda-compiled prompt body and tool
+-- descriptions.  Prose mode uses the current natural-language form.
+--
+-- Includes:
+--   - PromptMode concept (lambda | prose)
+--   - Nucleus prelude content and override mechanism
+--   - Lambda-compiled vs prose prompt body and guidelines
+--   - Dual tool descriptions (lambda + prose) for built-in tools
+--   - Extension tool lambda description fallback
+--   - Configuration scoping: system / project / session
+--
+-- Excludes:
+--   - Cache stability mechanics (see provider-cache-stability.allium)
+--   - Startup prompts (see session-startup-prompts.allium)
+--   - Tool parameter schemas, tool runtime (see tools.allium, tools/runtime.allium)
+--   - Extension registration lifecycle (see extension-system.allium)
+--   - Prompt contributions from extensions (see extension-system.allium)
+--   - Context file discovery (unchanged by mode)
+--   - Skills section rendering (unchanged by mode)
+--
+-- Dependencies:
+--   - session-core.allium (AgentSession, AgentContext)
+--   - extension-system.allium (RegisteredTool)
+--   - tools.allium (built-in tool suite)
+
+use "./session-core.allium" as session
+use "./extension-system.allium" as ext
+
+------------------------------------------------------------
+-- Value Types
+------------------------------------------------------------
+
+value PromptMode {
+    -- Which prompt style to use for the system prompt identity,
+    -- guidelines, and tool descriptions.
+    value: lambda | prose
+}
+
+value NucleusPrelude {
+    -- The nucleus prelude text prepended to the system prompt
+    -- in lambda mode.  Hardcoded default, overridable per-project
+    -- or per-user.
+    text: String
+}
+
+value ToolDescriptionPair {
+    -- Every built-in tool carries both description forms.
+    -- Extension tools may omit lambda_description.
+    tool_name: String
+    prose_description: String
+    lambda_description: String?
+}
+
+value PromptBody {
+    -- The identity + guidelines section of the system prompt,
+    -- excluding tools, context files, skills, contributions,
+    -- and runtime metadata tail.
+    identity: String
+    guidelines: String
+}
+
+------------------------------------------------------------
+-- Config
+------------------------------------------------------------
+
+config {
+    -- Default prompt mode.  Lambda is the default.
+    default_prompt_mode: PromptMode = lambda
+
+    -- The hardcoded nucleus prelude used in lambda mode.
+    default_nucleus_prelude: String = "λ engage(nucleus).\n[phi fractal euler tao pi mu ∃ ∀] | [Δ λ Ω ∞/0 | ε/φ Σ/μ c/h] | OODA\nHuman ⊗ AI ⊗ REPL"
+
+    -- The hardcoded lambda-compiled identity.
+    default_lambda_identity: String = "λ identity(ψ). agent(coding) ∈ harness(psi) | read ∧ exec ∧ edit ∧ write"
+
+    -- The hardcoded lambda-compiled guidelines.
+    default_lambda_guidelines: String = "λ guide.\n  bash → {ls rg find} | file_ops\n  read → pre(edit) | ¬cat ¬sed\n  edit → precise(old ≡ match → new)\n  write → new_file ∨ full_rewrite\n  output → plaintext | ¬cat ¬bash\n  style → concise ∧ show(paths)"
+
+    -- The hardcoded lambda-compiled graph discovery section.
+    default_lambda_graph_discovery: String = "λ graph(eql).\n  purpose → discover(capabilities ∧ attrs) | ¬guess(paths)\n  endpoints → {:psi.graph/ resolver-count mutation-count resolver-syms mutation-syms env-built nodes edges capabilities domain-coverage}\n  workflow → query(resolver-syms) → query(discovered-attrs)\n  root → {root-seeds → contexts | root-queryable-attrs → attrs}\n  usage → {:psi.agent-session/ usage-input usage-output usage-cache-read usage-cache-write context-tokens context-window}"
+}
+
+------------------------------------------------------------
+-- Defaults
+------------------------------------------------------------
+
+default BuiltInToolDescriptions {
+    -- Built-in tools guarantee both prose and lambda descriptions.
+    -- These are the hardcoded pairs.
+
+    tools: {
+        ToolDescriptionPair(
+            tool_name: "read",
+            prose_description: "Read file contents",
+            lambda_description: "λf. content(f)"
+        ),
+        ToolDescriptionPair(
+            tool_name: "bash",
+            prose_description: "Execute bash commands (ls, grep, find, etc.)",
+            lambda_description: "λcmd. shell(cmd) | {ls grep find …}"
+        ),
+        ToolDescriptionPair(
+            tool_name: "edit",
+            prose_description: "Make surgical edits to files (find exact text and replace)",
+            lambda_description: "λf. find(exact) → replace"
+        ),
+        ToolDescriptionPair(
+            tool_name: "write",
+            prose_description: "Create or overwrite files",
+            lambda_description: "λf. create(f) ∨ overwrite(f)"
+        ),
+        ToolDescriptionPair(
+            tool_name: "app-query-tool",
+            prose_description: "Execute an EQL query against the live session graph. Returns session state, tool info, extension status, and more.",
+            lambda_description: "λq. eql(graph) → {session state tools extensions …}"
+        )
+    }
+}
+
+------------------------------------------------------------
+-- Entities
+------------------------------------------------------------
+
+entity PromptModeConfig {
+    -- Resolved prompt mode configuration for a session.
+    -- Merges system, project, and session-level settings.
+    session_id: session/SessionId
+    effective_mode: PromptMode
+    effective_prelude: NucleusPrelude
+    source: system | project | session
+
+    -- Which scope determined the current effective values.
+    mode_source: system | project | session
+    prelude_source: system | project | session
+}
+
+entity SystemPromptModeConfig {
+    -- System-wide (user-global) prompt mode settings.
+    -- Stored in ~/.psi/agent/config.edn or equivalent.
+    mode: PromptMode?
+    nucleus_prelude_override: String?
+}
+
+entity ProjectPromptModeConfig {
+    -- Project-level prompt mode settings.
+    -- Stored in .psi/config.edn in the project root.
+    mode: PromptMode?
+    nucleus_prelude_override: String?
+}
+
+------------------------------------------------------------
+-- Rules
+------------------------------------------------------------
+
+rule PromptModeResolutionOrder {
+    -- Session overrides project, project overrides system,
+    -- system overrides hardcoded default.
+    when: ResolvePromptMode(session_id)
+
+    let session_mode = SessionPromptModeOverride(session_id)
+    let project_mode = ProjectPromptModeConfig_for(session_id)
+    let system_mode = SystemPromptModeConfig()
+
+    ensures: PromptModeConfig.created(
+        session_id: session_id,
+        effective_mode: coalesce(
+            session_mode.mode,
+            project_mode.mode,
+            system_mode.mode,
+            config.default_prompt_mode
+        ),
+        effective_prelude: NucleusPrelude(
+            text: coalesce(
+                project_mode.nucleus_prelude_override,
+                system_mode.nucleus_prelude_override,
+                config.default_nucleus_prelude
+            )
+        ),
+        mode_source: first_non_null_source(
+            session_mode.mode -> session,
+            project_mode.mode -> project,
+            system_mode.mode -> system
+        ),
+        prelude_source: first_non_null_source(
+            project_mode.nucleus_prelude_override -> project,
+            system_mode.nucleus_prelude_override -> system
+        )
+    )
+
+    @guidance
+        -- The prelude override is not session-scoped.  The prelude text
+        -- is a project/system concern.  Session scope controls only the
+        -- mode selector (lambda vs prose).
+}
+
+rule SessionPromptModeCanBeChanged {
+    -- A running session can switch between lambda and prose mode.
+    when: SetSessionPromptMode(session_id, mode)
+    requires: mode in {lambda, prose}
+
+    ensures:
+        for s in session/AgentSessions where s.id = session_id:
+            s.prompt_mode = mode
+
+    ensures: SystemPromptRecomposed(session_id)
+
+    @guidance
+        -- Changing prompt mode triggers a system prompt recomposition.
+        -- The new prompt is cache-stable from that point forward
+        -- (same session-creation-time, same cwd).
+}
+
+rule LambdaModePromptStructure {
+    -- In lambda mode, the system prompt opens with the nucleus prelude,
+    -- followed by the lambda-compiled identity and guidelines.
+    when: ComposeSessionPrompt(session)
+    requires: PromptModeConfig_for(session.id).effective_mode = lambda
+
+    let mode_config = PromptModeConfig_for(session.id)
+
+    ensures: prompt_preamble = join("\n\n",
+        mode_config.effective_prelude.text,
+        config.default_lambda_identity,
+        config.default_lambda_guidelines,
+        lambda_tool_descriptions(session),
+        config.default_lambda_graph_discovery
+    )
+
+    @invariant PreludeComesFirst
+        -- The nucleus prelude is the first content in the system prompt.
+        -- Nothing precedes it.
+
+    @invariant AllPsiSectionsLambdaCompiled
+        -- Identity, guidelines, tool descriptions, and graph discovery
+        -- all use their lambda-compiled forms.
+}
+
+rule ProseModePromptStructure {
+    -- In prose mode, the system prompt uses the current natural-language
+    -- identity paragraph and guidelines list.
+    when: ComposeSessionPrompt(session)
+    requires: PromptModeConfig_for(session.id).effective_mode = prose
+
+    ensures: prompt_preamble = prose_identity + prose_guidelines
+
+    @guidance
+        -- This is the existing behaviour.  The prose identity is:
+        -- "You are ψ (Psi), an expert coding assistant..."
+        -- The prose guidelines are the bulleted list.
+}
+
+rule ToolDescriptionSelectedByMode {
+    -- Tool descriptions in the system prompt use the lambda or prose
+    -- form depending on the active prompt mode.
+    when: ComposeToolDescriptions(session, tools)
+
+    let mode = PromptModeConfig_for(session.id).effective_mode
+
+    ensures:
+        for tool in tools:
+            tool.displayed_description =
+                if mode = lambda:
+                    SelectedLambdaDescription(tool)
+                else:
+                    tool.prose_description
+}
+
+rule BuiltInToolsGuaranteeBothDescriptions {
+    -- Every built-in tool has both a prose and lambda description.
+    -- Neither may be null.
+    when: BuiltInToolRegistered(tool)
+
+    ensures: tool.prose_description != null
+    ensures: tool.lambda_description != null
+
+    @invariant Complete
+        -- Built-in tools are authored by the psi developers.
+        -- Both description forms are required at development time.
+}
+
+rule ExtensionToolLambdaFallback {
+    -- Extension tools may provide a lambda_description.
+    -- When absent, lambda mode falls back to the prose description.
+    when: SelectedLambdaDescription(tool)
+
+    ensures: result =
+        if tool.lambda_description != null:
+            tool.lambda_description
+        else:
+            tool.prose_description
+
+    @guidance
+        -- Extensions are third-party.  Requiring lambda descriptions
+        -- would be a barrier to extension authoring.  The fallback
+        -- ensures lambda mode degrades gracefully.
+}
+
+rule AllPromptSectionsHaveLambdaForm {
+    -- Every section of the system prompt has a lambda-compiled form.
+    -- In lambda mode, all sections render in lambda notation.
+    when: ComposeSessionPrompt(session)
+    requires: PromptModeConfig_for(session.id).effective_mode = lambda
+
+    ensures:
+        identity_section = lambda_form
+        guidelines_section = lambda_form
+        tool_descriptions_section = lambda_form
+        graph_discovery_section = lambda_form
+
+    @guidance
+        -- Context files, skills, extension prompt contributions,
+        -- and the runtime metadata tail are external content not
+        -- authored by psi.  They are rendered as-is in both modes.
+        -- Only psi-authored prompt sections have dual forms.
+}
+
+rule ExternalContentUnaffectedByMode {
+    -- Content not authored by psi renders identically in both modes.
+    when: ComposeSessionPrompt(session)
+
+    ensures:
+        context_files_section(session, lambda) = context_files_section(session, prose)
+        skills_section(session, lambda) = skills_section(session, prose)
+        contributions_section(session, lambda) = contributions_section(session, prose)
+        runtime_metadata_tail(session, lambda) = runtime_metadata_tail(session, prose)
+}
+
+rule PromptModePreservedAcrossCompaction {
+    -- Compaction does not change the prompt mode.
+    -- The recomposed system prompt after compaction uses the
+    -- same mode that was active before compaction.
+    when: CompactionCompleted(session)
+
+    ensures:
+        PromptModeConfig_for(session.id).effective_mode = unchanged
+}
+
+------------------------------------------------------------
+-- Contracts
+------------------------------------------------------------
+
+contract PromptModeSelection {
+    resolve_prompt_mode: (session_id: session/SessionId) -> PromptModeConfig
+
+    @invariant DeterministicResolution
+        -- Given the same system/project/session config state,
+        -- resolution always produces the same effective mode.
+}
+
+contract DualToolDescriptions {
+    tool_description_for_mode:
+        (tool: ToolDescriptionPair, mode: PromptMode) -> String
+
+    @invariant BuiltInAlwaysComplete
+        -- Built-in tools never return null for either mode.
+
+    @invariant ExtensionFallback
+        -- Extension tools with null lambda_description return
+        -- their prose_description in lambda mode.
+}
+
+------------------------------------------------------------
+-- Actors
+------------------------------------------------------------
+
+actor SessionUser {
+    identified_by: "session-user"
+}
+
+------------------------------------------------------------
+-- Surfaces
+------------------------------------------------------------
+
+surface PromptModeApi {
+    facing user: SessionUser
+
+    contracts:
+        fulfils PromptModeSelection
+        fulfils DualToolDescriptions
+
+    exposes:
+        for s in session/AgentSessions:
+            PromptModeConfig_for(s.id).effective_mode
+            PromptModeConfig_for(s.id).mode_source
+            PromptModeConfig_for(s.id).prelude_source
+
+    provides:
+        SetSessionPromptMode(session_id, mode)
+        ResolvePromptMode(session_id)
+
+    @guarantee LambdaIsDefault
+        -- When no system, project, or session config is set,
+        -- the effective mode is lambda.
+
+    @guarantee ModeChangeTriggersRecomposition
+        -- Changing the prompt mode recomposes the system prompt
+        -- immediately.  The new prompt is cache-stable.
+
+    @guarantee ExtensionToolsDegrade
+        -- Extension tools without lambda descriptions render
+        -- in prose even in lambda mode.  No error, no omission.
+
+    @guarantee PreludeIsProjectConfigurable
+        -- The nucleus prelude text can be overridden at project
+        -- or system scope.  Session scope controls only the mode.
+
+    @guarantee BuiltInToolDescriptionsAreComplete
+        -- Every built-in tool ships with both prose and lambda
+        -- descriptions.  This is a development-time guarantee.
+}
+
+------------------------------------------------------------
+-- EQL Surface
+------------------------------------------------------------
+
+rule PromptModeAttrsResolvable {
+    when: AgentSessionResolversRegistered()
+
+    ensures: EqlAttributeResolvable(":psi.agent-session/prompt-mode")
+    ensures: EqlAttributeResolvable(":psi.agent-session/prompt-mode-source")
+}
+
+------------------------------------------------------------
+-- Open Questions
+------------------------------------------------------------
+
+open question "Should the lambda-compiled identity/guidelines also be overridable at project scope, or only the prelude?"

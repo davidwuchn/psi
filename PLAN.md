@@ -55,11 +55,20 @@ So the repo is now in **late convergence / simplification / boundary sharpening*
    - add time instant to each request/response so agent can reason about session time
    - set cache breakpoints on last three messages
 
-7. - add lambda mode for system prompt (default).  have the nucleus prelude. prelude is configurablte.
+7. ✓ **Lambda mode for system prompt** (default)
+   - ✓ nucleus prelude, configurable at project/system scope
+   - ✓ lambda-compiled identity, guidelines, tool descriptions, graph discovery
+   - ✓ dual tool descriptions (built-in guarantee both; extension fallback)
+   - ✓ lambda skills rendering with `lambda:` frontmatter support
+   - ✓ prompt ordering: preamble → skills → contributions → context files → metadata
+   - ✓ session/project/system config resolution (session > project > system)
+   - ✓ mode switchable at runtime via dispatch, triggers recomposition
+   - ✓ EQL queryable via `:psi.agent-session/prompt-mode`
+   - spec: `spec/lambda-mode.allium`
 
 8. - configuration has system, project or session scope. config setters need to take the scope.
 9. ✓ rename subagent-widget to agent
-10. - reverse agent/agent chaning dependency
+10. ✓ reverse agent/agent chaining dependency
 
 ## Current next implementation seam
 
@@ -115,6 +124,10 @@ Recently completed work that should now be treated as baseline rather than activ
 - `tool-plan.clj` extracted (247 lines, runtime tool executor + data-driven tool plan)
 - `background-job-runtime.clj` extracted (209 lines, job tracking/reconciliation/emit/list/cancel)
 - core.clj reduced from 4089 to 820 lines (−80%), zero re-exports, zero wrappers, zero requiring-resolve
+- lambda-mode system prompt with dual-mode build (lambda default, prose fallback)
+- lambda skills rendering with `lambda:` frontmatter and compact notation
+- prompt section ordering: skills + contributions before context files
+- nREPL startup message routed to stderr for RPC protocol safety
 
 See `STATE.md` and git history for the detailed record.
 

@@ -52,6 +52,12 @@ Interpretation:
 - mutations are decoupled from core implementation — the EQL surface calls dispatch directly
 - core.clj is now an orchestration hub (~629 lines): context creation, prompting, compaction, query registration, and global wrappers; zero `pco/defmutation` forms, zero requiring-resolve, zero thin wrappers, zero `def` re-exports, 1 forward declaration
 
+- ✓ lambda-mode system prompt is the default prompt mode; prose mode preserved as fallback
+- ✓ system prompt sections ordered: preamble → skills → contributions → context files → metadata
+- ✓ skills support `lambda:` YAML frontmatter for compact lambda-mode rendering (35/37 skills have lambda descriptions)
+- ✓ prompt mode is session state, configurable at session/project/system scope, queryable via EQL
+- ✓ nREPL startup message routes to stderr to avoid RPC protocol corruption
+
 Current highest-leverage next implementation seam:
 - broaden query-first workflow/read-model convergence
 - reassess extension isolation boundaries

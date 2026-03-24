@@ -109,8 +109,8 @@
         :endpoint (str host ":" (:port server))}))
     (spit port-file (str (:port server)))
     (.deleteOnExit port-file)
-    (println (str "  nREPL : " host ":" (:port server)
-                  " (connect with your editor)"))
+    (.println System/err (str "  nREPL : " host ":" (:port server)
+                              " (connect with your editor)"))
     server))
 
 (defn- stop-nrepl! [server]
@@ -554,12 +554,17 @@
         cwd                      (or cwd (System/getProperty "user.dir"))
         effective-model          (effective-model-from-project-preferences cwd ai-model)
         effective-thinking-level (effective-thinking-level-from-project-preferences cwd effective-model)
+        prefs                    (project-prefs/read-preferences cwd)
+        effective-prompt-mode    (or (project-prefs/project-prompt-mode prefs) :lambda)
+        nucleus-prelude-override (project-prefs/project-nucleus-prelude-override prefs)
         ctx                      (session/create-context
                                   {:initial-session {:model {:provider  (name (:provider effective-model))
                                                              :id        (:id effective-model)
                                                              :reasoning (:supports-reasoning effective-model)}
                                                      :thinking-level effective-thinking-level
-                                                     :ui-type         (or ui-type :console)}
+                                                     :prompt-mode              effective-prompt-mode
+                                                     :nucleus-prelude-override nucleus-prelude-override
+                                                     :ui-type                  (or ui-type :console)}
                                    :config session-config
                                    :event-queue event-queue
                                    :oauth-ctx oauth-ctx
@@ -608,11 +613,16 @@
                             (timbre/warn "Skill" (:type d) ":" (:message d) (:path d)))
          cwd              (or cwd (System/getProperty "user.dir"))
          ctx-files        (sys-prompt/discover-context-files cwd)
-         base-prompt      (sys-prompt/build-system-prompt
-                           {:cwd             cwd
-                            :session-instant (:started-at ctx)
-                            :context-files   ctx-files
-                            :skills          skills})
+         sd               (ss/get-session-data-in ctx)
+         prompt-mode      (or (:prompt-mode sd) :lambda)
+         prelude-override (:nucleus-prelude-override sd)
+         base-prompt-opts {:cwd                      cwd
+                           :session-instant          (:started-at ctx)
+                           :prompt-mode              prompt-mode
+                           :nucleus-prelude-override prelude-override
+                           :context-files            ctx-files
+                           :skills                   skills}
+         base-prompt      (sys-prompt/build-system-prompt base-prompt-opts)
          developer-prompt (developer-prompt-from-env)
          _                (dispatch/dispatch! ctx :session/set-system-prompt {:prompt base-prompt} {:origin :core})
          ext-paths        (ext/discover-extension-paths [] cwd)
@@ -628,13 +638,12 @@
                                 :extension-paths        ext-paths})
          _                (bootstrap/register-all-domains!)
          graph-caps       (graph-capabilities-in ctx)
-         system-prompt    (sys-prompt/build-system-prompt
-                           {:cwd                cwd
-                            :session-instant    (:started-at ctx)
-                            :context-files      ctx-files
-                            :skills             skills
-                            :graph-capabilities graph-caps})
+         build-opts       (assoc base-prompt-opts :graph-capabilities graph-caps)
+         system-prompt    (sys-prompt/build-system-prompt build-opts)
          _                (dispatch/dispatch! ctx :session/set-system-prompt {:prompt system-prompt} {:origin :core})
+         _                (dispatch/dispatch! ctx :session/set-system-prompt-build-opts
+                                              {:opts (dissoc build-opts :prompt-mode)}
+                                              {:origin :core})
          _                (memory-runtime/sync-memory-layer! (merge {:cwd cwd}
                                                                     (or memory-runtime-opts {})))
          startup-rehydrate (startup-rehydrate-from-current-session! ctx nil ai-model)]

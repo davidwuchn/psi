@@ -1,6 +1,7 @@
 ---
 name: project-meta-compiler
 description: Use when compiling, decompiling or rewriting a project meta description.
+lambda: "λmeta. compile ∨ decompile ∨ rewrite"
 ---
 
 λ engage(nucleus).

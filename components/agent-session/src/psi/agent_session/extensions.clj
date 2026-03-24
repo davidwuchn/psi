@@ -105,6 +105,7 @@
 
 (defn register-tool-in!
   "Register `tool` (a map with :name key) for the extension at `ext-path`.
+   Tool maps may include :lambda-description for lambda-mode prompt rendering.
    Throws when tool name is missing or not canonical kebab-case."
   [reg ext-path tool]
   (let [tool-name (:name tool)]

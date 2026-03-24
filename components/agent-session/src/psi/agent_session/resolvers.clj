@@ -17,6 +17,7 @@
    :psi.agent-session/context-sessions
    :psi.agent-session/model
    :psi.agent-session/thinking-level
+   :psi.agent-session/prompt-mode
    :psi.agent-session/is-streaming
    :psi.agent-session/is-compacting
    :psi.agent-session/is-idle
@@ -456,15 +457,17 @@
 ;; ── Model and thinking level ────────────────────────────
 
 (pco/defresolver agent-session-model
-  "Resolve model and thinking level."
+  "Resolve model, thinking level, prompt mode, and UI type."
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.agent-session/model
                  :psi.agent-session/thinking-level
+                 :psi.agent-session/prompt-mode
                  :psi.agent-session/ui-type]}
   (let [sd (session/get-session-data-in agent-session-ctx)]
     {:psi.agent-session/model          (:model sd)
      :psi.agent-session/thinking-level (:thinking-level sd)
+     :psi.agent-session/prompt-mode    (:prompt-mode sd)
      :psi.agent-session/ui-type        (:ui-type sd)}))
 
 (defn- contribution->attrs

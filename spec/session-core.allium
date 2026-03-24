@@ -13,6 +13,10 @@ value CacheBreakpoint {
     value: system | tools
 }
 
+value PromptMode {
+    value: lambda | prose
+}
+
 external entity Project {
     id: ProjectId
     git_origin_url: String?
@@ -49,6 +53,7 @@ entity AgentSession {
     worktree_path: WorktreePath
 
     effective_system_prompt: String
+    prompt_mode: PromptMode
     cache_breakpoints: Set<CacheBreakpoint>
     active_tools: Set<ToolName>
 
@@ -138,8 +143,10 @@ rule RootSessionCreatedInContext {
         effective_system_prompt: ComposeSessionPromptFromContext(
             context_id: context_id_for(project_id, worktree_path),
             requested_system_prompt: system_prompt,
-            parent_session_id: null
+            parent_session_id: null,
+            prompt_mode: lambda_mode/ResolvePromptMode(new_session_id()).effective_mode
         ),
+        prompt_mode: lambda_mode/ResolvePromptMode(new_session_id()).effective_mode,
         cache_breakpoints: {system},
         active_tools: context_tools_for(context_id_for(project_id, worktree_path)),
         start_instant: now,
@@ -174,6 +181,13 @@ rule SpawnedSessionInheritsCacheBreakpointPolicy {
     ensures: child.cache_breakpoints = parent.cache_breakpoints
 }
 
+rule SpawnedSessionInheritsPromptMode {
+    when: SessionSpawnedFromParent(child, parent, spawn_mode)
+    requires: spawn_mode in {fork_head, fork_at_entry, agent}
+
+    ensures: child.prompt_mode = parent.prompt_mode
+}
+
 rule SessionCacheBreakpointPolicyCanBeReconfigured {
     when: SessionCacheBreakpointsSet(session_id, breakpoints)
     requires: exists s in AgentSessions where s.id = session_id
@@ -191,12 +205,14 @@ contract SessionCoreEql {
     create_context: (input: JsonMap) -> JsonMap
     create_session: (input: JsonMap) -> JsonMap
     set_cache_breakpoints: (session_id: SessionId, breakpoints: Set<CacheBreakpoint>) -> JsonMap
+    set_prompt_mode: (session_id: SessionId, mode: PromptMode) -> JsonMap
 
     @invariant SessionAttrs
         -- session attrs include:
         -- {:session/id :session/context-id :session/parent-id
         --  :session/project-id :session/worktree-path
-        --  :session/effective-system-prompt :session/cache-breakpoints :session/active-tools}
+        --  :session/effective-system-prompt :session/prompt-mode
+        --  :session/cache-breakpoints :session/active-tools}
 }
 
 actor EqlClient {
@@ -204,6 +220,7 @@ actor EqlClient {
 }
 
 use "./system-context-unification.allium" as system_ctx
+use "./lambda-mode.allium" as lambda_mode
 
 surface SessionCoreApi {
     facing client: EqlClient
@@ -220,6 +237,7 @@ surface SessionCoreApi {
             s.worktree_path
             s.start_instant
             s.effective_system_prompt
+            s.prompt_mode
             s.cache_breakpoints
             s.name
             s.summary_line
@@ -232,6 +250,7 @@ surface SessionCoreApi {
         SessionCacheBreakpointsSet(session_id, breakpoints)
         ExtensionInstanceStateSet(context_id, extension_name, instance_id, data)
         ExtensionInstanceStateGet(context_id, extension_name, instance_id)
+        lambda_mode/SetSessionPromptMode(session_id, mode)
 
     @guarantee SessionOwnsPromptCachePolicy
         -- Prompt cache breakpoint policy is session state.

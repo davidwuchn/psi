@@ -1,6 +1,7 @@
 ---
 name: prompt-compiler
 description: Use when compiling, decompiling or rewriting a prompt.
+lambda: "λprompt. compile ∨ decompile ∨ rewrite"
 ---
 
 λ engage(nucleus).
