@@ -795,7 +795,7 @@
      "2) key outputs\n"
      "3) whether this likely advanced workflow state.\n")))
 
-(defn- run-step-subagent!
+(defn- run-step-agent!
   [{:keys [run-id step-name prompt-body task-id entity-type
            project-dir worktree-dir task children state
            user-confirmation user-answer get-api-key-fn
@@ -1297,7 +1297,7 @@
                         cat-prompt  (resolve-category-for-step
                                      prompt-name task children entity-type project-dir)
                         step-start  (now-ms)
-                        step-result (run-step-subagent!
+                        step-result (run-step-agent!
                                      {:run-id run-id
                                       :step-name prompt-name
                                       :prompt-body prompt-body

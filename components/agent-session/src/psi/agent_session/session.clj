@@ -117,7 +117,7 @@
    [:worktree-path :string]
    [:parent-session-id {:optional true} [:maybe :string]]
    [:parent-session-path {:optional true} [:maybe :string]]
-   [:spawn-mode {:optional true} [:enum :new-root :fork-head :fork-at-entry :subagent]]
+   [:spawn-mode {:optional true} [:enum :new-root :fork-head :fork-at-entry :agent]]
    [:model {:optional true} [:maybe model-schema]]
    [:thinking-level thinking-level-schema]
    [:is-streaming :boolean]

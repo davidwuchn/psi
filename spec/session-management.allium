@@ -3,7 +3,7 @@
 -- session-management.allium
 -- Session orchestration: prompting, model/thinking, prompt overlays, and persistence hooks.
 
-use "./agent.allium" as agent
+use "./agent-extension.allium" as agent
 use "./extension-system.allium" as ext
 use "./compaction.allium" as compact
 use "./session-core.allium" as core
@@ -129,7 +129,7 @@ rule SessionConfigDerivedFromContextOnCreate {
 
 rule SpawnedSessionInheritsThenDiverges {
     when: SessionSpawnedFromParent(child, parent, spawn_mode)
-    requires: spawn_mode in {fork_head, fork_at_entry, subagent}
+    requires: spawn_mode in {fork_head, fork_at_entry, agent}
 
     ensures: child.active_tools = parent.active_tools
     ensures: child.effective_system_prompt = parent.effective_system_prompt

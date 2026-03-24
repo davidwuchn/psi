@@ -281,13 +281,13 @@ rule WorkDoneAutoRebasesBeforeFastForward {
     let default_branch = CachedDefaultBranch()
     let main_wt = worktrees/GitWorktreeRegistry.main
 
-    ensures: ForkedSubagentRequested(
+    ensures: ForkedAgentRequested(
         mode: sync,
         purpose: "rebase current worktree onto default branch",
         preserve_context: true
     )
 
-    requires: ForkedSubagentResult().success = true
+    requires: ForkedAgentResult().success = true
     requires: CurrentWorktreeBranchContainsDefaultBranchHead()
 
     ensures: git/BranchMergeRequested(
@@ -329,12 +329,12 @@ rule WorkDoneStopsWhenAutomaticRebaseFails {
     when: SlashCommandDispatched("/work-done")
     requires: CurrentWorktreeIsLinked()
     requires: not CurrentWorktreeBranchContainsDefaultBranchHead()
-    requires: ForkedSubagentRequested(
+    requires: ForkedAgentRequested(
         mode: sync,
         purpose: "rebase current worktree onto default branch",
         preserve_context: true
     )
-    requires: ForkedSubagentResult().success = false
+    requires: ForkedAgentResult().success = false
 
     ensures: WorkDoneResult.created(
         success: false,
@@ -344,7 +344,7 @@ rule WorkDoneStopsWhenAutomaticRebaseFails {
         worktree_removed: false,
         branch_deleted: false,
         switched_to_session: null,
-        error: "automatic rebase onto `{CachedDefaultBranch()}` failed: {ForkedSubagentResult().error}"
+        error: "automatic rebase onto `{CachedDefaultBranch()}` failed: {ForkedAgentResult().error}"
     )
 }
 

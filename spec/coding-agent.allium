@@ -3,7 +3,7 @@
 -- coding-agent.allium
 -- High-level coding-agent orchestration contract.
 
-use "./agent.allium" as agent
+use "./agent-extension.allium" as agent
 use "./session-management.allium" as session
 use "./session-core.allium" as core
 use "./skills.allium" as skills
@@ -135,7 +135,7 @@ surface CodingAgentApi {
 
     @guarantee AgentIsOperationalViewOfSession
         -- Agent execution is routed to a target session within the context.
-        -- Subagents are child sessions, not a separate top-level concept.
+        -- Agents are child sessions, not a separate top-level concept.
 }
 
 open question "Should prompt submission while streaming default to steer or follow_up by ui_type?"

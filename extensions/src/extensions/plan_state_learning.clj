@@ -80,11 +80,11 @@
               :content text
               :custom-type custom-type}))
 
-(defn- run-subagent-psl!
+(defn- run-agent-psl!
   [mutate-fn task]
   (mutate-fn 'psi.extension.tool/chain
-             {:steps [{:id "psl-subagent"
-                       :tool "subagent"
+             {:steps [{:id "psl-agent"
+                       :tool "agent"
                        :args {"action" "create"
                               "task" task
                               "mode" "sync"
@@ -134,7 +134,7 @@
                       :idle "waiting for session idle"
                       :running "updating PLAN/STATE/LEARNING"
                       :done (when-not (:accepted? result)
-                              "inspect PSL subagent result")
+                              "inspect PSL agent result")
                       :error "inspect PSL error"
                       nil)]
     {:top-line    top-line
@@ -214,18 +214,18 @@
       (if (str/includes? subject marker)
         {:status :done :skipped? true}
         (let [prompt          (psl-prompt {:source-sha source-sha})
-              subagent-res    (run-subagent-psl! mutate-fn prompt)
-              plan-succeeded? (true? (:psi.extension.tool-plan/succeeded? subagent-res))
-              first-result    (first (:psi.extension.tool-plan/results subagent-res))
+              agent-res    (run-agent-psl! mutate-fn prompt)
+              plan-succeeded? (true? (:psi.extension.tool-plan/succeeded? agent-res))
+              first-result    (first (:psi.extension.tool-plan/results agent-res))
               tool-result     (:result first-result)
               content         (str (or (:content tool-result) ""))
               is-error?       (or (false? plan-succeeded?)
                                   (true? (:is-error tool-result)))
               status-msg      (if is-error?
-                                (str "PSL subagent run failed"
+                                (str "PSL agent run failed"
                                      (when (seq content)
                                        (str ": " content)))
-                                (str "PSL subagent run completed"
+                                (str "PSL agent run completed"
                                      (when (seq content)
                                        (str ": " content))))]
           (when (seq status-msg)
@@ -233,8 +233,8 @@
           (refresh-widget-later!)
           {:status          :done
            :accepted?       (not is-error?)
-           :delivery        :subagent
-           :subagent-result subagent-res}))
+           :delivery        :agent
+           :agent-result agent-res}))
       (catch Exception e
         (send-message! mutate-fn (str "PSL error: " (ex-message e)))
         (refresh-widget-later!)

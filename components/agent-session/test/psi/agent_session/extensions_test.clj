@@ -501,8 +501,8 @@
              ((:mutate api) 'psi.other/test {:a 1})))
       (is (= {:op 'psi.extension/test :params {:a 1 :ext-path "/custom"}}
              ((:mutate api) 'psi.extension/test {:a 1 :ext-path "/custom"})))
-      (is (= {:op 'psi.extension.workflow/create :params {:type :subagent :ext-path "/ext/test"}}
-             ((:mutate api) 'psi.extension.workflow/create {:type :subagent})))))
+      (is (= {:op 'psi.extension.workflow/create :params {:type :agent :ext-path "/ext/test"}}
+             ((:mutate api) 'psi.extension.workflow/create {:type :agent})))))
 
   (testing "API session lifecycle helpers delegate to runtime mutate fn"
     (let [reg         (ext/create-registry)

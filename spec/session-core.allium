@@ -88,8 +88,23 @@ entity SessionContainment {
     context_id: ContextId
     parent_session_id: SessionId
     child_session_id: SessionId
-    relation: fork | fork_at_entry | subagent | automation
+    relation: fork | fork_at_entry | agent | automation
     created_at: Timestamp
+}
+
+entity ExtensionInstanceState {
+    context_id: ContextId
+    extension_name: String
+    instance_id: String
+    data: JsonMap
+
+    @guidance
+        -- Opaque per-invocation state owned by an extension.
+        -- Core stores and exposes it via EQL; extensions own the shape.
+        -- Keyed by [extension_name, instance_id] within a context.
+        -- Examples:
+        --   ["agent", "agent-7"]        → steering/follow-up/interrupt state
+        --   ["agent-chain", "run-3"]    → step sessions, accumulated input, progress
 }
 
 rule ContextInitializedExplicitly {
@@ -154,7 +169,7 @@ rule SessionCreationDoesNotDisturbSiblings {
 
 rule SpawnedSessionInheritsCacheBreakpointPolicy {
     when: SessionSpawnedFromParent(child, parent, spawn_mode)
-    requires: spawn_mode in {fork_head, fork_at_entry, subagent}
+    requires: spawn_mode in {fork_head, fork_at_entry, agent}
 
     ensures: child.cache_breakpoints = parent.cache_breakpoints
 }
@@ -215,6 +230,8 @@ surface SessionCoreApi {
     provides:
         SessionCreateRequested(project_id, worktree_path, system_prompt, name)
         SessionCacheBreakpointsSet(session_id, breakpoints)
+        ExtensionInstanceStateSet(context_id, extension_name, instance_id, data)
+        ExtensionInstanceStateGet(context_id, extension_name, instance_id)
 
     @guarantee SessionOwnsPromptCachePolicy
         -- Prompt cache breakpoint policy is session state.
@@ -225,11 +242,11 @@ surface SessionCoreApi {
         -- Sessions use these shared resources; they do not own independent copies.
 
     @guarantee SessionsFormATreeWithinContext
-        -- Every forked or subagent session is represented as a child session in the same context.
+        -- Every forked or agent session is represented as a child session in the same context.
 
     @guarantee AgentIsASession
-        -- A subagent is modeled as just another session in the context tree.
-        -- The distinction is recorded by SessionContainment.relation = subagent.
+        -- An agent is modeled as just another session in the context tree.
+        -- The distinction is recorded by SessionContainment.relation = agent.
 
     @guarantee SessionStartInstantIsStableForUiProjection
         -- Every session has a start_instant fixed at creation time.
@@ -258,4 +275,10 @@ surface SessionCoreApi {
     @guarantee ContextIsCanonicalSystemContextProjection
         -- AgentContext is the session-core projection of the canonical system context.
         -- Shared mutable runtime state is rooted in system_ctx/SystemContext rather than in multiple independent mutable roots.
+
+    @guarantee ExtensionInstanceStateIsOpaqueToCore
+        -- Core stores, queries, and garbage-collects ExtensionInstanceState.
+        -- Core does not interpret or validate the data map.
+        -- Extensions own the shape and enforce their own schema.
+        -- Queryable via EQL by [extension_name, instance_id].
 }

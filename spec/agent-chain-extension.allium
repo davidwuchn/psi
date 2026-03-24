@@ -1,0 +1,220 @@
+-- allium: 1
+
+-- agent-chain-extension.allium
+-- Sequential pipeline orchestrator for agent workflows.
+-- Chains are sequences of agent steps where output flows as input to the next.
+-- Individual step execution delegates to agent_ext/RunAgent.
+-- Chain instance state stored in core via ExtensionInstanceState.
+-- Step sessions are standard core sessions, created per chain invocation.
+
+use "./agent-extension.allium" as agent_ext
+use "./session-core.allium" as core
+
+;;; Chain definitions
+
+value ChainStep {
+    agent_name: String
+    prompt_template: String   -- may contain $INPUT and $ORIGINAL placeholders
+}
+
+value ChainDef {
+    name: String
+    description: String?
+    steps: OrderedSet<ChainStep>
+}
+
+rule LoadChainDefs {
+    when: LoadChainDefs(chains_file: String)
+
+    ensures: ForEach chain in ParseEdn(chains_file) {
+        ChainDef{
+            name: chain.name,
+            description: chain.description,
+            steps: ForEach step in chain.steps {
+                ChainStep{
+                    agent_name: step.agent,
+                    prompt_template: step.prompt
+                }
+            }
+        }
+    }
+
+    @guidance
+        -- Chain definitions live in .psi/agents/agent-chain.edn
+        -- Each chain has a name and an ordered sequence of steps.
+        -- Each step references an agent name and a prompt template.
+}
+
+;;; Chain instance state — extension-owned, stored in core
+
+entity ChainInstanceState {
+    -- Stored in core/ExtensionInstanceState as ["agent-chain", run-id]
+    -- Core is opaque to this shape; agent-chain extension enforces it.
+
+    chain_name: String
+    original_prompt: String
+    current_step_index: Integer
+    accumulated_input: String
+    step_sessions: Map<Integer, core/SessionId>
+    step_results: OrderedSet<StepResult>
+    status: running | done | error
+}
+
+;;; Results
+
+value StepResult {
+    step_index: Integer
+    agent_name: String
+    session_id: core/SessionId
+    success: Boolean
+    output: String
+    elapsed_ms: Integer
+}
+
+value ChainRunResult {
+    chain_name: String
+    output: String
+    success: Boolean
+    elapsed_ms: Integer
+    step_results: OrderedSet<StepResult>
+}
+
+;;; Execution rules
+
+rule ResolveStepPrompt {
+    when: ResolveStepPrompt(step: ChainStep, input: String, original: String)
+
+    ensures: result = step.prompt_template
+        .replace("$INPUT", input)
+        .replace("$ORIGINAL", original)
+
+    @guidance
+        -- $INPUT is the output of the previous step (or original prompt for step 0).
+        -- $ORIGINAL is always the user's original prompt, unchanged.
+}
+
+rule RunChainStep {
+    when: RunChainStep(run_id: String, step_index: Integer, context_id)
+
+    let state = core/ExtensionInstanceStateGet(context_id, "agent-chain", run_id)
+    let step = state.chain.steps[step_index]
+    let prompt = ResolveStepPrompt(step, state.accumulated_input, state.original_prompt)
+    let existing_session = state.step_sessions[step_index]
+    let config = agent_ext/ResolveAgentConfig(step.agent_name, context_id, agents_dir)
+
+    ensures: result = agent_ext/RunAgent(
+        context_id,
+        config,
+        prompt,
+        existing_session
+    )
+    ensures: state.step_sessions[step_index] = result.session_id
+    ensures: state.step_results = state.step_results + {StepResult{
+        step_index: step_index,
+        agent_name: step.agent_name,
+        session_id: result.session_id,
+        success: result.ok,
+        output: result.text,
+        elapsed_ms: result.elapsed_ms
+    }}
+    ensures: core/ExtensionInstanceStateSet(context_id, "agent-chain", run_id, state)
+}
+
+rule RunChain {
+    when: RunChain(chain: ChainDef, original_prompt: String, context_id, run_id: String)
+
+    ensures: core/ExtensionInstanceStateSet(context_id, "agent-chain", run_id, ChainInstanceState{
+        chain_name: chain.name,
+        original_prompt: original_prompt,
+        current_step_index: 0,
+        accumulated_input: original_prompt,
+        step_sessions: {},
+        step_results: {},
+        status: running
+    })
+
+    ensures: ForEachSequential(chain.steps, step_index) {
+        step_result = RunChainStep(run_id, step_index, context_id)
+        if not step_result.success then {
+            state.status = error
+            ChainFailed(run_id, step_index)
+        }
+        state.accumulated_input = step_result.output
+        state.current_step_index = step_index + 1
+    }
+    ensures: when state.status != error: state.status = done
+    ensures: ChainRunResult{
+        chain_name: chain.name,
+        output: state.accumulated_input,
+        success: state.status = done,
+        elapsed_ms: ElapsedSince(run_started_at),
+        step_results: state.step_results
+    }
+}
+
+;;; Invariants
+
+rule ChainStepSessionsAreCoreSessions {
+    when: RunChainStep(run_id, step_index, context_id)
+    requires: state.step_sessions[step_index] = null
+
+    ensures: core/SessionContainment.created(
+        context_id: context_id,
+        parent_session_id: current_session_id,
+        child_session_id: result.session_id,
+        relation: agent
+    )
+
+    @guidance
+        -- Chain step sessions are standard core sessions.
+        -- They appear in the context session tree.
+        -- They persist through standard core persistence.
+}
+
+rule ChainStepSessionsAreInvocationSpecific {
+    when: RunChain(chain, original_prompt, context_id, run_id)
+
+    ensures: state.step_sessions is fresh per invocation
+
+    @guidance
+        -- Each chain invocation creates its own step sessions.
+        -- Sessions are not shared across chain invocations.
+}
+
+rule ChainStepFailureStopsChain {
+    when: RunChainStep(run_id, step_index, context_id)
+    requires: result.ok = false
+
+    ensures: state.status = error
+    ensures: no further steps executed
+    ensures: ChainRunResult.success = false
+
+    @guidance
+        -- A failing step terminates the chain immediately.
+        -- The output of the failing step is included in the chain result.
+        -- Completed step results are preserved in the chain result.
+}
+
+surface AgentChainApi {
+    facing caller: core/EqlClient
+
+    provides:
+        RunChain(chain, original_prompt, context_id, run_id)
+        LoadChainDefs(chains_file)
+
+    exposes:
+        ChainDef
+        ChainRunResult
+        ChainInstanceState
+
+    related:
+        agent_ext/AgentToolApi
+        core/SessionCoreApi
+
+    @guidance
+        -- Chain coordination only. Individual step execution
+        -- delegates to agent_ext/RunAgent.
+        -- Agent name resolution uses agent_ext/ResolveAgentConfig.
+        -- Chain instance state stored in core via ExtensionInstanceState["agent-chain", run_id].
+        -- Step sessions are core sessions, created per chain invocation.
+}

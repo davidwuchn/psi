@@ -24,7 +24,7 @@ Preferred display-map keys:
 - `:action-line`
 
 Store that map under an extension-specific public key such as `:run/display`,
-`:chain/display`, or `:subagent/display`, then let consumers merge/render that
+`:chain/display`, or `:agent/display`, then let consumers merge/render that
 public surface via shared helpers such as `extensions.workflow-display`.
 
 Preferred helper usage:

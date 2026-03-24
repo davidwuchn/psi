@@ -144,8 +144,8 @@
           (is (some #(re-find #"PSL skipped" (str %)) texts))
           (is (= ["git log -1 --pretty=format:%H%n%s"] @calls)))))))
 
-(deftest psl-job-runs-subagent-in-forked-sync-mode-test
-  (testing "psl job uses subagent tool-plan chain with fork_session=true"
+(deftest psl-job-runs-agent-in-forked-sync-mode-test
+  (testing "psl job uses agent tool-plan chain with fork_session=true"
     (let [sent     (atom [])
           captured (atom nil)
           mutate-fn (fn [op params]
@@ -154,7 +154,7 @@
                         (do
                           (reset! captured params)
                           {:psi.extension.tool-plan/succeeded? true
-                           :psi.extension.tool-plan/results [{:id "psl-subagent"
+                           :psi.extension.tool-plan/results [{:id "psl-agent"
                                                               :result {:content "ok" :is-error false}}]})
                         psi.extension/send-message
                         (do (swap! sent conj (:content params))
@@ -166,20 +166,20 @@
             args   (:args step)]
         (is (= :done (:status result)))
         (is (true? (:accepted? result)))
-        (is (= :subagent (:delivery result)))
-        (is (= "subagent" (:tool step)))
+        (is (= :agent (:delivery result)))
+        (is (= "agent" (:tool step)))
         (is (= "create" (get args "action")))
         (is (= "sync" (get args "mode")))
         (is (= true (get args "fork_session")))
-        (is (some #(re-find #"PSL subagent run completed" (str %)) @sent)))))
+        (is (some #(re-find #"PSL agent run completed" (str %)) @sent)))))
 
-  (testing "psl job emits failure message when subagent plan fails"
+  (testing "psl job emits failure message when agent plan fails"
     (let [sent      (atom [])
           mutate-fn (fn [op params]
                       (case op
                         psi.extension.tool/chain
                         {:psi.extension.tool-plan/succeeded? false
-                         :psi.extension.tool-plan/results [{:id "psl-subagent"
+                         :psi.extension.tool-plan/results [{:id "psl-agent"
                                                             :result {:content "boom" :is-error true}}]}
                         psi.extension/send-message
                         (do (swap! sent conj (:content params))
@@ -189,5 +189,5 @@
       (let [result (invoke-private 'psl-job {:source-sha "feedbeef" :subject "⚒ Add feature"})]
         (is (= :done (:status result)))
         (is (false? (:accepted? result)))
-        (is (= :subagent (:delivery result)))
-        (is (some #(re-find #"PSL subagent run failed" (str %)) @sent))))))
+        (is (= :agent (:delivery result)))
+        (is (some #(re-find #"PSL agent run failed" (str %)) @sent))))))

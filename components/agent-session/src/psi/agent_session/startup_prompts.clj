@@ -18,7 +18,7 @@
    :run-on-new-root?     true
    :run-on-fork-head?    false
    :run-on-fork-at-entry? false
-   :run-on-subagent?     false})
+   :run-on-agent?     false})
 
 (def ^:private phase-order
   {:system-bootstrap  0
@@ -123,16 +123,16 @@
 
 (defn should-run?
   "Return true when startup prompts should run for `spawn-mode`.
-   spawn-mode values: :new-root | :fork-head | :fork-at-entry | :subagent"
-  [{:keys [spawn-mode run-on-new-root? run-on-fork-head? run-on-fork-at-entry? run-on-subagent?]
+   spawn-mode values: :new-root | :fork-head | :fork-at-entry | :agent"
+  [{:keys [spawn-mode run-on-new-root? run-on-fork-head? run-on-fork-at-entry? run-on-agent?]
     :or   {run-on-new-root?      (:run-on-new-root? default-config)
            run-on-fork-head?     (:run-on-fork-head? default-config)
            run-on-fork-at-entry? (:run-on-fork-at-entry? default-config)
-           run-on-subagent?      (:run-on-subagent? default-config)}}]
+           run-on-agent?      (:run-on-agent? default-config)}}]
   (case spawn-mode
     :fork-head     (boolean run-on-fork-head?)
     :fork-at-entry (boolean run-on-fork-at-entry?)
-    :subagent      (boolean run-on-subagent?)
+    :agent      (boolean run-on-agent?)
     ;; default/new-root
     (boolean run-on-new-root?)))
 

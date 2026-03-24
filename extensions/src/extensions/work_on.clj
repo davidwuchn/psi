@@ -189,11 +189,11 @@
        "- Do not merge, delete the branch, or remove the worktree.\n"
        "- In the final response, clearly state whether the rebase succeeded.\n"))
 
-(defn- run-rebase-subagent!
+(defn- run-rebase-agent!
   [current-branch default-branch]
   (let [result      (mutate! 'psi.extension.tool/chain
                              {:steps [{:id "work-done-rebase"
-                                       :tool "subagent"
+                                       :tool "agent"
                                        :args {"action" "create"
                                               "task" (work-done-rebase-task current-branch default-branch)
                                               "mode" "sync"
@@ -209,7 +209,7 @@
      :error (or (when-not ok?
                   (or (squish (:psi.extension.tool-plan/error result))
                       content
-                      "subagent did not complete"))
+                      "agent did not complete"))
                 content)}))
 
 (defn- merge-and-cleanup!
@@ -375,7 +375,7 @@
             ff-ready?      (branch-ready-for-ff? current-path default-branch)]
         (if ff-ready?
           (merge-and-cleanup! current-branch current-path main-wt default-branch false)
-          (let [rebase-result   (run-rebase-subagent! current-branch default-branch)
+          (let [rebase-result   (run-rebase-agent! current-branch default-branch)
                 ff-ready-after? (branch-ready-for-ff? current-path default-branch)]
             (cond
               (not (:ok? rebase-result))

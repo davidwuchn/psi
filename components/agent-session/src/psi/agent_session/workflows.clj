@@ -52,7 +52,7 @@
    - `:action-line`    — optional fallback action/help line
 
    Extensions may keep namespaced storage for the display payload itself
-   (for example `:run/display`, `:chain/display`, `:subagent/display`), but
+   (for example `:run/display`, `:chain/display`, `:agent/display`), but
    the map shape above is the preferred convention for shared rendering.
 
    Preferred helper path for consumers:

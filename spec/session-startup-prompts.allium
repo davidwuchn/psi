@@ -44,7 +44,7 @@ config {
     run_on_new_root: Boolean = true
     run_on_fork_head: Boolean = false
     run_on_fork_at_entry: Boolean = false
-    run_on_subagent: Boolean = false
+    run_on_agent: Boolean = false
 }
 
 rule StartupPromptConfigLoadedForContext {
@@ -101,14 +101,14 @@ rule StartupPromptsRunOnNewRootSession {
 rule StartupPromptsSkippedOnSpawnedSessions {
     when: session/NewSessionStarted(s, input)
     requires: config.startup_prompts_enabled = true
-    requires: input.spawn_mode in {fork_head, fork_at_entry, subagent}
+    requires: input.spawn_mode in {fork_head, fork_at_entry, agent}
 
     ensures:
         if input.spawn_mode = fork_head and config.run_on_fork_head = false:
             NoStartupPromptReplay(s)
         else if input.spawn_mode = fork_at_entry and config.run_on_fork_at_entry = false:
             NoStartupPromptReplay(s)
-        else if input.spawn_mode = subagent and config.run_on_subagent = false:
+        else if input.spawn_mode = agent and config.run_on_agent = false:
             NoStartupPromptReplay(s)
 }
 
@@ -173,5 +173,5 @@ rule StartupPromptAttrsDiscoverableInGraph {
 }
 
 open question "Should startup prompts run as independent turns or as one concatenated startup turn?"
--- Decision: forked/subagent spawned sessions inherit prior startup transcript only by default (no startup replay).
+-- Decision: forked/agent spawned sessions inherit prior startup transcript only by default (no startup replay).
 open question "Should startup prompts be represented as core/system messages instead of user-role messages?"

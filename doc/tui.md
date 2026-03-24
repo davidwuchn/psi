@@ -69,7 +69,7 @@ The selector UI is frontend-native, but candidate lists and command semantics ar
 - `/work-done` completes the current linked worktree onto the default branch.
 - It uses the cached default branch for the context.
 - If the current branch is not yet fast-forwardable onto the default branch, `/work-done`
-  runs a forked sync subagent to rebase first.
+  runs a forked sync agent to rebase first.
 - If that rebase fails, `/work-done` stops and preserves the worktree.
 - On success, `/work-done` fast-forward merges from the main worktree context, removes the
   linked worktree, deletes the branch, and switches back to an existing main-worktree

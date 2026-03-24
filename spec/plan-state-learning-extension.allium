@@ -75,7 +75,7 @@ rule PlanStateLearningCreatesChildSessionWhenNeeded {
     when: PlanStateLearningRunStarted(run)
     requires: run.skipped = false
 
-    ensures: core/SubagentSessionRequested(
+    ensures: core/AgentSessionRequested(
         parent_session_id: CurrentActiveSessionIdForWorktree(CurrentProjectId(), CurrentWorktreePath()),
         system_prompt: CurrentEffectiveSessionPrompt(),
         name: "plan-state-learning"

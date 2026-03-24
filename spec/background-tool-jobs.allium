@@ -127,18 +127,18 @@ rule WorkflowSendEventCanStartBackgroundJob {
     ensures: JobStartResponseFor(tool_call_id).job_id = job_id
 }
 
-rule SubagentAsyncCreateMapsToExactlyOneBackgroundJob {
+rule AgentAsyncCreateMapsToExactlyOneBackgroundJob {
     when: ToolInvocationStartedBackgroundJob(tool_call_id, thread_id, tool_name, job_id)
-    requires: tool_name = "workflow/subagent"
-    requires: ToolInvocationOrigin(tool_call_id) = subagent_create_async
+    requires: tool_name = "workflow/agent"
+    requires: ToolInvocationOrigin(tool_call_id) = agent_create_async
 
     ensures: CountBackgroundJobsForToolCall(tool_call_id) = 1
 }
 
-rule SubagentAsyncContinueMapsToExactlyOneBackgroundJob {
+rule AgentAsyncContinueMapsToExactlyOneBackgroundJob {
     when: ToolInvocationStartedBackgroundJob(tool_call_id, thread_id, tool_name, job_id)
-    requires: tool_name = "workflow/subagent"
-    requires: ToolInvocationOrigin(tool_call_id) = subagent_continue
+    requires: tool_name = "workflow/agent"
+    requires: ToolInvocationOrigin(tool_call_id) = agent_continue
 
     ensures: CountBackgroundJobsForToolCall(tool_call_id) = 1
 }

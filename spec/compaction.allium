@@ -3,7 +3,7 @@
 -- compaction.allium
 -- Context compaction and branch summarisation for sessions.
 
-use "./agent.allium" as agent
+use "./agent-extension.allium" as agent
 use "./extension-system.allium" as ext
 
 external entity Model {

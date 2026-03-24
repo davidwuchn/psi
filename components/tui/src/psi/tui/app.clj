@@ -1836,15 +1836,15 @@
                 "\n"))
          (charm/render dim-style "  ESC=interrupt  Ctrl+C=clear/quit  Ctrl+D=exit-empty") "\n")))
 
-(def ^:private subagent-title-style (charm/style :fg charm/yellow :bold true))
-(def ^:private subagent-head-style (charm/style :fg charm/cyan :bold true))
+(def ^:private agent-title-style (charm/style :fg charm/yellow :bold true))
+(def ^:private agent-head-style (charm/style :fg charm/cyan :bold true))
 (def ^:private psl-title-style (charm/style :fg charm/green :bold true))
 
-(defn- render-subagent-result
-  "Render a rich block for subagent-result custom messages."
+(defn- render-agent-result
+  "Render a rich block for agent-result custom messages."
   [text width]
   (let [lines     (str/split-lines (or text ""))
-        heading   (or (first lines) "Subagent result")
+        heading   (or (first lines) "Agent result")
         body      (->> (rest lines)
                        (drop-while str/blank?)
                        (str/join "\n"))
@@ -1853,8 +1853,8 @@
         body-lines (if (seq body-text) (str/split-lines body-text) [])]
     (str/join "\n"
               (concat
-               [(str (charm/render subagent-title-style "ψ: ⎇ Subagent Result"))
-                (str "   " (charm/render subagent-head-style heading))]
+               [(str (charm/render agent-title-style "ψ: ⎇ Agent Result"))
+                (str "   " (charm/render agent-head-style heading))]
                (when (seq body-lines)
                  (cons "   " (map #(str "   " %) body-lines)))))))
 
@@ -1868,8 +1868,8 @@
 
     :assistant
     (cond
-      (= "subagent-result" custom-type)
-      (render-subagent-result text width)
+      (= "agent-result" custom-type)
+      (render-agent-result text width)
 
       (= "plan-state-learning" custom-type)
       (str (charm/render psl-title-style "ψ: ⟳ Plan/State/Learning")

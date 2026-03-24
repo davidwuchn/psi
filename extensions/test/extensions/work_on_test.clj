@@ -302,7 +302,7 @@
         (is (re-find #"Fast-forwarded `feature-x` into `main`" @printed))))))
 
 (deftest work-done-auto-rebase-and-failure-messages-test
-  (testing "/work-done auto-rebases with a forked sync subagent when ff is not yet possible"
+  (testing "/work-done auto-rebases with a forked sync agent when ff is not yet possible"
     (let [printed      (atom nil)
           chain-calls  (atom [])
           remove-calls (atom 0)
@@ -352,7 +352,7 @@
         (sut/init api)
         ((get-in @state [:commands "work-done" :handler]) "")
         (is (= 1 (count @chain-calls)))
-        (is (= "subagent" (get-in (first @chain-calls) [:steps 0 :tool])))
+        (is (= "agent" (get-in (first @chain-calls) [:steps 0 :tool])))
         (is (= "create" (get-in (first @chain-calls) [:steps 0 :args "action"])))
         (is (= "sync" (get-in (first @chain-calls) [:steps 0 :args "mode"])))
         (is (= true (get-in (first @chain-calls) [:steps 0 :args "fork_session"])))
@@ -377,7 +377,7 @@
                                              (case op
                                                git.branch/default {:branch "main" :source :fallback}
                                                psi.extension.tool/chain {:psi.extension.tool-plan/succeeded? false
-                                                                         :psi.extension.tool-plan/error "subagent failed"
+                                                                         :psi.extension.tool-plan/error "agent failed"
                                                                          :psi.extension.tool-plan/results [{:id "work-done-rebase"
                                                                                                             :result {:content "rebase conflict"
                                                                                                                      :is-error true}}]}
@@ -389,7 +389,7 @@
         (sut/init api)
         ((get-in @state [:commands "work-done" :handler]) "")
         (is (= 0 @remove-calls))
-        (is (= "automatic rebase onto `main` failed: subagent failed"
+        (is (= "automatic rebase onto `main` failed: agent failed"
                @printed)))))
 
   (testing "/work-done preserves the worktree when merge verification fails"

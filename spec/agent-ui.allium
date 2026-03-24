@@ -1,23 +1,23 @@
 -- allium: 2
 
--- subagent-widget-ui.allium
--- Subagent widget UI projection and result-message rendering semantics.
+-- agent-ui.allium
+-- Agent UI projection and result-message rendering semantics.
 -- Distilled from tests/implementation and refined by elicitation.
 
-use "./subagent-widget-extension.allium" as subagent
+use "./agent-extension.allium" as agent
 use "./ui-extension-points.allium" as ui
 use "./ui-interactive-widgets.allium" as ui_widgets
 use "./session-core.allium" as session_core
 use "./tui.allium" as tui
 
-value SubagentWidgetRenderOptions {
+value AgentWidgetRenderOptions {
     task_preview_chars: Integer?
     detail_preview_chars: Integer?
     list_task_preview_chars: Integer?
     result_text_max_chars: Integer?
 }
 
-value EffectiveSubagentWidgetRenderOptions {
+value EffectiveAgentWidgetRenderOptions {
     task_preview_chars: Integer
     detail_preview_chars: Integer
     list_task_preview_chars: Integer
@@ -32,10 +32,10 @@ config {
     refresh_after_workflow_callback_ms: Integer = 30
 }
 
-rule SubagentWidgetRenderOptionsDefault {
-    when: SubagentWidgetProjectionRequested(session, extension_id, workflow_id, request_options)
+rule AgentWidgetRenderOptionsDefault {
+    when: AgentWidgetProjectionRequested(session, extension_id, workflow_id, request_options)
 
-    ensures: EffectiveRenderOptions(request_options) = EffectiveSubagentWidgetRenderOptions{
+    ensures: EffectiveRenderOptions(request_options) = EffectiveAgentWidgetRenderOptions{
         task_preview_chars: FirstPositiveInteger(request_options.task_preview_chars, config.default_task_preview_chars),
         detail_preview_chars: FirstPositiveInteger(request_options.detail_preview_chars, config.default_detail_preview_chars),
         list_task_preview_chars: FirstPositiveInteger(request_options.list_task_preview_chars, config.default_list_task_preview_chars),
@@ -43,64 +43,64 @@ rule SubagentWidgetRenderOptionsDefault {
     }
 }
 
-rule SubagentWidgetRenderOptionsArePerRequest {
-    when: SubagentWidgetProjectionRequested(session, extension_id, workflow_id, request_options)
+rule AgentWidgetRenderOptionsArePerRequest {
+    when: AgentWidgetProjectionRequested(session, extension_id, workflow_id, request_options)
 
     ensures: WidgetProjectionFor(workflow_id).render_options = EffectiveRenderOptions(request_options)
     ensures: DifferentRequestsMayUseDifferentRenderOptions(workflow_id)
 }
 
-rule VisibleSubagentWidgetsAreChildSessionsOfCurrentSession {
-    when: SubagentWidgetsRefreshed(session, extension_id)
+rule VisibleAgentWidgetsAreChildSessionsOfCurrentSession {
+    when: AgentWidgetsRefreshed(session, extension_id)
 
-    ensures: ForEach(VisibleSubagentWorkflowIds(session, extension_id),
+    ensures: ForEach(VisibleAgentWorkflowIds(session, extension_id),
                      sid -> session_core/SessionContainment(
                               context_id: session.context_id,
                               parent_session_id: session.id,
-                              child_session_id: SubagentSessionForWorkflow(extension_id, sid),
-                              relation: subagent,
+                              child_session_id: AgentSessionForWorkflow(extension_id, sid),
+                              relation: agent,
                               created_at: AnyTimestamp()))
 }
 
-rule OneWidgetPerVisibleSubagentWorkflow {
-    when: SubagentWidgetsRefreshed(session, extension_id)
+rule OneWidgetPerVisibleAgentWorkflow {
+    when: AgentWidgetsRefreshed(session, extension_id)
 
-    ensures: ForEach(VisibleSubagentWorkflowIds(session, extension_id),
-                     sid -> WidgetExists(session.ui_state.widgets, extension_id, "sub-" + sid))
+    ensures: ForEach(VisibleAgentWorkflowIds(session, extension_id),
+                     sid -> WidgetExists(session.ui_state.widgets, extension_id, "agent-" + sid))
 
     ensures: ForEach(WidgetIdsForExtension(session.ui_state.widgets, extension_id),
-                     wid -> wid startsWith "sub-" implies
-                            WorkflowIsVisibleInCurrentSession(session, extension_id, RemovePrefix(wid, "sub-")))
+                     wid -> wid startsWith "agent-" implies
+                            WorkflowIsVisibleInCurrentSession(session, extension_id, RemovePrefix(wid, "agent-")))
 }
 
-rule SubagentWidgetsOrderedMostRecentFirst {
-    when: SubagentWidgetsRefreshed(session, extension_id)
+rule AgentWidgetsOrderedMostRecentFirst {
+    when: AgentWidgetsRefreshed(session, extension_id)
 
     ensures: WidgetOrderForExtension(session.ui_state.widgets, extension_id) =
              SortMostRecentFirst(WidgetIdsForExtension(session.ui_state.widgets, extension_id),
                                  recency_key: {workflow.started_at, workflow.id})
 }
 
-rule SessionSwitchReprojectsOnlyChildSubagentWidgets {
+rule SessionSwitchReprojectsOnlyChildAgentWidgets {
     when: SessionSwitched(session)
 
     ensures: ForEach(WidgetIdsForExtension(session.ui_state.widgets, any_extension),
-                     wid -> wid startsWith "sub-" implies
+                     wid -> wid startsWith "agent-" implies
                             WidgetReferencesVisibleChildWorkflow(session, any_extension, wid))
-    ensures: NoWidgetForNonChildSubagentWorkflow(session.ui_state.widgets, session.id)
+    ensures: NoWidgetForNonChildAgentWorkflow(session.ui_state.widgets, session.id)
 }
 
-rule SubagentWidgetPlacementByUiKind {
-    when: SubagentWidgetProjected(session, ui_runtime, extension_id, subagent_id)
+rule AgentWidgetPlacementByUiKind {
+    when: AgentWidgetProjected(session, ui_runtime, extension_id, agent_id)
 
     ensures:
         if ui_runtime.ui_kind = emacs:
-            WidgetPlacementOf(session.ui_state.widgets, extension_id, "sub-" + subagent_id) = below_editor
+            WidgetPlacementOf(session.ui_state.widgets, extension_id, "agent-" + agent_id) = below_editor
         else:
-            WidgetPlacementOf(session.ui_state.widgets, extension_id, "sub-" + subagent_id) = above_editor
+            WidgetPlacementOf(session.ui_state.widgets, extension_id, "agent-" + agent_id) = above_editor
 }
 
-rule SubagentWidgetPhaseLabelMapping {
+rule AgentWidgetPhaseLabelMapping {
     when: PhaseLabelRequested(phase)
 
     ensures:
@@ -111,7 +111,7 @@ rule SubagentWidgetPhaseLabelMapping {
         else: PhaseLabel(phase) = Uppercase(ToString(phase))
 }
 
-rule SubagentWidgetStatusIconMapping {
+rule AgentWidgetStatusIconMapping {
     when: StatusIconRequested(phase)
 
     ensures:

@@ -98,19 +98,19 @@ Purpose: run repeatable multi-agent pipelines.
   - `.psi/agents/agent-chain.edn`
   - `.psi/agents/*.md` (agent profiles)
 
-### `extensions/subagent_widget.clj` (`extensions.subagent-widget`)
+### `extensions/agent.clj` (`extensions.agent`)
 
-Purpose: create/continue/remove/list subagents with workflow-backed UI widgets.
+Purpose: create/continue/remove/list agents with workflow-backed UI widgets.
 
-- Tool: `subagent`
+- Tool: `agent`
   - actions: `create`, `continue`, `remove`, `list`
   - create options include `agent`, `mode` (`sync|async`), `fork_session`, `timeout_ms`
 - Commands:
-  - `/sub [--fork|-f] [@agent] <task>`
-  - `/subcont <id> <prompt>`
-  - `/subrm <id>`
-  - `/subclear`
-  - `/sublist`
+  - `/agent [--fork|-f] [@agent] <task>`
+  - `/agent-cont <id> <prompt>`
+  - `/agent-rm <id>`
+  - `/agent-clear`
+  - `/agent-list`
 
 ### `extensions/mcp_tasks_run.clj` (`extensions.mcp-tasks-run`)
 
@@ -140,7 +140,7 @@ The display payload itself may live under an extension-specific namespaced key,
 for example:
 - `:run/display`
 - `:chain/display`
-- `:subagent/display`
+- `:agent/display`
 
 Preferred helper path:
 - widget/UI consumers: `extensions.workflow-display/merged-display` + `display-lines`
@@ -149,7 +149,7 @@ Preferred helper path:
 Current in-repo examples:
 - `extensions.mcp-tasks-run` — widget + list output reuse `:run/display`
 - `extensions.agent-chain` — widget + `action=list` reuse `:chain/display`
-- `extensions.subagent-widget` — widget + `sublist` reuse `:subagent/display`
+- `extensions.agent` — widget + `agent-list` reuse `:agent/display`
 
 ### `extensions/plan_state_learning.clj` (`extensions.plan-state-learning`)
 
@@ -159,7 +159,7 @@ Purpose: automate PLAN/STATE/LEARNING follow-up after non-PSL commits.
 - Behavior:
   - skips self-commits with marker `[psi:psl-auto]`
   - creates PSL workflow
-  - runs subagent to update/commit `PLAN.md`, `STATE.md`, `LEARNING.md`
+  - runs agent to update/commit `PLAN.md`, `STATE.md`, `LEARNING.md`
 - Workflow public data:
   - exposes `:psl/display` using the shared workflow display-map convention
   - `/psl` lists active PSL workflows by rendering that public display through `extensions.workflow-display/text-lines`

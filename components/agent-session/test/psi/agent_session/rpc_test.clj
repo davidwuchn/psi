@@ -474,8 +474,8 @@
                 {:type    :external-message
                  :message {:role "assistant"
                            :content {:kind :structured
-                                     :blocks [{:kind :text :text "Subagent result ready"}]}
-                           :custom-type "subagent-result"}})
+                                     :blocks [{:kind :text :text "Agent result ready"}]}
+                           :custom-type "agent-result"}})
         (Thread/sleep 180)
 
         (.close in-writer)
@@ -489,11 +489,11 @@
               assistant-evt (some #(when (= "assistant/message" (:event %)) %) events)]
           (is (some? assistant-evt))
           (is (= "assistant" (get-in assistant-evt [:data :role])))
-          (is (= "Subagent result ready"
+          (is (= "Agent result ready"
                  (get-in assistant-evt [:data :text])))
-          (is (= "Subagent result ready"
+          (is (= "Agent result ready"
                  (get-in assistant-evt [:data :content :blocks 0 :text])))
-          (is (= "subagent-result" (get-in assistant-evt [:data :custom-type])))
+          (is (= "agent-result" (get-in assistant-evt [:data :custom-type])))
           (is (contains? topics "session/updated"))
           (is (contains? topics "footer/updated")))
 

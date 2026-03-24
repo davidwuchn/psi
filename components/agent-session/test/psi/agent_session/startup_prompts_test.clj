@@ -71,10 +71,10 @@
     (is (true? (sp/should-run? {:spawn-mode :new-root})))
     (is (false? (sp/should-run? {:spawn-mode :fork-head})))
     (is (false? (sp/should-run? {:spawn-mode :fork-at-entry})))
-    (is (false? (sp/should-run? {:spawn-mode :subagent}))))
+    (is (false? (sp/should-run? {:spawn-mode :agent}))))
 
   (testing "explicit overrides respected"
     (is (true? (sp/should-run? {:spawn-mode :fork-head :run-on-fork-head? true})))
     (is (true? (sp/should-run? {:spawn-mode :fork-at-entry :run-on-fork-at-entry? true})))
-    (is (true? (sp/should-run? {:spawn-mode :subagent :run-on-subagent? true})))
+    (is (true? (sp/should-run? {:spawn-mode :agent :run-on-agent? true})))
     (is (false? (sp/should-run? {:spawn-mode :new-root :run-on-new-root? false})))))

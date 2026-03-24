@@ -58,7 +58,7 @@ So the repo is now in **late convergence / simplification / boundary sharpening*
 7. - add lambda mode for system prompt (default).  have the nucleus prelude. prelude is configurablte.
 
 8. - configuration has system, project or session scope. config setters need to take the scope.
-9. - rename subagent-widget to agent
+9. ✓ rename subagent-widget to agent
 10. - reverse agent/agent chaning dependency
 
 ## Current next implementation seam

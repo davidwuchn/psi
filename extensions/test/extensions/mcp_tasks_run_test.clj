@@ -123,7 +123,7 @@
                                              :state s
                                              :completed-count nil}))
                     sut/resolve-step-prompt (fn [_project-dir _prompt-name] "prompt")
-                    sut/run-step-subagent! (fn [_] {:ok? true :text "ok"})]
+                    sut/run-step-agent! (fn [_] {:ok? true :text "ok"})]
         (let [step-1 (#'sut/run-loop-job {:run-id "run-1"
                                           :task-id 42
                                           :project-dir "/tmp"
@@ -177,7 +177,7 @@
                                              :state state
                                              :completed-count completed-count}))
                     sut/resolve-step-prompt (fn [_project-dir _prompt-name] "prompt")
-                    sut/run-step-subagent! (fn [_] {:ok? true :text "ok"})]
+                    sut/run-step-agent! (fn [_] {:ok? true :text "ok"})]
         (let [res (#'sut/run-loop-job {:run-id "run-1"
                                        :task-id 42
                                        :project-dir "/tmp"
@@ -214,7 +214,7 @@
                                             (swap! derived-states #(if (seq %) (vec (rest %)) %))
                                             entry))
                     sut/resolve-step-prompt (fn [_project-dir _prompt-name] "prompt")
-                    sut/run-step-subagent! (fn [_] {:ok? true :text "ok"})]
+                    sut/run-step-agent! (fn [_] {:ok? true :text "ok"})]
         (let [res (#'sut/run-loop-job {:run-id "run-1"
                                        :task-id 42
                                        :project-dir "/tmp"
@@ -239,7 +239,7 @@
       (with-redefs [sut/derive-current! (fn [_project-dir _worktree-dir _task-id]
                                           snapshot)
                     sut/resolve-step-prompt (fn [_project-dir _prompt-name] "prompt")
-                    sut/run-step-subagent! (fn [_] {:ok? true :text "ok"})]
+                    sut/run-step-agent! (fn [_] {:ok? true :text "ok"})]
         (let [res (#'sut/run-loop-job {:run-id "run-1"
                                        :task-id 42
                                        :project-dir "/tmp"
@@ -266,7 +266,7 @@
       (with-redefs [sut/derive-current! (fn [_project-dir _worktree-dir _task-id]
                                           snapshot)
                     sut/resolve-step-prompt (fn [_project-dir _prompt-name] "prompt")
-                    sut/run-step-subagent! (fn [_] {:ok? true :text "ok"})]
+                    sut/run-step-agent! (fn [_] {:ok? true :text "ok"})]
         (let [res (#'sut/run-loop-job {:run-id "run-1"
                                        :task-id 42
                                        :project-dir "/tmp"
@@ -358,7 +358,7 @@
                                            :state :refined
                                            :completed-count nil})
                     sut/resolve-step-prompt (fn [_project-dir _prompt-name] "prompt")
-                    sut/run-step-subagent! (fn [_]
+                    sut/run-step-agent! (fn [_]
                                              {:ok? true
                                               :step-session pending-session
                                               :text "MCP_TASKS_RUN_USER_CONFIRMATION: {:question \"Continue?\" :expected-answer :yes-no}"})]
@@ -408,7 +408,7 @@
                                             (swap! derived-states #(if (seq %) (vec (rest %)) %))
                                             entry))
                     sut/resolve-step-prompt (fn [_project-dir _prompt-name] "prompt")
-                    sut/run-step-subagent! (fn [args]
+                    sut/run-step-agent! (fn [args]
                                              (reset! captured args)
                                              {:ok? true
                                               :step-session pending-session
@@ -709,8 +709,8 @@
                     "/tmp")]
         (is (nil? result))))))
 
-(deftest build-step-request-subagent-constraint-test
-  (testing "build-step-request instructs subagents to use confirmation marker for material questions"
+(deftest build-step-request-agent-constraint-test
+  (testing "build-step-request instructs agents to use confirmation marker for material questions"
     (let [result (#'sut/build-step-request
                   {:step-name "execute-task"
                    :prompt-body "Do the thing"
@@ -723,7 +723,7 @@
                    :state :refined
                    :category-prompt nil})]
       (is (re-find #"MCP_TASKS_RUN_USER_CONFIRMATION" result)
-          "should instruct subagent to use the confirmation marker")
+          "should instruct agent to use the confirmation marker")
       (is (not (re-find #"choose a deterministic" result))
           "old instruction should be removed")
       (is (re-find #"(?i)trivial" result)
@@ -905,8 +905,8 @@
                  :task
                  "/tmp"))))))
 
-(deftest run-step-subagent-executor-arg-order-test
-  (testing "run-step-subagent passes executor args in run-agent-loop order"
+(deftest run-step-agent-executor-arg-order-test
+  (testing "run-step-agent passes executor args in run-agent-loop order"
     (let [captured          (atom nil)
           fake-agent-ctx    {:fake :agent-ctx}
           fake-session-ctx  {:agent-ctx fake-agent-ctx
@@ -927,7 +927,7 @@
                                                {:role "assistant"
                                                 :stop-reason :stop
                                                 :content [{:type :text :text "ok"}]})]
-        (let [result (#'sut/run-step-subagent!
+        (let [result (#'sut/run-step-agent!
                       {:run-id "run-1"
                        :step-name "refine-task"
                        :prompt-body "prompt"
@@ -947,8 +947,8 @@
           (is (= "user" (get-in (nth @captured 4) [0 :role])))
           (is (= {:turn-ctx-atom nil} (nth @captured 5))))))))
 
-(deftest run-step-subagent-resume-session-test
-  (testing "run-step-subagent reuses the pending asking session on resume"
+(deftest run-step-agent-resume-session-test
+  (testing "run-step-agent reuses the pending asking session on resume"
     (let [captured         (atom nil)
           fake-agent-ctx   {:fake :agent-ctx}
           fake-session-ctx {:agent-ctx fake-agent-ctx
@@ -973,7 +973,7 @@
                                                {:role "assistant"
                                                 :stop-reason :stop
                                                 :content [{:type :text :text "ok"}]})]
-        (let [result (#'sut/run-step-subagent!
+        (let [result (#'sut/run-step-agent!
                       {:run-id "run-1"
                        :step-name "review-story-implementation"
                        :prompt-body "prompt"

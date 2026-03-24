@@ -1111,22 +1111,22 @@ clojure-lsp"}]})
           state     (init-state)
           event     {:type :external-message
                      :message {:role "assistant"
-                               :content [{:type :text :text "Subagent complete"}]}}
+                               :content [{:type :text :text "Agent complete"}]}}
           [s1 cmd]  (update-fn state event)]
       (is (= 1 (count (:messages s1))))
       (is (= :assistant (:role (first (:messages s1)))))
-      (is (= "Subagent complete" (:text (first (:messages s1)))))
+      (is (= "Agent complete" (:text (first (:messages s1)))))
       (is (some? cmd)))))
 
-(deftest subagent-result-rich-render-test
-  (testing "subagent-result custom-type renders rich heading"
+(deftest agent-result-rich-render-test
+  (testing "agent-result custom-type renders rich heading"
     (let [state (assoc (init-state)
                        :messages [{:role :assistant
-                                   :custom-type "subagent-result"
-                                   :text "Subagent #1 finished \"do thing\" in 2s\n\nResult:\nAll good"}])
+                                   :custom-type "agent-result"
+                                   :text "Agent #1 finished \"do thing\" in 2s\n\nResult:\nAll good"}])
           out   (app/view state)]
-      (is (str/includes? out "Subagent Result"))
-      (is (str/includes? out "Subagent #1 finished"))
+      (is (str/includes? out "Agent Result"))
+      (is (str/includes? out "Agent #1 finished"))
       (is (str/includes? out "All good")))))
 
 (deftest plan-state-learning-rich-render-test

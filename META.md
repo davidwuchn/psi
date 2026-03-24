@@ -42,10 +42,10 @@ A meta model for psi.
 - a session may be forked
 - a session may be forked from an earlier entry in its history
 - a session may be created as a new root session from global baseline configuration
-- a subagent session may optionally fork (inherit) the invoking session conversation context
+- an agent session may optionally fork (inherit) the invoking session conversation context
 - spawned sessions inherit parent session configuration snapshot (tools/extensions/prompt layers/model), then evolve independently
 - parent-child lineage is immutable after session creation
-- a session may contain other sessions (e.g., subagent sessions)
+- a session may contain other sessions (e.g., agent sessions)
 
 - a git worktree is a first-class context boundary for sessions
 - psi uses worktrees with minimal ceremony

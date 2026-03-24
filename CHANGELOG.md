@@ -95,7 +95,7 @@
     - `bb emacs:test`
 
 - λ Δ Renamed the worktree completion command from `/work-merge` to `/work-done` and removed `/work-merge`.
-- λ Δ `/work-done` now preserves linear history by checking fast-forwardability onto the cached default branch, auto-rebasing via a forked sync subagent when needed, then fast-forward merging and cleaning up the worktree/branch.
+- λ Δ `/work-done` now preserves linear history by checking fast-forwardability onto the cached default branch, auto-rebasing via a forked sync agent when needed, then fast-forward merging and cleaning up the worktree/branch.
 - λ Δ Added default-branch query surfaces:
   - history resolver `:git.branch/default-branch`
   - direct root attr `:git.branch/default-branch`
@@ -177,13 +177,13 @@
 
 ## 2026-03-12
 
-- λ Δ Added optional subagent session-forking capability:
-  - `subagent` tool `action=create` now accepts `fork_session` (boolean, default `false`)
-  - when `fork_session=true`, subagent starts with invoking session conversation history (`user`/`assistant`/`toolResult` messages)
+- λ Δ Added optional agent session-forking capability:
+  - `agent` tool `action=create` now accepts `fork_session` (boolean, default `false`)
+  - when `fork_session=true`, agent starts with invoking session conversation history (`user`/`assistant`/`toolResult` messages)
   - validation added: `fork_session` must be boolean and is rejected for non-`create` actions
 - Δ Added slash command fork flag support: `/sub [--fork|-f] [@agent] <task>`
-- Δ Updated subagent extension spec (`spec/subagent-widget-extension.allium`) with fork-session args/rules and surface guidance.
-- Δ Updated `META.md` to record subagent optional fork inheritance in session semantics.
+- Δ Updated agent extension spec (`spec/agent-extension.allium`) with fork-session args/rules and surface guidance.
+- Δ Updated `META.md` to record agent optional fork inheritance in session semantics.
 
 ## 2026-03-14
 

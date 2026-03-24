@@ -8,7 +8,7 @@
 -- sessions in that context observe and use the resulting commands, tools,
 -- handlers, and prompt contributions.
 
-use "./agent.allium" as agent
+use "./agent-extension.allium" as agent
 use "./session-core.allium" as core
 
 external entity AgentContext {

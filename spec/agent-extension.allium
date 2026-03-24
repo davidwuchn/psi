@@ -1,0 +1,509 @@
+-- allium: 2
+
+-- agent-extension.allium
+-- Agent extension: single-agent execution, tool surface, and instance state.
+-- Owns the RunAgent primitive consumed by agent-chain.
+-- Agent instance state (steering, interrupts) stored in core via ExtensionInstanceState.
+-- Agents are child sessions in the same context.
+
+use "./extension-system.allium" as ext
+use "./background-tool-jobs.allium" as background_jobs
+use "./session-core.allium" as core
+
+;;; Shared value types for agent messages and content
+
+external entity Model {
+    provider: String
+    id: String
+    api: String
+}
+
+value TextContent {
+    type: text
+    text: String
+}
+
+value ImageContent {
+    type: image
+    data: String
+    mime_type: String
+}
+
+value ThinkingContent {
+    type: thinking
+    thinking: String
+}
+
+value ToolCallContent {
+    type: tool_call
+    id: String
+    name: String
+    arguments: String
+}
+
+value UsageStats {
+    input: Integer
+    output: Integer
+    cache_read: Integer
+    cache_write: Integer
+    total_tokens: Integer
+}
+
+entity AgentMessage {
+    role: user | assistant | tool_result | custom
+    timestamp: Timestamp
+}
+
+entity AssistantMessage {
+    role: assistant
+    timestamp: Timestamp
+    content: Set<TextContent | ThinkingContent | ToolCallContent>
+    model: String
+    provider: String
+    stop_reason: stop | length | tool_use | aborted | error
+    usage: UsageStats?
+    error_message: String?
+}
+
+entity UserMessage {
+    role: user
+    timestamp: Timestamp
+    content: Set<TextContent | ImageContent>
+}
+
+entity ToolResultMessage {
+    role: tool_result
+    timestamp: Timestamp
+    tool_call_id: String
+    tool_name: String
+    content: Set<TextContent | ImageContent>
+    is_error: Boolean
+}
+
+entity AgentTool {
+    name: String
+    label: String
+    description: String
+    parameters: String
+}
+
+;;; Agent instance state — extension-owned, stored in core
+
+entity AgentInstanceState {
+    -- Stored in core/ExtensionInstanceState as ["agent", agent-id]
+    -- Core is opaque to this shape; agent extension enforces it.
+
+    steering_queue: Set<String>
+    follow_up_queue: Set<String>
+    steering_mode: all | one_at_a_time
+    follow_up_mode: all | one_at_a_time
+    interrupt_pending: Boolean
+    interrupt_requested_at: Timestamp?
+
+    has_queued_messages: steering_queue.count > 0 or follow_up_queue.count > 0
+}
+
+config {
+    default_model_provider: String = "google"
+    default_model_id: String = "gemini-2.5-flash-lite-preview-06-17"
+    default_thinking_level: off | minimal | low | medium | high | xhigh = off
+    default_steering_mode: all | one_at_a_time = one_at_a_time
+    default_follow_up_mode: all | one_at_a_time = one_at_a_time
+}
+
+;;; Agent instance state rules
+
+rule Steer {
+    when: Steer(agent_id, text)
+
+    let state = core/ExtensionInstanceStateGet(context_id, "agent", agent_id)
+
+    ensures: state.steering_queue = state.steering_queue + {text}
+    ensures: core/ExtensionInstanceStateSet(context_id, "agent", agent_id, state)
+}
+
+rule FollowUp {
+    when: FollowUp(agent_id, text)
+
+    let state = core/ExtensionInstanceStateGet(context_id, "agent", agent_id)
+
+    ensures: state.follow_up_queue = state.follow_up_queue + {text}
+    ensures: core/ExtensionInstanceStateSet(context_id, "agent", agent_id, state)
+}
+
+;;; Agent config resolution — shared with agent-chain
+
+value AgentDef {
+    name: String
+    description: String?
+    system_prompt: String
+    tools: Set<String>?
+}
+
+rule LoadAgentDefs {
+    when: LoadAgentDefs(agents_dir: String)
+
+    ensures: ForEach file in agents_dir where file.extension = ".md" {
+        parsed = ParseFrontmatter(file)
+        if parsed != null and parsed.name != null:
+            AgentDef{
+                name: lowercase(parsed.name),
+                description: parsed.description,
+                system_prompt: parsed.body,
+                tools: ParseToolList(parsed.tools)
+            }
+    }
+
+    @guidance
+        -- Agent definitions live in .psi/agents/*.md
+        -- Frontmatter fields: name, description, tools (comma-separated)
+        -- Body after frontmatter delimiter is the system prompt
+}
+
+rule ResolveAgentConfig {
+    when: ResolveAgentConfig(agent_name: String?, context_id, agents_dir)
+
+    let agent_def = when agent_name != null:
+        FindAgentDef(LoadAgentDefs(agents_dir), agent_name)
+
+    let base_tools = DefaultAgentTools()
+    let base_prompt = ContextBaselineSystemPrompt(context_id)
+
+    ensures: AgentRunConfig{
+        session_name: agent_name,
+        system_prompt: when agent_def != null:
+            base_prompt + "\n\n[Agent Profile: " + agent_def.name + "]\n" + agent_def.system_prompt
+            else: base_prompt,
+        tools: agent_def.tools ?? base_tools,
+        model: null,
+        thinking_level: off,
+        fork_messages: null
+    }
+}
+
+;;; Run-to-completion primitive
+
+value AgentRunConfig {
+    session_name: String?
+    system_prompt: String?
+    tools: Set<AgentTool>?
+    model: Model?
+    thinking_level: (off | minimal | low | medium | high | xhigh)?
+    fork_messages: Set<AgentMessage>?
+}
+
+value AgentRunResult {
+    session_id: core/SessionId
+    ok: Boolean
+    text: String
+    elapsed_ms: Integer
+    error_message: String?
+}
+
+rule RunAgent {
+    when: RunAgent(context_id, config: AgentRunConfig, prompt: String, existing_session_id: core/SessionId?)
+
+    -- Reuse existing session or create a new child session in the core context
+    let session_id = existing_session_id ?? CreateChildSession(context_id, relation: agent, config)
+
+    ensures: SessionExists(session_id)
+    ensures: SessionConfigured(session_id, config)
+    ensures: Prompt(session_id, prompt)
+    ensures: AgentLoopCompleted(session_id)
+    ensures: core/ExtensionInstanceStateSet(context_id, "agent", session_id, AgentInstanceState{
+        steering_queue: {},
+        follow_up_queue: {},
+        steering_mode: config.default_steering_mode,
+        follow_up_mode: config.default_follow_up_mode,
+        interrupt_pending: false,
+        interrupt_requested_at: null
+    })
+    ensures: AgentRunResult{
+        session_id: session_id,
+        ok: not SessionErrored(session_id),
+        text: ExtractTerminalText(session_id),
+        elapsed_ms: ElapsedSince(SessionStarted(session_id)),
+        error_message: SessionError(session_id)
+    }
+
+    @guidance
+        -- Creates a child session in core's context tree when no existing session provided.
+        -- Reuses the given session when existing_session_id is provided, preserving history.
+        -- The session is a standard core session — persisted, queryable, appears in session tree.
+        -- Agent instance state is stored in core via ExtensionInstanceState["agent", session_id].
+        -- Consumers call this instead of directly orchestrating agent-core + executor.
+}
+
+;;; Tool surface — renamed from Subagent* to Agent*
+
+value AgentCreateArgs {
+    task: String
+    agent: String?
+    mode: sync | async?
+    fork_session: Boolean?
+    include_result_in_context: Boolean?
+}
+
+value AgentContinueArgs {
+    id: Integer
+    prompt: String
+    include_result_in_context: Boolean?
+}
+
+value AgentCreateResponse {
+    workflow_id: String
+    mode: sync | async
+    job_id: String?
+    session_id: core/SessionId?
+    is_error: Boolean
+    content: String
+}
+
+value AgentContinueResponse {
+    workflow_id: String
+    job_id: String
+    is_error: Boolean
+    content: String
+}
+
+rule AgentCreateDefaultsToAsync {
+    when: AgentToolCalled(action: create, args)
+    requires: args.mode = null
+
+    ensures: EffectiveCreateMode(args) = async
+}
+
+rule AgentCreateModeMustBeKnownWhenProvided {
+    when: AgentToolCalled(action: create, args)
+    requires: args.mode != null
+    requires: args.mode not in {sync, async}
+
+    ensures: Error.thrown("mode must be one of sync, async")
+}
+
+rule AgentModeIsOnlySupportedForCreate {
+    when: AgentToolCalled(action, args)
+    requires: action in {continue, remove, list}
+    requires: args.mode != null
+
+    ensures: Error.thrown("mode is only supported for action=create")
+}
+
+rule AgentForkSessionMustBeBooleanWhenProvided {
+    when: AgentToolCalled(action: create, args)
+    requires: args.fork_session not in {null, true, false}
+
+    ensures: Error.thrown("fork_session must be true or false")
+}
+
+rule AgentIncludeResultInContextMustBeBooleanWhenProvided {
+    when: AgentToolCalled(action, args)
+    requires: args.include_result_in_context not in {null, true, false}
+
+    ensures: Error.thrown("include_result_in_context must be true or false")
+}
+
+rule AgentForkSessionIsOnlySupportedForCreate {
+    when: AgentToolCalled(action, args)
+    requires: action in {continue, remove, list}
+    requires: args.fork_session != null
+
+    ensures: Error.thrown("fork_session is only supported for action=create")
+}
+
+rule AgentCreateDefaultsForkSessionToFalse {
+    when: AgentToolCalled(action: create, args)
+    requires: args.fork_session = null
+
+    ensures: EffectiveForkSession(args) = false
+}
+
+rule AgentCreateDelegatesToRunAgent {
+    when: AgentToolCalled(action: create, args, tool_call_id, thread_id)
+
+    let config = ResolveAgentConfig(args.agent, CurrentContextId(), agents_dir)
+    let config_with_fork = when EffectiveForkSession(args):
+        config with { fork_messages: CurrentSessionMessages() }
+        else: config
+
+    ensures: RunAgent(CurrentContextId(), config_with_fork, args.task, null)
+    ensures: core/SessionContainment(CurrentContextId(), CurrentSessionId(), created_session_id(), relation: agent)
+}
+
+rule AgentCreatePropagatesForkSessionFlag {
+    when: AgentToolCalled(action: create, args, tool_call_id, thread_id)
+
+    ensures: AgentWorkflowCreated(workflow_id, thread_id)
+    ensures: AgentWorkflow(workflow_id).input.fork_session = EffectiveForkSession(args)
+}
+
+rule AgentCreatePropagatesIncludeResultInContextFlag {
+    when: AgentToolCalled(action: create, args, tool_call_id, thread_id)
+
+    ensures: AgentWorkflowCreated(workflow_id, thread_id)
+    ensures: AgentWorkflow(workflow_id).input.include_result_in_context = (args.include_result_in_context ?? false)
+}
+
+rule AgentContinuePropagatesIncludeResultInContextFlagWhenProvided {
+    when: AgentToolCalled(action: continue, args, tool_call_id, thread_id)
+    requires: args.include_result_in_context != null
+
+    ensures: AgentWorkflowEventAccepted(args.id, event: "agent/continue")
+    ensures: AgentWorkflow(args.id).data.include_result_in_context = args.include_result_in_context
+}
+
+rule AgentCreateSyncRunsToTerminal {
+    when: AgentToolCalled(action: create, args, tool_call_id, thread_id)
+    requires: EffectiveCreateMode(args) = sync
+
+    ensures: AgentWorkflowCreated(workflow_id, thread_id)
+    ensures: AgentWorkflowStarted(workflow_id)
+    ensures: AgentWorkflowReachedTerminalPhase(workflow_id, phase)
+    ensures: phase in {done, error}
+
+    ensures: ToolResponse(tool_call_id) = AgentCreateResponse{
+        workflow_id: workflow_id,
+        mode: sync,
+        job_id: null,
+        session_id: SessionForWorkflow(workflow_id),
+        is_error: phase = error,
+        content: AgentTerminalText(workflow_id)
+    }
+
+    ensures: background_jobs/CountBackgroundJobsForToolCall(tool_call_id) = 0
+    ensures: AgentWorkflow(workflow_id).phase = phase
+}
+
+rule AgentCreateSyncFailurePersistsErrorWorkflow {
+    when: AgentToolCalled(action: create, args, tool_call_id, thread_id)
+    requires: EffectiveCreateMode(args) = sync
+    requires: AgentWorkflowReachedTerminalPhase(workflow_id, error)
+
+    ensures: ToolResponse(tool_call_id).is_error = true
+    ensures: AgentWorkflow(workflow_id).phase = error
+    ensures: AgentWorkflowInspectable(workflow_id)
+    ensures: AgentWorkflowContinuable(workflow_id)
+}
+
+rule AgentCreateSyncEmitsResultMessageWhenContextInjectionDisabled {
+    when: AgentToolCalled(action: create, args, tool_call_id, thread_id)
+    requires: EffectiveCreateMode(args) = sync
+    requires: AgentWorkflowReachedTerminalPhase(workflow_id, phase)
+    requires: (args.include_result_in_context ?? false) = false
+
+    ensures: ext/CustomMessageSent(SessionByWorkflow(workflow_id), message)
+    ensures: message.customType = "agent-result"
+    ensures: message.role = "assistant"
+    ensures: message.content != ""
+}
+
+rule AgentResultInjectedIntoSessionWhenEnabled {
+    when: AgentWorkflowReachedTerminalPhase(workflow_id, phase)
+    requires: AgentWorkflow(workflow_id).input.include_result_in_context = true
+
+    ensures: not ext/CustomMessageSent(SessionByWorkflow(workflow_id), message where message.customType = "agent-result")
+
+    ensures: ext/MessageSent(SessionByWorkflow(workflow_id), user_message)
+    ensures: user_message.role = "user"
+    ensures: Contains(user_message.content, "Agent job id:")
+
+    ensures: ext/MessageSent(SessionByWorkflow(workflow_id), assistant_message)
+    ensures: assistant_message.role = "assistant"
+    ensures: assistant_message.content = AgentTerminalText(workflow_id)
+
+    ensures: PreservesRoleAlternation(SessionByWorkflow(workflow_id), after: assistant_message)
+}
+
+rule AgentCreateAsyncCreatesWorkflowAndBackgroundJob {
+    when: AgentToolCalled(action: create, args, tool_call_id, thread_id)
+    requires: EffectiveCreateMode(args) = async
+
+    ensures: AgentWorkflowCreated(workflow_id, thread_id)
+    ensures: background_jobs/ToolInvocationStartedBackgroundJob(
+        tool_call_id,
+        thread_id,
+        "workflow/agent",
+        job_id
+    )
+
+    ensures: ToolResponse(tool_call_id) = AgentCreateResponse{
+        workflow_id: workflow_id,
+        mode: async,
+        job_id: job_id,
+        session_id: SessionForWorkflow(workflow_id),
+        is_error: false,
+        content: Contains("spawned in background")
+    }
+}
+
+rule AgentContinueRemainsBackgroundOnly {
+    when: AgentToolCalled(action: continue, args, tool_call_id, thread_id)
+    requires: args.mode = null
+
+    ensures: AgentWorkflowEventAccepted(args.id, event: "agent/continue")
+    ensures: background_jobs/ToolInvocationStartedBackgroundJob(
+        tool_call_id,
+        thread_id,
+        "workflow/agent",
+        job_id
+    )
+
+    ensures: ToolResponse(tool_call_id) = AgentContinueResponse{
+        workflow_id: ToString(args.id),
+        job_id: job_id,
+        is_error: false,
+        content: Contains("continuing in background")
+    }
+}
+
+rule AgentContinueRejectsWhenWorkflowRunning {
+    when: AgentToolCalled(action: continue, args)
+    requires: AgentWorkflow(args.id).phase = running
+
+    ensures: Error.thrown("Agent #" + ToString(args.id) + " is still running.")
+}
+
+surface AgentToolApi {
+    facing caller: ext/ExtensionModule
+
+    provides:
+        AgentToolCalled(action, args)
+        AgentToolCalled(action, args, tool_call_id, thread_id)
+        RunAgent(context_id, config, prompt, existing_session_id?)
+        ResolveAgentConfig(agent_name, context_id, agents_dir)
+        LoadAgentDefs(agents_dir)
+        Steer(agent_id, text)
+        FollowUp(agent_id, text)
+
+    exposes:
+        EffectiveCreateMode(args)
+        EffectiveForkSession(args)
+        AgentCreateResponse
+        AgentContinueResponse
+        AgentRunConfig
+        AgentRunResult
+        AgentDef
+        AgentInstanceState
+
+    related:
+        ext/ExtensionApi
+        background_jobs/BackgroundToolJobsApi
+        core/SessionCoreApi
+
+    @guidance
+        -- create supports mode=sync|async; default mode is async.
+        -- create supports fork_session=true|false; default is false.
+        -- mode is rejected for continue/remove/list.
+        -- fork_session is rejected for continue/remove/list.
+        -- create mode=sync runs to terminal and returns output with no job_id.
+        -- create mode=async returns both workflow id and background job_id.
+        -- continue remains background-only and returns a background job_id.
+        -- Agent execution delegates to RunAgent, which creates core sessions.
+        -- Agent name resolution uses ResolveAgentConfig + LoadAgentDefs.
+        -- Agent instance state (steering, interrupts) stored in core via ExtensionInstanceState.
+        -- An agent is a child session in the same context as the current session.
+        -- slash command supports /agent [--fork|-f] [@agent] <task>.
+}
+
+open question "Should steering preempt remaining tool calls or only affect next model turn?"
+open question "Should follow-up queue preserve insertion order or support prioritization?"
