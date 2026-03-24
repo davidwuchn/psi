@@ -249,13 +249,16 @@
 ;;; Model mutation
 
 (pco/defmutation set-model
-  "Set the active model and clamp thinking-level for the current session."
-  [_ {:keys [psi/agent-session-ctx model]}]
+  "Set the active model and clamp thinking-level for the current session.
+   Optional :scope — :session (runtime only), :project (default), :user (user-global)."
+  [_ {:keys [psi/agent-session-ctx model scope]}]
   {::pco/op-name 'psi.extension/set-model
    ::pco/params  [:psi/agent-session-ctx :model]
    ::pco/output  [:psi.agent-session/model
                   :psi.agent-session/thinking-level]}
-  (let [result (dispatch/dispatch! agent-session-ctx :session/set-model {:model model} {:origin :mutations})]
+  (let [result (dispatch/dispatch! agent-session-ctx :session/set-model
+                                   (cond-> {:model model} scope (assoc :scope scope))
+                                   {:origin :mutations})]
     {:psi.agent-session/model          (:model result)
      :psi.agent-session/thinking-level (:thinking-level result)}))
 

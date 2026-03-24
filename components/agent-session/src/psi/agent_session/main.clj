@@ -61,7 +61,7 @@
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.prompt-templates :as pt]
-   [psi.agent-session.project-preferences :as project-prefs]
+   [psi.agent-session.config-resolution :as config-res]
    [psi.agent-session.rpc :as rpc]
    [psi.agent-session.skills :as skills]
    [psi.agent-session.session :as session-data]
@@ -188,23 +188,6 @@
                        (= model-id (:id model)))
               model))
           models/all-models)))
-
-(defn- effective-model-from-project-preferences
-  "Return project-selected runtime model map when valid, else fallback `ai-model`."
-  [cwd ai-model]
-  (let [prefs (project-prefs/read-preferences cwd)]
-    (if-let [{:keys [provider id]} (project-prefs/project-model prefs)]
-      (or (resolve-model-by-provider+id provider id)
-          ai-model)
-      ai-model)))
-
-(defn- effective-thinking-level-from-project-preferences
-  "Return project-selected thinking level (clamped by model), else :off/model default."
-  [cwd model]
-  (let [prefs (project-prefs/read-preferences cwd)
-        pref-level (project-prefs/project-thinking-level prefs)]
-    (session-data/clamp-thinking-level (or pref-level :off)
-                                       {:reasoning (:supports-reasoning model)})))
 
 (defn- arg-value
   [args flag]
@@ -552,11 +535,15 @@
   [ai-model {:keys [event-queue session-config cwd ui-type]}]
   (let [oauth-ctx                (oauth/create-context)
         cwd                      (or cwd (System/getProperty "user.dir"))
-        effective-model          (effective-model-from-project-preferences cwd ai-model)
-        effective-thinking-level (effective-thinking-level-from-project-preferences cwd effective-model)
-        prefs                    (project-prefs/read-preferences cwd)
-        effective-prompt-mode    (or (project-prefs/project-prompt-mode prefs) :lambda)
-        nucleus-prelude-override (project-prefs/project-nucleus-prelude-override prefs)
+        cfg                      (config-res/resolve-config cwd)
+        effective-model          (if-let [{:keys [provider id]} (config-res/resolved-model cfg)]
+                                   (or (resolve-model-by-provider+id provider id) ai-model)
+                                   ai-model)
+        effective-thinking-level (session-data/clamp-thinking-level
+                                  (config-res/resolved-thinking-level cfg)
+                                  {:reasoning (:supports-reasoning effective-model)})
+        effective-prompt-mode    (config-res/resolved-prompt-mode cfg)
+        nucleus-prelude-override (config-res/resolved-nucleus-prelude-override cfg)
         ctx                      (session/create-context
                                   {:initial-session {:model {:provider  (name (:provider effective-model))
                                                              :id        (:id effective-model)

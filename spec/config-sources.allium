@@ -1,0 +1,181 @@
+-- allium: 1
+
+-- config-sources.allium
+-- Config source precedence: session > project > user > system
+
+use "./session-core.allium" as session
+use "./project-preferences.allium" as project_prefs
+
+-- ── Values ───────────────────────────────────────────────────────────────────
+
+value ConfigScope {
+    scope: session | project | user
+}
+
+value AgentSessionConfig {
+    model_provider: String?
+    model_id: String?
+    thinking_level: off | minimal | low | medium | high | xhigh?
+    prompt_mode: lambda | prose?
+    nucleus_prelude_override: String?
+}
+
+value ResolvedConfig {
+    model_provider: String?
+    model_id: String?
+    thinking_level: off | minimal | low | medium | high | xhigh
+    prompt_mode: lambda | prose
+    nucleus_prelude_override: String?
+}
+
+config {
+    user_config_file: String = "~/.psi/agent/config.edn"
+    project_config_file: String = ".psi/project.edn"
+}
+
+-- ── Resolution ───────────────────────────────────────────────────────────────
+
+rule ConfigResolvesWithPrecedence {
+    -- System defaults < user config < project config
+    -- Session-level overrides are held in session state (not re-read from disk)
+
+    when: SessionBootstrapStarted(session)
+
+    let system_defaults = {
+        thinking_level: off,
+        prompt_mode: lambda
+    }
+    let user_cfg = ReadEdn(config.user_config_file).agent_session or {}
+    let project_cfg = ReadEdn(config.project_config_file).agent_session or {}
+
+    ensures: resolved_config = Merge(system_defaults, user_cfg, project_cfg)
+}
+
+rule BootstrapAppliesResolvedModel {
+    when: SessionBootstrapStarted(session)
+
+    requires: resolved_config.model_provider != null
+    requires: resolved_config.model_id != null
+    requires: ExistsModel(provider: resolved_config.model_provider, id: resolved_config.model_id)
+
+    ensures: session.model = ResolveModel(resolved_config.model_provider, resolved_config.model_id)
+}
+
+rule BootstrapFallsBackWhenResolvedModelInvalid {
+    when: SessionBootstrapStarted(session)
+
+    requires: resolved_config.model_provider != null
+    requires: resolved_config.model_id != null
+    requires: not ExistsModel(provider: resolved_config.model_provider, id: resolved_config.model_id)
+
+    ensures: session.model = BootstrapProvidedModel(session)
+}
+
+rule BootstrapAppliesResolvedThinkingLevel {
+    when: SessionBootstrapStarted(session)
+
+    ensures: session.thinking_level = ClampThinkingLevel(
+        resolved_config.thinking_level or off,
+        session.model
+    )
+}
+
+rule BootstrapAppliesResolvedPromptMode {
+    when: SessionBootstrapStarted(session)
+
+    ensures: session.prompt_mode = resolved_config.prompt_mode or lambda
+}
+
+rule BootstrapAppliesResolvedNucleusPrelude {
+    when: SessionBootstrapStarted(session)
+
+    requires: resolved_config.nucleus_prelude_override != null
+
+    ensures: session.nucleus_prelude_override = resolved_config.nucleus_prelude_override
+}
+
+-- ── Scoped setters ───────────────────────────────────────────────────────────
+
+rule ModelSetWithSessionScopeIsRuntimeOnly {
+    when: SessionModelSet(session, model, scope: session)
+
+    ensures: session.model = model
+    ensures: not WriteEdn(config.project_config_file, _)
+    ensures: not WriteEdn(config.user_config_file, _)
+}
+
+rule ModelSetWithProjectScopePersistsToProject {
+    when: SessionModelSet(session, model, scope: project)
+
+    ensures: session.model = model
+    ensures: WriteEdn(
+        path: config.project_config_file,
+        merge: { agent_session: { model_provider: model.provider, model_id: model.id } }
+    )
+}
+
+rule ModelSetWithUserScopePersistsToUser {
+    when: SessionModelSet(session, model, scope: user)
+
+    ensures: session.model = model
+    ensures: WriteEdn(
+        path: config.user_config_file,
+        merge: { agent_session: { model_provider: model.provider, model_id: model.id } }
+    )
+}
+
+rule ThinkingLevelSetWithSessionScopeIsRuntimeOnly {
+    when: SessionThinkingLevelSet(session, level, scope: session)
+
+    ensures: session.thinking_level = ClampThinkingLevel(level, session.model)
+    ensures: not WriteEdn(config.project_config_file, _)
+    ensures: not WriteEdn(config.user_config_file, _)
+}
+
+rule ThinkingLevelSetWithProjectScopePersistsToProject {
+    when: SessionThinkingLevelSet(session, level, scope: project)
+
+    ensures: session.thinking_level = ClampThinkingLevel(level, session.model)
+    ensures: WriteEdn(
+        path: config.project_config_file,
+        merge: { agent_session: { thinking_level: session.thinking_level } }
+    )
+}
+
+rule ThinkingLevelSetWithUserScopePersistsToUser {
+    when: SessionThinkingLevelSet(session, level, scope: user)
+
+    ensures: session.thinking_level = ClampThinkingLevel(level, session.model)
+    ensures: WriteEdn(
+        path: config.user_config_file,
+        merge: { agent_session: { thinking_level: session.thinking_level } }
+    )
+}
+
+rule PromptModeSetWithSessionScopeIsRuntimeOnly {
+    when: SessionPromptModeSet(session, mode, scope: session)
+
+    ensures: session.prompt_mode = mode
+    ensures: not WriteEdn(config.project_config_file, _)
+    ensures: not WriteEdn(config.user_config_file, _)
+}
+
+rule PromptModeSetWithProjectScopePersistsToProject {
+    when: SessionPromptModeSet(session, mode, scope: project)
+
+    ensures: session.prompt_mode = mode
+    ensures: WriteEdn(
+        path: config.project_config_file,
+        merge: { agent_session: { prompt_mode: mode } }
+    )
+}
+
+rule PromptModeSetWithUserScopePersistsToUser {
+    when: SessionPromptModeSet(session, mode, scope: user)
+
+    ensures: session.prompt_mode = mode
+    ensures: WriteEdn(
+        path: config.user_config_file,
+        merge: { agent_session: { prompt_mode: mode } }
+    )
+}

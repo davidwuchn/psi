@@ -1,3 +1,3 @@
 *.elc
 .psi/project.edn
-.clj-konde/imports
+.clj-konde/imports.claude/

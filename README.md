@@ -73,6 +73,12 @@ For the session-root graph discovery surface (`:psi.graph/*`), canonical discove
 workflow, and graph semantics, see:
 - [`doc/graph-surface.md`](doc/graph-surface.md)
 
+## Configuration
+
+Config file locations, precedence (session > project > user > system), settings
+reference, and runtime scoped setters:
+- [`doc/configuration.md`](doc/configuration.md)
+
 ## ψ Psi project config
 
 Project query/config tool details:

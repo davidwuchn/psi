@@ -442,40 +442,59 @@
   (dispatch/register-handler!
    :session/set-model
    {}
-   (fn [ctx {:keys [model]}]
+   ;; scope: :session (default) — runtime only
+   ;;        :project           — persist to .psi/project.edn
+   ;;        :user              — persist to ~/.psi/agent/config.edn
+   (fn [ctx {:keys [model scope]}]
      (let [clamped-level (session-data/clamp-thinking-level
                           (:thinking-level (session/get-session-data-in ctx))
-                          model)]
+                          model)
+           persist-effect (case (or scope :project)
+                            :user    {:effect/type :persist/user-config-update
+                                      :prefs {:model-provider (:provider model)
+                                              :model-id (:id model)
+                                              :thinking-level clamped-level}}
+                            :session nil
+                            ;; :project is the default
+                            {:effect/type :persist/project-prefs-update
+                             :prefs {:model-provider (:provider model)
+                                     :model-id (:id model)
+                                     :thinking-level clamped-level}})]
        {:root-state-update (session/session-update #(assoc % :model model :thinking-level clamped-level))
         :return {:model model :thinking-level clamped-level}
-        :effects [{:effect/type :runtime/agent-set-model
-                   :model model}
-                  {:effect/type :persist/journal-append-model-entry
-                   :provider (:provider model)
-                   :model-id (:id model)}
-                  {:effect/type :persist/project-prefs-update
-                   :prefs {:model-provider (:provider model)
-                           :model-id (:id model)
-                           :thinking-level clamped-level}}
-                  {:effect/type :notify/extension-dispatch
-                   :event-name "model_select"
-                   :payload {:model model :source :set}}]})))
+        :effects (cond-> [{:effect/type :runtime/agent-set-model
+                           :model model}
+                          {:effect/type :persist/journal-append-model-entry
+                           :provider (:provider model)
+                           :model-id (:id model)}
+                          {:effect/type :notify/extension-dispatch
+                           :event-name "model_select"
+                           :payload {:model model :source :set}}]
+                   persist-effect (conj persist-effect))})))
 
   (dispatch/register-handler!
    :session/set-thinking-level
    {}
-   (fn [ctx {:keys [level]}]
+   ;; scope: :session (default) — runtime only
+   ;;        :project           — persist to .psi/project.edn
+   ;;        :user              — persist to ~/.psi/agent/config.edn
+   (fn [ctx {:keys [level scope]}]
      (let [sd      (session/get-session-data-in ctx)
            model   (:model sd)
-           clamped (if model (session-data/clamp-thinking-level level model) level)]
+           clamped (if model (session-data/clamp-thinking-level level model) level)
+           persist-effect (case (or scope :project)
+                            :user    {:effect/type :persist/user-config-update
+                                      :prefs {:thinking-level clamped}}
+                            :session nil
+                            {:effect/type :persist/project-prefs-update
+                             :prefs {:thinking-level clamped}})]
        {:root-state-update (session/session-update #(assoc % :thinking-level clamped))
         :return {:thinking-level clamped}
-        :effects [{:effect/type :runtime/agent-set-thinking-level
-                   :level clamped}
-                  {:effect/type :persist/journal-append-thinking-level-entry
-                   :level clamped}
-                  {:effect/type :persist/project-prefs-update
-                   :prefs {:thinking-level clamped}}]})))
+        :effects (cond-> [{:effect/type :runtime/agent-set-thinking-level
+                           :level clamped}
+                          {:effect/type :persist/journal-append-thinking-level-entry
+                           :level clamped}]
+                   persist-effect (conj persist-effect))})))
 
   (dispatch/register-handler!
    :session/set-worktree-path
@@ -492,10 +511,20 @@
   (dispatch/register-handler!
    :session/set-prompt-mode
    {}
-   (fn [_ctx {:keys [mode]}]
-     (let [validated (if (#{:lambda :prose} mode) mode :lambda)]
+   ;; scope: :session (default) — runtime only
+   ;;        :project           — persist to .psi/project.edn
+   ;;        :user              — persist to ~/.psi/agent/config.edn
+   (fn [_ctx {:keys [mode scope]}]
+     (let [validated      (if (#{:lambda :prose} mode) mode :lambda)
+           persist-effect (case (or scope :session)
+                            :project {:effect/type :persist/project-prefs-update
+                                      :prefs {:prompt-mode validated}}
+                            :user    {:effect/type :persist/user-config-update
+                                      :prefs {:prompt-mode validated}}
+                            nil)]
        {:root-state-update (session/session-update #(assoc % :prompt-mode validated))
-        :effects [{:effect/type :runtime/refresh-system-prompt}]})))
+        :effects (cond-> [{:effect/type :runtime/refresh-system-prompt}]
+                   persist-effect (conj persist-effect))})))
 
   (dispatch/register-handler!
    :session/set-system-prompt-build-opts

@@ -10,6 +10,7 @@
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.project-preferences :as project-prefs]
+   [psi.agent-session.user-config :as user-cfg]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.statechart :as sc]))
 
@@ -153,6 +154,12 @@
     (project-prefs/update-agent-session!
      ((:effective-cwd-fn ctx) ctx)
      (:prefs effect))
+    (catch Exception _
+      nil)))
+
+(defmethod execute-effect! :persist/user-config-update [_ctx effect]
+  (try
+    (user-cfg/update-agent-session! (:prefs effect))
     (catch Exception _
       nil)))
 
