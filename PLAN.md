@@ -51,6 +51,16 @@ So the repo is now in **late convergence / simplification / boundary sharpening*
    - revisit which remaining extension/runtime handles should stay external
    - tighten permissions or move boundaries only after the simpler convergence work above
 
+5. - change injected prompt time to be session creation time for cache stability
+   - add time instant to each request/response so agent can reason about session time
+   - set cache breakpoints on last three messages
+
+7. - add lambda mode for system prompt (default).  have the nucleus prelude. prelude is configurablte.
+
+8. - configuration has system, project or session scope. config setters need to take the scope.
+9. - rename subagent-widget to agent
+10. - reverse agent/agent chaning dependency
+
 ## Current next implementation seam
 
 Highest-leverage next work:
