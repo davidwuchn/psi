@@ -1,0 +1,49 @@
+#kaocha/v1
+ {:tests
+  [{:id :agent-core
+    :test-paths ["components/agent-core/test"]
+    :source-paths ["components/agent-core/src"]
+    :ns-patterns [".*-test$"]}
+
+   {:id :memory
+    :test-paths ["components/memory/test"]
+    :source-paths ["components/memory/src"]
+    :ns-patterns [".*-test$"]}
+
+   {:id :query
+    :test-paths ["components/query/test"]
+    :source-paths ["components/query/src"]
+    :ns-patterns [".*-test$"]}
+
+   {:id :engine
+    :test-paths ["components/engine/test"]
+    :source-paths ["components/engine/src"]
+    :ns-patterns [".*-test$"]}
+
+   {:id :history
+    :test-paths ["components/history/test"]
+    :source-paths ["components/history/src"]
+    :ns-patterns [".*-test$"]}
+
+   {:id :recursion
+    :test-paths ["components/recursion/test"]
+    :source-paths ["components/recursion/src"]
+    :ns-patterns [".*-test$"]}
+
+   {:id :ai
+    :test-paths ["components/ai/test"]
+    :source-paths ["components/ai/src"]
+    :ns-patterns [".*-test$"]}
+
+   {:id :tui
+    :test-paths ["components/tui/test"]
+    :source-paths ["components/tui/src"]
+    :ns-patterns [".*-test$"]}]
+
+  :color? true
+  :fail-fast? false
+  :capture-output? true
+  :reporter [kaocha.report/dots]
+  :plugins [:kaocha.plugin/hooks]
+  :kaocha.hooks/pre-run [psi.test-hooks/pre-run]
+  :skip-meta [:integration]}

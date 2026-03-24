@@ -1,0 +1,486 @@
+-- allium: 2
+
+-- event-dispatch.allium
+-- Scope: Event dispatch pipeline — named events, pure handlers, interceptor
+-- chain, effect execution at boundary, and event log for replay/debugging.
+--
+-- Every state change enters the system as a named event. Handlers are pure
+-- functions of (state, event) → (state', effects). Effects are described as
+-- data and executed at the boundary. An interceptor chain wraps every dispatch
+-- with cross-cutting concerns: permissions, logging, statechart routing,
+-- validation. The event log enables replay and time-travel debugging.
+--
+-- This spec describes the target architecture. Current implementation has
+-- partial coverage; open questions mark the convergence gaps.
+-- In the current migration phase, dispatch ownership is true for migrated
+-- mutation families, not yet every runtime-visible state mutation.
+
+use "./system-context-unification.allium" as system_ctx
+use "./session-core.allium" as core
+use "./extension-system.allium" as ext
+
+-- ────────────────────────────────────────────────────────────
+-- Events
+-- ────────────────────────────────────────────────────────────
+
+value EventType { value: String }
+
+value Event {
+    type: EventType
+    session_id: core/SessionId?
+    payload: core/JsonMap
+    origin: core | extension | adapter | statechart
+    ext_id: String?
+    timestamp: core/Timestamp
+}
+
+-- ────────────────────────────────────────────────────────────
+-- Handler result
+-- ────────────────────────────────────────────────────────────
+
+value HandlerResult {
+    db: core/JsonMap
+    effects: List<EffectDescription>
+}
+
+value EffectDescription {
+    type: EffectType
+    payload: core/JsonMap
+    on_success: Event?
+    on_error: Event?
+}
+
+enum EffectType {
+    ai_generate
+    | tool_execute
+    | http_request
+    | schedule
+    | notify
+    | persist
+    | dispatch
+}
+
+-- ────────────────────────────────────────────────────────────
+-- Interceptors
+-- ────────────────────────────────────────────────────────────
+
+entity Interceptor {
+    id: String
+    position: Integer
+
+    has_before: Boolean
+    has_after: Boolean
+}
+
+entity InterceptorChain {
+    interceptors: List<Interceptor>
+    is_ordered: true
+}
+
+value InterceptorContext {
+    db: core/JsonMap
+    event: Event
+    effects: List<EffectDescription>
+    blocked: Boolean
+    block_reason: String?
+    replaying: Boolean
+    sc_raised_events: List<Event>
+    log_db_before: core/JsonMap?
+}
+
+-- ────────────────────────────────────────────────────────────
+-- Default interceptor stack
+-- ────────────────────────────────────────────────────────────
+
+entity DefaultInterceptorStack {
+    permission_interceptor: Interceptor
+    log_interceptor: Interceptor
+    statechart_interceptor: Interceptor
+    handler_interceptor: Interceptor
+    validate_interceptor: Interceptor
+    trim_effects_on_replay: Interceptor
+}
+
+rule DefaultStackOrdered {
+    when: DefaultInterceptorStack.created
+
+    ensures: DefaultInterceptorStack.permission_interceptor.position = 1
+    ensures: DefaultInterceptorStack.log_interceptor.position = 2
+    ensures: DefaultInterceptorStack.statechart_interceptor.position = 3
+    ensures: DefaultInterceptorStack.handler_interceptor.position = 4
+    ensures: DefaultInterceptorStack.validate_interceptor.position = 5
+    ensures: DefaultInterceptorStack.trim_effects_on_replay.position = 6
+}
+
+-- ────────────────────────────────────────────────────────────
+-- Event handlers (pure)
+-- ────────────────────────────────────────────────────────────
+
+entity EventHandler {
+    event_type: EventType
+    handler_id: String
+    is_pure: true
+}
+
+rule EventHandlerIsPure {
+    when: EventHandlerInvoked(handler, db, event)
+    requires: handler.is_pure = true
+
+    ensures: HandlerResult.created(
+        db: TransformState(db, event),
+        effects: DescribeEffects(db, event)
+    )
+
+    @guidance
+        -- Handlers must be pure: same (db, event) always produces same
+        -- (db', effects). Side-effecting information (current time, random IDs)
+        -- must be injected in the event payload before dispatch, never generated
+        -- inside the handler.
+}
+
+-- ────────────────────────────────────────────────────────────
+-- Dispatch function
+-- ────────────────────────────────────────────────────────────
+
+entity DispatchResult {
+    db_after: core/JsonMap
+    effects: List<EffectDescription>
+    blocked: Boolean
+    block_reason: String?
+}
+
+rule EventDispatched {
+    when: EventDispatched(event, opts)
+
+    let ctx = InterceptorContext.created(
+        db: CurrentState(),
+        event: event,
+        effects: {},
+        blocked: false,
+        block_reason: null,
+        replaying: opts.replaying ?? false,
+        sc_raised_events: {},
+        log_db_before: null
+    )
+
+    let result_ctx = RunInterceptorChain(ctx, DefaultInterceptorStack)
+
+    -- Process statechart-raised events through handlers
+    let final = ProcessRaisedEvents(result_ctx)
+
+    ensures: ApplyState(final.db)
+    ensures:
+        if not final.replaying:
+            for effect in final.effects:
+                EffectExecutionRequested(effect)
+}
+
+rule DispatchBlockedByInterceptor {
+    when: EventDispatched(event, opts)
+    requires: InterceptorBlocked(event)
+
+    ensures: DispatchResult.created(
+        db_after: CurrentState(),
+        effects: {},
+        blocked: true,
+        block_reason: BlockReason(event)
+    )
+}
+
+-- ────────────────────────────────────────────────────────────
+-- Interceptor behaviours
+-- ────────────────────────────────────────────────────────────
+
+rule PermissionInterceptorChecksExtensionOrigin {
+    when: InterceptorBeforePhase(permission_interceptor, ctx)
+    requires: ctx.event.origin = extension
+    requires: ctx.event.ext_id != null
+
+    let manifest = ExtensionManifest(ctx.event.ext_id)
+    let allowed = ctx.event.type in manifest.allowed_events
+
+    ensures:
+        if not allowed:
+            ctx.blocked = true
+            ctx.block_reason = "permission-denied"
+}
+
+rule PermissionInterceptorPassesCoreEvents {
+    when: InterceptorBeforePhase(permission_interceptor, ctx)
+    requires: ctx.event.origin != extension
+
+    ensures: ctx.blocked = false
+
+    @guidance
+        -- Events from core code, adapters, and statecharts bypass
+        -- permission checks.
+}
+
+rule LogInterceptorCapturesBeforeState {
+    when: InterceptorBeforePhase(log_interceptor, ctx)
+
+    ensures: ctx.log_db_before = ctx.db
+}
+
+rule LogInterceptorRecordsEntry {
+    when: InterceptorAfterPhase(log_interceptor, ctx)
+
+    ensures: EventLogEntry.created(
+        event: ctx.event,
+        db_before: ctx.log_db_before,
+        db_after: ctx.db,
+        effects: ctx.effects,
+        blocked: ctx.blocked,
+        timestamp: ctx.event.timestamp
+    )
+}
+
+rule StatechartInterceptorRoutesEvents {
+    when: InterceptorBeforePhase(statechart_interceptor, ctx)
+    requires: ctx.event.session_id != null
+
+    let sc_result = StatechartProcess(ctx.event.session_id, ctx.event)
+
+    ensures:
+        if sc_result.handled:
+            ctx.db = ApplyStatechartTransition(ctx.db, sc_result)
+            ctx.sc_raised_events = sc_result.raised_events
+            ctx.effects = ctx.effects + sc_result.effects
+
+    @guidance
+        -- The statechart decides whether a transition is valid, updates
+        -- statechart working memory in the state map, and raises domain
+        -- events that the handler layer processes.
+}
+
+rule TrimEffectsOnReplay {
+    when: InterceptorAfterPhase(trim_effects_on_replay, ctx)
+    requires: ctx.replaying = true
+
+    ensures: ctx.effects = {}
+
+    @guidance
+        -- During replay, effects must not execute. This interceptor strips
+        -- the effects vector so dispatch never calls effect executors.
+}
+
+-- ────────────────────────────────────────────────────────────
+-- Effect execution
+-- ────────────────────────────────────────────────────────────
+
+rule EffectExecuted {
+    when: EffectExecutionRequested(effect)
+
+    ensures: EffectExecutorInvoked(effect.type, effect.payload)
+
+    ensures:
+        if effect.on_success != null:
+            EffectSuccessDispatched(effect.on_success)
+        if effect.on_error != null:
+            EffectErrorDispatched(effect.on_error)
+
+    @guidance
+        -- Effect executors are the only impure code in the system.
+        -- Each effect type is registered independently.
+        -- Effect results feed back into the system by dispatching new events.
+}
+
+rule EffectSuccessDispatchesEvent {
+    when: EffectSuccessDispatched(event)
+
+    ensures: EventDispatched(event, {replaying: false})
+}
+
+rule EffectErrorDispatchesEvent {
+    when: EffectErrorDispatched(event)
+
+    ensures: EventDispatched(event, {replaying: false})
+}
+
+-- ────────────────────────────────────────────────────────────
+-- Event log
+-- ────────────────────────────────────────────────────────────
+
+entity EventLogEntry {
+    event: Event
+    db_before: core/JsonMap
+    db_after: core/JsonMap
+    effects: List<EffectDescription>
+    blocked: Boolean
+    timestamp: core/Timestamp
+}
+
+entity EventLog {
+    entries: List<EventLogEntry>
+    is_append_only: true
+}
+
+rule EventLogReplay {
+    when: ReplayRequested(initial_state, entries)
+
+    ensures: ApplyState(initial_state)
+    ensures:
+        for entry in entries:
+            EventDispatched(entry.event, {replaying: true})
+
+    @guidance
+        -- All retained dispatch log entries are replayable.
+        -- Because handlers are pure and effects are stripped during replay,
+        -- entries can be re-dispatched deterministically from any initial state.
+}
+
+rule EventLogTimeTravelToIndex {
+    when: TimeTravelRequested(index)
+    requires: index >= 0
+    requires: index < EventLog.entries.count
+
+    let entry = EntryAtIndex(EventLog.entries, index)
+    ensures: ApplyState(entry.db_after)
+
+    @guidance
+        -- Jump to any point in history by restoring the snapshot from that
+        -- log entry. Subscriptions update reactively because they're driven
+        -- by the atom.
+}
+
+-- ────────────────────────────────────────────────────────────
+-- Extension dispatch integration
+-- ────────────────────────────────────────────────────────────
+
+rule ExtensionDispatchesEvent {
+    when: ExtensionDispatchRequested(ext_id, event_type, payload)
+
+    ensures: EventDispatched(
+        Event.created(
+            type: event_type,
+            session_id: payload.session_id,
+            payload: payload,
+            origin: extension,
+            ext_id: ext_id,
+            timestamp: now
+        ),
+        {replaying: false}
+    )
+
+    @guidance
+        -- Extensions dispatch named events through the interceptor chain.
+        -- The permission interceptor validates that the extension is allowed
+        -- to dispatch the given event type.
+}
+
+-- ────────────────────────────────────────────────────────────
+-- Adapter dispatch integration
+-- ────────────────────────────────────────────────────────────
+
+rule AdapterDispatchesEvent {
+    when: AdapterDispatchRequested(adapter_type, event_type, payload)
+
+    ensures: EventDispatched(
+        Event.created(
+            type: event_type,
+            session_id: payload.session_id,
+            payload: payload,
+            origin: adapter,
+            ext_id: null,
+            timestamp: now
+        ),
+        {replaying: false}
+    )
+
+    @guidance
+        -- View adapters (TUI, RPC) translate user input into events.
+        -- These bypass extension permission checks but still traverse
+        -- the full interceptor chain (logging, statechart, validation).
+}
+
+-- ────────────────────────────────────────────────────────────
+-- Statechart action bridge
+-- ────────────────────────────────────────────────────────────
+
+rule StatechartActionBecomesEvent {
+    when: StatechartActionRaised(session_id, action_key, data)
+
+    ensures: EventDispatched(
+        Event.created(
+            type: action_key,
+            session_id: session_id,
+            payload: data,
+            origin: statechart,
+            ext_id: null,
+            timestamp: now
+        ),
+        {replaying: false}
+    )
+
+    @guidance
+        -- Statechart entry/exit/transition actions raise domain events
+        -- that feed back through the dispatch pipeline. This replaces
+        -- the current make-actions-fn case dispatch with event data.
+}
+
+-- ────────────────────────────────────────────────────────────
+-- Surfaces
+-- ────────────────────────────────────────────────────────────
+
+actor SystemRuntime {
+    identified_by: id = "system-runtime"
+}
+
+surface DispatchApi {
+    facing runtime: SystemRuntime
+
+    exposes:
+        EventLog.entries
+        EventLogEntry.event
+        EventLogEntry.blocked
+        EventLogEntry.timestamp
+
+    provides:
+        EventDispatched(event, opts)
+        ReplayRequested(initial_state, entries)
+        TimeTravelRequested(index)
+        ExtensionDispatchRequested(ext_id, event_type, payload)
+        AdapterDispatchRequested(adapter_type, event_type, payload)
+
+    related:
+        system_ctx/CanonicalSystemContextApi
+        ext/ExtensionApi
+
+    @guarantee SingleDispatchCoordinationPoint
+        -- dispatch! is the only function that touches the atom or
+        -- triggers side effects. All state changes flow through it.
+
+    @guarantee HandlerPurityContract
+        -- Event handlers are pure functions: same (db, event) always
+        -- produces same (db', effects). This is the foundational contract
+        -- that makes replay, testing, and time-travel debugging possible.
+
+    @guarantee EffectsAreData
+        -- Side effects are described as data by handlers and executed
+        -- at the boundary by effect executors. Handlers never perform
+        -- I/O directly.
+
+    @guarantee InterceptorChainIsUniversal
+        -- Every event passes through the interceptor chain. There is no
+        -- backdoor path that bypasses logging, permission, or statechart
+        -- routing.
+
+    @guarantee ReplayDeterminism
+        -- Replaying the event log from any initial state produces the
+        -- exact same sequence of state transitions. Effects are stripped
+        -- during replay so no I/O occurs.
+
+    @guarantee ExtensionsNeverTouchAtom
+        -- Extension code never touches the atom directly. All mutation
+        -- goes through named events subject to interceptor validation.
+}
+
+-- ────────────────────────────────────────────────────────────
+-- Open questions
+-- ────────────────────────────────────────────────────────────
+
+open question "Should the validate interceptor use malli schemas or a lighter check?"
+open question "Should the event log store full db snapshots or diffs for memory efficiency?"
+open question "How large should the event log grow before pruning or snapshotting?"
+open question "Should interceptor chains be configurable per-event-type or always universal?"
+open question "What is the migration path from current Pathom mutations to event dispatch for extensions?"

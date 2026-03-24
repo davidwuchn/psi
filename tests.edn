@@ -7,22 +7,32 @@
     :source-paths ["components/ai/src" "components/engine/src" "components/query/src" "components/history/src"
                    "components/introspection/src" "components/memory/src" "components/recursion/src" "components/tui/src" "components/agent-core/src"
                    "components/agent-session/src" "components/system-bootstrap/src"]
-    :ns-patterns [".*-test$"]}
+    :ns-patterns [".*-test$"]
+    :skip-meta [:integration]}
 
    {:id :extensions
     :test-paths ["extensions/test"]
     :source-paths ["extensions/src"]
-    :ns-patterns [".*-test$"]}]
+    :ns-patterns [".*-test$"]
+    :skip-meta [:integration]}
+
+   {:id :integration
+    :test-paths ["components/ai/test" "components/engine/test" "components/query/test" "components/history/test"
+                 "components/introspection/test" "components/memory/test" "components/recursion/test" "components/tui/test" "components/agent-core/test"
+                 "components/agent-session/test" "extensions/test"]
+    :source-paths ["components/ai/src" "components/engine/src" "components/query/src" "components/history/src"
+                   "components/introspection/src" "components/memory/src" "components/recursion/src" "components/tui/src" "components/agent-core/src"
+                   "components/agent-session/src" "components/system-bootstrap/src" "extensions/src"]
+    :ns-patterns [".*-test$"]
+    :focus-meta [:integration]}]
 
   :color? true
   :fail-fast? false
   :capture-output? true
 
  ;; Reporters
-  :reporter [kaocha.report/documentation]
+  :reporter [kaocha.report/dots]
 
  ;; Plugins
-  :plugins []
-
- ;; Skip tests that require API keys unless environment variables are set
-  :skip-meta [:integration]}
+  :plugins [:kaocha.plugin/hooks]
+  :kaocha.hooks/pre-run [psi.test-hooks/pre-run]}

@@ -16,10 +16,13 @@
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.core :as session]))
 
+(def ^:private shared-ctx
+  (delay (session/create-context {:persist? false})))
+
 (defn- q
-  "Run EQL query against a fresh session context."
+  "Run EQL query against a shared session context."
   [eql]
-  (session/query-in (session/create-context {:persist? false}) eql))
+  (session/query-in @shared-ctx eql))
 
 (defn- join-attr?
   [x]
@@ -270,8 +273,8 @@
       (is (seq root-attrs))
       (is (every? keyword? root-attrs))
       (assert-canonical-graph-root-attrs root-attrs)
-      (doseq [attr root-attrs]
-        (let [result (q [attr])]
+      (let [result (q (vec root-attrs))]
+        (doseq [attr root-attrs]
           (is (contains? result attr)
               (str "expected root-queryable attr to resolve: " attr)))))))
 

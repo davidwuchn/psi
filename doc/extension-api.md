@@ -11,6 +11,26 @@ receives an API map with:
 - EQL query access (`query`)
 - UI hooks (`dialogs`, `widgets`, `status`, `notifications`, `renderers`)
 
+## Workflow public-data display convention
+
+For workflow-backed extensions, prefer projecting reusable display/read-model
+data from `:public-data-fn` rather than formatting separately in every widget
+or command consumer.
+
+Preferred display-map keys:
+- `:top-line`
+- `:detail-line`
+- `:question-lines`
+- `:action-line`
+
+Store that map under an extension-specific public key such as `:run/display`,
+`:chain/display`, or `:subagent/display`, then let consumers merge/render that
+public surface via shared helpers such as `extensions.workflow-display`.
+
+Preferred helper usage:
+- widget/UI consumers: `extensions.workflow-display/merged-display` + `display-lines`
+- CLI/list consumers: `extensions.workflow-display/text-lines` over the rendered workflow lines
+
 ## Memory durability operations
 
 Inspect provider selection/fallback + failure telemetry via EQL:

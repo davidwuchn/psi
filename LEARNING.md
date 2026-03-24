@@ -2,6 +2,239 @@
 
 ---
 
+## 2026-03-23 - core.clj decomposition: defmulti + ctx-key callbacks + requiring-resolve break circular deps
+
+### λ A defmulti effect executor enables open dispatch without circular ns dependencies
+
+Replacing the 170-line `case` statement in `execute-dispatch-effect-in!` with a `defmulti` dispatching on `:effect/type` broke the coupling that prevented extracting effect handlers. Back-references to core.clj private functions (compaction, journal-append, background jobs) route through ctx callback keys — the same pattern already established for `:run-tool-call-fn`. New effect types can now be added from any namespace via `defmethod` without modifying core.clj.
+
+Key gotcha: `defmulti` returns a `MultiFn` which does NOT satisfy `(fn? ...)`. The dispatch pipeline's `(fn? execute-fn)` guard silently skipped all effects. Fix: wrap in `(fn [ctx effect] (execute-effect! ctx effect))` at the ctx wiring point.
+
+### λ requiring-resolve breaks ns cycles for registration-time-only calls
+
+`create-context` calls handler registration functions that live in `dispatch-handlers.clj`, which in turn requires `core.clj` for state readers. Direct `:require` would be circular. `requiring-resolve` defers the require to first call (runtime), when all vars are bound. This is clean for registration-time-only calls where the resolved fn is called once during setup, not on every dispatch.
+
+Same gotcha: `requiring-resolve` returns a Var. Vars satisfy `ifn?` but not `fn?`. For ctx keys checked with `fn?`, deref with `@` before storing.
+
+### λ ctx-key callbacks make with-redefs work when function values are captured at context-creation time
+
+When a ctx key stores a function value (`execute-tool-runtime-in!`), `with-redefs` in tests has no effect because the value was captured before the redef. Storing the Var instead (`#'execute-tool-runtime-in!`) makes the ctx key deref through the var at call time, so `with-redefs` works transparently.
+
+### λ Mutations calling dispatch directly breaks the core.clj coupling — the EQL surface doesn't need the implementation ns
+
+The 34 EQL mutations in core.clj were entwined with core because each mutation called a `*-in!` wrapper function defined in core. But most `*-in!` wrappers are just `dispatch! + read-back` — the mutation can call dispatch directly and derive the return from handler `:return` or input params. This means mutations.clj requires only `dispatch.clj` + external domain nses, NOT core.clj. Core.clj can then safely require mutations.clj for `all-mutations` registration.
+
+For mutations that need core-private orchestration (tool execution, background job tracking), `requiring-resolve` bridges the gap without a compile-time ns cycle. Making the resolved functions public is cleaner than keeping them private and using var reflection.
+
+### λ Extracting state infrastructure as a leaf module eliminates circular deps without requiring-resolve
+
+The root cause of all requiring-resolve calls was that core.clj was both the state infrastructure provider (get-session-data-in, session-update, state-path) AND the top-level consumer of dispatch-handlers, mutations, lifecycle. Every downstream module needed core's state infra, and core needed every downstream module.
+
+Extracting `session-state.clj` as a leaf module that owns state paths, primitives, session-update, journal, context-index, and phase queries broke every cycle. dispatch-handlers and session-lifecycle now require session-state (not core), so core can require them directly. This eliminated 9 of 10 requiring-resolve calls in core.clj.
+
+The key insight: when a hub module is both infrastructure provider and orchestration consumer, split the infrastructure into a leaf. The orchestration hub shrinks to just orchestration, and the leaf has no upward dependencies.
+
+### λ The coupling hub that formerly required requiring-resolve is now just orchestration
+
+After session-state extraction, core.clj (1515 lines) contains only: context creation, extension management, prompting, query registration, re-exported API, and global wrappers. It requires all downstream modules directly. The only remaining requiring-resolve is the executor boundary (a separate, pre-existing cycle).
+
+## 2026-03-23 - Gate dispatch schema validation on `*assert*` at compile time, not a runtime config flag
+
+### λ Schema validation of dispatch effects/pure-results is an invariant check, not a feature toggle
+
+The effect and pure-result malli schemas describe the system's actual contract — violations are bugs, not configuration choices. That makes `*assert*` the right gate: it is a compile-time binding that is true during dev/test and false in production AOT builds, matching the semantics of "catch contract violations during development, pay zero cost in production." A runtime config flag would imply the validation is optional behavior, invite it being left off during testing, and add a code path that is never exercised in production. `*assert*` avoids all three problems.
+
+The implementation pattern: `(def validator (when *assert* (fn ...)))` compiles to `nil` when `*assert*` is false. The existing validate-interceptor already checks `(fn? validate-fn)` before calling, so a nil validator is skipped with no conditional logic at the wiring site.
+
+## 2026-03-23 - Replay classification was unnecessary when replay already suppresses effects
+
+### λ If replay skips effects, every dispatch event is safe to replay — classification solves a non-problem
+
+The replay classification system (`:replayable` / `:projection` / `:diagnostic`) was built on the assumption that some events are unsafe to replay. But since replay already suppresses effects and only applies pure state transforms, the safety concern doesn't exist. Removing 261 lines of classification infrastructure, separate replayable stores, per-handler annotations, and EQL surfaces simplified the dispatch pipeline with no behavioral loss.
+
+The reusable rule: before building a classification/policy system, check whether the mechanism it gates already handles the concern. If replay = "apply state, skip effects," then every event is already replay-safe by construction.
+
+### λ Stream-done and lifecycle tool-start were a latent duplicate that classification obscured
+
+The duplicate `tool/start` progress emission (one from stream-done, one from the lifecycle system) went unnoticed partly because the classification ceremony made it easy to focus on replay policy rather than simple event flow. Once classification was removed and the test assertion tightened, the duplicate was obvious. Simpler systems expose bugs faster.
+
+## 2026-03-23 - Unify result shapes by asking "why are there two?" not "which one wins?"
+
+### λ When two code paths do the same thing, the question isn't which to keep — it's whether the distinction is real
+
+`:session-update` and `:root-state-update` both called `swap!` on the same atom. The only difference was that `:session-update` wrapped the transform to target the session-data slice and sync the context index. That wrapping is a helper concern, not a result-shape concern. Moving it to a `session-update` wrapper function collapsed three apply-interceptor branches to one.
+
+The reusable rule: when multiple code paths exist, check whether they differ in *mechanism* or just in *convenience*. If it's convenience, extract a helper and unify the mechanism.
+
+### λ Bulk regex-style replacement on Clojure forms needs paren repair immediately — don't accumulate
+
+The `replace_all` approach for converting `{:session-update #(assoc %` to `{:root-state-update (session-update #(assoc %` left multiline `#(assoc % ...)` forms with broken parens because the tool couldn't see the closing context. Running paren repair once after all replacements then mis-closed the anonymous functions. The better approach: replace in smaller batches and repair after each, or manually convert the multiline forms.
+
+## 2026-03-23 - Effect migration works best by exhaustive audit then batch conversion
+
+### λ Audit all direct mutations first, classify as strong-candidate vs acceptable, then convert in one pass
+
+The agent-core effect migration was most efficient when preceded by a thorough audit that classified every direct `agent/` call as either a strong dispatch candidate or an acceptable runtime boundary call. That gave a clear scope (6 functions, 9 mutations) and avoided incremental discovery during implementation. The acceptable calls (executor streaming, infrastructure setup, effect executor internals) were identified once and left alone.
+
+---
+
+## 2026-03-22 - Replay classification belongs with handler intent, not only event-name convention (SUPERSEDED)
+
+### λ Replay semantics get clearer when handler registration declares them directly
+
+A static event-type table is a useful bridge, but it leaves replay meaning adjacent to the behavior instead of attached to it. Moving replay class onto handler registration makes the architectural intent local to the mutation boundary:
+- `:replayable` for canonical mutations intentionally admitted to replay
+- `:projection` for runtime/telemetry projection writes
+- `:diagnostic` for retained history without replay guarantee
+
+That makes the replay contract easier to review during handler changes and reduces the chance that event naming drifts away from replay semantics.
+
+A useful next refinement is to admit replayable events by small coherent families instead of one-offs. Expanding from `set-session-name` to a compact session-config family worked well because the handlers are still simple session-state transforms with low semantic ambiguity.
+
+Once replay classification exists, a replayable-only read model is worth exposing explicitly. Otherwise every query consumer has to re-filter the full dispatch log and duplicate the replay-substrate boundary in UI or tooling code.
+
+A second useful follow-on is to pair that read model with an explicit replay helper. A queryable replay subset without a canonical way to replay it leaves every caller reinventing re-dispatch semantics. The cleaner split is:
+- resolvers expose replayable retained entries
+- dispatch owns replay of those entries with `:replaying? true`
+- session core provides the context-shaped entrypoint for replaying them into canonical state
+
+Once replay is executable, retention policy becomes architectural rather than incidental. If replayable and non-replayable entries share one bounded log, the log should prefer evicting `:projection` / `:diagnostic` entries first. Otherwise the system can claim a replay substrate while allowing projection noise to evict the very entries that substrate depends on.
+
+An even simpler next step is to stop making the two classes compete in one store at all. A separate bounded replayable-only log removes mixed-priority trimming logic and makes the replay substrate contract more legible: replay reads from the replay log, observability reads from the mixed log.
+
+### λ Keep fallback classification only as migration scaffolding
+
+Once handler registration can declare replay class, the older event-type mapping should be treated as compatibility scaffolding, not the destination. The simpler end-state rule is:
+- handler registration declares replay class explicitly
+- retained log records that class
+- replay consumes only entries classified `:replayable`
+
+Reducing the fallback tables to empty compatibility scaffolding is a useful cleanup checkpoint: once the meaningful production families are annotated, an unclassified handler should default to `:diagnostic` instead of silently inheriting replay semantics from naming convention.
+
+The next useful cleanup after that is to annotate obvious non-replayable production families explicitly too, especially effect-only runtime/orchestration handlers. Even when the default is already `:diagnostic`, explicit annotation still improves reviewability because replay intent is visible at the registration site instead of inferred from absence.
+
+## 2026-03-21 - State unification gets easier once the remaining non-canonical state is classified by role
+
+### λ The useful question is not “what atoms are left?” but “which remaining state is runtime handle, projection, or true canonical domain state?”
+
+After converging most session-visible mutable state into the canonical `:state*` root, the remaining external state stopped being one homogenous cleanup bucket. The more durable framing is:
+- runtime handles stay external
+- runtime-visible/queryable state should be projected or hosted canonically
+- subsystem-local transport/control state may remain separate if it is truly boundary-local
+
+That classification makes next steps smaller and prevents trying to force opaque control objects into the same storage model as queryable session state.
+
+### λ RPC transport state should be split by connection-local policy versus duplicated session truth
+
+A useful audit result in `rpc.clj` is that most of the transport atom is not architectural debt at all. It is legitimate per-connection state:
+- handshake readiness
+- in-flight request bookkeeping
+- event sequencing
+- worker/thread ownership
+- subscription preferences
+- route-lock enforcement
+
+The meaningful smell is the part that duplicates session truth. In the current transport atom, that was primarily `:pending-login`, because canonical OAuth pending-login projection already exists in the session root. Converging `login_begin`, `login_complete`, and manual `/login` continuation on canonical oauth projection proved the narrower rule:
+- keep connection-local transport coordination external
+- project diagnostics if needed
+- converge only the fields that duplicate canonical runtime-visible state
+- remove the duplicate source of truth before reconsidering the rest of the transport boundary
+
+### λ The next dispatch migration family should be chosen by behavioral value and log volume, not just by which setter remains direct
+
+The adjacent-namespace audit showed two different kinds of remaining direct canonical writes:
+- low-frequency runtime-visible projections such as nREPL runtime metadata
+- high-volume executor/telemetry plumbing such as turn context, provider captures, tool-call attempts, and tool-output stats
+
+Only the first group is a strong immediate dispatch candidate. The second group is behavior-significant but would flood the dispatch event log unless logging/replay policy becomes more selective. Migrating canonical nREPL runtime metadata through dispatch validated the rule in practice: low-frequency lifecycle-visible projection state is a good dispatch fit and gains useful event-log visibility with little downside.
+
+The practical rule is:
+- move low-frequency, queryable projection state into dispatch first
+- defer high-churn telemetry families until the event-log boundary can absorb them intentionally
+
+### λ RPC transport state and extension-owned run state are the highest-signal remaining convergence candidates
+
+The most meaningful remaining state outside the canonical session root is not local scratch atoms. It is:
+- RPC transport loop state that partly overlaps with session-visible behavior
+- extension-owned run/progress registries that may need canonical/queryable projection
+- workflow runtime that now sits adjacent to canonical background-job projections
+
+These surfaces are worth reviewing next because they are both observable and architecturally significant.
+
+## 2026-03-19 - Dispatch migration works best by mutation family, not by individual setter (commits `788b63a`, `f942dcc`, `40c81cb`, `6775102`, `dbe8d07`, `601e047`, `3cd0de2`)
+
+### λ Migrate coherent behaviour clusters, then record the new boundary explicitly
+
+The dispatch pipeline broadened cleanly when changes were grouped by cohesive behaviour families:
+- config flags
+- model/thinking
+- session metadata (name/worktree/cache breakpoints)
+- system prompt recomposition
+- prompt contribution mutations
+- active tools
+
+Trying to migrate one setter at a time risks losing the behaviour boundary and scattering tiny commits that are hard to reason about. Migrating a family lets tests prove the whole cluster still behaves coherently and makes STATE/PLAN updates easier because the new architectural boundary is obvious.
+
+### λ Pure handler `:return` payloads are necessary for command-style mutations
+
+Prompt contribution mutations return domain payloads like `{:registered? ...}` / `{:updated? ...}` / `{:removed? ...}`. Once they move into the pure/effects model, the dispatch layer needs to preserve a return channel distinct from `:session-update` and `:effects`. Without `:return`, migrating command-style mutations would force awkward post-dispatch recomputation at the call site.
+
+### λ Queryable event log turns the pipeline from abstraction into capability
+
+The event log became materially more useful once exposed via EQL. Before that, it was mainly an internal debugging aid. After exposing `:psi.agent-session/dispatch-event-log*`, the pipeline became introspectable from the same session root query surface as the rest of the system. That is the first concrete step toward replay/time-travel being a user-visible capability rather than just an implementation aspiration.
+
+---
+
+## 2026-03-19 - Dispatch pipeline: start with the bridge, not the destination (commits `1ec0f94`, `3196165`, `11bcf5a`)
+
+### λ Introduce dispatch as a thin passthrough first, then thicken incrementally
+
+The architecture doc describes a full pipeline: interceptor chain → pure handlers → effects-as-data → event log. Implementing all of that at once would require touching every state mutation in the system simultaneously.
+
+Instead: create `dispatch!` as the single coordination point that just calls handlers directly (same behavior as before). Then register each statechart action as a named handler. `make-actions-fn` shrinks from 90 lines of case dispatch to 3 lines delegating to `dispatch!`. The pipeline shape exists but the pipeline is a passthrough.
+
+This means interceptors, logging, and purity can be added one at a time without any behavioral change to the existing system. Each step is independently verifiable.
+
+### λ Global handler registry needs test isolation strategy
+
+`defonce` + global atom for handler registry means tests share state. The `clear-handlers!` escape hatch must be used in test fixtures. Better: make the registry per-context (on the ctx map) rather than global. Deferred to a later step to keep this change minimal.
+
+### λ Spec before code clarifies the migration boundary
+
+Writing `event-dispatch.allium` before any code forced explicit decisions about: what events exist, what the interceptor stack ordering is, how effects feed back as events, and what the migration path looks like (`dispatch_pipeline_active` flag). The spec then guided the code directly — the handler registration pattern matches the spec's `EventHandler` entity.
+
+---
+
+## 2026-03-19 - UI shim removal finishes cleanly when naming and implementation collapse separately (commits `6c8d90a`, `45f09c7`, `2d33693`, `f3a910c`, `99a8db9`, `460c0e9`)
+
+### λ First collapse duplicated implementation, then collapse compatibility naming
+
+Phase 4 only finished cleanly once the work was split into two distinct reductions:
+- centralize all UI mutation behavior in one implementation (`psi.ui.state`)
+- then remove or rename compatibility surfaces (`psi.tui.extension-ui`, `:ui-state-atom`) afterward
+
+Trying to do both at once made it easy to lose track of whether a change was semantic or just naming. The reliable sequence was:
+1. remove session-context storage of the shim
+2. migrate readers/writers to canonical/shared state
+3. collapse duplicated implementation namespaces into wrappers
+4. finally rename the last bootstrap handle to reflect its real role
+
+### λ Compatibility wrappers are useful only when they stop containing logic
+
+`psi.tui.extension-ui` became much safer once it was reduced to a pure forwarding wrapper over `psi.ui.state`. The reusable lesson is:
+- duplicated compatibility namespaces accumulate behavioral drift
+- wrapper namespaces are acceptable when they preserve call shape only
+- once the wrapper contains real mutation logic, it becomes a second subsystem and blocks cleanup
+
+### λ Renaming the final handle matters because names preserve architecture
+
+The last bootstrap surface still needed to pass a shared UI-state handle into the TUI, but the name `:ui-state-atom` kept implying a compatibility shim. Renaming it to `:ui-state*` clarified that it is:
+- shared mutable UI state used intentionally by the TUI bootstrap
+- not session-context storage
+- not a legacy escape hatch that callers should continue spreading
+
+The practical rule: once a migration is mechanically complete, rename surviving handles so future work does not rebuild the old architecture by habit.
+
 ## 2026-03-18 - Circular Dependencies Resolved via Architectural Dependency Inversion (commit `f8a7116`)
 
 ### λ The exact circular dependency path: introspection ↔ agent-session at import level

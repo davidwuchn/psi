@@ -5,8 +5,10 @@
 
    In-memory journal
    ─────────────────
-   The journal atom holds a vector of SessionEntry maps.  All callers
-   append via `append-entry!`.
+   The canonical journal lives in ctx `:state*` at the per-session path
+   [:agent-session :sessions sid :persistence :journal].
+   Low-level atom-oriented helpers remain for focused persistence tests.
+   Runtime code should prefer the ctx-based `*-in` functions.
 
    Disk write (lazy flush)
    ───────────────────────
@@ -84,6 +86,37 @@
 (def ^:dynamic *session-file-lock-retry-ms* 25)
 (def ^:dynamic *session-file-lock-max-attempts* 400)
 
+(defn- active-session-id-from-ctx
+  "Return the active session id from ctx without requiring session-state."
+  [ctx]
+  (get-in @(:state* ctx) [:agent-session :active-session-id]))
+
+(defn- journal-path
+  "Build the per-session journal path for the active session in ctx."
+  [ctx]
+  (session/state-path :journal (active-session-id-from-ctx ctx)))
+
+(defn- flush-state-path
+  "Build the per-session flush-state path for the active session in ctx."
+  [ctx]
+  (session/state-path :flush-state (active-session-id-from-ctx ctx)))
+
+(defn- state*
+  [ctx]
+  (:state* ctx))
+
+(defn- get-state-in
+  [ctx path]
+  (get-in @(state* ctx) path))
+
+(defn- assoc-state-in!
+  [ctx path value]
+  (swap! (state* ctx) assoc-in path value))
+
+(defn- update-state-in!
+  [ctx path f & args]
+  (apply swap! (state* ctx) update-in path f args))
+
 ;;; ============================================================
 ;;; Journal operations (in-memory atom)
 ;;; ============================================================
@@ -141,6 +174,55 @@
           (when (= (:kind entry) :message)
             (get-in entry [:data :message])))
         (entries-up-to journal-atom entry-id)))
+
+(defn append-entry-in!
+  "Append `entry` to the canonical journal in ctx. Returns `entry`."
+  [ctx entry]
+  (update-state-in! ctx (journal-path ctx) conj entry)
+  entry)
+
+(defn all-entries-in
+  "Return all canonical journal entries from ctx as a vector."
+  [ctx]
+  (vec (or (get-state-in ctx (journal-path ctx)) [])))
+
+(defn entries-of-kind-in
+  "Return canonical journal entries of `kind` from ctx."
+  [ctx kind]
+  (filterv #(= (:kind %) kind) (all-entries-in ctx)))
+
+(defn entries-up-to-in
+  "Return canonical journal entries up to and including `entry-id`.
+   Returns full journal if `entry-id` is nil or not found."
+  [ctx entry-id]
+  (let [entries (all-entries-in ctx)]
+    (if (nil? entry-id)
+      entries
+      (let [idx (first (keep-indexed #(when (= (:id %2) entry-id) %1) entries))]
+        (if idx
+          (subvec entries 0 (inc idx))
+          entries)))))
+
+(defn last-entry-of-kind-in
+  "Return the most recent canonical journal entry of `kind`, or nil."
+  [ctx kind]
+  (last (entries-of-kind-in ctx kind)))
+
+(defn messages-from-entries-in
+  "Extract agent messages from canonical journal message entries in ctx."
+  [ctx]
+  (keep (fn [entry]
+          (when (= (:kind entry) :message)
+            (get-in entry [:data :message])))
+        (all-entries-in ctx)))
+
+(defn messages-up-to-in
+  "Extract agent messages from canonical journal entries up to `entry-id`."
+  [ctx entry-id]
+  (keep (fn [entry]
+          (when (= (:kind entry) :message)
+            (get-in entry [:data :message])))
+        (entries-up-to-in ctx entry-id)))
 
 ;;; ============================================================
 ;;; Flush state
@@ -385,6 +467,30 @@
              (do
                (flush-journal! session-file session-id cwd parent-session-id parent-session-path entries)
                (swap! flush-state-atom assoc :flushed? true)))))))))
+
+(defn persist-entry-in!
+  "Ctx-based runtime persistence helper.
+
+   Reads journal + flush-state from canonical ctx state and writes any flush-state
+   transition back to canonical state."
+  ([ctx session-id cwd parent-session-path]
+   (persist-entry-in! ctx session-id cwd nil parent-session-path))
+  ([ctx session-id cwd parent-session-id parent-session-path]
+   (let [fp           (flush-state-path ctx)
+         flush-state  (get-state-in ctx fp)
+         session-file (:session-file flush-state)
+         entries      (all-entries-in ctx)]
+     (when session-file
+       (let [has-assistant (some (fn [e]
+                                   (and (= :message (:kind e))
+                                        (= "assistant" (get-in e [:data :message :role]))))
+                                 entries)]
+         (when has-assistant
+           (if (:flushed? flush-state)
+             (append-entry-to-disk! session-file (last entries))
+             (do
+               (flush-journal! session-file session-id cwd parent-session-id parent-session-path entries)
+               (assoc-state-in! ctx fp (assoc flush-state :flushed? true))))))))))
 
 ;;; ============================================================
 ;;; Migration

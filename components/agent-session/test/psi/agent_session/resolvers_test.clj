@@ -17,6 +17,9 @@
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.background-jobs :as bg-jobs]
    [psi.agent-session.core :as session]
+   [psi.agent-session.session-state :as ss]
+   [psi.agent-session.dispatch :as dispatch]
+   [psi.agent-session.mutations :as mutations]
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.persistence :as persist]
    [psi.query.core :as query]))
@@ -61,7 +64,7 @@
       (is (zero? (:psi.agent-session/ai-call-count result))
           "fresh session has no AI calls"))))
 
-;; ── :psi.agent-session/tool-call-count ──────────────────
+;; ── :psi.agent-session/tool-call-count / executed-tool-count ─────────
 
 (deftest tool-call-count-resolver-test
   (testing "tool-call-count is an integer for a fresh session"
@@ -69,6 +72,34 @@
       (is (integer? (:psi.agent-session/tool-call-count result)))
       (is (zero? (:psi.agent-session/tool-call-count result))
           "fresh session has no tool calls"))))
+
+(deftest executed-tool-count-resolver-test
+  (testing "executed-tool-count is an integer for a fresh session"
+    (let [result (q [:psi.agent-session/executed-tool-count])]
+      (is (integer? (:psi.agent-session/executed-tool-count result)))
+      (is (zero? (:psi.agent-session/executed-tool-count result))
+          "fresh session has no executed tools")))
+
+  (testing "executed-tool-count follows canonical lifecycle summaries rather than transcript tool results"
+    (let [ctx (session/create-context {:persist? false})]
+      (ss/update-state-value-in! ctx (ss/state-path :journal (ss/active-session-id-in ctx)) into
+                                 [{:kind :message
+                                   :data {:message {:role "assistant"
+                                                    :content [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}
+                                                              {:type :tool-call :id "call-2" :name "bash" :arguments "{}"}]}}}
+                                  {:kind :message
+                                   :data {:message {:role "toolResult"
+                                                    :tool-call-id "call-1"
+                                                    :tool-name "read"
+                                                    :content [{:type :text :text "done"}]
+                                                    :is-error false}}}])
+      (ss/update-state-value-in! ctx (ss/state-path :tool-lifecycle-events (ss/active-session-id-in ctx)) into
+                                 [{:event-kind :tool-result :tool-id "call-1" :tool-name "read"}
+                                  {:event-kind :tool-result :tool-id "call-2" :tool-name "bash"}])
+      (let [result (q-in ctx [:psi.agent-session/tool-call-count
+                              :psi.agent-session/executed-tool-count])]
+        (is (= 1 (:psi.agent-session/tool-call-count result)))
+        (is (= 2 (:psi.agent-session/executed-tool-count result)))))))
 
 ;; ── :psi.agent-session/start-time ───────────────────────
 
@@ -106,12 +137,15 @@
     (let [result (q [:psi.agent-session/messages-count
                      :psi.agent-session/ai-call-count
                      :psi.agent-session/tool-call-count
+                     :psi.agent-session/executed-tool-count
                      :psi.agent-session/ui-type
                      :psi.agent-session/start-time
                      :psi.agent-session/current-time])]
       (is (integer? (:psi.agent-session/messages-count result)))
       (is (integer? (:psi.agent-session/ai-call-count result)))
       (is (integer? (:psi.agent-session/tool-call-count result)))
+      (is (integer? (:psi.agent-session/executed-tool-count result)))
+      (is (integer? (:psi.agent-session/executed-tool-count result)))
       (is (contains? #{:console :tui :emacs} (:psi.agent-session/ui-type result)))
       (is (instance? java.time.Instant (:psi.agent-session/start-time result)))
       (is (instance? java.time.Instant (:psi.agent-session/current-time result))))))
@@ -127,6 +161,7 @@
                      :psi.agent-session/messages-count
                      :psi.agent-session/ai-call-count
                      :psi.agent-session/tool-call-count
+                     :psi.agent-session/executed-tool-count
                      :psi.agent-session/start-time
                      :psi.agent-session/current-time])]
       (is (keyword? (:psi.agent-session/phase result)))
@@ -145,8 +180,8 @@
           _        (.mkdirs (java.io.File. cwd))
           ctx      (session/create-context {:cwd cwd})
           _        (session/new-session-in! ctx)
-          sid-1    (:session-id (session/get-session-data-in ctx))
-          path-1   (:session-file (session/get-session-data-in ctx))
+          sid-1    (:session-id (ss/get-session-data-in ctx))
+          path-1   (:session-file (ss/get-session-data-in ctx))
           _        (persist/flush-journal! (java.io.File. path-1)
                                            sid-1
                                            cwd
@@ -155,8 +190,8 @@
                                            [(persist/thinking-level-entry :off)
                                             (persist/session-info-entry "alpha")])
           _        (session/new-session-in! ctx)
-          sid-2    (:session-id (session/get-session-data-in ctx))
-          path-2   (:session-file (session/get-session-data-in ctx))
+          sid-2    (:session-id (ss/get-session-data-in ctx))
+          path-2   (:session-file (ss/get-session-data-in ctx))
           _        (persist/flush-journal! (java.io.File. path-2)
                                            sid-2
                                            cwd
@@ -267,7 +302,10 @@
           result   (q-in ctx [:psi.agent-session/authenticated-providers])
           providers (:psi.agent-session/authenticated-providers result)]
       (is (vector? providers))
-      (is (= ["anthropic"] providers)))))
+      (is (= ["anthropic"] providers))
+      (is (= ["anthropic"]
+             (get-in (ss/get-state-value-in ctx (ss/state-path :oauth))
+                     [:authenticated-providers]))))))
 
 ;; ── Git history bridge (cwd -> :git/context) ─────────────
 
@@ -330,17 +368,19 @@
 (deftest background-jobs-resolver-test
   (testing "background job attrs resolve from session root and include nested job entities"
     (let [ctx       (session/create-context {:persist? false})
-          thread-id (:session-id (session/get-session-data-in ctx))
-          store     (:background-jobs-atom ctx)
-          _         (bg-jobs/start-background-job-in!
-                     store
-                     {:tool-call-id "tc-bg-1"
-                      :thread-id    thread-id
-                      :tool-name    "workflow/subagent"
-                      :job-id       "job-bg-1"
-                      :job-kind     :workflow
-                      :workflow-ext-path "extensions/subagent_widget.clj"
-                      :workflow-id  "wf-1"})
+          thread-id (:session-id (ss/get-session-data-in ctx))
+          _         (dispatch/dispatch! ctx :session/update-background-jobs-state
+                                        {:update-fn (fn [store]
+                                                      (:state (bg-jobs/start-background-job
+                                                               store
+                                                               {:tool-call-id "tc-bg-1"
+                                                                :thread-id    thread-id
+                                                                :tool-name    "workflow/subagent"
+                                                                :job-id       "job-bg-1"
+                                                                :job-kind     :workflow
+                                                                :workflow-ext-path "extensions/subagent_widget.clj"
+                                                                :workflow-id  "wf-1"})))}
+                                        {:origin :core})
           result    (q-in ctx [:psi.agent-session/background-job-count
                                :psi.agent-session/background-job-statuses
                                {:psi.agent-session/background-jobs
@@ -415,7 +455,7 @@
     (let [ctx    (session/create-context {:persist? false})
           qctx   (query/create-query-context)
           _      (session/register-resolvers-in! qctx false)
-          _      (session/register-mutations-in! qctx true)
+          _      (session/register-mutations-in! qctx mutations/all-mutations true)
           result (query/query-in qctx {:psi/agent-session-ctx ctx}
                                  [:git.worktree/list
                                   :git.worktree/current

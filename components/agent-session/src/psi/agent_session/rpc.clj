@@ -11,14 +11,18 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [psi.agent-core.core :as agent]
+   [psi.agent-session.background-job-runtime :as bg-rt]
    [psi.agent-session.commands :as commands]
    [psi.agent-session.core :as session]
+   [psi.agent-session.dispatch :as dispatch]
+   [psi.agent-session.extension-runtime :as ext-rt]
+   [psi.agent-session.session-state :as ss]
+   [psi.agent-session.state-accessors :as sa]
    [psi.agent-session.executor :as executor]
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.runtime :as runtime]
    [psi.agent-session.message-text :as message-text]
-   [psi.ai.models :as ai-models]
-   [psi.ui.state :as ui-state]))
+   [psi.ai.models :as ai-models]))
 
 (def protocol-version "1.0")
 
@@ -123,12 +127,6 @@
     "get_state"
     "get_messages"
     "get_session_stats"})
-
-(def ^:private exclusive-route-lock-rpc-ops
-  "Ops that must not run while a route-locked prompt request is in flight."
-  #{"new_session"
-    "switch_session"
-    "fork"})
 
 (declare emit-event! assistant-content-text)
 
@@ -459,10 +457,51 @@
   [v]
   (or (nil? v) (boolean? v) (string? v)))
 
+(def ^:private ui-state-path (ss/state-path :ui-state))
+
+(defn- ui-state-map
+  [ctx]
+  (ss/get-state-value-in ctx ui-state-path))
+
+(defn- active-ui-dialog
+  [ctx]
+  (get-in (ui-state-map ctx) [:dialog-queue :active]))
+
+(defn- visible-notifications
+  ([ui-state] (visible-notifications ui-state 3))
+  ([ui-state max-visible]
+   (->> (:notifications ui-state)
+        (remove :dismissed?)
+        (take-last max-visible)
+        vec)))
+
+(defn- ui-snapshot
+  [ctx]
+  (when-let [s (ui-state-map ctx)]
+    {:dialog-queue-empty?    (and (nil? (get-in s [:dialog-queue :active]))
+                                  (empty? (get-in s [:dialog-queue :pending])))
+     :active-dialog          (when-let [d (get-in s [:dialog-queue :active])]
+                               (dissoc d :promise))
+     :pending-dialog-count   (count (get-in s [:dialog-queue :pending]))
+     :widgets                (vec (vals (:widgets s)))
+     :statuses               (vec (vals (:statuses s)))
+     :visible-notifications  (visible-notifications s)
+     :tool-renderers         (mapv #(dissoc % :render-call-fn :render-result-fn)
+                                   (vals (:tool-renderers s)))
+     :message-renderers      (mapv #(dissoc % :render-fn)
+                                   (vals (:message-renderers s)))}))
+
+(defn- resolve-active-dialog!
+  [ctx dialog-id result]
+  (sa/resolve-active-dialog-in! ctx dialog-id result))
+
+(defn- cancel-active-dialog!
+  [ctx]
+  (sa/cancel-active-dialog-in! ctx))
+
 (defn- active-dialog-or-error!
   [ctx]
-  (let [ui-state-atom (:ui-state-atom ctx)
-        active        (when ui-state-atom (ui-state/active-dialog ui-state-atom))]
+  (let [active (active-ui-dialog ctx)]
     (when-not (map? active)
       (throw (ex-info "no active dialog"
                       {:error-code "request/no-active-dialog"})))
@@ -483,7 +522,7 @@
     (when-not (= dialog-id active-id)
       (throw (ex-info "dialog-id mismatch"
                       {:error-code "request/dialog-id-mismatch"})))
-    (when-not (ui-state/resolve-dialog! (:ui-state-atom ctx) dialog-id result)
+    (when-not (resolve-active-dialog! ctx dialog-id result)
       (throw (ex-info "no active dialog"
                       {:error-code "request/no-active-dialog"})))
     (response-frame (:id request) "resolve_dialog" true {:accepted true})))
@@ -496,7 +535,7 @@
     (when-not (= dialog-id active-id)
       (throw (ex-info "dialog-id mismatch"
                       {:error-code "request/dialog-id-mismatch"})))
-    (when-not (ui-state/cancel-dialog! (:ui-state-atom ctx))
+    (when-not (cancel-active-dialog! ctx)
       (throw (ex-info "no active dialog"
                       {:error-code "request/no-active-dialog"})))
     (response-frame (:id request) "cancel_dialog" true {:accepted true})))
@@ -505,8 +544,8 @@
   [ctx params]
   (let [target-id (:session-id params)
         sd        (if target-id
-                    (session/get-session-data-in ctx target-id)
-                    (session/get-session-data-in ctx))]
+                    (ss/get-session-data-in ctx target-id)
+                    (ss/get-session-data-in ctx))]
     (:session-id sd)))
 
 (defn- normalize-statuses-param
@@ -554,8 +593,8 @@
                       {:error-code "request/invalid-params"})))
     (let [thread-id (request-thread-id ctx params)
           jobs      (if statuses*
-                      (session/list-background-jobs-in! ctx thread-id statuses*)
-                      (session/list-background-jobs-in! ctx thread-id))]
+                      (bg-rt/list-background-jobs-in! ctx thread-id statuses*)
+                      (bg-rt/list-background-jobs-in! ctx thread-id))]
       (response-frame (:id request) "list_background_jobs" true
                       {:jobs (mapv background-job->rpc-view jobs)}))))
 
@@ -563,7 +602,7 @@
   [ctx request params]
   (let [job-id    (req-arg! request params :job-id #(and (string? %) (not (str/blank? %))) "non-empty string")
         thread-id (request-thread-id ctx params)
-        job       (session/inspect-background-job-in! ctx thread-id job-id)]
+        job       (bg-rt/inspect-background-job-in! ctx thread-id job-id)]
     (response-frame (:id request) "inspect_background_job" true
                     {:job (background-job->rpc-view job)})))
 
@@ -571,7 +610,7 @@
   [ctx request params]
   (let [job-id    (req-arg! request params :job-id #(and (string? %) (not (str/blank? %))) "non-empty string")
         thread-id (request-thread-id ctx params)
-        job       (session/cancel-background-job-in! ctx thread-id job-id :user)]
+        job       (bg-rt/cancel-background-job-in! ctx thread-id job-id :user)]
     (response-frame (:id request) "cancel_background_job" true
                     {:accepted true
                      :job (background-job->rpc-view job)})))
@@ -593,7 +632,7 @@
 
 (defn- current-ai-model
   [ctx state]
-  (let [sd (session/get-session-data-in ctx)]
+  (let [sd (ss/get-session-data-in ctx)]
     (or (when-let [provider (get-in sd [:model :provider])]
           (when-let [model-id (get-in sd [:model :id])]
             (resolve-model provider model-id)))
@@ -609,13 +648,17 @@
                      trimmed))
     :else        ::invalid))
 
+(defn- pending-login-state
+  [ctx]
+  (:pending-login (or (sa/oauth-projection-in ctx) {})))
+
 (defn- handle-login-begin!
   [ctx request params state]
   (let [oauth-ctx (:oauth-ctx ctx)]
     (when-not oauth-ctx
       (throw (ex-info "OAuth not available."
                       {:error-code "request/invalid-params"})))
-    (when (:pending-login @state)
+    (when (pending-login-state ctx)
       (throw (ex-info "login already in progress"
                       {:error-code "request/invalid-params"})))
     (let [provider-param (normalize-provider-param (get params :provider))
@@ -636,15 +679,10 @@
                         {:error-code "request/invalid-params"})))
       (let [{:keys [url login-state]} (oauth/begin-login! oauth-ctx (:id provider))
             callback? (boolean (:uses-callback-server provider))]
-        (session/assoc-state-value-in! ctx
-                                       (session/state-path :oauth)
-                                       (assoc (or (session/get-state-value-in ctx (session/state-path :oauth)) {})
-                                              :pending-login {:provider-id   (:id provider)
-                                                              :provider-name (:name provider)
-                                                              :login-state   login-state}))
-        (swap! state assoc :pending-login {:provider-id   (:id provider)
-                                           :provider-name (:name provider)
-                                           :login-state   login-state})
+        (sa/set-oauth-pending-login-in! ctx
+                                        {:provider-id   (:id provider)
+                                         :provider-name (:name provider)
+                                         :login-state   login-state})
         (response-frame (:id request) "login_begin" true
                         {:provider {:id (name (:id provider))
                                     :name (:name provider)}
@@ -653,7 +691,7 @@
                          :pending-login true})))))
 
 (defn- handle-login-complete!
-  [ctx request params state]
+  [ctx request params _state]
   (let [oauth-ctx (:oauth-ctx ctx)]
     (when-not oauth-ctx
       (throw (ex-info "OAuth not available."
@@ -661,20 +699,14 @@
     (when-not (or (nil? (:input params)) (string? (:input params)))
       (throw (ex-info "invalid request parameter :input: string or nil"
                       {:error-code "request/invalid-params"})))
-    (let [{:keys [provider-id provider-name login-state]} (:pending-login @state)]
+    (let [{:keys [provider-id provider-name login-state]} (pending-login-state ctx)]
       (when-not provider-id
         (throw (ex-info "no pending login"
                         {:error-code "request/no-pending-login"})))
-      (swap! state dissoc :pending-login)
       (let [trimmed (some-> (:input params) str/trim)
             input   (when-not (str/blank? trimmed) trimmed)]
         (oauth/complete-login! oauth-ctx provider-id input login-state)
-        (session/assoc-state-value-in! ctx
-                                       (session/state-path :oauth)
-                                       (assoc (or (session/get-state-value-in ctx (session/state-path :oauth)) {})
-                                              :pending-login nil
-                                              :last-login-provider (name provider-id)
-                                              :last-login-at (java.time.Instant/now)))
+        (sa/complete-oauth-login-in! ctx provider-id)
         (response-frame (:id request) "login_complete" true
                         {:provider {:id (name provider-id)
                                     :name provider-name}
@@ -682,7 +714,7 @@
 
 (defn session->handshake-server-info
   [ctx]
-  (let [sd (session/get-session-data-in ctx)]
+  (let [sd (ss/get-session-data-in ctx)]
     {:protocol-version protocol-version
      :features         ["eql-graph" "eql-memory"]
      :session-id       (:session-id sd)
@@ -801,14 +833,14 @@
 
 (defn- session-updated-payload
   [ctx]
-  (let [sd               (session/get-session-data-in ctx)
+  (let [sd               (ss/get-session-data-in ctx)
         model            (:model sd)
         thinking-level   (:thinking-level sd)
         effective-effort (effective-reasoning-effort model thinking-level)]
     {:session-id                  (:session-id sd)
      :session-file                (:session-file sd)
      :session-name                (:session-name sd)
-     :phase                       (some-> (session/sc-phase-in ctx) name)
+     :phase                       (some-> (ss/sc-phase-in ctx) name)
      :is-streaming                (boolean (:is-streaming sd))
      :is-compacting               (boolean (:is-compacting sd))
      :pending-message-count       (+ (count (:steering-messages sd))
@@ -832,11 +864,10 @@
    :parent-session-id and :created-at.
    Sessions are ordered by updated-at ascending (oldest first → stable tree order)."
   [ctx]
-  (let [index            (session/get-context-index-in ctx)
-        active-id        (:active-session-id index)
-        sd               (session/get-session-data-in ctx)
+  (let [active-id        (ss/active-session-id-in ctx)
+        sd               (ss/get-session-data-in ctx)
         current-id       (:session-id sd)
-        indexed-sessions (or (some-> index :sessions vals seq) [])
+        indexed-sessions (or (seq (ss/list-context-sessions-in ctx)) [])
         sessions*        (if (seq indexed-sessions)
                            (->> indexed-sessions
                                 (sort-by :updated-at)
@@ -924,7 +955,7 @@
 (defn- footer-path-line
   [ctx d]
   (let [cwd          (or (:psi.agent-session/cwd d)
-                         (session/effective-cwd-in ctx)
+                         (ss/effective-cwd-in ctx)
                          "")
         git-branch   (:psi.agent-session/git-branch d)
         session-name (:psi.agent-session/session-name d)
@@ -1135,7 +1166,7 @@
           run-fn      (fn [text _source]
                         (try
                           (loop [attempt 0]
-                            (if (session/idle-in? ctx)
+                            (if (ss/idle-in? ctx)
                               (let [{:keys [user-message]} (runtime/prepare-user-message-in! ctx text)
                                     ai-model  (ai-model-fn)
                                     api-key   (runtime/resolve-api-key-in ctx ai-model)
@@ -1183,22 +1214,20 @@
                                          {:event "error"
                                           :data  {:error-code    "runtime/failed"
                                                   :error-message (or (ex-message e) "extension run failed")}}))))]
-      (session/set-extension-run-fn-in! ctx run-fn))))
+      (ext-rt/set-extension-run-fn-in! ctx run-fn))))
 
 (defn- maybe-start-ui-watch-loop!
   [ctx emit-frame! state]
-  (when (and (:ui-state-atom ctx)
-             (some extension-ui-topic? (:subscribed-topics @state))
+  (when (and (some extension-ui-topic? (:subscribed-topics @state))
              (nil? (:ui-watch-loop @state)))
-    (let [ui-state-atom (:ui-state-atom ctx)
-          watch-loop    (future
-                          (binding [*out* (:err @state)
-                                    *err* (:err @state)]
-                            (loop [last-snap (or (ui-state/snapshot ui-state-atom) {})]
-                              (let [current (or (ui-state/snapshot ui-state-atom) {})]
-                                (emit-ui-snapshot-events! emit-frame! state last-snap current)
-                                (Thread/sleep 50)
-                                (recur current)))))]
+    (let [watch-loop (future
+                       (binding [*out* (:err @state)
+                                 *err* (:err @state)]
+                         (loop [last-snap (or (ui-snapshot ctx) {})]
+                           (let [current (or (ui-snapshot ctx) {})]
+                             (emit-ui-snapshot-events! emit-frame! state last-snap current)
+                             (Thread/sleep 50)
+                             (recur current)))))]
       (swap! state assoc :ui-watch-loop watch-loop))))
 
 (defn- assistant-content-text
@@ -1261,18 +1290,19 @@
             :content [{:type :text :text text*}]})))
 
 (defn- complete-pending-login!
-  [ctx state message emit!]
-  (when-let [{:keys [provider-id provider-name login-state]} (:pending-login @state)]
-    (swap! state dissoc :pending-login)
+  [ctx _state message emit!]
+  (when-let [{:keys [provider-id provider-name login-state]} (pending-login-state ctx)]
     (if-let [oauth-ctx (:oauth-ctx ctx)]
       (try
         (let [trimmed (some-> message str/trim)
               input   (when-not (str/blank? trimmed) trimmed)]
           (oauth/complete-login! oauth-ctx provider-id input login-state)
+          (sa/complete-oauth-login-in! ctx provider-id)
           (emit-assistant-text! emit! (str "✓ Logged in to " (or provider-name
                                                                  (some-> provider-id name)
                                                                  "provider"))))
         (catch Throwable e
+          (sa/complete-oauth-login-in! ctx provider-id)
           (emit-assistant-text! emit! (str "✗ Login failed: " (ex-message e)))))
       (emit-assistant-text! emit! "OAuth not available."))))
 
@@ -1311,9 +1341,10 @@
             (swap! state update :inflight-futures (fnil conj []) worker))
           (emit-assistant-text! emit! "OAuth not available.")))
       (do
-        (swap! state assoc :pending-login {:provider-id   provider-id
-                                           :provider-name provider-name
-                                           :login-state   login-state})
+        (sa/set-oauth-pending-login-in! ctx
+                                        {:provider-id provider-id
+                                         :provider-name provider-name
+                                         :login-state login-state})
         (emit-assistant-text! emit! "Paste authorization code as your next prompt message.")))))
 
 (defn- emit-command-result!
@@ -1456,41 +1487,18 @@
                       {:error-code "request/invalid-params"}))))
   session-id)
 
-(defn- maybe-assert-route-lock!
-  [state op target-session-id skip-lock?]
-  (when (and state (not skip-lock?) (true? (:enforce-session-route-lock? @state)))
-    (when-let [lock (:session-route-lock @state)]
-      (let [same-route? (= (:session-id lock) target-session-id)
-            exclusive-op? (contains? exclusive-route-lock-rpc-ops op)]
-        (when (or (not same-route?) exclusive-op?)
-          (throw (ex-info "session routing conflict with in-flight request"
-                          {:error-code "request/session-routing-conflict"
-                           :inflight-request-id (:request-id lock)
-                           :inflight-session-id (:session-id lock)
-                           :target-session-id target-session-id})))))))
-
 (defn- with-target-session!
   "Run `f` against optional target session-id in request params.
 
-   If :session-id is provided, ensures that session is loaded as active in the
-   runtime context before invoking f.
-
-   Optional isolation guard (disabled by default): when
-   `:enforce-session-route-lock?` is true in transport state, targetable ops
-   routed to a different session than the current `:session-route-lock` fail
-   fast with `request/session-routing-conflict`."
+   If :session-id is provided, sets that session as active before invoking f.
+   All sessions are resident in the atom — no loading required."
   ([ctx request f]
-   (with-target-session! ctx request nil f false))
-  ([ctx request state f]
-   (with-target-session! ctx request state f false))
-  ([ctx request state f skip-lock?]
-   (let [params             (params-map request)
-         session-id         (valid-target-session-id! (:session-id params))
-         current-session-id (:session-id (session/get-session-data-in ctx))
-         target-session-id  (or session-id current-session-id)]
-     (maybe-assert-route-lock! state (:op request) target-session-id skip-lock?)
+   (with-target-session! ctx request nil f))
+  ([ctx request _state f]
+   (let [params     (params-map request)
+         session-id (valid-target-session-id! (:session-id params))]
      (when session-id
-       (session/ensure-session-loaded-in! ctx session-id))
+       (ss/set-context-active-session-in! ctx session-id))
      (f))))
 
 (defn- run-command!
@@ -1527,7 +1535,7 @@
           (emit-command-result! emit! {:type "text"
                                        :message (str "Session file not found: " session-path)})
           (let [sd   (session/resume-session-in! ctx session-path)
-                msgs (:messages (agent/get-data-in (:agent-ctx ctx)))]
+                msgs (:messages (agent/get-data-in (ss/agent-ctx-in ctx)))]
             (emit! "session/resumed"
                    {:session-id   (:session-id sd)
                     :session-file (:session-file sd)
@@ -1538,13 +1546,12 @@
                     :tool-order []}))))
 
       (= trimmed "/tree")
-      (let [index      (session/get-context-index-in ctx)
-            current-id (:session-id (session/get-session-data-in ctx))
-            active-id  (or (:active-session-id index) current-id)
-            sessions0  (vec (or (session/list-context-sessions-in ctx) []))
+      (let [current-id (:session-id (ss/get-session-data-in ctx))
+            active-id  (or (ss/active-session-id-in ctx) current-id)
+            sessions0  (vec (or (ss/list-context-sessions-in ctx) []))
             sessions   (if (seq sessions0)
                          sessions0
-                         [(select-keys (session/get-session-data-in ctx)
+                         [(select-keys (ss/get-session-data-in ctx)
                                        [:session-id :session-name :worktree-path])])]
         (emit! "ui/frontend-action-requested"
                {:request-id request-id
@@ -1555,13 +1562,12 @@
 
       (str/starts-with? trimmed "/tree ")
       (let [arg        (-> (str/replace trimmed #"^/tree\s+" "") str/trim)
-            index      (session/get-context-index-in ctx)
-            current-id (:session-id (session/get-session-data-in ctx))
-            active-id  (or (:active-session-id index) current-id)
-            sessions0  (vec (or (session/list-context-sessions-in ctx) []))
+            current-id (:session-id (ss/get-session-data-in ctx))
+            active-id  (or (ss/active-session-id-in ctx) current-id)
+            sessions0  (vec (or (ss/list-context-sessions-in ctx) []))
             sessions   (if (seq sessions0)
                          sessions0
-                         [(select-keys (session/get-session-data-in ctx)
+                         [(select-keys (ss/get-session-data-in ctx)
                                        [:session-id :session-name :worktree-path])])
             match-by-id
             (some (fn [m]
@@ -1589,8 +1595,8 @@
           :else
           (do
             (session/ensure-session-loaded-in! ctx sid)
-            (let [sd   (session/get-session-data-in ctx)
-                  msgs (:messages (agent/get-data-in (:agent-ctx ctx)))]
+            (let [sd   (ss/get-session-data-in ctx)
+                  msgs (:messages (agent/get-data-in (ss/agent-ctx-in ctx)))]
               (emit! "session/resumed"
                      {:session-id   (:session-id sd)
                       :session-file (:session-file sd)
@@ -1626,9 +1632,9 @@
         (do
           (when (= :new-session (:type cmd-result))
             (let [rehydrate (:rehydrate cmd-result)
-                  sd        (session/get-session-data-in ctx)
+                  sd        (ss/get-session-data-in ctx)
                   msgs      (or (:agent-messages rehydrate)
-                                (:messages (agent/get-data-in (:agent-ctx ctx))))]
+                                (:messages (agent/get-data-in (ss/agent-ctx-in ctx))))]
               (emit! "session/resumed"
                      {:session-id   (:session-id sd)
                       :session-file (:session-file sd)
@@ -1677,7 +1683,7 @@
           (when (string? value)
             (when (.exists (io/file value))
               (let [sd   (session/resume-session-in! ctx value)
-                    msgs (:messages (agent/get-data-in (:agent-ctx ctx)))]
+                    msgs (:messages (agent/get-data-in (ss/agent-ctx-in ctx)))]
                 (emit-event! emit-frame! state {:event "session/resumed"
                                                 :id (:id request)
                                                 :data {:session-id (:session-id sd)
@@ -1693,8 +1699,8 @@
           "context-session-selector"
           (when (string? value)
             (session/ensure-session-loaded-in! ctx value)
-            (let [sd   (session/get-session-data-in ctx)
-                  msgs (:messages (agent/get-data-in (:agent-ctx ctx)))]
+            (let [sd   (ss/get-session-data-in ctx)
+                  msgs (:messages (agent/get-data-in (ss/agent-ctx-in ctx)))]
               (emit-event! emit-frame! state {:event "session/resumed"
                                               :id (:id request)
                                               :data {:session-id (:session-id sd)
@@ -1715,16 +1721,16 @@
               (when resolved
                 (let [provider-str (name (:provider resolved))
                       model {:provider provider-str :id (:id resolved) :reasoning (:supports-reasoning resolved)}]
-                  (session/set-model-in! ctx model)
+                  (dispatch/dispatch! ctx :session/set-model {:model model} {:origin :core})
                   (emit-command-result! emit! {:type "text"
                                                :message (str "✓ Model set to " provider-str " " (:id resolved))})))))
 
           "thinking-picker"
           (when (string? value)
-            (let [level (keyword value)
-                  sd    (session/set-thinking-level-in! ctx level)]
+            (let [level  (keyword value)
+                  result (dispatch/dispatch! ctx :session/set-thinking-level {:level level} {:origin :core})]
               (emit-command-result! emit! {:type "text"
-                                           :message (str "✓ Thinking level set to " (name (:thinking-level sd)))})))
+                                           :message (str "✓ Thinking level set to " (name (:thinking-level result)))})))
 
           nil)
         (emit! "session/updated" (session-updated-payload ctx))
@@ -1747,13 +1753,6 @@
           (boolean (:sync-on-git-head-change? @state))
           (not custom-run-loop?))
         on-new-session! (:on-new-session! @state)
-        target-session-id (or (get-in request [:params :session-id])
-                              (:session-id (session/get-session-data-in ctx)))
-        acquired-route-lock?
-        (when (true? (:enforce-session-route-lock? @state))
-          (swap! state assoc :session-route-lock {:request-id request-id
-                                                  :session-id target-session-id})
-          true)
         progress-q   (java.util.concurrent.LinkedBlockingQueue.)
         worker       (start-daemon-thread!
                       (fn []
@@ -1779,7 +1778,7 @@
                                                     (throw (ex-info "session model is not configured"
                                                                     {:error-code "request/invalid-params"})))
                                     oauth-ctx     (:oauth-ctx ctx)
-                                    pending-login (:pending-login @state)
+                                    pending-login (pending-login-state ctx)
                                     cmd-result    (when-not pending-login
                                                     (commands/dispatch ctx message {:oauth-ctx oauth-ctx
                                                                                     :ai-model  ai-model
@@ -1803,9 +1802,9 @@
                                       (do
                                         (when (= :new-session (:type cmd-result))
                                           (let [rehydrate (:rehydrate cmd-result)
-                                                sd (session/get-session-data-in ctx)
+                                                sd (ss/get-session-data-in ctx)
                                                 msgs (or (:agent-messages rehydrate)
-                                                         (:messages (agent/get-data-in (:agent-ctx ctx))))]
+                                                         (:messages (agent/get-data-in (ss/agent-ctx-in ctx))))]
                                             (emit! "session/resumed"
                                                    {:session-id (:session-id sd)
                                                     :session-file (:session-file sd)
@@ -1856,13 +1855,7 @@
                                 (emit! "footer/updated" (footer-updated-payload ctx)))
                               (finally
                                 (reset! progress-stop? true)
-                                (.join ^Thread progress-loop 200)
-                                (when acquired-route-lock?
-                                  (swap! state
-                                         (fn [s]
-                                           (if (= request-id (get-in s [:session-route-lock :request-id]))
-                                             (assoc s :session-route-lock nil)
-                                             s))))))))))]
+                                (.join ^Thread progress-loop 200)))))))]
     (swap! state update :inflight-futures (fnil conj []) worker)
     (response-frame (:id request) "prompt" true {:accepted true})))
 
@@ -1874,7 +1867,9 @@
 
    Runtime state mutations used by this handler:
    - :subscribed-topics (set of topic strings)
-   - :pending-login (map used by login_begin/login_complete and /login prompt flow)
+
+   OAuth pending-login for login_begin/login_complete and /login prompt flow
+   is stored in the canonical session oauth projection, not in transport state.
 
    opts:
    - :on-new-session! optional callback used by /new command and new_session op.
@@ -1980,9 +1975,9 @@
                                                (do
                                                  (session/new-session-in! ctx)
                                                  {:agent-messages [] :messages [] :tool-calls {} :tool-order []}))
-                                   sd        (session/get-session-data-in ctx)
+                                   sd        (ss/get-session-data-in ctx)
                                    msgs      (or (:agent-messages rehydrate)
-                                                 (:messages (agent/get-data-in (:agent-ctx ctx))))]
+                                                 (:messages (agent/get-data-in (ss/agent-ctx-in ctx))))]
                                (emit-event! emit-frame! state {:event "session/resumed"
                                                                :id (:id request)
                                                                :data {:session-id   (:session-id sd)
@@ -2012,8 +2007,8 @@
                                    (throw (ex-info "invalid request parameter :session-id: non-empty string"
                                                    {:error-code "request/invalid-params"})))
                                  (let [_    (session/ensure-session-loaded-in! ctx sid)
-                                       sd   (session/get-session-data-in ctx)
-                                       msgs (:messages (agent/get-data-in (:agent-ctx ctx)))]
+                                       sd   (ss/get-session-data-in ctx)
+                                       msgs (:messages (agent/get-data-in (ss/agent-ctx-in ctx)))]
                                    (emit-event! emit-frame! state {:event "session/resumed"
                                                                    :id (:id request)
                                                                    :data {:session-id   (:session-id sd)
@@ -2040,7 +2035,7 @@
                                    (throw (ex-info "session file not found"
                                                    {:error-code "request/not-found"})))
                                  (let [sd   (session/resume-session-in! ctx session-path)
-                                       msgs (:messages (agent/get-data-in (:agent-ctx ctx)))]
+                                       msgs (:messages (agent/get-data-in (ss/agent-ctx-in ctx)))]
                                    (emit-event! emit-frame! state {:event "session/resumed"
                                                                    :id (:id request)
                                                                    :data {:session-id   (:session-id sd)
@@ -2064,8 +2059,8 @@
                                                                           :session-file (:session-file sd)}))))
 
                              "list_sessions"
-                             (response-frame (:id request) op true {:active-session-id (:active-session-id (session/get-context-index-in ctx))
-                                                                    :sessions (session/list-context-sessions-in ctx)})
+                             (response-frame (:id request) op true {:active-session-id (ss/active-session-id-in ctx)
+                                                                    :sessions (ss/list-context-sessions-in ctx)})
 
                              "fork"
                              (let [entry-id (req-arg! request params :entry-id #(and (string? %) (not (str/blank? %))) "non-empty entry id")
@@ -2077,9 +2072,9 @@
                                                                       :session-file (:session-file sd)}))
 
                              "set_session_name"
-                             (let [name (req-arg! request params :name #(and (string? %) (not (str/blank? %))) "non-empty string")
-                                   sd   (session/set-session-name-in! ctx name)]
-                               (response-frame (:id request) op true {:session-name (:session-name sd)}))
+                             (let [name   (req-arg! request params :name #(and (string? %) (not (str/blank? %))) "non-empty string")
+                                   result (dispatch/dispatch! ctx :session/set-session-name {:name name} {:origin :core})]
+                               (response-frame (:id request) op true {:session-name (:session-name result)}))
 
                              "set_model"
                              (let [provider (req-arg! request params :provider #(or (keyword? %) (string? %)) "string or keyword")
@@ -2092,9 +2087,9 @@
                                      model       {:provider provider-str
                                                   :id (:id resolved)
                                                   :reasoning (:supports-reasoning resolved)}
-                                     sd          (session/set-model-in! ctx model)]
-                                 (response-frame (:id request) op true {:model {:provider (:provider (:model sd))
-                                                                                :id (:id (:model sd))}})))
+                                     result      (dispatch/dispatch! ctx :session/set-model {:model model} {:origin :core})]
+                                 (response-frame (:id request) op true {:model {:provider (:provider (:model result))
+                                                                                :id (:id (:model result))}})))
 
                              "cycle_model"
                              (let [direction (case (:direction params)
@@ -2113,8 +2108,8 @@
                                             (keyword? level) level
                                             (string? level)  (keyword level)
                                             :else            level)
-                                   sd    (session/set-thinking-level-in! ctx level*)]
-                               (response-frame (:id request) op true {:thinking-level (:thinking-level sd)}))
+                                   result (dispatch/dispatch! ctx :session/set-thinking-level {:level level*} {:origin :core})]
+                               (response-frame (:id request) op true {:thinking-level (:thinking-level result)}))
 
                              "cycle_thinking_level"
                              (let [sd (session/cycle-thinking-level-in! ctx)]
@@ -2127,19 +2122,19 @@
 
                              "set_auto_compaction"
                              (let [enabled (req-arg! request params :enabled boolean? "boolean")
-                                   sd      (session/set-auto-compaction-in! ctx enabled)]
-                               (response-frame (:id request) op true {:enabled (:auto-compaction-enabled sd)}))
+                                   result  (dispatch/dispatch! ctx :session/set-auto-compaction {:enabled? enabled} {:origin :core})]
+                               (response-frame (:id request) op true {:enabled (:auto-compaction-enabled result)}))
 
                              "set_auto_retry"
                              (let [enabled (req-arg! request params :enabled boolean? "boolean")
-                                   sd      (session/set-auto-retry-in! ctx enabled)]
-                               (response-frame (:id request) op true {:enabled (:auto-retry-enabled sd)}))
+                                   result  (dispatch/dispatch! ctx :session/set-auto-retry {:enabled? enabled} {:origin :core})]
+                               (response-frame (:id request) op true {:enabled (:auto-retry-enabled result)}))
 
                              "get_state"
-                             (response-frame (:id request) op true {:state (session/get-session-data-in ctx)})
+                             (response-frame (:id request) op true {:state (ss/get-session-data-in ctx)})
 
                              "get_messages"
-                             (response-frame (:id request) op true {:messages (:messages (agent/get-data-in (:agent-ctx ctx)))})
+                             (response-frame (:id request) op true {:messages (:messages (agent/get-data-in (ss/agent-ctx-in ctx)))})
 
                              "get_session_stats"
                              (response-frame (:id request) op true {:stats (session/diagnostics-in ctx)})
@@ -2163,7 +2158,7 @@
                                  (emit-ui-snapshot-events! emit-frame!
                                                            state
                                                            {}
-                                                           (or (ui-state/snapshot (:ui-state-atom ctx)) {})))
+                                                           (or (ui-snapshot ctx) {})))
              ;; Emit current session/footer/context snapshots immediately on subscription
              ;; so frontends render baseline status without waiting for prompt activity.
                                (emit-event! emit-frame! state {:event "session/updated"
@@ -2201,13 +2196,7 @@
                                            :data          {:supported-ops supported-rpc-ops}})))]
          (cond
            (contains? targetable-rpc-ops op)
-           (with-target-session! ctx request state dispatch-op (= op "prompt"))
-
-           (contains? exclusive-route-lock-rpc-ops op)
-           (let [target-id (or (get-in request [:params :session-id])
-                               (:session-id (session/get-session-data-in ctx)))]
-             (maybe-assert-route-lock! state op target-id false)
-             (dispatch-op))
+           (with-target-session! ctx request state dispatch-op)
 
            :else
            (dispatch-op)))
@@ -2243,9 +2232,7 @@
                           :max-pending-requests default-max-pending-requests
                           :subscribed-topics #{}
                           :event-seq 0
-                          :inflight-futures []
-                          :session-route-lock nil
-                          :enforce-session-route-lock? false}
+                          :inflight-futures []}
                          %
                          {:err err}))
     (let [emit-tracked! (make-tracked-emitter emit-frame! state)

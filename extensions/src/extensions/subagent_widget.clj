@@ -19,6 +19,7 @@
    [clojure.set :as set]
    [clojure.string :as str]
    [com.fulcrologic.statecharts.chart :as chart]
+   [extensions.workflow-display :as workflow-display]
    [com.fulcrologic.statecharts.elements :as ele]
    [psi.agent-core.core :as agent]
    [psi.agent-session.executor :as executor]
@@ -356,21 +357,35 @@
           (str/replace #"(?i)^error:\s*" "")
           not-empty))
 
+(defn- error-line-from-data
+  [data]
+  (or (clean-error-line (:workflow/error-message data))
+      (some-> (:subagent/last-text data) last-non-blank-line clean-error-line)))
+
+(defn- last-line-from-data
+  [data]
+  (some-> (:subagent/last-text data) last-non-blank-line str/trim not-empty))
+
 (defn- wf-error-line [wf]
-  (or (clean-error-line (:psi.extension.workflow/error-message wf))
+  (or (:subagent/error-line (wf-data wf))
+      (error-line-from-data (wf-data wf))
+      (clean-error-line (:psi.extension.workflow/error-message wf))
       (some-> (wf-last-text wf) last-non-blank-line clean-error-line)))
 
 (defn- widget-detail-line [wf]
-  (cond
-    (:psi.extension.workflow/error? wf)
-    (when-let [err (wf-error-line wf)]
-      (str "  ! " (task-preview err 100)))
+  (let [data (wf-data wf)]
+    (cond
+      (:psi.extension.workflow/error? wf)
+      (when-let [err (wf-error-line wf)]
+        (str "  ! " (task-preview err 100)))
 
-    :else
-    (when-let [last-line (some-> (wf-last-text wf) last-non-blank-line str/trim not-empty)]
-      (str "  "
-           (if (:psi.extension.workflow/done? wf) "↳ " "… ")
-           (task-preview last-line 100)))))
+      :else
+      (when-let [last-line (or (:subagent/last-line data)
+                               (last-line-from-data data)
+                               (some-> (wf-last-text wf) last-non-blank-line str/trim not-empty))]
+        (str "  "
+             (if (:psi.extension.workflow/done? wf) "↳ " "… ")
+             (task-preview last-line 100))))))
 
 (defn- widget-action-line [wf]
   (when (and (not (:psi.extension.workflow/running? wf))
@@ -381,11 +396,12 @@
        :action {:type :command
                 :command (str "/subrm " id)}})))
 
-(defn- widget-lines [wf]
+(defn- workflow-display-model
+  [wf]
   (let [agent-tag   (when-let [agent-name (some-> (wf-agent-name wf) str str/trim not-empty)]
                       (str " · @" agent-name))
         fork-tag    (when (wf-forked? wf) " · fork")
-        line-1      (str (status-icon wf)
+        top-line    (str (status-icon wf)
                          " Subagent #" (:psi.extension.workflow/id wf)
                          " " (phase-badge wf)
                          " · T" (wf-turn-count wf)
@@ -395,9 +411,41 @@
                          " · " (task-preview (wf-task wf) 52))
         detail-line (widget-detail-line wf)
         action-line (widget-action-line wf)]
-    (cond-> [line-1]
-      (seq detail-line) (conj detail-line)
-      (seq action-line) (conj action-line))))
+    {:top-line top-line
+     :detail-line detail-line
+     :action-line action-line}))
+
+(defn- workflow-public-display
+  [data]
+  (let [agent-tag   (when-let [agent-name (some-> (:subagent/agent-name data) str str/trim not-empty)]
+                      (str " · @" agent-name))
+        fork-tag    (when (:subagent/fork-session? data) " · fork")
+        top-line    (str (status-icon {:psi.extension.workflow/phase (if (:workflow/error-message data)
+                                                                       :error
+                                                                       :done)})
+                         " Subagent #" (:workflow/id data)
+                         " [" (if (:workflow/error-message data) "ERR" "DONE") "]"
+                         " · T" (or (:subagent/turn-count data) 1)
+                         " · " (quot (long (or (:subagent/elapsed-ms data) 0)) 1000) "s"
+                         agent-tag
+                         fork-tag
+                         " · " (task-preview (or (:subagent/current-prompt data) "") 52))
+        detail-line (cond
+                      (seq (:subagent/error-line data))
+                      (str "  ! " (task-preview (:subagent/error-line data) 100))
+
+                      (seq (:subagent/last-line data))
+                      (str "  ↳ " (task-preview (:subagent/last-line data) 100))
+
+                      :else nil)]
+    {:top-line top-line
+     :detail-line detail-line}))
+
+(defn- widget-lines [wf]
+  (let [display (workflow-display/merged-display
+                 (workflow-display-model wf)
+                 (:subagent/display (or (:psi.extension.workflow/data wf) {})))]
+    (workflow-display/display-lines display)))
 
 (defn- available-agent-defs []
   (load-agent-defs (:query-fn @state)))
@@ -634,7 +682,8 @@
         prompt      (or (:subagent/current-prompt data) "")
         turn-count  (long (or (:subagent/turn-count data) 1))
         include?    (true? (:subagent/include-result-in-context? data))
-        on-finished (:subagent/on-finished data)]
+        on-finished (:subagent/on-finished data)
+        last-line   (some-> text last-non-blank-line str/trim not-empty)]
     (when (fn? on-finished)
       (on-finished {:id                          (:workflow/id data)
                     :prompt                      prompt
@@ -645,6 +694,8 @@
                     :include-result-in-context?  include?}))
     [{:op :assign
       :data {:subagent/last-text text
+             :subagent/last-line last-line
+             :subagent/error-line nil
              :subagent/elapsed-ms elapsed-ms
              :workflow/error-message nil
              :workflow/result text}}]))
@@ -658,7 +709,9 @@
         prompt      (or (:subagent/current-prompt data) "")
         turn-count  (long (or (:subagent/turn-count data) 1))
         include?    (true? (:subagent/include-result-in-context? data))
-        on-finished (:subagent/on-finished data)]
+        on-finished (:subagent/on-finished data)
+        error-line  (or (clean-error-line msg)
+                        (some-> text last-non-blank-line clean-error-line))]
     (when (fn? on-finished)
       (on-finished {:id                          (:workflow/id data)
                     :prompt                      prompt
@@ -669,6 +722,8 @@
                     :include-result-in-context?  include?}))
     [{:op :assign
       :data {:subagent/last-text text
+             :subagent/last-line nil
+             :subagent/error-line error-line
              :subagent/elapsed-ms elapsed-ms
              :workflow/error-message msg
              :workflow/result text}}]))
@@ -741,16 +796,25 @@
                                                     :subagent/turn-count                  0
                                                     :subagent/current-prompt              nil
                                                     :subagent/last-text                   ""
+                                                    :subagent/last-line                   nil
+                                                    :subagent/error-line                  nil
                                                     :subagent/elapsed-ms                  0}))
                               :public-data-fn  (fn [data]
-                                                 (select-keys data
-                                                              [:subagent/agent-name
-                                                               :subagent/fork-session?
-                                                               :subagent/include-result-in-context?
-                                                               :subagent/turn-count
-                                                               :subagent/current-prompt
-                                                               :subagent/last-text
-                                                               :subagent/elapsed-ms]))})]
+                                                 (let [base (select-keys data
+                                                                         [:workflow/id
+                                                                          :workflow/error-message
+                                                                          :subagent/agent-name
+                                                                          :subagent/fork-session?
+                                                                          :subagent/include-result-in-context?
+                                                                          :subagent/turn-count
+                                                                          :subagent/current-prompt
+                                                                          :subagent/last-text
+                                                                          :subagent/last-line
+                                                                          :subagent/error-line
+                                                                          :subagent/elapsed-ms])]
+                                                   (assoc base
+                                                          :subagent/display
+                                                          (workflow-public-display base))))})]
     (when-let [e (:psi.extension.workflow/error r)]
       (notify! (str "Failed to register subagent workflow type: " e) :error))))
 
@@ -912,24 +976,7 @@
       (let [running (count (filter :psi.extension.workflow/running? subs))
             done    (count (filter :psi.extension.workflow/done? subs))
             errors  (count (filter :psi.extension.workflow/error? subs))
-            lines   (mapcat
-                     (fn [s]
-                       (let [agent-tag (when-let [agent-name (some-> (wf-agent-name s) str str/trim not-empty)]
-                                         (str " · @" agent-name))
-                             fork-tag  (when (wf-forked? s) " · fork")
-                             base (str "#" (:psi.extension.workflow/id s)
-                                       " " (phase-badge s)
-                                       " · T" (wf-turn-count s)
-                                       " · " (elapsed-seconds s) "s"
-                                       agent-tag
-                                       fork-tag
-                                       " · " (task-preview (wf-task s) 70))
-                             err  (when (:psi.extension.workflow/error? s)
-                                    (when-let [e (wf-error-line s)]
-                                      (str "   ! " (task-preview e 100))))]
-                         (cond-> [base]
-                           (seq err) (conj err))))
-                     subs)]
+            lines   (mapcat (comp workflow-display/text-lines widget-lines) subs)]
         (str "Subagents (" (count subs)
              " total · " running " running · " done " done · " errors " error):\n"
              (str/join "\n" lines))))))

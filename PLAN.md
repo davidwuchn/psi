@@ -4,147 +4,115 @@ Ordered steps toward PSI COMPLETE.
 
 ---
 
-## Done
+## Reconciled status vs `STATE.md` and `../psi-main/architecture.md`
 
-### Step 15kh — Canonical-root cleanup docs/tests now match the hosted runtime architecture ✓ complete
-- Commit `d037818` adds canonical-root-backed test helpers and updates subsystem docs to describe adapters as root-backed views rather than separate sources of truth.
-- Cleanup results:
-  - added `components/agent-session/test/psi/agent_session/test_support.clj` with `make-session-ctx`, `set-state!`, and `update-state!`
-  - migrated representative agent-session runtime/executor tests to canonical-root-backed fixtures
-  - updated `statechart.clj` and `extensions.clj` comments to describe `:session-data-atom` and `:ui-state-atom` as adapter-backed compatibility surfaces
-- Converged files:
-  - `components/agent-session/src/psi/agent_session/statechart.clj`
-  - `components/agent-session/src/psi/agent_session/extensions.clj`
-  - `components/agent-session/test/psi/agent_session/test_support.clj`
-  - `components/agent-session/test/psi/agent_session/runtime_test.clj`
-  - `components/agent-session/test/psi/agent_session/executor_test.clj`
-- Verification:
-  - `clj-kondo --lint components/agent-session/src/psi/agent_session/core.clj components/agent-session/src/psi/agent_session/statechart.clj components/agent-session/src/psi/agent_session/extensions.clj components/agent-session/src/psi/agent_session/resolvers.clj components/agent-session/test/psi/agent_session/runtime_test.clj components/agent-session/test/psi/agent_session/executor_test.clj components/agent-session/test/psi/agent_session/test_support.clj`
-  - `clj-paren-repair` on the same file set
+Current repo status is no longer “build the core architecture.”
 
-### Step 15kg — Runtime-visible ui/recursion/nrepl/oauth projections now converge on canonical state ✓ complete
-- Commit `a110370` hosts extension UI state, recursion state, canonical nREPL metadata, and runtime-visible OAuth projections inside the session canonical state root while preserving runtime handles for opaque integrations.
-- Phase 2A/2B/2C/2D results:
-  - extension UI state now lives under canonical root state and is surfaced through a compatibility atom adapter
-  - recursion state now runs through `recursion/create-hosted-context` backed by the canonical session root
-  - nREPL endpoint metadata is written to and resolved from canonical runtime-visible state
-  - runtime-visible OAuth state now tracks authenticated providers, pending login, and last login metadata in canonical state while the secure OAuth store remains external
-- Converged files:
-  - `components/agent-session/src/psi/agent_session/core.clj`
-  - `components/agent-session/src/psi/agent_session/main.clj`
-  - `components/agent-session/src/psi/agent_session/resolvers.clj`
-  - `components/agent-session/src/psi/agent_session/rpc.clj`
-  - `components/recursion/src/psi/recursion/core.clj`
-- Verification:
-  - `clj-kondo --lint components/agent-session/src/psi/agent_session/core.clj components/agent-session/src/psi/agent_session/main.clj components/agent-session/src/psi/agent_session/resolvers.clj components/agent-session/src/psi/agent_session/rpc.clj components/recursion/src/psi/recursion/core.clj`
-  - `clj-paren-repair` on the same file set
+The core reference-architecture substrate is now materially present:
+- ✓ canonical session-root state owns most runtime-visible session truth
+- ✓ dispatch has an explicit interceptor/effect pipeline
+- ✓ statechart participation is an explicit dispatch boundary
+- ✓ the full single tool-call transaction now enters through a dispatch-owned runtime boundary
+- ✓ all dispatch events are replayable (effects suppressed, state applied)
+- ✓ all public session functions route agent-core mutations through dispatch-owned effects
+- ✓ dispatch has one pure-result shape: `:root-state-update` with `session-update` wrapper
+- ✓ workflow/query-first read models are materially stronger than before
+- ✓ effect boundary is schema-validated in dev/test (gated on `*assert*`)
 
-### Step 15kf — Agent-session mutable runtime state now converges on a canonical root-state model ✓ complete
-- Commit `3097239` adds `spec/system-context-unification.allium` and integrates that model into the existing session/runtime specs.
-- Agent-session implementation now uses a canonical `:state*` root for session-owned mutable state, with path-based helpers exposed from `components/agent-session/src/psi/agent_session/core.clj`.
-- Migrated state domains include:
-  - session data
-  - context index
-  - journal + flush state
-  - turn context
-  - provider request/reply captures
-  - tool-call attempt telemetry
-  - tool-output telemetry
-  - background job state
-- Runtime handles remain outside the canonical mutable root where appropriate:
-  - UI integration handles
-  - agent-core context
-  - extension/workflow registries
-  - OAuth runtime/store integration
-  - nREPL runtime integration
-- Converged files:
-  - `components/agent-session/src/psi/agent_session/core.clj`
-  - `components/agent-session/src/psi/agent_session/runtime.clj`
-  - `components/agent-session/src/psi/agent_session/executor.clj`
-  - `components/agent-session/src/psi/agent_session/resolvers.clj`
-  - `components/agent-session/src/psi/agent_session/persistence.clj`
-- Verification:
-  - `allium check spec/system-context-unification.allium spec/session-core.allium spec/coding-agent.allium spec/rpc-edn.allium`
-  - `clj-kondo --lint components/agent-session/src/psi/agent_session/core.clj components/agent-session/src/psi/agent_session/runtime.clj components/agent-session/src/psi/agent_session/executor.clj components/agent-session/src/psi/agent_session/resolvers.clj components/agent-session/src/psi/agent_session/rpc.clj components/agent-session/src/psi/agent_session/persistence.clj`
-  - `clj-paren-repair` on the same file set
+So the repo is now in **late convergence / simplification / boundary sharpening**, not early architectural migration.
 
-### Step 15kfb — Session-debug skill now documents resolver reload + graph rebuild workflow for live debugging ✓ complete
-- Commit `b84f60f` updates `.psi/skills/session-debug/SKILL.md` so future debugging loops use the right live/runtime distinction when code changes touch the query surface.
-- Skill guidance now explicitly covers:
-  - reloading affected namespaces via nREPL
-  - rebuilding the global query env after resolver changes via `psi.agent-session.core/register-resolvers!` and `psi.introspection.core/register-resolvers!`
-  - recognizing when `app-query-tool` is still attached to a stale or different JVM and therefore needs a real process restart
-  - preferring narrow turn-id provider capture lookup over dumping full provider request/reply rings when investigating one failing turn
-- Follow-up note:
-  - local reload instructions alone do not guarantee that the active UI/backend process serving `app-query-tool` has ingested the new graph; future live-debug loops should treat runtime restart as a distinct step when graph introspection remains stale.
+## Active priorities
 
-### Step 15kfa — Provider captures now have narrow turn-id lookup resolvers for exact failing-turn inspection ✓ complete
-- Commit `2413557` adds focused agent-session resolvers to fetch one provider request or one provider reply by turn id instead of forcing full capture-buffer dumps during live debugging.
-- Resolver/query surface changes now:
-  - add `provider-request-by-turn-id` and `provider-reply-by-turn-id` helpers in `components/agent-session/src/psi/agent_session/resolvers.clj`
-  - expose root-style lookup attrs seeded by `:psi.agent-session/lookup-turn-id`:
-    - `:psi.agent-session/provider-request-for-turn-id`
-    - `:psi.agent-session/provider-reply-for-turn-id`
-- Regression coverage now proves exact request/reply lookup by turn id in `components/agent-session/test/psi/agent_session/core_test.clj`.
-- Verification:
-  - `clojure -M:test --focus psi.agent-session.core-test`
-- Follow-up note:
-  - local code/tests now support narrow turn-id lookup, but the currently running live app-query graph still needs a real runtime reload/restart before those attrs become queryable there.
+1. **Decompose `core.clj`** (4089 → 820 lines, target ≤800 per file) ✓
+   - ✓ `state-accessors.clj` extracted (197 lines, 12 readers + 14 mutators)
+   - ✓ `dispatch-effects.clj` extracted (207 lines, defmulti effect executor)
+   - ✓ `dispatch-handlers.clj` extracted (1015 lines, all handler registration + helpers)
+   - ✓ `bootstrap.clj` extracted (137 lines, startup orchestration)
+   - ✓ `session-lifecycle.clj` extracted (151 lines, new/resume/fork)
+   - ✓ `mutations.clj` extracted (626 lines, all 34 mutations calling dispatch directly)
+   - ✓ `session-state.clj` extracted as leaf module; breaks all circular deps
+   - ✓ `tool-plan.clj` extracted (247 lines, runtime tool executor + data-driven tool plan)
+   - ✓ `background-job-runtime.clj` extracted (209 lines, job tracking/reconciliation/emit/list/cancel)
+   - ✓ all architectural requiring-resolve eliminated (core 10→0, mutations 15→0)
+   - ✓ all 16 `def` re-exports eliminated; all 21 thin `*-in!` wrappers deleted
+   - ✓ forward declarations reduced from 11 to 4 (remaining: extension runtime coupling)
+   - ✓ `extension-runtime.clj` extracted (189 lines): loading, messaging, prompt delivery via ctx capability keys
+   - ✓ core.clj reduced to 629 lines (4089 → 629, −85%); forward declarations reduced to 1 (`execute-compaction-in!`)
 
-### Step 15kf.1 — Provider error replies now survive stream churn and are discoverable in the live graph ✓ complete
-- Commit `231477a` retains provider `:error` reply captures in a dedicated error buffer instead of relying on the shared rolling provider reply stream alone.
-- Agent-session capture/runtime changes now:
-  - add `:provider-error-replies-atom` alongside the general provider reply atom
-  - append provider `:error` events into that dedicated buffer with its own retention cap
-  - expose `:psi.agent-session/provider-last-error-reply` and `:psi.agent-session/provider-error-replies` from the dedicated store
-- API error diagnostics now:
-  - enrich assistant-derived API errors from matching provider reply captures when request ids line up
-  - deduplicate assistant-derived and provider-derived views of the same logical failure
-- Graph/introspection changes now:
-  - root-queryable attr discovery flattens join-map outputs, so nested resolver outputs become visible in `:psi.graph/root-queryable-attrs`
-  - the new provider error attrs are now graph-discoverable alongside the broader nested session/query surface
-- Verification:
-  - `clojure -M:test --focus psi.agent-session.core-test --focus psi.ai.providers.anthropic-test`
-  - live reload + graph rebuild confirmed fresh Anthropic errors remain queryable through `:psi.agent-session/provider-last-error-reply`, `:psi.agent-session/provider-error-replies`, and enriched `:psi.agent-session/api-errors`
+2. **Document intentional external runtime handles** ✓
+   - principle documented in `spec/system-context-unification.allium` and `doc/architecture.md`
+   - one rule: `:state*` owns queryable session truth; everything else on ctx is a handle to a running subsystem whose observable state is projected into `:state*` through dispatch
 
-### Step 15ke — Anthropic error capture now preserves raw reply bodies and normalized request ids ✓ complete
-- Commit `0bc6fb5` extends Anthropic failure diagnostics so live provider capture retains the actual reply payload, not just the summarized status/request-id string.
-- Provider error handling now:
-  - parses JSON error bodies when present
-  - keeps raw body text alongside parsed body data
-  - preserves response headers on emitted `:error` events
-  - still appends HTTP status and request id onto the normalized user-facing error message
-- Session diagnostics now:
-  - retain a deeper provider reply capture history (`1000` replies, `100` requests) so the failing Anthropic turn is less likely to fall off the tail during investigation
-  - parse request ids from the normalized `Error ... [request-id req_xxx]` suffix as well as the older raw header-map text format
-- Regression coverage added:
-  - Anthropic provider tests for captured error body/headers and emitted error event body/headers
-  - agent-session core test for request-id parsing from normalized provider error suffix
-- Verification:
-  - `clojure -M:test --focus psi.agent-session.core-test --focus psi.agent-session.executor-test --focus psi.ai.providers.anthropic-test`
+3. **Broaden query-first workflow/runtime read models**
+   - prefer workflow public-data/display surfaces over local mirrors and ad hoc formatting
+   - treat the shared workflow display helper path as the default convention for new consumers
 
-### Step 15kea — Agent-session runtime creation and bootstrap are now split by responsibility ✓ complete
-- Commit `2368583` separates UI-specific session context creation from shared runtime bootstrap in `components/agent-session/src/psi/agent_session/main.clj`.
-- `create-runtime-session-context` now owns:
-  - OAuth context creation
-  - effective model/thinking-level resolution
-  - `session/create-context`
-  - first `session/new-session-in!`
-  - UI-specific inputs like `:ui-type` and `:event-queue`
-- `bootstrap-runtime-session!` now owns:
-  - template/skill/extension discovery
-  - system prompt construction and enrichment
-  - tool + resolver + extension bootstrap
-  - memory sync
-  - startup prompt rehydrate
-- Runtime entrypoints now compose the two stages explicitly:
-  - `run-session` chooses `:console`
-  - `run-tui-session` chooses `:tui`
-  - `run-rpc-edn-session!` chooses `:emacs`
-- Result:
-  - bootstrap logic is independent of UI choice
-  - future UI additions can reuse bootstrap without widening its responsibility
-  - tests can target context creation and bootstrap as separate concerns
-- Verification:
-  - `clj-kondo --lint components/agent-session/src/psi/agent_session/main.clj`
-  - `clj-paren-repair components/agent-session/src/psi/agent_session/main.clj`
+4. **Reassess extension isolation after the above**
+   - revisit which remaining extension/runtime handles should stay external
+   - tighten permissions or move boundaries only after the simpler convergence work above
+
+## Current next implementation seam
+
+Highest-leverage next work:
+- broaden query-first workflow/read-model convergence
+- reassess extension isolation boundaries
+
+## Intentional external runtime handles
+
+These currently fit the actual repo architecture and should remain outside `:state*` unless requirements change.
+
+- `:agent-ctx`
+  - live agent-core loop, queues, event stream, provider/tool runtime mechanics
+- extension registry
+  - loaded extension runtime registry state
+- workflow registry
+  - workflow runtime substrate and instance coordination
+- oauth runtime/store integration via `:oauth-ctx`
+  - secure credentials, provider impls, callback/token mechanics
+- nREPL server handle
+  - live server object; canonical state keeps only runtime-visible metadata
+- memory / query / engine contexts
+  - subsystem control objects and global runtime handles
+
+## Completed work — intentionally compressed
+
+Recently completed work that should now be treated as baseline rather than active plan detail:
+- mutable-state audit and boundary classification
+- RPC `:pending-login` convergence onto canonical oauth projection
+- dispatch-owned low-frequency runtime-visible projection routing
+- workflow-public progress/display convergence for key extensions
+- canonical tool lifecycle event + read-model vertical slice
+- clarified executed-tool count vocabulary
+- dispatch-owned tool lifecycle side effects and tool-run transaction boundary
+- documentation of shared workflow display helper conventions
+- all agent-core mutations now dispatch-owned effects (~20 effect types)
+- replay classification removed — all events replayable by default
+- pure-result shapes unified to single `:root-state-update` with `session-update` wrapper
+- duplicate tool/start progress emission fixed
+- malli schemas added for effect inventory (34 types, multi-dispatch) and pure-result shape
+- effect/pure-result schema validation wired into dispatch pipeline, gated on `*assert*`
+- redundant wrappers removed (project-tool-lifecycle-progress!, apply-session-update-in!, tool-call-history resolver)
+- effect executor extracted to open defmulti in `dispatch-effects.clj`
+- state accessors extracted to `state-accessors.clj`
+- dispatch handlers extracted to `dispatch-handlers.clj` via requiring-resolve
+- bootstrap orchestration extracted to `bootstrap.clj`
+- session lifecycle extracted to `session-lifecycle.clj`
+- all 34 mutations extracted to `mutations.clj` calling dispatch directly (no core.clj dep)
+- `session-state.clj` extracted as leaf state infrastructure; circular deps eliminated
+- 12 callers converted from `*-in!` wrappers to direct dispatch
+- 21 thin `*-in!` dispatch wrappers deleted; all callers use direct dispatch
+- all 16 `def` re-exports of session-state eliminated; callers require session-state directly
+- `tool-plan.clj` extracted (247 lines, runtime tool executor + data-driven tool plan)
+- `background-job-runtime.clj` extracted (209 lines, job tracking/reconciliation/emit/list/cancel)
+- core.clj reduced from 4089 to 820 lines (−80%), zero re-exports, zero wrappers, zero requiring-resolve
+
+See `STATE.md` and git history for the detailed record.
+
+## Success shape
+
+- canonical session-root truth remains the center of runtime-visible state
+- dispatch has one result shape, one apply path, one event log
+- replay is simple: all events replay, effects suppressed
+- effect boundary is schema-validated
+- query/public read models become the default path for consumers
+- architecture docs describe the real system precisely

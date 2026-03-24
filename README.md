@@ -56,6 +56,9 @@ For TUI login flow, in-session commands, and runtime behavior, see:
 For extension-facing runtime/query details (including memory durability operations), see:
 - [`doc/extension-api.md`](doc/extension-api.md)
 
+This includes the preferred workflow public-data display convention for
+workflow-backed extensions.
+
 For built-in extension docs (`extensions/src`), see:
 - [`doc/extensions.md`](doc/extensions.md)
 

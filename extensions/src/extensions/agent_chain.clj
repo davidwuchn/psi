@@ -31,6 +31,7 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [com.fulcrologic.statecharts.chart :as chart]
+   [extensions.workflow-display :as workflow-display]
    [com.fulcrologic.statecharts.elements :as ele]
    [psi.agent-core.core :as agent]
    [psi.agent-session.executor :as executor]
@@ -62,6 +63,8 @@
      :psi.extension.workflow/result
      :psi.extension.workflow/elapsed-ms
      :psi.extension.workflow/started-at]}])
+
+(declare chain-workflows workflow-by-id mutate!)
 
 (def ^:private widget-id "agent-chain")
 (def ^:private max-widget-runs 4)
@@ -161,17 +164,6 @@
     :error "✗"
     "?"))
 
-(defn- workflow-phase [wf]
-  (or (:psi.extension.workflow/phase wf)
-      (cond
-        (:psi.extension.workflow/running? wf) :running
-        (:psi.extension.workflow/error? wf) :error
-        (:psi.extension.workflow/done? wf) :done
-        :else :unknown)))
-
-(defn- phase-label [wf]
-  (-> (workflow-phase wf) name str/upper-case))
-
 (defn- task-preview [s n]
   (let [s (or s "")]
     (if (> (count s) n)
@@ -205,38 +197,109 @@
 (defn- now-ms []
   (System/currentTimeMillis))
 
-(defn- tracked-runs []
-  (if-let [runs-a (:runs @state)]
-    (vals @runs-a)
-    []))
+(defn- initial-progress
+  [{:keys [run-id chain-name step-count]}]
+  {:run-id     run-id
+   :chain-name chain-name
+   :phase      :running
+   :step-count step-count
+   :step-index nil
+   :step-agent nil
+   :last-work  ""
+   :elapsed-ms 0
+   :started-ms (now-ms)
+   :updated-at (now-ms)})
 
-(defn- widget-run-text
-  [{:keys [run-id chain-name phase step-index step-count step-agent last-work elapsed-ms]}]
-  (str (status-icon (or phase :pending)) " " run-id
-       " [" (-> (or phase :pending) name str/upper-case) "] "
-       (or chain-name "unknown")
-       (when (and (number? step-index) (number? step-count) (pos? step-count))
-         (str " · step " (inc step-index) "/" step-count
-              (when (seq step-agent)
-                (str " " step-agent))))
-       (when (pos? (long (or elapsed-ms 0)))
-         (str " · " (quot (long elapsed-ms) 1000) "s"))
-       (when (seq last-work)
-         (str " — " (task-preview last-work 70)))))
+(defn- progress-snapshot
+  [progress*]
+  (let [progress (when (instance? clojure.lang.IDeref progress*)
+                   @progress*)]
+    (when (map? progress)
+      (assoc progress :updated-at (or (:updated-at progress) (now-ms))))))
 
-(defn- widget-run-line
-  [run]
-  (let [line-text (widget-run-text run)
-        run-id    (str/trim (str (or (:run-id run) "")))]
-    (if (seq run-id)
-      {:text   (str line-text " · ✕ remove")
-       :action {:type :command
-                :command (str "/chain-rm " run-id)}}
-      line-text)))
+(defn- workflow-display-model
+  [wf]
+  (let [progress   (or (get-in wf [:psi.extension.workflow/data :chain/progress]) {})
+        run-id     (or (:psi.extension.workflow/id wf)
+                       (:run-id progress))
+        chain-name (or (:chain/name progress)
+                       (:chain-name progress)
+                       (get-in wf [:psi.extension.workflow/meta :chain-name])
+                       (get-in wf [:psi.extension.workflow/input :chain :name]))
+        phase      (or (:psi.extension.workflow/phase wf)
+                       (:phase progress)
+                       :pending)
+        step-index (:step-index progress)
+        step-count (:step-count progress)
+        step-agent (:step-agent progress)
+        last-work  (:last-work progress)
+        elapsed-ms (or (:psi.extension.workflow/elapsed-ms wf)
+                       (:elapsed-ms progress)
+                       0)
+        top-line   (str (status-icon phase) " " run-id
+                        " [" (-> phase name str/upper-case) "] "
+                        (or chain-name "unknown")
+                        (when (and (number? step-index) (number? step-count) (pos? step-count))
+                          (str " · step " (inc step-index) "/" step-count
+                               (when (seq step-agent)
+                                 (str " " step-agent))))
+                        (when (pos? (long (or elapsed-ms 0)))
+                          (str " · " (quot (long elapsed-ms) 1000) "s")))
+        detail-line (when (seq last-work)
+                      (str "  " (task-preview last-work 70)))]
+    {:top-line top-line
+     :detail-line detail-line}))
+
+(defn- workflow-public-display
+  [data]
+  (let [progress    (or (:chain/progress data) {})
+        run-id      (or (:chain/run-id data)
+                        (:run-id progress))
+        chain-name  (or (get-in data [:chain/config :name])
+                        (:chain/name progress)
+                        (:chain-name progress))
+        phase       (or (:phase progress) :pending)
+        step-index  (:step-index progress)
+        step-count  (:step-count progress)
+        step-agent  (:step-agent progress)
+        elapsed-ms  (:elapsed-ms progress)
+        last-work   (:last-work progress)
+        top-line    (str (status-icon phase) " " run-id
+                         " [" (-> phase name str/upper-case) "] "
+                         (or chain-name "unknown")
+                         (when (and (number? step-index) (number? step-count) (pos? step-count))
+                           (str " · step " (inc step-index) "/" step-count
+                                (when (seq step-agent)
+                                  (str " " step-agent))))
+                         (when (pos? (long (or elapsed-ms 0)))
+                           (str " · " (quot (long elapsed-ms) 1000) "s")))
+        detail-line (when (seq last-work)
+                      (str "  " (task-preview last-work 70)))]
+    {:top-line top-line
+     :detail-line detail-line}))
+
+(defn- workflow-lines
+  [wf]
+  (let [run-id (str/trim (str (or (:psi.extension.workflow/id wf) "")))]
+    (-> (workflow-display/merged-display
+         (workflow-display-model wf)
+         (:chain/display (or (:psi.extension.workflow/data wf) {})))
+        (workflow-display/display-lines
+         :decorate-top-line
+         (fn [top-line]
+           (if (seq run-id)
+             {:text   (str top-line " · ✕ remove")
+              :action {:type :command
+                       :command (str "/chain-rm " run-id)}}
+             top-line))))))
 
 (defn- widget-lines []
-  (let [runs        (->> (tracked-runs)
-                         (sort-by :updated-at >)
+  (let [runs        (->> (chain-workflows)
+                         (sort-by (fn [wf]
+                                    (or (get-in wf [:psi.extension.workflow/data :chain/progress :updated-at])
+                                        (some-> (:psi.extension.workflow/updated-at wf) .toEpochMilli)
+                                        0))
+                                  >)
                          (take max-widget-runs))
         chain-names (->> @(:chains @state)
                          (map :name)
@@ -245,7 +308,7 @@
                          (when (seq chain-names)
                            (str " · " (str/join " · " chain-names))))]
     (vec (if (seq runs)
-           (cons header (map widget-run-line runs))
+           (cons header (mapcat workflow-lines runs))
            [header]))))
 
 (defn- prompt-contribution-content []
@@ -284,29 +347,19 @@
     (when-let [set-widget (:set-widget ui)]
       (set-widget widget-id (widget-placement) (widget-lines)))))
 
-(defn- trim-runs! []
-  (when-let [runs-a (:runs @state)]
-    (swap! runs-a
-           (fn [runs]
-             (let [keep-ids (->> (vals runs)
-                                 (sort-by :updated-at >)
-                                 (take (* 3 max-widget-runs))
-                                 (map :run-id)
-                                 set)]
-               (into {} (filter (fn [[rid _]] (contains? keep-ids rid)) runs)))))))
-
-(defn- upsert-run!
+(defn- update-workflow-progress!
   [run-id f]
-  (when-let [runs-a (:runs @state)]
-    (swap! runs-a
-           (fn [runs]
-             (let [existing (get runs run-id {:run-id run-id})
-                   updated  (-> (f existing)
-                                (assoc :run-id run-id
-                                       :updated-at (now-ms)))]
-               (assoc runs run-id updated))))
-    (trim-runs!)
-    (refresh-widget!)))
+  (when-let [wf (workflow-by-id run-id)]
+    (let [current  (or (get-in wf [:psi.extension.workflow/data :chain/progress])
+                       {:run-id run-id})
+          updated  (-> (f current)
+                       (assoc :run-id run-id
+                              :updated-at (now-ms)))]
+      (mutate! 'psi.extension.workflow/send-event
+               {:id    (str run-id)
+                :event :chain/progress
+                :data  {:progress updated}})
+      (refresh-widget!))))
 
 ;;; Extension query/mutate helpers
 
@@ -375,8 +428,6 @@
 
       (nil? wf)
       (do
-        (when-let [runs-a (:runs @state)]
-          (swap! runs-a dissoc sid))
         (refresh-widget!)
         {:ok false
          :error (str "No chain run \"" sid "\" found.")})
@@ -385,8 +436,6 @@
       (let [r (mutate! 'psi.extension.workflow/remove {:id sid})]
         (if (:psi.extension.workflow/removed? r)
           (do
-            (when-let [runs-a (:runs @state)]
-              (swap! runs-a dissoc sid))
             (refresh-widget!)
             {:ok true})
           {:ok false
@@ -537,15 +586,23 @@
 ;;; Workflow execution chart
 
 (defn- start-run-script
-  [_ _data]
-  [{:op :assign
-    :data {:workflow/error-message nil
-           :workflow/result nil
-           :chain/summary nil
-           :chain/success? nil
-           :chain/output nil
-           :chain/elapsed-ms 0
-           :chain/step-results []}}])
+  [_ data]
+  (let [input (:workflow/input data)
+        chain (:chain/config data)]
+    [{:op :assign
+      :data {:workflow/error-message nil
+             :workflow/result nil
+             :chain/summary nil
+             :chain/success? nil
+             :chain/output nil
+             :chain/elapsed-ms 0
+             :chain/step-results []
+             :chain/progress (initial-progress
+                              {:run-id     (or (:chain/run-id data)
+                                               (:run-id input))
+                               :chain-name (or (:name chain)
+                                               (get-in input [:chain :name]))
+                               :step-count (count (:steps chain))})}}]))
 
 (defn- run-invoke-params
   [_ data]
@@ -608,62 +665,51 @@
         on-step         (fn [idx status elapsed last-work]
                           (let [step-agent (:agent (nth steps idx nil))
                                 elapsed*   (- (now-ms) started-ms)]
-                            (upsert-run! run-id*
-                                         (fn [r]
-                                           (cond-> (merge r
-                                                          {:run-id     run-id*
-                                                           :chain-name (:name chain)
-                                                           :phase      (if (= status :error) :error :running)
-                                                           :step-count step-count
-                                                           :step-index idx
-                                                           :step-agent step-agent
-                                                           :last-work  (or last-work "")
-                                                           :elapsed-ms elapsed*})
-                                             (pos? (long (or elapsed 0)))
-                                             (assoc :step-elapsed-ms (long elapsed)))))))]
-    (upsert-run! run-id*
-                 (fn [r]
-                   (merge r
-                          {:run-id     run-id*
-                           :chain-name (:name chain)
-                           :phase      :running
-                           :step-count step-count
-                           :step-index nil
-                           :step-agent nil
-                           :last-work  ""
-                           :elapsed-ms 0
-                           :started-ms started-ms})))
+                            (update-workflow-progress!
+                             run-id*
+                             (fn [progress]
+                               (cond-> (merge progress
+                                              {:run-id     run-id*
+                                               :chain-name (:name chain)
+                                               :phase      (if (= status :error) :error :running)
+                                               :step-count step-count
+                                               :step-index idx
+                                               :step-agent step-agent
+                                               :last-work  (or last-work "")
+                                               :elapsed-ms elapsed*})
+                                 (pos? (long (or elapsed 0)))
+                                 (assoc :step-elapsed-ms (long elapsed)))))))]
     (try
       (let [result  (run-chain! chain agents agent-sessions ai-model* task on-step get-api-key-fn)
             success (:success result)
-            summary (chain-summary chain success (:elapsed result))]
-        (upsert-run! run-id*
-                     (fn [r]
-                       (-> r
-                           (assoc :phase (if success :done :error)
-                                  :elapsed-ms (long (or (:elapsed result) 0))
-                                  :step-index (when (pos? step-count)
-                                                (dec step-count))
-                                  :step-agent (when (pos? step-count)
-                                                (:agent (nth steps (dec step-count) nil)))))))
+            summary (chain-summary chain success (:elapsed result))
+            progress (-> (progress-snapshot (:chain/progress result))
+                         (merge {:run-id     run-id*
+                                 :chain-name (:name chain)
+                                 :phase      (if success :done :error)
+                                 :elapsed-ms (long (or (:elapsed result) 0))})
+                         (cond-> (pos? step-count)
+                           (assoc :step-index (dec step-count)
+                                  :step-agent (:agent (nth steps (dec step-count) nil)))))]
         {:ok?           success
          :output        (:output result)
          :elapsed-ms    (:elapsed result)
          :step-results  (:step-results result)
          :summary       summary
+         :progress      progress
          :error-message (when-not success (:output result))})
       (catch Exception e
-        (upsert-run! run-id*
-                     (fn [r]
-                       (assoc r
-                              :phase :error
-                              :last-work (str "Error: " (ex-message e))
-                              :elapsed-ms (- (now-ms) started-ms))))
         {:ok?           false
          :output        (str "Error: " (ex-message e))
          :elapsed-ms    (- (now-ms) started-ms)
          :step-results  []
          :summary       (chain-summary chain false (- (now-ms) started-ms))
+         :progress      {:run-id     run-id*
+                         :chain-name (:name chain)
+                         :phase      :error
+                         :last-work  (str "Error: " (ex-message e))
+                         :elapsed-ms (- (now-ms) started-ms)
+                         :updated-at (now-ms)}
          :error-message (ex-message e)}))))
 
 (defn- invoke-ok?
@@ -687,7 +733,9 @@
              :chain/success? true
              :chain/output (:output ev)
              :chain/elapsed-ms (long (or (:elapsed-ms ev) 0))
-             :chain/step-results (or (:step-results ev) [])}}]))
+             :chain/step-results (or (:step-results ev) [])
+             :chain/progress (or (:progress ev)
+                                 (:chain/progress data))}}]))
 
 (defn- error-script
   [_ data]
@@ -707,7 +755,15 @@
              :chain/success? false
              :chain/output (:output ev)
              :chain/elapsed-ms (long (or (:elapsed-ms ev) 0))
-             :chain/step-results (or (:step-results ev) [])}}]))
+             :chain/step-results (or (:step-results ev) [])
+             :chain/progress (or (:progress ev)
+                                 (:chain/progress data))}}]))
+
+(defn- progress-script
+  [_ data]
+  (let [progress (get-in data [:_event :data :progress])]
+    [{:op :assign
+      :data {:chain/progress (or progress (:chain/progress data))}}]))
 
 (def ^:private chain-workflow-chart
   (chart/statechart {:id :agent-chain-workflow}
@@ -720,6 +776,8 @@
                                             :type   :future
                                             :params run-invoke-params
                                             :src    run-chain-workflow-job})
+                               (ele/transition {:event :chain/progress :target :running}
+                                               (ele/script {:expr progress-script}))
                                (ele/transition {:event :done.invoke.runner
                                                 :target :done
                                                 :cond   invoke-ok?}
@@ -751,12 +809,18 @@
                                         :chain/agent-sessions agent-sessions
                                         :chain/on-finished    on-finished})
                     :public-data-fn  (fn [data]
-                                       (select-keys data
-                                                    [:chain/summary
-                                                     :chain/success?
-                                                     :chain/output
-                                                     :chain/elapsed-ms
-                                                     :chain/step-results]))})]
+                                       (let [base (select-keys data
+                                                               [:chain/run-id
+                                                                :chain/config
+                                                                :chain/summary
+                                                                :chain/success?
+                                                                :chain/output
+                                                                :chain/elapsed-ms
+                                                                :chain/step-results
+                                                                :chain/progress])]
+                                         (assoc base
+                                                :chain/display
+                                                (workflow-public-display base))))})]
     (when-let [e (:psi.extension.workflow/error r)]
       (timbre/warn "agent-chain workflow type registration error:" e))))
 
@@ -778,12 +842,12 @@
   "Run a named chain. Requires :chain and :task in args-map."
   [args-map _opts]
   (let [{:keys [all-agents query-fn]} @state
-        chain-name       (str/trim (or (get args-map "chain") ""))
-        agents           @all-agents
-        model            (when query-fn
-                           (:psi.agent-session/model
-                            (query-fn [:psi.agent-session/model])))
-        task             (str/trim (or (get args-map "task") ""))]
+        chain-name (str/trim (or (get args-map "chain") ""))
+        agents     @all-agents
+        model      (when query-fn
+                     (:psi.agent-session/model
+                      (query-fn [:psi.agent-session/model])))
+        task       (str/trim (or (get args-map "task") ""))]
     (cond
       (str/blank? chain-name)
       {:content  "chain is required. Use action=\"list\" to see available chains."
@@ -812,46 +876,28 @@
              :is-error true})
 
           :else
-          (let [run-id     (next-run-id!)
-                started-ms (now-ms)
-                _          (println (str "\n  ── Chain: " (:name chain) " (" run-id ") ──"))
-                _          (upsert-run! run-id
-                                        (fn [r]
-                                          (merge r
-                                                 {:run-id     run-id
-                                                  :chain-name (:name chain)
-                                                  :phase      :running
-                                                  :step-count (count (:steps chain))
-                                                  :step-index nil
-                                                  :step-agent nil
-                                                  :last-work  ""
-                                                  :elapsed-ms 0
-                                                  :started-ms started-ms})))
-                created    (mutate! 'psi.extension.workflow/create
-                                    {:type                  chain-workflow-type
-                                     :id                    run-id
-                                     :track-background-job? false
-                                     :meta                  {:chain-name (:name chain)}
-                                     :input                 {:run-id run-id
-                                                             :task   task
-                                                             :chain  chain
-                                                             :agents agents
-                                                             :model  model}})]
+          (let [run-id  (next-run-id!)
+                _       (println (str "\n  ── Chain: " (:name chain) " (" run-id ") ──"))
+                created (mutate! 'psi.extension.workflow/create
+                                 {:type                  chain-workflow-type
+                                  :id                    run-id
+                                  :track-background-job? false
+                                  :meta                  {:chain-name (:name chain)}
+                                  :input                 {:run-id run-id
+                                                          :task   task
+                                                          :chain  chain
+                                                          :agents agents
+                                                          :model  model}})]
             (if-not (:psi.extension.workflow/created? created)
-              (let [msg (str "Failed to start chain run: "
-                             (or (:psi.extension.workflow/error created)
-                                 "unknown error"))]
-                (upsert-run! run-id
-                             (fn [r]
-                               (assoc r
-                                      :phase :error
-                                      :last-work msg
-                                      :elapsed-ms (- (now-ms) started-ms))))
-                {:content  msg
-                 :is-error true})
-              {:content  (str "Chain run started: " run-id
-                              "\nMonitor with agent-chain action=\"list\" (or /chain).")
-               :is-error false})))))))
+              {:content  (str "Failed to start chain run: "
+                              (or (:psi.extension.workflow/error created)
+                                  "unknown error"))
+               :is-error true}
+              (do
+                (refresh-widget!)
+                {:content  (str "Chain run started: " run-id
+                                "\nMonitor with agent-chain action=\"list\" (or /chain).")
+                 :is-error false}))))))))
 
 (defn- action-list
   "List chains, agents, and recent runs. Returns content string."
@@ -885,19 +931,8 @@
     (if (empty? runs)
       (.append sb "  (none)\n")
       (doseq [wf runs]
-        (let [phase   (workflow-phase wf)
-              icon    (status-icon phase)
-              run-id  (:psi.extension.workflow/id wf)
-              chain-n (or (get-in wf [:psi.extension.workflow/meta :chain-name])
-                          (get-in wf [:psi.extension.workflow/input :chain :name])
-                          "unknown")
-              task    (get-in wf [:psi.extension.workflow/input :task])
-              elapsed (quot (or (:psi.extension.workflow/elapsed-ms wf) 0) 1000)]
-          (.append sb (str "  " icon " " run-id
-                           " [" (phase-label wf) "] "
-                           chain-n " · " elapsed "s\n"))
-          (when (seq task)
-            (.append sb (str "     " (task-preview task 100) "\n"))))))
+        (doseq [line (workflow-display/text-lines (workflow-lines wf))]
+          (.append sb (str "  " line "\n")))))
     {:content  (str sb)
      :is-error false}))
 
@@ -909,7 +944,6 @@
     (reset! (:all-agents @state) (scan-agent-dirs cwd))
     (reset! (:chains @state) (load-chains cwd))
     (reset! (:agent-sessions @state) {})
-    (reset! (:runs @state) {})
     (reset! (:next-run-id @state) 1)
     (refresh-widget!)
     (sync-prompt-contribution!)
@@ -948,7 +982,6 @@
         all-agents-a     (atom (scan-agent-dirs cwd))
         chains-a         (atom (load-chains cwd))
         agent-sessions-a (atom {})
-        runs-a           (atom {})
         next-run-id-a    (atom 1)
         query-fn         (:query api)
         mutate-fn        (:mutate api)
@@ -962,7 +995,6 @@
              :all-agents     all-agents-a
              :chains         chains-a
              :agent-sessions agent-sessions-a
-             :runs           runs-a
              :next-run-id    next-run-id-a
              :query-fn       query-fn
              :mutate-fn      mutate-fn
@@ -1021,7 +1053,6 @@
                (fn [_ev]
                  (clear-chain-workflows!)
                  (reset! agent-sessions-a {})
-                 (reset! runs-a {})
                  (reset! all-agents-a (scan-agent-dirs cwd))
                  (reset! chains-a (load-chains cwd))
                  (reset! next-run-id-a 1)

@@ -19,8 +19,11 @@
      nil            — not a command (pass through to agent)"
   (:require
    [clojure.string :as str]
+   [psi.agent-session.background-job-runtime :as bg-rt]
    [psi.agent-session.core :as session]
+   [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extensions :as ext]
+   [psi.agent-session.session-state :as ss]
    [psi.agent-session.prompt-templates :as pt]
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-core.core :as agent]
@@ -70,7 +73,7 @@
 (defn format-history
   "Return a history string for the current message list."
   [ctx]
-  (let [msgs (:messages (agent/get-data-in (:agent-ctx ctx)))]
+  (let [msgs (:messages (agent/get-data-in (ss/agent-ctx-in ctx)))]
     (str "── Message history ────────────────────\n"
          (if (empty? msgs)
            "  (empty)"
@@ -106,7 +109,7 @@
 (defn format-help
   "Return a help string listing all available commands."
   [ctx]
-  (let [sd            (session/get-session-data-in ctx)
+  (let [sd            (ss/get-session-data-in ctx)
         templates     (:prompt-templates sd)
         loaded-skills (:skills sd)
         ext-cmds      (ext/all-commands-in (:extension-registry ctx))]
@@ -158,7 +161,7 @@
 (defn format-prompts
   "Return a string listing available prompt templates."
   [ctx]
-  (let [templates (:prompt-templates (session/get-session-data-in ctx))]
+  (let [templates (:prompt-templates (ss/get-session-data-in ctx))]
     (str "── Prompt Templates ───────────────────\n"
          (if (empty? templates)
            "  (none discovered)"
@@ -176,7 +179,7 @@
 (defn format-skills
   "Return a string listing available skills."
   [ctx]
-  (let [loaded-skills (:skills (session/get-session-data-in ctx))]
+  (let [loaded-skills (:skills (ss/get-session-data-in ctx))]
     (str "── Skills ─────────────────────────────\n"
          (if (empty? loaded-skills)
            "  (none discovered)"
@@ -247,8 +250,8 @@
 
 (defn- remember-provenance
   [ctx]
-  (let [session-id (get-in (session/get-session-data-in ctx) [:session-id])
-        cwd        (session/effective-cwd-in ctx)
+  (let [session-id (get-in (ss/get-session-data-in ctx) [:session-id])
+        cwd        (ss/effective-cwd-in ctx)
         git-branch (try
                      (:psi.agent-session/git-branch
                       (session/query-in ctx [:psi.agent-session/git-branch]))
@@ -386,13 +389,12 @@
         {:type :text
          :message "[/tree is only available in TUI mode (--tui)]"}
         (let [arg        (-> (str/replace trimmed #"^/tree\s*" "") str/trim)
-              index      (session/get-context-index-in ctx)
-              current-id (:session-id (session/get-session-data-in ctx))
-              active-id  (or (:active-session-id index) current-id)
-              sessions0 (vec (or (session/list-context-sessions-in ctx) []))
+              current-id (:session-id (ss/get-session-data-in ctx))
+              active-id  (or (ss/active-session-id-in ctx) current-id)
+              sessions0 (vec (or (ss/list-context-sessions-in ctx) []))
               sessions  (if (seq sessions0)
                           sessions0
-                          [(select-keys (session/get-session-data-in ctx)
+                          [(select-keys (ss/get-session-data-in ctx)
                                         [:session-id :session-name :worktree-path])])]
           (cond
             (str/blank? arg)
@@ -456,10 +458,10 @@
       (let [tail      (-> (str/replace trimmed #"^/jobs\s*" "") str/trim)
             statuses  (parse-job-statuses tail)
             invalid?  (and (not (str/blank? tail)) (empty? statuses))
-            thread-id (:session-id (session/get-session-data-in ctx))
+            thread-id (:session-id (ss/get-session-data-in ctx))
             jobs      (if statuses
-                        (session/list-background-jobs-in! ctx thread-id statuses)
-                        (session/list-background-jobs-in! ctx thread-id))]
+                        (bg-rt/list-background-jobs-in! ctx thread-id statuses)
+                        (bg-rt/list-background-jobs-in! ctx thread-id))]
         (if invalid?
           {:type :text :message "Usage: /jobs [status ...]"}
           {:type :text
@@ -478,10 +480,10 @@
       (or (= trimmed "/job")
           (str/starts-with? trimmed "/job "))
       (let [job-id    (-> (str/replace trimmed #"^/job\s*" "") str/trim)
-            thread-id (:session-id (session/get-session-data-in ctx))]
+            thread-id (:session-id (ss/get-session-data-in ctx))]
         (if (str/blank? job-id)
           {:type :text :message "Usage: /job <job-id>"}
-          (let [job (session/inspect-background-job-in! ctx thread-id job-id)]
+          (let [job (bg-rt/inspect-background-job-in! ctx thread-id job-id)]
             {:type :text
              :message (str "── Background job ──────────────────────\n"
                            (safe-pr-str job)
@@ -491,10 +493,10 @@
       (or (= trimmed "/cancel-job")
           (str/starts-with? trimmed "/cancel-job "))
       (let [job-id    (-> (str/replace trimmed #"^/cancel-job\s*" "") str/trim)
-            thread-id (:session-id (session/get-session-data-in ctx))]
+            thread-id (:session-id (ss/get-session-data-in ctx))]
         (if (str/blank? job-id)
           {:type :text :message "Usage: /cancel-job <job-id>"}
-          (let [job (session/cancel-background-job-in! ctx thread-id job-id :user)]
+          (let [job (bg-rt/cancel-background-job-in! ctx thread-id job-id :user)]
             {:type :text
              :message (str "Cancellation requested for " job-id
                            " (status=" (name (:status job)) ")")})))
@@ -520,7 +522,7 @@
       (let [args (-> (str/replace trimmed #"^/model\s*" "")
                      str/trim)]
         (if (str/blank? args)
-          (let [m (:model (session/get-session-data-in ctx))]
+          (let [m (:model (ss/get-session-data-in ctx))]
             {:type :text
              :message (if m
                         (str "Current model: " (:provider m) " " (:id m))
@@ -538,11 +540,11 @@
                         model {:provider provider-str
                                :id (:id resolved)
                                :reasoning (:supports-reasoning resolved)}
-                        sd (session/set-model-in! ctx model)]
+                        result (dispatch/dispatch! ctx :session/set-model {:model model} {:origin :core})]
                     {:type :text
                      :message (str "✓ Model set to "
-                                   (get-in sd [:model :provider]) " "
-                                   (get-in sd [:model :id]))})))))))
+                                   (get-in result [:model :provider]) " "
+                                   (get-in result [:model :id]))})))))))
 
       ;; Thinking level
       (or (= trimmed "/thinking")
@@ -550,7 +552,7 @@
       (let [args (-> (str/replace trimmed #"^/thinking\s*" "")
                      str/trim)]
         (if (str/blank? args)
-          (let [level (:thinking-level (session/get-session-data-in ctx))]
+          (let [level (:thinking-level (ss/get-session-data-in ctx))]
             {:type :text
              :message (str "Current thinking level: " (name (or level :off)))})
           (let [tokens (str/split args #"\s+")]
@@ -562,10 +564,10 @@
                 (if-not (known-thinking-level? level)
                   {:type :text
                    :message (unknown-thinking-level-message level-input)}
-                  (let [sd (session/set-thinking-level-in! ctx level)]
+                  (let [result (dispatch/dispatch! ctx :session/set-thinking-level {:level level} {:origin :core})]
                     {:type :text
                      :message (str "✓ Thinking level set to "
-                                   (name (:thinking-level sd)))})))))))
+                                   (name (:thinking-level result)))})))))))
 
       ;; Login
       (or (= trimmed "/login")

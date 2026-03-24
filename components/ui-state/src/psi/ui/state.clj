@@ -146,17 +146,24 @@
 ;; Dialog creation (blocking)
 ;; ============================================================
 
+(defn- request-dialog!
+  "Request a dialog and block on its promise.
+   Returns `headless-default` when `ui-state-atom` is nil."
+  [ui-state-atom headless-default kind ext-id fields]
+  (if (nil? ui-state-atom)
+    headless-default
+    (let [dialog (make-dialog kind ext-id fields)]
+      (enqueue-dialog! ui-state-atom dialog)
+      (deref (:promise dialog)))))
+
 (defn request-confirm!
   "Request a confirm dialog. Blocks until the user responds.
    Returns true (confirmed) or false (cancelled).
    In headless mode (ui-state-atom is nil), returns false."
   [ui-state-atom ext-id title message]
-  (if (nil? ui-state-atom)
-    false
-    (let [dialog (make-dialog :confirm ext-id {:title title :message message})]
-      (enqueue-dialog! ui-state-atom dialog)
-      (let [result (deref (:promise dialog))]
-        (if (nil? result) false result)))))
+  (let [result (request-dialog! ui-state-atom false :confirm ext-id
+                                {:title title :message message})]
+    (if (nil? result) false result)))
 
 (defn request-select!
   "Request a select dialog. Blocks until the user responds.
@@ -164,22 +171,16 @@
    Returns the selected :value string, or nil if cancelled.
    In headless mode, returns nil."
   [ui-state-atom ext-id title options]
-  (if (nil? ui-state-atom)
-    nil
-    (let [dialog (make-dialog :select ext-id {:title title :options options})]
-      (enqueue-dialog! ui-state-atom dialog)
-      (deref (:promise dialog)))))
+  (request-dialog! ui-state-atom nil :select ext-id
+                   {:title title :options options}))
 
 (defn request-input!
   "Request an input dialog. Blocks until the user responds.
    Returns the entered text, or nil if cancelled.
    In headless mode, returns nil."
   [ui-state-atom ext-id title placeholder]
-  (if (nil? ui-state-atom)
-    nil
-    (let [dialog (make-dialog :input ext-id {:title title :placeholder placeholder})]
-      (enqueue-dialog! ui-state-atom dialog)
-      (deref (:promise dialog)))))
+  (request-dialog! ui-state-atom nil :input ext-id
+                   {:title title :placeholder placeholder}))
 
 ;; ============================================================
 ;; Widgets
@@ -304,6 +305,21 @@
 (def ^:private default-auto-dismiss-ms 5000)
 (def ^:private default-max-visible 3)
 
+(defn- dismiss-notifications!
+  "Dismiss notifications matching `pred`.
+   Returns the number dismissed."
+  [ui-state-atom pred]
+  (let [count-a (atom 0)]
+    (swap! ui-state-atom update :notifications
+           (fn [ns]
+             (mapv (fn [n]
+                     (if (pred n)
+                       (do (swap! count-a inc)
+                           (assoc n :dismissed? true))
+                       n))
+                   ns)))
+    @count-a))
+
 (defn notify!
   "Create a non-blocking notification.
    `level` is :info, :warning, or :error.
@@ -324,19 +340,10 @@
   ([ui-state-atom] (dismiss-expired! ui-state-atom default-auto-dismiss-ms))
   ([ui-state-atom max-age-ms]
    (when ui-state-atom
-     (let [now      (System/currentTimeMillis)
-           expired? (fn [n] (and (not (:dismissed? n))
-                                 (> (- now (:created-at n)) max-age-ms)))
-           count-a  (atom 0)]
-       (swap! ui-state-atom update :notifications
-              (fn [ns]
-                (mapv (fn [n]
-                        (if (expired? n)
-                          (do (swap! count-a inc)
-                              (assoc n :dismissed? true))
-                          n))
-                      ns)))
-       @count-a))))
+     (let [now (System/currentTimeMillis)]
+       (dismiss-notifications! ui-state-atom
+                               #(and (not (:dismissed? %))
+                                     (> (- now (:created-at %)) max-age-ms)))))))
 
 (defn visible-notifications
   "Return non-dismissed notifications, capped at `max-visible`."
@@ -356,16 +363,11 @@
    (when ui-state-atom
      (let [visible  (->> (:notifications @ui-state-atom) (remove :dismissed?))
            overflow (max 0 (- (count visible) max-visible))]
-       (when (pos? overflow)
+       (if (pos? overflow)
          (let [to-dismiss (set (map :id (take overflow visible)))]
-           (swap! ui-state-atom update :notifications
-                  (fn [ns]
-                    (mapv (fn [n]
-                            (if (to-dismiss (:id n))
-                              (assoc n :dismissed? true)
-                              n))
-                          ns)))))
-       overflow))))
+           (dismiss-notifications! ui-state-atom
+                                   #(to-dismiss (:id %))))
+         overflow)))))
 
 ;; ============================================================
 ;; Render registry
@@ -535,21 +537,33 @@
 ;; EQL snapshot (for resolvers — excludes fns and promises)
 ;; ============================================================
 
+(defn snapshot-state
+  "Return a serialisable snapshot of raw UI state.
+   Strips promises and render fns."
+  [s]
+  (when s
+    {:dialog-queue-empty?    (and (nil? (get-in s [:dialog-queue :active]))
+                                  (empty? (get-in s [:dialog-queue :pending])))
+     :active-dialog          (when-let [d (get-in s [:dialog-queue :active])]
+                               (dissoc d :promise))
+     :pending-dialog-count   (count (get-in s [:dialog-queue :pending]))
+     :widgets                (vec (vals (:widgets s)))
+     :statuses               (vec (vals (:statuses s)))
+     :visible-notifications  (->> (:notifications s)
+                                  (remove :dismissed?)
+                                  (sort-by :created-at)
+                                  reverse
+                                  (take default-max-visible)
+                                  reverse
+                                  vec)
+     :tool-renderers         (mapv #(dissoc % :render-call-fn :render-result-fn)
+                                   (vals (:tool-renderers s)))
+     :message-renderers      (mapv #(dissoc % :render-fn)
+                                   (vals (:message-renderers s)))}))
+
 (defn snapshot
   "Return a serialisable snapshot of UI state for EQL resolvers.
    Strips promises and render fns."
   [ui-state-atom]
   (when ui-state-atom
-    (let [s @ui-state-atom]
-      {:dialog-queue-empty?    (and (nil? (get-in s [:dialog-queue :active]))
-                                    (empty? (get-in s [:dialog-queue :pending])))
-       :active-dialog          (when-let [d (get-in s [:dialog-queue :active])]
-                                 (dissoc d :promise))
-       :pending-dialog-count   (count (get-in s [:dialog-queue :pending]))
-       :widgets                (vec (vals (:widgets s)))
-       :statuses               (vec (vals (:statuses s)))
-       :visible-notifications  (visible-notifications ui-state-atom)
-       :tool-renderers         (mapv #(dissoc % :render-call-fn :render-result-fn)
-                                     (vals (:tool-renderers s)))
-       :message-renderers      (mapv #(dissoc % :render-fn)
-                                     (vals (:message-renderers s)))})))
+    (snapshot-state @ui-state-atom)))

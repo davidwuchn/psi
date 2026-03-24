@@ -61,6 +61,10 @@ entity AgentSession {
     streaming_state: idle | streaming_assistant | streaming_tool
     status: active | paused | completed | failed
 
+    -- Per-session runtime handles, stored in canonical state
+    agent_core: Any
+    statechart_session_id: String
+
     is_root: parent_session_id = null
     has_parent: parent_session_id != null
 }
@@ -128,8 +132,24 @@ rule RootSessionCreatedInContext {
         name: name,
         summary_line: null,
         streaming_state: idle,
-        status: active
+        status: active,
+        agent_core: NewAgentCore(),
+        statechart_session_id: NewStatechartSessionId()
     )
+}
+
+rule SessionCreationDoesNotDisturbSiblings {
+    when: SessionCreateRequested(project_id, worktree_path, system_prompt, name)
+    requires: exists ctx in AgentContexts where ctx.project_id = project_id
+
+    ensures:
+        for s in AgentSessions where s.context_id = ctx.id and s.status = active:
+            s.streaming_state = unchanged
+            s.agent_core = unchanged
+
+    @guidance
+        -- Creating a new session has no effect on existing sessions in the
+        -- same context. Each session's runtime handles are independent.
 }
 
 rule SpawnedSessionInheritsCacheBreakpointPolicy {
@@ -219,6 +239,17 @@ surface SessionCoreApi {
     @guarantee ActiveSessionIsFocusNotExistence
         -- active_session_id is the default routing focus for prompts and UI selection.
         -- Switching focus does not destroy or reset sibling sessions.
+
+    @guarantee ConcurrentSessionExecution
+        -- Multiple sessions within a context may execute concurrently.
+        -- Each session owns its own agent_core and statechart_session_id.
+        -- Concurrent sessions share process-scoped resources (extensions, registries,
+        -- config) but do not share per-session runtime handles or mutable session state.
+
+    @guarantee SessionIdIsTheRoutingHandle
+        -- Consumers (TUI, extensions, RPC) address sessions by SessionId only.
+        -- They do not hold or receive the process-scoped runtime context.
+        -- All operations route through a service surface parameterized by SessionId.
 
     @guarantee SessionRunsInWorktreeContext
         -- Every context is bound to exactly one project/worktree pair.

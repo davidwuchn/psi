@@ -1,0 +1,1083 @@
+(ns psi.agent-session.dispatch-handlers
+  "Dispatch handler registration for the agent-session pipeline.
+   All handler registration is called once during context creation.
+
+   This namespace registers handlers for:
+   - Statechart action events (on-streaming-entered, on-agent-done, etc.)
+   - Session mutation events (session/set-model, session/set-session-name, etc.)
+   - Resume fallback handler"
+  (:require
+   [clojure.java.io :as io]
+   [psi.agent-core.core :as agent]
+   [psi.agent-session.dispatch :as dispatch]
+   [psi.agent-session.session :as session-data]
+   [psi.agent-session.session-state :as session]
+   [psi.agent-session.statechart :as sc]
+   [psi.agent-session.system-prompt :as sys-prompt]))
+
+;;; Thread utilities
+
+(defn daemon-thread
+  "Start a daemon thread running f. Returns the Thread."
+  [f]
+  (doto (Thread. ^Runnable f)
+    (.setDaemon true)
+    (.start)))
+
+;;; Auto-compaction helpers
+
+(defn- last-assistant-message-from-event
+  [event]
+  (let [m (last (:messages event))]
+    (when (= "assistant" (:role m))
+      m)))
+
+(defn- overflow-error-assistant?
+  [msg]
+  (let [stop-reason (or (:stop-reason msg)
+                        (:stopReason msg))]
+    (and (map? msg)
+         (or (= :error stop-reason)
+             (= "error" stop-reason))
+         (session-data/context-overflow-error? (:error-message msg)))))
+
+(defn- threshold-auto-compact?
+  [session-data config]
+  (let [tokens   (:context-tokens session-data)
+        window   (:context-window session-data)
+        reserve  (long (or (:auto-compaction-reserve-tokens config) 16384))
+        cutoff   (when (and (number? window) (pos? window))
+                   (max 0 (- window reserve)))]
+    (and (number? tokens)
+         (number? cutoff)
+         (> tokens cutoff))))
+
+(defn- auto-compaction-reason
+  "Return :overflow, :threshold, or nil from statechart working-memory `data`."
+  [data]
+  (let [sd     (session/get-session-data-in (:ctx data))
+        config (:config data)
+        event  (:pending-agent-event data)
+        last-m (last-assistant-message-from-event event)]
+    (cond
+      (and (:auto-compaction-enabled sd)
+           (overflow-error-assistant? last-m))
+      :overflow
+
+      (and (:auto-compaction-enabled sd)
+           (threshold-auto-compact? sd config)
+           (let [stop-reason (or (:stop-reason last-m)
+                                 (:stopReason last-m))]
+             (not (or (= :error stop-reason)
+                      (= "error" stop-reason)))))
+      :threshold
+
+      :else
+      nil)))
+
+(defn drop-trailing-overflow-error!
+  "Remove a trailing overflow-error assistant message from the agent context.
+   Called via ctx :drop-trailing-overflow-error-fn."
+  [ctx]
+  (let [messages (:messages (agent/get-data-in (session/agent-ctx-in ctx)))
+        last-msg (last messages)]
+    (when (overflow-error-assistant? last-msg)
+      (agent/replace-messages-in! (session/agent-ctx-in ctx) (vec (butlast messages))))))
+
+;;; Prompt contribution pure helpers
+
+(defn- normalize-prompt-contribution
+  [ext-path id contribution]
+  (let [now (java.time.Instant/now)
+        c   (or contribution {})]
+    {:id         (str id)
+     :ext-path   (str ext-path)
+     :section    (some-> (:section c) str)
+     :content    (str (or (:content c) ""))
+     :priority   (int (or (:priority c) 1000))
+     :enabled    (if (contains? c :enabled) (boolean (:enabled c)) true)
+     :created-at now
+     :updated-at now}))
+
+(defn- merge-prompt-contribution-patch
+  [existing patch]
+  (let [p (or patch {})
+        now (java.time.Instant/now)]
+    (cond-> (assoc existing :updated-at now)
+      (contains? p :section)  (assoc :section (some-> (:section p) str))
+      (contains? p :content)  (assoc :content (str (or (:content p) "")))
+      (contains? p :priority) (assoc :priority (int (or (:priority p) 1000)))
+      (contains? p :enabled)  (assoc :enabled (boolean (:enabled p))))))
+
+;;; State update pure helpers
+
+(defn- session-data-path [sid] [:agent-session :sessions sid :data])
+(defn- session-journal-path [sid] [:agent-session :sessions sid :persistence :journal])
+(defn- session-flush-state-path [sid] [:agent-session :sessions sid :persistence :flush-state])
+(defn- session-telemetry-path [sid k] [:agent-session :sessions sid :telemetry k])
+(defn- session-turn-ctx-path [sid] [:agent-session :sessions sid :turn :ctx])
+
+(defn- update-runtime-rpc-trace-state
+  [state enabled? file]
+  (assoc-in state [:runtime :rpc-trace] {:enabled? enabled?
+                                         :file file}))
+
+(defn- update-nrepl-runtime-state
+  [state runtime]
+  (assoc-in state [:runtime :nrepl] runtime))
+
+(defn- update-oauth-projection-state
+  [state oauth]
+  (assoc-in state [:oauth] oauth))
+
+(defn- update-recursion-projection-state
+  [state recursion-state]
+  (assoc-in state [:recursion] recursion-state))
+
+(defn- update-background-jobs-store-state
+  [state update-fn]
+  (if (fn? update-fn)
+    (update-in state [:background-jobs :store] update-fn)
+    state))
+
+(defn- update-context-active-session-state
+  [state session-id]
+  (assoc-in state [:agent-session :active-session-id] session-id))
+
+(defn- initialize-resume-missing-state
+  [state current-sd session-path]
+  (let [next-sd (assoc current-sd :session-file session-path)
+        sid     (:session-id next-sd)]
+    (-> state
+        (assoc-in (session-data-path sid) next-sd)
+        (assoc-in [:agent-session :active-session-id] sid)
+        (assoc-in (session-journal-path sid) [])
+        (assoc-in (session-flush-state-path sid) {:flushed? false
+                                                  :session-file (io/file session-path)})
+        (assoc-in [:agent-session :sessions sid :telemetry]
+                  {:tool-output-stats {:calls []
+                                       :aggregates {:total-context-bytes 0
+                                                    :by-tool {}
+                                                    :limit-hits-by-tool {}}}
+                   :tool-call-attempts []
+                   :tool-lifecycle-events []
+                   :provider-requests []
+                   :provider-replies []})
+        (assoc-in [:agent-session :sessions sid :turn] {:ctx nil}))))
+
+(defn- prune-ephemeral-sessions
+  "Remove ephemeral seed sessions from the sessions map.
+   The initial seed created by create-context is transient and should not
+   persist in the multi-session registry once real sessions are registered."
+  [state]
+  (update-in state [:agent-session :sessions]
+             (fn [sessions]
+               (into {} (remove (fn [[_sid entry]]
+                                  (get-in entry [:data :ephemeral-seed?]))
+                                sessions)))))
+
+(defn- carry-runtime-handles
+  "Copy :agent-ctx and :sc-session-id from the current active session to a new session entry."
+  [state new-session-id]
+  (let [old-sid   (get-in state [:agent-session :active-session-id])
+        agent-ctx (get-in state [:agent-session :sessions old-sid :agent-ctx])
+        sc-sid    (get-in state [:agent-session :sessions old-sid :sc-session-id])]
+    (-> state
+        (assoc-in [:agent-session :sessions new-session-id :agent-ctx] agent-ctx)
+        (assoc-in [:agent-session :sessions new-session-id :sc-session-id] sc-sid))))
+
+(defn- initialize-new-session-state
+  [state current-sd {:keys [new-session-id worktree-path session-name spawn-mode session-file]}]
+  (let [next-sd (assoc current-sd
+                       :session-id new-session-id
+                       :session-file session-file
+                       :session-name session-name
+                       :worktree-path worktree-path
+                       :parent-session-id nil
+                       :parent-session-path nil
+                       :spawn-mode (or spawn-mode :new-root)
+                       :interrupt-pending false
+                       :interrupt-requested-at nil
+                       :steering-messages []
+                       :follow-up-messages []
+                       :retry-attempt 0
+                       :startup-prompts []
+                       :startup-bootstrap-completed? false
+                       :startup-bootstrap-started-at nil
+                       :startup-bootstrap-completed-at nil
+                       :startup-message-ids []
+                       :ephemeral-seed? false
+                       :created-at (java.time.Instant/now))]
+    (cond-> (-> state
+                (carry-runtime-handles new-session-id)
+                prune-ephemeral-sessions
+                (assoc-in (session-data-path new-session-id) next-sd)
+                (assoc-in [:agent-session :active-session-id] new-session-id)
+                (assoc-in (session-journal-path new-session-id) [])
+                (assoc-in [:agent-session :sessions new-session-id :telemetry]
+                          {:tool-output-stats {:calls []
+                                               :aggregates {:total-context-bytes 0
+                                                            :by-tool {}
+                                                            :limit-hits-by-tool {}}}
+                           :tool-call-attempts []
+                           :tool-lifecycle-events []
+                           :provider-requests []
+                           :provider-replies []})
+                (assoc-in [:agent-session :sessions new-session-id :turn] {:ctx nil}))
+      session-file
+      (assoc-in (session-flush-state-path new-session-id) {:flushed? false
+                                                           :session-file (io/file session-file)}))))
+
+(defn- initialize-resumed-session-state
+  [state current-sd {:keys [session-id session-path header entries model thinking-level]}]
+  (let [session-name (some #(when (= :session-info (:kind %))
+                              (get-in % [:data :name]))
+                           (rseq (vec entries)))
+        next-sd      (assoc current-sd
+                            :session-id session-id
+                            :session-file session-path
+                            :session-name session-name
+                            :worktree-path (or (:worktree-path header) (:cwd header))
+                            :parent-session-id (:parent-session-id header)
+                            :parent-session-path (:parent-session header)
+                            :interrupt-pending false
+                            :interrupt-requested-at nil
+                            :model model
+                            :thinking-level thinking-level)]
+    (-> state
+        (carry-runtime-handles session-id)
+        prune-ephemeral-sessions
+        (assoc-in (session-journal-path session-id) (vec entries))
+        (assoc-in (session-flush-state-path session-id) {:flushed? true
+                                                         :session-file (io/file session-path)})
+        (assoc-in (session-data-path session-id) next-sd)
+        (assoc-in [:agent-session :active-session-id] session-id)
+        (assoc-in [:agent-session :sessions session-id :telemetry]
+                  {:tool-output-stats {:calls []
+                                       :aggregates {:total-context-bytes 0
+                                                    :by-tool {}
+                                                    :limit-hits-by-tool {}}}
+                   :tool-call-attempts []
+                   :tool-lifecycle-events []
+                   :provider-requests []
+                   :provider-replies []})
+        (assoc-in [:agent-session :sessions session-id :turn] {:ctx nil}))))
+
+(defn- initialize-forked-session-state
+  [state parent-sd {:keys [new-session-id branch-entries session-file]}]
+  (let [parent-session-id   (:session-id parent-sd)
+        parent-session-file (:session-file parent-sd)
+        next-sd             (assoc parent-sd
+                                   :session-id new-session-id
+                                   :parent-session-id parent-session-id
+                                   :parent-session-path parent-session-file
+                                   :session-file session-file
+                                   :startup-prompts []
+                                   :startup-bootstrap-completed? false
+                                   :startup-bootstrap-started-at nil
+                                   :startup-bootstrap-completed-at nil
+                                   :startup-message-ids [])]
+    ;; carry-runtime-handles must run before any pruning as active session may be ephemeral
+    (cond-> (-> state
+                (carry-runtime-handles new-session-id)
+                (assoc-in (session-journal-path new-session-id) branch-entries)
+                (assoc-in (session-data-path new-session-id) next-sd)
+                (assoc-in [:agent-session :active-session-id] new-session-id)
+                (assoc-in [:agent-session :sessions new-session-id :telemetry]
+                          {:tool-output-stats {:calls []
+                                               :aggregates {:total-context-bytes 0
+                                                            :by-tool {}
+                                                            :limit-hits-by-tool {}}}
+                           :tool-call-attempts []
+                           :tool-lifecycle-events []
+                           :provider-requests []
+                           :provider-replies []})
+                (assoc-in [:agent-session :sessions new-session-id :turn] {:ctx nil}))
+      session-file
+      (assoc-in (session-flush-state-path new-session-id) {:flushed? true
+                                                           :session-file (io/file session-file)}))))
+
+;;; Handler registration
+
+(defn- register-statechart-action-handlers!
+  "Register event handlers for all statechart action keys.
+   Each handler receives (ctx, data) and performs the action.
+   Called once during context creation.
+   Handlers are context-independent — they use the ctx passed at dispatch time,
+   not a closed-over reference.
+
+   All statechart-action handlers return pure `:root-state-update` / `:effects`
+   results."
+  [_ctx]
+  (dispatch/register-handler!
+   :on-streaming-entered
+   {}
+   (fn [_ctx _data]
+     {:root-state-update (session/session-update #(assoc % :is-streaming true))}))
+
+  (dispatch/register-handler!
+   :on-agent-done
+   {}
+   (fn [_ctx _data]
+     {:root-state-update (session/session-update #(assoc %
+                                                         :is-streaming false
+                                                         :retry-attempt 0
+                                                         :interrupt-pending false
+                                                         :interrupt-requested-at nil))
+      :effects [{:effect/type :runtime/mark-workflow-jobs-terminal}
+                {:effect/type :runtime/emit-background-job-terminal-messages}]}))
+
+  (dispatch/register-handler!
+   :on-abort
+   {}
+   (fn [_ctx _data]
+     {:root-state-update (session/session-update #(assoc %
+                                                         :is-streaming false
+                                                         :interrupt-pending false
+                                                         :interrupt-requested-at nil))
+      :effects [{:effect/type :runtime/agent-abort}]}))
+
+  (dispatch/register-handler!
+   :on-auto-compact-triggered
+   {}
+   (fn [_ctx data]
+     (let [reason      (or (some-> data auto-compaction-reason) :threshold)
+           will-retry? (= :overflow reason)]
+       {:root-state-update (session/session-update #(assoc % :is-compacting true))
+        :effects [{:effect/type :runtime/auto-compact-workflow
+                   :reason reason
+                   :will-retry? will-retry?}]})))
+
+  (dispatch/register-handler!
+   :on-compacting-entered
+   {}
+   (fn [_ctx _data]
+     {:root-state-update (session/session-update #(assoc % :is-compacting true))}))
+
+  (dispatch/register-handler!
+   :on-compact-done
+   {}
+   (fn [_ctx _data]
+     {:root-state-update (session/session-update #(assoc % :is-compacting false))}))
+
+  (dispatch/register-handler!
+   :on-retry-triggered
+   {}
+   (fn [ctx _data]
+     (let [sd       (session/get-session-data-in ctx)
+           attempt  (:retry-attempt sd)
+           base-ms  (get-in ctx [:config :auto-retry-base-delay-ms] 2000)
+           max-ms   (get-in ctx [:config :auto-retry-max-delay-ms] 60000)
+           delay-ms (session-data/exponential-backoff-ms attempt base-ms max-ms)]
+       {:root-state-update (session/session-update #(update % :retry-attempt inc))
+        :effects [{:effect/type :runtime/schedule-thread-sleep-send-event
+                   :delay-ms delay-ms
+                   :event :session/retry-done}]})))
+
+  (dispatch/register-handler!
+   :on-retrying-entered
+   {}
+   (fn [_ctx _data]
+     nil)) ;; retry-attempt increment handled in :on-retry-triggered
+
+  (dispatch/register-handler!
+   :on-retry-resume
+   {}
+   (fn [_ctx _data]
+     {:effects [{:effect/type :runtime/agent-start-loop}]})))
+
+(defn- register-session-mutation-handlers!
+  "Register dispatch handlers for public session mutation events.
+   This broadens dispatch coverage beyond statechart actions."
+  [_ctx]
+  (dispatch/register-handler!
+   :session/manual-compaction-execute
+   {}
+   (fn [ctx {:keys [custom-instructions]}]
+     ;; Intentional narrow synchronous boundary for the manual compaction
+     ;; vertical slice. The surrounding statechart transitions route through
+     ;; dispatch; the compaction execution itself remains synchronous here so
+     ;; callers can receive the compaction result directly.
+     ;; execute-compaction-fn is set on ctx by core.clj to avoid a circular dep.
+     ((:execute-compaction-fn ctx) ctx custom-instructions)))
+
+  (dispatch/register-handler!
+   :session/prompt-submit
+   {}
+   (fn [_ctx {:keys [user-msg]}]
+     {:effects [{:effect/type :persist/journal-append-message-entry
+                 :message user-msg}]
+      :return {:submitted? true}}))
+
+  (dispatch/register-handler!
+   :session/prompt-execute
+   {}
+   (fn [_ctx {:keys [user-msg]}]
+     {:effects [{:effect/type :runtime/agent-start-loop-with-messages
+                 :messages [user-msg]}
+                {:effect/type :runtime/reconcile-and-emit-background-job-terminals}]}))
+
+  (dispatch/register-handler!
+   :session/set-auto-compaction
+   {}
+   (fn [_ctx {:keys [enabled?]}]
+     (let [v (boolean enabled?)]
+       {:root-state-update (session/session-update #(assoc % :auto-compaction-enabled v))
+        :return {:auto-compaction-enabled v}})))
+
+  (dispatch/register-handler!
+   :session/set-auto-retry
+   {}
+   (fn [_ctx {:keys [enabled?]}]
+     (let [v (boolean enabled?)]
+       {:root-state-update (session/session-update #(assoc % :auto-retry-enabled v))
+        :return {:auto-retry-enabled v}})))
+
+  (dispatch/register-handler!
+   :session/set-ui-type
+   {}
+   (fn [_ctx {:keys [ui-type]}]
+     {:root-state-update (session/session-update #(assoc % :ui-type ui-type))}))
+
+  (dispatch/register-handler!
+   :session/set-model
+   {}
+   (fn [ctx {:keys [model]}]
+     (let [clamped-level (session-data/clamp-thinking-level
+                          (:thinking-level (session/get-session-data-in ctx))
+                          model)]
+       {:root-state-update (session/session-update #(assoc % :model model :thinking-level clamped-level))
+        :return {:model model :thinking-level clamped-level}
+        :effects [{:effect/type :runtime/agent-set-model
+                   :model model}
+                  {:effect/type :persist/journal-append-model-entry
+                   :provider (:provider model)
+                   :model-id (:id model)}
+                  {:effect/type :persist/project-prefs-update
+                   :prefs {:model-provider (:provider model)
+                           :model-id (:id model)
+                           :thinking-level clamped-level}}
+                  {:effect/type :notify/extension-dispatch
+                   :event-name "model_select"
+                   :payload {:model model :source :set}}]})))
+
+  (dispatch/register-handler!
+   :session/set-thinking-level
+   {}
+   (fn [ctx {:keys [level]}]
+     (let [sd      (session/get-session-data-in ctx)
+           model   (:model sd)
+           clamped (if model (session-data/clamp-thinking-level level model) level)]
+       {:root-state-update (session/session-update #(assoc % :thinking-level clamped))
+        :return {:thinking-level clamped}
+        :effects [{:effect/type :runtime/agent-set-thinking-level
+                   :level clamped}
+                  {:effect/type :persist/journal-append-thinking-level-entry
+                   :level clamped}
+                  {:effect/type :persist/project-prefs-update
+                   :prefs {:thinking-level clamped}}]})))
+
+  (dispatch/register-handler!
+   :session/set-worktree-path
+   {}
+   (fn [_ctx {:keys [worktree-path]}]
+     {:root-state-update (session/session-update #(assoc % :worktree-path (str worktree-path)))}))
+
+  (dispatch/register-handler!
+   :session/set-cache-breakpoints
+   {}
+   (fn [_ctx {:keys [breakpoints]}]
+     {:root-state-update (session/session-update #(assoc % :cache-breakpoints (set (or breakpoints #{}))))}))
+
+  (dispatch/register-handler!
+   :session/set-session-name
+   {}
+   (fn [_ctx {:keys [name]}]
+     {:root-state-update (session/session-update #(assoc % :session-name name))
+      :effects [{:effect/type :persist/journal-append-session-info-entry
+                 :name name}]
+      :return {:session-name name}}))
+
+  (dispatch/register-handler!
+   :session/refresh-system-prompt
+   {}
+   (fn [ctx _data]
+     (let [sd      (session/get-session-data-in ctx)
+           base    (or (:base-system-prompt sd) (:system-prompt sd) "")
+           contrib (session/list-prompt-contributions-in ctx)
+           prompt  (sys-prompt/apply-prompt-contributions base contrib)]
+       {:root-state-update (session/session-update #(assoc % :system-prompt prompt))
+        :effects [{:effect/type :runtime/agent-set-system-prompt
+                   :prompt prompt}]})))
+
+  (dispatch/register-handler!
+   :session/set-system-prompt
+   {}
+   (fn [ctx {:keys [prompt]}]
+     (let [base*   (or prompt "")
+           contrib (session/list-prompt-contributions-in ctx)
+           prompt* (sys-prompt/apply-prompt-contributions base* contrib)]
+       {:root-state-update (session/session-update #(assoc %
+                                                           :base-system-prompt base*
+                                                           :system-prompt prompt*))
+        :effects [{:effect/type :runtime/agent-set-system-prompt
+                   :prompt prompt*}]})))
+
+  (dispatch/register-handler!
+   :session/register-prompt-contribution
+   {}
+   (fn [ctx {:keys [ext-path id contribution]}]
+     (let [ext-path* (str ext-path)
+           id*       (str id)
+           norm      (normalize-prompt-contribution ext-path* id* contribution)]
+       {:root-state-update
+        (session/session-update
+         (fn [sd]
+           (let [xs    (or (:prompt-contributions sd) [])
+                 xs*   (vec (remove #(and (= ext-path* (:ext-path %))
+                                          (= id* (:id %)))
+                                    xs))
+                 next* (conj xs* norm)
+                 base  (or (:base-system-prompt sd) (:system-prompt sd) "")
+                 prompt (sys-prompt/apply-prompt-contributions
+                         base
+                         (session/sorted-prompt-contributions next*))]
+             (assoc sd
+                    :prompt-contributions next*
+                    :system-prompt prompt))))
+        :effects [{:effect/type :runtime/agent-set-system-prompt
+                   :prompt (let [sd   (session/get-session-data-in ctx)
+                                 base (or (:base-system-prompt sd) (:system-prompt sd) "")
+                                 xs   (or (:prompt-contributions sd) [])
+                                 xs*  (vec (remove #(and (= ext-path* (:ext-path %))
+                                                         (= id* (:id %)))
+                                                   xs))
+                                 next* (conj xs* norm)]
+                             (sys-prompt/apply-prompt-contributions
+                              base
+                              (session/sorted-prompt-contributions next*)))}]
+        :return {:registered? true
+                 :contribution norm
+                 :count (count (session/list-prompt-contributions-in ctx))}})))
+
+  (dispatch/register-handler!
+   :session/update-prompt-contribution
+   {}
+   (fn [ctx {:keys [ext-path id patch]}]
+     (let [ext-path* (str ext-path)
+           id*       (str id)
+           sd        (session/get-session-data-in ctx)
+           xs        (vec (or (:prompt-contributions sd) []))
+           found     (some #(and (= ext-path* (:ext-path %)) (= id* (:id %))) xs)]
+       (if-not found
+         {:return {:updated? false
+                   :contribution nil
+                   :count (count (session/sorted-prompt-contributions xs))}}
+         (let [updated (atom nil)
+               next*   (mapv (fn [c]
+                               (if (and (= ext-path* (:ext-path c))
+                                        (= id* (:id c)))
+                                 (let [next (merge-prompt-contribution-patch c patch)]
+                                   (reset! updated next)
+                                   next)
+                                 c))
+                             xs)
+               base    (or (:base-system-prompt sd) (:system-prompt sd) "")
+               prompt* (sys-prompt/apply-prompt-contributions
+                        base
+                        (session/sorted-prompt-contributions next*))]
+           {:root-state-update (session/session-update #(assoc %
+                                                               :prompt-contributions next*
+                                                               :system-prompt prompt*))
+            :effects [{:effect/type :runtime/agent-set-system-prompt
+                       :prompt prompt*}]
+            :return {:updated? true
+                     :contribution @updated
+                     :count (count (session/sorted-prompt-contributions next*))}})))))
+
+  (dispatch/register-handler!
+   :session/unregister-prompt-contribution
+   {}
+   (fn [ctx {:keys [ext-path id]}]
+     (let [ext-path* (str ext-path)
+           id*       (str id)
+           sd        (session/get-session-data-in ctx)
+           xs        (vec (or (:prompt-contributions sd) []))
+           next*     (vec (remove #(and (= ext-path* (:ext-path %))
+                                        (= id* (:id %)))
+                                  xs))
+           removed?  (< (count next*) (count xs))]
+       (if-not removed?
+         {:return {:removed? false
+                   :count (count xs)}}
+         (let [base    (or (:base-system-prompt sd) (:system-prompt sd) "")
+               prompt* (sys-prompt/apply-prompt-contributions
+                        base
+                        (session/sorted-prompt-contributions next*))]
+           {:root-state-update (session/session-update #(assoc %
+                                                               :prompt-contributions next*
+                                                               :system-prompt prompt*))
+            :effects [{:effect/type :runtime/agent-set-system-prompt
+                       :prompt prompt*}]
+            :return {:removed? true
+                     :count (count next*)}})))))
+
+  (dispatch/register-handler!
+   :session/set-active-tools
+   {}
+   (fn [_ctx {:keys [tool-maps]}]
+     {:root-state-update (session/session-update #(assoc % :active-tools (->> tool-maps (map :name) set)))
+      :effects [{:effect/type :runtime/agent-set-tools
+                 :tool-maps tool-maps}
+                {:effect/type :runtime/refresh-system-prompt}]}))
+
+  (dispatch/register-handler!
+   :session/startup-bootstrap-begin
+   {}
+   (fn [_ctx {:keys [started-at]}]
+     {:root-state-update (session/session-update #(assoc %
+                                                         :startup-bootstrap-started-at started-at
+                                                         :startup-bootstrap-completed? false
+                                                         :startup-bootstrap-completed-at nil
+                                                         :startup-message-ids []))}))
+
+  (dispatch/register-handler!
+   :session/record-startup-message-id
+   {}
+   (fn [_ctx {:keys [message-id]}]
+     (when message-id
+       {:root-state-update (session/session-update #(update % :startup-message-ids (fnil conj []) message-id))})))
+
+  (dispatch/register-handler!
+   :session/startup-bootstrap-complete
+   {}
+   (fn [_ctx {:keys [startup-prompts completed-at]}]
+     {:root-state-update (session/session-update
+                          (fn [sd]
+                            (cond-> (assoc sd
+                                           :startup-bootstrap-completed? true
+                                           :startup-bootstrap-completed-at completed-at)
+                              (some? startup-prompts)
+                              (assoc :startup-prompts startup-prompts))))}))
+
+  (dispatch/register-handler!
+   :session/set-startup-bootstrap-summary
+   {}
+   (fn [_ctx {:keys [summary]}]
+     {:root-state-update (session/session-update #(assoc % :startup-bootstrap summary))}))
+
+  (dispatch/register-handler!
+   :session/update-context-usage
+   {}
+   (fn [_ctx {:keys [tokens window]}]
+     {:root-state-update (session/session-update #(assoc % :context-tokens tokens :context-window window))}))
+
+  (dispatch/register-handler!
+   :session/record-extension-prompt
+   {}
+   (fn [_ctx {:keys [source delivery at]}]
+     {:root-state-update (session/session-update #(assoc %
+                                                         :extension-last-prompt-source (some-> source str)
+                                                         :extension-last-prompt-delivery delivery
+                                                         :extension-last-prompt-at at))}))
+
+  (dispatch/register-handler!
+   :session/retarget-runtime-prompt-metadata
+   {}
+   (fn [ctx _data]
+     (let [sd      (session/get-session-data-in ctx)
+           cwd     (session/effective-cwd-in ctx)
+           base*   (some-> (or (:base-system-prompt sd) "")
+                           (sys-prompt/refresh-runtime-metadata-tail cwd))
+           prompt* (some-> (or (:system-prompt sd) "")
+                           (sys-prompt/refresh-runtime-metadata-tail cwd))]
+       {:root-state-update (session/session-update #(assoc %
+                                                           :base-system-prompt base*
+                                                           :system-prompt prompt*))
+        :effects [{:effect/type :runtime/agent-set-system-prompt
+                   :prompt prompt*}]})))
+
+  (dispatch/register-handler!
+   :session/set-rpc-trace
+   {}
+   (fn [_ctx {:keys [enabled? file]}]
+     {:root-state-update #(update-runtime-rpc-trace-state % enabled? file)}))
+
+  (dispatch/register-handler!
+   :session/set-nrepl-runtime
+   {}
+   (fn [_ctx {:keys [runtime]}]
+     {:root-state-update #(update-nrepl-runtime-state % runtime)}))
+
+  (dispatch/register-handler!
+   :session/set-oauth-projection
+   {}
+   (fn [_ctx {:keys [oauth]}]
+     {:root-state-update #(update-oauth-projection-state % oauth)}))
+
+  (dispatch/register-handler!
+   :session/set-recursion-state
+   {}
+   (fn [_ctx {:keys [recursion-state]}]
+     {:root-state-update #(update-recursion-projection-state % recursion-state)}))
+
+  (dispatch/register-handler!
+   :session/update-background-jobs-state
+   {}
+   (fn [_ctx {:keys [update-fn]}]
+     {:root-state-update #(update-background-jobs-store-state % update-fn)}))
+
+  (dispatch/register-handler!
+   :session/set-turn-context
+   {}
+   (fn [_ctx {:keys [turn-ctx]}]
+     {:root-state-update (fn [state]
+                           (let [sid (get-in state [:agent-session :active-session-id])]
+                             (assoc-in state (session-turn-ctx-path sid) turn-ctx)))}))
+
+  (dispatch/register-handler!
+   :session/append-tool-call-attempt
+   {}
+   (fn [_ctx {:keys [attempt]}]
+     {:root-state-update (fn [state]
+                           (let [sid (get-in state [:agent-session :active-session-id])]
+                             (update-in state (session-telemetry-path sid :tool-call-attempts)
+                                        (fnil conj [])
+                                        (assoc attempt :timestamp (java.time.Instant/now)))))}))
+
+  (dispatch/register-handler!
+   :session/append-provider-request-capture
+   {}
+   (fn [_ctx {:keys [capture]}]
+     (let [entry (assoc capture :timestamp (java.time.Instant/now))]
+       {:root-state-update
+        (fn [state]
+          (let [sid (get-in state [:agent-session :active-session-id])]
+            (update-in state (session-telemetry-path sid :provider-requests)
+                       (fn [entries]
+                         (let [entries* (conj (vec (or entries [])) entry)
+                               n        (count entries*)]
+                           (if (> n 100)
+                             (subvec entries* (- n 100))
+                             entries*))))))})))
+
+  (dispatch/register-handler!
+   :session/append-provider-reply-capture
+   {}
+   (fn [_ctx {:keys [capture]}]
+     (let [entry (assoc capture :timestamp (java.time.Instant/now))]
+       {:root-state-update
+        (fn [state]
+          (let [sid (get-in state [:agent-session :active-session-id])]
+            (update-in state (session-telemetry-path sid :provider-replies)
+                       (fn [entries]
+                         (let [entries* (conj (vec (or entries [])) entry)
+                               n        (count entries*)]
+                           (if (> n 1000)
+                             (subvec entries* (- n 1000))
+                             entries*))))))})))
+
+  (dispatch/register-handler!
+   :session/record-tool-output-stat
+   {}
+   (fn [_ctx {:keys [stat context-bytes-added limit-hit?]}]
+     {:root-state-update
+      (fn [state]
+        (let [sid (get-in state [:agent-session :active-session-id])]
+          (update-in state (session-telemetry-path sid :tool-output-stats)
+                     (fn [ts]
+                       (-> ts
+                           (update :calls (fnil conj []) stat)
+                           (update-in [:aggregates :total-context-bytes] (fnil + 0) context-bytes-added)
+                           (update-in [:aggregates :by-tool (:tool-name stat)] (fnil + 0) context-bytes-added)
+                           (update-in [:aggregates :limit-hits-by-tool (:tool-name stat)]
+                                      (fnil + 0)
+                                      (if limit-hit? 1 0)))))))}))
+
+  (dispatch/register-handler!
+   :session/tool-lifecycle-event
+   {}
+   (fn [_ctx {:keys [entry]}]
+     {:root-state-update (fn [state]
+                           (let [sid (get-in state [:agent-session :active-session-id])]
+                             (update-in state (session-telemetry-path sid :tool-lifecycle-events)
+                                        (fnil conj [])
+                                        (assoc entry :timestamp (java.time.Instant/now)))))}))
+
+  (dispatch/register-handler!
+   :session/tool-agent-start
+   {}
+   (fn [_ctx {:keys [tool-call]}]
+     {:effects [{:effect/type :runtime/agent-emit-tool-start
+                 :tool-call tool-call}]}))
+
+  (dispatch/register-handler!
+   :session/tool-agent-end
+   {}
+   (fn [_ctx {:keys [tool-call result is-error?]}]
+     {:effects [{:effect/type :runtime/agent-emit-tool-end
+                 :tool-call tool-call
+                 :result result
+                 :is-error? is-error?}]}))
+
+  (dispatch/register-handler!
+   :session/tool-agent-record-result
+   {}
+   (fn [_ctx {:keys [tool-result-msg]}]
+     {:effects [{:effect/type :runtime/agent-record-tool-result
+                 :tool-result-msg tool-result-msg}]}))
+
+  (dispatch/register-handler!
+   :session/tool-execute
+   {}
+   (fn [_ctx {:keys [tool-name args opts]}]
+     {:effects [{:effect/type :runtime/tool-execute
+                 :tool-name tool-name
+                 :args args
+                 :opts opts}]
+      :return-effect-result? true}))
+
+  (dispatch/register-handler!
+   :session/tool-run
+   {}
+   (fn [_ctx {:keys [tool-call parsed-args progress-queue]}]
+     {:effects [{:effect/type :runtime/tool-run
+                 :tool-call tool-call
+                 :parsed-args parsed-args
+                 :progress-queue progress-queue}]
+      :return-effect-result? true}))
+
+  (dispatch/register-handler!
+   :session/set-context-active-session
+   {}
+   (fn [_ctx {:keys [session-id]}]
+     {:root-state-update #(update-context-active-session-state % session-id)
+      :return             session-id}))
+  ;; return-key was [:agent-session :context-index] — now just returns session-id
+
+  (dispatch/register-handler!
+   :session/new-initialize
+   {}
+   (fn [ctx {:keys [new-session-id worktree-path session-name spawn-mode session-file]}]
+     (let [current-sd (session/get-session-data-in ctx)
+           payload    {:new-session-id new-session-id
+                       :worktree-path worktree-path
+                       :session-name session-name
+                       :spawn-mode spawn-mode
+                       :session-file session-file}]
+       {:root-state-update #(initialize-new-session-state % current-sd payload)
+        :return-key        (session-data-path new-session-id)
+        :effects [{:effect/type :runtime/agent-reset}]})))
+
+  (dispatch/register-handler!
+   :session/resume-loaded
+   {}
+   (fn [ctx {:keys [session-id session-path header entries model thinking-level messages]}]
+     (let [current-sd (session/get-session-data-in ctx)
+           payload    {:session-id session-id
+                       :session-path session-path
+                       :header header
+                       :entries entries
+                       :model model
+                       :thinking-level thinking-level}]
+       {:root-state-update #(initialize-resumed-session-state % current-sd payload)
+        :return-key        (session-data-path session-id)
+        :effects (cond-> [{:effect/type :runtime/agent-reset}
+                          {:effect/type :runtime/agent-set-thinking-level
+                           :level thinking-level}]
+                   model
+                   (conj {:effect/type :runtime/agent-set-model
+                          :model model})
+                   messages
+                   (conj {:effect/type :runtime/agent-replace-messages
+                          :messages messages}))})))
+
+  (dispatch/register-handler!
+   :session/fork-initialize
+   {}
+   (fn [ctx {:keys [new-session-id branch-entries session-file messages]}]
+     (let [parent-sd (session/get-session-data-in ctx)
+           payload   {:new-session-id new-session-id
+                      :branch-entries branch-entries
+                      :session-file session-file}]
+       {:root-state-update #(initialize-forked-session-state % parent-sd payload)
+        :return-key        (session-data-path new-session-id)
+        :effects (when messages
+                   [{:effect/type :runtime/agent-replace-messages
+                     :messages messages}])})))
+
+  (dispatch/register-handler!
+   :session/enqueue-steering-message
+   {}
+   (fn [_ctx {:keys [text]}]
+     {:root-state-update (session/session-update #(update % :steering-messages (fnil conj []) text))
+      :effects [{:effect/type :runtime/agent-queue-steering
+                 :message {:role      "user"
+                           :content   [{:type :text :text text}]
+                           :timestamp (java.time.Instant/now)}}]}))
+
+  (dispatch/register-handler!
+   :session/enqueue-follow-up-message
+   {}
+   (fn [_ctx {:keys [text]}]
+     {:root-state-update (session/session-update #(update % :follow-up-messages (fnil conj []) text))
+      :effects [{:effect/type :runtime/agent-queue-follow-up
+                 :message {:role      "user"
+                           :content   [{:type :text :text text}]
+                           :timestamp (java.time.Instant/now)}}]}))
+
+  (dispatch/register-handler!
+   :session/clear-queued-messages
+   {}
+   (fn [_ctx _data]
+     {:root-state-update (session/session-update #(assoc % :steering-messages [] :follow-up-messages []))
+      :effects [{:effect/type :runtime/agent-clear-steering-queue}
+                {:effect/type :runtime/agent-clear-follow-up-queue}]}))
+
+  (dispatch/register-handler!
+   :session/compaction-finished
+   {}
+   (fn [_ctx {:keys [messages]}]
+     (cond-> {:root-state-update (session/session-update #(assoc % :is-compacting false :context-tokens nil))}
+       messages
+       (assoc :effects [{:effect/type :runtime/agent-replace-messages
+                         :messages messages}]))))
+
+  (dispatch/register-handler!
+   :session/reset-prompt-contributions
+   {}
+   (fn [_ctx _data]
+     {:root-state-update (session/session-update #(assoc % :prompt-contributions []))}))
+
+  (dispatch/register-handler!
+   :session/register-prompt-template
+   {}
+   (fn [ctx {:keys [template]}]
+     (let [templates  (vec (:prompt-templates (session/get-session-data-in ctx)))
+           existing?  (some #(= (:name %) (:name template)) templates)
+           next-count (if existing? (count templates) (inc (count templates)))]
+       (cond-> {:return {:added? (not existing?)
+                         :count  next-count}}
+         (not existing?)
+         (assoc :root-state-update (session/session-update #(update % :prompt-templates (fnil conj []) template)))))))
+
+  (dispatch/register-handler!
+   :session/register-skill
+   {}
+   (fn [ctx {:keys [skill]}]
+     (let [skills     (vec (:skills (session/get-session-data-in ctx)))
+           existing?  (some #(= (:name %) (:name skill)) skills)
+           next-count (if existing? (count skills) (inc (count skills)))]
+       (cond-> {:return {:added? (not existing?)
+                         :count  next-count}}
+         (not existing?)
+         (assoc :root-state-update (session/session-update #(update % :skills (fnil conj []) skill)))))))
+
+  (dispatch/register-handler!
+   :session/request-interrupt
+   {}
+   (fn [ctx {:keys [already-pending? requested-at]}]
+     (let [sd (session/get-session-data-in ctx)]
+       {:root-state-update
+        (session/session-update
+         (fn [_]
+           (cond-> (assoc sd
+                          :interrupt-pending true
+                          :steering-messages [])
+             (not already-pending?)
+             (assoc :interrupt-requested-at requested-at))))
+        :effects [{:effect/type :runtime/agent-clear-steering-queue}]})))
+
+  (dispatch/register-handler!
+   :session/bootstrap-prompt-state
+   {}
+   (fn [_ctx {:keys [system-prompt developer-prompt developer-prompt-source]}]
+     {:root-state-update (session/session-update #(assoc %
+                                                         :base-system-prompt system-prompt
+                                                         :system-prompt system-prompt
+                                                         :developer-prompt developer-prompt
+                                                         :developer-prompt-source developer-prompt-source))}))
+
+  (dispatch/register-handler!
+   :session/ensure-base-system-prompt
+   {}
+   (fn [ctx _data]
+     (let [sd (session/get-session-data-in ctx)]
+       (when-not (contains? sd :base-system-prompt)
+         {:root-state-update (session/session-update #(assoc % :base-system-prompt (or (:system-prompt sd) "")))}))))
+
+  (dispatch/register-handler!
+   :session/send-extension-message
+   {}
+   (fn [ctx {:keys [message]}]
+     (let [bootstrap-complete? (:startup-bootstrap-completed?
+                                (session/get-session-data-in ctx))]
+       {:effects (cond-> []
+                   bootstrap-complete?
+                   (into [{:effect/type :runtime/agent-append-message
+                           :message message}
+                          {:effect/type :runtime/agent-emit
+                           :event {:type :message-start :message message}}
+                          {:effect/type :runtime/agent-emit
+                           :event {:type :message-end :message message}}])
+                   true
+                   (conj {:effect/type :runtime/event-queue-offer
+                          :event {:type :external-message
+                                  :message message}}))})))
+
+  (dispatch/register-handler!
+   :session/add-tool
+   {}
+   (fn [ctx {:keys [tool]}]
+     (let [tools     (:tools (agent/get-data-in (session/agent-ctx-in ctx)))
+           existing? (some #(= (:name %) (:name tool)) tools)]
+       (cond-> {:return {:added? (not existing?)
+                         :count  (if existing? (count tools) (inc (count tools)))}}
+         (not existing?)
+         (assoc :effects [{:effect/type :runtime/agent-set-tools
+                           :tool-maps (conj (vec tools) tool)}])))))
+
+  nil)
+
+(defn- register-resume-fallback-handler!
+  []
+  (dispatch/register-handler!
+   :session/resume-missing-initialize
+   {}
+   (fn [ctx {:keys [session-path]}]
+     (let [current-sd (session/get-session-data-in ctx)
+           sid        (:session-id current-sd)]
+       {:root-state-update #(initialize-resume-missing-state % current-sd session-path)
+        :return-key        (session-data-path sid)})))
+
+  nil)
+
+;;; Wiring functions
+
+(defn make-actions-fn
+  "Return the side-effect dispatcher wired into the statechart working memory.
+   The statechart calls (actions-fn action-key data) from guard/entry/script fns.
+   Delegates to the dispatch pipeline for all registered action keys."
+  [ctx]
+  (fn
+    ([action-key] (dispatch/dispatch! ctx action-key nil {:origin :statechart}))
+    ([action-key data] (dispatch/dispatch! ctx action-key data {:origin :statechart}))))
+
+(defn dispatch-statechart-event-in!
+  "Adapter boundary for routing session statechart events through dispatch.
+
+   Returns {:claimed? true} when the event was sent to the session statechart.
+   This makes statechart participation explicit in the dispatch pipeline while
+   preserving the existing statechart runtime and transition ownership."
+  [ctx event-type event-data _ictx]
+  (when (contains? #{:session/prompt :session/abort :session/compact-start :session/compact-done} event-type)
+    (sc/send-event! (:sc-env ctx) (session/sc-session-id-in ctx) event-type event-data)
+    {:claimed? true}))
+
+(defn register-all!
+  "Register all dispatch handlers for the agent-session pipeline.
+   Called once during context creation via requiring-resolve."
+  [ctx]
+  (register-statechart-action-handlers! ctx)
+  (register-session-mutation-handlers! ctx)
+  (register-resume-fallback-handler!))

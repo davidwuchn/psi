@@ -72,6 +72,25 @@
         (is (= {:content "No active subagents." :is-error false}
                (execute {"action" "list"}))))))
 
+  (testing "subagent list reuses workflow display lines when present"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/subagent_widget.clj"})]
+      (sut/init api)
+      (swap! state assoc-in [:workflows "8"]
+             {:psi.extension/path "/test/subagent_widget.clj"
+              :psi.extension.workflow/id "8"
+              :psi.extension.workflow/type :subagent
+              :psi.extension.workflow/done? true
+              :psi.extension.workflow/running? false
+              :psi.extension.workflow/error? false
+              :psi.extension.workflow/data {:subagent/display {:top-line "✓ public top"
+                                                               :detail-line "  ↳ final useful line"}}})
+      (let [execute (get-in @state [:tools "subagent" :execute])
+            result  (execute {"action" "list"})]
+        (is (false? (:is-error result)))
+        (is (str/includes? (:content result) "✓ public top"))
+        (is (str/includes? (:content result) "↳ final useful line")))))
+
   (testing "subagent create rejects unknown agent"
     (let [{:keys [api state]} (nullable/create-nullable-extension-api
                                {:path "/test/subagent_widget.clj"})]
@@ -434,6 +453,37 @@
               :psi.extension.workflow/done? false
               :psi.extension.workflow/error? false}]
       (is (nil? (#'sut/widget-action-line wf))))))
+
+(deftest subagent-public-data-detail-lines-test
+  (testing "widget detail prefers workflow public last-line"
+    (let [wf {:psi.extension.workflow/id "8"
+              :psi.extension.workflow/running? false
+              :psi.extension.workflow/done? true
+              :psi.extension.workflow/error? false
+              :psi.extension.workflow/data {:subagent/last-line "final useful line"
+                                            :subagent/last-text "ignored\nbody"
+                                            :subagent/display {:top-line "✓ public top"
+                                                               :detail-line "  ↳ final useful line"}}}
+          line (#'sut/widget-detail-line wf)
+          lines (#'sut/widget-lines wf)]
+      (is (= "  ↳ final useful line" line))
+      (is (= "✓ public top" (first lines)))
+      (is (some #{"  ↳ final useful line"} lines))))
+
+  (testing "widget detail prefers workflow public error-line"
+    (let [wf {:psi.extension.workflow/id "9"
+              :psi.extension.workflow/running? false
+              :psi.extension.workflow/done? false
+              :psi.extension.workflow/error? true
+              :psi.extension.workflow/error-message "Error: fallback"
+              :psi.extension.workflow/data {:subagent/error-line "clean failure"
+                                            :subagent/display {:top-line "✗ public err"
+                                                               :detail-line "  ! clean failure"}}}
+          line (#'sut/widget-detail-line wf)
+          lines (#'sut/widget-lines wf)]
+      (is (= "  ! clean failure" line))
+      (is (= "✗ public err" (first lines)))
+      (is (some #{"  ! clean failure"} lines)))))
 
 (deftest subagent-widget-placement-follows-ui-type-test
   (testing "widgets render below editor in emacs ui"

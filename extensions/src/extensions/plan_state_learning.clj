@@ -18,7 +18,8 @@
   (:require
    [clojure.string :as str]
    [com.fulcrologic.statecharts.chart :as chart]
-   [com.fulcrologic.statecharts.elements :as ele]))
+   [com.fulcrologic.statecharts.elements :as ele]
+   [extensions.workflow-display :as workflow-display]))
 
 (def ^:private marker "[psi:psl-auto]")
 (def ^:private custom-type "plan-state-learning")
@@ -28,8 +29,30 @@
 ;; Module state (set during init)
 ;; ---------------------------------------------------------------------------
 
+(def ^:private workflow-eql
+  [{:psi.extension/workflows
+    [:psi.extension/path
+     :psi.extension.workflow/id
+     :psi.extension.workflow/type
+     :psi.extension.workflow/phase
+     :psi.extension.workflow/running?
+     :psi.extension.workflow/done?
+     :psi.extension.workflow/error?
+     :psi.extension.workflow/error-message
+     :psi.extension.workflow/input
+     :psi.extension.workflow/data
+     :psi.extension.workflow/result
+     :psi.extension.workflow/elapsed-ms
+     :psi.extension.workflow/started-at]}])
+
+(def ^:private widget-id "psl")
+
 (defonce ^:private state
-  (atom {:mutate-fn nil
+  (atom {:api      nil
+         :ext-path nil
+         :ui       nil
+         :ui-type  :console
+         :mutate-fn nil
          :query-fn  nil}))
 
 ;; ---------------------------------------------------------------------------
@@ -77,6 +100,90 @@
     {:sha (squish sha)
      :subject (squish subject)}))
 
+(defn- query!
+  [q]
+  (when-let [qf (:query-fn @state)]
+    (try
+      (qf q)
+      (catch Exception _ nil))))
+
+(defn- all-workflows []
+  (or (:psi.extension/workflows (query! workflow-eql)) []))
+
+(defn- psl-workflows []
+  (let [ext-path (:ext-path @state)]
+    (->> (all-workflows)
+         (filter (fn [wf]
+                   (and (= ext-path (:psi.extension/path wf))
+                        (= workflow-type (:psi.extension.workflow/type wf))))))))
+
+(defn- workflow-public-display
+  [{:psl/keys [source-sha subject phase result]}]
+  (let [source7 (subs (or source-sha "unknown") 0 (min 7 (count (or source-sha "unknown"))))
+        top-line (case phase
+                   :idle (str "… PSL pending for " source7)
+                   :running (str "… PSL running for " source7)
+                   :done (if (:accepted? result)
+                           (str "✓ PSL updated artifacts for " source7)
+                           (str "✗ PSL failed for " source7))
+                   :error (str "✗ PSL errored for " source7)
+                   (str "… PSL " (name (or phase :unknown)) " for " source7))
+        detail-line (when (seq (squish subject))
+                      (str "commit: " (squish subject)))
+        action-line (case phase
+                      :idle "waiting for session idle"
+                      :running "updating PLAN/STATE/LEARNING"
+                      :done (when-not (:accepted? result)
+                              "inspect PSL subagent result")
+                      :error "inspect PSL error"
+                      nil)]
+    {:top-line    top-line
+     :detail-line detail-line
+     :action-line action-line}))
+
+(defn- workflow-lines
+  [wf]
+  (-> (workflow-display/merged-display
+       {:top-line    (str "… PSL " (or (:psi.extension.workflow/id wf) ""))
+        :detail-line nil
+        :action-line nil}
+       (:psl/display (or (:psi.extension.workflow/data wf) {})))
+      (workflow-display/display-lines)))
+
+(defn- list-psl-runs!
+  []
+  (let [runs (psl-workflows)]
+    (if (empty? runs)
+      (println "No PSL runs.")
+      (doseq [wf runs]
+        (doseq [line (workflow-display/text-lines (workflow-lines wf))]
+          (println line))))))
+
+(defn- widget-placement []
+  (if (= :emacs (or (:ui-type @state) :console))
+    :below-editor
+    :above-editor))
+
+(defn- widget-lines []
+  (let [runs (psl-workflows)]
+    (if (seq runs)
+      (into ["⊕ PSL"]
+            (mapcat (fn [wf]
+                      (map (fn [line] (str "  " (:text line line)))
+                           (workflow-lines wf)))
+                    runs))
+      ["⊕ PSL"])))
+
+(defn- refresh-widget! []
+  (when-let [ui (:ui @state)]
+    (when-let [set-widget (:set-widget ui)]
+      (set-widget widget-id (widget-placement) (widget-lines)))))
+
+(defn- refresh-widget-later! []
+  (future
+    (Thread/sleep 30)
+    (refresh-widget!)))
+
 (defn- psl-prompt
   [{:keys [source-sha]}]
   (let [source7 (subs source-sha 0 (min 7 (count source-sha)))]
@@ -123,12 +230,14 @@
                                        (str ": " content))))]
           (when (seq status-msg)
             (send-message! mutate-fn status-msg))
+          (refresh-widget-later!)
           {:status          :done
            :accepted?       (not is-error?)
            :delivery        :subagent
            :subagent-result subagent-res}))
       (catch Exception e
         (send-message! mutate-fn (str "PSL error: " (ex-message e)))
+        (refresh-widget-later!)
         {:status :error :error (ex-message e)}))))
 
 ;; ---------------------------------------------------------------------------
@@ -214,11 +323,14 @@
                                     :psl/phase      :idle
                                     :psl/result     nil})
                 :public-data-fn  (fn [data]
-                                   (select-keys data
-                                                [:psl/source-sha
-                                                 :psl/subject
-                                                 :psl/phase
-                                                 :psl/result]))})))
+                                   (let [base (select-keys data
+                                                           [:psl/source-sha
+                                                            :psl/subject
+                                                            :psl/phase
+                                                            :psl/result])]
+                                     (assoc base
+                                            :psl/display
+                                            (workflow-public-display base))))})))
 
 ;; ---------------------------------------------------------------------------
 ;; Event handler
@@ -241,6 +353,7 @@
                                 :input {:source-sha    source-sha
                                         :subject       subject
                                         :cwd           (or cwd (System/getProperty "user.dir"))}})]
+        (refresh-widget-later!)
         {:skip? false
          :source-sha source-sha
          :subject subject
@@ -253,9 +366,20 @@
 (defn init
   [api]
   (let [mutate-fn (:mutate api)
-        query-fn  (:query api)]
-    (swap! state assoc :mutate-fn mutate-fn :query-fn query-fn)
+        query-fn  (:query api)
+        ext-path  (:path api)
+        ui-type   (or (:ui-type api) :console)
+        ui        (:ui api)]
+    (swap! state assoc
+           :api api :ext-path ext-path
+           :mutate-fn mutate-fn :query-fn query-fn
+           :ui ui :ui-type ui-type)
     (register-workflow-type!)
+    (mutate-fn 'psi.extension/register-command
+               {:name "psl"
+                :opts {:description "List active PSL workflows"
+                       :handler     (fn [_args]
+                                      (list-psl-runs!))}})
     (mutate-fn 'psi.extension/register-handler
                {:event-name "git_head_changed"
                 :handler-fn (fn [ev]
@@ -264,4 +388,5 @@
                                 (catch Exception e
                                   (send-message! mutate-fn
                                                  (str "PSL error: " (ex-message e)))
-                                  {:error (ex-message e)})))})))
+                                  {:error (ex-message e)})))})
+    (refresh-widget!)))

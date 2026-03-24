@@ -8,6 +8,6 @@
         psi/extension-test-helpers  {:local/root "../components/extension-test-helpers"}}
 
  :aliases
- {:test {:extra-paths ["test"]
+ {:test {:extra-paths ["test" "../test-support"]
          :extra-deps  {lambdaisland/kaocha {:mvn/version "1.91.1392"}}
          :main-opts   ["-m" "kaocha.runner"]}}}

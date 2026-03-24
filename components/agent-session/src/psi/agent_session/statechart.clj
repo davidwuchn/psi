@@ -22,10 +22,8 @@
 
    Working memory keys (stored in the flat data model)
    ─────────────────────────────────────────────────────
-   :session-data-atom  — atom-like view used by the statechart to read current
-                         AgentSession data. In the runtime architecture this is
-                         backed by the canonical root state, not a separate
-                         source of truth.
+   :ctx                — runtime session context; statechart guards read current
+                         AgentSession data through canonical state helpers
    :actions-fn         — (fn [key]) — side-effect dispatcher
    :config             — merged config map
    :pending-agent-event — the most recent agent event (set before dispatching
@@ -66,8 +64,13 @@
          (number? cutoff)
          (> tokens cutoff))))
 
+(defn- current-session-data [data]
+  (let [state @(get-in data [:ctx :state*])
+        sid   (get-in state [:agent-session :active-session-id])]
+    (get-in state [:agent-session :sessions sid :data])))
+
 (defn- auto-compaction-reason [data]
-  (let [sd      @(:session-data-atom data)
+  (let [sd      (current-session-data data)
         config  (:config data)
         last-msg (last-assistant-message data)]
     (cond
@@ -90,7 +93,7 @@
   (boolean (auto-compaction-reason data)))
 
 (defn- should-retry? [data]
-  (let [sd     @(:session-data-atom data)
+  (let [sd     (current-session-data data)
         max-r  (get-in data [:config :auto-retry-max-retries] 3)
         event  (:pending-agent-event data)
         last-m (last (:messages event))]

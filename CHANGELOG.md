@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-03-22
+
+- λ Δ Sharpened tool-history resolver docs so canonical consumers default to lifecycle read models:
+  - Marked `:psi.agent-session/tool-call-history` and `:psi.agent-session/tool-call-history-count` as transcript-derived compatibility projections.
+  - Updated resolver guidance to prefer `:psi.agent-session/tool-lifecycle-summaries` and `:psi.agent-session/executed-tool-count` for canonical executed-tool consumers.
+
+- λ Δ Aligned `plan_state_learning` with the shared workflow display convention:
+  - Added `:psl/display` projection using the shared display-map shape.
+  - Added `/psl` command listing active PSL workflows through `extensions.workflow-display/text-lines`.
+  - Added PSL widget (`⊕ PSL`) with workflow display lines, ui-type-aware placement, and refresh on create/complete/error.
+  - Documented the PSL public display surface, `/psl`, and widget in `doc/extensions.md`.
+  - Added focused extension coverage for the PSL public display projection, `/psl` list, widget registration, placement, and display line rendering.
+  - Verification: `bb clojure:test:extensions`
+
 ## 2026-03-18
 
 - λ Δ Anthropic OAuth re-auth flow was stabilized:

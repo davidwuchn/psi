@@ -17,9 +17,9 @@
   {:doc  "Run Clojure extension tests (Kaocha :extensions suite)."
    :task (shell "clojure -M:test --focus extensions")}
 
-  clojure:test:working
-  {:doc  "Run all working component tests individually to avoid loading conflicts."
-   :depends [test:agent-core test:query test:memory test:engine test:ai test:recursion clojure:test:extensions]}
+  clojure:test:integration
+  {:doc  "Run Clojure integration tests (slow, requires tmux etc)."
+   :task (shell "clojure -M:test --focus integration")}
 
   clojure:test
   {:doc     "Run both Clojure unit and extension test suites."
@@ -80,8 +80,4 @@
 
   test:components
   {:doc "Test all components in isolation (bypasses circular dependencies)"
-   :depends [test:agent-core test:memory test:query test:engine test:history test:recursion test:ai test:tui]}
-
-  test:working
-  {:doc "Run all working test suites (components + extensions + emacs)"
-   :depends [test:components clojure:test:extensions emacs:check]}}}
+   :depends [test:agent-core test:memory test:query test:engine test:history test:recursion test:ai test:tui]}}}

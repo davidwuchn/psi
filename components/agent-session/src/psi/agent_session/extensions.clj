@@ -39,7 +39,6 @@
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [psi.ui.state :as ui-state]
    [taoensso.timbre :as timbre]))
 
 ;; ============================================================
@@ -435,12 +434,11 @@
    The API provides registration methods plus EQL runtime access.
 
    `runtime-fns` is a map of runtime implementations:
-     :query-fn      — (fn [eql-query])
-     :mutate-fn     — (fn [op-sym params])
+     :query-fn       — (fn [eql-query])
+     :mutate-fn      — (fn [op-sym params])
      :get-api-key-fn — (fn [provider]) ; narrow auth capability
-     :ui-type-fn    — (fn [] => :console|:tui|:emacs|nil)
-     :ui-state-atom — atom-like adapter used to build extension UI context;
-                      backed by canonical session root state
+     :ui-type-fn     — (fn [] => :console|:tui|:emacs|nil)
+     :ui-context-fn  — (fn [ext-path] => extension ui context)
 
    Any missing runtime key throws."
   [reg ext-path runtime-fns]
@@ -619,7 +617,9 @@
      ;; ── UI context ─────────────────────────────────────
      ;; nil when headless (no TUI); present when TUI is active.
      :ui
-     (ui-state/create-ui-context (:ui-state-atom runtime-fns) ext-path)}))
+     (if-let [f (:ui-context-fn runtime-fns)]
+       (f ext-path)
+       nil)}))
 
 ;; ============================================================
 ;; Extension loading

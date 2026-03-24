@@ -752,21 +752,7 @@
       (is (some #(re-find #"❓.*Should we proceed with the destructive migration?" %) lines)
           "should contain the question line with ❓ prefix")))
 
-  (testing "widget-lines omits question line when no user-confirmation data"
-    (let [wf {:psi.extension.workflow/id "run-1"
-              :psi.extension.workflow/phase :paused
-              :psi.extension.workflow/running? false
-              :psi.extension.workflow/data
-              {:run/task-id 42
-               :run/entity-type :task
-               :run/current-state :wait-user-confirmation
-               :run/last-step "execute-task"
-               :run/pause-reason :wait-user-confirmation}}
-          lines (#'sut/widget-lines wf)]
-      (is (not (some #(re-find #"❓" %) lines))
-          "should not contain a question line")))
-
-  (testing "widget-lines shows all lines for a multi-line question"
+  (testing "widget-lines prefers workflow public display lines when present"
     (let [wf {:psi.extension.workflow/id "run-1"
               :psi.extension.workflow/phase :paused
               :psi.extension.workflow/running? false
@@ -776,14 +762,48 @@
                :run/current-state :wait-user-confirmation
                :run/last-step "execute-task"
                :run/pause-reason :wait-user-confirmation
-               :run/user-confirmation {:question "Should we proceed?\n- Option A\n- Option B"}}}
+               :run/user-confirmation {:question "fallback question"}
+               :run/display {:top-line "● public top"
+                             :detail-line "  public detail"
+                             :question-lines ["  ❓ public question"]}}}
           lines (#'sut/widget-lines wf)]
-      (is (some #(re-find #"❓.*Should we proceed\?" %) lines)
-          "should include the first question line")
-      (is (some #(re-find #"- Option A" %) lines)
-          "should include follow-up lines")
-      (is (some #(re-find #"- Option B" %) lines)
-          "should include all question lines"))))
+      (is (= "● public top" (first lines)))
+      (is (some #{"  public detail"} lines))
+      (is (some #{"  ❓ public question"} lines))
+      (is (not (some #(re-find #"fallback question" %) lines))))))
+
+(testing "widget-lines omits question line when no user-confirmation data"
+  (let [wf {:psi.extension.workflow/id "run-1"
+            :psi.extension.workflow/phase :paused
+            :psi.extension.workflow/running? false
+            :psi.extension.workflow/data
+            {:run/task-id 42
+             :run/entity-type :task
+             :run/current-state :wait-user-confirmation
+             :run/last-step "execute-task"
+             :run/pause-reason :wait-user-confirmation}}
+        lines (#'sut/widget-lines wf)]
+    (is (not (some #(re-find #"❓" %) lines))
+        "should not contain a question line")))
+
+(testing "widget-lines shows all lines for a multi-line question"
+  (let [wf {:psi.extension.workflow/id "run-1"
+            :psi.extension.workflow/phase :paused
+            :psi.extension.workflow/running? false
+            :psi.extension.workflow/data
+            {:run/task-id 42
+             :run/entity-type :task
+             :run/current-state :wait-user-confirmation
+             :run/last-step "execute-task"
+             :run/pause-reason :wait-user-confirmation
+             :run/user-confirmation {:question "Should we proceed?\n- Option A\n- Option B"}}}
+        lines (#'sut/widget-lines wf)]
+    (is (some #(re-find #"❓.*Should we proceed\?" %) lines)
+        "should include the first question line")
+    (is (some #(re-find #"- Option A" %) lines)
+        "should include follow-up lines")
+    (is (some #(re-find #"- Option B" %) lines)
+        "should include all question lines")))
 
 (deftest widget-placement-follows-ui-type-test
   (testing "refresh-widgets places widgets below editor in emacs ui"
@@ -848,14 +868,16 @@
     (let [wf-running {:psi.extension.workflow/id "run-1"
                       :psi.extension.workflow/phase :running
                       :psi.extension.workflow/running? true
-                      :psi.extension.workflow/data {:run/task-id 42
+                      :psi.extension.workflow/data {:run/id "run-1"
+                                                    :run/task-id 42
                                                     :run/entity-type :task
                                                     :run/current-state :refined
                                                     :run/last-step "execute-task"}}
           wf-paused {:psi.extension.workflow/id "run-2"
                      :psi.extension.workflow/phase :paused
                      :psi.extension.workflow/running? false
-                     :psi.extension.workflow/data {:run/task-id 99
+                     :psi.extension.workflow/data {:run/id "run-2"
+                                                   :run/task-id 99
                                                    :run/entity-type :story
                                                    :run/current-state :wait-user-confirmation
                                                    :run/last-step "execute-story-child"
@@ -863,8 +885,8 @@
       (with-redefs [sut/mcp-run-workflows (fn [] [wf-running wf-paused])
                     sut/elapsed-seconds (fn [_] 10)]
         (let [output (with-out-str (#'sut/list-runs!))]
-          (is (re-find #"run-1 \[RUNNING\] task #42" output))
-          (is (re-find #"run-2 \[PAUSED\] story #99" output)))))))
+          (is (re-find #"mcp-run run-1 \[RUNNING\] · task #42 · state refined · step execute-task · 10s" output))
+          (is (re-find #"mcp-run run-2 \[PAUSED\] · story #99 · state wait-user-confirmation · step execute-story-child · 10s" output)))))))
 
 (deftest resolve-category-for-step-non-matching-step-test
   (testing "resolve-category-for-step returns nil for non-matching step names"
@@ -899,7 +921,7 @@
                     sut/create-step-session-ctx (fn [agent-ctx]
                                                   (is (= fake-agent-ctx agent-ctx))
                                                   fake-session-ctx)
-                    sut/set-live-progress! (fn [& _])
+                    sut/update-workflow-progress! (fn [& _])
                     executor/run-agent-loop! (fn [& args]
                                                (reset! captured args)
                                                {:role "assistant"
@@ -941,7 +963,7 @@
                             :model fake-model
                             :step-name "review-story-implementation"
                             :step-state :done}]
-      (with-redefs [sut/set-live-progress! (fn [& _])
+      (with-redefs [sut/update-workflow-progress! (fn [& _])
                     sut/create-step-agent-ctx (fn [_]
                                                 (throw (ex-info "should not create a new agent ctx" {})))
                     sut/create-step-session-ctx (fn [_]

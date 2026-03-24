@@ -124,6 +124,33 @@ Purpose: run mcp-tasks task/story workflows with sub-agent execution per step.
   - `/mcp-tasks-run cancel <run-id>`
   - `/mcp-tasks-run retry <run-id>`
 
+## Workflow display convention
+
+Workflow-backed extensions should prefer projecting reusable display/read-model
+fields through `:public-data-fn` instead of having each widget/command derive
+its own formatting from private runtime state.
+
+Preferred display-map keys:
+- `:top-line` — primary summary line
+- `:detail-line` — optional secondary line
+- `:question-lines` — optional follow-up lines/questions
+- `:action-line` — optional fallback action/help line
+
+The display payload itself may live under an extension-specific namespaced key,
+for example:
+- `:run/display`
+- `:chain/display`
+- `:subagent/display`
+
+Preferred helper path:
+- widget/UI consumers: `extensions.workflow-display/merged-display` + `display-lines`
+- CLI/list consumers: `extensions.workflow-display/text-lines`
+
+Current in-repo examples:
+- `extensions.mcp-tasks-run` — widget + list output reuse `:run/display`
+- `extensions.agent-chain` — widget + `action=list` reuse `:chain/display`
+- `extensions.subagent-widget` — widget + `sublist` reuse `:subagent/display`
+
 ### `extensions/plan_state_learning.clj` (`extensions.plan-state-learning`)
 
 Purpose: automate PLAN/STATE/LEARNING follow-up after non-PSL commits.
@@ -133,6 +160,10 @@ Purpose: automate PLAN/STATE/LEARNING follow-up after non-PSL commits.
   - skips self-commits with marker `[psi:psl-auto]`
   - creates PSL workflow
   - runs subagent to update/commit `PLAN.md`, `STATE.md`, `LEARNING.md`
+- Workflow public data:
+  - exposes `:psl/display` using the shared workflow display-map convention
+  - `/psl` lists active PSL workflows by rendering that public display through `extensions.workflow-display/text-lines`
+- Widget: shows `⊕ PSL` header with workflow display lines for active runs
 
 ### `extensions/hello_ext.clj` (`extensions.hello-ext`)
 

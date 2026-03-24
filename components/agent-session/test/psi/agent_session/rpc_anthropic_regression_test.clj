@@ -4,6 +4,7 @@
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.core :as session]
+   [psi.agent-session.session-state :as ss]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.rpc :as rpc]))
 
@@ -65,9 +66,9 @@
           _       (.mkdirs (java.io.File. cwd))
           ctx     (session/create-context {:cwd cwd})
           _       (session/new-session-in! ctx)
-          path1   (:session-file (session/get-session-data-in ctx))
+          path1   (:session-file (ss/get-session-data-in ctx))
           _       (persist/flush-journal! (java.io.File. path1)
-                                          (:session-id (session/get-session-data-in ctx))
+                                          (:session-id (ss/get-session-data-in ctx))
                                           cwd
                                           nil
                                           nil

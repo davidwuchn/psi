@@ -144,11 +144,12 @@
               (is (str/includes? (:content result) "Monitor with agent-chain"))
               (is (contains? (:workflows @state) "run-1"))
               (let [lines (get-in @state [:widgets "agent-chain" :lines])
-                    run-line (some #(when (map? %)
-                                      (let [t (:text %)]
-                                        (when (and (string? t)
-                                                   (str/includes? t "run-1"))
-                                          %)))
+                    run-line (some (fn [line]
+                                     (when (map? line)
+                                       (let [t (:text line)]
+                                         (when (and (string? t)
+                                                    (str/includes? t "run-1"))
+                                           line))))
                                    lines)]
                 (is (map? run-line))
                 (is (= "/chain-rm run-1" (get-in run-line [:action :command])))))))
@@ -235,11 +236,28 @@
           (let [{:keys [api state]} (nullable/create-nullable-extension-api
                                      {:path "/test/agent-chain.clj"})]
             (sut/init api)
+            (swap! state assoc-in [:workflows "run-1"]
+                   {:psi.extension/path "/test/agent-chain.clj"
+                    :psi.extension.workflow/id "run-1"
+                    :psi.extension.workflow/type :agent-chain-run
+                    :psi.extension.workflow/phase :running
+                    :psi.extension.workflow/data {:chain/run-id "run-1"
+                                                  :chain/config {:name "plan-build-review"}
+                                                  :chain/display {:top-line "● run-1 [RUNNING] plan-build-review · step 1/2 planner · 1s"
+                                                                  :detail-line "  say hello"}
+                                                  :chain/progress {:phase :running
+                                                                   :step-index 0
+                                                                   :step-count 2
+                                                                   :step-agent "planner"
+                                                                   :last-work "say hello"
+                                                                   :elapsed-ms 1000}}})
             (let [execute (get-in @state [:tools "agent-chain" :execute])
                   result  (execute {"action" "list"})]
               (is (false? (:is-error result)))
               (is (str/includes? (:content result) "plan-build-review"))
-              (is (str/includes? (:content result) "Planner")))))
+              (is (str/includes? (:content result) "Planner"))
+              (is (str/includes? (:content result) "run-1 [RUNNING] plan-build-review · step 1/2 planner · 1s · ✕ remove"))
+              (is (str/includes? (:content result) "say hello")))))
         (finally
           (.delete tmp))))))
 

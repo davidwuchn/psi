@@ -317,6 +317,68 @@ actor User {
     identified_by: id = "human-operator"
 }
 
+actor SessionConsumer {
+    identified_by: "consumer-id"
+
+    @guidance
+        -- TUI, extensions, and RPC are session consumers.
+        -- They interact with sessions exclusively via SessionId.
+        -- They never hold or receive the process-scoped runtime context.
+}
+
+contract SessionService {
+    query:   (session_id: core/SessionId, eql: Any) -> Any
+    mutate:  (session_id: core/SessionId, op: String, params: core/JsonMap) -> Any
+    prompt:  (session_id: core/SessionId, text: String) -> Void
+    abort:   (session_id: core/SessionId) -> Void
+    steer:   (session_id: core/SessionId, text: String) -> Void
+}
+
+rule ServiceRoutesToSessionBySessionId {
+    when: ServiceOperationRequested(session_id, operation)
+    requires: exists s in AgentSessions where s.id = session_id
+
+    ensures: OperationExecutedAgainstSession(session_id, operation)
+
+    @guidance
+        -- The service surface resolves session_id to the session entry in
+        -- canonical state. The consumer never sees the process-scoped ctx.
+        -- If session_id is null, the active_session_id is used as default.
+}
+
+rule ServiceRejectsUnknownSessionId {
+    when: ServiceOperationRequested(session_id, operation)
+    requires: not exists s in AgentSessions where s.id = session_id
+
+    ensures: OperationRejected(session_id, "session not found")
+}
+
+surface SessionServiceApi {
+    facing consumer: SessionConsumer
+
+    contracts:
+        fulfils SessionService
+
+    exposes:
+        for s in AgentSessions:
+            s.id
+            s.name
+            s.streaming_state
+            s.status
+
+    provides:
+        ServiceOperationRequested(session_id, operation)
+
+    @guarantee ConsumerNeverSeesCtx
+        -- The process-scoped runtime context is an implementation detail.
+        -- Consumers hold only a SessionId and the service reference.
+
+    @guarantee SessionIdIsStableAcrossLifecycle
+        -- A SessionId remains valid for the lifetime of the session in
+        -- canonical state. Session switching is changing which SessionId
+        -- the consumer addresses, not invalidating existing sessions.
+}
+
 surface AgentSessionApi {
     facing caller: User
 

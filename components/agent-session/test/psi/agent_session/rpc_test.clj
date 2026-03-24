@@ -9,6 +9,9 @@
    [psi.agent-session.background-jobs :as bg-jobs]
    [psi.agent-session.commands :as commands]
    [psi.agent-session.core :as session]
+   [psi.agent-session.dispatch :as dispatch]
+   [psi.agent-session.session-state :as ss]
+   [psi.agent-session.state-accessors :as sa]
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.rpc :as rpc]
@@ -16,7 +19,7 @@
    [psi.agent-session.tools :as tools]
    [psi.memory.core :as memory]
    [psi.memory.store :as store]
-   [psi.tui.extension-ui :as ext-ui]))
+   [psi.ui.state :as ui-state]))
 
 (defn- run-loop
   ([input handler]
@@ -41,6 +44,10 @@
 
 (defn- parse-frames [lines]
   (mapv edn/read-string lines))
+
+(defn- ui-view
+  [ctx]
+  (ss/ui-state-view-in ctx))
 
 (defn- stream-body
   [s]
@@ -335,13 +342,16 @@
 
   (testing "background job list/inspect/cancel ops route through session job store"
     (let [ctx       (session/create-context)
-          thread-id (:session-id (session/get-session-data-in ctx))
-          _         (bg-jobs/start-background-job-in!
-                     (:background-jobs-atom ctx)
-                     {:tool-call-id "tc-rpc-bg-1"
-                      :thread-id thread-id
-                      :tool-name "agent-chain"
-                      :job-id "job-rpc-1"})
+          thread-id (:session-id (ss/get-session-data-in ctx))
+          _         (dispatch/dispatch! ctx :session/update-background-jobs-state
+                                        {:update-fn (fn [store]
+                                                      (:state (bg-jobs/start-background-job
+                                                               store
+                                                               {:tool-call-id "tc-rpc-bg-1"
+                                                                :thread-id thread-id
+                                                                :tool-name "agent-chain"
+                                                                :job-id "job-rpc-1"})))}
+                                        {:origin :core})
           state     (atom {:ready? true :pending {}})
           handler   (rpc/make-session-request-handler ctx)
           {:keys [out-lines]}
@@ -373,8 +383,8 @@
 (deftest rpc-subscribe-ui-topics-emits-initial-widget-snapshot-test
   (testing "subscribe ui/widgets-updated emits current widget projection immediately"
     (let [ctx     (session/create-context)
-          ui      (:ui-state-atom ctx)
-          _       (ext-ui/set-widget! ui "ext.demo" "w-1" :above-editor ["hello widget"])
+          ui      (ui-view ctx)
+          _       (ui-state/set-widget! ui "ext.demo" "w-1" :above-editor ["hello widget"])
           state   (atom {:ready? true :pending {} :subscribed-topics #{}})
           handler (rpc/make-session-request-handler ctx)
           {:keys [out-lines state]}
@@ -414,7 +424,7 @@
         (write-line! "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"ui/widgets-updated\"]}}")
         (Thread/sleep 100)
 
-        (ext-ui/set-widget! (:ui-state-atom ctx) "ext.demo" "w-2" :above-editor ["live update"])
+        (ui-state/set-widget! (ui-view ctx) "ext.demo" "w-2" :above-editor ["live update"])
         (Thread/sleep 180)
 
         (.close in-writer)
@@ -596,7 +606,10 @@
       (is (= "anthropic" (get-in complete-frame [:data :provider :id])))
       (is (= true (get-in complete-frame [:data :logged-in])))
       (is (oauth/has-auth? oauth-ctx :anthropic))
-      (is (nil? (:pending-login @state)))))
+      (let [oauth-state (sa/oauth-projection-in ctx)]
+        (is (= "anthropic" (:last-login-provider oauth-state)))
+        (is (nil? (:pending-login oauth-state)))
+        (is (instance? java.time.Instant (:last-login-at oauth-state))))))
 
   (testing "login_begin supports explicit provider override"
     (let [ctx     (session/create-context {:oauth-ctx (oauth/create-null-context)})
@@ -612,7 +625,7 @@
       (is (= :response (:kind frame)))
       (is (= "login_begin" (:op frame)))
       (is (= "openai" (get-in frame [:data :provider :id])))
-      (is (= :openai (get-in @state [:pending-login :provider-id])))))
+      (is (= :openai (get-in (sa/oauth-projection-in ctx) [:pending-login :provider-id])))))
 
   (testing "login_complete without pending login returns deterministic error"
     (let [ctx     (session/create-context {:oauth-ctx (oauth/create-null-context)})
@@ -658,7 +671,7 @@
 (deftest rpc-handshake-server-info-test
   (testing "handshake emits server-info with protocol/session metadata"
     (let [ctx     (session/create-context)
-          sid     (:session-id (session/get-session-data-in ctx))
+          sid     (:session-id (ss/get-session-data-in ctx))
           state   (atom {:handshake-server-info-fn (fn [] (rpc/session->handshake-server-info ctx))
                          :handshake-context-updated-payload-fn (fn [] (#'rpc/context-updated-payload ctx))
                          :subscribed-topics #{"context/updated"}})
@@ -699,8 +712,8 @@
 (deftest rpc-dialog-response-ops-test
   (testing "resolve_dialog succeeds with active dialog and matching id"
     (let [ctx     (session/create-context)
-          ui      (:ui-state-atom ctx)
-          _       (ext-ui/enqueue-dialog! ui {:id "d1" :kind :confirm :title "Confirm" :promise (promise)})
+          ui      (ui-view ctx)
+          _       (ui-state/enqueue-dialog! ui {:id "d1" :kind :confirm :title "Confirm" :promise (promise)})
           state   (atom {:ready? true :pending {}})
           handler (rpc/make-session-request-handler ctx)
           {:keys [out-lines]}
@@ -712,12 +725,12 @@
       (is (= "resolve_dialog" (:op frame)))
       (is (= true (:ok frame)))
       (is (= {:accepted true} (:data frame)))
-      (is (nil? (ext-ui/active-dialog ui)))))
+      (is (nil? (ui-state/active-dialog ui)))))
 
   (testing "cancel_dialog succeeds with active dialog and matching id"
     (let [ctx     (session/create-context)
-          ui      (:ui-state-atom ctx)
-          _       (ext-ui/enqueue-dialog! ui {:id "d2" :kind :input :title "Input" :promise (promise)})
+          ui      (ui-view ctx)
+          _       (ui-state/enqueue-dialog! ui {:id "d2" :kind :input :title "Input" :promise (promise)})
           state   (atom {:ready? true :pending {}})
           handler (rpc/make-session-request-handler ctx)
           {:keys [out-lines]}
@@ -729,7 +742,7 @@
       (is (= "cancel_dialog" (:op frame)))
       (is (= true (:ok frame)))
       (is (= {:accepted true} (:data frame)))
-      (is (nil? (ext-ui/active-dialog ui)))))
+      (is (nil? (ui-state/active-dialog ui)))))
 
   (testing "resolve_dialog invalid params are deterministic"
     (let [ctx     (session/create-context)
@@ -772,8 +785,8 @@
 
   (testing "dialog-id mismatch returns deterministic error"
     (let [ctx     (session/create-context)
-          ui      (:ui-state-atom ctx)
-          _       (ext-ui/enqueue-dialog! ui {:id "d-real" :kind :confirm :title "Confirm" :promise (promise)})
+          ui      (ui-view ctx)
+          _       (ui-state/enqueue-dialog! ui {:id "d-real" :kind :confirm :title "Confirm" :promise (promise)})
           state   (atom {:ready? true :pending {}})
           handler (rpc/make-session-request-handler ctx)
           {:keys [out-lines]}
@@ -788,7 +801,7 @@
 (deftest rpc-prompt-streams-events-and-interleaves-test
   (testing "prompt emits canonical events that interleave with accepted response"
     (let [ctx (session/create-context)
-          _   (ext-ui/set-status! (:ui-state-atom ctx) "ext.demo" "ready")
+          _   (ui-state/set-status! (ui-view ctx) "ext.demo" "ready")
           state (atom {:ready? true
                        :pending {}
                        :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
@@ -886,7 +899,7 @@
 (deftest rpc-openai-codex-prompt-emits-tool-events-with-final-args-test
   (testing "openai codex tool args from response.output_item.done flow through RPC tool events"
     (let [ctx       (session/create-context)
-          _         (session/set-active-tools-in! ctx [tools/bash-tool])
+          _         (dispatch/dispatch! ctx :session/set-active-tools {:tool-maps [tools/bash-tool]} {:origin :core})
           state     (atom {:ready? true
                            :pending {}
                            :sync-on-git-head-change? false
@@ -975,7 +988,7 @@
 (deftest rpc-openai-chat-completions-tool-id-late-still-executes-test
   (testing "openai chat completions executes tool calls when streamed id arrives late"
     (let [ctx       (session/create-context)
-          _         (session/set-active-tools-in! ctx [tools/bash-tool])
+          _         (dispatch/dispatch! ctx :session/set-active-tools {:tool-maps [tools/bash-tool]} {:origin :core})
           state     (atom {:ready? true
                            :pending {}
                            :sync-on-git-head-change? false
@@ -1051,7 +1064,7 @@
 (deftest rpc-openai-chat-completions-cumulative-args-executes-once-test
   (testing "openai chat completions cumulative tool args execute with full parsed payload"
     (let [ctx       (session/create-context)
-          _         (session/set-active-tools-in! ctx [tools/bash-tool])
+          _         (dispatch/dispatch! ctx :session/set-active-tools {:tool-maps [tools/bash-tool]} {:origin :core})
           state     (atom {:ready? true
                            :pending {}
                            :sync-on-git-head-change? false
@@ -1147,9 +1160,9 @@
           _       (.mkdirs (java.io.File. cwd))
           ctx     (session/create-context {:cwd cwd})
           _       (session/new-session-in! ctx)
-          path1   (:session-file (session/get-session-data-in ctx))
+          path1   (:session-file (ss/get-session-data-in ctx))
           _       (persist/flush-journal! (java.io.File. path1)
-                                          (:session-id (session/get-session-data-in ctx))
+                                          (:session-id (ss/get-session-data-in ctx))
                                           cwd
                                           nil
                                           nil
@@ -1179,8 +1192,8 @@
           _       (.mkdirs (java.io.File. cwd))
           ctx     (session/create-context {:cwd cwd})
           _       (session/new-session-in! ctx)
-          sid1    (:session-id (session/get-session-data-in ctx))
-          path1   (:session-file (session/get-session-data-in ctx))
+          sid1    (:session-id (ss/get-session-data-in ctx))
+          path1   (:session-file (ss/get-session-data-in ctx))
           _       (persist/flush-journal! (java.io.File. path1)
                                           sid1
                                           cwd
@@ -1212,7 +1225,7 @@
     (let [cwd     (str (System/getProperty "java.io.tmpdir") "/psi-rpc-context-" (java.util.UUID/randomUUID))
           _       (.mkdirs (java.io.File. cwd))
           ctx     (session/create-context {:cwd cwd})
-          _       (:session-id (session/get-session-data-in ctx))
+          _       (:session-id (ss/get-session-data-in ctx))
           state   (atom {:ready? true :pending {}})
           handler (rpc/make-session-request-handler ctx)
           input   (str "{:id \"n1\" :kind :request :op \"new_session\"}\n"
@@ -1238,8 +1251,8 @@
           _       (.mkdirs (java.io.File. cwd))
           ctx     (session/create-context {:cwd cwd})
           _       (session/new-session-in! ctx)
-          sid1    (:session-id (session/get-session-data-in ctx))
-          path1   (:session-file (session/get-session-data-in ctx))
+          sid1    (:session-id (ss/get-session-data-in ctx))
+          path1   (:session-file (ss/get-session-data-in ctx))
           _       (persist/flush-journal! (java.io.File. path1)
                                           sid1
                                           cwd
@@ -1247,7 +1260,7 @@
                                           nil
                                           [(persist/thinking-level-entry :off)])
           _       (session/new-session-in! ctx)
-          sid2    (:session-id (session/get-session-data-in ctx))
+          sid2    (:session-id (ss/get-session-data-in ctx))
           _       (session/new-session-in! ctx)
           state   (atom {:ready? true
                          :pending {}
@@ -1266,16 +1279,16 @@
       (is (.exists (java.io.File. path1)))
       (is (= sid1 (get-in switch-r [:data :session-id])))
       (is (= sid1 (get-in resumed-e [:data :session-id])))
-      (is (= sid1 (:session-id (session/get-session-data-in ctx))))
-      (is (= sid1 (:active-session-id (session/get-context-index-in ctx))))))
+      (is (= sid1 (:session-id (ss/get-session-data-in ctx))))
+      (is (= sid1 (ss/active-session-id-in ctx)))))
 
   (testing "targetable ops accept :session-id and route to that session"
     (let [cwd     (str (System/getProperty "java.io.tmpdir") "/psi-rpc-target-" (java.util.UUID/randomUUID))
           _       (.mkdirs (java.io.File. cwd))
           ctx     (session/create-context {:cwd cwd})
           _       (session/new-session-in! ctx)
-          sid1    (:session-id (session/get-session-data-in ctx))
-          path1   (:session-file (session/get-session-data-in ctx))
+          sid1    (:session-id (ss/get-session-data-in ctx))
+          path1   (:session-file (ss/get-session-data-in ctx))
           _       (persist/flush-journal! (java.io.File. path1)
                                           sid1
                                           cwd
@@ -1283,7 +1296,7 @@
                                           nil
                                           [(persist/thinking-level-entry :off)])
           _       (session/new-session-in! ctx)
-          sid2    (:session-id (session/get-session-data-in ctx))
+          sid2    (:session-id (ss/get-session-data-in ctx))
           _       (session/new-session-in! ctx)
           state   (atom {:ready? true :pending {}})
           handler (rpc/make-session-request-handler ctx)
@@ -1294,8 +1307,8 @@
       (is (= :response (:kind frame)))
       (is (= "set_session_name" (:op frame)))
       (is (= "alpha" (get-in frame [:data :session-name])))
-      (is (= sid1 (:session-id (session/get-session-data-in ctx))))
-      (is (= "alpha" (:session-name (session/get-session-data-in ctx))))))
+      (is (= sid1 (:session-id (ss/get-session-data-in ctx))))
+      (is (= "alpha" (:session-name (ss/get-session-data-in ctx))))))
 
   (testing "targetable op rejects invalid :session-id param"
     (let [ctx     (session/create-context)
@@ -1310,141 +1323,143 @@
       (is (= "get_state" (:op frame)))
       (is (= "request/invalid-params" (:error-code frame)))))
 
-  (testing "targetable op rejects cross-session routing while prompt is in-flight when lock enforcement is enabled"
-    (let [cwd     (str (System/getProperty "java.io.tmpdir") "/psi-rpc-routing-lock-" (java.util.UUID/randomUUID))
-          _       (.mkdirs (java.io.File. cwd))
-          ctx     (session/create-context {:cwd cwd})
-          _       (session/new-session-in! ctx)
-          sid1    (:session-id (session/get-session-data-in ctx))
-          path1   (:session-file (session/get-session-data-in ctx))
-          _       (persist/flush-journal! (java.io.File. path1)
-                                          sid1
-                                          cwd
-                                          nil
-                                          nil
-                                          [(persist/thinking-level-entry :off)])
-          _       (session/new-session-in! ctx)
-          sid2    (:session-id (session/get-session-data-in ctx))
-          gate    (promise)
-          release (promise)
-          state   (atom {:ready? true
-                         :pending {}
-                         :enforce-session-route-lock? true
-                         :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
-                         :run-agent-loop-fn (fn [& _]
-                                              (deliver gate true)
-                                              @release
-                                              {:role "assistant" :content [{:type :text :text "ok"}]})})
-          handler (rpc/make-session-request-handler ctx)
-          in-reader   (java.io.PipedReader.)
-          in-writer   (java.io.PipedWriter. in-reader)
-          out-writer  (java.io.StringWriter.)
-          err-writer  (java.io.StringWriter.)
-          write-line! (fn [line]
-                        (.write in-writer (str line "\n"))
-                        (.flush in-writer))
-          loop-future (future
-                        (rpc/run-stdio-loop! {:in              in-reader
-                                              :out             out-writer
-                                              :err             err-writer
-                                              :state           state
-                                              :request-handler handler}))]
-      (try
-        (write-line! "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}")
-        (write-line! (str "{:id \"p1\" :kind :request :op \"prompt\" :params {:session-id \"" sid1 "\" :message \"hold\"}}"))
-        (deref gate 1000 nil)
-        (write-line! (str "{:id \"g2\" :kind :request :op \"get_state\" :params {:session-id \"" sid2 "\"}}"))
-        (Thread/sleep 150)
-        (deliver release true)
-        (Thread/sleep 250)
-        (.close in-writer)
-        (deref loop-future 1000 nil)
-        (let [frames (->> (str/split-lines (str out-writer))
-                          (remove str/blank?)
-                          parse-frames)
-              conflict (some #(when (and (= :error (:kind %))
-                                         (= "g2" (:id %))) %)
-                             frames)]
-          (is (some? conflict))
-          (is (= "request/session-routing-conflict" (:error-code conflict)))
-          (is (= sid1 (get-in conflict [:data :inflight-session-id])))
-          (is (= sid2 (get-in conflict [:data :target-session-id]))))
-        (finally
+  ;; Route-lock tests removed — route-lock machinery eliminated in multi-session migration.
+  ;; Sessions are now concurrently resident in the atom; no single-slot contention.
+  #_(testing "targetable op rejects cross-session routing while prompt is in-flight when lock enforcement is enabled"
+      (let [cwd     (str (System/getProperty "java.io.tmpdir") "/psi-rpc-routing-lock-" (java.util.UUID/randomUUID))
+            _       (.mkdirs (java.io.File. cwd))
+            ctx     (session/create-context {:cwd cwd})
+            _       (session/new-session-in! ctx)
+            sid1    (:session-id (ss/get-session-data-in ctx))
+            path1   (:session-file (ss/get-session-data-in ctx))
+            _       (persist/flush-journal! (java.io.File. path1)
+                                            sid1
+                                            cwd
+                                            nil
+                                            nil
+                                            [(persist/thinking-level-entry :off)])
+            _       (session/new-session-in! ctx)
+            sid2    (:session-id (ss/get-session-data-in ctx))
+            gate    (promise)
+            release (promise)
+            state   (atom {:ready? true
+                           :pending {}
+                           :enforce-session-route-lock? true
+                           :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
+                           :run-agent-loop-fn (fn [& _]
+                                                (deliver gate true)
+                                                @release
+                                                {:role "assistant" :content [{:type :text :text "ok"}]})})
+            handler (rpc/make-session-request-handler ctx)
+            in-reader   (java.io.PipedReader.)
+            in-writer   (java.io.PipedWriter. in-reader)
+            out-writer  (java.io.StringWriter.)
+            err-writer  (java.io.StringWriter.)
+            write-line! (fn [line]
+                          (.write in-writer (str line "\n"))
+                          (.flush in-writer))
+            loop-future (future
+                          (rpc/run-stdio-loop! {:in              in-reader
+                                                :out             out-writer
+                                                :err             err-writer
+                                                :state           state
+                                                :request-handler handler}))]
+        (try
+          (write-line! "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}")
+          (write-line! (str "{:id \"p1\" :kind :request :op \"prompt\" :params {:session-id \"" sid1 "\" :message \"hold\"}}"))
+          (deref gate 1000 nil)
+          (write-line! (str "{:id \"g2\" :kind :request :op \"get_state\" :params {:session-id \"" sid2 "\"}}"))
+          (Thread/sleep 150)
           (deliver release true)
-          (when-let [f (:ui-watch-loop @state)]
-            (future-cancel f))
-          (when-let [f (:external-event-loop @state)]
-            (future-cancel f))
-          (future-cancel loop-future)
-          (try (.close in-writer) (catch Exception _ nil))
-          (try (.close in-reader) (catch Exception _ nil))))))
+          (Thread/sleep 250)
+          (.close in-writer)
+          (deref loop-future 1000 nil)
+          (let [frames (->> (str/split-lines (str out-writer))
+                            (remove str/blank?)
+                            parse-frames)
+                conflict (some #(when (and (= :error (:kind %))
+                                           (= "g2" (:id %))) %)
+                               frames)]
+            (is (some? conflict))
+            (is (= "request/session-routing-conflict" (:error-code conflict)))
+            (is (= sid1 (get-in conflict [:data :inflight-session-id])))
+            (is (= sid2 (get-in conflict [:data :target-session-id]))))
+          (finally
+            (deliver release true)
+            (when-let [f (:ui-watch-loop @state)]
+              (future-cancel f))
+            (when-let [f (:external-event-loop @state)]
+              (future-cancel f))
+            (future-cancel loop-future)
+            (try (.close in-writer) (catch Exception _ nil))
+            (try (.close in-reader) (catch Exception _ nil))))))
 
-  (testing "exclusive ops are rejected while prompt is in-flight when lock enforcement is enabled"
-    (let [cwd     (str (System/getProperty "java.io.tmpdir") "/psi-rpc-routing-lock-exclusive-" (java.util.UUID/randomUUID))
-          _       (.mkdirs (java.io.File. cwd))
-          ctx     (session/create-context {:cwd cwd})
-          _       (session/new-session-in! ctx)
-          sid1    (:session-id (session/get-session-data-in ctx))
-          path1   (:session-file (session/get-session-data-in ctx))
-          _       (persist/flush-journal! (java.io.File. path1)
-                                          sid1
-                                          cwd
-                                          nil
-                                          nil
-                                          [(persist/thinking-level-entry :off)])
-          gate    (promise)
-          release (promise)
-          state   (atom {:ready? true
-                         :pending {}
-                         :enforce-session-route-lock? true
-                         :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
-                         :run-agent-loop-fn (fn [& _]
-                                              (deliver gate true)
-                                              @release
-                                              {:role "assistant" :content [{:type :text :text "ok"}]})})
-          handler (rpc/make-session-request-handler ctx)
-          in-reader   (java.io.PipedReader.)
-          in-writer   (java.io.PipedWriter. in-reader)
-          out-writer  (java.io.StringWriter.)
-          err-writer  (java.io.StringWriter.)
-          write-line! (fn [line]
-                        (.write in-writer (str line "\n"))
-                        (.flush in-writer))
-          loop-future (future
-                        (rpc/run-stdio-loop! {:in              in-reader
-                                              :out             out-writer
-                                              :err             err-writer
-                                              :state           state
-                                              :request-handler handler}))]
-      (try
-        (write-line! "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}")
-        (write-line! (str "{:id \"p1\" :kind :request :op \"prompt\" :params {:session-id \"" sid1 "\" :message \"hold\"}}"))
-        (deref gate 1000 nil)
-        (write-line! "{:id \"n2\" :kind :request :op \"new_session\"}")
-        (Thread/sleep 150)
-        (deliver release true)
-        (Thread/sleep 250)
-        (.close in-writer)
-        (deref loop-future 1000 nil)
-        (let [frames (->> (str/split-lines (str out-writer))
-                          (remove str/blank?)
-                          parse-frames)
-              conflict (some #(when (and (= :error (:kind %))
-                                         (= "n2" (:id %))) %)
-                             frames)]
-          (is (some? conflict))
-          (is (= "request/session-routing-conflict" (:error-code conflict)))
-          (is (= sid1 (get-in conflict [:data :inflight-session-id])))
-          (is (= sid1 (get-in conflict [:data :target-session-id]))))
-        (finally
+  #_(testing "exclusive ops are rejected while prompt is in-flight when lock enforcement is enabled"
+      (let [cwd     (str (System/getProperty "java.io.tmpdir") "/psi-rpc-routing-lock-exclusive-" (java.util.UUID/randomUUID))
+            _       (.mkdirs (java.io.File. cwd))
+            ctx     (session/create-context {:cwd cwd})
+            _       (session/new-session-in! ctx)
+            sid1    (:session-id (ss/get-session-data-in ctx))
+            path1   (:session-file (ss/get-session-data-in ctx))
+            _       (persist/flush-journal! (java.io.File. path1)
+                                            sid1
+                                            cwd
+                                            nil
+                                            nil
+                                            [(persist/thinking-level-entry :off)])
+            gate    (promise)
+            release (promise)
+            state   (atom {:ready? true
+                           :pending {}
+                           :enforce-session-route-lock? true
+                           :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
+                           :run-agent-loop-fn (fn [& _]
+                                                (deliver gate true)
+                                                @release
+                                                {:role "assistant" :content [{:type :text :text "ok"}]})})
+            handler (rpc/make-session-request-handler ctx)
+            in-reader   (java.io.PipedReader.)
+            in-writer   (java.io.PipedWriter. in-reader)
+            out-writer  (java.io.StringWriter.)
+            err-writer  (java.io.StringWriter.)
+            write-line! (fn [line]
+                          (.write in-writer (str line "\n"))
+                          (.flush in-writer))
+            loop-future (future
+                          (rpc/run-stdio-loop! {:in              in-reader
+                                                :out             out-writer
+                                                :err             err-writer
+                                                :state           state
+                                                :request-handler handler}))]
+        (try
+          (write-line! "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}")
+          (write-line! (str "{:id \"p1\" :kind :request :op \"prompt\" :params {:session-id \"" sid1 "\" :message \"hold\"}}"))
+          (deref gate 1000 nil)
+          (write-line! "{:id \"n2\" :kind :request :op \"new_session\"}")
+          (Thread/sleep 150)
           (deliver release true)
-          (when-let [f (:ui-watch-loop @state)]
-            (future-cancel f))
-          (when-let [f (:external-event-loop @state)]
-            (future-cancel f))
-          (future-cancel loop-future)
-          (try (.close in-writer) (catch Exception _ nil))
-          (try (.close in-reader) (catch Exception _ nil)))))))
+          (Thread/sleep 250)
+          (.close in-writer)
+          (deref loop-future 1000 nil)
+          (let [frames (->> (str/split-lines (str out-writer))
+                            (remove str/blank?)
+                            parse-frames)
+                conflict (some #(when (and (= :error (:kind %))
+                                           (= "n2" (:id %))) %)
+                               frames)]
+            (is (some? conflict))
+            (is (= "request/session-routing-conflict" (:error-code conflict)))
+            (is (= sid1 (get-in conflict [:data :inflight-session-id])))
+            (is (= sid1 (get-in conflict [:data :target-session-id]))))
+          (finally
+            (deliver release true)
+            (when-let [f (:ui-watch-loop @state)]
+              (future-cancel f))
+            (when-let [f (:external-event-loop @state)]
+              (future-cancel f))
+            (future-cancel loop-future)
+            (try (.close in-writer) (catch Exception _ nil))
+            (try (.close in-reader) (catch Exception _ nil)))))))
 
 (deftest rpc-new-session-uses-callback-rehydrate-payload-test
   (testing "new_session uses on-new-session! callback when provided"
@@ -1481,11 +1496,11 @@
                          :pending {}
                          :subscribed-topics #{"footer/updated"}})
           handler (rpc/make-session-request-handler ctx)
-          _       (session/journal-append-in! ctx {:kind :message
-                                                   :session-id (:session-id (session/get-session-data-in ctx))
-                                                   :data {:message {:role "assistant"
-                                                                    :usage {:input-tokens 111
-                                                                            :output-tokens 22}}}})
+          _       (ss/journal-append-in! ctx {:kind :message
+                                              :session-id (:session-id (ss/get-session-data-in ctx))
+                                              :data {:message {:role "assistant"
+                                                               :usage {:input-tokens 111
+                                                                       :output-tokens 22}}}})
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"n1\" :kind :request :op \"new_session\"}\n")
           {:keys [out-lines]} (run-loop input handler state)
@@ -1500,16 +1515,16 @@
 (deftest footer-updated-payload-includes-model-and-thinking-when-session-reasoning-enabled-test
   (testing "footer payload includes model/thinking details from active session query"
     (let [ctx (session/create-context)
-          _   (session/set-model-in! ctx {:provider "openai"
-                                          :id "gpt-5.3-codex"
-                                          :reasoning true})
-          _   (session/set-thinking-level-in! ctx :high)
-          _   (session/update-context-usage-in! ctx 4000 100000)
-          _   (session/journal-append-in! ctx {:kind :message
-                                               :session-id (:session-id (session/get-session-data-in ctx))
-                                               :data {:message {:role "assistant"
-                                                                :usage {:input-tokens 111
-                                                                        :output-tokens 22}}}})
+          _   (dispatch/dispatch! ctx :session/set-model
+                                  {:model {:provider "openai" :id "gpt-5.3-codex" :reasoning true}}
+                                  {:origin :core})
+          _   (dispatch/dispatch! ctx :session/set-thinking-level {:level :high} {:origin :core})
+          _   (dispatch/dispatch! ctx :session/update-context-usage {:tokens 4000 :window 100000} {:origin :core})
+          _   (ss/journal-append-in! ctx {:kind :message
+                                          :session-id (:session-id (ss/get-session-data-in ctx))
+                                          :data {:message {:role "assistant"
+                                                           :usage {:input-tokens 111
+                                                                   :output-tokens 22}}}})
           payload (#'rpc/footer-updated-payload ctx)
           stats-line (:stats-line payload)]
       (is (string? stats-line))
@@ -1541,10 +1556,10 @@
     (let [cwd     (str (System/getProperty "java.io.tmpdir") "/psi-rpc-fork-" (java.util.UUID/randomUUID))
           _       (.mkdirs (java.io.File. cwd))
           ctx     (session/create-context {:cwd cwd})
-          _       (session/set-model-in! ctx {:provider "anthropic" :id "claude-sonnet"})
+          _       (dispatch/dispatch! ctx :session/set-model {:model {:provider "anthropic" :id "claude-sonnet"}} {:origin :core})
           ;; Append a message entry so fork has an entry-id to branch from
           entry   (persist/message-entry {:role "user" :content "hi"})
-          _       (session/journal-append-in! ctx entry)
+          _       (ss/journal-append-in! ctx entry)
           entry-id (:id entry)
           state   (atom {:ready? true
                          :pending {}
@@ -1869,8 +1884,8 @@
                       {:type :oauth :access "tok" :refresh "ref" :expires (+ (System/currentTimeMillis) 60000)})]
         (run-loop "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/login\"}}\n"
                   handler state 250)
-        (is (some? (:pending-login @state))
-            "manual login-start should set pending-login state")
+        (is (some? (:pending-login (sa/oauth-projection-in ctx)))
+            "manual login-start should set canonical pending-login state")
 
         (run-loop "{:id \"p2\" :kind :request :op \"prompt\" :params {:message \"auth-code-123\"}}\n"
                   handler state 250)
@@ -1880,8 +1895,8 @@
                  :login-state {:verifier "v1"}}]
                @completions)
             "pending auth code prompt should complete login via oauth/complete-login!")
-        (is (nil? (:pending-login @state))
-            "pending-login should clear after completion attempt")
+        (is (nil? (:pending-login (sa/oauth-projection-in ctx)))
+            "pending-login should clear from canonical oauth state after completion attempt")
         (is (= ["/login"] @dispatches)
             "second prompt must bypass commands/dispatch while login is pending")
         (is (false? @loop-called?)
@@ -1922,8 +1937,8 @@
                    :login-state {:state "s1"}}]
                  @completions)
               "callback login-start should complete with nil input and wait for callback server")
-          (is (nil? (:pending-login @state))
-              "callback flow should not leave pending-login state")
+          (is (nil? (:pending-login (sa/oauth-projection-in ctx)))
+              "callback flow should not leave canonical pending-login state")
           (is (false? @loop-called?)
               "agent loop must not run during callback login completion")
           (is (some #(str/includes? % "Waiting for browser callback") texts)
@@ -2097,7 +2112,7 @@
       (with-redefs [commands/dispatch (fn [_ctx _text _opts]
                                         {:type :text :message "history output"})]
         (run-loop input handler state 250)
-        (let [journal-entries @(:journal-atom ctx)
+        (let [journal-entries (persist/all-entries-in ctx)
               msg-entries     (filterv #(= :message (:kind %)) journal-entries)
               user-msg        (some #(when (= "user" (get-in % [:data :message :role])) %) msg-entries)]
           (is (seq msg-entries)
@@ -2120,7 +2135,7 @@
                        "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"tell me a joke\"}}\n")]
       (with-redefs [commands/dispatch (fn [_ctx _text _opts] nil)]
         (run-loop input handler state 250)
-        (let [journal-entries @(:journal-atom ctx)
+        (let [journal-entries (persist/all-entries-in ctx)
               msg-entries     (filterv #(= :message (:kind %)) journal-entries)
               user-msg        (some #(when (= "user" (get-in % [:data :message :role])) %) msg-entries)]
           (is (some? user-msg)

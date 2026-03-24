@@ -2,7 +2,7 @@
   (:require
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
-   [psi.agent-session.core :as session]
+   [psi.agent-session.extensions :as ext]
    [psi.agent-session.runtime :as runtime]
    [psi.agent-session.test-support :as test-support]
    [psi.recursion.core :as recursion]))
@@ -116,7 +116,7 @@
                   (fn [_ _ _]
                     (swap! orchestration-calls inc)
                     {:ok? true})
-                  session/dispatch-extension-event-in!
+                  ext/dispatch-in
                   (fn [_ event-name payload]
                     (swap! extension-events conj {:name event-name :payload payload})
                     {:cancelled? false :override nil :results []})]
@@ -129,13 +129,15 @@
 
 (deftest run-agent-loop-sync-on-git-head-change-dispatches-extension-event-test
   (let [extension-events (atom [])
+        sid              "runtime-event"
         ctx              {:cwd "/tmp/psi-runtime-event"
-                          :agent-ctx {}
                           :recursion-ctx (recursion/create-context)
                           :extension-registry {:state (atom {:registration-order []
                                                              :extensions {}})}
-                          :session-data-atom (atom {:worktree-path "/tmp/psi-runtime-event"
-                                                    :session-id "runtime-event"})}]
+                          :state* (atom {:agent-session {:sessions {sid {:data      {:worktree-path "/tmp/psi-runtime-event"
+                                                                                     :session-id    sid}
+                                                                         :agent-ctx {}}}
+                                                         :active-session-id sid}})}]
     (with-redefs [runtime/safe-maybe-sync-on-git-head-change!
                   (fn [ctx]
                     (let [git-sync {:ok? true
@@ -147,7 +149,7 @@
                       (#'runtime/maybe-trigger-recursion-from-git-sync! ctx git-sync)
                       (#'runtime/maybe-dispatch-git-head-changed-event! ctx git-sync)
                       git-sync))
-                  session/dispatch-extension-event-in!
+                  ext/dispatch-in
                   (fn [_ event-name payload]
                     (swap! extension-events conj {:name event-name :payload payload})
                     {:cancelled? false :override nil :results []})]

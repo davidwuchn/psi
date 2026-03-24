@@ -12,8 +12,6 @@
    (java.nio.file Files)
    (java.nio.file.attribute FileAttribute)))
 
-;;; Shared null context fixture (per test via let — each test gets its own)
-
 (def ^:private seed-commits
   [{:message "⚒ Initial commit"
     :files   {"README.md"   "# psi\n"
@@ -24,6 +22,12 @@
     :files   {"CHANGELOG.md" "## v0.1\n"}}
    {:message "⚒ Add another feature"
     :files   {"src/extra.clj" "(ns extra)\n"}}])
+
+;;; Shared read-only context for tests that don't mutate the repo
+
+(def ^:private shared-ro-ctx
+  "Delayed null context for read-only tests. Created once per test run."
+  (delay (git/create-null-context seed-commits)))
 
 (defn- linked-worktree-path
   [ctx name]
@@ -59,7 +63,7 @@
 
 (deftest log-returns-commits
   ;; null context with seeded commits — log should see all four
-  (let [ctx     (git/create-null-context seed-commits)
+  (let [ctx     @shared-ro-ctx
         commits (git/log ctx {:n 10})]
     (testing "returns the seeded commits"
       (is (= 4 (count commits))))
@@ -74,14 +78,14 @@
 
 (deftest log-n-limits-results
   ;; :n 2 must return at most 2 commits
-  (let [ctx     (git/create-null-context seed-commits)
+  (let [ctx     @shared-ro-ctx
         commits (git/log ctx {:n 2})]
     (testing ":n limits results"
       (is (<= (count commits) 2)))))
 
 (deftest log-grep-filters-by-message
   ;; grep λ must return only commits whose subject contains λ
-  (let [ctx     (git/create-null-context seed-commits)
+  (let [ctx     @shared-ro-ctx
         grepped (git/log ctx {:grep "λ"})]
     (testing "grep returns only matching commits"
       (is (= 1 (count grepped)))
@@ -89,7 +93,7 @@
 
 (deftest log-symbols-extracted
   ;; the λ commit should carry λ in its symbols set
-  (let [ctx     (git/create-null-context seed-commits)
+  (let [ctx     @shared-ro-ctx
         commits (git/log ctx {})]
     (testing "λ symbol extracted from message"
       (let [lambda-c (first (filter #(str/includes? (:git.commit/subject %) "λ") commits))]
@@ -102,7 +106,7 @@
 
 (deftest show-returns-detail
   ;; show HEAD must echo the sha and include diff + stat
-  (let [ctx    (git/create-null-context seed-commits)
+  (let [ctx    @shared-ro-ctx
         sha    (git/current-commit ctx)
         detail (git/show ctx sha)]
     (testing "sha matches"
@@ -119,7 +123,7 @@
 
 (deftest status-clean-on-fresh-repo
   ;; a freshly committed null repo should be clean
-  (let [ctx (git/create-null-context seed-commits)]
+  (let [ctx @shared-ro-ctx]
     (testing "status is :clean after commits"
       (is (= :clean (git/status ctx))))))
 
@@ -127,7 +131,7 @@
 
 (deftest current-commit-is-40-char-sha
   ;; HEAD sha must be a 40-character lowercase hex string
-  (let [ctx (git/create-null-context seed-commits)
+  (let [ctx @shared-ro-ctx
         sha (git/current-commit ctx)]
     (testing "sha is 40 chars"
       (is (= 40 (count sha))))
@@ -138,7 +142,7 @@
 
 (deftest ls-files-returns-tracked-paths
   ;; null repo seeds four source files
-  (let [ctx   (git/create-null-context seed-commits)
+  (let [ctx   @shared-ro-ctx
         files (git/ls-files ctx {})]
     (testing "returns tracked files"
       (is (seq files))
@@ -151,7 +155,7 @@
 
 (deftest grep-finds-pattern
   ;; null repo contains "(defresolver foo" — grep must find it
-  (let [ctx     (git/create-null-context seed-commits)
+  (let [ctx     @shared-ro-ctx
         results (git/grep ctx "defresolver" {})]
     (testing "finds defresolver"
       (is (seq results)))
@@ -164,7 +168,7 @@
 
 (deftest grep-no-match-returns-empty
   ;; searching for a nonsense string must return nil or empty
-  (let [ctx     (git/create-null-context seed-commits)
+  (let [ctx     @shared-ro-ctx
         results (git/grep ctx "XYZZY_NOTHING_HERE_9999" {})]
     (testing "no match is nil or empty"
       (is (or (nil? results) (empty? results))))))
@@ -191,11 +195,11 @@
     (is (true? (get-in worktrees [2 :git.worktree/detached?])))))
 
 (deftest inside-repo-detects-null-context
-  (let [ctx (git/create-null-context seed-commits)]
+  (let [ctx @shared-ro-ctx]
     (is (true? (git/inside-repo? ctx)))))
 
 (deftest worktree-list-includes-current-on-null-context
-  (let [ctx       (git/create-null-context seed-commits)
+  (let [ctx       @shared-ro-ctx
         worktrees (git/worktree-list ctx)
         current   (git/current-worktree ctx)]
     (is (seq worktrees))
@@ -212,7 +216,7 @@
     (is (nil? (git/current-worktree ctx)))))
 
 (deftest worktree-list-command-failure-emits-telemetry-and-empty
-  (let [ctx (git/create-null-context seed-commits)
+  (let [ctx @shared-ro-ctx
         warned (atom nil)]
     (with-redefs [psi.history.git/inside-repo? (fn [_] true)
                   psi.history.git/run-git (fn [_ _]
@@ -226,7 +230,7 @@
       (is (= "boom" (:error @warned))))))
 
 (deftest worktree-list-marks-nested-cwd-as-current
-  (let [ctx         (git/create-null-context seed-commits)
+  (let [ctx         @shared-ro-ctx
         root        (:repo-dir ctx)
         nested      (str root File/separator "src")
         _           (.mkdirs (File. nested))
@@ -360,7 +364,7 @@
     (is (nil? (:error result)))))
 
 (deftest default-branch-falls-back-to-main
-  (let [ctx    (git/create-null-context seed-commits)
+  (let [ctx    @shared-ro-ctx
         result (git/default-branch ctx)]
     (is (= "main" (:branch result)))
     (is (= :fallback (:source result)))))

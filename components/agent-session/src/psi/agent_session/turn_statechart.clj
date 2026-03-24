@@ -1,14 +1,24 @@
 (ns psi.agent-session.turn-statechart
-  "Per-turn streaming statechart — formalises the implicit state machine
-   in stream-turn! as an explicit, queryable statechart.
+  "Per-turn stream-assembly statechart — formalises the implicit provider
+   streaming accumulation in `stream-turn!` as an explicit, queryable statechart.
+
+   Scope
+   ─────
+   This chart owns one provider-stream assembly boundary only:
+   text/thinking/tool-call accumulation and one streamed assistant terminal
+   result (`:done` | `:error`).
+
+   It does not own the next-step orchestration boundary after stream completion:
+   tool execution, recurse-for-next-turn decisions, and agent-loop completion
+   remain in `psi.agent-session.executor`.
 
    States
    ──────
-   :idle               — not streaming, ready for the next turn
+   :idle               — not streaming, ready for one provider stream
    :text-accumulating   — receiving text deltas from the provider
    :tool-accumulating   — receiving tool-call argument deltas
-   :done                — final assistant message assembled
-   :error               — provider error or timeout
+   :done                — final assistant message assembled for this stream
+   :error               — provider error or timeout for this stream
 
    Working memory keys (stored in the flat data model)
    ─────────────────────────────────────────────────────

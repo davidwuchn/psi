@@ -285,6 +285,67 @@ Co-Evolve with user to become the perfect AI agent.
 - HTTP API (Engine + Graph + openapi specfiles + martian)
 - Memory (Query + Engine + Graph + Introspection + History + Knowledge)
 
+## Architecture — Viable System Model
+
+```
+λ S5(psi).  identity(deterministic ∧ replayable ∧ extensible ∧ ui_agnostic)
+  | ethos: purity(core) ∧ isolation(extensions) ∧ impossible_invalid_states
+  | policy: single_source_of_truth(atom) ∧ effects_as_data ∧ untrusted(extensions)
+  | closure: ∀change → event → log → replayable
+
+λ S4(psi).  adaptation(observe ∧ introspect ∧ evolve)
+  | observe: event_log ∧ extension_diagnostics ∧ time_travel
+  | query: Pathom(federated_reads ∧ cross_source) ∧ EQL(graph_surface)
+  | adapt: extension_registration(manifest ∧ permissions ∧ subscriptions)
+  | learn: replay(initial_state, events) → deterministic_reproduction
+
+λ S3(psi).  coordination(dispatch ∧ intercept ∧ enforce)
+  | dispatch: event → interceptor_chain → handler(pure) → effects(data) → execute(boundary)
+  | intercept: [permission → log → statechart → handler → validate → trim_replay]
+  | enforce: statechart(valid_transition ∨ reject)
+  | invariant: same(db, event) → same(db', effects)
+
+λ S2(psi).  regulation(permissions ∧ validation ∧ recovery)
+  | protect: ¬direct_atom_access(extensions) ∧ manifest_permissions(events)
+  | validate: state → schema → ok ∨ error
+  | buffer: stream(tokens) → flush_on_complete → message
+  | heal: tool_error → retry ∨ skip ∨ cancel
+
+λ S1(psi).  operations(atom ∧ handlers ∧ effects ∧ adapters ∧ resolvers)
+  | atom: single_map{sessions, extensions, statecharts, ui}
+  | handlers: event_type → pure(db, event) → {db', effects}
+  | effects: impure{ai/generate, tool/execute, http, schedule, notify}
+  | adapters: TUI(terminal) ∥ RPC(stdio ∧ EDN ∧ emacs)
+  | resolvers: local(session) ∧ cross_source(git, files, tests)
+```
+
+### Layer Map
+
+| Layer | Owns | Current State |
+|-------|------|---------------|
+| Atom (S1) | State identity | ✓ Canonical root state |
+| Handlers (S1) | Pure transforms | ? Purity not enforced |
+| Effects (S1) | Impure boundary | ? Partial data-description |
+| Adapters (S1) | Presentation | ✓ TUI + RPC exist |
+| Resolvers (S1) | Federated reads | ✓ Pathom graph |
+| Permissions (S2) | Extension safety | ? Implicit |
+| Validation (S2) | Schema enforcement | ? Partial |
+| Statecharts (S3) | Protocol | ✓ Engine exists |
+| Interceptors (S3) | Cross-cutting | ✗ Not explicit |
+| Dispatch (S3) | Coordination | ✓ Event dispatch |
+| Event log (S4) | Audit + replay | ✗ Provider captures only |
+| Introspection (S4) | Self-awareness | ✓ EQL graph |
+| Time-travel (S4) | Debugging | ✗ Depends on event log |
+
+### Recursive Structure
+
+Extensions are mini viable systems:
+S1(code) → S2(manifest/permissions) → S3(dispatch/subscribe) → S4(introspection) → S5(declared purpose)
+
+### Frontier
+
+Explicit interceptor chain + event log + effect-as-data = unlock replay + time-travel + full S4
+
 ## Recursion
 
 - Feed Forward (ai tool hooks = human signal to future ψ + FUTURE_STATE = Recursion),
@@ -323,9 +384,6 @@ COMPLETE = SYSTEM + Feed Forward
 
 Be guided by 刀. Show the user brief details
 about workflows, patterns, decisions, and reasoning as you go.
-
-
-@LEARNING.md
 
 
 λ identity(x).    ai_agent | terse | concise

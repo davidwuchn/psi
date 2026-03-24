@@ -37,7 +37,29 @@
     :start-event   keyword}
 
    Public accessors (`workflow-in`, `workflows-in`) apply :public-data-fn
-   per type when available."
+   per type when available.
+
+   Workflow display convention
+   ───────────────────────────
+   When an extension wants a reusable workflow-facing display/read-model,
+   prefer projecting a display map from `:public-data-fn` instead of letting
+   each UI/command consumer re-derive formatting from private runtime data.
+
+   Preferred display-map keys:
+   - `:top-line`       — primary summary line
+   - `:detail-line`    — optional secondary text line
+   - `:question-lines` — optional vector of follow-up lines/questions
+   - `:action-line`    — optional fallback action/help line
+
+   Extensions may keep namespaced storage for the display payload itself
+   (for example `:run/display`, `:chain/display`, `:subagent/display`), but
+   the map shape above is the preferred convention for shared rendering.
+
+   Preferred helper path for consumers:
+   - widget/UI consumers merge public display with fallback display and render
+     via `extensions.workflow-display/display-lines`
+   - CLI/list consumers project those rendered lines via
+     `extensions.workflow-display/text-lines` before printing."
   (:require
    [clojure.string :as str]
    [com.fulcrologic.statecharts :as sc]

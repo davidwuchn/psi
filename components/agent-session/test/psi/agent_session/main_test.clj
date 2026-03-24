@@ -3,9 +3,13 @@
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.commands :as commands]
+   [psi.agent-session.bootstrap :as bootstrap]
    [psi.agent-session.core :as session]
+   [psi.agent-session.session-state :as ss]
+   [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.main :as main]
+   [psi.agent-session.persistence :as persist]
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.prompt-templates :as pt]
    [psi.agent-session.project-preferences :as project-prefs]
@@ -65,7 +69,7 @@
                 sys-prompt/discover-context-files (fn [_] [])
                 sys-prompt/build-system-prompt (fn [_] "")
                 ext/discover-extension-paths (fn [& _] [])
-                session/bootstrap-in!
+                bootstrap/bootstrap-in!
                 (fn [_ctx _]
                   {:extension-errors [] :extension-loaded-count 0})]
     (f)))
@@ -82,7 +86,7 @@
                                                      nil)))]
             (main/run-session :ignored)
             (let [ctx (:ctx @main/session-state)
-                  sd  (session/get-session-data-in ctx)]
+                  sd  (ss/get-session-data-in ctx)]
               (is (some? ctx))
               (is (string? (:session-file sd)))
               (is (= :console (:ui-type sd)))))))
@@ -102,7 +106,7 @@
                                                      nil)))]
             (main/run-session :ignored)
             (let [ctx (:ctx @main/session-state)
-                  msg-texts (->> @(:journal-atom ctx)
+                  msg-texts (->> (persist/all-entries-in ctx)
                                  (filter #(= :message (:kind %)))
                                  (map #(get-in % [:data :message :content 0 :text]))
                                  set)]
@@ -124,7 +128,7 @@
             (is (string? (:current-session-file @captured)))
             (is (fn? (:dispatch-fn @captured)))
             (is (fn? (:on-interrupt-fn! @captured)))
-            (is (= :tui (:ui-type (session/get-session-data-in (:ctx @main/session-state))))))))
+            (is (= :tui (:ui-type (ss/get-session-data-in (:ctx @main/session-state))))))))
       (finally
         (reset! main/session-state orig-state)))))
 
@@ -138,7 +142,7 @@
                                   :ok)]
             (is (= :ok (main/run-tui-session-with-interface! mock-tui-start! :ignored)))
             (let [ctx (:ctx @main/session-state)
-                  msg-texts (->> @(:journal-atom ctx)
+                  msg-texts (->> (persist/all-entries-in ctx)
                                  (filter #(= :message (:kind %)))
                                  (map #(get-in % [:data :message :content 0 :text]))
                                  set)]
@@ -158,7 +162,7 @@
                           :ok)]
             (#'main/run-rpc-edn-session! :ignored)
             (let [ctx (:ctx @main/session-state)
-                  sd  (session/get-session-data-in ctx)
+                  sd  (ss/get-session-data-in ctx)
                   hs  (:handshake-server-info-fn @(:state @captured))]
               (is (some? ctx))
               (is (string? (:session-file sd)))
@@ -185,21 +189,23 @@
                           :ok)]
             (#'main/run-rpc-edn-session! :ignored {} {} {:rpc-trace-file trace-file})
             (let [ctx         (:ctx @main/session-state)
-                  trace-state (session/get-state-value-in ctx (session/state-path :rpc-trace))
+                  trace-state (ss/get-state-value-in ctx (ss/state-path :rpc-trace))
                   trace-fn    (:trace-fn @captured)]
               (is (fn? trace-fn))
               (is (= true (:enabled? trace-state)))
               (is (= trace-file (:file trace-state)))
+              (let [entry (last (dispatch/event-log-entries))]
+                (is (= :session/set-rpc-trace (:event-type entry)))
+                (is (= :core (:origin entry)))
+                (is (= {:enabled? true :file trace-file}
+                       (:event-data entry))))
 
               (trace-fn {:dir :in
                          :raw "{:id \"1\" :kind :request :op \"ping\"}"
                          :frame {:id "1" :kind :request :op "ping"}})
               (let [before-disable (count (str/split-lines (slurp trace-file)))]
                 (is (pos? before-disable))
-                (session/assoc-state-value-in!
-                 ctx
-                 (session/state-path :rpc-trace)
-                 {:enabled? false :file trace-file})
+                (dispatch/dispatch! ctx :session/set-rpc-trace {:enabled? false :file trace-file} {:origin :core})
                 (trace-fn {:dir :out
                            :raw "{:kind :response :id \"1\" :op \"ping\" :ok true}"
                            :frame {:kind :response :id "1" :op "ping" :ok true}})
@@ -317,7 +323,7 @@
                 ext/discover-extension-paths (fn [& _] [])
                 introspection/register-resolvers! (fn [] nil)
                 memory-runtime/sync-memory-layer! (fn [_] {:ok? true})
-                session/bootstrap-in!
+                bootstrap/bootstrap-in!
                 (fn [_ctx _]
                   {:extension-errors [] :extension-loaded-count 0})]
     (let [{:keys [ctx]} (#'main/bootstrap-runtime-session!
@@ -326,11 +332,11 @@
                           :name "Test Model"
                           :supports-reasoning false}
                          {})
-          index (session/get-context-index-in ctx)
-          sd   (session/get-session-data-in ctx)]
-      (is (= 1 (count (:sessions index))))
-      (is (= (:session-id sd) (:active-session-id index)))
-      (is (= [(:session-id sd)] (vec (keys (:sessions index))))))))
+          sd       (ss/get-session-data-in ctx)
+          sessions (ss/get-sessions-map-in ctx)]
+      (is (= 1 (count sessions)))
+      (is (= (:session-id sd) (ss/active-session-id-in ctx)))
+      (is (= [(:session-id sd)] (vec (keys sessions)))))))
 
 (deftest bootstrap-runtime-session-passes-memory-runtime-opts-to-sync-test
   (let [captured (atom nil)]
@@ -344,7 +350,7 @@
                   memory-runtime/sync-memory-layer! (fn [opts]
                                                       (reset! captured opts)
                                                       {:ok? true})
-                  session/bootstrap-in!
+                  bootstrap/bootstrap-in!
                   (fn [_ctx _]
                     {:extension-errors [] :extension-loaded-count 0})]
       (let [{:keys [ctx]} (#'main/bootstrap-runtime-session!
@@ -370,7 +376,7 @@
                 ext/discover-extension-paths (fn [& _] [])
                 introspection/register-resolvers! (fn [] nil)
                 memory-runtime/sync-memory-layer! (fn [_] {:ok? true})
-                session/bootstrap-in!
+                bootstrap/bootstrap-in!
                 (fn [ctx _]
                   (session/new-session-in! ctx)
                   {:extension-errors [] :extension-loaded-count 0})]
@@ -399,7 +405,7 @@
                     ext/discover-extension-paths (fn [& _] [])
                     introspection/register-resolvers! (fn [] nil)
                     memory-runtime/sync-memory-layer! (fn [_] {:ok? true})
-                    session/bootstrap-in!
+                    bootstrap/bootstrap-in!
                     (fn [ctx _]
                       (session/new-session-in! ctx)
                       {:extension-errors [] :extension-loaded-count 0})]
@@ -478,7 +484,7 @@
                   ext/discover-extension-paths (fn [& _] [])
                   introspection/register-resolvers! (fn [] nil)
                   memory-runtime/sync-memory-layer! (fn [_] {:ok? true})
-                  session/bootstrap-in!
+                  bootstrap/bootstrap-in!
                   (fn [ctx _]
                     (session/new-session-in! ctx)
                     {:extension-errors [] :extension-loaded-count 0})]
@@ -488,7 +494,7 @@
                             :name "Claude Sonnet 4.6"
                             :supports-reasoning true}
                            {:cwd cwd})
-            sd (session/get-session-data-in ctx)]
+            sd (ss/get-session-data-in ctx)]
         (is (= "openai" (get-in sd [:model :provider])))
         (is (= "gpt-5.3-codex" (get-in sd [:model :id])))
         (is (= :high (:thinking-level sd)))))))
@@ -509,7 +515,7 @@
                   ext/discover-extension-paths (fn [& _] [])
                   introspection/register-resolvers! (fn [] nil)
                   memory-runtime/sync-memory-layer! (fn [_] {:ok? true})
-                  session/bootstrap-in!
+                  bootstrap/bootstrap-in!
                   (fn [ctx _]
                     (session/new-session-in! ctx)
                     {:extension-errors [] :extension-loaded-count 0})]
@@ -519,7 +525,7 @@
                             :name "Claude Sonnet 4.6"
                             :supports-reasoning false}
                            {:cwd cwd})
-            sd (session/get-session-data-in ctx)]
+            sd (ss/get-session-data-in ctx)]
         (is (= "anthropic" (get-in sd [:model :provider])))
         (is (= "claude-sonnet-4-6" (get-in sd [:model :id])))
         (is (= :off (:thinking-level sd)))))))

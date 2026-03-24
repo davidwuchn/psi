@@ -9,7 +9,10 @@
    - agent loop execution + context usage update"
   (:require
    [clojure.string :as str]
-   [psi.agent-session.core :as session]
+   [psi.agent-session.dispatch :as dispatch]
+   [psi.agent-session.extension-runtime :as ext-rt]
+   [psi.agent-session.session-state :as ss]
+   [psi.agent-session.state-accessors :as sa]
    [psi.agent-session.executor :as executor]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.oauth.core :as oauth]
@@ -38,7 +41,7 @@
    (journal-user-message-in! ctx text nil))
   ([ctx text images]
    (let [user-msg (make-user-message text images)]
-     (session/journal-append-in! ctx (persist/message-entry user-msg))
+     (ss/journal-append-in! ctx (persist/message-entry user-msg))
      user-msg)))
 
 (defn expand-input-in
@@ -48,7 +51,7 @@
    {:text <expanded-text>
     :expansion {:kind :skill|:template :name string} | nil}"
   [ctx text]
-  (let [sd            (session/get-session-data-in ctx)
+  (let [sd            (ss/get-session-data-in ctx)
         loaded-skills (:skills sd)
         templates     (:prompt-templates sd)
         commands      (ext/command-names-in (:extension-registry ctx))]
@@ -73,7 +76,7 @@
   (try
     (memory-runtime/remember-session-message!
      msg
-     {:session-id (:session-id (session/get-session-data-in ctx))})
+     {:session-id (:session-id (ss/get-session-data-in ctx))})
     (catch Exception _
       nil)))
 
@@ -90,7 +93,7 @@
    (let [{:keys [text expansion]} (expand-input-in ctx text)
          _        (safe-recover-memory! text)
          user-msg (make-user-message text images)]
-     (session/journal-append-in! ctx (persist/message-entry user-msg))
+     (ss/journal-append-in! ctx (persist/message-entry user-msg))
      (safe-remember-session-message! ctx user-msg)
      {:user-message  user-msg
       :expanded-text text
@@ -121,7 +124,7 @@
   (let [tokens (usage->context-tokens (:usage result))
         window (:context-window ai-model)]
     (when (and (some? tokens) (number? window) (pos? window))
-      (session/update-context-usage-in! ctx tokens window))))
+      (dispatch/dispatch! ctx :session/update-context-usage {:tokens tokens :window window} {:origin :core}))))
 
 (defn- sync->recursion-trigger-type
   [sync]
@@ -191,20 +194,19 @@
   (when (and (true? (:changed? git-sync))
              (string? (:head git-sync))
              (not (str/blank? (:head git-sync))))
-    (session/dispatch-extension-event-in!
-     ctx
-     "git_head_changed"
-     {:cwd (session/effective-cwd-in ctx)
-      :head (:head git-sync)
-      :previous-head (:previous-head git-sync)
-      :reason "head-changed"
-      :timestamp (java.time.Instant/now)})))
+    (ext/dispatch-in (:extension-registry ctx)
+                     "git_head_changed"
+                     {:cwd (ss/effective-cwd-in ctx)
+                      :head (:head git-sync)
+                      :previous-head (:previous-head git-sync)
+                      :reason "head-changed"
+                      :timestamp (java.time.Instant/now)})))
 
 (defn safe-maybe-sync-on-git-head-change!
   [ctx]
   (try
     (let [git-sync (invoke-git-head-sync!
-                    {:cwd (session/effective-cwd-in ctx)
+                    {:cwd (ss/effective-cwd-in ctx)
                      :memory-ctx (:memory-ctx ctx)})]
       (try
         (maybe-trigger-recursion-from-git-sync! ctx git-sync)
@@ -223,56 +225,20 @@
 
    opts:
    - :run-loop-fn   custom runner (default executor/run-agent-loop!)
-   - :turn-ctx-atom optional turn context atom
    - :api-key       optional provider API key
    - :progress-queue optional LinkedBlockingQueue
    - :sync-on-git-head-change? trigger maybe-sync memory hook after loop (default false)"
   ([ctx ai-ctx ai-model user-messages]
    (run-agent-loop-in! ctx ai-ctx ai-model user-messages nil))
-  ([ctx ai-ctx ai-model user-messages {:keys [run-loop-fn turn-ctx-atom api-key progress-queue sync-on-git-head-change?]}]
+  ([ctx ai-ctx ai-model user-messages {:keys [run-loop-fn api-key progress-queue sync-on-git-head-change?]}]
    (let [runner (or run-loop-fn executor/run-agent-loop!)
-         turn-ctx-atom* (or turn-ctx-atom
-                            (let [path (session/state-path :turn-ctx)]
-                              (reify
-                                clojure.lang.IDeref
-                                (deref [_] (session/get-state-value-in ctx path))
-                                clojure.lang.IAtom
-                                (compareAndSet [_ oldv newv]
-                                  (let [curv (session/get-state-value-in ctx path)]
-                                    (if (= curv oldv)
-                                      (do
-                                        (session/assoc-state-value-in! ctx path newv)
-                                        true)
-                                      false)))
-                                (reset [_ newv]
-                                  (session/assoc-state-value-in! ctx path newv)
-                                  newv)
-                                (swap [_ f]
-                                  (let [newv (f (session/get-state-value-in ctx path))]
-                                    (session/assoc-state-value-in! ctx path newv)
-                                    newv))
-                                (swap [_ f a]
-                                  (let [newv (f (session/get-state-value-in ctx path) a)]
-                                    (session/assoc-state-value-in! ctx path newv)
-                                    newv))
-                                (swap [_ f a b]
-                                  (let [newv (f (session/get-state-value-in ctx path) a b)]
-                                    (session/assoc-state-value-in! ctx path newv)
-                                    newv))
-                                (swap [_ f a b xs]
-                                  (let [newv (apply f (session/get-state-value-in ctx path) a b xs)]
-                                    (session/assoc-state-value-in! ctx path newv)
-                                    newv)))))
          opts   (cond-> {}
-                  turn-ctx-atom*
-                  (assoc :turn-ctx-atom turn-ctx-atom*)
-
                   api-key
                   (assoc :api-key api-key)
 
                   progress-queue
                   (assoc :progress-queue progress-queue))
-         result (runner ai-ctx ctx (:agent-ctx ctx) ai-model user-messages opts)]
+         result (runner ai-ctx ctx (ss/agent-ctx-in ctx) ai-model user-messages opts)]
      (update-context-usage-from-result-in! ctx ai-model result)
      (when sync-on-git-head-change?
        (safe-maybe-sync-on-git-head-change! ctx))
@@ -292,7 +258,7 @@
   (let [run-fn (fn [text _source]
                  (try
                    (loop [attempt 0]
-                     (if (session/idle-in? ctx)
+                     (if (ss/idle-in? ctx)
                        (let [{:keys [user-message]} (prepare-user-message-in! ctx text)
                              api-key (resolve-api-key-in ctx ai-model)]
                          (run-agent-loop-in! ctx ai-ctx ai-model [user-message]
@@ -303,7 +269,7 @@
                          (recur (inc attempt)))))
                    (catch Exception e
                      (timbre/warn e "Extension run-fn failed"))))]
-    (session/set-extension-run-fn-in! ctx run-fn)))
+    (ext-rt/set-extension-run-fn-in! ctx run-fn)))
 
 (defn run-startup-prompts-in!
   "Run configured startup prompts as visible user turns.
@@ -327,14 +293,10 @@
   (let [should-run? (startup-prompts/should-run?
                      {:spawn-mode spawn-mode})
         started-at (java.time.Instant/now)
-        _ (session/update-state-value-in! ctx (session/state-path :session-data) assoc
-                                          :startup-bootstrap-started-at started-at
-                                          :startup-bootstrap-completed? false
-                                          :startup-bootstrap-completed-at nil
-                                          :startup-message-ids [])
+        _ (dispatch/dispatch! ctx :session/startup-bootstrap-begin {:started-at started-at} {:origin :core})
         rules (if should-run?
                 (startup-prompts/discover-rules
-                 {:cwd (session/effective-cwd-in ctx)
+                 {:cwd (ss/effective-cwd-in ctx)
                   :session-mode session-mode})
                 [])
         {:keys [applied errors]}
@@ -344,11 +306,10 @@
           (if-let [rule (first remaining)]
             (let [text       (:text rule)
                   user-msg   (journal-user-message-in! ctx text)
-                  message-id (some-> (session/get-state-value-in ctx (session/state-path :journal)) last :id)
+                  message-id (some-> (sa/journal-state-in ctx) last :id)
                   api-key    (resolve-api-key-in ctx ai-model)
                   _          (when message-id
-                               (session/update-state-value-in! ctx (session/state-path :session-data)
-                                                               update :startup-message-ids conj message-id))
+                               (dispatch/dispatch! ctx :session/record-startup-message-id {:message-id message-id} {:origin :core}))
                   outcome    (try
                                {:status :ok
                                 :assistant-result
@@ -373,10 +334,7 @@
                 (recur (rest remaining) applied' errors')))
             {:applied applied :errors errors}))
         completed-at (java.time.Instant/now)]
-    (session/update-state-value-in! ctx (session/state-path :session-data) assoc
-                                    :startup-prompts (startup-prompts/applied-view rules)
-                                    :startup-bootstrap-completed? true
-                                    :startup-bootstrap-completed-at completed-at)
+    (dispatch/dispatch! ctx :session/startup-bootstrap-complete {:startup-prompts (startup-prompts/applied-view rules) :completed-at completed-at} {:origin :core})
     {:rules rules
      :applied applied
      :errors errors}))

@@ -150,14 +150,8 @@
            (load-and-register-in! 'psi.memory.resolvers 'all-resolvers nil)
            (load-and-register-in! 'psi.recursion.resolvers 'all-resolvers 'all-mutations)
 
-           ;; Agent-session mutations are in the core namespace
-           (try
-             (require 'psi.agent-session.core)
-             (when-let [mutations-var (resolve 'psi.agent-session.core/all-mutations)]
-               (doseq [m @mutations-var]
-                 (register-mutation-if-missing! m)))
-             (catch Exception e
-               (println "Warning: Could not load agent-session mutations in isolated context:" (.getMessage e)))))
+           ;; Agent-session mutations live in the mutations namespace
+           (load-and-register-in! 'psi.agent-session.mutations nil 'all-mutations))
          (do
            ;; Without session context, still expose core domains
            (load-and-register-in! 'psi.history.resolvers 'all-resolvers 'all-mutations)

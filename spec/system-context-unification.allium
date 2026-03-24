@@ -9,6 +9,7 @@ use "./ui-extension-points.allium" as ui
 use "./oauth-auth.allium" as oauth
 use "./remember-capture.allium" as remember
 use "./bootstrap-system.allium" as bootstrap
+use "./event-dispatch.allium" as dispatch
 
 entity SystemContext {
     id: String
@@ -18,19 +19,21 @@ entity SystemContext {
     state_root_kind: single_atom
     mutable_state_roots: Integer
 
+    mutation_path: direct | dispatch_pipeline
+    dispatch_pipeline_active: Boolean
+
     runtime_handle_kinds: Set<String>
 }
 
 entity RuntimeState {
     context_id: String
 
-    agent_session_state: session_mgmt/AgentSession
+    sessions: Map<session_core/SessionId, session_mgmt/AgentSession>
+    active_session_id: session_core/SessionId?
     session_context_state: session_core/AgentContext
 
-    context_index_present: Boolean
     journal_present: Boolean
     flush_state_present: Boolean
-    turn_state_present: Boolean
 
     telemetry_present: Boolean
     extension_ui_state_present: Boolean
@@ -39,6 +42,12 @@ entity RuntimeState {
     nrepl_runtime_state_present: Boolean
     background_jobs_state_present: Boolean
 }
+
+    @guidance
+        -- Sessions are keyed by SessionId in the canonical state root.
+        -- Each session entry holds session data, agent_core, and
+        -- statechart_session_id. context_index is subsumed by the sessions
+        -- map. turn_state is eliminated by the service surface.
 
 rule SystemContextCreatedWithSingleMutableRoot {
     when: SystemContextCreated(context, runtime_state)
@@ -51,10 +60,9 @@ rule SystemContextCreatedWithSingleMutableRoot {
 rule AgentSessionMutableStateLivesUnderCanonicalRoot {
     when: SystemContextCreated(context, runtime_state)
 
-    ensures: runtime_state.context_index_present = true
+    ensures: runtime_state.sessions != null
     ensures: runtime_state.journal_present = true
     ensures: runtime_state.flush_state_present = true
-    ensures: runtime_state.turn_state_present = true
     ensures: runtime_state.telemetry_present = true
     ensures: runtime_state.background_jobs_state_present = true
 }
@@ -65,6 +73,39 @@ rule RuntimeMutableDataUpdatesShareSingleRoot {
 
     ensures: AtomicStateTransition(context.id, mutation_scope)
     ensures: not AdditionalMutableStateRootCreated(context.id)
+
+    @guidance
+        -- The canonical root remains the only mutable state root throughout
+        -- migration.
+        -- dispatch_pipeline_active = true means the dispatch pipeline owns a
+        -- substantial migrated subset of runtime-visible mutations, not yet the
+        -- full system.
+        -- During migration, direct state path helpers may still exist for
+        -- remaining unmigrated slices.
+}
+
+rule MutationsFlowThroughDispatchPipeline {
+    when: RuntimeStateMutationRequested(context, mutation_scope)
+    requires: context.dispatch_pipeline_active = true
+    requires: mutation_scope.migrated_to_dispatch = true
+
+    ensures: dispatch/EventDispatched(
+        dispatch/Event.created(
+            type: mutation_scope.event_type,
+            session_id: mutation_scope.session_id,
+            payload: mutation_scope.payload,
+            origin: mutation_scope.origin,
+            ext_id: mutation_scope.ext_id,
+            timestamp: now
+        ),
+        {replaying: false}
+    )
+
+    @guidance
+        -- This rule applies to migrated mutation families only.
+        -- dispatch_pipeline_active does not yet imply that every runtime state
+        -- mutation in the system is dispatch-owned.
+        -- Full-system dispatch ownership remains the target end state.
 }
 
 rule UiStateBecomesProjectionWithinCanonicalRoot {
@@ -80,19 +121,50 @@ rule RecursionStateBecomesProjectionWithinCanonicalRoot {
     ensures: runtime_state.recursion_state_present = true
 }
 
-rule RuntimeHandlesRemainOutsideCanonicalState {
+rule ProcessScopedHandlesRemainOutsideCanonicalState {
     when: SystemContextCreated(context, runtime_state)
 
     ensures: "statechart_env" in context.runtime_handle_kinds
-    ensures: "statechart_session" in context.runtime_handle_kinds
-    ensures: "agent_core" in context.runtime_handle_kinds
     ensures: "extension_registry" in context.runtime_handle_kinds
     ensures: "workflow_registry" in context.runtime_handle_kinds
     ensures: "oauth_store" in context.runtime_handle_kinds
     ensures: "oauth_provider_registry" in context.runtime_handle_kinds
+    ensures: "query_context" in context.runtime_handle_kinds
+    ensures: "engine_context" in context.runtime_handle_kinds
+    ensures: "memory_context" in context.runtime_handle_kinds
+    ensures: "nrepl_server" in context.runtime_handle_kinds
 
     @guidance
-        -- Opaque or effectful runtime integrations remain outside the mutable state root.
+        -- Process-scoped runtime handles live on ctx, outside the canonical
+        -- state root. They are shared across all sessions.
+        --
+        -- A runtime handle is any object that:
+        --   (a) owns internal mutable lifecycle (atoms, watches, threads), or
+        --   (b) performs side-effecting I/O (disk, network, locks), or
+        --   (c) is infrastructure machinery (compiled envs, registries, engines).
+        --
+        -- Runtime handles are not queryable domain state. When a subsystem has
+        -- observable status worth querying (e.g. OAuth login state, nREPL
+        -- endpoint, workflow progress), that status is projected into :state*
+        -- as canonical data. The handle itself stays external.
+}
+
+rule PerSessionHandlesLiveInCanonicalState {
+    when: SessionCreateRequested(project_id, worktree_path, system_prompt, name)
+
+    ensures:
+        for s in runtime_state.sessions:
+            s.agent_core != null
+            s.statechart_session_id != null
+
+    @guidance
+        -- agent_core and statechart_session_id are per-session runtime
+        -- handles stored in canonical state under each session entry.
+        -- This enables concurrent session execution: each session owns
+        -- its own LLM loop and statechart instance.
+        --
+        -- The statechart environment (statechart_env) remains process-scoped
+        -- and hosts multiple session instances.
 }
 
 rule QuerySurfaceSeedsCanonicalSystemContext {
@@ -126,16 +198,25 @@ rule BootstrapCreatesCanonicalSystemContext {
         status: active,
         state_root_kind: single_atom,
         mutable_state_roots: 1,
+        mutation_path: direct,
+        dispatch_pipeline_active: false,
         runtime_handle_kinds: RuntimeHandleKindsForBootstrap(cwd, ui_type)
     )
+
+    @guidance
+        -- Bootstrap starts with mutation_path = direct and
+        -- dispatch_pipeline_active = false.
+        -- During migration, dispatch_pipeline_active may later become true
+        -- before full-system dispatch ownership is reached.
+        -- Treat it as "dispatch pipeline active for migrated slices" rather
+        -- than "every mutation path is converged".
     ensures: RuntimeState.created(
         context_id: CurrentSystemContextId(),
-        agent_session_state: InitialAgentSessionState(cwd, ui_type),
+        sessions: {},
+        active_session_id: null,
         session_context_state: InitialAgentContextState(cwd),
-        context_index_present: true,
         journal_present: true,
         flush_state_present: true,
-        turn_state_present: true,
         telemetry_present: true,
         extension_ui_state_present: InitialExtensionUiStatePresent(ui_type),
         recursion_state_present: true,
@@ -173,6 +254,7 @@ surface CanonicalSystemContextApi {
         ui/ExtensionUIQuery
         oauth/CredentialStoreApi
         remember/RememberMemoryApi
+        dispatch/DispatchApi
 
     @guarantee OneCanonicalMutableStateRoot
         -- Agent-session runtime behavior uses exactly one canonical mutable state root per system context.
@@ -182,4 +264,12 @@ surface CanonicalSystemContextApi {
 
     @guarantee LegacyContextsMayRemainAsDerivedViewsDuringMigration
         -- Compatibility projections may remain temporarily while implementation converges on the canonical root.
+
+    @guarantee DispatchPipelineIsTheMutationPath
+        -- Target end state:
+        -- when convergence is complete, the dispatch pipeline
+        -- (event-dispatch.allium) is the sole path for state mutations.
+        -- During migration, dispatch_pipeline_active = true means migrated
+        -- mutation families use dispatch while remaining slices may still use
+        -- direct canonical path helpers.
 }

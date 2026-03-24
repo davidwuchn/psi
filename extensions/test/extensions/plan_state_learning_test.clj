@@ -1,5 +1,6 @@
 (ns extensions.plan-state-learning-test
   (:require
+   [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
    [extensions.plan-state-learning :as sut]
    [psi.extension-test-helpers.nullable-api :as nullable]))
@@ -18,12 +19,107 @@
   (reset! (var-get (ns-resolve 'extensions.plan-state-learning 'state)) m))
 
 (deftest init-registers-git-head-changed-handler-test
-  (testing "extension registers git_head_changed handler"
+  (testing "extension registers git_head_changed handler and widget"
     (let [{:keys [api state]} (nullable/create-nullable-extension-api
                                {:path "/test/plan_state_learning.clj"})]
       (sut/init api)
       (is (= 1 (count (get-in @state [:handlers "git_head_changed"]))))
-      (is (contains? (:workflow-types @state) :psl)))))
+      (is (contains? (:workflow-types @state) :psl))
+      (is (contains? (:commands @state) "psl"))
+      (is (contains? (:widgets @state) "psl"))
+      (is (= :above-editor (get-in @state [:widgets "psl" :position])))
+      (is (some #(str/includes? (str %) "PSL")
+                (get-in @state [:widgets "psl" :lines]))))))
+
+(deftest psl-widget-placement-follows-ui-type-test
+  (testing "PSL widget renders below editor in emacs ui"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/plan_state_learning.clj"
+                                :ui-type :emacs})]
+      (sut/init api)
+      (is (= :below-editor (get-in @state [:widgets "psl" :position]))))))
+
+(deftest workflow-public-display-test
+  (testing "workflow public data includes shared display-map shape"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/plan_state_learning.clj"})]
+      (sut/init api)
+      (let [public-data-fn (get-in @state [:workflow-types :psl :public-data-fn])
+            public        (public-data-fn {:psl/source-sha "feedbeef"
+                                           :psl/subject "docs(agent-session): λ clarify canonical tool history guidance"
+                                           :psl/phase :running
+                                           :psl/result nil})]
+        (is (= {:top-line "… PSL running for feedbee"
+                :detail-line "commit: docs(agent-session): λ clarify canonical tool history guidance"
+                :action-line "updating PLAN/STATE/LEARNING"}
+               (:psl/display public)))
+        (is (= :running (:psl/phase public)))
+        (is (= "feedbeef" (:psl/source-sha public)))))))
+
+(deftest psl-widget-shows-workflow-display-lines-test
+  (testing "widget includes workflow public display lines when a PSL run exists"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/plan_state_learning.clj"})]
+      (sut/init api)
+      (swap! state assoc :workflows {"psl-1" {:psi.extension/path "/test/plan_state_learning.clj"
+                                              :psi.extension.workflow/id "psl-1"
+                                              :psi.extension.workflow/type :psl
+                                              :psi.extension.workflow/phase :running
+                                              :psi.extension.workflow/running? true
+                                              :psi.extension.workflow/done? false
+                                              :psi.extension.workflow/error? false
+                                              :psi.extension.workflow/error-message nil
+                                              :psi.extension.workflow/input {:source-sha "feedbeef"}
+                                              :psi.extension.workflow/data {:psl/display {:top-line "… PSL running for feedbee"
+                                                                                          :detail-line "commit: test commit"
+                                                                                          :action-line "updating PLAN/STATE/LEARNING"}}
+                                              :psi.extension.workflow/result nil
+                                              :psi.extension.workflow/elapsed-ms 0
+                                              :psi.extension.workflow/started-at nil}})
+      ;; Force widget refresh after injecting workflow
+      (#'sut/refresh-widget!)
+      (let [lines (get-in @state [:widgets "psl" :lines])
+            text  (clojure.string/join "\n" (map #(if (map? %) (:text %) (str %)) lines))]
+        (is (str/includes? text "PSL"))
+        (is (str/includes? text "PSL running for feedbee"))
+        (is (str/includes? text "commit: test commit"))))))
+
+(deftest psl-command-lists-workflow-public-display-test
+  (testing "/psl reuses workflow public display lines"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/plan_state_learning.clj"})]
+      (sut/init api)
+      (swap! state assoc :workflows {"psl-1" {:psi.extension/path "/test/plan_state_learning.clj"
+                                              :psi.extension.workflow/id "psl-1"
+                                              :psi.extension.workflow/type :psl
+                                              :psi.extension.workflow/phase :running
+                                              :psi.extension.workflow/running? true
+                                              :psi.extension.workflow/done? false
+                                              :psi.extension.workflow/error? false
+                                              :psi.extension.workflow/error-message nil
+                                              :psi.extension.workflow/input {:source-sha "feedbeef"}
+                                              :psi.extension.workflow/data {:psl/source-sha "feedbeef"
+                                                                            :psl/subject "docs(agent-session): λ clarify canonical tool history guidance"
+                                                                            :psl/phase :running
+                                                                            :psl/display {:top-line "… PSL running for feedbee"
+                                                                                          :detail-line "commit: docs(agent-session): λ clarify canonical tool history guidance"
+                                                                                          :action-line "updating PLAN/STATE/LEARNING"}}
+                                              :psi.extension.workflow/result nil
+                                              :psi.extension.workflow/elapsed-ms 0
+                                              :psi.extension.workflow/started-at nil}})
+      (let [handler (get-in @state [:commands "psl" :handler])
+            out     (with-out-str (handler ""))]
+        (is (re-find #"PSL running for feedbee" out))
+        (is (re-find #"commit: docs\(agent-session\): λ clarify canonical tool history guidance" out))
+        (is (re-find #"updating PLAN/STATE/LEARNING" out)))))
+
+  (testing "/psl prints empty-state message when no runs exist"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/plan_state_learning.clj"})]
+      (sut/init api)
+      (let [handler (get-in @state [:commands "psl" :handler])
+            out     (with-out-str (handler ""))]
+        (is (re-find #"No PSL runs\." out))))))
 
 (deftest handler-skips-self-marker-commits-test
   (testing "handler emits skip message when marker is present"

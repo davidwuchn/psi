@@ -36,10 +36,11 @@
    [psi.ai.core :as ai]
    [psi.ai.conversation :as conv]
    [psi.agent-core.core :as agent]
-   [psi.agent-session.core :as session]
+   [psi.agent-session.session-state :as session]
+   [psi.agent-session.state-accessors :as sa]
+   [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.system-prompt :as system-prompt]
    [psi.agent-session.tool-output :as tool-output]
-   [psi.agent-session.tools :as tools]
    [psi.agent-session.turn-statechart :as turn-sc]))
 
 ;; ============================================================
@@ -357,16 +358,6 @@ Also tolerates cumulative snapshots that differ near previous tail
         (into error-blocks)
         (into tool-blocks))))
 
-(defn- emit-tool-ready-progress!
-  [progress-queue tool-calls]
-  (doseq [tc (->> tool-calls (remove invalid-tool-call))]
-    (emit-progress! progress-queue
-                    {:event-kind :tool-start
-                     :tool-id    (:id tc)
-                     :tool-name  (:name tc)
-                     :arguments  (:arguments tc)
-                     :parsed-args (:value (parse-args-strict (:arguments tc)))})))
-
 (defn- emit-tool-assembly-errors!
   [progress-queue tool-calls]
   (doseq [invalid (keep invalid-tool-call tool-calls)]
@@ -384,7 +375,7 @@ Also tolerates cumulative snapshots that differ near previous tail
 
    Tool-call UI semantics are terminal-boundary only:
    - stream-time toolcall deltas/ends are accumulated but not emitted
-   - when :on-done fires, validated calls emit a single logical :tool-start
+   - tool-start progress is emitted by the lifecycle system during execution
    - invalid assembled tool-calls surface visible :error progress events"
   [agent-ctx done-p progress-queue]
   (fn [action-key data]
@@ -482,7 +473,8 @@ Also tolerates cumulative snapshots that differ near previous tail
                                  :timestamp   (java.time.Instant/now)}
                           (map? usage) (assoc :usage usage))]
           (note-last-provider-event! td :done data)
-          (emit-tool-ready-progress! progress-queue completed)
+          ;; Tool-start progress is now emitted by the lifecycle system in
+          ;; run-tool-call-through-runtime-effect! — no duplicate here.
           (emit-tool-assembly-errors! progress-queue completed)
           (swap! td assoc :final-message final)
           (agent/end-stream-in! agent-ctx final)
@@ -528,39 +520,17 @@ Also tolerates cumulative snapshots that differ near previous tail
 (defn- now-ms []
   (System/currentTimeMillis))
 
-(def ^:private provider-request-capture-limit 100)
-(def ^:private provider-reply-capture-limit 1000)
-
 (defn- append-tool-call-attempt!
   [agent-session-ctx attempt]
-  (session/update-state-value-in! agent-session-ctx
-                                  (session/state-path :tool-call-attempts)
-                                  conj
-                                  (assoc attempt :timestamp (java.time.Instant/now))))
+  (sa/append-tool-call-attempt-in! agent-session-ctx attempt))
 
 (defn- append-provider-request-capture!
   [agent-session-ctx capture]
-  (let [entry (assoc capture :timestamp (java.time.Instant/now))]
-    (session/update-state-value-in! agent-session-ctx
-                                    (session/state-path :provider-requests)
-                                    (fn [entries]
-                                      (let [entries* (conj (vec (or entries [])) entry)
-                                            n        (count entries*)]
-                                        (if (> n provider-request-capture-limit)
-                                          (subvec entries* (- n provider-request-capture-limit))
-                                          entries*))))))
+  (sa/append-provider-request-capture-in! agent-session-ctx capture))
 
 (defn- append-provider-reply-capture!
   [agent-session-ctx capture]
-  (let [entry (assoc capture :timestamp (java.time.Instant/now))]
-    (session/update-state-value-in! agent-session-ctx
-                                    (session/state-path :provider-replies)
-                                    (fn [entries]
-                                      (let [entries* (conj (vec (or entries [])) entry)
-                                            n        (count entries*)]
-                                        (if (> n provider-reply-capture-limit)
-                                          (subvec entries* (- n provider-reply-capture-limit))
-                                          entries*))))))
+  (sa/append-provider-reply-capture-in! agent-session-ctx capture))
 
 (defn- chain-callbacks
   [& callbacks]
@@ -606,12 +576,12 @@ Also tolerates cumulative snapshots that differ near previous tail
    then translates each provider event into a statechart event.  Blocks until
    the statechart reaches :done or :error.
 
-   If `turn-ctx-atom` is non-nil, stores the turn context there so it can be
+   Stores the turn context in agent-session-ctx canonical state so it can be
    queried live from nREPL.
 
    `extra-ai-options` — merged into the ai-options map sent to the provider
                         (e.g. {:api-key \"...\"})"
-  [ai-ctx agent-session-ctx agent-ctx ai-model turn-ctx-atom extra-ai-options progress-queue]
+  [ai-ctx agent-session-ctx agent-ctx ai-model extra-ai-options progress-queue]
   (let [data             (agent/get-data-in agent-ctx)
         turn-id          (str (java.util.UUID/randomUUID))
         system-prompt    (:system-prompt data)
@@ -647,8 +617,7 @@ Also tolerates cumulative snapshots that differ near previous tail
         ;; for the block so far (consumers should replace, not append).
         thinking-buffers  (atom {})]
     ;; Expose turn context for nREPL introspection
-    (when turn-ctx-atom
-      (reset! turn-ctx-atom turn-ctx))
+    (sa/set-turn-context-in! agent-session-ctx turn-ctx)
     ;; Transition: :idle → :text-accumulating (calls begin-stream-in!)
     (turn-sc/send-event! turn-ctx :turn/start)
     ;; Start provider stream — callback translates events to statechart events
@@ -864,68 +833,77 @@ Also tolerates cumulative snapshots that differ near previous tail
                              :effective-max-bytes  (:max-bytes effective-policy)
                              :output-bytes         output-bytes
                              :context-bytes-added  context-bytes-added}]
-    (session/update-state-value-in! agent-session-ctx
-                                    (session/state-path :tool-output-stats)
-                                    (fn [state]
-                                      (-> state
-                                          (update :calls (fnil conj []) stat)
-                                          (update-in [:aggregates :total-context-bytes] (fnil + 0) context-bytes-added)
-                                          (update-in [:aggregates :by-tool tool-name] (fnil + 0) context-bytes-added)
-                                          (update-in [:aggregates :limit-hits-by-tool tool-name] (fnil + 0)
-                                                     (if limit-hit? 1 0)))))))
+    (sa/record-tool-output-stat-in! agent-session-ctx stat context-bytes-added limit-hit?)))
 
-(defn- execute-tool-with-registry
-  "Execute a tool by name, preferring an :execute fn from the current
-   agent tool registry when present. Falls back to built-in tools.
+(defn- tool-lifecycle-event
+  "Build one canonical tool lifecycle event shape.
 
-   Tool contract:
-   - preferred: (fn [args-map opts-map] -> {:content string|blocks :is-error boolean})
-   - legacy:    (fn [args-map] -> {:content string|blocks :is-error boolean})"
-  [agent-ctx tool-name args opts]
-  (let [tool-def   (some #(when (= tool-name (:name %)) %) (:tools (agent/get-data-in agent-ctx)))
-        execute-fn (:execute tool-def)]
-    (if (fn? execute-fn)
-      (try
-        (execute-fn args opts)
-        (catch clojure.lang.ArityException _
-          (execute-fn args)))
-      (tools/execute-tool tool-name args opts))))
+   This is the shared semantic payload that can be projected to both:
+   - dispatch-visible canonical telemetry
+   - progress-queue UI events"
+  [event-kind tool-id tool-name & {:as extra}]
+  (merge {:event-kind event-kind
+          :tool-id    tool-id
+          :tool-name  tool-name}
+         extra))
 
-(defn- run-tool-call!
-  "Execute one tool call, record the result in agent-core, return the result map."
+(defn- emit-tool-lifecycle!
+  [agent-session-ctx _progress-queue lifecycle-event]
+  (dispatch/dispatch! agent-session-ctx
+                      :session/tool-lifecycle-event
+                      {:entry lifecycle-event}
+                      {:origin :core})
+  lifecycle-event)
+
+(defn- execute-tool-call!
+  "Execute one tool call and return a shaped execution result before recording.
+
+   This isolates tool execution from progress/agent-core recording.
+
+   Output shape:
+   - {:tool-call tc
+      :tool-result raw-result
+      :result-message tool-result-msg
+      :effective-policy policy}"
   [agent-session-ctx tool-call progress-queue]
-  (let [agent-ctx (:agent-ctx agent-session-ctx)
-        call-id  (:id tool-call)
+  (let [call-id  (:id tool-call)
         name     (:name tool-call)
-        args     (parse-args (:arguments tool-call))
-        opts     {:cwd         (or (:worktree-path (session/get-session-data-in agent-session-ctx))
-                                   (:cwd agent-session-ctx))
-                  :overrides   (:tool-output-overrides (session/get-session-data-in agent-session-ctx))
-                  :tool-call-id call-id
-                  :on-update   (fn [{:keys [content details is-error]}]
-                                 (let [content-blocks (normalize-tool-content content)
-                                       text-fallback  (tool-content->text content)]
-                                   (emit-progress! progress-queue
-                                                   {:event-kind   :tool-execution-update
-                                                    :tool-id      call-id
-                                                    :tool-name    name
-                                                    :content      content-blocks
-                                                    :result-text  text-fallback
-                                                    :details      details
-                                                    :is-error     (boolean is-error)})))}]
-    (agent/emit-tool-start-in! agent-ctx tool-call)
-    (emit-progress! progress-queue
-                    {:event-kind  :tool-executing
-                     :tool-id     call-id
-                     :tool-name   name
-                     :arguments   (:arguments tool-call)
-                     :parsed-args args})
-    (let [{:keys [content is-error details] :as tool-result}
-          (try
-            (execute-tool-with-registry agent-ctx name args opts)
-            (catch Exception e
-              {:content  (str "Error: " (ex-message e))
-               :is-error true}))
+        args     (or (:parsed-args tool-call)
+                     (parse-args (:arguments tool-call)))]
+    (emit-progress!
+     progress-queue
+     (emit-tool-lifecycle!
+      agent-session-ctx progress-queue
+      (tool-lifecycle-event
+       :tool-executing call-id name
+       :arguments (:arguments tool-call)
+       :parsed-args args)))
+    (let [opts {:cwd          (or (:worktree-path (session/get-session-data-in agent-session-ctx))
+                                  (:cwd agent-session-ctx))
+                :overrides    (:tool-output-overrides (session/get-session-data-in agent-session-ctx))
+                :tool-call-id call-id
+                :on-update    (fn [{:keys [content details is-error]}]
+                                (let [content-blocks (normalize-tool-content content)
+                                      text-fallback  (tool-content->text content)]
+                                  (emit-progress!
+                                   progress-queue
+                                   (emit-tool-lifecycle!
+                                    agent-session-ctx progress-queue
+                                    (tool-lifecycle-event
+                                     :tool-execution-update call-id name
+                                     :content content-blocks
+                                     :result-text text-fallback
+                                     :details details
+                                     :is-error (boolean is-error))))))}
+          {:keys [content is-error details] :as tool-result}
+          (or (dispatch/dispatch! agent-session-ctx
+                                  :session/tool-execute
+                                  {:tool-name name
+                                   :args args
+                                   :opts opts}
+                                  {:origin :core})
+              {:content "Error: tool execution returned no result"
+               :is-error true})
           content-blocks (normalize-tool-content content)
           text-fallback  (tool-content->text content)
           policy         (effective-tool-output-policy agent-session-ctx name)
@@ -937,75 +915,260 @@ Also tolerates cumulative snapshots that differ near previous tail
                           :details      details
                           :result-text  text-fallback
                           :timestamp    (java.time.Instant/now)}]
-      (emit-progress! progress-queue
-                      {:event-kind  :tool-result
-                       :tool-id     call-id
-                       :tool-name   name
-                       :content     content-blocks
-                       :result-text text-fallback
-                       :details     details
-                       :is-error    is-error})
-      (record-tool-output-stat!
-       agent-session-ctx
-       {:tool-call-id     call-id
-        :tool-name        name
-        :content          content
-        :details          details
-        :effective-policy policy})
-      (agent/emit-tool-end-in! agent-ctx tool-call tool-result is-error)
-      (agent/record-tool-result-in! agent-ctx result-msg)
-      result-msg)))
+      {:tool-call         tool-call
+       :tool-result       tool-result
+       :result-message    result-msg
+       :effective-policy  policy})))
+
+(defn- record-tool-call-result!
+  "Record one shaped tool execution result into progress, telemetry, and agent-core."
+  [agent-session-ctx {:keys [tool-call tool-result result-message effective-policy]} progress-queue]
+  (let [call-id         (:id tool-call)
+        name            (:name tool-call)
+        result-text     (or (:result-text result-message)
+                            (tool-content->text (:content result-message)))
+        {:keys [content is-error details]} tool-result]
+    (emit-progress!
+     progress-queue
+     (emit-tool-lifecycle!
+      agent-session-ctx progress-queue
+      (tool-lifecycle-event
+       :tool-result call-id name
+       :content (:content result-message)
+       :result-text result-text
+       :details details
+       :is-error is-error)))
+    (record-tool-output-stat!
+     agent-session-ctx
+     {:tool-call-id     call-id
+      :tool-name        name
+      :content          content
+      :details          details
+      :effective-policy effective-policy})
+    (dispatch/dispatch! agent-session-ctx
+                        :session/tool-agent-end
+                        {:tool-call tool-call
+                         :result tool-result
+                         :is-error? is-error}
+                        {:origin :core})
+    (dispatch/dispatch! agent-session-ctx
+                        :session/tool-agent-record-result
+                        {:tool-result-msg result-message}
+                        {:origin :core})
+    result-message))
+
+(defn run-tool-call-through-runtime-effect!
+  "Execute one tool call inside the dispatch-owned runtime effect boundary.
+
+   This owns the full tool-call transaction:
+   start → execute → progress updates → telemetry/agent-core recording → result.
+
+   Exposed as a named runtime helper so core can delegate `:runtime/tool-run`
+   here without re-implementing executor-local shaping logic."
+  [agent-session-ctx tool-call parsed-args progress-queue]
+  (emit-progress!
+   progress-queue
+   (emit-tool-lifecycle!
+    agent-session-ctx progress-queue
+    (tool-lifecycle-event :tool-start (:id tool-call) (:name tool-call))))
+  (dispatch/dispatch! agent-session-ctx
+                      :session/tool-agent-start
+                      {:tool-call tool-call}
+                      {:origin :core})
+  (try
+    (record-tool-call-result!
+     agent-session-ctx
+     (execute-tool-call! agent-session-ctx
+                         (assoc tool-call :parsed-args parsed-args)
+                         progress-queue)
+     progress-queue)
+    (catch Exception e
+      (let [result-msg {:role         "toolResult"
+                        :tool-call-id (:id tool-call)
+                        :tool-name    (:name tool-call)
+                        :content      [{:type :text :text (str "Error: " (ex-message e))}]
+                        :is-error     true
+                        :details      {:exception true}
+                        :result-text  (str "Error: " (ex-message e))
+                        :timestamp    (java.time.Instant/now)}]
+        (dispatch/dispatch! agent-session-ctx
+                            :session/tool-agent-end
+                            {:tool-call tool-call
+                             :result {:content (str "Error: " (ex-message e))
+                                      :is-error true}
+                             :is-error? true}
+                            {:origin :core})
+        (dispatch/dispatch! agent-session-ctx
+                            :session/tool-agent-record-result
+                            {:tool-result-msg result-msg}
+                            {:origin :core})
+        result-msg))))
+
+(defn- run-tool-call!
+  "Execute one tool call through one dispatch-owned runtime boundary."
+  [agent-session-ctx tool-call progress-queue]
+  (dispatch/dispatch! agent-session-ctx
+                      :session/tool-run
+                      {:tool-call tool-call
+                       :parsed-args (or (:parsed-args tool-call)
+                                        (parse-args (:arguments tool-call)))
+                       :progress-queue progress-queue}
+                      {:origin :core}))
 
 ;; ============================================================
 ;; Public: run a full agent turn (recursive for tool loops)
 ;; ============================================================
 
+(defn- classify-turn-outcome
+  "Classify one completed streamed assistant message into the next turn boundary.
+
+   Outcome shapes:
+   - {:turn/outcome :turn.outcome/stop     :assistant-message msg}
+   - {:turn/outcome :turn.outcome/tool-use :assistant-message msg :tool-calls [...]} 
+   - {:turn/outcome :turn.outcome/error    :assistant-message msg}
+
+   This keeps stream assembly (`stream-turn!`) separate from the decision about
+   whether the agent should stop, execute tools, or terminate on error."
+  [assistant-msg]
+  (let [tool-calls (vec (extract-tool-calls assistant-msg))]
+    (cond
+      (= :error (:stop-reason assistant-msg))
+      {:turn/outcome     :turn.outcome/error
+       :assistant-message assistant-msg}
+
+      (seq tool-calls)
+      {:turn/outcome     :turn.outcome/tool-use
+       :assistant-message assistant-msg
+       :tool-calls       tool-calls}
+
+      :else
+      {:turn/outcome     :turn.outcome/stop
+       :assistant-message assistant-msg})))
+
+(defn- continue-after-tool-use!
+  "Execute one explicit tool-use outcome and return the next continuation shape.
+
+   Input:
+   - outcome from `classify-turn-outcome` with `:turn/outcome :turn.outcome/tool-use`
+
+   Output:
+   - {:turn/continuation :turn.continue/next-turn
+      :assistant-message msg
+      :tool-results [...]}"
+  [agent-session-ctx outcome progress-queue]
+  (let [tool-results (mapv (fn [tc]
+                             (run-tool-call! agent-session-ctx tc progress-queue))
+                           (:tool-calls outcome))]
+    {:turn/continuation :turn.continue/next-turn
+     :assistant-message (:assistant-message outcome)
+     :tool-results tool-results}))
+
+(defn- execute-one-turn!
+  "Execute exactly one streamed assistant turn and return its explicit outcome.
+
+   Output shape:
+   - {:assistant-message msg
+      :outcome outcome-map}
+
+   This isolates single-turn execution from recursive multi-turn orchestration."
+  [ai-ctx agent-session-ctx agent-ctx ai-model extra-ai-options progress-queue]
+  (agent/emit-in! agent-ctx {:type :turn-start})
+  (let [assistant-msg (stream-turn! ai-ctx agent-session-ctx agent-ctx ai-model
+                                    extra-ai-options progress-queue)
+        outcome       (classify-turn-outcome assistant-msg)]
+    (agent/emit-turn-end-in! agent-ctx assistant-msg [])
+    {:assistant-message assistant-msg
+     :outcome outcome}))
+
+(defn- run-turn-loop!
+  "Run the recursive multi-turn loop until one terminal assistant outcome.
+
+   Delegates one-turn work to `execute-one-turn!` and only owns the loop control
+   that follows explicit turn outcomes and continuations."
+  [ai-ctx agent-session-ctx agent-ctx ai-model extra-ai-options progress-queue]
+  (let [{:keys [assistant-message outcome]}
+        (execute-one-turn! ai-ctx agent-session-ctx agent-ctx ai-model
+                           extra-ai-options progress-queue)]
+    (case (:turn/outcome outcome)
+      :turn.outcome/tool-use
+      (let [continuation (continue-after-tool-use! agent-session-ctx outcome progress-queue)]
+        (case (:turn/continuation continuation)
+          :turn.continue/next-turn
+          (run-turn-loop! ai-ctx agent-session-ctx agent-ctx ai-model
+                          extra-ai-options progress-queue)
+
+          assistant-message))
+
+      :turn.outcome/stop
+      assistant-message
+
+      :turn.outcome/error
+      assistant-message)))
+
 (defn run-turn!
   "Drive one complete agent interaction loop:
-     stream → check tools → execute tools → stream again (recursive).
+     execute one turn → continue after tool-use when needed → loop until terminal.
 
    `ai-ctx`            — ai component context (has :provider-registry)
    `agent-session-ctx` — agent session context
    `agent-ctx`         — agent-core context
    `ai-model`          — ai.schemas.Model map
-   `turn-ctx-atom`     — optional atom, stores current turn context for introspection
    `extra-ai-options`  — extra options merged into ai-options (e.g. {:api-key \"...\"})
    `progress-queue`    — optional LinkedBlockingQueue for TUI progress events
 
-   Returns the final (non-tool) assistant message map.
+   Returns the final terminal assistant message map.
    Emits agent-core events throughout."
   ([ai-ctx agent-session-ctx agent-ctx ai-model]
-   (run-turn! ai-ctx agent-session-ctx agent-ctx ai-model nil nil nil))
-  ([ai-ctx agent-session-ctx agent-ctx ai-model turn-ctx-atom]
-   (run-turn! ai-ctx agent-session-ctx agent-ctx ai-model turn-ctx-atom nil nil))
-  ([ai-ctx agent-session-ctx agent-ctx ai-model turn-ctx-atom extra-ai-options]
-   (run-turn! ai-ctx agent-session-ctx agent-ctx ai-model turn-ctx-atom extra-ai-options nil))
-  ([ai-ctx agent-session-ctx agent-ctx ai-model turn-ctx-atom extra-ai-options progress-queue]
-   (agent/emit-in! agent-ctx {:type :turn-start})
-   (let [assistant-msg (stream-turn! ai-ctx agent-session-ctx agent-ctx ai-model turn-ctx-atom
-                                     extra-ai-options progress-queue)
-         tool-calls    (extract-tool-calls assistant-msg)]
-     (agent/emit-turn-end-in! agent-ctx assistant-msg [])
-     (if (and (seq tool-calls) (not= :error (:stop-reason assistant-msg)))
-       ;; Tool calls requested — execute them all then recurse
-       (do
-         (doseq [tc tool-calls]
-           (run-tool-call! agent-session-ctx tc progress-queue))
-         (run-turn! ai-ctx agent-session-ctx agent-ctx ai-model turn-ctx-atom
-                    extra-ai-options progress-queue))
-       ;; No tool calls (or error) — we're done
-       assistant-msg))))
+   (run-turn! ai-ctx agent-session-ctx agent-ctx ai-model nil nil))
+  ([ai-ctx agent-session-ctx agent-ctx ai-model extra-ai-options]
+   (run-turn! ai-ctx agent-session-ctx agent-ctx ai-model extra-ai-options nil))
+  ([ai-ctx agent-session-ctx agent-ctx ai-model extra-ai-options progress-queue]
+   (run-turn-loop! ai-ctx agent-session-ctx agent-ctx ai-model
+                   extra-ai-options progress-queue)))
 
 (defn- session-thinking-level
   [agent-session-ctx]
-  (or (some-> (:session-data-atom agent-session-ctx) deref :thinking-level)
-      (:thinking-level (session/get-session-data-in agent-session-ctx))))
+  (:thinking-level (session/get-session-data-in agent-session-ctx)))
 
 (defn- session-llm-stream-idle-timeout-ms
   [agent-session-ctx]
   (let [v (get-in agent-session-ctx [:config :llm-stream-idle-timeout-ms])]
     (when (and (number? v) (pos? v))
       (long v))))
+
+(defn- agent-loop-options
+  "Build the effective AI options for one agent loop from session/runtime inputs."
+  [agent-session-ctx {:keys [api-key]}]
+  (let [thinking-level  (session-thinking-level agent-session-ctx)
+        idle-timeout-ms (session-llm-stream-idle-timeout-ms agent-session-ctx)]
+    (cond-> {}
+      api-key (assoc :api-key api-key)
+      (keyword? thinking-level) (assoc :thinking-level thinking-level)
+      idle-timeout-ms (assoc :llm-stream-idle-timeout-ms idle-timeout-ms))))
+
+(defn- run-agent-loop-body!
+  "Execute the core turn loop for one agent loop lifecycle.
+
+   Converts unexpected exceptions into canonical assistant error messages so the
+   outer lifecycle boundary can finalize success/error uniformly."
+  [ai-ctx agent-session-ctx agent-ctx ai-model extra-ai-options progress-queue]
+  (try
+    (run-turn! ai-ctx agent-session-ctx agent-ctx ai-model
+               extra-ai-options progress-queue)
+    (catch Exception e
+      (cond-> {:role "assistant" :content []
+               :stop-reason :error
+               :error-message (ex-message e)
+               :timestamp (java.time.Instant/now)}
+        (:status (ex-data e)) (assoc :http-status (:status (ex-data e)))))))
+
+(defn- finish-agent-loop!
+  "Finalize one agent loop lifecycle from the terminal assistant result."
+  [agent-ctx result]
+  (if (= :error (:stop-reason result))
+    (agent/end-loop-on-error-in! agent-ctx (:error-message result))
+    (agent/end-loop-in! agent-ctx))
+  result)
 
 (defn run-agent-loop!
   "Run a complete agent loop starting from the current agent-core state.
@@ -1015,7 +1178,6 @@ Also tolerates cumulative snapshots that differ near previous tail
    requesting tool calls.
 
    Options (optional 5th arg map):
-     :turn-ctx-atom  — atom to store the current turn context for EQL introspection
      :api-key        — API key to pass through to the provider (from OAuth store)
      :progress-queue — LinkedBlockingQueue for TUI progress events
 
@@ -1026,24 +1188,9 @@ Also tolerates cumulative snapshots that differ near previous tail
    Returns the final assistant message."
   ([ai-ctx agent-session-ctx agent-ctx ai-model new-messages]
    (run-agent-loop! ai-ctx agent-session-ctx agent-ctx ai-model new-messages nil))
-  ([ai-ctx agent-session-ctx agent-ctx ai-model new-messages {:keys [turn-ctx-atom api-key progress-queue]}]
+  ([ai-ctx agent-session-ctx agent-ctx ai-model new-messages opts]
    (agent/start-loop-in! agent-ctx new-messages)
-   (let [thinking-level       (session-thinking-level agent-session-ctx)
-         idle-timeout-ms      (session-llm-stream-idle-timeout-ms agent-session-ctx)
-         extra-ai-options     (cond-> {}
-                                api-key (assoc :api-key api-key)
-                                (keyword? thinking-level) (assoc :thinking-level thinking-level)
-                                idle-timeout-ms (assoc :llm-stream-idle-timeout-ms idle-timeout-ms))
-         result (try
-                  (run-turn! ai-ctx agent-session-ctx agent-ctx ai-model turn-ctx-atom
-                             extra-ai-options progress-queue)
-                  (catch Exception e
-                    (cond-> {:role "assistant" :content []
-                             :stop-reason :error
-                             :error-message (ex-message e)
-                             :timestamp (java.time.Instant/now)}
-                      (:status (ex-data e)) (assoc :http-status (:status (ex-data e))))))]
-     (if (= :error (:stop-reason result))
-       (agent/end-loop-on-error-in! agent-ctx (:error-message result))
-       (agent/end-loop-in! agent-ctx))
-     result)))
+   (let [extra-ai-options (agent-loop-options agent-session-ctx opts)
+         result           (run-agent-loop-body! ai-ctx agent-session-ctx agent-ctx ai-model
+                                                extra-ai-options (:progress-queue opts))]
+     (finish-agent-loop! agent-ctx result))))

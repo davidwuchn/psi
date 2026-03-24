@@ -8,4 +8,6 @@
   :color? true
   :fail-fast? false
   :capture-output? true
-  :reporter [kaocha.report/documentation]}
+  :reporter [kaocha.report/dots]
+  :plugins [:kaocha.plugin/hooks]
+  :kaocha.hooks/pre-run [psi.test-hooks/pre-run]}

@@ -14,6 +14,10 @@
    [psi.agent-core.core :as agent-core]
    [psi.agent-session.background-jobs :as bj]
    [psi.agent-session.core :as session]
+   [psi.agent-session.dispatch :as dispatch]
+   [psi.agent-session.extension-runtime :as ext-rt]
+   [psi.agent-session.session-state :as ss]
+   [psi.agent-session.mutations :as mutations]
    [psi.agent-session.test-support :as test-support]
    [psi.agent-session.tool-output :as tool-output]
    [psi.agent-session.workflows :as wf]
@@ -26,9 +30,17 @@
                                       :tool-name tool-name
                                       :job-id job-id}))
 
+(defn- mark-terminal!
+  [store params]
+  (bj/mark-terminal-in! store params))
+
+(defn- request-cancel!
+  [store params]
+  (bj/request-cancel-in! store params))
+
 (defn- pending-background-terminal-message-count
   [ctx]
-  (->> (:messages (agent-core/get-data-in (:agent-ctx ctx)))
+  (->> (:messages (agent-core/get-data-in (ss/agent-ctx-in ctx)))
        (filter #(= "assistant" (:role %)))
        (filter #(= "background-job-terminal" (:custom-type %)))
        count))
@@ -89,9 +101,9 @@
   (testing "N4: one synthetic assistant message emitted per terminal job"
     (let [store (bj/create-store)
           _     (start-job! store "tc-n4" "thread-a" "tool-z" "job-n4")
-          _     (bj/mark-terminal-in! store {:job-id "job-n4"
-                                             :outcome :completed
-                                             :payload {:ok true}})
+          _     (mark-terminal! store {:job-id "job-n4"
+                                       :outcome :completed
+                                       :payload {:ok true}})
           pending-before (bj/pending-terminal-jobs-in store "thread-a")
           _     (bj/mark-terminal-message-emitted-in! store {:job-id "job-n4"})
           pending-after  (bj/pending-terminal-jobs-in store "thread-a")
@@ -107,9 +119,9 @@
           _     (start-job! store "tc-n5-a" "thread-a" "tool-z" "job-n5-a")
           _     (Thread/sleep 2)
           _     (start-job! store "tc-n5-b" "thread-a" "tool-z" "job-n5-b")
-          _     (bj/mark-terminal-in! store {:job-id "job-n5-a" :outcome :completed :payload {:n 1}})
+          _     (mark-terminal! store {:job-id "job-n5-a" :outcome :completed :payload {:n 1}})
           _     (Thread/sleep 2)
-          _     (bj/mark-terminal-in! store {:job-id "job-n5-b" :outcome :completed :payload {:n 2}})
+          _     (mark-terminal! store {:job-id "job-n5-b" :outcome :completed :payload {:n 2}})
           pending (bj/pending-terminal-jobs-in store "thread-a")]
       (is (= ["job-n5-a" "job-n5-b"] (mapv :job-id pending))))))
 
@@ -118,12 +130,12 @@
     (let [store (bj/create-store)
           _     (start-job! store "tc-n6-user" "thread-a" "tool-z" "job-n6-user")
           _     (start-job! store "tc-n6-agent" "thread-a" "tool-z" "job-n6-agent")
-          user-cancelled  (bj/request-cancel-in! store {:thread-id "thread-a"
-                                                        :job-id "job-n6-user"
-                                                        :requested-by "user"})
-          agent-cancelled (bj/request-cancel-in! store {:thread-id "thread-a"
-                                                        :job-id "job-n6-agent"
-                                                        :requested-by :agent})]
+          user-cancelled  (request-cancel! store {:thread-id "thread-a"
+                                                  :job-id "job-n6-user"
+                                                  :requested-by "user"})
+          agent-cancelled (request-cancel! store {:thread-id "thread-a"
+                                                  :job-id "job-n6-agent"
+                                                  :requested-by :agent})]
       (is (= :pending-cancel (:status user-cancelled)))
       (is (= :pending-cancel (:status agent-cancelled)))
       (is (instance? java.time.Instant (:cancel-requested-at user-cancelled)))
@@ -134,9 +146,9 @@
     (let [store   (bj/create-store)
           payload {:blob (apply str (repeat 200 "x"))}
           _       (start-job! store "tc-n7" "thread-a" "tool-z" "job-n7")
-          _       (bj/mark-terminal-in! store {:job-id "job-n7"
-                                               :outcome :completed
-                                               :payload payload})
+          _       (mark-terminal! store {:job-id "job-n7"
+                                         :outcome :completed
+                                         :payload payload})
           payload-edn (pr-str payload)
           policy      {:max-lines 1000 :max-bytes 40}
           truncation  (tool-output/head-truncate payload-edn policy)]
@@ -162,8 +174,8 @@
           _     (start-job! store "tc-bg-3" "thread-a" "tool-x" "job-3")
           _     (start-job! store "tc-bg-4" "thread-a" "tool-x" "job-4")
           _     (start-job! store "tc-bg-5" "thread-a" "tool-x" "job-5")
-          _     (bj/request-cancel-in! store {:thread-id "thread-a" :job-id "job-4"})
-          _     (bj/mark-terminal-in! store {:job-id "job-5" :outcome :failed :payload {:error "boom"}})
+          _     (request-cancel! store {:thread-id "thread-a" :job-id "job-4"})
+          _     (mark-terminal! store {:job-id "job-5" :outcome :failed :payload {:error "boom"}})
           listed (bj/list-jobs-in store "thread-a")
           ids    (mapv :job-id listed)
           statuses (set (map :status listed))]
@@ -176,10 +188,10 @@
           _     (start-job! store "tc-n9-a" "thread-a" "tool-z" "job-n9-running")
           _     (start-job! store "tc-n9-b" "thread-a" "tool-z" "job-n9-cancel")
           _     (start-job! store "tc-n9-c" "thread-a" "tool-z" "job-n9-failed")
-          _     (bj/request-cancel-in! store {:thread-id "thread-a" :job-id "job-n9-cancel"})
-          _     (bj/mark-terminal-in! store {:job-id "job-n9-failed"
-                                             :outcome :failed
-                                             :payload {:error "x"}})
+          _     (request-cancel! store {:thread-id "thread-a" :job-id "job-n9-cancel"})
+          _     (mark-terminal! store {:job-id "job-n9-failed"
+                                       :outcome :failed
+                                       :payload {:error "x"}})
           listed (bj/list-jobs-in store "thread-a" [:failed])]
       (is (= ["job-n9-failed"] (mapv :job-id listed)))
       (is (= #{:failed} (set (map :status listed)))))))
@@ -228,7 +240,7 @@
   (testing "E4: duplicate terminal emit attempt does not create second message"
     (let [store (bj/create-store)
           _     (start-job! store "tc-e4" "thread-a" "tool-z" "job-e4")
-          _     (bj/mark-terminal-in! store {:job-id "job-e4" :outcome :completed :payload {:ok true}})
+          _     (mark-terminal! store {:job-id "job-e4" :outcome :completed :payload {:ok true}})
           _     (bj/mark-terminal-message-emitted-in! store {:job-id "job-e4"})
           _     (bj/mark-terminal-message-emitted-in! store {:job-id "job-e4"})
           pending (bj/pending-terminal-jobs-in store "thread-a")]
@@ -239,10 +251,10 @@
   (testing "E5: cancellation remains best-effort and job may still complete"
     (let [store (bj/create-store)
           _     (start-job! store "tc-e5" "thread-a" "tool-z" "job-e5")
-          _     (bj/request-cancel-in! store {:thread-id "thread-a" :job-id "job-e5"})
-          done  (bj/mark-terminal-in! store {:job-id "job-e5"
-                                             :outcome :completed
-                                             :payload {:ok true}})]
+          _     (request-cancel! store {:thread-id "thread-a" :job-id "job-e5"})
+          done  (mark-terminal! store {:job-id "job-e5"
+                                       :outcome :completed
+                                       :payload {:ok true}})]
       (is (= :completed (:status done)))
       (is (= {:ok true} (:terminal-payload done)))
       (is (instance? java.time.Instant (:cancel-requested-at done))))))
@@ -251,10 +263,10 @@
   (testing "E6: completion wins if execution already finished"
     (let [store (bj/create-store)
           _     (start-job! store "tc-e6" "thread-a" "tool-z" "job-e6")
-          _     (bj/mark-terminal-in! store {:job-id "job-e6"
-                                             :outcome :completed
-                                             :payload {:ok true}})
-          after-cancel (bj/request-cancel-in! store {:thread-id "thread-a" :job-id "job-e6"})]
+          _     (mark-terminal! store {:job-id "job-e6"
+                                       :outcome :completed
+                                       :payload {:ok true}})
+          after-cancel (request-cancel! store {:thread-id "thread-a" :job-id "job-e6"})]
       (is (= :completed (:status after-cancel)))
       (is (= {:ok true} (:terminal-payload after-cancel)))
       (is (nil? (:cancel-requested-at after-cancel))))))
@@ -262,17 +274,24 @@
 (deftest e7-idle-completion-wakes-turn-boundary-test
   (testing "E7: idle terminal outcome requests next turn boundary"
     (let [ctx (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
-          store (:background-jobs-atom ctx)
-          thread-id (:session-id (session/get-session-data-in ctx))]
-      (start-job! store "tc-e7" thread-id "workflow/test" "job-e7")
-      (bj/mark-terminal-in! store {:job-id "job-e7"
-                                   :outcome :completed
-                                   :payload {:ok true}})
+          thread-id (:session-id (ss/get-session-data-in ctx))]
+      (dispatch/dispatch! ctx :session/update-background-jobs-state
+                          {:update-fn (fn [store]
+                                        (-> store
+                                            (-> (bj/start-background-job {:tool-call-id "tc-e7"
+                                                                          :thread-id thread-id
+                                                                          :tool-name "workflow/test"
+                                                                          :job-id "job-e7"})
+                                                :state)
+                                            (bj/mark-terminal {:job-id "job-e7"
+                                                               :outcome :completed
+                                                               :payload {:ok true}})))}
+                          {:origin :core})
       (is (= 0 (pending-background-terminal-message-count ctx)))
-      (session/set-extension-run-fn-in! ctx (fn [_ _] nil))
+      (ext-rt/set-extension-run-fn-in! ctx (fn [_ _] nil))
       (Thread/sleep 30)
       (is (= 1 (pending-background-terminal-message-count ctx)))
-      (is (true? (:terminal-message-emitted (bj/get-job-in store "job-e7")))))))
+      (is (true? (:terminal-message-emitted (bj/get-job-in (ss/get-state-value-in ctx (ss/state-path :background-jobs)) "job-e7")))))))
 
 (deftest e8-cross-thread-list-cancel-isolation-test
   (testing "E8: cross-thread list/cancel isolation is enforced"
@@ -286,7 +305,7 @@
       (is (thrown-with-msg?
            clojure.lang.ExceptionInfo
            #"Job not found in this thread"
-           (bj/request-cancel-in! store {:thread-id "thread-b" :job-id "job-e8-a"}))))))
+           (request-cancel! store {:thread-id "thread-b" :job-id "job-e8-a"}))))))
 
 (deftest e9-inspect-outside-thread-rejected-test
   (testing "E9: inspect outside origin thread returns canonical not-found error"
@@ -343,16 +362,23 @@
 (deftest e13-retryable-llm-http-errors-are-internal-test
   (testing "E13: internal retryable LLM HTTP errors do not trigger external injection"
     (let [ctx (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
-          store (:background-jobs-atom ctx)
-          thread-id (:session-id (session/get-session-data-in ctx))]
-      (start-job! store "tc-e13" thread-id "workflow/test" "job-e13")
+          thread-id (:session-id (ss/get-session-data-in ctx))]
+      (dispatch/dispatch! ctx :session/update-background-jobs-state
+                          {:update-fn (fn [store]
+                                        (:state (bj/start-background-job
+                                                 store
+                                                 {:tool-call-id "tc-e13"
+                                                  :thread-id thread-id
+                                                  :tool-name "workflow/test"
+                                                  :job-id "job-e13"})))}
+                          {:origin :core})
       ;; Simulate internal retryable error handling path: job remains running and no terminal outcome marked.
-      (is (= :running (:status (bj/get-job-in store "job-e13"))))
-      (session/set-extension-run-fn-in! ctx (fn [_ _] nil))
+      (is (= :running (:status (bj/get-job-in (ss/get-state-value-in ctx (ss/state-path :background-jobs)) "job-e13"))))
+      (ext-rt/set-extension-run-fn-in! ctx (fn [_ _] nil))
       (Thread/sleep 30)
-      (is (= :running (:status (bj/get-job-in store "job-e13"))))
+      (is (= :running (:status (bj/get-job-in (ss/get-state-value-in ctx (ss/state-path :background-jobs)) "job-e13"))))
       (is (= 0 (pending-background-terminal-message-count ctx)))
-      (is (empty? (bj/pending-terminal-jobs-in store thread-id))))))
+      (is (empty? (bj/pending-terminal-jobs-in (ss/get-state-value-in ctx (ss/state-path :background-jobs)) thread-id))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Boundary (B)
@@ -412,8 +438,8 @@
     (let [store (bj/create-store)
           _     (start-job! store "tc-b3-a" "thread-a" "tool-z" "job-b3-a")
           _     (start-job! store "tc-b3-b" "thread-a" "tool-z" "job-b3-b")
-          _     (bj/mark-terminal-in! store {:job-id "job-b3-a" :outcome :completed :payload {:n 1}})
-          _     (bj/mark-terminal-in! store {:job-id "job-b3-b" :outcome :completed :payload {:n 2}})
+          _     (mark-terminal! store {:job-id "job-b3-a" :outcome :completed :payload {:n 1}})
+          _     (mark-terminal! store {:job-id "job-b3-b" :outcome :completed :payload {:n 2}})
           completed-at (-> (bj/get-job-in store "job-b3-a") :completed-at)
           _     (swap! store assoc-in [:jobs-by-id "job-b3-b" :completed-at] completed-at)
           pending (bj/pending-terminal-jobs-in store "thread-a")]
@@ -424,18 +450,25 @@
 (deftest b4-at-most-once-under-concurrent-emitters-test
   (testing "B4: concurrent emit attempts still produce one terminal message"
     (let [ctx (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
-          store (:background-jobs-atom ctx)
-          thread-id (:session-id (session/get-session-data-in ctx))
-          _     (start-job! store "tc-b4" thread-id "tool-z" "job-b4")
-          _     (bj/mark-terminal-in! store {:job-id "job-b4" :outcome :completed :payload {:ok true}})
-          f1    (future (session/set-extension-run-fn-in! ctx (fn [_ _] nil)) true)
-          f2    (future (session/set-extension-run-fn-in! ctx (fn [_ _] nil)) true)
+          thread-id (:session-id (ss/get-session-data-in ctx))
+          _     (dispatch/dispatch! ctx :session/update-background-jobs-state
+                                    {:update-fn (fn [store]
+                                                  (-> store
+                                                      (-> (bj/start-background-job {:tool-call-id "tc-b4"
+                                                                                    :thread-id thread-id
+                                                                                    :tool-name "tool-z"
+                                                                                    :job-id "job-b4"})
+                                                          :state)
+                                                      (bj/mark-terminal {:job-id "job-b4" :outcome :completed :payload {:ok true}})))}
+                                    {:origin :core})
+          f1    (future (ext-rt/set-extension-run-fn-in! ctx (fn [_ _] nil)) true)
+          f2    (future (ext-rt/set-extension-run-fn-in! ctx (fn [_ _] nil)) true)
           _     @f1
           _     @f2
-          pending (bj/pending-terminal-jobs-in store thread-id)]
+          pending (bj/pending-terminal-jobs-in (ss/get-state-value-in ctx (ss/state-path :background-jobs)) thread-id)]
       (is (= 1 (pending-background-terminal-message-count ctx)))
       (is (empty? pending))
-      (is (true? (:terminal-message-emitted (bj/get-job-in store "job-b4")))))))
+      (is (true? (:terminal-message-emitted (bj/get-job-in (ss/get-state-value-in ctx (ss/state-path :background-jobs)) "job-b4")))))))
 
 (deftest b5-payload-size-boundary-test
   (testing "B5: max-bytes/max-lines boundary behavior is correct"
@@ -455,10 +488,10 @@
       (doseq [i (range 20)]
         (let [job-id (str "job-b6-" i)]
           (start-job! store (str "tc-b6-" i) "thread-a" "tool-z" job-id)
-          (bj/mark-terminal-in! store {:job-id job-id
-                                       :outcome :completed
-                                       :terminal-history-max-per-thread 20
-                                       :payload {:i i}})))
+          (mark-terminal! store {:job-id job-id
+                                 :outcome :completed
+                                 :terminal-history-max-per-thread 20
+                                 :payload {:i i}})))
       (let [terminal (->> (vals (:jobs-by-id @store))
                           (filter #(= "thread-a" (:thread-id %)))
                           (filter #(bj/terminal-status? (:status %))))]
@@ -470,10 +503,10 @@
       (doseq [i (range 21)]
         (let [job-id (str "job-b7-" i)]
           (start-job! store (str "tc-b7-" i) "thread-a" "tool-z" job-id)
-          (bj/mark-terminal-in! store {:job-id job-id
-                                       :outcome :completed
-                                       :terminal-history-max-per-thread 20
-                                       :payload {:i i}})
+          (mark-terminal! store {:job-id job-id
+                                 :outcome :completed
+                                 :terminal-history-max-per-thread 20
+                                 :payload {:i i}})
           (Thread/sleep 1)))
       (let [ids (set (keys (:jobs-by-id @store)))]
         (is (= 20 (count ids)))
@@ -487,10 +520,10 @@
       (doseq [i (range 21)]
         (let [job-id (str "job-b8-term-" i)]
           (start-job! store (str "tc-b8-term-" i) "thread-a" "tool-z" job-id)
-          (bj/mark-terminal-in! store {:job-id job-id
-                                       :outcome :completed
-                                       :terminal-history-max-per-thread 20
-                                       :payload {:i i}})
+          (mark-terminal! store {:job-id job-id
+                                 :outcome :completed
+                                 :terminal-history-max-per-thread 20
+                                 :payload {:i i}})
           (Thread/sleep 1)))
       (let [running (bj/get-job-in store "job-b8-running")
             terminal (->> (vals (:jobs-by-id @store))
@@ -519,12 +552,11 @@
     (let [ctx       (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
           ext-path  "/test/send-message-regression.clj"
           wf-id     "wf-sm-1"
-          store     (:background-jobs-atom ctx)
-          thread-id (:session-id (session/get-session-data-in ctx))
+          thread-id (:session-id (ss/get-session-data-in ctx))
           reg       (:workflow-registry ctx)
           qctx      (query/create-query-context)
           _         (session/register-resolvers-in! qctx false)
-          _         (session/register-mutations-in! qctx true)
+          _         (session/register-mutations-in! qctx mutations/all-mutations true)
           mutate    (fn [op params]
                       (get (query/query-in qctx
                                            {:psi/agent-session-ctx ctx}
@@ -543,21 +575,25 @@
       (is (true? (:done? (wf/workflow-in reg ext-path wf-id)))
           "workflow should be done before we register the background job")
       ;; Register a background job that is linked to the now-done workflow
-      (bj/start-background-job-in! store
-                                   {:tool-call-id      "tc-sm-regression"
-                                    :thread-id         thread-id
-                                    :tool-name         "workflow/instant-done"
-                                    :job-id            "job-sm-1"
-                                    :job-kind          :workflow
-                                    :workflow-ext-path ext-path
-                                    :workflow-id       wf-id})
-      (is (= :running (:status (bj/get-job-in store "job-sm-1")))
+      (dispatch/dispatch! ctx :session/update-background-jobs-state
+                          {:update-fn (fn [store]
+                                        (:state (bj/start-background-job
+                                                 store
+                                                 {:tool-call-id      "tc-sm-regression"
+                                                  :thread-id         thread-id
+                                                  :tool-name         "workflow/instant-done"
+                                                  :job-id            "job-sm-1"
+                                                  :job-kind          :workflow
+                                                  :workflow-ext-path ext-path
+                                                  :workflow-id       wf-id})))}
+                          {:origin :core})
+      (is (= :running (:status (bj/get-job-in (ss/get-state-value-in ctx (ss/state-path :background-jobs)) "job-sm-1")))
           "job should start as running before send-message is called")
       ;; Invoke send-message via the real Pathom mutation surface — this exercises the fix
       (mutate 'psi.extension/send-message
               {:role "assistant" :content "chain result" :custom-type "chain-result"})
       ;; The job should now be terminal (completed) — the fix under test
-      (let [job (bj/get-job-in store "job-sm-1")]
+      (let [job (bj/get-job-in (ss/get-state-value-in ctx (ss/state-path :background-jobs)) "job-sm-1")]
         (is (bj/terminal-status? (:status job))
             "background job should be terminal after send-message")
         (is (= :completed (:status job))))
@@ -583,12 +619,11 @@
     (let [ctx       (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
           ext-path  "/test/send-message-race.clj"
           wf-id     "wf-sm-race"
-          store     (:background-jobs-atom ctx)
-          thread-id (:session-id (session/get-session-data-in ctx))
+          thread-id (:session-id (ss/get-session-data-in ctx))
           reg       (:workflow-registry ctx)
           qctx      (query/create-query-context)
           _         (session/register-resolvers-in! qctx false)
-          _         (session/register-mutations-in! qctx true)
+          _         (session/register-mutations-in! qctx mutations/all-mutations true)
           mutate    (fn [op params]
                       (get (query/query-in qctx
                                            {:psi/agent-session-ctx ctx}
@@ -597,20 +632,25 @@
       (wf/register-type-in! reg ext-path {:type :delayed-done :chart delayed-done-chart})
       (wf/ensure-pump! reg)
       (wf/create-workflow-in! reg ext-path {:type :delayed-done :id wf-id :auto-start? true})
-      (bj/start-background-job-in! store
-                                   {:tool-call-id      "tc-sm-race"
-                                    :thread-id         thread-id
-                                    :tool-name         "workflow/delayed-done"
-                                    :job-id            "job-sm-race"
-                                    :job-kind          :workflow
-                                    :workflow-ext-path ext-path
-                                    :workflow-id       wf-id})
+      (dispatch/dispatch! ctx :session/update-background-jobs-state
+                          {:update-fn (fn [store]
+                                        (:state (bj/start-background-job
+                                                 store
+                                                 {:tool-call-id      "tc-sm-race"
+                                                  :thread-id         thread-id
+                                                  :tool-name         "workflow/delayed-done"
+                                                  :job-id            "job-sm-race"
+                                                  :job-kind          :workflow
+                                                  :workflow-ext-path ext-path
+                                                  :workflow-id       wf-id})))}
+                          {:origin :core})
       ;; Fire send-message before workflow reaches :done.
       (mutate 'psi.extension/send-message
               {:role "assistant" :content "chain result" :custom-type "chain-result"})
       ;; Poll for eventual terminal transition (covers race between message inject and wf completion).
       (loop [i 0]
-        (let [job (bj/get-job-in store "job-sm-race")]
+        (let [job (bj/get-job-in (ss/get-state-value-in ctx (ss/state-path :background-jobs))
+                                 "job-sm-race")]
           (if (or (>= i 80) (bj/terminal-status? (:status job)))
             (is (= :completed (:status job)))
             (do
@@ -623,8 +663,7 @@
     (let [ctx       (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
           ext-path  "/test/resolver-reconcile.clj"
           wf-id     "wf-resolve-1"
-          store     (:background-jobs-atom ctx)
-          thread-id (:session-id (session/get-session-data-in ctx))
+          thread-id (:session-id (ss/get-session-data-in ctx))
           reg       (:workflow-registry ctx)]
       (wf/register-type-in! reg ext-path {:type :instant-done :chart instant-done-chart})
       (wf/ensure-pump! reg)
@@ -636,15 +675,19 @@
             (Thread/sleep 10)
             (recur (inc i)))))
       ;; Seed stale running job linked to done workflow
-      (bj/start-background-job-in! store
-                                   {:tool-call-id      "tc-resolve-1"
-                                    :thread-id         thread-id
-                                    :tool-name         "workflow/instant-done"
-                                    :job-id            "job-resolve-1"
-                                    :job-kind          :workflow
-                                    :workflow-ext-path ext-path
-                                    :workflow-id       wf-id})
-      (is (= :running (:status (bj/get-job-in store "job-resolve-1"))))
+      (dispatch/dispatch! ctx :session/update-background-jobs-state
+                          {:update-fn (fn [store]
+                                        (:state (bj/start-background-job
+                                                 store
+                                                 {:tool-call-id      "tc-resolve-1"
+                                                  :thread-id         thread-id
+                                                  :tool-name         "workflow/instant-done"
+                                                  :job-id            "job-resolve-1"
+                                                  :job-kind          :workflow
+                                                  :workflow-ext-path ext-path
+                                                  :workflow-id       wf-id})))}
+                          {:origin :core})
+      (is (= :running (:status (bj/get-job-in (ss/get-state-value-in ctx (ss/state-path :background-jobs)) "job-resolve-1"))))
       ;; Querying background-jobs should reconcile and expose terminal status.
       (let [resp (session/query-in ctx [:psi.agent-session/background-jobs])
             jobs (:psi.agent-session/background-jobs resp)

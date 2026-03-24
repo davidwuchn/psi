@@ -291,6 +291,17 @@
       (is (= {:content "read ok" :is-error false}
              (wrapped "read" {})))))
 
+  (testing "wrap-tool-executor remains an extension-local compatibility wrapper"
+    (let [reg        (ext/create-registry)
+          calls      (atom [])
+          execute-fn (fn [tool-name args]
+                       (swap! calls conj {:tool-name tool-name :args args})
+                       {:content "ok" :is-error false})
+          wrapped    (ext/wrap-tool-executor reg execute-fn)]
+      (is (= {:content "ok" :is-error false}
+             (wrapped "echo" {"x" 1})))
+      (is (= [{:tool-name "echo" :args {"x" 1}}] @calls))))
+
   (testing "tool_call handler can block execution"
     (let [reg        (ext/create-registry)
           execute-fn (fn [_tool-name _args]

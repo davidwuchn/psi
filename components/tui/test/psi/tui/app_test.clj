@@ -13,7 +13,7 @@
    [psi.agent-session.persistence :as persist]
    [psi.tui.app :as app]
    [psi.tui.ansi :as ansi]
-   [psi.tui.extension-ui :as ext-ui])
+   [psi.ui.state :as ui-state])
   (:import
    [java.util.concurrent LinkedBlockingQueue]))
 
@@ -41,9 +41,9 @@
   ([] (init-state "test-model" {}))
   ([model-name] (init-state model-name {}))
   ([model-name opts]
-   (let [ui-state-atom (:ui-state-atom opts)
-         opts'         (dissoc opts :ui-state-atom)
-         init-fn       (app/make-init model-name nil ui-state-atom
+   (let [ui-state* (:ui-state* opts)
+         opts'         (dissoc opts :ui-state*)
+         init-fn       (app/make-init model-name nil ui-state*
                                       (merge {:dispatch-fn default-dispatch-fn} opts'))
          [state _cmd]  (init-fn)]
      state)))
@@ -905,22 +905,22 @@ clojure-lsp"}]})
 
 (deftest ctrl-o-updates-extension-tools-expanded-state-test
   (testing "ctrl+o updates extension ui tools-expanded state"
-    (let [ui        (ext-ui/create-ui-state)
+    (let [ui        (ui-state/create-ui-state)
           update-fn (app/make-update (stub-agent-fn ""))
-          state     (init-state "test-model" {:ui-state-atom ui})
+          state     (init-state "test-model" {:ui-state* ui})
           [s1 _]    (update-fn state (msg/key-press "o" :ctrl true))]
       (is (true? (:tools-expanded? s1)))
-      (is (true? (ext-ui/get-tools-expanded ui)))
+      (is (true? (ui-state/get-tools-expanded ui)))
       (let [[s2 _] (update-fn s1 (msg/key-press "o" :ctrl true))]
         (is (false? (:tools-expanded? s2)))
-        (is (false? (ext-ui/get-tools-expanded ui)))))))
+        (is (false? (ui-state/get-tools-expanded ui)))))))
 
 (deftest app-syncs-tools-expanded-from-extension-ui-state-test
   (testing "update loop syncs tools-expanded from extension ui state"
-    (let [ui       (ext-ui/create-ui-state)
+    (let [ui       (ui-state/create-ui-state)
           update-fn (app/make-update (stub-agent-fn ""))
-          state    (init-state "test-model" {:ui-state-atom ui})]
-      (ext-ui/set-tools-expanded! ui true)
+          state    (init-state "test-model" {:ui-state* ui})]
+      (ui-state/set-tools-expanded! ui true)
       (let [[s1 _] (update-fn state {:type :agent-poll})]
         (is (true? (:tools-expanded? s1)))))))
 
@@ -1046,13 +1046,13 @@ clojure-lsp"}]})
 
 (deftest extension-tool-renderers-override-builtins-test
   (testing "registered extension renderer output is used for call + result"
-    (let [ui (ext-ui/create-ui-state)]
-      (ext-ui/register-tool-renderer! ui
-                                      "read"
-                                      "ext-a"
-                                      (fn [_args] "EXT call render")
-                                      (fn [_tc _opts] "EXT result render"))
-      (let [state (-> (init-state "test-model" {:ui-state-atom ui})
+    (let [ui (ui-state/create-ui-state)]
+      (ui-state/register-tool-renderer! ui
+                                        "read"
+                                        "ext-a"
+                                        (fn [_args] "EXT call render")
+                                        (fn [_tc _opts] "EXT result render"))
+      (let [state (-> (init-state "test-model" {:ui-state* ui})
                       (assoc :phase :streaming
                              :stream-text ""
                              :tool-order ["t1"]
@@ -1068,13 +1068,13 @@ clojure-lsp"}]})
 
 (deftest extension-tool-renderer-exception-falls-back-to-builtin-test
   (testing "renderer exceptions fall back to built-in tool rendering"
-    (let [ui (ext-ui/create-ui-state)]
-      (ext-ui/register-tool-renderer! ui
-                                      "read"
-                                      "ext-a"
-                                      (fn [_args] (throw (ex-info "boom-call" {})))
-                                      (fn [_tc _opts] (throw (ex-info "boom-result" {}))))
-      (let [state (-> (init-state "test-model" {:ui-state-atom ui})
+    (let [ui (ui-state/create-ui-state)]
+      (ui-state/register-tool-renderer! ui
+                                        "read"
+                                        "ext-a"
+                                        (fn [_args] (throw (ex-info "boom-call" {})))
+                                        (fn [_tc _opts] (throw (ex-info "boom-result" {}))))
+      (let [state (-> (init-state "test-model" {:ui-state* ui})
                       (assoc :phase :streaming
                              :stream-text ""
                              :tool-order ["t1"]

@@ -5,8 +5,12 @@
    [com.fulcrologic.statecharts.chart :as chart]
    [com.fulcrologic.statecharts.elements :as ele]
    [psi.agent-session.background-jobs :as bg-jobs]
+   [psi.agent-session.background-job-runtime :as bg-rt]
    [psi.agent-session.commands :as commands]
    [psi.agent-session.core :as session]
+   [psi.agent-session.session-state :as ss]
+   [psi.agent-session.dispatch :as dispatch]
+   [psi.agent-session.mutations :as mutations]
    [psi.agent-session.extensions :as ext]
    [psi.agent-core.core :as agent]
    [psi.memory.core :as memory]
@@ -63,12 +67,12 @@
 (deftest dispatch-new-session-test
   (let [ctx (make-test-ctx)
         _   (session/new-session-in! ctx)
-        old-id (:session-id (session/get-session-data-in ctx))
+        old-id (:session-id (ss/get-session-data-in ctx))
         result (commands/dispatch ctx "/new" cmd-opts)]
     (is (= :new-session (:type result)))
     (is (string? (:message result)))
     ;; Session ID should have changed
-    (is (not= old-id (:session-id (session/get-session-data-in ctx))))))
+    (is (not= old-id (:session-id (ss/get-session-data-in ctx))))))
 
 (deftest dispatch-new-session-uses-callback-when-provided-test
   (let [ctx (make-test-ctx)
@@ -106,7 +110,7 @@
 (deftest dispatch-tree-switch-by-id-test
   (let [ctx        (make-test-ctx)
         _          (session/new-session-in! ctx)
-        active-id  (:session-id (session/get-session-data-in ctx))
+        active-id  (:session-id (ss/get-session-data-in ctx))
         result     (commands/dispatch ctx (str "/tree " active-id) cmd-opts)]
     ;; Explicit ids should be parsed as ids, not mistaken for bare /tree.
     (is (string? active-id))
@@ -114,7 +118,7 @@
 
 (deftest dispatch-tree-active-session-id-is-noop-test
   (let [ctx       (make-test-ctx)
-        active-id (:session-id (session/get-session-data-in ctx))
+        active-id (:session-id (ss/get-session-data-in ctx))
         result    (commands/dispatch ctx (str "/tree " active-id) cmd-opts)]
     (is (string? active-id))
     (is (= :text (:type result)))
@@ -166,13 +170,16 @@
 
 (deftest dispatch-background-jobs-commands-test
   (let [ctx       (make-test-ctx)
-        thread-id (:session-id (session/get-session-data-in ctx))]
-    (bg-jobs/start-background-job-in!
-     (:background-jobs-atom ctx)
-     {:tool-call-id "tc-cmd-j1"
-      :thread-id thread-id
-      :tool-name "agent-chain"
-      :job-id "job-cmd-j1"})
+        thread-id (:session-id (ss/get-session-data-in ctx))]
+    (dispatch/dispatch! ctx :session/update-background-jobs-state
+                        {:update-fn (fn [store]
+                                      (:state (bg-jobs/start-background-job
+                                               store
+                                               {:tool-call-id "tc-cmd-j1"
+                                                :thread-id thread-id
+                                                :tool-name "agent-chain"
+                                                :job-id "job-cmd-j1"})))}
+                        {:origin :core})
 
     (let [jobs-result (commands/dispatch ctx "/jobs" cmd-opts)]
       (is (= :text (:type jobs-result)))
@@ -197,7 +204,7 @@
       (is (= "Usage: /job <job-id>" (:message inspect-usage))))
 
     (let [cancel-result (commands/dispatch ctx "/cancel-job job-cmd-j1" cmd-opts)
-          job           (session/inspect-background-job-in! ctx thread-id "job-cmd-j1")]
+          job           (bg-rt/inspect-background-job-in! ctx thread-id "job-cmd-j1")]
       (is (= :text (:type cancel-result)))
       (is (str/includes? (:message cancel-result) "Cancellation requested"))
       (is (= :pending-cancel (:status job))))
@@ -215,7 +222,7 @@
 (deftest workflow-send-event-tracked-job-visible-via-commands-test
   (testing "workflow send-event tracked job is visible via /jobs and /job"
     (let [ctx       (make-test-ctx)
-          thread-id (:session-id (session/get-session-data-in ctx))
+          thread-id (:session-id (ss/get-session-data-in ctx))
           qctx      (query/create-query-context)
           chart     (chart/statechart {:id :cmd-wf}
                                       (ele/state {:id :idle}
@@ -228,7 +235,7 @@
                                            [(list op (assoc params :psi/agent-session-ctx ctx))])
                            op))]
       (session/register-resolvers-in! qctx false)
-      (session/register-mutations-in! qctx true)
+      (session/register-mutations-in! qctx mutations/all-mutations true)
 
       (mutate 'psi.extension.workflow/register-type
               {:ext-path "/ext/cmd"
@@ -258,7 +265,7 @@
           (is (= :text (:type inspect-result)))
           (is (str/includes? (:message inspect-result) job-id)))
 
-        (let [listed (session/list-background-jobs-in! ctx thread-id)]
+        (let [listed (bg-rt/list-background-jobs-in! ctx thread-id)]
           (is (some #(= job-id (:job-id %)) listed)))))))
 
 (deftest dispatch-model-set-test
@@ -266,8 +273,8 @@
         result (commands/dispatch ctx "/model openai gpt-5.3-codex" cmd-opts)]
     (is (= :text (:type result)))
     (is (str/includes? (:message result) "✓ Model set to"))
-    (is (= "openai" (get-in (session/get-session-data-in ctx) [:model :provider])))
-    (is (= "gpt-5.3-codex" (get-in (session/get-session-data-in ctx) [:model :id])))))
+    (is (= "openai" (get-in (ss/get-session-data-in ctx) [:model :provider])))
+    (is (= "gpt-5.3-codex" (get-in (ss/get-session-data-in ctx) [:model :id])))))
 
 (deftest dispatch-model-invalid-arity-test
   (let [ctx    (make-test-ctx)
@@ -293,7 +300,7 @@
     (is (= :text (:type result)))
     ;; test model in fixture has reasoning false, so level clamps to :off
     (is (str/includes? (:message result) "✓ Thinking level set to off"))
-    (is (= :off (:thinking-level (session/get-session-data-in ctx))))))
+    (is (= :off (:thinking-level (ss/get-session-data-in ctx))))))
 
 (deftest dispatch-thinking-unknown-level-test
   (let [ctx    (make-test-ctx)
@@ -450,7 +457,7 @@
 
 (deftest format-history-with-messages-test
   (let [ctx (make-test-ctx)]
-    (agent/append-message-in! (:agent-ctx ctx)
+    (agent/append-message-in! (ss/agent-ctx-in ctx)
                               {:role "user" :content [{:type :text :text "hello"}]})
     (let [s (commands/format-history ctx)]
       (is (str/includes? s "[user]"))

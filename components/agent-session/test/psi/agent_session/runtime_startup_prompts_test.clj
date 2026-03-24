@@ -2,6 +2,8 @@
   (:require
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.core :as session]
+   [psi.agent-session.session-state :as ss]
+   [psi.agent-session.persistence :as persist]
    [psi.agent-session.runtime :as runtime]
    [psi.agent-session.startup-prompts]))
 
@@ -24,7 +26,7 @@
                     {:role "assistant" :content [{:type :text :text "ok"}]})]
       (let [result (runtime/run-startup-prompts-in! ctx {:ai-ctx nil :ai-model {:provider :anthropic :id "m"}
                                                          :run-loop-fn fake-runner})
-            sd (session/get-session-data-in ctx)]
+            sd (ss/get-session-data-in ctx)]
         (testing "runs all discovered startup prompts"
           (is (= 2 (count (:rules result))))
           (is (= 2 (count @calls))))
@@ -41,7 +43,7 @@
           (is (= [] (:errors result))))
 
         (testing "startup prompts are recorded as visible user entries in journal"
-          (let [user-texts (->> @(:journal-atom ctx)
+          (let [user-texts (->> (persist/all-entries-in ctx)
                                 (filter #(= :message (:kind %)))
                                 (map #(get-in % [:data :message]))
                                 (filter #(= "user" (:role %)))
@@ -66,7 +68,7 @@
                         {:role "assistant" :content [{:type :text :text "ok"}]})))]
       (let [result (runtime/run-startup-prompts-in! ctx {:ai-ctx nil :ai-model {:provider :anthropic :id "m"}
                                                          :run-loop-fn fake-runner})
-            sd (session/get-session-data-in ctx)
+            sd (ss/get-session-data-in ctx)
             by-id (into {} (map (juxt :id identity)) (:applied result))]
         (is (= ["one" "two"] @calls))
         (is (= 1 (count (:errors result))))
@@ -113,7 +115,7 @@
       (let [result (runtime/run-startup-prompts-in! ctx {:ai-ctx nil
                                                          :ai-model {:provider :anthropic :id "m"}
                                                          :spawn-mode :fork-head})
-            sd (session/get-session-data-in ctx)]
+            sd (ss/get-session-data-in ctx)]
         (is (= [] (:rules result)))
         (is (= [] @calls))
         (is (= [] (:startup-prompts sd)))

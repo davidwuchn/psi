@@ -2,7 +2,7 @@
   "Tests for the extension UI state: dialogs, widgets, status, notifications, render registry."
   (:require
    [clojure.test :refer [deftest testing is]]
-   [psi.tui.extension-ui :as ui]))
+   [psi.ui.state :as ui]))
 
 ;; ── UI state creation ───────────────────────────────────────
 

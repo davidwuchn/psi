@@ -34,7 +34,7 @@
    [psi.agent-session.message-text :as message-text]
    [psi.agent-session.persistence :as persist]
    [psi.tui.ansi :as ansi]
-   [psi.tui.extension-ui :as ext-ui]
+   [psi.ui.state :as ui-state]
    [psi.tui.markdown :as md])
   (:import
    [java.time Instant]
@@ -639,25 +639,25 @@
 ;; ── Dialog state helpers ────────────────────────────────────
 
 (defn- has-active-dialog? [state]
-  (boolean (some-> (:ui-state-atom state) ext-ui/active-dialog)))
+  (boolean (some-> (:ui-state* state) ui-state/active-dialog)))
 
 (defn- handle-dialog-key
   "Route keypress to the active dialog. Returns [new-state cmd] or nil
    if no dialog is active."
   [state m]
-  (when-let [ui-atom (:ui-state-atom state)]
-    (when-let [dialog (ext-ui/active-dialog ui-atom)]
+  (when-let [ui-atom (:ui-state* state)]
+    (when-let [dialog (ui-state/active-dialog ui-atom)]
       (cond
         ;; Escape cancels any dialog
         (msg/key-match? m "escape")
-        (do (ext-ui/cancel-dialog! ui-atom)
+        (do (ui-state/cancel-dialog! ui-atom)
             [state nil])
 
         ;; Enter confirms / submits
         (msg/key-match? m "enter")
         (case (:kind dialog)
           :confirm
-          (do (ext-ui/resolve-dialog! ui-atom (:id dialog) true)
+          (do (ui-state/resolve-dialog! ui-atom (:id dialog) true)
               [state nil])
 
           :select
@@ -665,12 +665,12 @@
                 options (:options dialog)
                 value   (when (seq options) (:value (nth options idx nil)))]
             (when value
-              (ext-ui/resolve-dialog! ui-atom (:id dialog) value))
+              (ui-state/resolve-dialog! ui-atom (:id dialog) value))
             [state nil])
 
           :input
           (let [text (or (:input-text dialog) "")]
-            (ext-ui/resolve-dialog! ui-atom (:id dialog) text)
+            (ui-state/resolve-dialog! ui-atom (:id dialog) text)
             [state nil])
 
           ;; fallback
@@ -995,9 +995,8 @@
    `model-name` is displayed in the banner.
    `query-fn`  — optional (fn [eql-query]) → result map; used to
                   introspect the session for prompt templates, etc.
-   `ui-state-atom` — optional extension UI state atom; when present,
-                     the TUI renders widgets, status, notifications,
-                     and dialogs from extensions.
+   `ui-state*` — optional shared UI-state atom used by the TUI for
+                     widgets, status, notifications, renderers, and dialogs.
    `opts` map:
      :cwd                  — working directory string (for /resume)
      :current-session-file — current session file path (highlighted in selector)
@@ -1017,8 +1016,8 @@
      :event-queue          — shared LinkedBlockingQueue for agent + extension events"
   ([model-name] (make-init model-name nil))
   ([model-name query-fn] (make-init model-name query-fn nil))
-  ([model-name query-fn ui-state-atom] (make-init model-name query-fn ui-state-atom {}))
-  ([model-name query-fn ui-state-atom opts]
+  ([model-name query-fn ui-state*] (make-init model-name query-fn ui-state* {}))
+  ([model-name query-fn ui-state* opts]
    (fn []
      (let [introspected (when query-fn
                           (query-fn [:psi.agent-session/prompt-templates
@@ -1040,7 +1039,7 @@
          :extension-summary     (or (:psi.agent-session/extension-summary introspected) {})
          :extension-command-names (vec (:psi.extension/command-names introspected))
          :query-fn              query-fn
-         :ui-state-atom         ui-state-atom
+         :ui-state*         ui-state*
          :dispatch-fn           (:dispatch-fn opts)
          :on-interrupt-fn!      (:on-interrupt-fn! opts)
          :on-queue-input-fn!    (:on-queue-input-fn! opts)
@@ -1062,7 +1061,7 @@
          :stream-thinking       nil
          :tool-calls            (or (:initial-tool-calls opts) {})
          :tool-order            (vec (or (:initial-tool-order opts) []))
-         :tools-expanded?       (ext-ui/get-tools-expanded ui-state-atom)}
+         :tools-expanded?       (ui-state/get-tools-expanded ui-state*)}
         (poll-cmd queue)]))))
 
 ;; ── Update helpers ──────────────────────────────────────────
@@ -1566,15 +1565,15 @@
                   (assoc state :force-clear? false)
                   state)
           ;; Keep app state in sync with extension-controlled tools-expanded state.
-          state (if-let [ui-atom (:ui-state-atom state)]
-                  (assoc state :tools-expanded? (ext-ui/get-tools-expanded ui-atom))
+          state (if-let [ui-atom (:ui-state* state)]
+                  (assoc state :tools-expanded? (ui-state/get-tools-expanded ui-atom))
                   state)
           ;; Refresh extension slash commands discovered from the backend.
           state (refresh-extension-command-names state)]
       ;; Dismiss expired notifications on every tick
-      (when-let [ui-atom (:ui-state-atom state)]
-        (ext-ui/dismiss-expired! ui-atom)
-        (ext-ui/dismiss-overflow! ui-atom))
+      (when-let [ui-atom (:ui-state* state)]
+        (ui-state/dismiss-expired! ui-atom)
+        (ui-state/dismiss-overflow! ui-atom))
 
       (when (and (key-debug-enabled?) (msg/key-press? m))
         (println (str "[key-debug] key=" (pr-str (:key m))
@@ -1678,8 +1677,8 @@
         (and (= :idle (:phase state))
              (msg/key-match? m "ctrl+o"))
         (let [new-expanded? (not (:tools-expanded? state))]
-          (when-let [ui-atom (:ui-state-atom state)]
-            (ext-ui/set-tools-expanded! ui-atom new-expanded?))
+          (when-let [ui-atom (:ui-state* state)]
+            (ui-state/set-tools-expanded! ui-atom new-expanded?))
           [(assoc state :tools-expanded? new-expanded?) nil])
 
       ;; Alt/Meta+Backspace delete previous word.
@@ -1929,9 +1928,9 @@
 (def ^:private notify-warning-style (charm/style :fg charm/yellow))
 (def ^:private notify-error-style   error-style)
 
-(defn- render-widgets [ui-state-atom placement]
-  (when ui-state-atom
-    (let [widgets (ext-ui/widgets-by-placement ui-state-atom placement)]
+(defn- render-widgets [ui-state* placement]
+  (when ui-state*
+    (let [widgets (ui-state/widgets-by-placement ui-state* placement)]
       (when (seq widgets)
         (str (str/join "\n"
                        (mapcat :content widgets))
@@ -2103,9 +2102,9 @@
         cleared-lines (map #(str % clear-line-end-seq) lines)]
     (str (str/join "\n" cleared-lines) "\n")))
 
-(defn- render-notifications [ui-state-atom]
-  (when ui-state-atom
-    (let [notes (ext-ui/visible-notifications ui-state-atom)]
+(defn- render-notifications [ui-state*]
+  (when ui-state*
+    (let [notes (ui-state/visible-notifications ui-state*)]
       (when (seq notes)
         (str (str/join "\n"
                        (map (fn [n]
@@ -2117,9 +2116,9 @@
                             notes))
              "\n")))))
 
-(defn- render-dialog [ui-state-atom]
-  (when ui-state-atom
-    (when-let [dialog (ext-ui/active-dialog ui-state-atom)]
+(defn- render-dialog [ui-state*]
+  (when ui-state*
+    (when-let [dialog (ui-state/active-dialog ui-state*)]
       (case (:kind dialog)
         :confirm
         (str (charm/render title-style (:title dialog)) "\n"
@@ -2510,8 +2509,8 @@
       (conj "Long lines truncated"))))
 
 (defn- extension-call-render
-  [ui-state-atom tc]
-  (when-let [render-fn (some-> (ext-ui/get-tool-renderer ui-state-atom (:name tc))
+  [ui-state* tc]
+  (when-let [render-fn (some-> (ui-state/get-tool-renderer ui-state* (:name tc))
                                :render-call-fn)]
     (try
       (some-> (render-fn (parse-tool-args (:parsed-args tc) (:args tc))) str)
@@ -2520,8 +2519,8 @@
         nil))))
 
 (defn- extension-result-render
-  [ui-state-atom tc opts]
-  (when-let [render-fn (some-> (ext-ui/get-tool-renderer ui-state-atom (:name tc))
+  [ui-state* tc opts]
+  (when-let [render-fn (some-> (ui-state/get-tool-renderer ui-state* (:name tc))
                                :render-result-fn)]
     (try
       (some-> (render-fn tc opts) str)
@@ -2532,7 +2531,7 @@
 (defn- render-tool-calls
   "Render all tool calls for the current turn.
    `width` is the terminal column count."
-  [tool-calls tool-order spinner-char width tools-expanded? ui-state-atom]
+  [tool-calls tool-order spinner-char width tools-expanded? ui-state*]
   (when (seq tool-order)
     (let [;; "  ✓ " prefix = 4 visible cols for header
           header-avail (when (and width (> width 4))
@@ -2547,7 +2546,7 @@
              :when tc]
          (let [status-icon   (tool-status-indicator
                               (:status tc) spinner-char)
-               call-render   (extension-call-render ui-state-atom tc)
+               call-render   (extension-call-render ui-state* tc)
                header        (if (seq call-render)
                                call-render
                                (tool-header (:name tc)
@@ -2569,7 +2568,7 @@
                                   (str "… (" hidden-count " more lines, ctrl+o to expand)")))
                warning-lines  (into [] (concat (detail-warning-lines (:details tc))
                                                (when hint-line [hint-line])))
-               result-render  (extension-result-render ui-state-atom tc
+               result-render  (extension-result-render ui-state* tc
                                                        {:expanded? expanded?
                                                         :width width
                                                         :tool-id id
@@ -2631,7 +2630,7 @@
   "Render the full TUI state to a string."
   [state]
   (let [{:keys [messages phase error input spinner-frame model-name
-                prompt-templates skills extension-summary ui-state-atom
+                prompt-templates skills extension-summary ui-state*
                 stream-text stream-thinking tool-calls tool-order tools-expanded?
                 session-selector current-session-file width force-clear?]} state
         spinner-char   (nth spinner-frames (mod spinner-frame (count spinner-frames)))
@@ -2666,19 +2665,19 @@
               (if has-progress?
                 (str (render-stream-thinking stream-thinking)
                      (render-stream-text stream-text term-width)
-                     (render-tool-calls tool-calls tool-order spinner-char term-width tools-expanded? ui-state-atom)
+                     (render-tool-calls tool-calls tool-order spinner-char term-width tools-expanded? ui-state*)
                      "\n")
                 (str "\n" (charm/render assist-style "ψ: ")
                      spinner-char " thinking…\n")))
             (when error
               (str "\n" (charm/render error-style (str "[error: " error "]")) "\n"))
             ;; Widgets above editor
-            (render-widgets ui-state-atom :above-editor)
+            (render-widgets ui-state* :above-editor)
             "\n"
             (render-separator term-width) "\n"
             ;; Dialog replaces editor when active
             (if dialog-active?
-              (render-dialog ui-state-atom)
+              (render-dialog ui-state*)
               (str (wrap-text-input-view input term-width)
                    (when (= :streaming phase)
                      (str "\n"
@@ -2690,11 +2689,11 @@
             "\n"
             (render-separator term-width) "\n"
             ;; Widgets below editor
-            (render-widgets ui-state-atom :below-editor)
+            (render-widgets ui-state* :below-editor)
             ;; Default footer (path, stats, statuses)
             (render-footer state term-width)
             ;; Notifications toast
-            (render-notifications ui-state-atom)
+            (render-notifications ui-state*)
             clear-to-end-seq)))))
 
 ;; ── Public entry point ──────────────────────────────────────
@@ -2708,7 +2707,7 @@
                        {:kind :error :message str} on queue.
    `opts`           — optional map:
                        :query-fn            — (fn [eql-query]) for session introspection
-                       :ui-state-atom       — extension UI state atom
+                       :ui-state*       — shared UI-state atom
                        :cwd                 — working directory for /resume filtering
                        :current-session-file — current session file path for highlight
                        :resume-fn!          — (fn [session-path]) =>
@@ -2723,7 +2722,7 @@
   ([model-name run-agent-fn!]
    (start! model-name run-agent-fn! {}))
   ([model-name run-agent-fn! opts]
-   (charm/run {:init       (make-init model-name (:query-fn opts) (:ui-state-atom opts) opts)
+   (charm/run {:init       (make-init model-name (:query-fn opts) (:ui-state* opts) opts)
                :update     (make-update run-agent-fn!)
                :view       view
                :alt-screen (if (contains? opts :alt-screen)

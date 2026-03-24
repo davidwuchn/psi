@@ -348,16 +348,14 @@
 
 ;; ── Canonical-root runtime access helpers ───────────────
 
-(def ^:private session-data-path [:agent-session :data])
-(def ^:private context-index-path [:agent-session :context-index])
-(def ^:private tool-output-stats-path [:telemetry :tool-output-stats])
-(def ^:private tool-call-attempts-path [:telemetry :tool-call-attempts])
-(def ^:private provider-requests-path [:telemetry :provider-requests])
-(def ^:private provider-replies-path [:telemetry :provider-replies])
+(defn- session-data-path [sid] [:agent-session :sessions sid :data])
+
+(defn- session-telemetry-path [sid k] [:agent-session :sessions sid :telemetry k])
+(defn- session-journal-path [sid] [:agent-session :sessions sid :persistence :journal])
+(defn- session-flush-state-path [sid] [:agent-session :sessions sid :persistence :flush-state])
+(defn- session-turn-ctx-path [sid] [:agent-session :sessions sid :turn :ctx])
+
 (def ^:private nrepl-runtime-path [:runtime :nrepl])
-(def ^:private journal-path [:persistence :journal])
-(def ^:private flush-state-path [:persistence :flush-state])
-(def ^:private turn-ctx-path [:turn :ctx])
 (def ^:private background-jobs-path [:background-jobs :store])
 (def ^:private ui-state-path [:ui :extension-ui])
 (def ^:private recursion-state-path [:recursion])
@@ -365,25 +363,30 @@
 (def ^:private rpc-trace-path [:runtime :rpc-trace])
 
 (defn state-path
-  "Resolve known canonical-root runtime paths by key."
-  [k]
-  (case k
-    :session-data session-data-path
-    :context-index context-index-path
-    :tool-output-stats tool-output-stats-path
-    :tool-call-attempts tool-call-attempts-path
-    :provider-requests provider-requests-path
-    :provider-replies provider-replies-path
-    :nrepl-runtime nrepl-runtime-path
-    :journal journal-path
-    :flush-state flush-state-path
-    :turn-ctx turn-ctx-path
-    :background-jobs background-jobs-path
-    :ui-state ui-state-path
-    :recursion recursion-state-path
-    :oauth oauth-state-path
-    :rpc-trace rpc-trace-path
-    nil))
+  "Resolve known canonical-root runtime paths by key.
+   Session-scoped keys (:session-data, :journal, :flush-state, :turn-ctx,
+   :tool-output-stats, :tool-call-attempts, :tool-lifecycle-events,
+   :provider-requests, :provider-replies) require a session-id `sid`.
+   Non-session keys work with one arg."
+  ([k] (state-path k nil))
+  ([k sid]
+   (case k
+     :session-data (when sid (session-data-path sid))
+     :tool-output-stats (when sid (session-telemetry-path sid :tool-output-stats))
+     :tool-call-attempts (when sid (session-telemetry-path sid :tool-call-attempts))
+     :tool-lifecycle-events (when sid (session-telemetry-path sid :tool-lifecycle-events))
+     :provider-requests (when sid (session-telemetry-path sid :provider-requests))
+     :provider-replies (when sid (session-telemetry-path sid :provider-replies))
+     :nrepl-runtime nrepl-runtime-path
+     :journal (when sid (session-journal-path sid))
+     :flush-state (when sid (session-flush-state-path sid))
+     :turn-ctx (when sid (session-turn-ctx-path sid))
+     :background-jobs background-jobs-path
+     :ui-state ui-state-path
+     :recursion recursion-state-path
+     :oauth oauth-state-path
+     :rpc-trace rpc-trace-path
+     nil)))
 
 (defn get-state-value-in
   "Read `path` from canonical root state in `ctx`."
@@ -396,20 +399,13 @@
   (swap! (:state* ctx) assoc-in path value))
 
 (defn get-session-data-in
-  "Read active session data from canonical root state in `ctx`.
-
-   If `session-id` is provided and present in context index, returns that
-   context-session projection entry."
+  "Read session data from canonical root state in `ctx`.
+   Without session-id, returns the active session's data."
   ([ctx]
-   (get-state-value-in ctx session-data-path))
-  ([ctx session-id]
-   (or (get-in (get-state-value-in ctx context-index-path) [:sessions session-id])
-       (get-state-value-in ctx session-data-path))))
-
-(defn get-context-index-in
-  "Read context session index from canonical root state in `ctx`."
-  [ctx]
-  (get-state-value-in ctx context-index-path))
+   (let [sid (get-in @(:state* ctx) [:agent-session :active-session-id])]
+     (get-state-value-in ctx (session-data-path sid))))
+  ([ctx sid]
+   (get-state-value-in ctx (session-data-path sid))))
 
 ;; ── Retry backoff ───────────────────────────────────────
 

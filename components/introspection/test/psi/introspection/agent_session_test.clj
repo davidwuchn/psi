@@ -7,7 +7,9 @@
   (:require
    [clojure.test :refer [deftest testing is]]
    [psi.introspection.core :as introspection]
+   [psi.agent-session.bootstrap :as bootstrap]
    [psi.agent-session.core :as session]
+   [psi.agent-session.dispatch :as dispatch]
    [psi.engine.core :as engine]))
 
 ;; ─────────────────────────────────────────────────────────────────────────────
@@ -127,7 +129,7 @@
     (let [ctx         (session-introspection-ctx)
           session-ctx (:agent-session-ctx ctx)
           model       {:provider "x" :id "test-model" :reasoning false}]
-      (session/set-model-in! session-ctx model)
+      (dispatch/dispatch! session-ctx :session/set-model {:model model} {:origin :core})
       (let [result (introspection/query-agent-session-in
                     ctx [:psi.agent-session/model])]
         (is (= model (:psi.agent-session/model result))))))
@@ -159,7 +161,7 @@
 (deftest startup-bootstrap-introspection-test
   (testing "startup bootstrap summary is queryable via introspection graph"
     (let [session-ctx (session/create-context)
-          _           (session/bootstrap-in!
+          _           (bootstrap/bootstrap-in!
                        session-ctx {:register-global-query? false
                                     :base-tools             []
                                     :system-prompt          "sys"

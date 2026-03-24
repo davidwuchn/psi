@@ -48,8 +48,14 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [taoensso.timbre :as timbre]
+   [psi.agent-session.bootstrap :as session-bootstrap]
    [psi.agent-session.commands :as commands]
    [psi.agent-session.core :as session]
+   [psi.agent-session.mutations :as mutations]
+   [psi.agent-session.service :as service]
+   [psi.agent-session.dispatch :as dispatch]
+   [psi.agent-session.session-state :as ss]
+   [psi.agent-session.state-accessors :as sa]
    [psi.agent-session.runtime :as runtime]
    [psi.agent-session.message-text :as message-text]
    [psi.agent-session.extensions :as ext]
@@ -96,9 +102,8 @@
                            :port (:port server)
                            :endpoint (str host ":" (:port server))})
     (when-let [ctx (:ctx @session-state)]
-      (psi.agent-session.core/assoc-state-value-in!
+      (psi.agent-session.state-accessors/set-nrepl-runtime-in!
        ctx
-       (psi.agent-session.core/state-path :nrepl-runtime)
        {:host host
         :port (:port server)
         :endpoint (str host ":" (:port server))}))
@@ -114,10 +119,7 @@
           port-file   (java.io.File. ".nrepl-port")]
       (reset! nrepl-runtime nil)
       (when-let [ctx (:ctx @session-state)]
-        (psi.agent-session.core/assoc-state-value-in!
-         ctx
-         (psi.agent-session.core/state-path :nrepl-runtime)
-         nil))
+        (psi.agent-session.state-accessors/set-nrepl-runtime-in! ctx nil))
       (stop-server server)
       (when (.exists port-file)
         (when (= (str/trim (slurp port-file)) (str (:port server)))
@@ -523,7 +525,7 @@
     (runtime/run-startup-prompts-in! ctx {:ai-ctx ai-ctx :ai-model ai-model :spawn-mode :new-root})
     (catch Throwable t
       (timbre/warn t "Startup prompts failed; continuing with empty startup transcript")))
-  (let [agent-messages (:messages (agent/get-data-in (:agent-ctx ctx)))
+  (let [agent-messages (:messages (agent/get-data-in (ss/agent-ctx-in ctx)))
         tui-state      (agent-messages->tui-resume-state agent-messages)]
     (assoc tui-state :agent-messages agent-messages)))
 
@@ -562,13 +564,14 @@
                                    :event-queue event-queue
                                    :oauth-ctx oauth-ctx
                                    :nrepl-runtime-atom nrepl-runtime
-                                   :ui-type ui-type})
-        _                        (when-not (session/get-state-value-in ctx (session/state-path :recursion))
-                                   (session/assoc-state-value-in! ctx
-                                                                  (session/state-path :recursion)
-                                                                  (recursion/initial-state)))
-        recursion-ctx            (recursion/create-hosted-context ctx (session/state-path :recursion))
+                                   :ui-type ui-type
+                                   :mutations mutations/all-mutations})
+        _                        (when-not (sa/recursion-state-in ctx)
+                                   (sa/set-recursion-state-in! ctx
+                                                               (recursion/initial-state)))
+        recursion-ctx            (recursion/create-hosted-context ctx (ss/state-path :recursion))
         ctx                      (assoc ctx :recursion-ctx recursion-ctx)]
+    (service/initialize! ctx)
     (session/new-session-in! ctx)
     {:ctx       ctx
      :oauth-ctx oauth-ctx
@@ -610,10 +613,10 @@
                             :context-files ctx-files
                             :skills        skills})
          developer-prompt (developer-prompt-from-env)
-         _                (session/set-system-prompt-in! ctx base-prompt)
+         _                (dispatch/dispatch! ctx :session/set-system-prompt {:prompt base-prompt} {:origin :core})
          ext-paths        (ext/discover-extension-paths [] cwd)
          app-query-tool   (tools/make-app-query-tool (fn [q] (session/query-in ctx q)))
-         summary          (session/bootstrap-in!
+         summary          (session-bootstrap/bootstrap-in!
                            ctx {:register-global-query? false
                                 :base-tools             (conj (vec tools/all-tools) app-query-tool)
                                 :system-prompt          base-prompt
@@ -629,7 +632,7 @@
                             :context-files      ctx-files
                             :skills             skills
                             :graph-capabilities graph-caps})
-         _                (session/set-system-prompt-in! ctx system-prompt)
+         _                (dispatch/dispatch! ctx :session/set-system-prompt {:prompt system-prompt} {:origin :core})
          _                (memory-runtime/sync-memory-layer! (merge {:cwd cwd}
                                                                     (or memory-runtime-opts {})))
          startup-rehydrate (startup-rehydrate-from-current-session! ctx nil ai-model)]
@@ -799,7 +802,7 @@
          resume-fn! (fn [session-path]
                       (try
                         (session/resume-session-in! ctx session-path)
-                        (let [messages (:messages (agent/get-data-in (:agent-ctx ctx)))]
+                        (let [messages (:messages (agent/get-data-in (ss/agent-ctx-in ctx)))]
                           (agent-messages->tui-resume-state messages))
                         (catch Exception e
                           (timbre/error e "Resume failed:" session-path)
@@ -811,7 +814,7 @@
          switch-session-fn! (fn [session-id]
                               (try
                                 (session/ensure-session-loaded-in! ctx session-id)
-                                (let [messages (:messages (agent/get-data-in (:agent-ctx ctx)))]
+                                (let [messages (:messages (agent/get-data-in (ss/agent-ctx-in ctx)))]
                                   (agent-messages->tui-resume-state messages))
                                 (catch Exception e
                                   (timbre/error e "Session switch failed:" session-id)
@@ -894,11 +897,11 @@
 
      (tui-start-fn! (:name ai-model) run-agent-fn!
                     {:query-fn             (fn [q] (session/query-in ctx q))
-                     :ui-state-atom        (:ui-state-atom ctx)
+                     :ui-state*        (ss/ui-state-view-in ctx)
                      :dispatch-fn          dispatch-fn
                      :on-interrupt-fn!     on-interrupt-fn!
                      :on-queue-input-fn!   (fn [text _state]
-                                             (if (= :streaming (session/sc-phase-in ctx))
+                                             (if (= :streaming (ss/sc-phase-in ctx))
                                                (do
                                                  (session/steer-in! ctx text)
                                                  {:message "Queued steering message."})
@@ -908,7 +911,7 @@
                      :double-press-window-ms 500
                      :double-escape-action :none
                      :cwd                  cwd
-                     :current-session-file (:session-file (session/get-session-data-in ctx))
+                     :current-session-file (:session-file (ss/get-session-data-in ctx))
                      :initial-messages     (vec (or (:messages startup-rehydrate) []))
                      :initial-tool-calls   (or (:tool-calls startup-rehydrate) {})
                      :initial-tool-order   (vec (or (:tool-order startup-rehydrate) []))
@@ -953,14 +956,11 @@
                                                                        :cwd cwd})
                trace-file*   (when-not (str/blank? rpc-trace-file)
                                rpc-trace-file)
-               _             (session/assoc-state-value-in! ctx
-                                                            (session/state-path :rpc-trace)
-                                                            {:enabled? (boolean trace-file*)
-                                                             :file trace-file*})
+               _             (dispatch/dispatch! ctx :session/set-rpc-trace {:enabled? (boolean trace-file*) :file trace-file*} {:origin :core})
                trace-lock    (Object.)
                trace-fn      (fn [{:keys [dir raw frame parse-error]}]
                                (try
-                                 (let [cfg      (or (session/get-state-value-in ctx (session/state-path :rpc-trace)) {})
+                                 (let [cfg      (or (sa/rpc-trace-state-in ctx) {})
                                        enabled? (boolean (:enabled? cfg))
                                        path     (:file cfg)]
                                    (when (and enabled?
