@@ -71,7 +71,12 @@
 
      :ui-context-fn
      (fn [ext-path]
-       (ui-state/create-ui-context (ss/ui-state-view-in ctx) ext-path))}))
+       (ui-state/create-ui-context (ss/ui-state-view-in ctx) ext-path))
+
+     :log-fn
+     (fn [text]
+       (binding [*out* *err*]
+         (println text)))}))
 
 ;;; Extension loading
 

@@ -173,11 +173,17 @@
     :below-editor
     :above-editor))
 
+(defn- log! [text]
+  (if-let [f (:log (:api @state))]
+    (f text)
+    (binding [*out* *err*]
+      (println text))))
+
 (defn- notify!
   [text level]
   (if-let [ui (:ui @state)]
     ((:notify ui) text level)
-    (println text)))
+    (log! text)))
 
 (defn- query!
   [q]
@@ -1804,9 +1810,9 @@
   [task-id]
   (let [task-id* (parse-int task-id)]
     (if-let [existing (active-workflow-for-task task-id*)]
-      (println (str "Task #" task-id* " already has active run "
-                    (:psi.extension.workflow/id existing)
-                    " (" (name (phase-of existing)) ")."))
+      (log! (str "Task #" task-id* " already has active run "
+                 (:psi.extension.workflow/id existing)
+                 " (" (name (phase-of existing)) ")."))
       (let [run-id      (next-run-id!)
             project-dir (System/getProperty "user.dir")
             created     (mutate! 'psi.extension.workflow/create
@@ -1819,19 +1825,19 @@
                                           :max-steps max-steps-default}})]
         (if (:psi.extension.workflow/created? created)
           (do
-            (println (str "Started mcp-tasks run " run-id " for task #" task-id* "."))
+            (log! (str "Started mcp-tasks run " run-id " for task #" task-id* "."))
             (refresh-widgets-later!))
-          (println (str "Failed to start run: "
-                        (or (:psi.extension.workflow/error created) "unknown error"))))))))
+          (log! (str "Failed to start run: "
+                     (or (:psi.extension.workflow/error created) "unknown error"))))))))
 
 (defn- list-runs!
   []
   (let [wfs (mcp-run-workflows)]
     (if (empty? wfs)
-      (println "No mcp-tasks runs.")
+      (log! "No mcp-tasks runs.")
       (doseq [wf wfs]
         (doseq [line (workflow-display/text-lines (workflow-lines wf))]
-          (println line))))))
+          (log! line))))))
 
 (defn- pause-run!
   [run-id]
@@ -1839,11 +1845,11 @@
     (if (:psi.extension.workflow/running? wf)
       (if (set-control! run-id #(assoc % :pause? true))
         (do
-          (println (str "Pause requested for " run-id ". It will pause at step boundary."))
+          (log! (str "Pause requested for " run-id ". It will pause at step boundary."))
           (refresh-widgets-later!))
-        (println (str "Run control not found for " run-id ".")))
-      (println (str run-id " is not running.")))
-    (println (str "Run not found: " run-id))))
+        (log! (str "Run control not found for " run-id ".")))
+      (log! (str run-id " is not running.")))
+    (log! (str "Run not found: " run-id))))
 
 (defn- resume-run!
   [run-id merge? answer]
@@ -1852,18 +1858,18 @@
           data       (or (:psi.extension.workflow/data wf) {})
           pause-rsn  (:run/pause-reason data)]
       (if (= phase :running)
-        (println (str run-id " is already running."))
+        (log! (str run-id " is already running."))
         (if (not= phase :paused)
-          (println (str run-id " is not paused."))
+          (log! (str run-id " is not paused."))
           (cond
             (and (= pause-rsn :wait-pr-merge) (not merge?))
-            (println (str "Run " run-id " is waiting for PR merge. "
-                          "Use: /mcp-tasks-run resume " run-id " merge"))
+            (log! (str "Run " run-id " is waiting for PR merge. "
+                       "Use: /mcp-tasks-run resume " run-id " merge"))
 
             (and (= pause-rsn :wait-user-confirmation)
                  (str/blank? (str answer)))
-            (println (str "Run " run-id " is waiting for user confirmation. "
-                          "Use: /mcp-tasks-run resume " run-id " <answer>"))
+            (log! (str "Run " run-id " is waiting for user confirmation. "
+                       "Use: /mcp-tasks-run resume " run-id " <answer>"))
 
             :else
             (let [r (mutate! 'psi.extension.workflow/send-event
@@ -1873,16 +1879,16 @@
                                        (seq (str answer)) (assoc :answer answer))})]
               (if (:psi.extension.workflow/event-accepted? r)
                 (do
-                  (println (str "Resumed " run-id
-                                (cond
-                                  merge? " with merge intent"
-                                  (seq (str answer)) " with answer"
-                                  :else "")
-                                "."))
+                  (log! (str "Resumed " run-id
+                             (cond
+                               merge? " with merge intent"
+                               (seq (str answer)) " with answer"
+                               :else "")
+                             "."))
                   (refresh-widgets-later!))
-                (println (str "Failed to resume " run-id ": "
-                              (or (:psi.extension.workflow/error r) "unknown error")))))))))
-    (println (str "Run not found: " run-id))))
+                (log! (str "Failed to resume " run-id ": "
+                           (or (:psi.extension.workflow/error r) "unknown error")))))))))
+    (log! (str "Run not found: " run-id))))
 
 (defn- cancel-run!
   [run-id]
@@ -1892,9 +1898,9 @@
         (= phase :running)
         (if (set-control! run-id #(assoc % :cancel? true))
           (do
-            (println (str "Cancel requested for " run-id "."))
+            (log! (str "Cancel requested for " run-id "."))
             (refresh-widgets-later!))
-          (println (str "Run control not found for " run-id ".")))
+          (log! (str "Run control not found for " run-id ".")))
 
         (#{:paused :error} phase)
         (let [r (mutate! 'psi.extension.workflow/send-event
@@ -1903,24 +1909,24 @@
                           :data  {}})]
           (if (:psi.extension.workflow/event-accepted? r)
             (do
-              (println (str "Cancelled " run-id "."))
+              (log! (str "Cancelled " run-id "."))
               (refresh-widgets-later!))
-            (println (str "Failed to cancel " run-id ": "
-                          (or (:psi.extension.workflow/error r) "unknown error")))))
+            (log! (str "Failed to cancel " run-id ": "
+                       (or (:psi.extension.workflow/error r) "unknown error")))))
 
         :else
-        (println (str run-id " cannot be cancelled in phase " (name phase) "."))))
-    (println (str "Run not found: " run-id))))
+        (log! (str run-id " cannot be cancelled in phase " (name phase) "."))))
+    (log! (str "Run not found: " run-id))))
 
 (defn- retry-run!
   [run-id]
   (if-let [wf (workflow-by-id run-id)]
     (cond
       (= :running (phase-of wf))
-      (println (str run-id " is already running."))
+      (log! (str run-id " is already running."))
 
       (not= :error (phase-of wf))
-      (println (str run-id " is not in error phase."))
+      (log! (str run-id " is not in error phase."))
 
       :else
       (let [r (mutate! 'psi.extension.workflow/send-event
@@ -1929,11 +1935,11 @@
                         :data  {}})]
         (if (:psi.extension.workflow/event-accepted? r)
           (do
-            (println (str "Retrying " run-id " from current derived state."))
+            (log! (str "Retrying " run-id " from current derived state."))
             (refresh-widgets-later!))
-          (println (str "Failed to retry " run-id ": "
-                        (or (:psi.extension.workflow/error r) "unknown error"))))))
-    (println (str "Run not found: " run-id))))
+          (log! (str "Failed to retry " run-id ": "
+                     (or (:psi.extension.workflow/error r) "unknown error"))))))
+    (log! (str "Run not found: " run-id))))
 
 (defn- remove-run-workflows!
   []
@@ -1950,7 +1956,7 @@
         cmd   (first parts)]
     (cond
       (empty? parts)
-      (println (usage))
+      (log! (usage))
 
       (= "list" cmd)
       (list-runs!)
@@ -1958,7 +1964,7 @@
       (= "pause" cmd)
       (if-let [rid (second parts)]
         (pause-run! rid)
-        (println "Usage: /mcp-tasks-run pause <run-id>"))
+        (log! "Usage: /mcp-tasks-run pause <run-id>"))
 
       (= "resume" cmd)
       (if-let [rid (second parts)]
@@ -1972,22 +1978,22 @@
                                        (str/join " "))
                               (str/join " " resume-args)))]
           (resume-run! rid merge? answer))
-        (println "Usage: /mcp-tasks-run resume <run-id> [merge|<answer>]"))
+        (log! "Usage: /mcp-tasks-run resume <run-id> [merge|<answer>]"))
 
       (= "cancel" cmd)
       (if-let [rid (second parts)]
         (cancel-run! rid)
-        (println "Usage: /mcp-tasks-run cancel <run-id>"))
+        (log! "Usage: /mcp-tasks-run cancel <run-id>"))
 
       (= "retry" cmd)
       (if-let [rid (second parts)]
         (retry-run! rid)
-        (println "Usage: /mcp-tasks-run retry <run-id>"))
+        (log! "Usage: /mcp-tasks-run retry <run-id>"))
 
       :else
       (if-let [task-id (parse-int cmd)]
         (start-run! task-id)
-        (println (usage))))))
+        (log! (usage))))))
 
 ;; ---------------------------------------------------------------------------
 ;; init

@@ -602,10 +602,16 @@
     :below-editor
     :above-editor))
 
+(defn- log! [text]
+  (if-let [f (:log (:api @state))]
+    (f text)
+    (binding [*out* *err*]
+      (println text))))
+
 (defn- notify! [text level]
   (if-let [ui (:ui @state)]
     ((:notify ui) text level)
-    (println text)))
+    (log! text)))
 
 (defn- context-last-role [query-fn]
   (->> (current-session-messages query-fn)
@@ -670,9 +676,9 @@
                         :content     full
                         :custom-type "agent-result"})
             (catch Exception _ nil)))))
-    (println "\n[agent-result]" heading "\n")
+    (log! (str "[agent-result] " heading))
     (when (seq result-text)
-      (println (task-preview result-text 800)))
+      (log! (task-preview result-text 800)))
     (notify! (str "Agent #" id " "
                   (if ok? "done" "error")
                   " in " seconds "s")
@@ -1251,14 +1257,14 @@
                                              (let [r (spawn-agent! task agent {:mode :async
                                                                                :fork-session? fork-session?})]
                                                (if-let [e (:error r)]
-                                                 (println (str "Error: " e))
-                                                 (println (str "Spawned Agent #" (:ok r)
-                                                               (when (seq agent)
-                                                                 (str " (@" (normalize-agent-name agent) ")"))
-                                                               (when fork-session? " [fork]")
-                                                               (when-let [jid (:job-id r)]
-                                                                 (str " (job " jid ")"))))))
-                                             (println "Usage: /agent [--fork|-f] [@agent] <task>")))})
+                                                 (log! (str "Error: " e))
+                                                 (log! (str "Spawned Agent #" (:ok r)
+                                                            (when (seq agent)
+                                                              (str " (@" (normalize-agent-name agent) ")"))
+                                                            (when fork-session? " [fork]")
+                                                            (when-let [jid (:job-id r)]
+                                                              (str " (job " jid ")"))))))
+                                             (log! "Usage: /agent [--fork|-f] [@agent] <task>")))})
 
   ((:register-command api) "agent-cont"
                            {:description "Continue an agent: /agent-cont <id> <prompt>"
@@ -1266,36 +1272,36 @@
                                            (if-let [{:keys [id prompt]} (parse-agent-cont-args args)]
                                              (let [result (continue-agent! id prompt)]
                                                (if-let [e (:error result)]
-                                                 (println e)
-                                                 (println (str "Continuing Agent #" id "..."
-                                                               (when-let [jid (:job-id result)]
-                                                                 (str " (job " jid ")"))))))
-                                             (println "Usage: /agent-cont <id> <prompt>")))})
+                                                 (log! (str e))
+                                                 (log! (str "Continuing Agent #" id "..."
+                                                            (when-let [jid (:job-id result)]
+                                                              (str " (job " jid ")"))))))
+                                             (log! "Usage: /agent-cont <id> <prompt>")))})
 
   ((:register-command api) "agent-rm"
                            {:description "Remove an agent: /agent-rm <id>"
                             :handler     (fn [args]
                                            (let [id (parse-int (str/trim (or args "")))]
                                              (if (nil? id)
-                                               (println "Usage: /agent-rm <id>")
+                                               (log! "Usage: /agent-rm <id>")
                                                (let [result (remove-agent! id)]
                                                  (if-let [e (:error result)]
-                                                   (println e)
-                                                   (println (str "Removed Agent #" id)))))))})
+                                                   (log! (str e))
+                                                   (log! (str "Removed Agent #" id)))))))})
 
   ((:register-command api) "agent-clear"
                            {:description "Clear all agents"
                             :handler     (fn [_args]
                                            (let [n (clear-all-agents!)]
-                                             (println (if (zero? n)
-                                                        "No agents to clear."
-                                                        (str "Cleared " n " agent"
-                                                             (when (not= 1 n) "s") ".")))))})
+                                             (log! (if (zero? n)
+                                                     "No agents to clear."
+                                                     (str "Cleared " n " agent"
+                                                          (when (not= 1 n) "s") ".")))))})
 
   ((:register-command api) "agent-list"
                            {:description "List all agents"
                             :handler     (fn [_args]
-                                           (println (list-agents-text)))})
+                                           (log! (list-agents-text)))})
 
   ;; Session lifecycle cleanup
   ((:on api) "session_switch"

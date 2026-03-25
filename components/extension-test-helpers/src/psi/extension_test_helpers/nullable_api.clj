@@ -20,6 +20,7 @@
          :flag-values    {}
          :shortcuts      {}
          :notifications  []
+         :log-lines      []
          :widgets        {}
          :cleared-widgets []
          :status-lines   []
@@ -313,6 +314,10 @@
                                (filter #(= path* (:ext-path %)))
                                vec)))
 
+                      :log
+                      (fn [text]
+                        (swap! state update :log-lines conj text))
+
                       :ui {:notify       (fn [text level]
                                            (swap! state update :notifications conj {:text text :level level}))
                            :set-widget   (fn [id position lines]
@@ -325,6 +330,24 @@
                                            (swap! state update :status-lines conj (str/trim (or text ""))))}}]
      {:api api
       :state state})))
+
+(defn ^{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
+  drain-log!
+  "Return all log lines captured since last drain, clearing the buffer.
+   Works with nullable API state atoms."
+  [state]
+  (let [lines (:log-lines @state)]
+    (swap! state assoc :log-lines [])
+    (str/join "\n" lines)))
+
+(defmacro ^{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
+  with-log-str
+  "Evaluate BODY, return log lines captured in STATE as a single string."
+  [state & body]
+  `(do
+     (swap! ~state assoc :log-lines [])
+     ~@body
+     (drain-log! ~state)))
 
 (defmacro ^{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
   with-user-dir

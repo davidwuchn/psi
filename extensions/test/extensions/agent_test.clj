@@ -362,20 +362,18 @@
            (#'sut/parse-agent-args "@builder ship it")))))
 
 (deftest slash-agent-command-passes-fork-to-spawn-test
-  (testing "/agent forwards fork flag and prints [fork] marker"
+  (testing "/agent forwards fork flag and logs [fork] marker"
     (let [{:keys [api state]} (nullable/create-nullable-extension-api
                                {:path "/test/agent.clj"})
-          captured (atom nil)
-          printed  (atom nil)]
+          captured (atom nil)]
       (sut/init api)
       (with-redefs [sut/spawn-agent! (fn [_task _agent opts]
                                        (reset! captured opts)
-                                       {:ok 7 :mode :async :job-id "job-7"})
-                    println (fn [& xs] (reset! printed (apply str xs)))]
+                                       {:ok 7 :mode :async :job-id "job-7"})]
         (let [handler (get-in @state [:commands "agent" :handler])]
           (handler "--fork @planner investigate")
           (is (= true (:fork-session? @captured)))
-          (is (str/includes? @printed "[fork]")))))))
+          (is (some #(str/includes? % "[fork]") (:log-lines @state))))))))
 
 (deftest include-result-in-context-injection-test
   (testing "emit-result-message injects user+assistant context messages when enabled"

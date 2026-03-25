@@ -440,6 +440,7 @@
      :get-api-key-fn — (fn [provider]) ; narrow auth capability
      :ui-type-fn     — (fn [] => :console|:tui|:emacs|nil)
      :ui-context-fn  — (fn [ext-path] => extension ui context)
+     :log-fn         — (fn [text]) ; diagnostic output → stderr
 
    Any missing runtime key throws."
   [reg ext-path runtime-fns]
@@ -620,7 +621,16 @@
      :ui
      (if-let [f (:ui-context-fn runtime-fns)]
        (f ext-path)
-       nil)}))
+       nil)
+
+     ;; ── Diagnostic logging ─────────────────────────────
+     ;; Always routes to stderr — never to the RPC stdout pipe.
+     :log
+     (fn [text]
+       (if-let [f (:log-fn runtime-fns)]
+         (f text)
+         (binding [*out* *err*]
+           (println text))))}))
 
 ;; ============================================================
 ;; Extension loading

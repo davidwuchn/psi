@@ -48,17 +48,18 @@
                      :is-error false}))})
 
 (defn init [api]
-  (let [mutate-fn (:mutate api)]
+  (let [mutate-fn (:mutate api)
+        log!      (:log api)]
     ;; Register a slash command
     (mutate-fn 'psi.extension/register-command
                {:name "hello"
                 :opts {:description "Say hello"
-                       :handler     (fn [_args] (println "Hello from extension!"))}})
+                       :handler     (fn [_args] (log! "Hello from extension!"))}})
 
     ;; Listen to events
     (mutate-fn 'psi.extension/register-handler
                {:event-name "session_switch"
-                :handler-fn (fn [ev] (println "Session switched:" (:reason ev)))})
+                :handler-fn (fn [ev] (log! (str "Session switched: " (:reason ev))))})
 
     ;; Register two tiny tools so we can demonstrate a chained tool plan.
     (mutate-fn 'psi.extension/register-tool {:tool (upper-tool)})
@@ -85,9 +86,9 @@
                                                             :s2
                                                             :content])]
                                         (if ok?
-                                          (println "hello-plan result:" final)
-                                          (println "hello-plan failed:"
-                                                   (:psi.extension.tool-plan/error result)))))}})
+                                          (log! (str "hello-plan result: " final))
+                                          (log! (str "hello-plan failed: "
+                                                     (:psi.extension.tool-plan/error result))))))}})
 
     ;; Show a status line in the TUI footer
     #_(when-let [ui (:ui api)]
