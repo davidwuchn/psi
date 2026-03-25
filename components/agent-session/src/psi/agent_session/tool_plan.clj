@@ -13,18 +13,34 @@
 
 ;;; Runtime tool invocation boundary
 
+(defn- find-tool-def
+  "Resolve a tool definition by name from agent-ctx tools or extension registry.
+
+   agent-ctx may be nil (e.g. child/agent sessions that have no dedicated
+   agent-core context). Falls back to extension registry in that case."
+  [ctx tool-name]
+  (let [agent-ctx (ss/agent-ctx-in ctx)
+        from-agent (when agent-ctx
+                     (some #(when (= tool-name (:name %)) %)
+                           (:tools (agent/get-data-in agent-ctx))))
+        from-ext   (when-not from-agent
+                     (when-let [reg (:extension-registry ctx)]
+                       (some #(when (= tool-name (:name %)) %)
+                             (ext/all-tools-in reg))))]
+    (or from-agent from-ext)))
+
 (defn default-execute-runtime-tool-in!
   "Default runtime tool invocation implementation.
 
-   Prefers a registered :execute fn in agent tools and falls back to built-in
-   tool dispatch. Supports both 1-arity and 2-arity execute fn contracts.
+   Prefers a registered :execute fn in agent tools (or extension registry for
+   child sessions without an agent-ctx) and falls back to built-in tool
+   dispatch. Supports both 1-arity and 2-arity execute fn contracts.
 
    This is the default concrete runtime invocation behind the higher-level
    ctx-provided runtime tool executor boundary."
   [ctx tool-name args opts]
-  (let [agent-ctx   (ss/agent-ctx-in ctx)
-        tool-def    (some #(when (= tool-name (:name %)) %) (:tools (agent/get-data-in agent-ctx)))
-        execute-fn  (:execute tool-def)]
+  (let [tool-def   (find-tool-def ctx tool-name)
+        execute-fn (:execute tool-def)]
     (if (fn? execute-fn)
       (try
         (execute-fn args opts)
