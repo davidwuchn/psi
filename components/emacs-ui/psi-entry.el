@@ -7,6 +7,7 @@
 
 (require 'subr-x)
 (require 'psi-globals)
+(require 'psi-widget-projection)
 
 (defvar psi-emacs-buffer-name)
 (defvar psi-emacs-working-directory)
@@ -182,6 +183,7 @@ frontend state boundaries."
         (puthash buffer psi-emacs--state psi-emacs--state-by-buffer)
         (psi-emacs--refresh-header-line)
         (psi-emacs--start-rpc-client buffer)))
+    (psi-widget-projection-setup)
     buffer))
 
 ;;;###autoload

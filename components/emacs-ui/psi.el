@@ -67,6 +67,8 @@ Used to detect stalled streaming runs and transition to deterministic recovery."
   thinking-archived-ranges
   tool-rows
   projection-widgets
+  projection-widget-specs
+  projection-widget-lstates
   projection-statuses
   projection-footer
   projection-notifications

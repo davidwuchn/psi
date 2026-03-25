@@ -7,6 +7,7 @@
 
 (require 'subr-x)
 (require 'psi-globals)
+(require 'psi-widget-projection)
 
 (defun psi-emacs--event-data-get (data keys)
   "Return first non-nil value from DATA for KEYS.
@@ -420,6 +421,8 @@ Child sessions (non-nil parent-session-id that matches a slot) are indented."
                 (psi-emacs--projection-seq
                  (or (psi-emacs--event-data-get data '(:widgets widgets))
                      (psi-emacs--event-data-get data '(:items items))))))
+         ;; Also re-query declarative widget specs
+         (psi-widget-projection-request-specs)
          (psi-emacs--upsert-projection-block)))
       ("ui/status-updated"
        (when psi-emacs--state

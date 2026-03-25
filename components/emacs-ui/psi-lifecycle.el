@@ -30,6 +30,8 @@
    :thinking-archived-ranges nil
    :tool-rows (make-hash-table :test #'equal)
    :projection-widgets nil
+   :projection-widget-specs nil
+   :projection-widget-lstates nil
    :projection-statuses nil
    :projection-footer nil
    :projection-notifications nil

@@ -8,6 +8,7 @@
 (require 'cl-lib)
 (require 'subr-x)
 (require 'psi-globals)
+(require 'psi-widget-projection)
 
 (defvar psi-emacs-notification-timeout-seconds)
 
@@ -354,6 +355,12 @@ path-line, stats-line, status-line (blank lines omitted)."
                                 'face 'psi-emacs-projection-separator-face
                                 'font-lock-face 'psi-emacs-projection-separator-face))
          (lines nil))
+    ;; Declarative widget specs (psi.ui.widget-spec node trees)
+    (let ((spec-rendered (psi-widget-projection-render-specs state)))
+      (when (and (stringp spec-rendered) (not (string-empty-p spec-rendered)))
+        (push spec-rendered lines)
+        (push separator lines)))
+    ;; Legacy flat content-lines widgets
     (when widgets
       (dolist (widget widgets)
         (dolist (widget-line (psi-emacs--projection-widget-lines widget))
