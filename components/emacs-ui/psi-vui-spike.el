@@ -127,19 +127,24 @@ mounts the vui component tree with that client in context."
               (vui-set-state :client client)))))
       (pop-to-buffer buf))))
 
+(defun psi-vui-spike--client-from-buffer (buf)
+  "Return a ready psi-rpc-client from BUF, or nil."
+  (with-current-buffer buf
+    (when (boundp 'psi-emacs--state)
+      (let ((client (and psi-emacs--state
+                         (psi-emacs-state-rpc-client psi-emacs--state))))
+        (when (and (psi-rpc-client-p client)
+                   (eq (psi-rpc-client-transport-state client) 'ready))
+          client)))))
+
 (defun psi-vui-spike--find-client ()
-  "Return a live psi-rpc-client from any *psi* buffer, or nil."
-  (cl-some
-   (lambda (buf)
-     (when (string-match-p "\\*psi\\*" (buffer-name buf))
-       (with-current-buffer buf
-         (when (boundp 'psi-emacs--state)
-           (let ((client (and psi-emacs--state
-                              (psi-emacs-state-rpc-client psi-emacs--state))))
-             (when (and (psi-rpc-client-p client)
-                        (eq (psi-rpc-client-transport-state client) 'ready))
-               client))))))
-   (buffer-list)))
+  "Return a live psi-rpc-client — current buffer first, then any *psi:...* buffer."
+  (or (psi-vui-spike--client-from-buffer (current-buffer))
+      (cl-some
+       (lambda (buf)
+         (when (string-match-p "\\*psi[*:]" (buffer-name buf))
+           (psi-vui-spike--client-from-buffer buf)))
+       (buffer-list))))
 
 (provide 'psi-vui-spike)
 ;;; psi-vui-spike.el ends here
