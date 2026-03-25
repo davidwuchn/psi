@@ -22,7 +22,8 @@
    [extensions.workflow-display :as workflow-display]
    [com.fulcrologic.statecharts.elements :as ele]
    [psi.agent-session.tools :as tools]
-   [psi.ai.models :as models]))
+   [psi.ai.models :as models]
+   [psi.ui.widget-spec :as widget-spec]))
 
 (defonce state
   (atom {:api        nil
@@ -522,9 +523,44 @@
     (update! prompt-contribution-id
              {:content (prompt-contribution-content)})))
 
+(defn- build-agent-widget-spec [wf]
+  (let [wid        (str "agent-" (:psi.extension.workflow/id wf))
+        running?   (:psi.extension.workflow/running? wf)
+        done?      (:psi.extension.workflow/done? wf)
+        error?     (:psi.extension.workflow/error? wf)
+        agent-name (some-> (wf-agent-name wf) str str/trim not-empty)
+        forked?    (wf-forked? wf)
+        turns      (wf-turn-count wf)
+        elapsed-s  (elapsed-seconds wf)
+        task       (task-preview (wf-task wf) 52)
+        top-text   (str (status-icon wf)
+                        " Agent #" (:psi.extension.workflow/id wf)
+                        " " (phase-badge wf)
+                        " · T" turns
+                        " · " elapsed-s "s"
+                        (when agent-name (str " · @" agent-name))
+                        (when forked? " · fork")
+                        " · " task)
+        detail-text (widget-detail-line wf)
+        id          (:psi.extension.workflow/id wf)
+        action-text (str "  /agent-cont " id " <prompt> · ✕ remove")
+        children    (cond-> [(widget-spec/text top-text)]
+                      detail-text
+                      (conj (widget-spec/muted detail-text))
+                      (and (not running?) (or done? error?))
+                      (conj (widget-spec/text action-text)))]
+    (widget-spec/widget-spec
+     wid
+     (widget-placement)
+     (widget-spec/vstack children)
+     :subscriptions [(widget-spec/event-subscription "tool/result")
+                     (widget-spec/event-subscription "tool/update")])))
+
 (defn- clear-widget! [id]
   (when-let [ui (:ui @state)]
-    ((:clear-widget ui) (str "agent-" id))))
+    ((:clear-widget ui) (str "agent-" id))
+    (when-let [clear-spec (:clear-widget-spec ui)]
+      (clear-spec (str "agent-" id)))))
 
 (defn- refresh-widgets! []
   (when-let [ui (:ui @state)]
@@ -533,12 +569,16 @@
           old-ids     (:widget-ids @state)
           removed     (set/difference old-ids current-ids)]
       (doseq [wid removed]
-        ((:clear-widget ui) wid))
+        ((:clear-widget ui) wid)
+        (when-let [clear-spec (:clear-widget-spec ui)]
+          (clear-spec wid)))
       (doseq [wf wfs]
         ((:set-widget ui)
          (str "agent-" (:psi.extension.workflow/id wf))
          (widget-placement)
-         (widget-lines wf)))
+         (widget-lines wf))
+        (when-let [set-spec (:set-widget-spec ui)]
+          (set-spec (build-agent-widget-spec wf))))
       (swap! state assoc :widget-ids current-ids)
       (sync-prompt-contribution!))))
 
