@@ -63,8 +63,7 @@
    (vui-newline)
    (vui-button "↺ refresh"
                :on-click (lambda ()
-                           (vui-set-state :loaded nil)
-                           (vui-set-state :err    nil)
+                           (vui-set-state :err nil)
                            (psi-vui--do-query))))
 
   :on-mount
