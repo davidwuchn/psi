@@ -402,7 +402,22 @@ Rows are rendered according to global tool-output-view-mode."
                 (let* ((ar (psi-emacs-state-assistant-range psi-emacs--state))
                        (as (and (psi-emacs--assistant-range-live-p ar) (car ar))))
                   (when (and as (= (marker-position as) start-pos))
-                    (set-marker as (point))))))
+                    (set-marker as (point))))
+                ;; Fix any other tool row start markers that collapsed to
+                ;; start-pos due to the delete above.  When two tool rows are
+                ;; adjacent the next row's :start marker shares the same buffer
+                ;; position as this row's :end marker.  delete-region collapses
+                ;; both to start-pos, so the subsequent row's start drifts into
+                ;; this row's range.  Advance any such markers to point (= end
+                ;; of this row's new content) to restore correct boundaries.
+                (maphash (lambda (other-id other-row)
+                           (unless (equal other-id tool-id)
+                             (let ((other-start (plist-get other-row :start)))
+                               (when (and (markerp other-start)
+                                          (marker-buffer other-start)
+                                          (= (marker-position other-start) start-pos))
+                                 (set-marker other-start (point))))))
+                         rows)))
             (puthash tool-id (list :id tool-id
                                    :tool-name tool-name*
                                    :arguments arguments*
@@ -447,6 +462,19 @@ Rows are rendered according to global tool-output-view-mode."
                     ;; assistant line) so the assistant range covers only the
                     ;; assistant line and not this new tool row.
                     (set-marker assistant-start-marker (point))
+                    ;; The assistant end marker is also nil-type and stayed at
+                    ;; insert-pos + A (where A = prior assistant content length).
+                    ;; If the tool row is longer than the assistant content
+                    ;; (R > A), end is now BEFORE start, making the range
+                    ;; inverted.  delete-region on an inverted range swaps the
+                    ;; bounds and deletes tool row content instead of assistant
+                    ;; content, leaving stale assistant text in the buffer and
+                    ;; corrupting the tool row.  Advance end to at least start
+                    ;; so the range is always non-inverted.
+                    (let ((ae (and (psi-emacs--assistant-range-live-p assistant-range)
+                                   (cdr assistant-range))))
+                      (when (and ae (< (marker-position ae) (point)))
+                        (set-marker ae (point))))
                     (puthash tool-id (list :id tool-id
                                            :tool-name tool-name*
                                            :arguments arguments*

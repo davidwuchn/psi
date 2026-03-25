@@ -2396,6 +2396,87 @@ then deleted the tool row along with the assistant line."
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
+(ert-deftest psi-parallel-tool-rows-all-survive-sequential-result-updates ()
+  "Multiple parallel tool rows (no assistant delta) must all survive when results arrive.
+
+Regression: when two tool rows are adjacent in the buffer (no assistant line
+between them), updating the first row via tool/result caused the second row's
+:start marker to collapse to the first row's :start position.  The subsequent
+tool/result for the second row then deleted both rows (delete-region spanned
+both rows) leaving only the second row's updated content."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (unwind-protect
+        (progn
+          (psi-emacs--ensure-input-area)
+          ;; Thinking then two parallel tool calls (no assistant/delta between them)
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/thinking-delta") (:data . ((:text . "plan")))))
+          (psi-emacs--handle-rpc-event
+           '((:event . "tool/start") (:data . ((:tool-id . "t-1") (:tool-name . "bash")))))
+          (psi-emacs--handle-rpc-event
+           '((:event . "tool/executing") (:data . ((:tool-id . "t-1") (:tool-name . "bash")))))
+          (psi-emacs--handle-rpc-event
+           '((:event . "tool/start") (:data . ((:tool-id . "t-2") (:tool-name . "read")))))
+          (psi-emacs--handle-rpc-event
+           '((:event . "tool/executing") (:data . ((:tool-id . "t-2") (:tool-name . "read")))))
+          ;; First tool completes
+          (psi-emacs--handle-rpc-event
+           '((:event . "tool/result") (:data . ((:tool-id . "t-1") (:tool-name . "bash")
+                                                (:result-text . "ok1")))))
+          ;; Second tool completes — must not delete first tool row
+          (psi-emacs--handle-rpc-event
+           '((:event . "tool/result") (:data . ((:tool-id . "t-2") (:tool-name . "read")
+                                                (:result-text . "ok2")))))
+          (let ((content (buffer-substring-no-properties
+                          (point-min) (psi-emacs--input-separator-position))))
+            ;; Both tool rows must be present
+            (should (string-match-p "· plan" content))
+            (should (string-match-p "\\$" content))   ;; bash row
+            (should (string-match-p "read" content))  ;; read row
+            (should (= 2 (hash-table-count (psi-emacs-state-tool-rows psi-emacs--state))))))
+      nil)))
+
+(ert-deftest psi-assistant-delta-not-duplicated-when-tool-row-longer-than-assistant-content ()
+  "Assistant streaming text must not be duplicated when a tool row longer than the
+current assistant content is inserted before the assistant line.
+
+Regression: inserting a tool row of length R before an assistant line of
+length A (where R > A) left the assistant-range end marker BEFORE the new
+start marker (inverted range).  Subsequent assistant/delta calls then called
+delete-region on the inverted range (which swaps bounds and deletes tool row
+content), leaving the stale assistant text in the buffer.  Each new delta
+appended to the stale text instead of replacing it, producing repeated/doubled
+assistant content."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (unwind-protect
+        (progn
+          (psi-emacs--ensure-input-area)
+          ;; Short assistant delta — assistant content is shorter than a typical tool row
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/delta") (:data . ((:text . "The")))))
+          ;; Tool start — inserts a tool row (longer than "ψ: The\n" = 8 chars)
+          ;; before the assistant line.  This is the trigger for the inversion bug.
+          (psi-emacs--handle-rpc-event
+           '((:event . "tool/start") (:data . ((:tool-id . "t-1") (:tool-name . "bash")
+                                               (:arguments . "{\"command\":\"ls -la\"}")))))
+          ;; Second assistant delta with cumulative snapshot — must REPLACE, not append
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/delta") (:data . ((:text . "The last commit")))))
+          (let* ((content (buffer-substring-no-properties
+                           (point-min) (psi-emacs--input-separator-position)))
+                 (assistant-lines (cl-remove-if-not
+                                   (lambda (line) (string-prefix-p "ψ: " line))
+                                   (split-string content "\n" t))))
+            ;; Exactly one assistant line — no duplication
+            (should (= 1 (length assistant-lines)))
+            ;; Must show the latest cumulative snapshot, not "TheThe last commit"
+            (should (equal "ψ: The last commit" (car assistant-lines)))))
+      nil)))
+
 (ert-deftest psi-empty-assistant-message-archives-thinking-not-clears ()
   "Empty assistant/message (tool-only turn) must archive thinking, not delete it.
 

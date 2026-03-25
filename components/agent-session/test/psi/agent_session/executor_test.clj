@@ -214,6 +214,61 @@
             thinking-events (filterv #(= :thinking-delta (:event-kind %)) events)]
         (is (= ["plan-1" "plan-2"] (mapv :text thinking-events)))))))
 
+(deftest toolcall-assembly-emits-live-progress-events-with-canonical-id-test
+  (let [agent-ctx   (setup-agent-ctx!)
+        session-ctx (setup-session-ctx! agent-ctx)
+        q           (LinkedBlockingQueue.)
+        stream-fn   (fn [_ai-ctx _conv _model _opts consume-fn]
+                      (consume-fn {:type :start})
+                      (consume-fn {:type :thinking-delta :content-index 0 :delta "plan"})
+                      (consume-fn {:type :toolcall-start :content-index 1 :name "read"})
+                      (consume-fn {:type :toolcall-delta :content-index 1 :delta "{\"path\":\"foo.clj\"}"})
+                      (consume-fn {:type :toolcall-end :content-index 1})
+                      (consume-fn {:type :done :reason :stop}))]
+    (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
+      (let [{:keys [assistant-message]} (#'executor/execute-one-turn! nil session-ctx agent-ctx stub-model nil q)
+            events      (loop [acc []]
+                          (if-let [e (.poll q 5 TimeUnit/MILLISECONDS)]
+                            (recur (conj acc e))
+                            acc))
+            kinds       (mapv :event-kind events)
+            assembly    (filterv #(= :tool-call-assembly (:event-kind %)) events)
+            first-start (first assembly)
+            first-delta (second assembly)
+            first-end   (nth assembly 2)
+            tool-call-block (some #(when (= :tool-call (:type %)) %) (:content assistant-message))]
+        (is (= [:thinking-delta :tool-call-assembly :tool-call-assembly :tool-call-assembly]
+               kinds))
+        (is (= :start (:phase first-start)))
+        (is (= :delta (:phase first-delta)))
+        (is (= :end (:phase first-end)))
+        (is (= "read" (:tool-name first-start)))
+        (is (= "{\"path\":\"foo.clj\"}" (:arguments first-delta)))
+        (is (string? (:tool-id first-start)))
+        (is (str/includes? (:tool-id first-start) "/toolcall/1"))
+        (is (= (:tool-id first-start) (:id tool-call-block)))))))
+
+(deftest toolcall-assembly-preserves-provider-id-when-present-test
+  (let [agent-ctx   (setup-agent-ctx!)
+        session-ctx (setup-session-ctx! agent-ctx)
+        q           (LinkedBlockingQueue.)
+        stream-fn   (fn [_ai-ctx _conv _model _opts consume-fn]
+                      (consume-fn {:type :start})
+                      (consume-fn {:type :toolcall-start :content-index 2 :id "call-xyz" :name "bash"})
+                      (consume-fn {:type :toolcall-delta :content-index 2 :delta "{\"command\":\"pwd\"}"})
+                      (consume-fn {:type :toolcall-end :content-index 2})
+                      (consume-fn {:type :done :reason :stop}))]
+    (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
+      (let [{:keys [assistant-message]} (#'executor/execute-one-turn! nil session-ctx agent-ctx stub-model nil q)
+            events (loop [acc []]
+                     (if-let [e (.poll q 5 TimeUnit/MILLISECONDS)]
+                       (recur (conj acc e))
+                       acc))
+            assembly (filterv #(= :tool-call-assembly (:event-kind %)) events)
+            tool-call-block (some #(when (= :tool-call (:type %)) %) (:content assistant-message))]
+        (is (= ["call-xyz" "call-xyz" "call-xyz"] (mapv :tool-id assembly)))
+        (is (= "call-xyz" (:id tool-call-block)))))))
+
 (deftest cross-provider-thinking-is-not-replayed-into-anthropic-request-test
   (testing "OpenAI thinking deltas remain transient and are not included in later Anthropic messages"
     (let [agent-ctx   (setup-agent-ctx!)

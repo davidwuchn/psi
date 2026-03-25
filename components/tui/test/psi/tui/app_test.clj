@@ -859,7 +859,88 @@ clojure-lsp"}]})
                                    :text "Plan step"})
           out       (app/view s2)]
       (is (= "Plan step" (:stream-thinking s2)))
+      (is (= ["thinking/0"] (:active-turn-order s2)))
       (is (str/includes? out "Plan step")))))
+
+(deftest active-turn-renders-thinking-before-tool-in-arrival-order-test
+  (testing "streaming view renders active-turn items in arrival order"
+    (let [update-fn (app/make-update (stub-agent-fn ""))
+          state     (assoc (init-state) :phase :streaming)
+          [s1 _]    (update-fn state {:type :agent-event
+                                      :event-kind :thinking-delta
+                                      :content-index 0
+                                      :text "Plan first"})
+          [s2 _]    (update-fn s1 {:type :agent-event
+                                   :event-kind :tool-call-assembly
+                                   :phase :start
+                                   :content-index 1
+                                   :tool-id "call-1"
+                                   :tool-name "read"
+                                   :arguments "{\"path\":\"foo.clj\"}"})
+          out       (app/view s2)
+          thinking-pos (.indexOf out "Plan first")
+          tool-pos     (.indexOf out "foo.clj")]
+      (is (= ["thinking/0" "tool/call-1"] (:active-turn-order s2)))
+      (is (<= 0 thinking-pos))
+      (is (<= 0 tool-pos))
+      (is (< thinking-pos tool-pos)))))
+
+(deftest active-turn-renders-multiple-thinking-blocks-around-tool-test
+  (testing "distinct content-index thinking blocks remain separate and ordered around a tool row"
+    (let [update-fn (app/make-update (stub-agent-fn ""))
+          state     (assoc (init-state) :phase :streaming)
+          [s1 _]    (update-fn state {:type :agent-event
+                                      :event-kind :thinking-delta
+                                      :content-index 0
+                                      :text "Plan A"})
+          [s2 _]    (update-fn s1 {:type :agent-event
+                                   :event-kind :tool-call-assembly
+                                   :phase :start
+                                   :content-index 1
+                                   :tool-id "call-1"
+                                   :tool-name "read"
+                                   :arguments "{\"path\":\"a.clj\"}"})
+          [s3 _]    (update-fn s2 {:type :agent-event
+                                   :event-kind :thinking-delta
+                                   :content-index 2
+                                   :text "Plan B"})
+          out       (app/view s3)
+          a-pos      (.indexOf out "Plan A")
+          tool-pos   (.indexOf out "a.clj")
+          b-pos      (.indexOf out "Plan B")]
+      (is (= ["thinking/0" "tool/call-1" "thinking/2"] (:active-turn-order s3)))
+      (is (= [:thinking :tool :thinking]
+             (mapv :item-kind (:active-turn-events s3))))
+      (is (< a-pos tool-pos))
+      (is (< tool-pos b-pos)))))
+
+(deftest active-turn-event-timeline-keeps-repeated-tool-lifecycle-after-assembly-test
+  (testing "event timeline preserves repeated tool appearances after assembly"
+    (let [update-fn (app/make-update (stub-agent-fn ""))
+          state     (assoc (init-state) :phase :streaming)
+          [s1 _]    (update-fn state {:type :agent-event
+                                      :event-kind :tool-call-assembly
+                                      :phase :start
+                                      :content-index 1
+                                      :tool-id "call-1"
+                                      :tool-name "read"
+                                      :arguments "{\"path\":\"a.clj\"}"})
+          [s2 _]    (update-fn s1 {:type :agent-event
+                                   :event-kind :tool-executing
+                                   :tool-id "call-1"
+                                   :tool-name "read"})
+          [s3 _]    (update-fn s2 {:type :agent-event
+                                   :event-kind :tool-result
+                                   :tool-id "call-1"
+                                   :tool-name "read"
+                                   :content [{:type :text :text "ok"}]
+                                   :is-error false})
+          out       (app/view s3)]
+      (is (= 3 (count (:active-turn-events s3))))
+      (is (= [:tool :tool-lifecycle :tool-lifecycle]
+             (mapv :item-kind (:active-turn-events s3))))
+      (is (every? some? (map :snapshot (:active-turn-events s3))))
+      (is (< (.indexOf out "a.clj") (.indexOf out "ok"))))))
 
 (deftest view-shows-spinner-in-waiting-indicator-with-tool-history-test
   (testing "streaming view keeps a visible spinner even after tools complete"
@@ -932,7 +1013,69 @@ clojure-lsp"}]})
                                       :event-kind :tool-start
                                       :tool-id "t1"
                                       :tool-name "bash"})]
-      (is (true? (get-in s1 [:tool-calls "t1" :expanded?]))))))
+      (is (true? (get-in s1 [:tool-calls "tool/t1" :expanded?]))))))
+
+(deftest tool-call-assembly-creates-and-updates-single-row-test
+  (testing "assembly events use tool-call-id/content-index correlation so one row survives to result"
+    (let [update-fn (app/make-update (stub-agent-fn ""))
+          state     (assoc (init-state) :phase :streaming)
+          [s1 _]    (update-fn state {:type :agent-event
+                                      :event-kind :tool-call-assembly
+                                      :phase :start
+                                      :content-index 1
+                                      :tool-name "read"
+                                      :arguments ""})
+          [s2 _]    (update-fn s1 {:type :agent-event
+                                   :event-kind :tool-call-assembly
+                                   :phase :delta
+                                   :content-index 1
+                                   :tool-id "call-1"
+                                   :tool-name "read"
+                                   :arguments "{\"path\":\"foo.clj\"}"})
+          [s3 _]    (update-fn s2 {:type :agent-event
+                                   :event-kind :tool-start
+                                   :tool-id "call-1"
+                                   :tool-name "read"})
+          [s4 _]    (update-fn s3 {:type :agent-event
+                                   :event-kind :tool-result
+                                   :tool-id "call-1"
+                                   :content [{:type :text :text "ok"}]
+                                   :is-error false})]
+      (is (= 1 (count (:tool-order s4))))
+      (is (= ["tool/content-1"] (:tool-order s2)))
+      (is (= "tool/content-1" (get-in s4 [:tool-ui-id-by-tool-id "call-1"])))
+      (is (= "{\"path\":\"foo.clj\"}" (get-in s4 [:tool-calls "tool/content-1" :args])))
+      (is (= :success (get-in s4 [:tool-calls "tool/content-1" :status])))
+      (is (= "ok" (get-in s4 [:tool-calls "tool/content-1" :result]))))))
+
+(deftest parallel-tool-results-target-correct-rows-test
+  (testing "parallel tool updates are routed by tool-call-id, not by order or name"
+    (let [update-fn (app/make-update (stub-agent-fn ""))
+          state     (assoc (init-state) :phase :streaming)
+          [s1 _]    (update-fn state {:type :agent-event
+                                      :event-kind :tool-call-assembly
+                                      :phase :start
+                                      :content-index 1
+                                      :tool-id "call-a"
+                                      :tool-name "read"})
+          [s2 _]    (update-fn s1 {:type :agent-event
+                                   :event-kind :tool-call-assembly
+                                   :phase :start
+                                   :content-index 2
+                                   :tool-id "call-b"
+                                   :tool-name "read"})
+          [s3 _]    (update-fn s2 {:type :agent-event
+                                   :event-kind :tool-result
+                                   :tool-id "call-b"
+                                   :content [{:type :text :text "B"}]
+                                   :is-error false})
+          [s4 _]    (update-fn s3 {:type :agent-event
+                                   :event-kind :tool-result
+                                   :tool-id "call-a"
+                                   :content [{:type :text :text "A"}]
+                                   :is-error false})]
+      (is (= "B" (get-in s4 [:tool-calls "tool/call-b" :result])))
+      (is (= "A" (get-in s4 [:tool-calls "tool/call-a" :result]))))))
 
 (deftest completed-tool-rows-are-retained-after-result-test
   (testing "tool rows remain after final agent result"

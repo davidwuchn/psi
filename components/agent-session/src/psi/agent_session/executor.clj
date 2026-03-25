@@ -324,13 +324,20 @@ Also tolerates cumulative snapshots that differ near previous tail
           incoming*
           (str current* incoming*))))))
 
+(defn- canonical-tool-call-id
+  [turn-id content-index provider-tool-call-id]
+  (or provider-tool-call-id
+      (str turn-id "/toolcall/" content-index)))
+
 (defn- complete-tool-calls
-  [tool-calls]
+  [turn-id tool-calls]
   (->> tool-calls
        (sort-by key)
        (mapv (fn [[idx tc]]
-               (cond-> tc
-                 (nil? (:content-index tc)) (assoc :content-index idx))))))
+               (let [content-index (or (:content-index tc) idx)]
+                 (-> tc
+                     (assoc :content-index content-index)
+                     (update :id #(canonical-tool-call-id turn-id content-index %))))))))
 
 (defn- parse-args-strict
   "Parse tool args strictly, preserving parse validity.
@@ -415,10 +422,11 @@ Also tolerates cumulative snapshots that differ near previous tail
    Handles data accumulation (in turn-data atom) and session-data writes.
    When progress-queue is non-nil, emits :agent-event messages for TUI.
 
-   Tool-call UI semantics are terminal-boundary only:
-   - stream-time toolcall deltas/ends are accumulated but not emitted
-   - tool-start progress is emitted by the lifecycle system during execution
-   - invalid assembled tool-calls surface visible :error progress events"
+   Tool-call identity semantics:
+   - provider stream assembly is visible live to the UI
+   - content-index is the provisional per-turn identity during assembly
+   - every tool call is upgraded to a canonical tool-call-id by execution time
+   - lifecycle/result events must target rows by canonical tool-call-id"
   [agent-session-ctx _agent-ctx done-p progress-queue]
   (fn [action-key data]
     (let [td (:turn-data data)]
@@ -432,13 +440,14 @@ Also tolerates cumulative snapshots that differ near previous tail
           (begin-content-block! td (or (:content-index data) 0)))
 
         :on-text-delta
-        (do
+        (let [idx    (or (:content-index data) 0)
+              merged (:text-buffer (swap! td update :text-buffer merge-stream-text (:delta data)))]
           (note-last-provider-event! td :text-delta data)
-          (note-content-delta! td (or (:content-index data) 0) :text)
-          (swap! td update :text-buffer merge-stream-text (:delta data))
+          (note-content-delta! td idx :text)
           (emit-progress! progress-queue
-                          {:event-kind :text-delta
-                           :text       (:text-buffer @td)}))
+                          {:event-kind    :text-delta
+                           :content-index idx
+                           :text          merged}))
 
         :on-text-end
         (do
@@ -465,39 +474,73 @@ Also tolerates cumulative snapshots that differ near previous tail
         :on-toolcall-start
         (let [idx     (:content-index data)
               tc-id   (:tool-id data)
-              tc-name (:tool-name data)]
+              tc-name (:tool-name data)
+              updated (get-in (swap! td update-in [:tool-calls idx]
+                                     (fn [cur]
+                                       (let [merged (merge {:id nil :name nil :arguments "" :content-index idx}
+                                                           cur
+                                                           {:id (or tc-id (:id cur))
+                                                            :name (or tc-name (:name cur))
+                                                            :content-index idx})]
+                                         (assoc merged :id (canonical-tool-call-id (:turn-id @td) idx (:id merged))))))
+                              [:tool-calls idx])]
           (note-last-provider-event! td :toolcall-start data)
           (begin-content-block! td idx)
           (update-content-block! td idx #(assoc % :kind :tool-call))
-          (swap! td update-in [:tool-calls idx]
-                 (fn [cur]
-                   (merge {:id nil :name nil :arguments "" :content-index idx}
-                          cur
-                          {:id (or tc-id (:id cur))
-                           :name (or tc-name (:name cur))
-                           :content-index idx}))))
+          (emit-progress! progress-queue
+                          {:event-kind            :tool-call-assembly
+                           :phase                 :start
+                           :turn-id               (:turn-id @td)
+                           :content-index         idx
+                           :tool-id               (:id updated)
+                           :provider-tool-call-id (when (= tc-id (:id updated)) tc-id)
+                           :tool-name             (:name updated)
+                           :arguments             (:arguments updated)}))
 
         :on-toolcall-delta
         (let [idx   (:content-index data)
-              delta (:delta data)]
+              delta (:delta data)
+              updated (get-in (swap! td update-in [:tool-calls idx]
+                                     (fn [cur]
+                                       (let [current-args (or (:arguments cur) "")
+                                             merged       (merge {:id nil :name nil :arguments "" :content-index idx}
+                                                                 cur
+                                                                 {:arguments (str current-args (or delta ""))
+                                                                  :content-index idx})]
+                                         (assoc merged :id (canonical-tool-call-id (:turn-id @td) idx (:id merged))))))
+                              [:tool-calls idx])]
           (note-last-provider-event! td :toolcall-delta data)
           (note-content-delta! td idx :tool-call)
-          (swap! td update-in [:tool-calls idx]
-                 (fn [cur]
-                   (let [current-args (or (:arguments cur) "")]
-                     (merge {:id nil :name nil :arguments "" :content-index idx}
-                            cur
-                            {:arguments (str current-args (or delta ""))
-                             :content-index idx})))))
+          (emit-progress! progress-queue
+                          {:event-kind            :tool-call-assembly
+                           :phase                 :delta
+                           :turn-id               (:turn-id @td)
+                           :content-index         idx
+                           :tool-id               (:id updated)
+                           :provider-tool-call-id (when-not (str/starts-with? (str (:id updated)) (str (:turn-id @td) "/toolcall/"))
+                                                    (:id updated))
+                           :tool-name             (:name updated)
+                           :arguments             (:arguments updated)}))
 
         :on-toolcall-end
-        (do
+        (let [idx     (:content-index data)
+              updated (get-in @td [:tool-calls idx])]
           (note-last-provider-event! td :toolcall-end data)
-          (end-content-block! td (:content-index data)))
+          (end-content-block! td idx)
+          (emit-progress! progress-queue
+                          {:event-kind            :tool-call-assembly
+                           :phase                 :end
+                           :turn-id               (:turn-id @td)
+                           :content-index         idx
+                           :tool-id               (:id updated)
+                           :provider-tool-call-id (when-not (str/starts-with? (str (:id updated)) (str (:turn-id @td) "/toolcall/"))
+                                                    (:id updated))
+                           :tool-name             (:name updated)
+                           :arguments             (:arguments updated)}))
 
         :on-done
         (let [{:keys [thinking-blocks text-buffer tool-calls]} @td
-              completed (complete-tool-calls tool-calls)
+              completed (complete-tool-calls (:turn-id @td) tool-calls)
               content   (build-final-content thinking-blocks text-buffer completed)
               usage     (:usage data)
               final     (cond-> {:role        "assistant"
@@ -659,6 +702,7 @@ Also tolerates cumulative snapshots that differ near previous tail
         done-p           (promise)
         actions-fn        (make-turn-actions agent-session-ctx agent-ctx done-p progress-queue)
         turn-ctx          (turn-sc/create-turn-context actions-fn)
+        _                 (swap! (:turn-data turn-ctx) assoc :turn-id turn-id)
         last-progress-ms  (atom (now-ms))
         timed-out?        (atom false)
         ;; Per-content-index thinking buffers — Anthropic interleaved thinking can
@@ -889,9 +933,8 @@ Also tolerates cumulative snapshots that differ near previous tail
 (defn- tool-lifecycle-event
   "Build one canonical tool lifecycle event shape.
 
-   This is the shared semantic payload that can be projected to both:
-   - dispatch-visible canonical telemetry
-   - progress-queue UI events"
+   `:tool-id` is the canonical tool-call-id used by the UI/runtime to route
+   updates to the correct visible tool row, including parallel executions."
   [event-kind tool-id tool-name & {:as extra}]
   (merge {:event-kind event-kind
           :tool-id    tool-id
