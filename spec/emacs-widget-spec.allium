@@ -1,0 +1,563 @@
+-- allium: 2
+
+-- emacs-widget-spec.allium
+-- Declarative, vui-inspired widget specs for the Emacs frontend.
+-- Extensions register typed node trees; the Emacs renderer walks them
+-- into the projection block. Data is pulled via EQL query; interactions
+-- dispatch mutations and subscribe to named server events.
+
+-- Scope:
+--   Includes: widget spec format, registration, rendering, data binding,
+--             interactions (mutations, events), local client state, lifecycle
+--   Excludes: dialogs (see existing dialog system),
+--             cross-widget composition (deferred),
+--             TUI/console rendering (text-only path unchanged),
+--             RPC transport (see rpc-edn.allium),
+--             projection block mechanics (see emacs-footer.allium)
+
+use "./ui-interactive-widgets.allium" as ui_widgets
+use "./ui-extension-points.allium" as ui
+use "./extension-system.allium" as ext
+use "./rpc-edn.allium" as rpc
+use "./emacs-frontend.allium" as emacs
+
+-- ─────────────────────────────────────────────
+-- Spec node types
+-- ─────────────────────────────────────────────
+
+-- A WidgetNode is a typed, composable unit of widget structure.
+-- Mirrors vui's primitive vocabulary but expressed as pure data —
+-- no functions, no lambdas. Interactions reference server-side ops by name.
+
+entity WidgetNode {
+    type: text | newline | hstack | vstack
+        | heading | strong | muted | code
+        | success | warning | error
+        | button | collapsible | list
+    key: String?                          -- stable identity for local state preservation
+}
+
+variant TextNode : WidgetNode {
+    content: String
+    content_path: Path?                   -- path into query result map, overrides content
+    face: String?                         -- Emacs face name
+}
+
+variant NewlineNode : WidgetNode {}
+
+variant HstackNode : WidgetNode {
+    spacing: Integer                      -- spaces between children, default 1
+    children: List<WidgetNode>
+}
+
+variant VstackNode : WidgetNode {
+    indent: Integer                       -- left indent in spaces, default 0
+    spacing: Integer                      -- blank lines between children, default 0
+    children: List<WidgetNode>
+}
+
+variant HeadingNode : WidgetNode {
+    content: String
+    content_path: Path?
+    level: Integer                        -- 1–8
+}
+
+variant StrongNode : WidgetNode {
+    content: String
+    content_path: Path?
+}
+
+variant MutedNode : WidgetNode {
+    content: String
+    content_path: Path?
+}
+
+variant CodeNode : WidgetNode {
+    content: String
+    content_path: Path?
+}
+
+variant SuccessNode : WidgetNode {
+    content: String
+    content_path: Path?
+}
+
+variant WarningNode : WidgetNode {
+    content: String
+    content_path: Path?
+}
+
+variant ErrorNode : WidgetNode {
+    content: String
+    content_path: Path?
+}
+
+variant ButtonNode : WidgetNode {
+    label: String
+    mutation: MutationRef
+    timeout_ms: Integer?                  -- overrides global default
+    disabled: Boolean
+}
+
+variant CollapsibleNode : WidgetNode {
+    title: String
+    title_path: Path?
+    children: List<WidgetNode>
+    initially_expanded: Boolean           -- default false
+}
+
+variant ListNode : WidgetNode {
+    items_path: Path                      -- path into query result → collection
+    item_spec: WidgetNode                 -- template; rendered once per item
+                                          -- item fields available as :item/*
+    vertical: Boolean                     -- default true
+    indent: Integer                       -- default 0
+}
+
+-- ─────────────────────────────────────────────
+-- Interactions
+-- ─────────────────────────────────────────────
+
+value MutationRef {
+    name: QualifiedSymbol                 -- e.g. psi.extension.workflow/send-event
+    params: Map<String, Any>              -- static params merged with runtime context
+    timeout_ms: Integer?                  -- nil → use global config default
+}
+
+value EventSubscription {
+    event_name: String                    -- server-emitted event name to subscribe to
+    local_state_map: Map<String, Path>?   -- maps local state keys ← event payload paths
+                                          -- nil → event is a pure re-query signal
+}
+
+-- ─────────────────────────────────────────────
+-- Widget registration
+-- ─────────────────────────────────────────────
+
+value WidgetSpec {
+    id: String                            -- unique within extension
+    placement: above_editor | below_editor
+    query: List<EqlKeyword>               -- EQL attrs to fetch; result available to all nodes
+    spec: WidgetNode                      -- root node of the widget tree
+    subscriptions: List<EventSubscription>
+}
+
+-- ─────────────────────────────────────────────
+-- Local client state
+-- ─────────────────────────────────────────────
+
+-- Local state lives in the Emacs frontend only.
+-- Keys are node :key values. Preserved across re-queries.
+-- Reset only on widget deregistration.
+
+entity WidgetLocalState {
+    widget_id: String
+    extension_id: String
+    collapsed_keys: Set<String>           -- keys of CollapsibleNodes currently collapsed
+    in_flight_keys: Set<String>           -- keys of ButtonNodes awaiting mutation response
+    event_state: Map<String, Any>         -- state merged from event payload maps
+}
+
+-- ─────────────────────────────────────────────
+-- Config
+-- ─────────────────────────────────────────────
+
+config {
+    mutation_timeout_ms: Integer = 30000  -- global default; overridable per ButtonNode
+}
+
+-- ─────────────────────────────────────────────
+-- Registration lifecycle
+-- ─────────────────────────────────────────────
+
+rule WidgetRegistered {
+    when: ExtensionRegistersWidget(session, extension_id, spec)
+
+    requires: spec.id != ""
+    requires: spec.spec != null
+    requires: spec.placement in {above_editor, below_editor}
+
+    ensures: WidgetSpecStored(session, extension_id, spec)
+    ensures: WidgetLocalState.created(
+        widget_id: spec.id,
+        extension_id: extension_id,
+        collapsed_keys: InitialCollapsedKeys(spec.spec),
+        in_flight_keys: {},
+        event_state: {})
+    ensures: WidgetQueryFired(session, extension_id, spec.id)
+}
+
+rule InitialCollapsedKeysFromSpec {
+    when: InitialCollapsedKeysRequested(spec)
+
+    ensures: InitialCollapsedKeys(spec) =
+        { node.key | node in AllNodes(spec)
+                   where node.type = collapsible
+                   and node.key != null
+                   and not node.initially_expanded }
+}
+
+rule WidgetDeregisteredOnExtensionUnload {
+    when: ext/ExtensionUnloaded(session, extension_id)
+
+    ensures: AllWidgetSpecsRemovedForExtension(session, extension_id)
+    ensures: AllWidgetLocalStatesRemovedForExtension(session, extension_id)
+}
+
+rule WidgetDeregisteredExplicitly {
+    when: ExtensionDeregistersWidget(session, extension_id, widget_id)
+
+    ensures: WidgetSpecRemoved(session, extension_id, widget_id)
+    ensures: not exists WidgetLocalState where widget_id = widget_id
+                                          and extension_id = extension_id
+}
+
+rule WidgetLocalStatesRemovedOnSessionEnd {
+    when: _: emacs/EmacsSession.status transitions_to ended
+
+    ensures: AllWidgetLocalStatesRemovedForSession(session)
+}
+
+-- ─────────────────────────────────────────────
+-- Data binding
+-- ─────────────────────────────────────────────
+
+rule WidgetQueryFiredOnRegistration {
+    when: WidgetQueryFired(session, extension_id, widget_id)
+
+    let spec = WidgetSpecFor(session, extension_id, widget_id)
+    requires: spec.query.count > 0
+
+    ensures: EqlQueryDispatched(session, extension_id, widget_id, spec.query)
+}
+
+rule WidgetQueryResultStored {
+    when: EqlQueryResultReceived(session, extension_id, widget_id, result)
+
+    ensures: WidgetQueryResultStored(session, extension_id, widget_id, result)
+    ensures: WidgetRenderRequested(session, extension_id, widget_id)
+}
+
+rule WidgetRefiredOnWidgetsUpdated {
+    when: rpc/RpcEventReceived(session, "ui/widgets-updated")
+
+    ensures: ForEach(AllWidgetSpecs(session),
+        spec -> WidgetQueryFired(session, spec.extension_id, spec.id))
+}
+
+-- ─────────────────────────────────────────────
+-- Rendering
+-- ─────────────────────────────────────────────
+
+rule WidgetRenderedIntoProjectionBlock {
+    when: WidgetRenderRequested(session, extension_id, widget_id)
+
+    let spec   = WidgetSpecFor(session, extension_id, widget_id)
+    let data   = WidgetQueryResultFor(session, extension_id, widget_id)
+    let lstate = WidgetLocalStateFor(widget_id, extension_id)
+
+    ensures: ProjectionBlockContainsRenderedWidget(
+        extension_id, widget_id, spec.spec, data, lstate)
+    ensures: TranscriptContentPreserved()
+}
+
+rule ContentPathResolvesIntoQueryResult {
+    when: NodeContentResolved(node, data)
+
+    requires: node.content_path != null
+
+    ensures:
+        if PathExists(data, node.content_path):
+            ResolvedContent(node, data) = GetPath(data, node.content_path)
+        else:
+            ResolvedContent(node, data) = ""
+}
+
+rule ContentLiteralUsedWhenNoPath {
+    when: NodeContentResolved(node, data)
+
+    requires: node.content_path = null
+
+    ensures: ResolvedContent(node, data) = node.content
+}
+
+rule ListNodeExpandsOverCollection {
+    when: ListNodeRendered(node, data, lstate)
+
+    requires: node.type = list
+
+    let items = GetPath(data, node.items_path)
+
+    ensures:
+        if items.count > 0:
+            RenderedListChildren(node, data) =
+                for item in items: RenderNode(node.item_spec, ItemContext(data, item))
+        else:
+            RenderedListChildren(node, data) = {}
+}
+
+rule CollapsibleRendersChildrenWhenExpanded {
+    when: CollapsibleNodeRendered(node, data, lstate)
+
+    requires: node.type = collapsible
+    requires: node.key != null
+    requires: node.key not in lstate.collapsed_keys
+
+    ensures: RenderedCollapsibleChildren(node, data, lstate) =
+        for child in node.children: RenderNode(child, data)
+    ensures: CollapsibleIndicatorShown(node, expanded: true)
+}
+
+rule CollapsibleHidesChildrenWhenCollapsed {
+    when: CollapsibleNodeRendered(node, data, lstate)
+
+    requires: node.type = collapsible
+    requires: node.key != null
+    requires: node.key in lstate.collapsed_keys
+
+    ensures: RenderedCollapsibleChildren(node, data, lstate) = {}
+    ensures: CollapsibleIndicatorShown(node, expanded: false)
+}
+
+rule MalformedNodeRendersInlineError {
+    when: WidgetNodeRendered(node, data, lstate)
+
+    requires: not ValidNode(node)
+
+    ensures: InlineErrorRendered(node, WidgetErrorContext{
+        widget_id: lstate.widget_id,
+        extension_id: lstate.extension_id,
+        error_code: "malformed-spec",
+        message: MalformedNodeMessage(node),
+        context: malformed_spec})
+    ensures: WidgetErrorHandlerCalled(WidgetErrorContext{
+        widget_id: lstate.widget_id,
+        extension_id: lstate.extension_id,
+        error_code: "malformed-spec",
+        message: MalformedNodeMessage(node),
+        context: malformed_spec})
+}
+
+rule LocalStatePreservedAcrossRequery {
+    when: WidgetRenderRequested(session, extension_id, widget_id)
+
+    let lstate_before = WidgetLocalStateFor(widget_id, extension_id)
+
+    ensures: WidgetLocalStateFor(widget_id, extension_id).collapsed_keys =
+             lstate_before.collapsed_keys
+    ensures: WidgetLocalStateFor(widget_id, extension_id).event_state =
+             lstate_before.event_state
+}
+
+-- ─────────────────────────────────────────────
+-- Collapse / expand
+-- ─────────────────────────────────────────────
+
+rule CollapsibleToggledByUser {
+    when: UserTogglesCollapsible(session, extension_id, widget_id, node_key)
+
+    let lstate = WidgetLocalStateFor(widget_id, extension_id)
+
+    ensures:
+        if node_key in lstate.collapsed_keys:
+            lstate.collapsed_keys = lstate.collapsed_keys - {node_key}
+        else:
+            lstate.collapsed_keys = lstate.collapsed_keys + {node_key}
+    ensures: WidgetRenderRequested(session, extension_id, widget_id)
+}
+
+-- ─────────────────────────────────────────────
+-- Mutations
+-- ─────────────────────────────────────────────
+
+rule ButtonActivatedDispatchesMutation {
+    when: UserActivatesButton(session, extension_id, widget_id, node_key)
+
+    let spec   = WidgetSpecFor(session, extension_id, widget_id)
+    let node   = ButtonNodeWithKey(spec.spec, node_key)
+    let lstate = WidgetLocalStateFor(widget_id, extension_id)
+
+    requires: not node.disabled
+    requires: node_key not in lstate.in_flight_keys
+
+    ensures: lstate.in_flight_keys = lstate.in_flight_keys + {node_key}
+    ensures: MutationDispatched(session, node.mutation)
+    ensures: WidgetRenderRequested(session, extension_id, widget_id)
+}
+
+rule DisabledButtonNotActivated {
+    when: UserActivatesButton(session, extension_id, widget_id, node_key)
+
+    let spec = WidgetSpecFor(session, extension_id, widget_id)
+    let node = ButtonNodeWithKey(spec.spec, node_key)
+
+    requires: node.disabled
+
+    ensures: MutationNotDispatched(session, node.mutation)
+}
+
+rule InFlightButtonNotReactivated {
+    when: UserActivatesButton(session, extension_id, widget_id, node_key)
+
+    let lstate = WidgetLocalStateFor(widget_id, extension_id)
+
+    requires: node_key in lstate.in_flight_keys
+
+    ensures: MutationNotDispatched(session, any_mutation)
+}
+
+rule MutationTimeoutResetsInFlightState {
+    when: MutationTimedOut(session, extension_id, widget_id, node_key)
+
+    let spec   = WidgetSpecFor(session, extension_id, widget_id)
+    let node   = ButtonNodeWithKey(spec.spec, node_key)
+    let lstate = WidgetLocalStateFor(widget_id, extension_id)
+
+    ensures: lstate.in_flight_keys = lstate.in_flight_keys - {node_key}
+    ensures: WidgetErrorHandlerCalled(WidgetErrorContext{
+        widget_id: widget_id,
+        extension_id: extension_id,
+        error_code: "mutation-timeout",
+        message: "Mutation timed out after " + ToString(EffectiveMutationTimeout(node)) + "ms",
+        context: mutation_timeout})
+    ensures: WidgetRenderRequested(session, extension_id, widget_id)
+}
+
+rule EffectiveMutationTimeoutResolution {
+    when: EffectiveMutationTimeoutRequested(node)
+
+    ensures:
+        if node.mutation.timeout_ms != null:
+            EffectiveMutationTimeout(node) = node.mutation.timeout_ms
+        else if node.timeout_ms != null:
+            EffectiveMutationTimeout(node) = node.timeout_ms
+        else:
+            EffectiveMutationTimeout(node) = config.mutation_timeout_ms
+}
+
+-- ─────────────────────────────────────────────
+-- Event subscriptions
+-- ─────────────────────────────────────────────
+
+rule SubscribedEventUpdatesLocalStateAndRequeries {
+    when: rpc/RpcEventReceived(session, event_name)
+
+    ensures: ForEach(
+        WidgetSpecsSubscribedTo(session, event_name),
+        spec -> SubscribedEventApplied(session, spec, event_name,
+                                       rpc/RpcEventPayload(event_name)))
+}
+
+rule SubscribedEventApplied {
+    when: SubscribedEventApplied(session, spec, event_name, payload)
+
+    let lstate = WidgetLocalStateFor(spec.id, spec.extension_id)
+    let sub    = SubscriptionFor(spec, event_name)
+
+    ensures:
+        if sub.local_state_map != null:
+            lstate.event_state = MergeEventPayload(
+                lstate.event_state, sub.local_state_map, payload)
+    ensures: lstate.in_flight_keys = {}
+    ensures: WidgetQueryFired(session, spec.extension_id, spec.id)
+
+    @guidance
+        -- An arriving subscribed event implies the server processed the mutation.
+        -- Clear all in-flight keys on any subscribed event arrival.
+        -- If per-button correlation is needed, use event payload fields.
+}
+
+-- ─────────────────────────────────────────────
+-- Error handling
+-- ─────────────────────────────────────────────
+
+value WidgetErrorContext {
+    widget_id: String
+    extension_id: String
+    error_code: String
+    message: String
+    context: malformed_spec | mutation_timeout | query_failed | event_error
+}
+
+rule QueryFailureCallsErrorHandler {
+    when: EqlQueryFailed(session, extension_id, widget_id, error)
+
+    ensures: WidgetErrorHandlerCalled(WidgetErrorContext{
+        widget_id: widget_id,
+        extension_id: extension_id,
+        error_code: "query-failed",
+        message: error.message,
+        context: query_failed})
+}
+
+rule WidgetErrorHandlerIsGlobal {
+    when: WidgetErrorHandlerCalled(ctx)
+
+    ensures: GlobalWidgetErrorHandler(ctx)
+
+    @guidance
+        -- The global error handler is a single Elisp function registered
+        -- by the frontend. It receives a WidgetErrorContext and may log,
+        -- display a notification, or take corrective action.
+        -- Widgets do not define per-widget error handlers.
+}
+
+-- ─────────────────────────────────────────────
+-- Surfaces
+-- ─────────────────────────────────────────────
+
+surface ExtensionWidgetRegistration {
+    facing ext_mod: ext/ExtensionModule
+
+    context session: emacs/EmacsSession
+
+    provides:
+        ExtensionRegistersWidget(session, extension_id, spec)
+            when spec.id != "" and spec.spec != null
+        ExtensionDeregistersWidget(session, extension_id, widget_id)
+
+    @guidance
+        -- Extensions register a complete WidgetSpec once at startup.
+        -- The spec is static; data changes flow through query re-fires,
+        -- not spec updates. Structural changes (e.g. dynamic item counts)
+        -- are handled via ListNode with items_path bound to a query result.
+}
+
+surface EmacsWidgetRenderer {
+    facing frontend: emacs/EmacsFrontend
+
+    context session: emacs/EmacsSession
+
+    exposes:
+        AllWidgetSpecs(session)
+        AllWidgetQueryResults(session)
+
+    provides:
+        UserTogglesCollapsible(session, extension_id, widget_id, node_key)
+        UserActivatesButton(session, extension_id, widget_id, node_key)
+        WidgetRenderRequested(session, extension_id, widget_id)
+
+    @guidance
+        -- The renderer walks the WidgetSpec node tree and inserts
+        -- propertized text into the projection block via marker-bounded
+        -- delete/reinsert (existing projection mechanics).
+        -- Local state (collapse, in-flight, event_state) is preserved
+        -- across re-renders. Only deregistration resets it.
+        -- The renderer is pure Elisp; it does not use vui or own a buffer.
+}
+
+-- ─────────────────────────────────────────────
+-- Open questions
+-- ─────────────────────────────────────────────
+
+open question "Per-button in-flight tracking via event payload correlation — \
+is clearing all in-flight keys on any subscribed event sufficient, \
+or do specific mutations need to correlate with specific events?"
+
+open question "Cross-widget composition — deferred until a concrete use case demands it"
+
+open question "Conditional widget visibility — deferred; initial implementation \
+always shows registered widgets"
+
+open question "Placement vocabulary extension — sidebar, inline-in-transcript \
+deferred beyond above_editor | below_editor"
