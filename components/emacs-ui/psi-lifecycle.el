@@ -32,6 +32,7 @@
    :projection-widgets nil
    :projection-widget-specs nil
    :projection-widget-lstates nil
+   :projection-widget-data (make-hash-table :test #'equal)
    :projection-statuses nil
    :projection-footer nil
    :projection-notifications nil

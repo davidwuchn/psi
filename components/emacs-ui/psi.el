@@ -69,6 +69,7 @@ Used to detect stalled streaming runs and transition to deterministic recovery."
   projection-widgets
   projection-widget-specs
   projection-widget-lstates
+  projection-widget-data
   projection-statuses
   projection-footer
   projection-notifications

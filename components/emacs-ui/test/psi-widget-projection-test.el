@@ -325,5 +325,131 @@
   (let ((node '((:type . text) (:key . "t1") (:content . "x"))))
     (should (null (psi-widget-projection--find-node-by-key node "missing")))))
 
+;;; ─── Per-spec query data ─────────────────────────────────────────────────────
+
+(defun pwpt--make-spec-with-query (id query-vec &optional root-node)
+  "Build a spec alist with :query set to QUERY-VEC."
+  `((:id . ,id)
+    (:extension-id . "ext")
+    (:query . ,query-vec)
+    (:spec . ,(or root-node `((:type . text) (:content . ,id))))))
+
+(ert-deftest pwpt-spec-key-formats-correctly ()
+  (let ((spec (pwpt--make-spec "w1")))
+    (should (equal "ext/w1"
+                   (psi-widget-projection--spec-key spec)))))
+
+(ert-deftest pwpt-spec-query-string-nil-when-no-query ()
+  (let ((spec (pwpt--make-spec "w1")))
+    (should (null (psi-widget-projection--spec-query-string spec)))))
+
+(ert-deftest pwpt-spec-query-string-nil-when-empty-query ()
+  (let ((spec (pwpt--make-spec-with-query "w1" [])))
+    (should (null (psi-widget-projection--spec-query-string spec)))))
+
+(ert-deftest pwpt-spec-query-string-formats-keywords ()
+  (let* ((spec   (pwpt--make-spec-with-query "w1" [:psi.agent-chain/chains]))
+         (result (psi-widget-projection--spec-query-string spec)))
+    (should (stringp result))
+    (should (string-prefix-p "[" result))
+    (should (string-suffix-p "]" result))
+    (should (string-match-p "psi.agent-chain/chains" result))))
+
+(ert-deftest pwpt-spec-query-string-formats-multiple-keywords ()
+  (let* ((spec   (pwpt--make-spec-with-query "w1" [:psi.agent-chain/chains :psi.agent-chain/count]))
+         (result (psi-widget-projection--spec-query-string spec)))
+    (should (string-match-p "psi.agent-chain/chains" result))
+    (should (string-match-p "psi.agent-chain/count" result))))
+
+(ert-deftest pwpt-get-set-spec-data-roundtrip ()
+  (pwpt--with-state
+   (let ((data '((:psi.agent-chain/count . 3))))
+     (psi-widget-projection--set-spec-data "ext/w1" data)
+     (should (equal data (psi-widget-projection--get-spec-data "ext/w1"))))))
+
+(ert-deftest pwpt-get-spec-data-nil-when-absent ()
+  (pwpt--with-state
+   (should (null (psi-widget-projection--get-spec-data "ext/missing")))))
+
+(ert-deftest pwpt-fetch-spec-data-noop-when-no-query ()
+  "Spec with no :query fires no query_eql, renders immediately."
+  (pwpt--with-state
+   (let* ((spec  (pwpt--make-spec "w1"))
+          (render-called nil))
+     (setf (psi-emacs-state-projection-widget-specs psi-emacs--state) (list spec))
+     (cl-letf (((symbol-function 'psi-emacs--upsert-projection-block)
+                (lambda () (setq render-called t))))
+       (let ((calls (pwpt--capture-query-sends
+                     (lambda () (psi-widget-projection--fetch-spec-data (list spec))))))
+         (should (= 0 (length calls)))
+         (should render-called))))))
+
+(ert-deftest pwpt-fetch-spec-data-sends-query-for-spec-with-query ()
+  (pwpt--with-state
+   (let* ((spec (pwpt--make-spec-with-query "w1" [:psi.agent-chain/chains])))
+     (setf (psi-emacs-state-projection-widget-specs psi-emacs--state) (list spec))
+     (cl-letf (((symbol-function 'psi-emacs--upsert-projection-block) #'ignore))
+       (let ((calls (pwpt--capture-query-sends
+                     (lambda () (psi-widget-projection--fetch-spec-data (list spec))))))
+         (should (= 1 (length calls)))
+         (should (equal "query_eql" (car (car calls))))
+         (let ((query (cdr (assq :query (cadr (car calls))))))
+           (should (string-match-p "psi.agent-chain/chains" query))))))))
+
+(ert-deftest pwpt-fetch-spec-data-stores-result-and-rerenders ()
+  (pwpt--with-state
+   (let* ((spec         (pwpt--make-spec-with-query "w1" [:psi.agent-chain/count]))
+          (render-count 0)
+          (captured-cb  nil))
+     (setf (psi-emacs-state-projection-widget-specs psi-emacs--state) (list spec))
+     (cl-letf (((symbol-value 'psi-emacs--send-request-function)
+                (lambda (_state _op _params &optional cb) (setq captured-cb cb)))
+               ((symbol-function 'psi-emacs--upsert-projection-block)
+                (lambda () (cl-incf render-count))))
+       (psi-widget-projection--fetch-spec-data (list spec)))
+     ;; Simulate response
+     (when captured-cb
+       (cl-letf (((symbol-function 'psi-emacs--upsert-projection-block)
+                  (lambda () (cl-incf render-count))))
+         (funcall captured-cb
+                  '((:data . ((:result . ((:psi.agent-chain/count . 5)))))))))
+     (should (equal '((:psi.agent-chain/count . 5))
+                    (psi-widget-projection--get-spec-data "ext/w1")))
+     (should (> render-count 0)))))
+
+(ert-deftest pwpt-fetch-spec-data-multiple-specs-fires-per-spec ()
+  "Two specs with queries → two query_eql sends."
+  (pwpt--with-state
+   (let* ((spec1 (pwpt--make-spec-with-query "w1" [:psi.agent-chain/chains]))
+          (spec2 (pwpt--make-spec-with-query "w2" [:psi.agent-chain/count])))
+     (cl-letf (((symbol-function 'psi-emacs--upsert-projection-block) #'ignore))
+       (let ((calls (pwpt--capture-query-sends
+                     (lambda ()
+                       (psi-widget-projection--fetch-spec-data (list spec1 spec2))))))
+         (should (= 2 (length calls))))))))
+
+(ert-deftest pwpt-render-specs-passes-data-to-renderer ()
+  "render-specs passes stored data for content-path resolution."
+  (pwpt--with-state
+   (let* ((spec (pwpt--make-spec-with-query
+                 "w1" [:psi.agent-chain/count]
+                 '((:type . text) (:content-path . (:psi.agent-chain/count))))))
+     (setf (psi-emacs-state-projection-widget-specs psi-emacs--state) (list spec))
+     (psi-widget-projection--sync-lstates (list spec))
+     (psi-widget-projection--set-spec-data "ext/w1" '((:psi.agent-chain/count . 42)))
+     (let ((result (substring-no-properties
+                    (psi-widget-projection-render-specs psi-emacs--state))))
+       (should (string-match-p "42" result))))))
+
+(ert-deftest pwpt-render-specs-nil-data-when-no-query ()
+  "render-specs passes nil data when no query result stored."
+  (pwpt--with-state
+   (let* ((spec (pwpt--make-spec "w1" '((:type . text) (:content . "static")))))
+     (setf (psi-emacs-state-projection-widget-specs psi-emacs--state) (list spec))
+     (psi-widget-projection--sync-lstates (list spec))
+     (let ((result (substring-no-properties
+                    (psi-widget-projection-render-specs psi-emacs--state))))
+       (should (string-match-p "static" result))))))
+
 (provide 'psi-widget-projection-test)
 ;;; psi-widget-projection-test.el ends here

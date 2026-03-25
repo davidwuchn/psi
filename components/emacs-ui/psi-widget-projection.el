@@ -4,15 +4,18 @@
 ;;
 ;; Wires psi-widget-renderer into the live frontend:
 ;;
-;;   ui/widgets-updated event
+;;   ui/widget-specs-updated event
 ;;     → re-query [:psi.ui/widget-specs] via query_eql
 ;;     → store specs in psi-emacs-state
 ;;     → merge/initialise per-widget local state (lstate)
+;;     → for each spec with non-empty :query, fire query_eql
+;;       → store result in projection-widget-data keyed by "ext-id/widget-id"
 ;;     → trigger projection block re-render
 ;;
 ;;   psi-widget-projection-render-specs
 ;;     → called from psi-projection.el render block
 ;;     → renders each spec via psi-widget-renderer-render-spec
+;;       passing per-spec query data from projection-widget-data
 ;;     → returns propertized string
 ;;
 ;;   Button / collapsible interaction handlers
@@ -27,10 +30,11 @@
 
 ;;; Forward declarations
 
-(declare-function psi-emacs-state-rpc-client           "psi")
-(declare-function psi-emacs-state-projection-widget-specs  "psi")
+(declare-function psi-emacs-state-rpc-client                "psi")
+(declare-function psi-emacs-state-projection-widget-specs   "psi")
 (declare-function psi-emacs-state-projection-widget-lstates "psi")
-(declare-function psi-emacs--upsert-projection-block   "psi-projection")
+(declare-function psi-emacs-state-projection-widget-data    "psi")
+(declare-function psi-emacs--upsert-projection-block        "psi-projection")
 
 (defvar psi-emacs--state)
 (defvar psi-emacs--send-request-function)
@@ -68,7 +72,9 @@
       (setf (psi-emacs-state-projection-widget-specs psi-emacs--state)
             specs-list)
       (psi-widget-projection--sync-lstates specs-list)
-      (psi-emacs--upsert-projection-block))))
+      ;; Fetch per-spec query data; render after all fetches complete (or immediately
+      ;; if no specs have queries).
+      (psi-widget-projection--fetch-spec-data specs-list))))
 
 ;;; Local state management
 
@@ -108,6 +114,74 @@
         (setf (psi-emacs-state-projection-widget-lstates psi-emacs--state) lstates))
       (puthash key lstate lstates))))
 
+;;; Per-spec query data
+
+(defun psi-widget-projection--spec-key (spec)
+  "Return \"ext-id/widget-id\" key for SPEC."
+  (format "%s/%s"
+          (alist-get :extension-id spec nil nil #'equal)
+          (alist-get :id           spec nil nil #'equal)))
+
+(defun psi-widget-projection--spec-query-string (spec)
+  "Return an EQL query string for SPEC's :query vector, or nil if empty."
+  (let ((q (alist-get :query spec nil nil #'equal)))
+    (when (and q (> (length q) 0))
+      (format "[%s]"
+              (mapconcat (lambda (kw) (format "%s" kw))
+                         (if (vectorp q) (append q nil) q)
+                         " ")))))
+
+(defun psi-widget-projection--get-spec-data (key)
+  "Return stored query-result alist for KEY, or nil."
+  (when psi-emacs--state
+    (let ((ht (psi-emacs-state-projection-widget-data psi-emacs--state)))
+      (when (hash-table-p ht)
+        (gethash key ht)))))
+
+(defun psi-widget-projection--set-spec-data (key data)
+  "Store query-result DATA for KEY."
+  (when psi-emacs--state
+    (let ((ht (or (psi-emacs-state-projection-widget-data psi-emacs--state)
+                  (make-hash-table :test #'equal))))
+      (unless (hash-table-p (psi-emacs-state-projection-widget-data psi-emacs--state))
+        (setf (psi-emacs-state-projection-widget-data psi-emacs--state) ht))
+      (puthash key data ht))))
+
+(defun psi-widget-projection--fetch-spec-data (specs)
+  "Fetch per-spec query data for SPECS that have a non-empty :query.
+Fires one query_eql per spec; re-renders after each response.
+Specs without a :query trigger an immediate re-render."
+  (if (null specs)
+      (psi-emacs--upsert-projection-block)
+    (let ((needs-fetch nil))
+      (dolist (spec specs)
+        (let ((query-str (psi-widget-projection--spec-query-string spec))
+              (key       (psi-widget-projection--spec-key spec)))
+          (if (and query-str (functionp psi-emacs--send-request-function))
+              (progn
+                (setq needs-fetch t)
+                (let ((captured-key key))
+                  (funcall psi-emacs--send-request-function
+                           psi-emacs--state
+                           "query_eql"
+                           `((:query . ,query-str))
+                           (lambda (frame)
+                             (psi-widget-projection--handle-spec-data-result
+                              captured-key frame)))))
+            ;; No query — clear stale data
+            (psi-widget-projection--set-spec-data key nil))))
+      (unless needs-fetch
+        (psi-emacs--upsert-projection-block)))))
+
+(defun psi-widget-projection--handle-spec-data-result (key frame)
+  "Handle query_eql response FRAME for per-spec data identified by KEY."
+  (when psi-emacs--state
+    (let* ((data   (alist-get :data frame nil nil #'equal))
+           (result (and (listp data)
+                        (alist-get :result data nil nil #'equal))))
+      (psi-widget-projection--set-spec-data key result)
+      (psi-emacs--upsert-projection-block))))
+
 ;;; Rendering
 
 (defun psi-widget-projection-render-specs (state)
@@ -120,8 +194,10 @@ Returns empty string when no specs are registered."
        (lambda (spec)
          (let* ((ext-id    (alist-get :extension-id spec nil nil #'equal))
                 (widget-id (alist-get :id           spec nil nil #'equal))
+                (key       (format "%s/%s" ext-id widget-id))
+                (data      (psi-widget-projection--get-spec-data key))
                 (lstate    (psi-widget-projection--get-lstate ext-id widget-id)))
-           (psi-widget-renderer-render-spec spec nil lstate)))
+           (psi-widget-renderer-render-spec spec data lstate)))
        specs
        "\n"))))
 
