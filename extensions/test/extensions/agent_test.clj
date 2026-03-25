@@ -247,6 +247,26 @@
           (is (true? (:is-error result)))
           (is (str/includes? (:content result) "boom")))))))
 
+(deftest sync-mode-spawn-does-not-directly-emit-result-test
+  (testing "sync mode does not emit result from spawn-agent! itself"
+    (let [{:keys [api]} (nullable/create-nullable-extension-api
+                         {:path "/test/agent.clj"})
+          emit-count (atom 0)]
+      (sut/init api)
+      (with-redefs [sut/await-terminal-workflow (fn [_id _timeout]
+                                                {:workflow {:psi.extension.workflow/error? false
+                                                            :psi.extension.workflow/result "sync ok"
+                                                            :psi.extension.workflow/data {:agent/elapsed-ms 12}}
+                                                 :timeout false
+                                                 :error nil})
+                    sut/emit-result-message! (fn [& _]
+                                               (swap! emit-count inc))]
+        (let [result (#'sut/spawn-agent! "sync task" nil {:mode :sync
+                                                       :tool-call-id "tc-sync-no-double"})]
+          (is (= 0 @emit-count))
+          (is (false? (:is-error result)))
+          (is (= "sync ok" (:content result))))))))
+
 (deftest execute-agent-tool-timeout-test
   (testing "create passes timeout_ms through to spawn-agent"
     (let [{:keys [api state]} (nullable/create-nullable-extension-api
