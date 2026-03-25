@@ -440,7 +440,9 @@ Child sessions (non-nil parent-session-id that matches a slot) are indented."
          (setf (psi-emacs-state-projection-footer psi-emacs--state)
                (psi-emacs--projection-footer-text data))
          (psi-emacs--upsert-projection-block)))
-      (_ nil)))))
+      (_ nil))
+      ;; Dispatch every event to widget subscription handler
+      (psi-widget-projection-handle-event event data))))
 
 (provide 'psi-events)
 

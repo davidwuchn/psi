@@ -319,6 +319,73 @@ Updates local collapsed state and re-renders — no RPC round-trip."
       (format "(%s)" (mapconcat #'psi-widget-projection--edn-encode x " "))))
    (t (format "%S" x))))
 
+;;; Event subscriptions
+
+(defun psi-widget-projection--specs-subscribed-to (event-name)
+  "Return list of specs whose :subscriptions include EVENT-NAME."
+  (when psi-emacs--state
+    (let ((specs (psi-emacs-state-projection-widget-specs psi-emacs--state)))
+      (cl-remove-if-not
+       (lambda (spec)
+         (let ((subs (alist-get :subscriptions spec nil nil #'equal)))
+           (cl-some (lambda (sub)
+                      (equal (alist-get :event-name sub nil nil #'equal)
+                             event-name))
+                    (if (vectorp subs) (append subs nil) subs))))
+       specs))))
+
+(defun psi-widget-projection--merge-event-payload (event-state local-state-map payload)
+  "Merge PAYLOAD into EVENT-STATE using LOCAL-STATE-MAP.
+LOCAL-STATE-MAP is an alist of (local-key . path-into-payload).
+Returns updated event-state alist."
+  (let ((result (copy-alist (or event-state nil))))
+    (dolist (mapping (if (vectorp local-state-map)
+                         (append local-state-map nil)
+                       local-state-map))
+      (let* ((local-key (car mapping))
+             (path      (cdr mapping))
+             (path-list (cond ((vectorp path) (append path nil))
+                              ((listp path)   path)
+                              (t              (list path))))
+             (val       (psi-widget-renderer--get-path payload path-list)))
+        (setq result (cons (cons local-key val)
+                           (cl-remove-if (lambda (pair) (equal (car pair) local-key))
+                                         result)))))
+    result))
+
+(defun psi-widget-projection--apply-subscribed-event (spec event-name payload)
+  "Apply a subscribed EVENT-NAME with PAYLOAD to SPEC's lstate.
+Merges local_state_map paths, clears in-flight keys, re-fires query."
+  (let* ((ext-id    (alist-get :extension-id spec nil nil #'equal))
+         (widget-id (alist-get :id           spec nil nil #'equal))
+         (subs      (let ((s (alist-get :subscriptions spec nil nil #'equal)))
+                      (if (vectorp s) (append s nil) s)))
+         (sub       (cl-find-if
+                     (lambda (s)
+                       (equal (alist-get :event-name s nil nil #'equal) event-name))
+                     subs))
+         (lstate    (psi-widget-projection--get-lstate ext-id widget-id))
+         (lsm       (alist-get :local-state-map sub nil nil #'equal))
+         ;; Merge payload into event-state when local-state-map present
+         (new-event-state
+          (if lsm
+              (psi-widget-projection--merge-event-payload
+               (plist-get lstate :event-state) lsm payload)
+            (plist-get lstate :event-state)))
+         ;; Clear all in-flight keys, update event-state
+         (cleared    (psi-widget-renderer-lstate-clear-in-flight lstate))
+         (new-lstate (plist-put (copy-sequence cleared) :event-state new-event-state)))
+    (psi-widget-projection--set-lstate ext-id widget-id new-lstate)
+    ;; Re-fire query (re-renders after data arrives, or immediately if no query)
+    (psi-widget-projection--fetch-spec-data (list spec))))
+
+(defun psi-widget-projection-handle-event (event-name payload)
+  "Dispatch EVENT-NAME with PAYLOAD to any subscribed widget specs.
+Called from psi-events.el for every inbound RPC event."
+  (when psi-emacs--state
+    (dolist (spec (psi-widget-projection--specs-subscribed-to event-name))
+      (psi-widget-projection--apply-subscribed-event spec event-name payload))))
+
 ;;; Setup — register interaction handlers
 
 (defun psi-widget-projection-setup ()
