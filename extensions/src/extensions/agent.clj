@@ -444,7 +444,7 @@
              (or (:psi.extension.workflow/done? wf)
                  (:psi.extension.workflow/error? wf)))
     (let [id (:psi.extension.workflow/id wf)]
-      {:text   (str "  /agent-cont " id " <prompt> · ✕ remove")
+      {:text   (str "  /agent-cont " id " [your prompt] · ✕ remove")
        :action {:type :command
                 :command (str "/agent-rm " id)}})))
 
@@ -617,7 +617,7 @@
   (->> (current-session-messages query-fn)
        (remove :custom-type)
        (map :role)
-       (filter #{{"user" "assistant"}})
+       (filter #{"user" "assistant"})
        last))
 
 (defn- inject-result-into-context!
@@ -664,18 +664,11 @@
         (inject-result-into-context! {:id id
                                       :turn-count turn-count
                                       :result-text result-text})
-        (do
-          (try
-            (mutate-fn 'psi.extension/append-entry
-                       {:custom-type "agent-result"
-                        :data        full})
-            (catch Exception _ nil))
-          (try
-            (mutate-fn 'psi.extension/send-message
-                       {:role        "assistant"
-                        :content     full
-                        :custom-type "agent-result"})
-            (catch Exception _ nil)))))
+        (try
+          (mutate-fn 'psi.extension/append-entry
+                     {:custom-type "agent-result"
+                      :data        full})
+          (catch Exception _ nil))))
     (log! (str "[agent-result] " heading))
     (when (seq result-text)
       (log! (task-preview result-text 800)))
@@ -954,18 +947,15 @@
             (if (= :sync mode*)
               (let [{:keys [timeout workflow error]} (await-terminal-workflow id timeout-ms)
                     wf       (or workflow (workflow-by-id id))
-                    text     (or (get-in wf [:psi.extension.workflow/data :agent/last-text])
-                                 (:psi.extension.workflow/result wf)
-                                 (:psi.extension.workflow/error-message wf)
-                                 "")
-                    elapsed  (or (get-in wf [:psi.extension.workflow/data :agent/elapsed-ms])
-                                 (:psi.extension.workflow/elapsed-ms wf)
-                                 0)
-                    ok?      (and wf
-                                  (not timeout)
-                                  (not error)
-                                  (not (true? (:psi.extension.workflow/error? wf))))
-                    text*    (cond
+                    text  (or (get-in wf [:psi.extension.workflow/data :agent/last-text])
+                               (:psi.extension.workflow/result wf)
+                               (:psi.extension.workflow/error-message wf)
+                               "")
+                    ok?   (and wf
+                               (not timeout)
+                               (not error)
+                               (not (true? (:psi.extension.workflow/error? wf))))
+                    text* (cond
                                timeout
                                (str "Error: Timed out waiting for Agent #" id " to finish.")
 
@@ -975,13 +965,8 @@
                                :else
                                text)]
                 (refresh-widgets!)
-                (emit-result-message! {:id                          id
-                                       :prompt                      task
-                                       :turn-count                  1
-                                       :ok?                         ok?
-                                       :elapsed-ms                  elapsed
-                                       :result-text                 text*
-                                       :include-result-in-context?  include-result-in-context?})
+                ;; on-finished callback handles emit-result-message! for all agents
+                ;; (including sync). Calling it here too would double-display results.
                 {:ok id
                  :mode :sync
                  :is-error (not ok?)

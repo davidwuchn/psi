@@ -427,6 +427,8 @@
           line (#'sut/widget-action-line wf)]
       (is (map? line))
       (is (str/includes? (:text line) "✕ remove"))
+      (is (str/includes? (:text line) "[your prompt]"))
+      (is (not (str/includes? (:text line) "<prompt>")))
       (is (= "/agent-rm 7" (get-in line [:action :command])))))
 
   (testing "running agent rows do not expose remove action"
