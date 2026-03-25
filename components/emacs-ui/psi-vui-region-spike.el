@@ -95,14 +95,40 @@
   (psi-vui-rpc-client-provider client
     (vui-component 'psi-vui-region-status)))
 
+;;; Mount without switching buffers
+;; vui-mount unconditionally calls switch-to-buffer at the end.
+;; We replicate its internals using with-current-buffer so the
+;; calling window is never disturbed.
+
+(defun psi-vui-region-spike--mount-in-buffer (vnode buf)
+  "Mount VNODE into BUF without switching the selected window.
+Returns the root instance."
+  (let* ((instance (vui--create-instance vnode nil))
+         (vui--pending-effects nil))
+    (setf (vui-instance-buffer instance) buf)
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (unless (derived-mode-p 'vui-mode)
+          (vui-mode))
+        (remove-overlays)
+        (erase-buffer)
+        (setq-local vui--root-instance instance)
+        (let ((vui--root-instance instance))
+          (setq vui--rendering-p t)
+          (unwind-protect
+              (vui--render-instance instance)
+            (setq vui--rendering-p nil)))
+        (widget-setup)
+        (vui--run-pending-effects)
+        (goto-char (point-min))))
+    instance))
+
 ;;; Window management
 
 (defun psi-vui-region-spike--get-or-create-window (transcript-window)
   "Return the vui split window below TRANSCRIPT-WINDOW, creating it if needed."
   (let ((vui-buf (get-buffer-create psi-vui-region-spike--vui-buffer-name)))
-    ;; Look for an existing window already showing the vui buffer
     (or (get-buffer-window vui-buf)
-        ;; Split below transcript window, fixed height
         (let ((win (split-window transcript-window
                                  (- psi-vui-region-spike--window-height)
                                  'below)))
@@ -112,10 +138,9 @@
 
 (defun psi-vui-region-spike--mount-vui (client)
   "Mount the vui component into the vui region buffer with CLIENT."
-  (let ((vnode (vui-component 'psi-vui-region-root :client client)))
-    ;; vui-mount switches to the buffer — we call it, then restore window state
-    (save-window-excursion
-      (vui-mount vnode psi-vui-region-spike--vui-buffer-name))))
+  (let* ((buf   (get-buffer-create psi-vui-region-spike--vui-buffer-name))
+         (vnode (vui-component 'psi-vui-region-root :client client)))
+    (psi-vui-region-spike--mount-in-buffer vnode buf)))
 
 ;;; Entry point
 
