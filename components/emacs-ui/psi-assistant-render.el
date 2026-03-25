@@ -11,7 +11,7 @@
 (defconst psi-emacs--assistant-line-prefix "ψ: "
   "Prefix rendered for assistant transcript lines.")
 
-(defconst psi-emacs--thinking-line-prefix "ψ⋯ "
+(defconst psi-emacs--thinking-line-prefix "· "
   "Prefix rendered for assistant thinking transcript lines.")
 
 (defconst psi-emacs--assistant-stream-verbatim-property 'psi-emacs-stream-verbatim
@@ -130,7 +130,11 @@ while streaming; markdown processing is deferred until finalization."
         (save-excursion
           (psi-emacs--ensure-newline-before-append)
           (let ((start (copy-marker (point) nil))
-                (end (copy-marker (point) t)))
+                ;; Non-advancing end marker: tool rows inserted immediately after
+                ;; this assistant line must not cause the end marker to drift past
+                ;; them, which would make delete-region swallow the tool row on the
+                ;; next streaming delta.
+                (end (copy-marker (point) nil)))
             (let ((inhibit-read-only t))
               (insert (psi-emacs--render-assistant-line text))
               (psi-emacs--mark-region-read-only start (point)))
@@ -168,15 +172,33 @@ while streaming; markdown processing is deferred until finalization."
                 (psi-emacs--mark-region-read-only start (point))
                 (set-marker end (point)))))
         (save-excursion
-          (psi-emacs--ensure-newline-before-append)
-          (let ((start (copy-marker (point) nil))
-                (end (copy-marker (point) nil)))
-            (let ((inhibit-read-only t))
-              (insert (psi-emacs--render-thinking-line text))
-              (psi-emacs--mark-region-read-only start (point)))
-            (set-marker end (point))
-            (setf (psi-emacs-state-thinking-range psi-emacs--state)
-                  (cons start end)))))
+          (let* ((assistant-range (psi-emacs-state-assistant-range psi-emacs--state))
+                 (assistant-start-marker (and (psi-emacs--assistant-range-live-p assistant-range)
+                                            (car assistant-range))))
+            (if assistant-start-marker
+                (progn
+                  (goto-char (marker-position assistant-start-marker))
+                  (unless (or (bobp) (eq (char-before) ?\n))
+                    (let ((inhibit-read-only t)) (insert "\n")))
+                  (let ((start (copy-marker (point) nil))
+                        (end (copy-marker (point) nil)))
+                    (let ((inhibit-read-only t))
+                      (insert (psi-emacs--render-thinking-line text))
+                      (psi-emacs--mark-region-read-only start (point)))
+                    (set-marker end (point))
+                    (setf (psi-emacs-state-thinking-range psi-emacs--state)
+                          (cons start end))
+                    (set-marker assistant-start-marker (point))))
+              (progn
+                (psi-emacs--ensure-newline-before-append)
+                (let ((start (copy-marker (point) nil))
+                      (end (copy-marker (point) nil)))
+                  (let ((inhibit-read-only t))
+                    (insert (psi-emacs--render-thinking-line text))
+                    (psi-emacs--mark-region-read-only start (point)))
+                  (set-marker end (point))
+                  (setf (psi-emacs-state-thinking-range psi-emacs--state)
+                        (cons start end))))))))
       (let ((updated-range (psi-emacs-state-thinking-range psi-emacs--state)))
         (when (psi-emacs--assistant-range-live-p updated-range)
           (save-excursion
@@ -307,21 +329,45 @@ so the next thinking delta still starts a fresh block."
           (setf (psi-emacs-state-thinking-in-progress psi-emacs--state) nil))))))
 
 (defun psi-emacs--assistant-finalize (text)
-  "Finalize assistant block with TEXT and clear in-progress state."
+  "Finalize assistant block with TEXT and clear in-progress state.
+
+Appends a blank line after the finalized reply to visually separate it
+from the next user prompt."
   (when psi-emacs--state
     (let* ((text* (if (and (stringp text) (string-empty-p text)) nil text))
            (final (or text* (psi-emacs-state-assistant-in-progress psi-emacs--state) ""))
-           (follow-input (psi-emacs--draft-anchor-at-end-p)))
+           ;; Capture cursor intent before any transcript mutations.
+           ;; Transcript inserts above the separator shift absolute positions,
+           ;; so we record offset-from-input-start rather than absolute point.
+           ;; follow-input: user has cursor somewhere in the input area.
+           ;; input-offset: position relative to input-start (restored afterward).
+           (input-start-before (psi-emacs--input-start-position))
+           (follow-input (and input-start-before
+                              (>= (point) input-start-before)
+                              (<= (point) (psi-emacs--draft-end-position))))
+           (input-offset (and follow-input (- (point) input-start-before))))
       (psi-emacs--set-assistant-line final nil)
       (psi-emacs--process-finalized-assistant-range
        (psi-emacs-state-assistant-range psi-emacs--state))
       (setf (psi-emacs-state-assistant-in-progress psi-emacs--state) nil)
       (setf (psi-emacs-state-assistant-range psi-emacs--state) nil)
-      (psi-emacs--clear-thinking-line)
+      ;; Archive (not clear) any live thinking block — it is part of the
+      ;; transcript and must remain visible after the reply is finalized.
+      (psi-emacs--archive-thinking-line)
       (psi-emacs--disarm-stream-watchdog psi-emacs--state)
       (psi-emacs--set-run-state psi-emacs--state 'idle)
+      ;; Blank line after reply — visual breathing room before next user prompt.
+      (save-excursion
+        (psi-emacs--ensure-newline-before-append)
+        (let ((inhibit-read-only t))
+          (insert "\n")))
       (if follow-input
-          (goto-char (psi-emacs--draft-end-position))
+          ;; Restore cursor to the same relative position within the input area.
+          ;; The input text is unchanged; only the transcript above it grew.
+          (let* ((input-start-after (psi-emacs--input-start-position))
+                 (input-end-after (psi-emacs--draft-end-position))
+                 (restored (+ input-start-after (or input-offset 0))))
+            (goto-char (max input-start-after (min restored input-end-after))))
         (goto-char (psi-emacs--transcript-append-position))))))
 
 (defun psi-emacs--assistant-content-kind (value)

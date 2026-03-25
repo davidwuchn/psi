@@ -1178,12 +1178,19 @@
                                                 (fn []
                                                   (loop []
                                                     (when-not @stop?
-                                                      (when-let [evt (.poll progress-q 50
+                                                      (when-let [evt (.poll progress-q 10
                                                                             java.util.concurrent.TimeUnit/MILLISECONDS)]
                                                         (when-let [{:keys [event data]} (progress-event->rpc-event evt)]
                                                           (emit! event data)
                                                           (when (= :tool-result (:event-kind evt))
-                                                            (emit! "footer/updated" (footer-updated-payload ctx)))))
+                                                            (emit! "footer/updated" (footer-updated-payload ctx))))
+                                                        (loop []
+                                                          (when-let [more (.poll progress-q)]
+                                                            (when-let [{:keys [event data]} (progress-event->rpc-event more)]
+                                                              (emit! event data)
+                                                              (when (= :tool-result (:event-kind more))
+                                                                (emit! "footer/updated" (footer-updated-payload ctx))))
+                                                            (recur))))
                                                       (recur))))
                                                 "rpc-poll-loop")
                                     result    (runtime/run-agent-loop-in!
@@ -1765,11 +1772,25 @@
                                                (fn []
                                                  (loop []
                                                    (when-not @progress-stop?
-                                                     (when-let [evt (.poll progress-q 50 java.util.concurrent.TimeUnit/MILLISECONDS)]
+                                                     ;; Block up to 10ms waiting for the next event, then drain
+                                                     ;; all immediately-available events without sleeping between
+                                                     ;; them. This prevents batching: events from a new LLM turn
+                                                     ;; that arrive while the loop was idle are emitted one-by-one
+                                                     ;; in arrival order rather than as a burst after a 50ms gap.
+                                                     (when-let [evt (.poll progress-q 10 java.util.concurrent.TimeUnit/MILLISECONDS)]
                                                        (when-let [{:keys [event data]} (progress-event->rpc-event evt)]
                                                          (emit! event data)
                                                          (when (= :tool-result (:event-kind evt))
-                                                           (emit! "footer/updated" (footer-updated-payload ctx)))))
+                                                           (emit! "footer/updated" (footer-updated-payload ctx))))
+                                                       ;; Drain any additional events already in the queue
+                                                       ;; without blocking, preserving arrival order.
+                                                       (loop []
+                                                         (when-let [more (.poll progress-q)]
+                                                           (when-let [{:keys [event data]} (progress-event->rpc-event more)]
+                                                             (emit! event data)
+                                                             (when (= :tool-result (:event-kind more))
+                                                               (emit! "footer/updated" (footer-updated-payload ctx))))
+                                                           (recur))))
                                                      (recur))))
                                                "rpc-progress-loop")]
                             (try

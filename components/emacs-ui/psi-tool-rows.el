@@ -394,7 +394,15 @@ Rows are rendered according to global tool-output-view-mode."
                 (insert rendered)
                 (set-marker end (point))
                 ;; Keep row boundary stable when projection is inserted at row end.
-                (set-marker-insertion-type end nil)))
+                (set-marker-insertion-type end nil)
+                ;; If the assistant start marker drifted to the tool row start
+                ;; (due to the delete above collapsing markers at that position),
+                ;; advance it to the tool row end so the assistant range still
+                ;; covers only the assistant line and not this tool row.
+                (let* ((ar (psi-emacs-state-assistant-range psi-emacs--state))
+                       (as (and (psi-emacs--assistant-range-live-p ar) (car ar))))
+                  (when (and as (= (marker-position as) start-pos))
+                    (set-marker as (point))))))
             (puthash tool-id (list :id tool-id
                                    :tool-name tool-name*
                                    :arguments arguments*
@@ -410,28 +418,72 @@ Rows are rendered according to global tool-output-view-mode."
                                    :end end)
                      rows))
         (save-excursion
-          (psi-emacs--ensure-newline-before-append)
-          (let ((new-start (copy-marker (point) nil))
-                ;; Keep insertion-type nil so projection/footer inserted at the
-                ;; row boundary stays outside this tool row range.
-                (new-end (copy-marker (point) nil)))
-            (insert rendered)
-            (set-marker new-end (point))
-            (set-marker-insertion-type new-end nil)
-            (puthash tool-id (list :id tool-id
-                                   :tool-name tool-name*
-                                   :arguments arguments*
-                                   :parsed-args parsed-args*
-                                   :details details*
-                                   :is-error is-error*
-                                   :stage stage
-                                   :status status
-                                   :text text
-                                   :tool-summary tool-summary
-                                   :accumulated-text accumulated
-                                   :start new-start
-                                   :end new-end)
-                     rows))))
+          ;; New tool rows must be inserted before the live assistant line (if
+          ;; one exists) so that their markers never overlap the assistant range.
+          ;; Overlapping markers cause delete-region on tool-row update to
+          ;; accidentally swallow the assistant line, and vice-versa.
+          ;; When no assistant range is live, fall back to the normal
+          ;; transcript-append position (just above the input separator).
+          (let* ((assistant-range (psi-emacs-state-assistant-range psi-emacs--state))
+                 (assistant-start-marker
+                  (and (psi-emacs--assistant-range-live-p assistant-range)
+                       (car assistant-range)))
+                 (insert-pos (and assistant-start-marker
+                                  (marker-position assistant-start-marker))))
+            (if insert-pos
+                (progn
+                  (goto-char insert-pos)
+                  (unless (or (bobp) (eq (char-before) ?\n))
+                    (let ((inhibit-read-only t)) (insert "\n")))
+                  (let ((new-start (copy-marker (point) nil))
+                        (new-end   (copy-marker (point) nil)))
+                    (let ((inhibit-read-only t))
+                      (insert rendered))
+                    (set-marker new-end (point))
+                    (set-marker-insertion-type new-end nil)
+                    ;; The assistant start marker is nil-type so it stayed at
+                    ;; insert-pos while we inserted the tool row before it.
+                    ;; Advance it to point (= end of tool row = start of
+                    ;; assistant line) so the assistant range covers only the
+                    ;; assistant line and not this new tool row.
+                    (set-marker assistant-start-marker (point))
+                    (puthash tool-id (list :id tool-id
+                                           :tool-name tool-name*
+                                           :arguments arguments*
+                                           :parsed-args parsed-args*
+                                           :details details*
+                                           :is-error is-error*
+                                           :stage stage
+                                           :status status
+                                           :text text
+                                           :tool-summary tool-summary
+                                           :accumulated-text accumulated
+                                           :start new-start
+                                           :end new-end)
+                             rows)))
+              (psi-emacs--ensure-newline-before-append)
+              (let ((new-start (copy-marker (point) nil))
+                    ;; Keep insertion-type nil so projection/footer inserted at the
+                    ;; row boundary stays outside this tool row range.
+                    (new-end (copy-marker (point) nil)))
+                (let ((inhibit-read-only t))
+                  (insert rendered))
+                (set-marker new-end (point))
+                (set-marker-insertion-type new-end nil)
+                (puthash tool-id (list :id tool-id
+                                       :tool-name tool-name*
+                                       :arguments arguments*
+                                       :parsed-args parsed-args*
+                                       :details details*
+                                       :is-error is-error*
+                                       :stage stage
+                                       :status status
+                                       :text text
+                                       :tool-summary tool-summary
+                                       :accumulated-text accumulated
+                                       :start new-start
+                                       :end new-end)
+                         rows))))))
       (when follow-anchor
         (psi-emacs--set-draft-anchor-to-end)))))
 

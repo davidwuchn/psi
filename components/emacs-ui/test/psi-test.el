@@ -1872,11 +1872,51 @@
            '((:event . "assistant/message") (:data . ((:text . "Hello world")))))
           (should-not (psi-emacs-state-assistant-in-progress psi-emacs--state))
           (should (eq 'idle (psi-emacs-state-run-state psi-emacs--state)))
-          (should (equal "ψ: Hello world\n" (buffer-string))))
+          (should (equal "ψ: Hello world\n\n" (buffer-string))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
-(ert-deftest psi-thinking-streaming-renders-ephemeral-line-and-clears-on-finalize ()
+(ert-deftest psi-assistant-finalize-preserves-cursor-when-user-typing-in-input-area ()
+  "Finalize must preserve cursor offset within the input area.
+
+If the user types \"hello\" then positions cursor between \\='h\\=' and \\='e\\='
+while the agent is streaming, the cursor must stay between \\='h\\=' and \\='e\\='
+after the turn completes.  Transcript inserts above the separator shift absolute
+positions, so we assert on offset-from-input-start rather than absolute point.
+
+The old implementation called (goto-char (draft-end-position)) unconditionally
+when the anchor was at-end, which jumped the cursor to the end of the draft."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (progn
+          (psi-emacs--ensure-input-area)
+          ;; User types "hello" in the input area
+          (goto-char (psi-emacs--draft-end-position))
+          (let ((inhibit-read-only t))
+            (insert "hello"))
+          ;; User moves cursor mid-word: 1 char into the input text (after 'h')
+          (goto-char (+ (psi-emacs--input-start-position) 1))
+          (let ((saved-input-offset 1))
+            ;; Agent streams and finalizes
+            (psi-emacs--handle-rpc-event
+             '((:event . "assistant/delta") (:data . ((:text . "reply")))))
+            (psi-emacs--handle-rpc-event
+             '((:event . "assistant/message") (:data . ((:text . "reply done")))))
+            ;; Cursor offset within the input area must be preserved.
+            (let ((offset-after (- (point) (psi-emacs--input-start-position))))
+              (should (= saved-input-offset offset-after)))
+            ;; Draft text must be intact and unmodified
+            (should (equal "hello" (psi-emacs--tail-draft-text)))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
+(ert-deftest psi-thinking-streaming-renders-line-and-archives-on-finalize ()
+  "Thinking line must remain visible after reply is finalized (archived, not cleared).
+
+The thinking block is part of the transcript — it should be frozen in place
+when the assistant reply arrives, not deleted."
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -1886,12 +1926,16 @@
            '((:event . "assistant/thinking-delta") (:data . ((:text . "plan")))))
           (should (eq 'streaming (psi-emacs-state-run-state psi-emacs--state)))
           (should (equal "plan" (psi-emacs-state-thinking-in-progress psi-emacs--state)))
-          (should (string-match-p "ψ⋯ plan" (buffer-string)))
+          (should (string-match-p "· plan" (buffer-string)))
           (psi-emacs--handle-rpc-event
            '((:event . "assistant/message") (:data . ((:text . "done")))))
+          ;; in-progress state cleared
           (should-not (psi-emacs-state-thinking-in-progress psi-emacs--state))
           (should-not (psi-emacs-state-thinking-range psi-emacs--state))
-          (should (equal "ψ: done\n" (buffer-string))))
+          ;; thinking line archived — still visible in buffer
+          (should (= 1 (length (psi-emacs-state-thinking-archived-ranges psi-emacs--state))))
+          (should (string-match-p "· plan" (buffer-string)))
+          (should (string-match-p "ψ: done" (buffer-string))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
@@ -1913,9 +1957,9 @@ semantics).  Each successive event carries more text than the previous one."
            '((:event . "assistant/thinking-delta") (:data . ((:text . "I think more")))))
           (should (equal "I think more" (psi-emacs-state-thinking-in-progress psi-emacs--state)))
           ;; Exactly one thinking line in the buffer — not one per delta
-          (should (equal 1 (cl-count-if (lambda (line) (string-prefix-p "ψ⋯ " line))
+          (should (equal 1 (cl-count-if (lambda (line) (string-prefix-p "· " line))
                                         (split-string (buffer-string) "\n" t))))
-          (should (string-match-p "ψ⋯ I think more" (buffer-string))))
+          (should (string-match-p "· I think more" (buffer-string))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
@@ -1938,9 +1982,9 @@ full accumulated thinking text rather than append-only chunks."
              `((:event . "assistant/thinking-delta") (:data . ((:text . ,text))))))
           (should (equal "- TUI command docs don't mention `/work-*`"
                          (psi-emacs-state-thinking-in-progress psi-emacs--state)))
-          (should (equal 1 (cl-count-if (lambda (line) (string-prefix-p "ψ⋯ " line))
+          (should (equal 1 (cl-count-if (lambda (line) (string-prefix-p "· " line))
                                         (split-string (buffer-string) "\n" t))))
-          (should (equal (format "ψ⋯ %s\n"
+          (should (equal (format "· %s\n"
                                  "- TUI command docs don't mention `/work-*`")
                          (buffer-string))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
@@ -1978,10 +2022,48 @@ full accumulated thinking text rather than append-only chunks."
            '((:event . "assistant/thinking-delta") (:data . ((:text . "plan-2")))))
           (should (equal "plan-2" (psi-emacs-state-thinking-in-progress psi-emacs--state)))
           (should (= 1 (length (psi-emacs-state-thinking-archived-ranges psi-emacs--state))))
-          (should (equal "ψ⋯ plan-1\nt-break pending\nψ⋯ plan-2\n"
+          (should (equal "· plan-1\nt-break pending\n· plan-2\n"
                          (buffer-string))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
+(ert-deftest psi-thinking-streaming-assistant-line-after-tool-insertion-keeps-late-thinking-block-ordered-before-final-reply ()
+  "Thinking blocks emitted after an assistant line has started must stay in transcript order.
+
+Second thinking blocks (after a tool event) should render before the finalized
+reply that comes later in the same assistant turn, and must preserve the
+thinking prefix.
+
+"
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (unwind-protect
+        (progn
+          (psi-emacs--ensure-input-area)
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/thinking-delta") (:data . ((:text . "plan-1")))))
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/delta") (:data . ((:text . "reply-1")))))
+          (psi-emacs--handle-rpc-event
+           '((:event . "tool/start") (:data . ((:tool-id . "t1") (:tool-name . "bash") (:arguments . "{\\\"command\\\":\\\"ls\\\"}")))))
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/thinking-delta") (:data . ((:text . "plan-2")))))
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/delta") (:data . ((:text . "reply-2")))))
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/message") (:data . ((:text . "final reply")))))
+          (let ((buf (buffer-substring-no-properties
+                      (point-min)
+                      (psi-emacs--input-separator-position))))
+            (should (string-match-p "\n· plan-2\n" buf))
+            (let* ((plan-2-idx (string-match "\n· plan-2\n" buf))
+                   (final-idx (string-match "\nψ: final reply\n" buf)))
+              (should (and plan-2-idx final-idx))
+              (should (< plan-2-idx final-idx)))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
 
 (ert-deftest psi-thinking-streaming-tool-event-clears-stale-thinking-text-when-range-missing ()
   (with-temp-buffer
@@ -1999,7 +2081,7 @@ full accumulated thinking text rather than append-only chunks."
           (psi-emacs--handle-rpc-event
            '((:event . "assistant/thinking-delta") (:data . ((:text . "plan-2")))))
           (should (equal "plan-2" (psi-emacs-state-thinking-in-progress psi-emacs--state)))
-          (should (equal "t-break pending\nψ⋯ plan-2\n"
+          (should (equal "t-break pending\n· plan-2\n"
                          (buffer-string))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
@@ -2069,7 +2151,7 @@ full accumulated thinking text rather than append-only chunks."
              (:data . ((:role . "assistant")
                        (:content . [((:type . :text) (:text . "Hello from content"))])))))
           (should-not (psi-emacs-state-assistant-in-progress psi-emacs--state))
-          (should (equal "ψ: Hello from content\n" (buffer-string))))
+          (should (equal "ψ: Hello from content\n\n" (buffer-string))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
@@ -2086,7 +2168,7 @@ full accumulated thinking text rather than append-only chunks."
                                     (:blocks . [((:kind . :text)
                                                  (:text . "Hello from structured content"))])))))))
           (should-not (psi-emacs-state-assistant-in-progress psi-emacs--state))
-          (should (equal "ψ: Hello from structured content\n" (buffer-string))))
+          (should (equal "ψ: Hello from structured content\n\n" (buffer-string))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
@@ -2101,7 +2183,7 @@ full accumulated thinking text rather than append-only chunks."
              (:data . ((:role . "assistant")
                        (:content . [])
                        (:error-message . "Validation failed")))))
-          (should (equal "ψ: [error] Validation failed\n" (buffer-string))))
+          (should (equal "ψ: [error] Validation failed\n\n" (buffer-string))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
@@ -2148,7 +2230,7 @@ full accumulated thinking text rather than append-only chunks."
           (psi-emacs--handle-rpc-event
            '((:event . "assistant/message") (:data . ((:role . "assistant") (:content . [])))))
           (should-not (psi-emacs-state-assistant-in-progress psi-emacs--state))
-          (should (equal "ψ: partial\n" (buffer-string))))
+          (should (equal "ψ: partial\n\n" (buffer-string))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
@@ -2225,6 +2307,121 @@ full accumulated thinking text rather than append-only chunks."
             (should (equal "done" (plist-get row :text)))
             ;; Accumulated text contains all deltas
             (should (string-match-p "done" (plist-get row :accumulated-text)))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
+(ert-deftest psi-assistant-streaming-tool-interleaved-preserves-tool-row ()
+  "Assistant delta followed by tool event then more delta must not delete the tool row.
+
+Regression: the assistant-range end marker was advancing (insertion-type t),
+causing delete-region on the next delta to swallow any tool row inserted
+immediately after the assistant line."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (progn
+          ;; 1. Assistant starts streaming
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/delta") (:data . ((:text . "Hello")))))
+          ;; 2. Tool starts (inserted immediately after assistant line)
+          (psi-emacs--handle-rpc-event
+           '((:event . "tool/start") (:data . ((:tool-id . "t-1") (:tool-name . "bash")))))
+          ;; 3. Tool completes
+          (psi-emacs--handle-rpc-event
+           '((:event . "tool/result") (:data . ((:tool-id . "t-1") (:tool-name . "bash")
+                                                (:result-text . "ok") (:is-error . nil)))))
+          ;; 4. More assistant streaming — must NOT delete the tool row
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/delta") (:data . ((:text . " world")))))
+          (let ((content (buffer-substring-no-properties
+                          (point-min) (psi-emacs--transcript-append-position))))
+            (should (string-match-p "ψ: Hello world" content))
+            ;; Tool row must still be present — tool rows hash must have t-1
+            (should (= 1 (hash-table-count (psi-emacs-state-tool-rows psi-emacs--state)))))
+          ;; 5. Final message — tool row must still be present
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/message") (:data . ((:text . "Hello world")))))
+          (let ((content (buffer-substring-no-properties
+                          (point-min) (psi-emacs--transcript-append-position))))
+            (should (string-match-p "ψ: Hello world" content))
+            ;; Tool row still tracked and rendered
+            (should (= 1 (hash-table-count (psi-emacs-state-tool-rows psi-emacs--state))))
+            ;; Buffer contains assistant line, tool row, and trailing blank (3 newlines)
+            (should (= 3 (cl-count ?\n content)))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
+(ert-deftest psi-multiple-tool-rows-survive-update-after-assistant-delta ()
+  "Multiple tool rows inserted before a live assistant line must not disappear
+when each row is updated (tool/result).
+
+Regression: tool-row update (delete+reinsert) caused the assistant start
+marker to drift to the tool-row start position.  The next assistant/delta
+then deleted the tool row along with the assistant line."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (progn
+          ;; Assistant starts streaming
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/delta") (:data . ((:text . "working")))))
+          ;; Two tool rows arrive (both inserted before the assistant line)
+          (psi-emacs--handle-rpc-event
+           '((:event . "tool/start") (:data . ((:tool-id . "t-1") (:tool-name . "bash")))))
+          (psi-emacs--handle-rpc-event
+           '((:event . "tool/start") (:data . ((:tool-id . "t-2") (:tool-name . "read")))))
+          ;; Both complete (update in-place)
+          (psi-emacs--handle-rpc-event
+           '((:event . "tool/result") (:data . ((:tool-id . "t-1") (:tool-name . "bash")
+                                                (:result-text . "ok1") (:is-error . nil)))))
+          (psi-emacs--handle-rpc-event
+           '((:event . "tool/result") (:data . ((:tool-id . "t-2") (:tool-name . "read")
+                                                (:result-text . "ok2") (:is-error . nil)))))
+          ;; More assistant text — must not delete tool rows
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/delta") (:data . ((:text . " done")))))
+          (let ((content (buffer-substring-no-properties
+                          (point-min) (psi-emacs--transcript-append-position))))
+            (should (string-match-p "ψ: working done" content))
+            (should (= 2 (hash-table-count (psi-emacs-state-tool-rows psi-emacs--state)))))
+          ;; Final message — both tool rows must survive
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/message") (:data . ((:text . "working done")))))
+          (let ((content (buffer-substring-no-properties
+                          (point-min) (psi-emacs--transcript-append-position))))
+            (should (string-match-p "ψ: working done" content))
+            (should (= 2 (hash-table-count (psi-emacs-state-tool-rows psi-emacs--state))))))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
+(ert-deftest psi-empty-assistant-message-archives-thinking-not-clears ()
+  "Empty assistant/message (tool-only turn) must archive thinking, not delete it.
+
+Regression: the empty-message path called clear-thinking-line which deleted
+the thinking block from the buffer.  Thinking is transcript and must survive."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (progn
+          ;; Thinking arrives, then a tool-only turn (no text in assistant/message)
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/thinking-delta") (:data . ((:text . "reasoning")))))
+          (psi-emacs--handle-rpc-event
+           '((:event . "tool/start") (:data . ((:tool-id . "t-1") (:tool-name . "bash")))))
+          (psi-emacs--handle-rpc-event
+           '((:event . "tool/result") (:data . ((:tool-id . "t-1") (:result-text . "ok")))))
+          ;; Empty assistant/message — no text, no streamed text
+          (psi-emacs--handle-rpc-event
+           '((:event . "assistant/message") (:data . ())))
+          (let ((content (buffer-substring-no-properties (point-min) (point-max))))
+            ;; Thinking must still be visible
+            (should (string-match-p "· reasoning" content))
+            ;; Thinking archived (not in-progress)
+            (should-not (psi-emacs-state-thinking-in-progress psi-emacs--state))
+            (should (= 1 (length (psi-emacs-state-thinking-archived-ranges psi-emacs--state))))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 

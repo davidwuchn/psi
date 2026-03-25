@@ -351,8 +351,10 @@ Child sessions (non-nil parent-session-id that matches a slot) are indented."
              (psi-emacs--assistant-finalize final-text)
            ;; Empty assistant/message payloads (tool-only or provider-edge events)
            ;; should not render a blank `ψ:` line.
+           ;; Archive (not clear) any live thinking block — it is part of the
+           ;; transcript and must remain visible even when no reply text follows.
            (when psi-emacs--state
-             (psi-emacs--clear-thinking-line)
+             (psi-emacs--archive-thinking-line)
              (psi-emacs--disarm-stream-watchdog psi-emacs--state)
              (psi-emacs--set-run-state psi-emacs--state 'idle)))))
       ("assistant/thinking-delta"

@@ -130,6 +130,10 @@ START-DIRECTORY sets the startup cwd for the owned subprocess when
 Creates/uses one dedicated buffer with one owned subprocess and initializes
 frontend state boundaries."
   (let* ((start-directory* (or start-directory default-directory))
+         ;; Capture buffer-local command value from the calling buffer before
+         ;; switching context; psi-emacs-command may be set buffer-locally in
+         ;; project buffers and would otherwise resolve to the psi buffer's value.
+         (captured-command psi-emacs-command)
          (buffer (get-buffer-create (or buffer-name psi-emacs-buffer-name))))
     (with-current-buffer buffer
       (unless (derived-mode-p 'psi-emacs-mode)
@@ -138,6 +142,9 @@ frontend state boundaries."
         (psi-emacs-mode))
       (psi-emacs--install-buffer-lifecycle-hooks)
       (psi-emacs--install-input-read-only-guard)
+      ;; Propagate caller's buffer-local command into the psi buffer so that
+      ;; psi-emacs--start-rpc-client reads the correct value when it runs here.
+      (setq-local psi-emacs-command captured-command)
       (setq-local default-directory
                   (psi-emacs--resolve-working-directory start-directory*))
       (if psi-emacs--state
