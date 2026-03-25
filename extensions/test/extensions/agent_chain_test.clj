@@ -440,3 +440,69 @@
                   (recur (inc i))))))
         (finally
           (wf/shutdown-in! reg))))))
+
+(deftest progress-event-during-invoke-does-not-cancel-future-test
+  ;; A progress event while the invoke future is running must use an internal
+  ;; transition so the future is NOT cancelled. A self-transition with :target
+  ;; would exit/enter :running, cancelling the invoke via future-cancel.
+  (testing "internal progress transition"
+    (testing "does not interrupt running invoke"
+      (let [reg          (wf/create-registry)
+            started      (promise)
+            finished     (promise)
+            ext-path     "/test/progress.clj"
+            progress-chart
+            (chart/statechart
+             {:id :progress-test}
+             (ele/state {:id :idle}
+                        (ele/transition {:event :wf/start :target :running}
+                                        (ele/script {:expr (fn [_ _] [{:op :assign :data {:step 0}}])})))
+             (ele/state {:id :running}
+                        (ele/invoke {:id     :job
+                                     :type   :future
+                                     :params (fn [_ _] {})
+                                     :src    (fn [_]
+                                               (deliver started true)
+                                               (deref finished 5000 :timeout)
+                                               {:ok true})})
+                        (ele/transition {:event :wf/progress
+                                         :type  :internal}
+                                        (ele/script {:expr (fn [_ data]
+                                                             [{:op :assign
+                                                               :data {:step (inc (or (:step data) 0))}}])}))
+                        (ele/transition {:event :done.invoke.job :target :done}
+                                        (ele/script {:expr (fn [_ data]
+                                                             [{:op :assign
+                                                               :data {:result (get-in data [:_event :data :ok])}}])})))
+             (ele/final {:id :done}))]
+        (try
+          (wf/register-type-in!
+           reg ext-path
+           {:type         :progress-test
+            :chart        progress-chart
+            :start-event  :wf/start
+            :initial-data-fn (fn [_] {})
+            :public-data-fn identity})
+          (wf/create-workflow-in!
+           reg ext-path
+           {:type :progress-test :id "pt-1"})
+          ;; Wait for invoke to start
+          (is (deref started 2000 false) "invoke should have started")
+          ;; Send progress events while invoke is blocked
+          (wf/send-event-in! reg ext-path "pt-1" :wf/progress {:step 1})
+          (wf/send-event-in! reg ext-path "pt-1" :wf/progress {:step 2})
+          ;; Let the invoke finish
+          (deliver finished true)
+          ;; Wait for completion
+          (loop [i 0]
+            (let [w (wf/workflow-in reg ext-path "pt-1")]
+              (if (or (>= i 100) (= :done (:phase w)))
+                (do
+                  (is (= :done (:phase w))
+                      "workflow should complete, not be interrupted")
+                  (is (true? (:result w))
+                      "invoke result should be captured"))
+                (do (Thread/sleep 20)
+                    (recur (inc i))))))
+          (finally
+            (wf/shutdown-in! reg)))))))

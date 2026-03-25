@@ -2517,3 +2517,56 @@
             :developer-prompt-source :explicit})
       (is (= "dev" (:developer-prompt (ss/get-session-data-in ctx))))
       (is (= :explicit (:developer-prompt-source (ss/get-session-data-in ctx)))))))
+
+;;; Child session infrastructure tests
+
+(deftest create-child-session-dispatch-test
+  ;; :session/create-child inserts a child session entry in state without
+  ;; changing the parent's active-session-id.
+  (let [ctx         (test-support/make-session-ctx {})
+        parent-id   (ss/active-session-id-in ctx)
+        child-id    (str (java.util.UUID/randomUUID))
+        sys-prompt  "child system"
+        tool-schemas [{:name "tool1"}]]
+    (testing ":session/create-child dispatch"
+      (dispatch/dispatch! ctx
+                          :session/create-child
+                          {:child-session-id child-id
+                           :session-name     "child-work"
+                           :system-prompt    sys-prompt
+                           :tool-schemas     tool-schemas
+                           :thinking-level   :off}
+                          {:origin :core})
+      (let [sessions   (ss/get-sessions-map-in ctx)
+            child-entry (get sessions child-id)
+            child-sd   (:data child-entry)]
+        (testing "child entry exists in sessions map"
+          (is (some? child-entry)
+              (str "expected child session in sessions, keys: " (keys sessions))))
+        (testing "spawn-mode is :agent"
+          (is (= :agent (:spawn-mode child-sd))
+              (str "spawn-mode should be :agent, got " (:spawn-mode child-sd))))
+        (testing "parent-session-id is the parent"
+          (is (= parent-id (:parent-session-id child-sd))
+              (str "parent-session-id should be " parent-id
+                   ", got " (:parent-session-id child-sd))))
+        (testing "system-prompt matches"
+          (is (= sys-prompt (:system-prompt child-sd))
+              (str "system-prompt should be " sys-prompt
+                   ", got " (:system-prompt child-sd))))
+        (testing "parent active-session-id unchanged"
+          (is (= parent-id (ss/active-session-id-in ctx))
+              "parent active-session-id must not change"))
+        (testing "child journal is empty"
+          (let [child-journal (ss/get-state-value-in
+                               ctx (ss/state-path :journal child-id))]
+            (is (= [] child-journal)
+                (str "child journal should be empty, got " child-journal))))
+        (testing "child telemetry is initialized"
+          (let [telemetry (get-in sessions [child-id :telemetry])]
+            (is (some? telemetry)
+                "child telemetry should be initialized")))
+        (testing "child turn slot is initialized"
+          (let [turn (get-in sessions [child-id :turn])]
+            (is (= {:ctx nil} turn)
+                (str "child turn should be {:ctx nil}, got " turn))))))))

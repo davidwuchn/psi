@@ -22,64 +22,62 @@
 
 (defmethod execute-effect! :default [_ctx _effect] nil)
 
-;;; runtime/agent-* — delegate to agent-core
+;;; runtime/agent-* — delegate to agent-core (skipped for child sessions without agent-ctx)
 
 (defmethod execute-effect! :runtime/agent-abort [ctx _effect]
-  (agent/abort-in! (ss/agent-ctx-in ctx)))
+  (when-let [ac (ss/agent-ctx-in ctx)] (agent/abort-in! ac)))
 
 (defmethod execute-effect! :runtime/agent-queue-steering [ctx effect]
-  (agent/queue-steering-in! (ss/agent-ctx-in ctx) (:message effect)))
+  (when-let [ac (ss/agent-ctx-in ctx)] (agent/queue-steering-in! ac (:message effect))))
 
 (defmethod execute-effect! :runtime/agent-queue-follow-up [ctx effect]
-  (agent/queue-follow-up-in! (ss/agent-ctx-in ctx) (:message effect)))
+  (when-let [ac (ss/agent-ctx-in ctx)] (agent/queue-follow-up-in! ac (:message effect))))
 
 (defmethod execute-effect! :runtime/agent-clear-steering-queue [ctx _effect]
-  (agent/clear-steering-queue-in! (ss/agent-ctx-in ctx)))
+  (when-let [ac (ss/agent-ctx-in ctx)] (agent/clear-steering-queue-in! ac)))
 
 (defmethod execute-effect! :runtime/agent-clear-follow-up-queue [ctx _effect]
-  (agent/clear-follow-up-queue-in! (ss/agent-ctx-in ctx)))
+  (when-let [ac (ss/agent-ctx-in ctx)] (agent/clear-follow-up-queue-in! ac)))
 
 (defmethod execute-effect! :runtime/agent-start-loop [ctx _effect]
-  (agent/start-loop-in! (ss/agent-ctx-in ctx) []))
+  (when-let [ac (ss/agent-ctx-in ctx)] (agent/start-loop-in! ac [])))
 
 (defmethod execute-effect! :runtime/agent-start-loop-with-messages [ctx effect]
-  (agent/start-loop-in! (ss/agent-ctx-in ctx) (vec (:messages effect))))
+  (when-let [ac (ss/agent-ctx-in ctx)] (agent/start-loop-in! ac (vec (:messages effect)))))
 
 (defmethod execute-effect! :runtime/agent-set-model [ctx effect]
-  (agent/set-model-in! (ss/agent-ctx-in ctx) (:model effect)))
+  (when-let [ac (ss/agent-ctx-in ctx)] (agent/set-model-in! ac (:model effect))))
 
 (defmethod execute-effect! :runtime/agent-set-thinking-level [ctx effect]
-  (agent/set-thinking-level-in! (ss/agent-ctx-in ctx) (:level effect)))
+  (when-let [ac (ss/agent-ctx-in ctx)] (agent/set-thinking-level-in! ac (:level effect))))
 
 (defmethod execute-effect! :runtime/agent-set-system-prompt [ctx effect]
-  (agent/set-system-prompt-in! (ss/agent-ctx-in ctx) (:prompt effect)))
+  (when-let [ac (ss/agent-ctx-in ctx)] (agent/set-system-prompt-in! ac (:prompt effect))))
 
 (defmethod execute-effect! :runtime/agent-set-tools [ctx effect]
-  (agent/set-tools-in! (ss/agent-ctx-in ctx) (:tool-maps effect)))
+  (when-let [ac (ss/agent-ctx-in ctx)] (agent/set-tools-in! ac (:tool-maps effect))))
 
 (defmethod execute-effect! :runtime/agent-reset [ctx _effect]
-  (agent/reset-agent-in! (ss/agent-ctx-in ctx)))
+  (when-let [ac (ss/agent-ctx-in ctx)] (agent/reset-agent-in! ac)))
 
 (defmethod execute-effect! :runtime/agent-replace-messages [ctx effect]
-  (agent/replace-messages-in! (ss/agent-ctx-in ctx) (vec (:messages effect))))
+  (when-let [ac (ss/agent-ctx-in ctx)] (agent/replace-messages-in! ac (vec (:messages effect)))))
 
 (defmethod execute-effect! :runtime/agent-append-message [ctx effect]
-  (agent/append-message-in! (ss/agent-ctx-in ctx) (:message effect)))
+  (when-let [ac (ss/agent-ctx-in ctx)] (agent/append-message-in! ac (:message effect))))
 
 (defmethod execute-effect! :runtime/agent-emit [ctx effect]
-  (agent/emit-in! (ss/agent-ctx-in ctx) (:event effect)))
+  (when-let [ac (ss/agent-ctx-in ctx)] (agent/emit-in! ac (:event effect))))
 
 (defmethod execute-effect! :runtime/agent-emit-tool-start [ctx effect]
-  (agent/emit-tool-start-in! (ss/agent-ctx-in ctx) (:tool-call effect)))
+  (when-let [ac (ss/agent-ctx-in ctx)] (agent/emit-tool-start-in! ac (:tool-call effect))))
 
 (defmethod execute-effect! :runtime/agent-emit-tool-end [ctx effect]
-  (agent/emit-tool-end-in! (ss/agent-ctx-in ctx)
-                           (:tool-call effect)
-                           (:result effect)
-                           (:is-error? effect)))
+  (when-let [ac (ss/agent-ctx-in ctx)]
+    (agent/emit-tool-end-in! ac (:tool-call effect) (:result effect) (:is-error? effect))))
 
 (defmethod execute-effect! :runtime/agent-record-tool-result [ctx effect]
-  (agent/record-tool-result-in! (ss/agent-ctx-in ctx) (:tool-result-msg effect)))
+  (when-let [ac (ss/agent-ctx-in ctx)] (agent/record-tool-result-in! ac (:tool-result-msg effect))))
 
 ;;; runtime/tool-* — tool execution boundary
 
@@ -191,9 +189,11 @@
                                 {:result     result
                                  :aborted    false
                                  :will-retry will-retry?})
-               (when (or will-retry?
-                         (agent/has-queued-messages-in? (ss/agent-ctx-in ctx)))
-                 (reset! continue? true)))
+               (let [sd (ss/get-session-data-in ctx)]
+                 (when (or will-retry?
+                           (seq (:steering-messages sd))
+                           (seq (:follow-up-messages sd)))
+                   (reset! continue? true))))
              (ext/dispatch-in reg "auto_compaction_end"
                               {:result     nil
                                :aborted    true

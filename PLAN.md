@@ -68,20 +68,36 @@ So the repo is now in **late convergence / simplification / boundary sharpening*
 
 8. - configuration has system, project or session scope. config setters need to take the scope.
 9. ✓ rename subagent-widget to agent
-10. ✓ reverse agent/agent chaining dependency
+10. ✓ reverse agent/chain dependency, eliminate agent-ctx from executor
+    - ✓ agent extension owns RunAgent, ResolveAgentConfig, LoadAgentDefs
+    - ✓ agent-chain depends on agent extension
+    - ✓ executor reads/writes session data directly (zero agent-core dependency)
+    - ✓ events bridge removed
+    - ✓ child session infrastructure (:target-session-id, CreateChildSession, RunAgentLoopInSession)
+    - ✓ agent extension creates child sessions via mutations, holds session-id only
+
+11. **Retire agent-core from remaining consumers**
+    - dispatch-effects still sync to agent-core (RPC resume, session switch, bootstrap)
+    - core.clj still creates agent-ctx in `create-context`
+    - migrate each consumer to session-data reads, then remove agent-ctx from session entries
+
+12. **ExtensionInstanceState storage**
+    - implement `:extension-instance-state` path in state*
+    - get/set operations + EQL resolvers
+    - steering-mode/follow-up-mode stored there (not session data)
 
 ## Current next implementation seam
 
 Highest-leverage next work:
+- retire agent-core from dispatch-effects consumers (item 11)
+- ExtensionInstanceState storage (item 12)
 - broaden query-first workflow/read-model convergence
-- reassess extension isolation boundaries
 
 ## Intentional external runtime handles
 
 These currently fit the actual repo architecture and should remain outside `:state*` unless requirements change.
 
-- `:agent-ctx`
-  - live agent-core loop, queues, event stream, provider/tool runtime mechanics
+- `:agent-ctx` — **vestigial**, still populated by dispatch-effects for non-executor consumers (RPC resume, session switch); targeted for removal in item 11
 - extension registry
   - loaded extension runtime registry state
 - workflow registry

@@ -76,7 +76,6 @@
    [psi.agent-session.tool-plan :as tool-plan]
    [psi.agent-session.workflows :as wf]
    [psi.history.resolvers :as history-resolvers]
-   [psi.memory.runtime :as memory-runtime]
    [psi.query.core :as query]
    [psi.ui.state :as ui-state]))
 
@@ -235,33 +234,13 @@
          _                 (dispatch-handlers/register-all! ctx)
          actions-fn        (dispatch-handlers/make-actions-fn ctx)]
 
-     ;; Watch agent-core events atom — forward new events to session statechart
-     ;; and persist message-end events to the journal.
-     ;; The watch fires whenever events-atom changes value.
-     ;; We detect the newest event by comparing old vs new vectors.
-     (add-watch (:events-atom agent-ctx) ::session-bridge
-                (fn [_key _ref old-events new-events]
-                  (let [new-count (count new-events)
-                        old-count (count old-events)]
-                    (when (> new-count old-count)
-                      (doseq [ev (subvec new-events old-count new-count)]
-                        ;; Persist LLM-generated messages on message-end.
-                        ;; User messages are already journaled in prompt-in!,
-                        ;; so only journal assistant, toolResult, and custom here.
-                        (when (= :message-end (:type ev))
-                          (let [msg  (:message ev)
-                                role (:role msg)]
-                            (when (contains? #{"assistant" "toolResult" "custom"} role)
-                              (ss/journal-append-in! ctx (persist/message-entry msg))
-                              (try
-                                (memory-runtime/remember-session-message!
-                                 msg
-                                 {:session-id (:session-id (ss/get-session-data-in ctx))})
-                                (catch Exception _
-                                  nil)))))
-                        (sc/send-event! sc-env sc-session-id
-                                        :session/agent-event
-                                        {:pending-agent-event ev}))))))
+     ;; NOTE: The events bridge (add-watch on agent-core events-atom) has been
+     ;; removed. Message journaling and session statechart events now go through
+     ;; the executor and dispatch pipeline directly:
+     ;; - Assistant messages: journaled by make-turn-actions in executor.clj
+     ;; - Tool results: journaled by :session/tool-agent-record-result handler
+     ;; - Agent-end: sent to session statechart by finish-agent-loop! in executor.clj
+     ;; - User messages: journaled by :session/prompt-submit handler
 
      ;; Start the session statechart with working memory containing ctx + actions-fn
      (sc/start-session! sc-env sc-session-id

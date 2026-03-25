@@ -247,6 +247,8 @@ surface SessionCoreApi {
 
     provides:
         SessionCreateRequested(project_id, worktree_path, system_prompt, name)
+        CreateChildSession(context_id, parent_session_id, relation, config)
+        RunAgentLoopInSession(session_id, prompt, model)
         SessionCacheBreakpointsSet(session_id, breakpoints)
         ExtensionInstanceStateSet(context_id, extension_name, instance_id, data)
         ExtensionInstanceStateGet(context_id, extension_name, instance_id)

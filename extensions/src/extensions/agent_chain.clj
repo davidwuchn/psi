@@ -31,11 +31,9 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [com.fulcrologic.statecharts.chart :as chart]
+   [extensions.agent :as agent-ext]
    [extensions.workflow-display :as workflow-display]
    [com.fulcrologic.statecharts.elements :as ele]
-   [psi.agent-core.core :as agent]
-   [psi.agent-session.executor :as executor]
-   [psi.agent-session.tools :as tools]
    [psi.ai.models :as models]
    [taoensso.timbre :as timbre]))
 
@@ -70,56 +68,16 @@
 (def ^:private max-widget-runs 4)
 (def ^:private prompt-contribution-id "agent-chain-chains")
 
-;;; Frontmatter parser
-
-(defn- parse-frontmatter
-  "Parse a markdown file with YAML-like frontmatter.
-   Returns {:name s :description s :tools s :system-prompt s} or nil."
-  [file-path]
-  (try
-    (let [raw   (slurp file-path)
-          match (re-find #"(?s)^---\n(.*?)\n---\n(.*)" raw)]
-      (when match
-        (let [fm-lines (str/split-lines (nth match 1))
-              fm       (into {}
-                             (keep (fn [line]
-                                     (let [idx (str/index-of line ":")]
-                                       (when (and idx (pos? idx))
-                                         [(str/trim (subs line 0 idx))
-                                          (str/trim (subs line (inc idx)))]))))
-                             fm-lines)]
-          (when (get fm "name")
-            {:name          (get fm "name")
-             :description   (get fm "description" "")
-             :tools         (get fm "tools" "read,bash,edit,write")
-             :system-prompt (str/trim (nth match 2))}))))
-    (catch Exception _ nil)))
-
-(defn- scan-agent-dirs
-  "Discover agent definition files from standard directories.
-   Returns {lowercase-name AgentDef}."
+(defn- load-all-agent-defs
+  "Discover agent definitions from standard directories.
+  Delegates to agent-ext/load-agent-defs for each directory."
   [cwd]
   (let [dirs [(str cwd "/.psi/agents")
               (str cwd "/agents")]]
-    (reduce
-     (fn [agents dir]
-       (let [d (io/file dir)]
-         (if (and (.exists d) (.isDirectory d))
-           (reduce
-            (fn [acc f]
-              (if (and (.isFile f) (str/ends-with? (.getName f) ".md"))
-                (if-let [parsed (parse-frontmatter (.getAbsolutePath f))]
-                  (let [k (str/lower-case (:name parsed))]
-                    (if (contains? acc k)
-                      acc
-                      (assoc acc k parsed)))
-                  acc)
-                acc))
-            agents
-            (.listFiles d))
-           agents)))
-     {}
-     dirs)))
+    (reduce (fn [agents dir]
+              (merge agents (agent-ext/load-agent-defs dir)))
+            {}
+            dirs)))
 
 ;;; Chain config loader
 
@@ -442,101 +400,36 @@
            :error (or (:psi.extension.workflow/error r)
                       (str "Failed to remove chain run \"" sid "\"."))})))))
 
-;;; Sub-agent execution (in-process)
-
-(defn- tool-schemas-for
-  "Parse a comma-separated tools string into tool schema maps.
-   Matches against built-in tool schemas."
-  [tools-str]
-  (let [tool-map (into {} (map (juxt :name identity)) tools/all-tool-schemas)
-        names    (map str/trim (str/split tools-str #","))]
-    (vec (keep tool-map names))))
-
-(defn- create-sub-session-ctx
-  "Create the minimal agent-session context required by executor/run-agent-loop!"
-  [agent-ctx]
-  {:agent-ctx agent-ctx
-   :cwd       (System/getProperty "user.dir")
-   :session-data-atom
-   (atom {:tool-output-overrides {}
-          :thinking-level :off})
-   :tool-output-stats-atom
-   (atom {:calls []
-          :aggregates {:total-context-bytes 0
-                       :by-tool {}
-                       :limit-hits-by-tool {}}})})
+;;; Sub-agent execution — delegates to extensions.agent/run-agent
 
 (defn- run-sub-agent!
-  "Run a sub-agent step in-process. Creates an isolated agent-core context,
-   sets the system prompt and tools, sends the task, and returns the result.
-
-   `agent-sessions` is an atom of {agent-key {:agent-ctx ... :session-ctx ...}}
-   for session persistence.
-   `ai-model` is the current session's ai model map.
-
-   Returns {:output string :success boolean :elapsed long}."
-  [agent-def task agent-sessions ai-model get-api-key-fn]
-  (let [agent-key     (str/lower-case (str/replace (:name agent-def) #"\s+" "-"))
-        start-time    (System/currentTimeMillis)
-        existing      (get @agent-sessions agent-key)
-        agent-session (cond
-                        (and (map? existing) (:agent-ctx existing))
-                        (update existing :session-ctx #(or % (create-sub-session-ctx (:agent-ctx existing))))
-
-                        existing
-                        {:agent-ctx existing
-                         :session-ctx (create-sub-session-ctx existing)}
-
-                        :else
-                        (let [ctx (agent/create-context)]
-                          (agent/create-agent-in! ctx)
-                          {:agent-ctx ctx
-                           :session-ctx (create-sub-session-ctx ctx)}))
-        _             (swap! agent-sessions assoc agent-key agent-session)
-        agent-ctx     (:agent-ctx agent-session)
-        session-ctx   (:session-ctx agent-session)
-        tool-schemas  (tool-schemas-for (:tools agent-def))
-        api-key       (when (fn? get-api-key-fn)
-                        (get-api-key-fn (:provider ai-model)))]
-    ;; Configure the sub-agent
-    (agent/set-system-prompt-in! agent-ctx (:system-prompt agent-def))
-    (agent/set-tools-in! agent-ctx tool-schemas)
-    (try
-      (let [user-msg {:role      "user"
-                      :content   [{:type :text :text task}]
-                      :timestamp (java.time.Instant/now)}
-            result   (executor/run-agent-loop!
-                      nil
-                      session-ctx
-                      agent-ctx
-                      ai-model
-                      [user-msg]
-                      (cond-> {:turn-ctx-atom nil}
-                        api-key (assoc :api-key api-key)))
-            elapsed  (- (System/currentTimeMillis) start-time)
-            text     (->> (:content result)
-                          (keep #(when (= :text (:type %)) (:text %)))
-                          (str/join "\n"))]
-        (if (= :error (:stop-reason result))
-          {:output  (or (:error-message result) "Unknown error")
-           :success false
-           :elapsed elapsed}
-          {:output  text
-           :success true
-           :elapsed elapsed}))
-      (catch Throwable t
-        {:output  (str "Error: " (or (ex-message t) (.getMessage t) (str t)))
-         :success false
-         :elapsed (- (System/currentTimeMillis) start-time)}))))
+  "Run a sub-agent step via agent-ext/run-agent.
+  Manages session persistence through agent-sessions atom.
+  Returns {:output string :success boolean :elapsed long}."
+  [agent-name task agent-sessions ai-model get-api-key-fn agents-dir base-system-prompt]
+  (let [agent-key  (str/lower-case (str/replace (or agent-name "") #"\s+" "-"))
+        existing   (get @agent-sessions agent-key)
+        config     (agent-ext/resolve-agent-config agent-name agents-dir base-system-prompt)
+        result     (agent-ext/run-agent
+                    {:config              config
+                     :prompt              task
+                     :model               ai-model
+                     :get-api-key-fn      get-api-key-fn
+                     :existing-session-id (:session-id existing)})]
+    (swap! agent-sessions assoc agent-key
+           {:session-id (:session-id result)})
+    {:output  (if (:ok? result) (:text result) (or (:error-message result) (:text result)))
+     :success (:ok? result)
+     :elapsed (:elapsed-ms result)}))
 
 ;;; Chain execution
 
 (defn- run-chain!
   "Execute a chain sequentially. Each step's output feeds into the next.
-   `on-step-update` is called with (step-index status elapsed last-work).
-
-   Returns {:output string :success boolean :elapsed long :step-results [...]} ."
-  [chain all-agents agent-sessions ai-model original-prompt on-step-update get-api-key-fn]
+  `on-step-update` is called with (step-index status elapsed last-work).
+  Returns {:output string :success boolean :elapsed long :step-results [...]}."
+  [chain all-agents agent-sessions ai-model original-prompt on-step-update
+   get-api-key-fn agents-dir base-system-prompt]
   (let [chain-start  (System/currentTimeMillis)
         steps        (:steps chain)
         step-results (atom [])
@@ -553,11 +446,13 @@
         (let [step    (nth steps i)
               agent-k (str/lower-case (:agent step))]
           (notify-step i :running 0 "")
-          (if-let [agent-def (get all-agents agent-k)]
+          (if (get all-agents agent-k)
             (let [prompt (-> (:prompt step)
                              (str/replace "$INPUT" (or input ""))
                              (str/replace "$ORIGINAL" (or original-prompt "")))
-                  result (run-sub-agent! agent-def prompt agent-sessions ai-model get-api-key-fn)]
+                  result (run-sub-agent! (:agent step) prompt agent-sessions
+                                         ai-model get-api-key-fn
+                                         agents-dir base-system-prompt)]
               (swap! step-results conj
                      {:agent   (:agent step)
                       :success (:success result)
@@ -606,12 +501,14 @@
 
 (defn- run-invoke-params
   [_ data]
-  {:run-id         (:chain/run-id data)
-   :chain          (:chain/config data)
-   :agents         (:chain/all-agents data)
-   :agent-sessions (:chain/agent-sessions data)
-   :ai-model       (:chain/model data)
-   :task           (:chain/task data)})
+  {:run-id              (:chain/run-id data)
+   :chain               (:chain/config data)
+   :agents              (:chain/all-agents data)
+   :agent-sessions      (:chain/agent-sessions data)
+   :ai-model            (:chain/model data)
+   :task                (:chain/task data)
+   :agents-dir          (:chain/agents-dir data)
+   :base-system-prompt  (:chain/base-system-prompt data)})
 
 (defn- normalize-provider
   [provider]
@@ -644,7 +541,8 @@
                 (vals models/all-models))))))
 
 (defn- run-chain-workflow-job
-  [{:keys [run-id chain agents agent-sessions ai-model task]}]
+  [{:keys [run-id chain agents agent-sessions ai-model task
+           agents-dir base-system-prompt]}]
   (let [run-id*         (str (or run-id (str "run-" (java.util.UUID/randomUUID))))
         started-ms      (now-ms)
         steps           (:steps chain)
@@ -680,7 +578,8 @@
                                  (pos? (long (or elapsed 0)))
                                  (assoc :step-elapsed-ms (long elapsed)))))))]
     (try
-      (let [result  (run-chain! chain agents agent-sessions ai-model* task on-step get-api-key-fn)
+      (let [result  (run-chain! chain agents agent-sessions ai-model* task on-step
+                                get-api-key-fn agents-dir base-system-prompt)
             success (:success result)
             summary (chain-summary chain success (:elapsed result))
             progress (-> (progress-snapshot (:chain/progress result))
@@ -776,7 +675,8 @@
                                             :type   :future
                                             :params run-invoke-params
                                             :src    run-chain-workflow-job})
-                               (ele/transition {:event :chain/progress :target :running}
+                               (ele/transition {:event  :chain/progress
+                                                :type   :internal}
                                                (ele/script {:expr progress-script}))
                                (ele/transition {:event :done.invoke.runner
                                                 :target :done
@@ -801,13 +701,19 @@
                     :chart           chain-workflow-chart
                     :start-event     :chain/start
                     :initial-data-fn (fn [input]
-                                       {:chain/run-id         (:run-id input)
-                                        :chain/config         (:chain input)
-                                        :chain/task           (:task input)
-                                        :chain/model          (:model input)
-                                        :chain/all-agents     (:agents input)
-                                        :chain/agent-sessions agent-sessions
-                                        :chain/on-finished    on-finished})
+                                       (let [qf (:query-fn @state)]
+                                         {:chain/run-id              (:run-id input)
+                                          :chain/config              (:chain input)
+                                          :chain/task                (:task input)
+                                          :chain/model               (:model input)
+                                          :chain/all-agents          (:agents input)
+                                          :chain/agent-sessions      agent-sessions
+                                          :chain/on-finished         on-finished
+                                          :chain/agents-dir          [(str (System/getProperty "user.home") "/.psi/agents")
+                                                                      (str (System/getProperty "user.dir") "/.psi/agents")]
+                                          :chain/base-system-prompt  (when qf
+                                                                       (:psi.agent-session/system-prompt
+                                                                        (qf [:psi.agent-session/system-prompt])))}))
                     :public-data-fn  (fn [data]
                                        (let [base (select-keys data
                                                                [:chain/run-id
@@ -941,7 +847,7 @@
   []
   (let [cwd     (System/getProperty "user.dir")
         cleared (clear-chain-workflows!)]
-    (reset! (:all-agents @state) (scan-agent-dirs cwd))
+    (reset! (:all-agents @state) (load-all-agent-defs cwd))
     (reset! (:chains @state) (load-chains cwd))
     (reset! (:agent-sessions @state) {})
     (reset! (:next-run-id @state) 1)
@@ -979,7 +885,7 @@
   [api]
   (let [cwd              (System/getProperty "user.dir")
         ui-type          (or (:ui-type api) :console)
-        all-agents-a     (atom (scan-agent-dirs cwd))
+        all-agents-a     (atom (load-all-agent-defs cwd))
         chains-a         (atom (load-chains cwd))
         agent-sessions-a (atom {})
         next-run-id-a    (atom 1)
@@ -1053,7 +959,7 @@
                (fn [_ev]
                  (clear-chain-workflows!)
                  (reset! agent-sessions-a {})
-                 (reset! all-agents-a (scan-agent-dirs cwd))
+                 (reset! all-agents-a (load-all-agent-defs cwd))
                  (reset! chains-a (load-chains cwd))
                  (reset! next-run-id-a 1)
                  (refresh-widget!)

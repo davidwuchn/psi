@@ -234,6 +234,89 @@ rule RunAgent {
         -- Consumers call this instead of directly orchestrating agent-core + executor.
 }
 
+;;; Child session lifecycle — mechanism
+
+rule CreateChildSession {
+    when: CreateChildSession(context_id, relation: agent, config: AgentRunConfig)
+
+    -- One process, one core context, one state* atom owning all sessions.
+    -- The extension does NOT fabricate or own any session context.
+    -- Child session creation goes through a core mutation; the extension
+    -- reaches the core context only through the mutation boundary.
+
+    let ctx = CoreContext(context_id)
+    let parent_session_id = core/ActiveSessionId(ctx)
+
+    -- Create a new session entry in ctx.state*.agent_session.sessions
+    let child_session_id = UUID()
+    let agent_ctx = core/CreateAgentCore()
+
+    ensures: core/SessionEntry(ctx, child_session_id, {
+        data: core/InitialSessionData({
+            session_id: child_session_id,
+            spawn_mode: agent,
+            parent_session_id: parent_session_id,
+            session_name: config.session_name,
+            system_prompt: config.system_prompt,
+            thinking_level: config.thinking_level ?? off,
+            worktree_path: core/WorktreePath(ctx)
+        }),
+        agent_ctx: agent_ctx,
+        sc_session_id: UUID(),
+        telemetry: core/EmptyTelemetry(),
+        persistence: core/EmptyPersistence(),
+        turn: { ctx: null }
+    })
+
+    ensures: core/AgentCoreConfigured(agent_ctx, {
+        tools: config.tools,
+        system_prompt: config.system_prompt,
+        thinking_level: config.thinking_level ?? off,
+        fork_messages: config.fork_messages
+    })
+
+    ensures: core/SessionContainment{
+        context_id: context_id,
+        parent_session_id: parent_session_id,
+        child_session_id: child_session_id,
+        relation: agent,
+        created_at: Now()
+    }
+
+    ensures: child_session_id
+
+    @guidance
+        -- The child session lives in the same state* atom as all other sessions.
+        -- It shares the context's extensions, registries, config, and dispatch pipeline.
+        -- It owns its own agent_core and statechart_session_id (per ConcurrentSessionExecution).
+        -- The executor runs against the core ctx, not an extension-fabricated ctx.
+        -- Persistence, journaling, and telemetry use the same infrastructure as any session.
+        -- The extension never holds a session-ctx; it holds only the session_id.
+        -- Session reuse across invocations is by session_id, not by stashing contexts.
+}
+
+rule AgentExecutesViaCoreContext {
+    when: Prompt(session_id, prompt)
+    requires: core/SessionEntry(ctx, session_id).data.spawn_mode = agent
+
+    let ctx = CoreContext(context_id)
+    let agent_ctx = core/SessionEntry(ctx, session_id).agent_ctx
+
+    -- Switch the context's active session to the agent session for the duration
+    -- of execution, then restore the parent session when done.
+    -- Alternatively, the executor accepts an explicit session_id parameter.
+
+    ensures: core/ExecutorRunAgentLoop(ctx, session_id, agent_ctx, model, prompt)
+
+    @guidance
+        -- The executor runs against the core ctx because it needs state* for
+        -- session-data reads, telemetry writes, dispatch, and provider streaming.
+        -- The extension does not pass a fabricated session-ctx to the executor.
+        -- The core ctx already has everything the executor needs.
+        -- The executor must be session-id-aware so concurrent agent sessions
+        -- do not clobber each other's state in the shared state* atom.
+}
+
 ;;; Tool surface — renamed from Subagent* to Agent*
 
 value AgentCreateArgs {
@@ -503,6 +586,11 @@ surface AgentToolApi {
         -- Agent instance state (steering, interrupts) stored in core via ExtensionInstanceState.
         -- An agent is a child session in the same context as the current session.
         -- slash command supports /agent [--fork|-f] [@agent] <task>.
+        --
+        -- Session ownership: the extension holds session_id only, never a session-ctx.
+        -- Child session creation and executor invocation go through core mutations.
+        -- The extension does not fabricate, own, or cache any session context or atoms.
+        -- Session reuse across invocations is by session_id passed to RunAgent.
 }
 
 open question "Should steering preempt remaining tool calls or only affect next model turn?"

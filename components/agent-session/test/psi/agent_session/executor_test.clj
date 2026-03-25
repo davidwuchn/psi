@@ -12,6 +12,7 @@
    [psi.agent-core.core :as agent]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.executor :as executor]
+   [psi.agent-session.persistence :as persist]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.test-support :as test-support]
    [psi.agent-session.tool-plan :as tool-plan]
@@ -77,16 +78,26 @@
         (is (= "Connection refused"
                (:error-message (turn-sc/get-turn-data turn-ctx))))))))
 
+(defn- journal-messages
+  "Derive messages from the persistence journal in ctx."
+  [ctx]
+  (let [sid     (ss/active-session-id-in ctx)
+        journal (ss/get-state-value-in ctx (ss/state-path :journal sid))]
+    (->> journal
+         (filter #(= :message (:kind %)))
+         (mapv #(get-in % [:data :message])))))
+
 (deftest agent-core-lifecycle-test
+  ;; After run-agent-loop!, the persistence journal contains user + assistant messages.
   (let [agent-ctx   (setup-agent-ctx!)
         session-ctx (setup-session-ctx! agent-ctx)
         user-msg    {:role "user" :content [{:type :text :text "hi"}]}]
     (with-redefs [psi.agent-session.executor/do-stream!
                   (stub-text-stream "response")]
       (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg])
-      (is (= :idle (agent/sc-phase-in agent-ctx)))
-      (let [msgs (:messages (agent/get-data-in agent-ctx))]
-        (is (>= (count msgs) 2))
+      (let [msgs (journal-messages session-ctx)]
+        (is (>= (count msgs) 2)
+            (str "expected >= 2 messages, got " (count msgs)))
         (is (= "user" (:role (first msgs))))
         (is (= "assistant" (:role (second msgs))))))))
 
@@ -222,15 +233,15 @@
           (is (= "Done"
                  (some #(when (= :text (:type %)) (:text %))
                        (:content result))))))
-      (let [messages   (:messages (agent/get-data-in agent-ctx))
-            assistant  (last messages)
+      (let [messages        (journal-messages session-ctx)
+            assistant       (last messages)
             anthropic-model (models/get-model :sonnet-4.6)
-            conv       (#'executor/agent-messages->ai-conversation
-                        "sys" messages [] {:cache-breakpoints #{:system}})
-            body       (json/parse-string
-                        (:body (#'anthropic/build-request conv anthropic-model {:api-key "test-key"
-                                                                                :thinking-level :high}))
-                        true)]
+            conv            (#'executor/agent-messages->ai-conversation
+                             "sys" messages [] {:cache-breakpoints #{:system}})
+            body            (json/parse-string
+                             (:body (#'anthropic/build-request conv anthropic-model {:api-key "test-key"
+                                                                                     :thinking-level :high}))
+                             true)]
         (is (= "assistant" (:role assistant)))
         (is (= [{:type :text :text "Done"}]
                (:content assistant))
@@ -261,9 +272,11 @@
                         (consume-fn {:type :done :reason :tool_use}))]
       (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
         (agent/start-loop-in! agent-ctx [user-msg])
+        (ss/journal-append-in! session-ctx (persist/message-entry user-msg))
         (let [result (#'executor/stream-turn! nil session-ctx agent-ctx anthropic-model nil nil)
+              msgs   (journal-messages session-ctx)
               conv   (#'executor/agent-messages->ai-conversation
-                      "sys" (:messages (agent/get-data-in agent-ctx)) [] {:cache-breakpoints #{:system}})
+                      "sys" msgs [] {:cache-breakpoints #{:system}})
               body   (json/parse-string
                       (:body (#'anthropic/build-request conv (models/get-model :sonnet-4.6)
                                                         {:api-key "test-key"
@@ -580,45 +593,41 @@
       (is (= 777 (:llm-stream-idle-timeout-ms opts))))))
 
 (deftest finish-agent-loop-test
-  (testing "success path ends the loop normally"
-    (let [agent-ctx (setup-agent-ctx!)
-          result    {:role "assistant" :content [] :stop-reason :stop}
-          calls     (atom [])]
-      (with-redefs [agent/end-loop-in! (fn [_] (swap! calls conj :end))
-                    agent/end-loop-on-error-in! (fn [_ _] (swap! calls conj :error-end))]
-        (is (= result (#'executor/finish-agent-loop! agent-ctx result)))
-        (is (= [:end] @calls)))))
+  ;; finish-agent-loop! sends :agent-end to session statechart and returns result.
+  (testing "success path returns result"
+    (let [agent-ctx   (setup-agent-ctx!)
+          session-ctx (setup-session-ctx! agent-ctx)
+          result      {:role "assistant" :content [] :stop-reason :stop}]
+      (is (= result (#'executor/finish-agent-loop! session-ctx agent-ctx result)))))
 
-  (testing "error path ends the loop with error"
-    (let [agent-ctx (setup-agent-ctx!)
-          result    {:role "assistant" :content [] :stop-reason :error :error-message "boom"}
-          calls     (atom [])]
-      (with-redefs [agent/end-loop-in! (fn [_] (swap! calls conj :end))
-                    agent/end-loop-on-error-in! (fn [_ msg] (swap! calls conj [:error-end msg]))]
-        (is (= result (#'executor/finish-agent-loop! agent-ctx result)))
-        (is (= [[:error-end "boom"]] @calls))))))
+  (testing "error path returns result"
+    (let [agent-ctx   (setup-agent-ctx!)
+          session-ctx (setup-session-ctx! agent-ctx)
+          result      {:role "assistant" :content [] :stop-reason :error :error-message "boom"}]
+      (is (= result (#'executor/finish-agent-loop! session-ctx agent-ctx result))))))
 
 (deftest run-agent-loop-lifecycle-test
-  (testing "run-agent-loop! separates start, body execution, and finish"
+  ;; run-agent-loop! journals user messages, runs body, then finishes.
+  (testing "run-agent-loop! journals messages, runs body, and finishes"
     (let [agent-ctx   (setup-agent-ctx!)
           session-ctx (setup-session-ctx! agent-ctx)
           user-msg    {:role "user" :content [{:type :text :text "hi"}]}
           calls       (atom [])]
-      (with-redefs [agent/start-loop-in! (fn [_ msgs] (swap! calls conj [:start msgs]))
-                    psi.agent-session.executor/run-agent-loop-body!
+      (with-redefs [psi.agent-session.executor/run-agent-loop-body!
                     (fn [_ _ _ _ extra-ai-options progress-queue]
                       (swap! calls conj [:body extra-ai-options progress-queue])
                       {:role "assistant" :content [{:type :text :text "done"}] :stop-reason :stop})
                     psi.agent-session.executor/finish-agent-loop!
-                    (fn [_ result]
+                    (fn [_ _ result]
                       (swap! calls conj [:finish (:stop-reason result)])
                       result)]
         (let [result (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg]
                                                {:api-key "k"})]
           (is (= :stop (:stop-reason result)))
-          (is (= :start (ffirst @calls)))
-          (is (= :body (first (second @calls))))
-          (is (= :finish (first (nth @calls 2)))))))))
+          (is (= :body (ffirst @calls)))
+          (is (= :finish (first (second @calls))))
+          ;; User message is journaled
+          (is (= 1 (count (journal-messages session-ctx)))))))))
 
 (deftest execute-one-turn-test
   (testing "single-turn execution returns assistant message and explicit outcome"
@@ -910,3 +919,145 @@
           (is (= "partial" (:result-text update-e)))
           (is (= blocks (:content result-e)))
           (is (= "hello" (:result-text result-e))))))))
+
+;;; Child session infrastructure tests
+
+(defn- make-child-session-id [] (str (java.util.UUID/randomUUID)))
+
+(defn- add-child-session-to-state!
+  "Directly insert a minimal child session entry into ctx's state atom."
+  [ctx child-id child-sd]
+  (let [state* (:state* ctx)]
+    (swap! state*
+           (fn [state]
+             (-> state
+                 (assoc-in [:agent-session :sessions child-id :data]
+                           child-sd)
+                 (assoc-in [:agent-session :sessions child-id :persistence]
+                           {:journal []
+                            :flush-state {:flushed? false :session-file nil}})
+                 (assoc-in [:agent-session :sessions child-id :telemetry]
+                           {:tool-output-stats {:calls []
+                                                :aggregates {:total-context-bytes 0
+                                                             :by-tool {}
+                                                             :limit-hits-by-tool {}}}
+                            :tool-call-attempts []
+                            :tool-lifecycle-events []
+                            :provider-requests []
+                            :provider-replies []})
+                 (assoc-in [:agent-session :sessions child-id :turn] {:ctx nil}))))))
+
+(defn- scoped-ctx
+  "Return a copy of ctx with :target-session-id set to child-id."
+  [ctx child-id]
+  (assoc ctx :target-session-id child-id))
+
+(defn- journal-for-session
+  "Return the raw journal vector for session-id sid."
+  [ctx sid]
+  (ss/get-state-value-in ctx (ss/state-path :journal sid)))
+
+(deftest child-session-target-routing-test
+  ;; :target-session-id on the ctx overrides active-session-id-in and
+  ;; get-session-data-in to read from the child session, not the parent.
+  (let [agent-ctx   (setup-agent-ctx!)
+        session-ctx (setup-session-ctx! agent-ctx)
+        parent-id   (ss/active-session-id-in session-ctx)
+        child-id    (make-child-session-id)
+        child-sd    {:session-id  child-id
+                     :session-name "child"
+                     :spawn-mode  :agent
+                     :parent-session-id parent-id}
+        _           (add-child-session-to-state! session-ctx child-id child-sd)
+        scoped      (scoped-ctx session-ctx child-id)]
+    (testing "child session target-session-id routing"
+      (testing "active-session-id-in returns child id when target is set"
+        (is (= child-id (ss/active-session-id-in scoped))
+            "target-session-id should override active session resolution"))
+      (testing "get-session-data-in returns child data"
+        (is (= "child" (:session-name (ss/get-session-data-in scoped)))
+            "should read from child session, not parent"))
+      (testing "parent session data is unaffected"
+        (is (= parent-id (:session-id (ss/get-session-data-in session-ctx)))
+            "parent ctx still sees parent session")))))
+
+(deftest child-session-journal-isolation-test
+  ;; Writes via journal-append-in! on a scoped ctx land in the child journal
+  ;; without touching the parent journal.
+  (let [agent-ctx   (setup-agent-ctx!)
+        session-ctx (setup-session-ctx! agent-ctx)
+        parent-id   (ss/active-session-id-in session-ctx)
+        child-id    (make-child-session-id)
+        child-sd    {:session-id child-id :spawn-mode :agent
+                     :parent-session-id parent-id}
+        _           (add-child-session-to-state! session-ctx child-id child-sd)
+        scoped      (scoped-ctx session-ctx child-id)
+        test-msg    {:role "user"
+                     :content [{:type :text :text "child msg"}]
+                     :timestamp (java.time.Instant/now)}]
+    (testing "child session journal isolation"
+      (ss/journal-append-in! scoped (persist/message-entry test-msg))
+      (testing "entry appears in child journal"
+        (let [child-journal (journal-for-session session-ctx child-id)]
+          (is (= 1 (count child-journal))
+              (str "child journal should have 1 entry, got " (count child-journal)))
+          (is (= "user" (get-in (first child-journal) [:data :message :role]))
+              "journalled entry should be user message")))
+      (testing "parent journal is untouched"
+        (let [parent-journal (journal-for-session session-ctx parent-id)]
+          (is (= 0 (count parent-journal))
+              (str "parent journal should be empty, got " (count parent-journal))))))))
+
+(deftest executor-child-session-end-to-end-test
+  ;; run-agent-loop! on a scoped ctx with :target-session-id writes messages
+  ;; into the child journal and does not modify the parent journal.
+  (let [agent-ctx   (setup-agent-ctx!)
+        session-ctx (setup-session-ctx! agent-ctx)
+        parent-id   (ss/active-session-id-in session-ctx)
+        child-id    (make-child-session-id)
+        child-sd    {:session-id     child-id
+                     :spawn-mode     :agent
+                     :parent-session-id parent-id
+                     :system-prompt  "child sys"
+                     :tool-schemas   []}
+        _           (add-child-session-to-state! session-ctx child-id child-sd)
+        scoped      (scoped-ctx session-ctx child-id)
+        user-msg    {:role "user"
+                     :content [{:type :text :text "hi child"}]
+                     :timestamp (java.time.Instant/now)}]
+    (testing "executor child session end-to-end"
+      (with-redefs [psi.agent-session.executor/do-stream!
+                    (stub-text-stream "child response")]
+        (executor/run-agent-loop! nil scoped agent-ctx stub-model [user-msg]))
+      (testing "child journal contains both user and assistant messages"
+        (let [child-journal  (journal-for-session session-ctx child-id)
+              child-messages (->> child-journal
+                                  (filter #(= :message (:kind %)))
+                                  (mapv #(get-in % [:data :message :role])))]
+          (is (>= (count child-messages) 2)
+              (str "expected >=2 messages in child journal, got " child-messages))
+          (is (= "user" (first child-messages))
+              "first message should be user")
+          (is (= "assistant" (second child-messages))
+              "second message should be assistant")))
+      (testing "parent journal remains empty"
+        (let [parent-journal (journal-for-session session-ctx parent-id)]
+          (is (= 0 (count parent-journal))
+              (str "parent journal should be empty, got " (count parent-journal))))))))
+
+(deftest finish-agent-loop-skips-statechart-for-child-test
+  ;; finish-agent-loop! must not crash or attempt statechart dispatch when
+  ;; :target-session-id is set (child session path has no statechart lifecycle).
+  (let [agent-ctx   (setup-agent-ctx!)
+        session-ctx (setup-session-ctx! agent-ctx)
+        child-id    (make-child-session-id)
+        scoped      (scoped-ctx session-ctx child-id)
+        result      {:role "assistant"
+                     :content [{:type :text :text "done"}]
+                     :stop-reason :stop}]
+    (testing "finish-agent-loop! with target-session-id"
+      (testing "returns result without error"
+        (let [returned (#'psi.agent-session.executor/finish-agent-loop!
+                        scoped agent-ctx result)]
+          (is (= result returned)
+              "should return the result unchanged"))))))

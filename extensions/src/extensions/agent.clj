@@ -21,8 +21,6 @@
    [com.fulcrologic.statecharts.chart :as chart]
    [extensions.workflow-display :as workflow-display]
    [com.fulcrologic.statecharts.elements :as ele]
-   [psi.agent-core.core :as agent]
-   [psi.agent-session.executor :as executor]
    [psi.agent-session.tools :as tools]
    [psi.ai.models :as models]))
 
@@ -173,7 +171,7 @@
      (query-fn [:psi.agent-session/system-prompt]))))
 
 (defn- parse-frontmatter
-  "Parse markdown frontmatter and return {:name :description :system-prompt} when present."
+  "Parse markdown frontmatter and return {:name :description :tools :system-prompt} when present."
   [raw]
   (let [m (re-find #"(?s)^---\n(.*?)\n---\n(.*)" (or raw ""))]
     (when m
@@ -188,6 +186,7 @@
         (when-let [name (not-empty (get fm "name"))]
           {:name          name
            :description   (some-> (get fm "description") str/trim not-empty)
+           :tools         (some-> (get fm "tools") str/trim not-empty)
            :system-prompt (str/trim (nth m 2))})))))
 
 (declare current-session-cwd)
@@ -196,12 +195,23 @@
 (defn- normalize-agent-name [x]
   (some-> x str str/trim (str/replace #"^@" "") str/lower-case not-empty))
 
-(defn- agents-dir [query-fn]
+(defn- current-session-cwd [query-fn]
+  (when query-fn
+    (:psi.agent-session/cwd
+     (query-fn [:psi.agent-session/cwd]))))
+
+(defn- global-agents-dir []
+  (str (System/getProperty "user.home") "/.psi/agents"))
+
+(defn- project-agents-dir [query-fn]
   (when-let [cwd (current-session-cwd query-fn)]
     (str cwd "/.psi/agents")))
 
-(defn- load-agent-defs [query-fn]
-  (let [dir (some-> (agents-dir query-fn) io/file)]
+(defn load-agent-defs
+  "Load agent definitions from a directory of markdown files.
+  Returns {lowercase-name {:name :description :tools :system-prompt}}."
+  [agents-dir]
+  (let [dir (some-> agents-dir io/file)]
     (if (and dir (.exists dir) (.isDirectory dir))
       (->> (.listFiles dir)
            (keep (fn [f]
@@ -213,29 +223,104 @@
                              k      (normalize-agent-name (:name parsed))]
                          (when (and k
                                     (seq (:system-prompt parsed)))
-                           [k {:name k
-                               :description (:description parsed)
+                           [k {:name          k
+                               :description   (:description parsed)
+                               :tools         (:tools parsed)
                                :system-prompt (:system-prompt parsed)}]))
                        (catch Exception _ nil)))))
            (into {}))
       {})))
 
+(defn- load-all-agent-defs
+  "Load agent defs from global (~/.psi/agents) and project dirs, merged.
+  Project defs take precedence over global."
+  [query-fn]
+  (merge (load-agent-defs (global-agents-dir))
+         (load-agent-defs (project-agents-dir query-fn))))
+
 (defn- selected-agent-def [query-fn agent-name]
   (when-let [name (normalize-agent-name agent-name)]
-    (get (load-agent-defs query-fn) name)))
+    (get (load-all-agent-defs query-fn) name)))
 
-(defn- selected-agent-prompt [query-fn agent-name]
-  (:system-prompt (selected-agent-def query-fn agent-name)))
+(defn- tool-schemas-for
+  "Resolve a comma-separated tools string to tool schema maps.
+  Falls back to default agent tool set when tools-str is nil."
+  [tools-str]
+  (let [tool-map (into {} (map (juxt :name identity)) tools/all-tool-schemas)
+        names    (if tools-str
+                   (into [] (comp (map str/trim) (remove str/blank?))
+                         (str/split tools-str #","))
+                   (vec agent-tool-names))]
+    (vec (keep tool-map names))))
 
-(defn- compose-system-prompt [base-prompt query-fn agent-name]
-  (if-let [agent-prompt (selected-agent-prompt query-fn agent-name)]
-    (let [base (str/trim (or base-prompt ""))
-          profile (str "[Agent Profile: " (or (normalize-agent-name agent-name) "custom") "]\n"
-                       agent-prompt)]
-      (if (seq base)
-        (str base "\n\n" profile)
-        profile))
-    base-prompt))
+;;; Public boundary — RunAgent primitive and config resolution
+
+(defn resolve-agent-config
+  "Resolve agent configuration from name, agents directories, and base prompt.
+  `agents-dirs` may be a single directory string or a seq of directories.
+  Returns {:session-name :system-prompt :tools :model :thinking-level :fork-messages}."
+  [agent-name agents-dirs base-system-prompt]
+  (let [norm-name (normalize-agent-name agent-name)
+        dirs      (if (string? agents-dirs) [agents-dirs] (vec agents-dirs))
+        all-defs  (reduce (fn [acc d] (merge acc (load-agent-defs d))) {} dirs)
+        agent-def (when norm-name (get all-defs norm-name))
+        prompt    (if agent-def
+                    (let [base (str/trim (or base-system-prompt ""))
+                          profile (str "[Agent Profile: " (:name agent-def) "]\n"
+                                       (:system-prompt agent-def))]
+                      (if (seq base)
+                        (str base "\n\n" profile)
+                        profile))
+                    base-system-prompt)
+        tools     (tool-schemas-for (:tools agent-def))]
+    {:session-name    norm-name
+     :system-prompt   prompt
+     :tools           tools
+     :model           nil
+     :thinking-level  :off
+     :fork-messages   nil}))
+
+(defn run-agent
+  "Run an agent to completion via core child session.
+  Creates a child session via mutation, runs the agent loop, returns result.
+  Returns {:ok? :text :elapsed-ms :error-message :session-id}."
+  [{:keys [config prompt model get-api-key-fn existing-session-id]}]
+  (let [started    (now-ms)
+        mutate-fn  (some-> @state :api :mutate)
+        session-id (or existing-session-id
+                       (when mutate-fn
+                         (:psi.agent-session/session-id
+                          (mutate-fn 'psi.extension/create-child-session
+                                     {:session-name    (:session-name config)
+                                      :system-prompt   (:system-prompt config)
+                                      :tool-schemas    (:tools config)
+                                      :thinking-level  (:thinking-level config)}))))]
+    (if-not session-id
+      {:ok?           false
+       :text          "Error: could not create child session"
+       :elapsed-ms    (- (now-ms) started)
+       :error-message "No mutate-fn or session creation failed"
+       :session-id    nil}
+      (let [model*  (or model (get models/all-models :sonnet-4.6))
+            api-key (when (fn? get-api-key-fn)
+                      (get-api-key-fn (:provider model*)))
+            result  (try
+                      (mutate-fn 'psi.extension/run-agent-loop-in-session
+                                 {:session-id session-id
+                                  :prompt     prompt
+                                  :model      model*
+                                  :api-key    api-key})
+                      (catch Exception e
+                        {:psi.agent-session/agent-run-ok?           false
+                         :psi.agent-session/agent-run-text          (str "Error: " (ex-message e))
+                         :psi.agent-session/agent-run-elapsed-ms    (- (now-ms) started)
+                         :psi.agent-session/agent-run-error-message (ex-message e)}))]
+        {:ok?           (:psi.agent-session/agent-run-ok? result)
+         :text          (:psi.agent-session/agent-run-text result)
+         :elapsed-ms    (or (:psi.agent-session/agent-run-elapsed-ms result)
+                            (- (now-ms) started))
+         :error-message (:psi.agent-session/agent-run-error-message result)
+         :session-id    session-id}))))
 
 (defn- current-session-messages [query-fn]
   (when query-fn
@@ -251,40 +336,6 @@
                                              (:role msg)))
                          msg)))))
            vec))))
-
-(defn- create-agent-ctx [query-fn agent-name {:keys [fork-session?]}]
-  (let [agent-ctx      (agent/create-context)
-        tools          (->> tools/all-tools
-                            (filter #(contains? agent-tool-names (:name %)))
-                            vec)
-        base-prompt    (current-system-prompt query-fn)
-        final-prompt   (compose-system-prompt base-prompt query-fn agent-name)
-        fork-messages  (when fork-session?
-                         (current-session-messages query-fn))]
-    (agent/create-agent-in! agent-ctx)
-    (agent/set-tools-in! agent-ctx tools)
-    (agent/set-thinking-level-in! agent-ctx :off)
-    (when (seq final-prompt)
-      (agent/set-system-prompt-in! agent-ctx final-prompt))
-    (when (seq fork-messages)
-      (agent/replace-messages-in! agent-ctx fork-messages))
-    agent-ctx))
-
-(defn- current-session-cwd [query-fn]
-  (when query-fn
-    (:psi.agent-session/cwd
-     (query-fn [:psi.agent-session/cwd]))))
-
-(defn- create-agent-session-ctx [agent-ctx query-fn]
-  {:agent-ctx agent-ctx
-   :cwd       (current-session-cwd query-fn)
-   :session-data-atom
-   (atom {:tool-output-overrides {}})
-   :tool-output-stats-atom
-   (atom {:calls []
-          :aggregates {:total-context-bytes 0
-                       :by-tool {}
-                       :limit-hits-by-tool {}}})})
 
 (defn- wf-phase [wf]
   (or (:psi.extension.workflow/phase wf)
@@ -448,7 +499,7 @@
     (workflow-display/display-lines display)))
 
 (defn- available-agent-defs []
-  (load-agent-defs (:query-fn @state)))
+  (load-all-agent-defs (:query-fn @state)))
 
 (defn- prompt-agent-line [[name {:keys [description]}]]
   (if (seq description)
@@ -583,49 +634,17 @@
                   " in " seconds "s")
              (if ok? :info :error))))
 
-(defn- result->text [result]
-  (->> (:content result)
-       (keep (fn [c]
-               (case (:type c)
-                 :text (:text c)
-                 :error (:text c)
-                 nil)))
-       (str/join "\n")))
-
 (defn- run-agent-job
-  [{:keys [agent-ctx session-ctx prompt query-fn get-api-key-fn]}]
-  (let [started (now-ms)]
-    (try
-      (let [model        (resolve-active-model query-fn)
-            _            (when-not model
-                           (throw (ex-info "No active model available" {})))
-            api-key      (when (fn? get-api-key-fn)
-                           (get-api-key-fn (:provider model)))
-            session-ctx* (or session-ctx
-                             (create-agent-session-ctx agent-ctx query-fn))
-            user-msg     {:role      "user"
-                          :content   [{:type :text :text (or prompt "")}]
-                          :timestamp (java.time.Instant/now)}
-            result       (executor/run-agent-loop!
-                          nil
-                          session-ctx*
-                          agent-ctx
-                          model
-                          [user-msg]
-                          (cond-> {}
-                            api-key (assoc :api-key api-key)))
-            text         (result->text result)
-            ok?          (not= :error (:stop-reason result))
-            elapsed      (- (now-ms) started)]
-        {:ok?           ok?
-         :text          text
-         :elapsed-ms    elapsed
-         :error-message (:error-message result)})
-      (catch Exception e
-        {:ok?           false
-         :text          (str "Error: " (ex-message e))
-         :elapsed-ms    (- (now-ms) started)
-         :error-message (ex-message e)}))))
+  "Workflow invocation wrapper. Delegates to `run-agent` via mutations."
+  [{:keys [session-id prompt query-fn get-api-key-fn]}]
+  (let [model (resolve-active-model query-fn)]
+    (when-not model
+      (throw (ex-info "No active model available" {})))
+    (run-agent {:config              {}
+                :prompt              prompt
+                :model               model
+                :get-api-key-fn      get-api-key-fn
+                :existing-session-id session-id})))
 
 (defn- start-script
   [_ data]
@@ -738,8 +757,7 @@
                                (ele/invoke {:id     :runner
                                             :type   :future
                                             :params (fn [_ data]
-                                                      {:agent-ctx       (:agent/agent-ctx data)
-                                                       :session-ctx     (:agent/session-ctx data)
+                                                      {:session-id      (:agent/session-id data)
                                                        :prompt          (:agent/current-prompt data)
                                                        :query-fn        (:agent/query-fn data)
                                                        :get-api-key-fn  (:agent/get-api-key-fn data)})
@@ -783,12 +801,21 @@
                                                  (let [agent-name    (normalize-agent-name (get input :agent))
                                                        fork-session? (true? (get input :fork-session))
                                                        include?      (true? (get input :include-result-in-context))
-                                                       agent-ctx      (create-agent-ctx qf agent-name {:fork-session? fork-session?})]
+                                                       config        (resolve-agent-config
+                                                                      agent-name
+                                                                      [(global-agents-dir) (project-agents-dir qf)]
+                                                                      (current-system-prompt qf))
+                                                       session-id    (when-let [mf (some-> @state :api :mutate)]
+                                                                       (:psi.agent-session/session-id
+                                                                        (mf 'psi.extension/create-child-session
+                                                                            {:session-name   agent-name
+                                                                             :system-prompt  (:system-prompt config)
+                                                                             :tool-schemas   (:tools config)
+                                                                             :thinking-level (:thinking-level config)})))]
                                                    {:agent/agent-name                  agent-name
                                                     :agent/fork-session?               fork-session?
                                                     :agent/include-result-in-context?  include?
-                                                    :agent/agent-ctx                   agent-ctx
-                                                    :agent/session-ctx                 (create-agent-session-ctx agent-ctx qf)
+                                                    :agent/session-id                  session-id
                                                     :agent/query-fn                    qf
                                                     :agent/get-api-key-fn              get-api-key
                                                     :agent/on-start                    on-start

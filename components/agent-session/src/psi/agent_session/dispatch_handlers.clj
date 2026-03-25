@@ -228,6 +228,41 @@
       (assoc-in (session-flush-state-path new-session-id) {:flushed? false
                                                            :session-file (io/file session-file)}))))
 
+(defn- initialize-child-session-state
+  "Add a child session entry without switching active-session-id.
+  The child is a lightweight session for agent execution."
+  [state parent-sd {:keys [child-session-id session-name system-prompt tool-schemas thinking-level]}]
+  (let [child-sd (merge (session-data/initial-session
+                         {:worktree-path (:worktree-path parent-sd)})
+                        {:session-id         child-session-id
+                         :session-name       session-name
+                         :spawn-mode         :agent
+                         :parent-session-id  (:session-id parent-sd)
+                         :system-prompt      (or system-prompt (:system-prompt parent-sd))
+                         :base-system-prompt (or system-prompt (:base-system-prompt parent-sd))
+                         :thinking-level     (or thinking-level :off)
+                         :tool-schemas       tool-schemas
+                         :model              (:model parent-sd)
+                         :created-at         (java.time.Instant/now)})]
+    (-> state
+        (assoc-in (session-data-path child-session-id) child-sd)
+        (assoc-in (session-journal-path child-session-id) [])
+        (assoc-in [:agent-session :sessions child-session-id :telemetry]
+                  {:tool-output-stats {:calls []
+                                       :aggregates {:total-context-bytes 0
+                                                    :by-tool {}
+                                                    :limit-hits-by-tool {}}}
+                   :tool-call-attempts []
+                   :tool-lifecycle-events []
+                   :provider-requests []
+                   :provider-replies []})
+        (assoc-in [:agent-session :sessions child-session-id :persistence]
+                  {:journal []
+                   :flush-state {:flushed? false :session-file nil}})
+        (assoc-in [:agent-session :sessions child-session-id :turn] {:ctx nil})
+        (assoc-in [:agent-session :sessions child-session-id :sc-session-id]
+                  (java.util.UUID/randomUUID)))))
+
 (defn- initialize-resumed-session-state
   [state current-sd {:keys [session-id session-path header entries model thinking-level]}]
   (let [session-name (some #(when (= :session-info (:kind %))
@@ -680,7 +715,9 @@
    :session/set-active-tools
    {}
    (fn [_ctx {:keys [tool-maps]}]
-     {:root-state-update (session/session-update #(assoc % :active-tools (->> tool-maps (map :name) set)))
+     {:root-state-update (session/session-update #(assoc %
+                                                         :active-tools (->> tool-maps (map :name) set)
+                                                         :tool-schemas (vec tool-maps)))
       :effects [{:effect/type :runtime/agent-set-tools
                  :tool-maps tool-maps}
                 {:effect/type :runtime/refresh-system-prompt}]}))
@@ -871,7 +908,9 @@
    {}
    (fn [_ctx {:keys [tool-result-msg]}]
      {:effects [{:effect/type :runtime/agent-record-tool-result
-                 :tool-result-msg tool-result-msg}]}))
+                 :tool-result-msg tool-result-msg}
+                {:effect/type :persist/journal-append-message-entry
+                 :message tool-result-msg}]}))
 
   (dispatch/register-handler!
    :session/tool-execute
@@ -951,6 +990,19 @@
         :effects (when messages
                    [{:effect/type :runtime/agent-replace-messages
                      :messages messages}])})))
+
+  (dispatch/register-handler!
+   :session/create-child
+   {}
+   (fn [ctx {:keys [child-session-id session-name system-prompt tool-schemas thinking-level]}]
+     (let [parent-sd (session/get-session-data-in ctx)]
+       {:root-state-update #(initialize-child-session-state % parent-sd
+                                                            {:child-session-id child-session-id
+                                                             :session-name     session-name
+                                                             :system-prompt    system-prompt
+                                                             :tool-schemas     tool-schemas
+                                                             :thinking-level   thinking-level})
+        :return child-session-id})))
 
   (dispatch/register-handler!
    :session/enqueue-steering-message

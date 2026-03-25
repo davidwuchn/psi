@@ -31,9 +31,12 @@
   (get-in state [:agent-session :active-session-id]))
 
 (defn active-session-id-in
-  "Return the active session id from the ctx atom."
+  "Return the target session id for ctx.
+  Uses :target-session-id if set (for child session execution),
+  otherwise falls back to the context's active-session-id."
   [ctx]
-  (get-in @(:state* ctx) [:agent-session :active-session-id]))
+  (or (:target-session-id ctx)
+      (get-in @(:state* ctx) [:agent-session :active-session-id])))
 
 ;;; Per-session runtime handle accessors
 

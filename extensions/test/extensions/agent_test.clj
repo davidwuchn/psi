@@ -4,7 +4,6 @@
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
    [extensions.agent :as sut]
-   [psi.agent-session.executor :as executor]
    [psi.extension-test-helpers.nullable-api :as nullable]))
 
 (def expected-tool-names
@@ -299,69 +298,54 @@
                 :is-error true}
                result))))))
 
-(deftest run-agent-job-executor-arg-order-test
-  (testing "run-agent-job passes executor args in run-agent-loop order"
-    (let [captured          (atom nil)
-          fake-agent-ctx    {:fake :agent-ctx}
-          fake-session-ctx  {:agent-ctx fake-agent-ctx
-                             :session-data-atom (atom {:tool-output-overrides {}})
-                             :tool-output-stats-atom (atom {:calls []
-                                                            :aggregates {:total-context-bytes 0
-                                                                         :by-tool {}
-                                                                         :limit-hits-by-tool {}}})}
-          fake-model        {:provider "anthropic" :id "sonnet"}]
-      (with-redefs [sut/resolve-active-model (fn [_] fake-model)
-                    executor/run-agent-loop! (fn [& args]
-                                               (reset! captured args)
-                                               {:role "assistant"
-                                                :stop-reason :stop
-                                                :content [{:type :text :text "ok"}]})]
-        (let [result (#'sut/run-agent-job
-                      {:agent-ctx      fake-agent-ctx
-                       :session-ctx    fake-session-ctx
-                       :prompt         "do thing"
-                       :query-fn       (fn [_] nil)
-                       :get-api-key-fn (fn [_] "test-api-key")})]
-          (is (:ok? result))
-          (is (= 6 (count @captured)))
-          (is (nil? (nth @captured 0)))
-          (is (= fake-session-ctx (nth @captured 1)))
-          (is (= fake-agent-ctx (nth @captured 2)))
-          (is (= fake-model (nth @captured 3)))
-          (is (= "user" (get-in (nth @captured 4) [0 :role])))
-          (is (= "do thing" (get-in (nth @captured 4) [0 :content 0 :text])))
-          (is (= {:api-key "test-api-key"} (nth @captured 5))))))))
+(deftest run-agent-mutation-flow-test
+  ;; run-agent creates a child session via mutation, then runs the loop via mutation.
+  (testing "run-agent"
+    (testing "delegates to create-child-session and run-agent-loop-in-session mutations"
+      (let [mutations (atom [])]
+        (reset! sut/state {:api {:mutate (fn [op params]
+                                           (swap! mutations conj [op params])
+                                           (case op
+                                             psi.extension/create-child-session
+                                             {:psi.agent-session/session-id "child-1"}
 
-(deftest run-agent-job-falls-back-to-created-session-ctx-test
-  (testing "run-agent-job creates a session ctx when missing"
-    (let [captured          (atom nil)
-          created           (atom nil)
-          fake-agent-ctx    {:fake :agent-ctx}
-          fake-session-ctx  {:agent-ctx fake-agent-ctx
-                             :session-data-atom (atom {:tool-output-overrides {}})
-                             :tool-output-stats-atom (atom {:calls []
-                                                            :aggregates {:total-context-bytes 0
-                                                                         :by-tool {}
-                                                                         :limit-hits-by-tool {}}})}
-          fake-model        {:provider "anthropic" :id "sonnet"}
-          qf                (fn [_] nil)]
-      (with-redefs [sut/resolve-active-model (fn [_] fake-model)
-                    sut/create-agent-session-ctx (fn [agent-ctx query-fn]
-                                                   (reset! created [agent-ctx query-fn])
-                                                   fake-session-ctx)
-                    executor/run-agent-loop! (fn [& args]
-                                               (reset! captured args)
-                                               {:role "assistant"
-                                                :stop-reason :stop
-                                                :content [{:type :text :text "ok"}]})]
-        (let [result (#'sut/run-agent-job
-                      {:agent-ctx      fake-agent-ctx
-                       :prompt         "fallback"
-                       :query-fn       qf
-                       :get-api-key-fn (fn [_] nil)})]
-          (is (:ok? result))
-          (is (= [fake-agent-ctx qf] @created))
-          (is (= fake-session-ctx (nth @captured 1))))))))
+                                             psi.extension/run-agent-loop-in-session
+                                             {:psi.agent-session/agent-run-ok? true
+                                              :psi.agent-session/agent-run-text "done"
+                                              :psi.agent-session/agent-run-elapsed-ms 42
+                                              :psi.agent-session/agent-run-error-message nil}
+
+                                             {}))}})
+        (let [result (sut/run-agent {:config {:session-name "test"
+                                              :system-prompt "hi"
+                                              :tools []
+                                              :thinking-level :off}
+                                     :prompt "do thing"
+                                     :model {:provider :test :id "m"}})]
+          (is (true? (:ok? result)))
+          (is (= "done" (:text result)))
+          (is (= "child-1" (:session-id result)))
+          (is (= 2 (count @mutations)))
+          (is (= 'psi.extension/create-child-session (ffirst @mutations)))
+          (is (= 'psi.extension/run-agent-loop-in-session (first (second @mutations)))))))
+
+    (testing "reuses existing session-id when provided"
+      (let [mutations (atom [])]
+        (reset! sut/state {:api {:mutate (fn [op params]
+                                           (swap! mutations conj [op params])
+                                           {:psi.agent-session/agent-run-ok? true
+                                            :psi.agent-session/agent-run-text "ok"
+                                            :psi.agent-session/agent-run-elapsed-ms 10
+                                            :psi.agent-session/agent-run-error-message nil})}})
+        (let [result (sut/run-agent {:config {}
+                                     :prompt "test"
+                                     :model {:provider :test :id "m"}
+                                     :existing-session-id "existing-1"})]
+          (is (true? (:ok? result)))
+          (is (= "existing-1" (:session-id result)))
+          ;; Only run-agent-loop mutation, no create-child
+          (is (= 1 (count @mutations)))
+          (is (= 'psi.extension/run-agent-loop-in-session (ffirst @mutations))))))))
 
 (deftest slash-agent-args-fork-flag-test
   (testing "parse-agent-args supports --fork and -f before optional agent"
@@ -494,3 +478,81 @@
       (let [execute (get-in @state [:tools "agent" :execute])]
         (execute {"action" "create" "task" "test task"})
         (is (= :below-editor (get-in @state [:widgets "agent-1" :position])))))))
+
+;;; Public boundary function tests
+
+(deftest load-agent-defs-test
+  ;; Tests the public boundary for loading agent definitions from a directory.
+  ;; Contracts: returns map keyed by lowercase name, includes :name :description :tools :system-prompt.
+  (testing "load-agent-defs"
+    (testing "returns empty map for nil directory"
+      (is (= {} (sut/load-agent-defs nil))))
+
+    (testing "returns empty map for nonexistent directory"
+      (is (= {} (sut/load-agent-defs "/nonexistent/path"))))
+
+    (testing "loads agent definitions from markdown files"
+      (with-test-agents-dir
+        {"planner.md" "---\nname: Planner\ndescription: Plans\ntools: read,bash\n---\nYou plan."
+         "builder.md" "---\nname: Builder\n---\nYou build."}
+        (fn []
+          (let [agents-dir (str (System/getProperty "user.dir") "/.psi/agents")
+                defs       (sut/load-agent-defs agents-dir)]
+            (is (= #{"planner" "builder"} (set (keys defs))))
+            (is (= "planner" (:name (get defs "planner"))))
+            (is (= "Plans" (:description (get defs "planner"))))
+            (is (= "read,bash" (:tools (get defs "planner"))))
+            (is (= "You plan." (:system-prompt (get defs "planner"))))
+            (is (nil? (:tools (get defs "builder"))))
+            (is (= "You build." (:system-prompt (get defs "builder"))))))))
+
+    (testing "skips files without name in frontmatter"
+      (with-test-agents-dir
+        {"no-name.md" "---\ndescription: orphan\n---\nNo name here."}
+        (fn []
+          (let [agents-dir (str (System/getProperty "user.dir") "/.psi/agents")]
+            (is (= {} (sut/load-agent-defs agents-dir)))))))))
+
+(deftest resolve-agent-config-test
+  ;; Tests the public boundary for resolving agent configuration.
+  ;; Contracts: pure function, returns config map with :session-name :system-prompt :tools.
+  (testing "resolve-agent-config"
+    (testing "returns base prompt when agent-name is nil"
+      (let [config (sut/resolve-agent-config nil nil "base prompt")]
+        (is (= "base prompt" (:system-prompt config)))
+        (is (nil? (:session-name config)))
+        (is (vector? (:tools config)))))
+
+    (testing "composes agent profile into system prompt"
+      (with-test-agents-dir
+        {"planner.md" "---\nname: Planner\ntools: read\n---\nYou plan."}
+        (fn []
+          (let [agents-dir (str (System/getProperty "user.dir") "/.psi/agents")
+                config     (sut/resolve-agent-config "planner" agents-dir "base")]
+            (is (= "planner" (:session-name config)))
+            (is (str/includes? (:system-prompt config) "base"))
+            (is (str/includes? (:system-prompt config) "[Agent Profile: planner]"))
+            (is (str/includes? (:system-prompt config) "You plan."))
+            (is (= 1 (count (:tools config))))
+            (is (= "read" (:name (first (:tools config)))))))))
+
+    (testing "uses default tools when agent has no tools field"
+      (with-test-agents-dir
+        {"builder.md" "---\nname: Builder\n---\nYou build."}
+        (fn []
+          (let [agents-dir (str (System/getProperty "user.dir") "/.psi/agents")
+                config     (sut/resolve-agent-config "builder" agents-dir "base")]
+            (is (= #{"read" "bash" "edit" "write"}
+                   (set (map :name (:tools config)))))))))))
+
+(deftest run-agent-test
+  ;; Tests the public run-agent boundary via mutation mocking.
+  ;; Covered more thoroughly in run-agent-mutation-flow-test above.
+  (testing "run-agent"
+    (testing "returns error when no mutate-fn available"
+      (reset! sut/state {:api {}})
+      (let [result (sut/run-agent {:config {:tools [] :system-prompt "hi"}
+                                   :prompt "test"
+                                   :model {:provider :test :id "m"}})]
+        (is (false? (:ok? result)))
+        (is (str/includes? (:text result) "Error"))))))

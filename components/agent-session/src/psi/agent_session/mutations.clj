@@ -10,12 +10,14 @@
    [psi.agent-session.background-job-runtime :as bg-rt]
    [psi.agent-session.core :as core]
    [psi.agent-session.dispatch :as dispatch]
+   [psi.agent-session.executor :as executor]
    [psi.agent-session.extension-runtime :as ext-rt]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.session :as session]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.tool-plan :as tool-plan]
+   [psi.ai.models :as models]
    [psi.agent-session.workflows :as wf]))
 
 ;;; Prompt-contribution helper
@@ -638,6 +640,75 @@
      :psi.agent-session/cwd            (:worktree-path sd)
      :psi.agent-session/thinking-level (:thinking-level sd)}))
 
+(pco/defmutation create-child-session
+  "Create a child session for agent execution without switching active session.
+  Returns the child session-id. The child shares the parent's context but has
+  its own journal, telemetry, and session data."
+  [_ {:keys [psi/agent-session-ctx session-name system-prompt tool-schemas thinking-level]}]
+  {::pco/op-name 'psi.extension/create-child-session
+   ::pco/params  [:psi/agent-session-ctx]
+   ::pco/output  [:psi.agent-session/session-id]}
+  (let [child-sid (str (java.util.UUID/randomUUID))]
+    (dispatch/dispatch! agent-session-ctx
+                        :session/create-child
+                        {:child-session-id child-sid
+                         :session-name     session-name
+                         :system-prompt    system-prompt
+                         :tool-schemas     tool-schemas
+                         :thinking-level   thinking-level}
+                        {:origin :mutations})
+    {:psi.agent-session/session-id child-sid}))
+
+(pco/defmutation run-agent-loop-in-session
+  "Run the agent loop for a specific child session.
+  Scopes the ctx to the target session-id and runs the executor.
+  Blocks until the agent loop completes. Returns the final result."
+  [_ {:keys [psi/agent-session-ctx session-id prompt model api-key]}]
+  {::pco/op-name 'psi.extension/run-agent-loop-in-session
+   ::pco/params  [:psi/agent-session-ctx :session-id :prompt]
+   ::pco/output  [:psi.agent-session/agent-run-ok?
+                  :psi.agent-session/agent-run-text
+                  :psi.agent-session/agent-run-elapsed-ms
+                  :psi.agent-session/agent-run-error-message]}
+  (let [scoped-ctx  (assoc agent-session-ctx :target-session-id session-id)
+        ;; Resolve model to full schema from models/all-models
+        session-model (:model (ss/get-session-data-in scoped-ctx))
+        resolved-model (or model
+                           (when session-model
+                             (some (fn [m]
+                                     (when (and (= (:provider m) (keyword (:provider session-model)))
+                                                (= (:id m) (:id session-model)))
+                                       m))
+                                   (vals models/all-models)))
+                           (get models/all-models :sonnet-4.6))
+        user-msg   {:role      "user"
+                    :content   [{:type :text :text (or prompt "")}]
+                    :timestamp (java.time.Instant/now)}]
+    (try
+      (let [result (executor/run-agent-loop!
+                    nil scoped-ctx nil
+                    resolved-model
+                    [user-msg]
+                    (cond-> {}
+                      api-key (assoc :api-key api-key)))
+            text   (->> (:content result)
+                        (keep (fn [c]
+                                (case (:type c)
+                                  :text (:text c)
+                                  :error (:text c)
+                                  nil)))
+                        (clojure.string/join "\n"))
+            ok?    (not= :error (:stop-reason result))]
+        {:psi.agent-session/agent-run-ok?           ok?
+         :psi.agent-session/agent-run-text          text
+         :psi.agent-session/agent-run-elapsed-ms    (or (:elapsed-ms result) 0)
+         :psi.agent-session/agent-run-error-message (:error-message result)})
+      (catch Throwable e
+        {:psi.agent-session/agent-run-ok?           false
+         :psi.agent-session/agent-run-text          (str "Error: " (or (ex-message e) (.getMessage e) (str e)))
+         :psi.agent-session/agent-run-elapsed-ms    0
+         :psi.agent-session/agent-run-error-message (or (ex-message e) (.getMessage e) (str e))}))))
+
 (pco/defmutation switch-session
   "Switch the active session to the given session-id."
   [_ {:keys [psi/agent-session-ctx session-id]}]
@@ -781,6 +852,8 @@
    remove-workflow
    add-extension
    create-session
+   create-child-session
+   run-agent-loop-in-session
    switch-session
    set-rpc-trace
    interrupt
