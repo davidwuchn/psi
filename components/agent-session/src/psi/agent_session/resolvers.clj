@@ -2565,16 +2565,18 @@
 
    This keeps session-root app-query-tool ergonomic while still allowing advanced
    introspection attrs that depend on non-session roots."
-  [ctx q]
-  (let [memory-ctx    (or (:memory-ctx ctx)
-                          (memory/global-context))
-        recursion-ctx (or (:recursion-ctx ctx)
-                          (recursion/global-context))
-        engine-ctx    (or (:engine-ctx ctx)
-                          (snapshot-engine-context))]
-    (p.eql/process (ensure-query-env!)
-                   {:psi/agent-session-ctx ctx
-                    :psi/memory-ctx        memory-ctx
-                    :psi/recursion-ctx     recursion-ctx
-                    :psi/engine-ctx        engine-ctx}
-                   q)))
+  ([ctx q] (query-in ctx q {}))
+  ([ctx q extra-entity]
+   (let [memory-ctx    (or (:memory-ctx ctx)
+                           (memory/global-context))
+         recursion-ctx (or (:recursion-ctx ctx)
+                           (recursion/global-context))
+         engine-ctx    (or (:engine-ctx ctx)
+                           (snapshot-engine-context))]
+     (p.eql/process (ensure-query-env!)
+                    (merge extra-entity
+                           {:psi/agent-session-ctx ctx
+                            :psi/memory-ctx        memory-ctx
+                            :psi/recursion-ctx     recursion-ctx
+                            :psi/engine-ctx        engine-ctx})
+                    q))))

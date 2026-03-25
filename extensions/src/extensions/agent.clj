@@ -523,36 +523,40 @@
     (update! prompt-contribution-id
              {:content (prompt-contribution-content)})))
 
+(defn- agent-widget-query []
+  ;; Join query — resolves the single workflow identified by the entity context
+  [{:psi.extension.workflow/detail
+    [:psi.extension.workflow/id
+     :psi.extension.workflow/phase
+     :psi.extension.workflow/running?
+     :psi.extension.workflow/done?
+     :psi.extension.workflow/error?
+     :psi.extension.workflow/error-message
+     :psi.extension.workflow/elapsed-ms
+     :psi.extension.workflow/data]}])
+
+(defn- agent-widget-spec-node [_wf-id]
+  ;; Static structure — content resolved client-side from query data
+  ;; Data shape: {:psi.extension.workflow/detail {... :psi.extension.workflow/data {...}}}
+  (let [detail-path [:psi.extension.workflow/detail]]
+    (widget-spec/vstack
+     [(widget-spec/text "" :content-path (conj detail-path :psi.extension.workflow/id))
+      ;; detail line: last-line or error-line from :data
+      (widget-spec/muted "" :content-path (into detail-path
+                                                [:psi.extension.workflow/data
+                                                 :agent/last-line]))])))
+
 (defn- build-agent-widget-spec [wf]
-  (let [wid        (str "agent-" (:psi.extension.workflow/id wf))
-        running?   (:psi.extension.workflow/running? wf)
-        done?      (:psi.extension.workflow/done? wf)
-        error?     (:psi.extension.workflow/error? wf)
-        agent-name (some-> (wf-agent-name wf) str str/trim not-empty)
-        forked?    (wf-forked? wf)
-        turns      (wf-turn-count wf)
-        elapsed-s  (elapsed-seconds wf)
-        task       (task-preview (wf-task wf) 52)
-        top-text   (str (status-icon wf)
-                        " Agent #" (:psi.extension.workflow/id wf)
-                        " " (phase-badge wf)
-                        " · T" turns
-                        " · " elapsed-s "s"
-                        (when agent-name (str " · @" agent-name))
-                        (when forked? " · fork")
-                        " · " task)
-        detail-text (widget-detail-line wf)
-        id          (:psi.extension.workflow/id wf)
-        action-text (str "  /agent-cont " id " <prompt> · ✕ remove")
-        children    (cond-> [(widget-spec/text top-text)]
-                      detail-text
-                      (conj (widget-spec/muted detail-text))
-                      (and (not running?) (or done? error?))
-                      (conj (widget-spec/text action-text)))]
+  (let [wf-id    (:psi.extension.workflow/id wf)
+        wid      (str "agent-" wf-id)
+        ext-path (:ext-path @state)]
     (widget-spec/widget-spec
      wid
      (widget-placement)
-     (widget-spec/vstack children)
+     (agent-widget-spec-node wf-id)
+     :query         (agent-widget-query)
+     :entity        {:psi.extension/path              ext-path
+                     :psi.extension.workflow/id        wf-id}
      :subscriptions [(widget-spec/event-subscription "tool/result")
                      (widget-spec/event-subscription "tool/update")])))
 

@@ -361,6 +361,30 @@
     (should (string-match-p "psi.agent-chain/chains" result))
     (should (string-match-p "psi.agent-chain/count" result))))
 
+(ert-deftest pwpt-spec-query-string-formats-join-map ()
+  "A join {:psi.extension.workflow/detail [...]} encodes as EDN map."
+  (let* ((join  `((:psi.extension.workflow/detail
+                   . [,:psi.extension.workflow/id
+                      ,:psi.extension.workflow/phase])))
+         (spec  (pwpt--make-spec-with-query "w1" (vector join)))
+         (result (psi-widget-projection--spec-query-string spec)))
+    (should (string-match-p "psi.extension.workflow/detail" result))
+    (should (string-match-p "{" result))))
+
+(ert-deftest pwpt-fetch-spec-data-passes-entity-when-present ()
+  "Spec with :entity sends entity param alongside query."
+  (pwpt--with-state
+   (let* ((spec `((:id . "w1") (:extension-id . "ext")
+                  (:query . [:psi.extension.workflow/detail])
+                  (:entity . ((:psi.extension/path . "/ext") (:psi.extension.workflow/id . 1)))
+                  (:spec . ((:type . text) (:content . "x"))))))
+     (cl-letf (((symbol-function 'psi-emacs--upsert-projection-block) #'ignore))
+       (let ((calls (pwpt--capture-query-sends
+                     (lambda () (psi-widget-projection--fetch-spec-data (list spec))))))
+         (should (= 1 (length calls)))
+         (let ((params (cadr (car calls))))
+           (should (assq :entity params))))))))
+
 (ert-deftest pwpt-get-set-spec-data-roundtrip ()
   (pwpt--with-state
    (let ((data '((:psi.agent-chain/count . 3))))

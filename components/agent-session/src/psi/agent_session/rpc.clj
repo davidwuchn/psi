@@ -1913,14 +1913,21 @@
                              (response-frame (:id request) "ping" true {:pong true :protocol-version protocol-version})
 
                              "query_eql"
-                             (let [query-str (req-arg! request params :query #(and (string? %) (not (str/blank? %))) "non-empty EDN string")
-                                   q         (parse-query-edn! query-str)
-                                   result    (try
-                                               (session/query-in ctx q)
-                                               (catch Throwable e
-                                                 (throw (ex-info (or (ex-message e) "query execution failed")
-                                                                 {:error-code "runtime/query-failed"}
-                                                                 e))))]
+                             (let [query-str  (req-arg! request params :query #(and (string? %) (not (str/blank? %))) "non-empty EDN string")
+                                   entity-str (:entity params)
+                                   q          (parse-query-edn! query-str)
+                                   extra      (when (and (string? entity-str) (not (str/blank? entity-str)))
+                                                (try
+                                                  (binding [*read-eval* false]
+                                                    (let [m (edn/read-string entity-str)]
+                                                      (when (map? m) m)))
+                                                  (catch Throwable _ nil)))
+                                   result     (try
+                                                (session/query-in ctx q (or extra {}))
+                                                (catch Throwable e
+                                                  (throw (ex-info (or (ex-message e) "query execution failed")
+                                                                  {:error-code "runtime/query-failed"}
+                                                                  e))))]
                                (response-frame (:id request) op true {:result result}))
 
                              "command"

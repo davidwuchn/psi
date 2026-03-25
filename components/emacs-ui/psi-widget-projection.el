@@ -150,11 +150,13 @@ If nil, errors are silently ignored (inline renderer errors still display).")
           (alist-get :id           spec nil nil #'equal)))
 
 (defun psi-widget-projection--spec-query-string (spec)
-  "Return an EQL query string for SPEC's :query vector, or nil if empty."
+  "Return an EQL query string for SPEC's :query vector, or nil if empty.
+Uses psi-widget-projection--edn-encode for each element to correctly
+handle keywords, joins (alist maps), and nested structures."
   (let ((q (alist-get :query spec nil nil #'equal)))
     (when (and q (> (length q) 0))
       (format "[%s]"
-              (mapconcat (lambda (kw) (format "%s" kw))
+              (mapconcat #'psi-widget-projection--edn-encode
                          (if (vectorp q) (append q nil) q)
                          " ")))))
 
@@ -187,11 +189,17 @@ Specs without a :query trigger an immediate re-render."
           (if (and query-str (functionp psi-emacs--send-request-function))
               (progn
                 (setq needs-fetch t)
-                (let ((captured-key key))
+                (let* ((captured-key key)
+                       (entity      (alist-get :entity spec nil nil #'equal))
+                       (entity-str  (when entity
+                                      (psi-widget-projection--edn-encode entity)))
+                       (params      (if entity-str
+                                        `((:query . ,query-str) (:entity . ,entity-str))
+                                      `((:query . ,query-str)))))
                   (funcall psi-emacs--send-request-function
                            psi-emacs--state
                            "query_eql"
-                           `((:query . ,query-str))
+                           params
                            (lambda (frame)
                              (psi-widget-projection--handle-spec-data-result
                               captured-key frame)))))

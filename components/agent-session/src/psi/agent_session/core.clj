@@ -560,9 +560,10 @@
 ;;; EQL query surface
 
 (defn query-in
-  "Run EQL `q` against `ctx` through the component's Pathom resolvers."
-  [ctx q]
-  (resolvers/query-in ctx q))
+  "Run EQL `q` against `ctx` through the component's Pathom resolvers.
+   Optional `extra-entity` map is merged into the Pathom query entity."
+  ([ctx q] (resolvers/query-in ctx q))
+  ([ctx q extra-entity] (resolvers/query-in ctx q extra-entity)))
 
 ;;; REPL convenience wrappers — delegate through service surface
 ;;; Uses requiring-resolve to avoid core ↔ service circular dependency.

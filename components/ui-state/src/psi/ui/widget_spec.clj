@@ -217,16 +217,19 @@
 
 (defn widget-spec
   "Build a WidgetSpec map.
-   :query    — vector of EQL keywords
-   :spec     — root WidgetNode
+   :query         — vector of EQL forms (keywords, joins)
+   :entity        — optional map merged into Pathom query entity (e.g. for seeding
+                    :psi.extension/path + :psi.extension.workflow/id)
+   :spec          — root WidgetNode
    :subscriptions — vector of EventSubscription maps"
-  [id placement spec-node & {:keys [query subscriptions]
+  [id placement spec-node & {:keys [query entity subscriptions]
                               :or   {query [] subscriptions []}}]
-  {:id            id
-   :placement     placement
-   :query         (vec query)
-   :spec          spec-node
-   :subscriptions (vec subscriptions)})
+  (cond-> {:id            id
+           :placement     placement
+           :query         (vec query)
+           :spec          spec-node
+           :subscriptions (vec subscriptions)}
+    entity (assoc :entity entity)))
 
 ;; ─────────────────────────────────────────────
 ;; Node traversal
