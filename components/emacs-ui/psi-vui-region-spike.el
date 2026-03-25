@@ -124,17 +124,19 @@ Returns the root instance."
     instance))
 
 ;;; Window management
+;; Use a side window so the vui buffer stays frame-persistent —
+;; it doesn't disappear when the transcript buffer is switched.
 
-(defun psi-vui-region-spike--get-or-create-window (transcript-window)
-  "Return the vui split window below TRANSCRIPT-WINDOW, creating it if needed."
-  (let ((vui-buf (get-buffer-create psi-vui-region-spike--vui-buffer-name)))
-    (or (get-buffer-window vui-buf)
-        (let ((win (split-window transcript-window
-                                 (- psi-vui-region-spike--window-height)
-                                 'below)))
-          (set-window-buffer win vui-buf)
-          (set-window-dedicated-p win t)
-          win))))
+(defun psi-vui-region-spike--show-side-window ()
+  "Display the vui region buffer in a bottom side window.
+Side windows are frame-persistent: they survive buffer switches."
+  (let ((buf (get-buffer-create psi-vui-region-spike--vui-buffer-name)))
+    (display-buffer-in-side-window
+     buf
+     `((side          . bottom)
+       (slot          . 0)
+       (window-height . ,psi-vui-region-spike--window-height)
+       (preserve-size . (nil . t))))))
 
 (defun psi-vui-region-spike--mount-vui (client)
   "Mount the vui component into the vui region buffer with CLIENT."
@@ -146,34 +148,18 @@ Returns the root instance."
 
 ;;;###autoload
 (defun psi-vui-region-spike-open ()
-  "Open the vui live-region spike alongside the active psi transcript buffer.
+  "Open the vui live-region spike in a bottom side window.
 
-Finds the active *psi:...* buffer, splits its window, and mounts a vui
-component in the lower split.  The transcript buffer is untouched."
+The vui buffer appears as a frame-persistent side window — it stays
+visible regardless of which buffer occupies the main window.
+The transcript buffer (*psi:...*) is untouched."
   (interactive)
   (require 'psi-vui-spike)
-  (let* ((client (psi-vui-spike--find-client))
-         (_ (unless client
-              (user-error "No live psi RPC client — open a *psi:...* buffer first")))
-         ;; Find or select the transcript window
-         (transcript-buf (psi-vui-region-spike--find-transcript-buffer))
-         (_ (unless transcript-buf
-              (user-error "No *psi:...* transcript buffer found")))
-         (transcript-win (or (get-buffer-window transcript-buf)
-                             (display-buffer transcript-buf))))
-    ;; Mount vui into its own buffer (save-window-excursion keeps us here)
+  (let ((client (psi-vui-spike--find-client)))
+    (unless client
+      (user-error "No live psi RPC client — open a *psi:...* buffer first"))
     (psi-vui-region-spike--mount-vui client)
-    ;; Open the split below the transcript
-    (psi-vui-region-spike--get-or-create-window transcript-win)
-    ;; Leave point in the transcript
-    (select-window transcript-win)))
-
-(defun psi-vui-region-spike--find-transcript-buffer ()
-  "Return the first live *psi:...* buffer, or nil."
-  (cl-find-if
-   (lambda (buf)
-     (string-match-p "\\*psi[*:]" (buffer-name buf)))
-   (buffer-list)))
+    (psi-vui-region-spike--show-side-window)))
 
 (provide 'psi-vui-region-spike)
 ;;; psi-vui-region-spike.el ends here
