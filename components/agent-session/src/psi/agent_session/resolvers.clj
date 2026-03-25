@@ -300,7 +300,8 @@
    :psi.ui/dialog-queue-empty?            — true when no dialogs active or pending
    :psi.ui/active-dialog                  — current dialog map (sans promise), or nil
    :psi.ui/pending-dialog-count           — number of queued dialogs
-   :psi.ui/widgets                        — vector of widget maps
+   :psi.ui/widgets                        — vector of legacy widget maps (content-lines)
+   :psi.ui/widget-specs                   — vector of declarative WidgetSpec maps
    :psi.ui/statuses                       — vector of status entry maps
    :psi.ui/visible-notifications          — vector of non-dismissed notification maps
    :psi.ui/tool-renderers                 — vector of tool renderer metadata maps
@@ -2050,6 +2051,7 @@
                  :psi.ui/active-dialog
                  :psi.ui/pending-dialog-count
                  :psi.ui/widgets
+                 :psi.ui/widget-specs
                  :psi.ui/statuses
                  :psi.ui/visible-notifications
                  :psi.ui/tool-renderers
@@ -2060,6 +2062,7 @@
        :psi.ui/active-dialog         (:active-dialog snap)
        :psi.ui/pending-dialog-count  (:pending-dialog-count snap)
        :psi.ui/widgets               (:widgets snap)
+       :psi.ui/widget-specs          (:widget-specs snap)
        :psi.ui/statuses              (:statuses snap)
        :psi.ui/visible-notifications (:visible-notifications snap)
        :psi.ui/tool-renderers        (:tool-renderers snap)
@@ -2068,6 +2071,7 @@
        :psi.ui/active-dialog         nil
        :psi.ui/pending-dialog-count  0
        :psi.ui/widgets               []
+       :psi.ui/widget-specs          []
        :psi.ui/statuses              []
        :psi.ui/visible-notifications []
        :psi.ui/tool-renderers        []

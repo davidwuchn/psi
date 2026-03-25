@@ -18,7 +18,8 @@
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.tool-plan :as tool-plan]
    [psi.ai.models :as models]
-   [psi.agent-session.workflows :as wf]))
+   [psi.agent-session.workflows :as wf]
+   [psi.ui.state :as ui-state]))
 
 ;;; Prompt-contribution helper
 
@@ -821,6 +822,38 @@
     {:psi.extension/prompt-accepted? accepted
      :psi.extension/prompt-delivery  delivery}))
 
+;;; Widget spec mutations
+
+(pco/defmutation set-widget-spec
+  "Register or replace a declarative WidgetSpec for the calling extension.
+   `spec` must be a valid psi.ui.widget-spec map (see psi.ui.widget-spec/validate-spec).
+   Returns {:psi.ui/widget-spec-accepted? true} on success, or an error."
+  [_ {:keys [psi/agent-session-ctx spec]}]
+  {::pco/op-name 'psi.ui/set-widget-spec
+   ::pco/params  [:psi/agent-session-ctx :spec]
+   ::pco/output  [:psi.ui/widget-spec-accepted?
+                  :psi.ui/widget-spec-errors]}
+  (let [ui-atom (ss/ui-state-view-in agent-session-ctx)
+        ;; Extension id is derived from the spec's :extension-id field,
+        ;; falling back to a generic sentinel. Extensions should set :extension-id.
+        ext-id  (or (:extension-id spec) "unknown")
+        result  (ui-state/set-widget-spec! ui-atom ext-id spec)]
+    (if result
+      {:psi.ui/widget-spec-accepted? false
+       :psi.ui/widget-spec-errors    (:errors result)}
+      {:psi.ui/widget-spec-accepted? true
+       :psi.ui/widget-spec-errors    nil})))
+
+(pco/defmutation clear-widget-spec
+  "Remove a declarative WidgetSpec by widget-id for the calling extension."
+  [_ {:keys [psi/agent-session-ctx extension-id widget-id]}]
+  {::pco/op-name 'psi.ui/clear-widget-spec
+   ::pco/params  [:psi/agent-session-ctx :extension-id :widget-id]
+   ::pco/output  [:psi.ui/widget-spec-cleared?]}
+  (let [ui-atom (ss/ui-state-view-in agent-session-ctx)]
+    (ui-state/clear-widget-spec! ui-atom extension-id widget-id)
+    {:psi.ui/widget-spec-cleared? true}))
+
 ;;; Registry
 
 (def all-mutations
@@ -860,4 +893,6 @@
    compact
    append-entry
    send-message
-   send-prompt])
+   send-prompt
+   set-widget-spec
+   clear-widget-spec])
