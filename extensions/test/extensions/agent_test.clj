@@ -267,6 +267,30 @@
           (is (false? (:is-error result)))
           (is (= "sync ok" (:content result))))))))
 
+
+(deftest execute-sync-tool-path-emits-result-once-test
+  (testing "sync /agent create emits result exactly once via emit-result-message!"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/agent.clj"})
+          emit-count (atom 0)]
+      (sut/init api)
+      (with-redefs [sut/await-terminal-workflow (fn [_id _timeout]
+                                                  {:workflow {:psi.extension.workflow/error? false
+                                                              :psi.extension.workflow/result "sync ok"
+                                                              :psi.extension.workflow/data {:agent.elapsed-ms 12}}
+                                                   :timeout false
+                                                   :error nil})
+                    sut/emit-result-message! (fn [& _]
+                                               (swap! emit-count inc))]
+        (let [execute (get-in @state [:tools "agent" :execute])
+              result  (execute {"action" "create"
+                               "task" "sync task"
+                               "mode" "sync"})]
+          (is (= 0 @emit-count))
+          (is (false? (:is-error result)))
+          (is (str/includes? (:content result) "Agent #1 finished"))
+          (is (str/includes? (:content result) "sync ok"))
+          (is (not (str/includes? (:content result) "job "))))))))
 (deftest execute-agent-tool-timeout-test
   (testing "create passes timeout_ms through to spawn-agent"
     (let [{:keys [api state]} (nullable/create-nullable-extension-api
