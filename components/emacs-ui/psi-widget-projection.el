@@ -45,6 +45,33 @@
   "[:psi.ui/widget-specs]"
   "EQL query string to fetch all registered widget specs.")
 
+(defconst psi-widget-projection--default-timeout-ms 30000
+  "Default mutation timeout in milliseconds.")
+
+;;; Global error handler
+
+(defvar psi-widget-projection-error-handler nil
+  "Function called when a widget error occurs.
+Called as (fn ctx) where ctx is an alist with keys:
+  :widget-id      — widget id string
+  :extension-id   — extension id string
+  :error-code     — string: \"mutation-timeout\", \"query-failed\", \"malformed-spec\"
+  :message        — human-readable error string
+  :context        — symbol: mutation-timeout | query-failed | malformed-spec | event-error
+If nil, errors are silently ignored (inline renderer errors still display).")
+
+(defun psi-widget-projection--call-error-handler (ctx)
+  "Invoke `psi-widget-projection-error-handler' with CTX if set."
+  (when (functionp psi-widget-projection-error-handler)
+    (condition-case err
+        (funcall psi-widget-projection-error-handler ctx)
+      (error (message "psi-widget: error handler raised: %S" err)))))
+
+;;; Mutation timeout state
+
+(defvar psi-widget-projection--mutation-timers (make-hash-table :test #'equal)
+  "Hash of \"ext/wid:node-key\" → timer for in-flight mutation watchdogs.")
+
 ;;; Query + spec storage
 
 (defun psi-widget-projection-request-specs ()
@@ -176,10 +203,21 @@ Specs without a :query trigger an immediate re-render."
 (defun psi-widget-projection--handle-spec-data-result (key frame)
   "Handle query_eql response FRAME for per-spec data identified by KEY."
   (when psi-emacs--state
-    (let* ((data   (alist-get :data frame nil nil #'equal))
-           (result (and (listp data)
-                        (alist-get :result data nil nil #'equal))))
-      (psi-widget-projection--set-spec-data key result)
+    (let* ((data    (alist-get :data frame nil nil #'equal))
+           (error   (alist-get :error frame nil nil #'equal))
+           (result  (and (listp data)
+                         (alist-get :result data nil nil #'equal))))
+      (if error
+          (let* ((parts   (split-string key "/"))
+                 (ext-id  (car parts))
+                 (wid     (cadr parts)))
+            (psi-widget-projection--call-error-handler
+             `((:widget-id    . ,wid)
+               (:extension-id . ,ext-id)
+               (:error-code   . "query-failed")
+               (:message      . ,(format "Query failed: %s" error))
+               (:context      . query-failed))))
+        (psi-widget-projection--set-spec-data key result))
       (psi-emacs--upsert-projection-block))))
 
 ;;; Rendering
@@ -234,26 +272,79 @@ Updates lstate to in-flight, fires mutation over RPC, re-renders."
         (psi-widget-projection--set-lstate
          ext-id wid
          (psi-widget-renderer-lstate-set-in-flight lstate node-key t))
-        ;; Fire mutation via query_eql
-        (psi-widget-projection--dispatch-mutation mutation ext-id wid node-key)
+        ;; Fire mutation via query_eql (pass button node for timeout resolution)
+        (psi-widget-projection--dispatch-mutation mutation ext-id wid node-key button)
         ;; Re-render immediately to show spinner
         (psi-emacs--upsert-projection-block)))))
 
-(defun psi-widget-projection--dispatch-mutation (mutation ext-id widget-id node-key)
+(defun psi-widget-projection--timer-key (ext-id widget-id node-key)
+  "Return hash key for a mutation timer: \"ext-id/widget-id:node-key\"."
+  (format "%s/%s:%s" ext-id widget-id node-key))
+
+(defun psi-widget-projection--effective-timeout-ms (button-node mutation)
+  "Return effective timeout ms for BUTTON-NODE / MUTATION.
+Priority: mutation :timeout-ms > button :timeout-ms > default."
+  (or (alist-get :timeout-ms mutation   nil nil #'equal)
+      (alist-get :timeout-ms button-node nil nil #'equal)
+      psi-widget-projection--default-timeout-ms))
+
+(defun psi-widget-projection--arm-mutation-timer (ext-id widget-id node-key timeout-ms)
+  "Arm a watchdog timer for EXT-ID/WIDGET-ID/NODE-KEY firing after TIMEOUT-MS."
+  (let ((tkey (psi-widget-projection--timer-key ext-id widget-id node-key)))
+    (psi-widget-projection--cancel-mutation-timer tkey)
+    (puthash tkey
+             (run-at-time (/ timeout-ms 1000.0) nil
+                          #'psi-widget-projection--on-mutation-timeout
+                          ext-id widget-id node-key timeout-ms)
+             psi-widget-projection--mutation-timers)))
+
+(defun psi-widget-projection--cancel-mutation-timer (tkey)
+  "Cancel and remove timer for TKEY."
+  (let ((timer (gethash tkey psi-widget-projection--mutation-timers)))
+    (when (timerp timer)
+      (cancel-timer timer))
+    (remhash tkey psi-widget-projection--mutation-timers)))
+
+(defun psi-widget-projection--on-mutation-timeout (ext-id widget-id node-key timeout-ms)
+  "Watchdog callback: mutation for EXT-ID/WIDGET-ID/NODE-KEY timed out."
+  (when psi-emacs--state
+    (let ((tkey (psi-widget-projection--timer-key ext-id widget-id node-key)))
+      (remhash tkey psi-widget-projection--mutation-timers)
+      ;; Clear in-flight
+      (let ((lstate (psi-widget-projection--get-lstate ext-id widget-id)))
+        (psi-widget-projection--set-lstate
+         ext-id widget-id
+         (psi-widget-renderer-lstate-set-in-flight lstate node-key nil)))
+      ;; Call global error handler
+      (psi-widget-projection--call-error-handler
+       `((:widget-id    . ,widget-id)
+         (:extension-id . ,ext-id)
+         (:error-code   . "mutation-timeout")
+         (:message      . ,(format "Mutation timed out after %dms" timeout-ms))
+         (:context      . mutation-timeout)))
+      (psi-emacs--upsert-projection-block))))
+
+(defun psi-widget-projection--dispatch-mutation (mutation ext-id widget-id node-key
+                                                           &optional button-node)
   "Send MUTATION as an EQL mutation over RPC.
-On response, clear in-flight state and re-render."
+Arms a timeout watchdog; cancels it on any response."
   (when (functionp psi-emacs--send-request-function)
-    (let* ((mut-name   (alist-get :name   mutation nil nil #'equal))
-           (mut-params (or (alist-get :params mutation nil nil #'equal) '()))
-           (query-str  (format "[(%s %s)]"
-                               mut-name
-                               (psi-widget-projection--edn-encode mut-params))))
+    (let* ((mut-name    (alist-get :name   mutation nil nil #'equal))
+           (mut-params  (or (alist-get :params mutation nil nil #'equal) '()))
+           (query-str   (format "[(%s %s)]"
+                                mut-name
+                                (psi-widget-projection--edn-encode mut-params)))
+           (timeout-ms  (psi-widget-projection--effective-timeout-ms
+                         button-node mutation))
+           (tkey        (psi-widget-projection--timer-key ext-id widget-id node-key)))
+      (psi-widget-projection--arm-mutation-timer ext-id widget-id node-key timeout-ms)
       (funcall psi-emacs--send-request-function
                psi-emacs--state
                "query_eql"
                `((:query . ,query-str))
                (lambda (_frame)
-                 ;; Clear in-flight on any response (success or error)
+                 ;; Cancel watchdog and clear in-flight on any response
+                 (psi-widget-projection--cancel-mutation-timer tkey)
                  (when psi-emacs--state
                    (let ((lstate (psi-widget-projection--get-lstate ext-id widget-id)))
                      (psi-widget-projection--set-lstate
