@@ -1,6 +1,6 @@
 (ns psi.ui.state
   "Shared UI state management - extracted to break circular dependencies.
-   
+
    Extension UI state: dialogs, widgets, status, notifications, render registry.
 
    Design
@@ -19,7 +19,8 @@
    Headless fallback: when no TUI is active, dialog methods return defaults
    immediately (confirm → false, select → nil, input → nil).
    Fire-and-forget methods (notify, set-widget, set-status) are no-ops."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [psi.ui.widget-spec :as widget-spec]))
 
 ;; ============================================================
 ;; UI state structure
@@ -39,6 +40,7 @@
   []
   (atom {:dialog-queue      {:pending [] :active nil}
          :widgets           {}
+         :widget-specs      {}
          :statuses          {}
          :notifications     []
          :tool-renderers    {}
@@ -259,6 +261,49 @@
   (when ui-state-atom
     (swap! ui-state-atom update :widgets dissoc [ext-id widget-id])))
 
+;; ============================================================
+;; Widget specs (declarative node-tree widgets)
+;; ============================================================
+
+(defn set-widget-spec!
+  "Register or replace a declarative WidgetSpec for ext-id.
+   spec must satisfy psi.ui.widget-spec/validate-spec.
+   Returns nil on success, or {:errors [...]} when validation fails.
+   No-op when ui-state-atom is nil (headless)."
+  [ui-state-atom ext-id spec]
+  (when ui-state-atom
+    (if-let [err (widget-spec/validate-spec spec)]
+      err
+      (do (swap! ui-state-atom assoc-in [:widget-specs [ext-id (:id spec)]]
+                 (assoc spec :extension-id ext-id))
+          nil))))
+
+(defn clear-widget-spec!
+  "Remove a declarative WidgetSpec. No-op when ui-state-atom is nil."
+  [ui-state-atom ext-id widget-id]
+  (when ui-state-atom
+    (swap! ui-state-atom update :widget-specs dissoc [ext-id widget-id])))
+
+(defn clear-all-widget-specs-for-extension!
+  "Remove all declarative WidgetSpecs for ext-id. Used on extension unload."
+  [ui-state-atom ext-id]
+  (when ui-state-atom
+    (swap! ui-state-atom update :widget-specs
+           (fn [specs]
+             (into {} (remove (fn [[[eid _] _]] (= eid ext-id)) specs))))))
+
+(defn all-widget-specs
+  "Return all registered WidgetSpec maps as a vector."
+  [ui-state-atom]
+  (when ui-state-atom
+    (vec (vals (:widget-specs @ui-state-atom)))))
+
+(defn widget-spec-for
+  "Return the WidgetSpec for [ext-id widget-id], or nil."
+  [ui-state-atom ext-id widget-id]
+  (when ui-state-atom
+    (get-in @ui-state-atom [:widget-specs [ext-id widget-id]])))
+
 (defn widgets-by-placement
   "Return widgets for a given placement (:above-editor or :below-editor)."
   [ui-state-atom placement]
@@ -451,6 +496,7 @@
       (reset! ui-state-atom
               {:dialog-queue      {:pending [] :active nil}
                :widgets           {}
+               :widget-specs      {}
                :statuses          {}
                :notifications     []
                :tool-renderers    {}
@@ -473,8 +519,10 @@
      :confirm     (fn [title message]) → boolean
      :select      (fn [title options]) → string?
      :input       (fn [title placeholder?]) → string?
-     :set-widget  (fn [widget-id placement content])
-     :clear-widget (fn [widget-id])
+     :set-widget      (fn [widget-id placement content])  — flat content-lines (legacy)
+     :clear-widget    (fn [widget-id])
+     :set-widget-spec  (fn [spec]) → nil | {:errors [...]}  — declarative WidgetSpec
+     :clear-widget-spec (fn [widget-id])
      :set-status  (fn [text])
      :clear-status (fn [])
      :notify      (fn [message level])
@@ -503,6 +551,14 @@
      :clear-widget
      (fn [widget-id]
        (clear-widget! ui-state-atom ext-id widget-id))
+
+     :set-widget-spec
+     (fn [spec]
+       (set-widget-spec! ui-state-atom ext-id spec))
+
+     :clear-widget-spec
+     (fn [widget-id]
+       (clear-widget-spec! ui-state-atom ext-id widget-id))
 
      :set-status
      (fn [text]
@@ -548,6 +604,7 @@
                                (dissoc d :promise))
      :pending-dialog-count   (count (get-in s [:dialog-queue :pending]))
      :widgets                (vec (vals (:widgets s)))
+     :widget-specs           (vec (vals (:widget-specs s)))
      :statuses               (vec (vals (:statuses s)))
      :visible-notifications  (->> (:notifications s)
                                   (remove :dismissed?)
