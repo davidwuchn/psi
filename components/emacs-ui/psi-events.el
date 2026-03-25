@@ -421,9 +421,10 @@ Child sessions (non-nil parent-session-id that matches a slot) are indented."
                 (psi-emacs--projection-seq
                  (or (psi-emacs--event-data-get data '(:widgets widgets))
                      (psi-emacs--event-data-get data '(:items items))))))
-         ;; Also re-query declarative widget specs
-         (psi-widget-projection-request-specs)
          (psi-emacs--upsert-projection-block)))
+      ("ui/widget-specs-updated"
+       (when psi-emacs--state
+         (psi-widget-projection-request-specs)))
       ("ui/status-updated"
        (when psi-emacs--state
          (setf (psi-emacs-state-projection-statuses psi-emacs--state)

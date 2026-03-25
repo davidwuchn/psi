@@ -86,6 +86,11 @@
 ;;   :in-flight-keys  — hash-table of node-key → t
 ;;   :event-state     — alist of key → value
 
+(defun psi-widget-renderer--edn-truthy-p (val)
+  "Return non-nil when VAL is truthy in EDN terms.
+Treats nil and :false as false; all other values as true."
+  (and val (not (eq val :false))))
+
 (defun psi-widget-renderer--collapsed-p (lstate key)
   "Return non-nil when node KEY is collapsed in LSTATE."
   (and key
@@ -250,7 +255,8 @@ INDENT is the current left-indent level in spaces."
   "Render a :button NODE."
   (let* ((label     (alist-get :label    node nil nil #'equal))
          (key       (alist-get :key      node nil nil #'equal))
-         (disabled  (alist-get :disabled node nil nil #'equal))
+         (disabled  (psi-widget-renderer--edn-truthy-p
+                     (alist-get :disabled node nil nil #'equal)))
          (in-flight (psi-widget-renderer--in-flight-p lstate key))
          (face      (cond (in-flight 'psi-widget-button-in-flight-face)
                           (disabled  'psi-widget-muted-face)
@@ -333,7 +339,8 @@ INDENT is the current left-indent level in spaces."
   "Render a :list NODE — item-spec rendered once per element at items-path."
   (let* ((items-path (alist-get :items-path node nil nil #'equal))
          (item-spec  (alist-get :item-spec  node nil nil #'equal))
-         (vertical   (not (eq nil (or (alist-get :vertical node nil nil #'equal) t))))
+         (vertical   (let ((v (alist-get :vertical node 'not-found nil #'equal)))
+                       (if (eq v 'not-found) t (and v t))))
          (node-indent (or (alist-get :indent node nil nil #'equal) 0))
          (items      (when items-path
                        (let ((v (psi-widget-renderer--get-path data items-path)))
@@ -416,7 +423,8 @@ EVENT-STATE is an alist."
     (let ((type (alist-get :type node nil nil #'equal))
           (key  (alist-get :key  node nil nil #'equal)))
       (when (and (eq type 'collapsible) key
-                 (not (alist-get :initially-expanded node nil nil #'equal)))
+                 (not (psi-widget-renderer--edn-truthy-p
+                       (alist-get :initially-expanded node nil nil #'equal))))
         (puthash key t ht))
       (dolist (child (alist-get :children node nil nil #'equal))
         (psi-widget-renderer--collect-initial-collapsed child ht))

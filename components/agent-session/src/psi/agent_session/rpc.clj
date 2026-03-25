@@ -752,6 +752,7 @@
     "ui/dialog-requested"
     "ui/frontend-action-requested"
     "ui/widgets-updated"
+    "ui/widget-specs-updated"
     "ui/status-updated"
     "ui/notification"
     "footer/updated"
@@ -773,6 +774,7 @@
    "ui/dialog-requested" #{:dialog-id :kind :title}
    "ui/frontend-action-requested" #{:request-id :action-name}
    "ui/widgets-updated" #{:widgets}
+   "ui/widget-specs-updated" #{}
    "ui/status-updated" #{:statuses}
    "ui/notification" #{:id :message :level}
    "footer/updated" #{:path-line :stats-line}
@@ -1117,6 +1119,9 @@
                  (conj events {:event "ui/widgets-updated"
                                :data  {:widgets (or (:widgets current) [])}})
                  events)
+        events (if (not= (:widget-specs previous) (:widget-specs current))
+                 (conj events {:event "ui/widget-specs-updated" :data {}})
+                 events)
         events (if (not= (:statuses previous) (:statuses current))
                  (conj events {:event "ui/status-updated"
                                :data  {:statuses (or (:statuses current) [])}})
@@ -1136,6 +1141,7 @@
 (def ^:private extension-ui-topics
   #{"ui/dialog-requested"
     "ui/widgets-updated"
+    "ui/widget-specs-updated"
     "ui/status-updated"
     "ui/notification"})
 

@@ -35,6 +35,7 @@
    [extensions.workflow-display :as workflow-display]
    [com.fulcrologic.statecharts.elements :as ele]
    [psi.ai.models :as models]
+   [psi.ui.widget-spec :as widget-spec]
    [taoensso.timbre :as timbre]))
 
 ;;; State — module-level atom, initialized in `init`
@@ -300,10 +301,64 @@
     :below-editor
     :above-editor))
 
+(defn- workflow-run-node
+  "Build a vstack node for a single workflow run."
+  [wf]
+  (let [data       (or (:psi.extension.workflow/data wf) {})
+        progress   (or (:chain/progress data) {})
+        run-id     (str (or (:psi.extension.workflow/id wf) ""))
+        chain-name (or (get-in data [:chain/config :name])
+                       (:chain/name progress)
+                       (:chain-name progress)
+                       "unknown")
+        phase      (or (:phase progress) :pending)
+        step-idx   (:step-index progress)
+        step-cnt   (:step-count progress)
+        step-agent (:step-agent progress)
+        elapsed-ms (:elapsed-ms progress)
+        last-work  (:last-work progress)
+        top-text   (str (status-icon phase) " " run-id
+                        " [" (-> phase name str/upper-case) "] "
+                        chain-name
+                        (when (and (number? step-idx) (number? step-cnt) (pos? step-cnt))
+                          (str " · step " (inc step-idx) "/" step-cnt
+                               (when (seq step-agent) (str " " step-agent))))
+                        (when (pos? (long (or elapsed-ms 0)))
+                          (str " · " (quot (long elapsed-ms) 1000) "s")))
+        children   (cond-> [(widget-spec/text top-text)]
+                     (seq last-work)
+                     (conj (widget-spec/muted (str "  " (task-preview last-work 70)))))]
+    (widget-spec/vstack children)))
+
+(defn- build-widget-spec []
+  (let [runs        (->> (chain-workflows)
+                         (sort-by (fn [wf]
+                                    (or (get-in wf [:psi.extension.workflow/data :chain/progress :updated-at])
+                                        (some-> (:psi.extension.workflow/updated-at wf) .toEpochMilli)
+                                        0))
+                                  >)
+                         (take max-widget-runs))
+        chain-names (->> @(:chains @state)
+                         (map :name)
+                         (filter seq))
+        header-text (str "⛓ Agent Chain"
+                         (when (seq chain-names)
+                           (str " · " (str/join " · " chain-names))))
+        children    (cons (widget-spec/heading header-text)
+                          (map workflow-run-node runs))]
+    (widget-spec/widget-spec
+     widget-id
+     (widget-placement)
+     (widget-spec/vstack (vec children)))))
+
 (defn- refresh-widget! []
   (when-let [ui (:ui @state)]
     (when-let [set-widget (:set-widget ui)]
-      (set-widget widget-id (widget-placement) (widget-lines)))))
+      (set-widget widget-id (widget-placement) (widget-lines)))
+    (when-let [set-spec (:set-widget-spec ui)]
+      (set-spec (build-widget-spec)))))
+
+
 
 (defn- update-workflow-progress!
   [run-id f]
