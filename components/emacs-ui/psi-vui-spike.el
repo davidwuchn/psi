@@ -94,9 +94,8 @@
 
 ;;; Root component — provides the context
 
-(vui-defcomponent psi-vui-root ()
-  "Root component: provides RPC client context, renders session status."
-  :state ((client nil))
+(vui-defcomponent psi-vui-root (client)
+  "Root component: provides RPC client context via prop, renders session status."
   :render
   (psi-vui-rpc-client-provider client
     (vui-component 'psi-vui-session-status)))
@@ -116,16 +115,9 @@ mounts the vui component tree with that client in context."
   (let ((client (psi-vui-spike--find-client)))
     (unless client
       (user-error "No live psi RPC client found — open a *psi* buffer first"))
-    (let ((buf (get-buffer-create psi-vui-spike--buffer-name)))
-      (with-current-buffer buf
-        (let ((instance (vui-mount 'psi-vui-root psi-vui-spike--buffer-name)))
-          ;; Inject the client into root state after mount
-          (vui-flush-sync)
-          (when instance
-            (let ((vui--current-instance instance)
-                  (vui--root-instance instance))
-              (vui-set-state :client client)))))
-      (pop-to-buffer buf))))
+    (let* ((vnode (vui-component 'psi-vui-root :client client))
+           (instance (vui-mount vnode psi-vui-spike--buffer-name)))
+      (pop-to-buffer psi-vui-spike--buffer-name))))
 
 (defun psi-vui-spike--client-from-buffer (buf)
   "Return a ready psi-rpc-client from BUF, or nil."
