@@ -140,17 +140,12 @@
     (update-in state [:background-jobs :store] update-fn)
     state))
 
-(defn- update-context-active-session-state
-  [state session-id]
-  (assoc-in state [:agent-session :active-session-id] session-id))
-
 (defn- initialize-resume-missing-state
   [state current-sd session-path]
   (let [next-sd (assoc current-sd :session-file session-path)
         sid     (:session-id next-sd)]
     (-> state
         (assoc-in (session-data-path sid) next-sd)
-        (assoc-in [:agent-session :active-session-id] sid)
         (assoc-in (session-journal-path sid) [])
         (assoc-in (session-flush-state-path sid) {:flushed? false
                                                   :session-file (io/file session-path)})
@@ -177,18 +172,18 @@
                                 sessions)))))
 
 (defn- carry-runtime-handles
-  "Copy :agent-ctx and :sc-session-id from the current active session to a new session entry."
-  [state new-session-id]
-  (let [old-sid   (get-in state [:agent-session :active-session-id])
-        agent-ctx (get-in state [:agent-session :sessions old-sid :agent-ctx])
-        sc-sid    (get-in state [:agent-session :sessions old-sid :sc-session-id])]
+  "Copy :agent-ctx and :sc-session-id from source-session-id to new-session-id."
+  [state source-session-id new-session-id]
+  (let [agent-ctx (get-in state [:agent-session :sessions source-session-id :agent-ctx])
+        sc-sid    (get-in state [:agent-session :sessions source-session-id :sc-session-id])]
     (-> state
         (assoc-in [:agent-session :sessions new-session-id :agent-ctx] agent-ctx)
         (assoc-in [:agent-session :sessions new-session-id :sc-session-id] sc-sid))))
 
 (defn- initialize-new-session-state
   [state current-sd {:keys [new-session-id worktree-path session-name spawn-mode session-file]}]
-  (let [next-sd (assoc current-sd
+  (let [source-sid (:session-id current-sd)
+        next-sd (assoc current-sd
                        :session-id new-session-id
                        :session-file session-file
                        :session-name session-name
@@ -209,10 +204,9 @@
                        :ephemeral-seed? false
                        :created-at (java.time.Instant/now))]
     (cond-> (-> state
-                (carry-runtime-handles new-session-id)
+                (carry-runtime-handles source-sid new-session-id)
                 prune-ephemeral-sessions
                 (assoc-in (session-data-path new-session-id) next-sd)
-                (assoc-in [:agent-session :active-session-id] new-session-id)
                 (assoc-in (session-journal-path new-session-id) [])
                 (assoc-in [:agent-session :sessions new-session-id :telemetry]
                           {:tool-output-stats {:calls []
@@ -265,7 +259,8 @@
 
 (defn- initialize-resumed-session-state
   [state current-sd {:keys [session-id session-path header entries model thinking-level]}]
-  (let [session-name (some #(when (= :session-info (:kind %))
+  (let [source-sid   (:session-id current-sd)
+        session-name (some #(when (= :session-info (:kind %))
                               (get-in % [:data :name]))
                            (rseq (vec entries)))
         next-sd      (assoc current-sd
@@ -280,13 +275,12 @@
                             :model model
                             :thinking-level thinking-level)]
     (-> state
-        (carry-runtime-handles session-id)
+        (carry-runtime-handles source-sid session-id)
         prune-ephemeral-sessions
         (assoc-in (session-journal-path session-id) (vec entries))
         (assoc-in (session-flush-state-path session-id) {:flushed? true
                                                          :session-file (io/file session-path)})
         (assoc-in (session-data-path session-id) next-sd)
-        (assoc-in [:agent-session :active-session-id] session-id)
         (assoc-in [:agent-session :sessions session-id :telemetry]
                   {:tool-output-stats {:calls []
                                        :aggregates {:total-context-bytes 0
@@ -314,10 +308,9 @@
                                    :startup-message-ids [])]
     ;; carry-runtime-handles must run before any pruning as active session may be ephemeral
     (cond-> (-> state
-                (carry-runtime-handles new-session-id)
+                (carry-runtime-handles parent-session-id new-session-id)
                 (assoc-in (session-journal-path new-session-id) branch-entries)
                 (assoc-in (session-data-path new-session-id) next-sd)
-                (assoc-in [:agent-session :active-session-id] new-session-id)
                 (assoc-in [:agent-session :sessions new-session-id :telemetry]
                           {:tool-output-stats {:calls []
                                                :aggregates {:total-context-bytes 0
@@ -347,14 +340,14 @@
   (dispatch/register-handler!
    :on-streaming-entered
    {}
-   (fn [_ctx _data]
-     {:root-state-update (session/session-update #(assoc % :is-streaming true))}))
+   (fn [ctx _data]
+     {:root-state-update (session/session-update (session/active-session-id-in ctx) #(assoc % :is-streaming true))}))
 
   (dispatch/register-handler!
    :on-agent-done
    {}
-   (fn [_ctx _data]
-     {:root-state-update (session/session-update #(assoc %
+   (fn [ctx _data]
+     {:root-state-update (session/session-update (session/active-session-id-in ctx) #(assoc %
                                                          :is-streaming false
                                                          :retry-attempt 0
                                                          :interrupt-pending false
@@ -365,8 +358,8 @@
   (dispatch/register-handler!
    :on-abort
    {}
-   (fn [_ctx _data]
-     {:root-state-update (session/session-update #(assoc %
+   (fn [ctx _data]
+     {:root-state-update (session/session-update (session/active-session-id-in ctx) #(assoc %
                                                          :is-streaming false
                                                          :interrupt-pending false
                                                          :interrupt-requested-at nil))
@@ -375,10 +368,10 @@
   (dispatch/register-handler!
    :on-auto-compact-triggered
    {}
-   (fn [_ctx data]
+   (fn [ctx data]
      (let [reason      (or (some-> data auto-compaction-reason) :threshold)
            will-retry? (= :overflow reason)]
-       {:root-state-update (session/session-update #(assoc % :is-compacting true))
+       {:root-state-update (session/session-update (session/active-session-id-in ctx) #(assoc % :is-compacting true))
         :effects [{:effect/type :runtime/auto-compact-workflow
                    :reason reason
                    :will-retry? will-retry?}]})))
@@ -386,14 +379,14 @@
   (dispatch/register-handler!
    :on-compacting-entered
    {}
-   (fn [_ctx _data]
-     {:root-state-update (session/session-update #(assoc % :is-compacting true))}))
+   (fn [ctx _data]
+     {:root-state-update (session/session-update (session/active-session-id-in ctx) #(assoc % :is-compacting true))}))
 
   (dispatch/register-handler!
    :on-compact-done
    {}
-   (fn [_ctx _data]
-     {:root-state-update (session/session-update #(assoc % :is-compacting false))}))
+   (fn [ctx _data]
+     {:root-state-update (session/session-update (session/active-session-id-in ctx) #(assoc % :is-compacting false))}))
 
   (dispatch/register-handler!
    :on-retry-triggered
@@ -404,7 +397,7 @@
            base-ms  (get-in ctx [:config :auto-retry-base-delay-ms] 2000)
            max-ms   (get-in ctx [:config :auto-retry-max-delay-ms] 60000)
            delay-ms (session-data/exponential-backoff-ms attempt base-ms max-ms)]
-       {:root-state-update (session/session-update #(update % :retry-attempt inc))
+       {:root-state-update (session/session-update (session/active-session-id-in ctx) #(update % :retry-attempt inc))
         :effects [{:effect/type :runtime/schedule-thread-sleep-send-event
                    :delay-ms delay-ms
                    :event :session/retry-done}]})))
@@ -455,24 +448,24 @@
   (dispatch/register-handler!
    :session/set-auto-compaction
    {}
-   (fn [_ctx {:keys [enabled?]}]
+   (fn [ctx {:keys [enabled?]}]
      (let [v (boolean enabled?)]
-       {:root-state-update (session/session-update #(assoc % :auto-compaction-enabled v))
+       {:root-state-update (session/session-update (session/active-session-id-in ctx) #(assoc % :auto-compaction-enabled v))
         :return {:auto-compaction-enabled v}})))
 
   (dispatch/register-handler!
    :session/set-auto-retry
    {}
-   (fn [_ctx {:keys [enabled?]}]
+   (fn [ctx {:keys [enabled?]}]
      (let [v (boolean enabled?)]
-       {:root-state-update (session/session-update #(assoc % :auto-retry-enabled v))
+       {:root-state-update (session/session-update (session/active-session-id-in ctx) #(assoc % :auto-retry-enabled v))
         :return {:auto-retry-enabled v}})))
 
   (dispatch/register-handler!
    :session/set-ui-type
    {}
-   (fn [_ctx {:keys [ui-type]}]
-     {:root-state-update (session/session-update #(assoc % :ui-type ui-type))}))
+   (fn [ctx {:keys [ui-type]}]
+     {:root-state-update (session/session-update (session/active-session-id-in ctx) #(assoc % :ui-type ui-type))}))
 
   (dispatch/register-handler!
    :session/set-model
@@ -495,7 +488,7 @@
                              :prefs {:model-provider (:provider model)
                                      :model-id (:id model)
                                      :thinking-level clamped-level}})]
-       {:root-state-update (session/session-update #(assoc % :model model :thinking-level clamped-level))
+       {:root-state-update (session/session-update (session/active-session-id-in ctx) #(assoc % :model model :thinking-level clamped-level))
         :return {:model model :thinking-level clamped-level}
         :effects (cond-> [{:effect/type :runtime/agent-set-model
                            :model model}
@@ -523,7 +516,7 @@
                             :session nil
                             {:effect/type :persist/project-prefs-update
                              :prefs {:thinking-level clamped}})]
-       {:root-state-update (session/session-update #(assoc % :thinking-level clamped))
+       {:root-state-update (session/session-update (session/active-session-id-in ctx) #(assoc % :thinking-level clamped))
         :return {:thinking-level clamped}
         :effects (cond-> [{:effect/type :runtime/agent-set-thinking-level
                            :level clamped}
@@ -534,14 +527,14 @@
   (dispatch/register-handler!
    :session/set-worktree-path
    {}
-   (fn [_ctx {:keys [worktree-path]}]
-     {:root-state-update (session/session-update #(assoc % :worktree-path (str worktree-path)))}))
+   (fn [ctx {:keys [worktree-path]}]
+     {:root-state-update (session/session-update (session/active-session-id-in ctx) #(assoc % :worktree-path (str worktree-path)))}))
 
   (dispatch/register-handler!
    :session/set-cache-breakpoints
    {}
-   (fn [_ctx {:keys [breakpoints]}]
-     {:root-state-update (session/session-update #(assoc % :cache-breakpoints (set (or breakpoints #{}))))}))
+   (fn [ctx {:keys [breakpoints]}]
+     {:root-state-update (session/session-update (session/active-session-id-in ctx) #(assoc % :cache-breakpoints (set (or breakpoints #{}))))}))
 
   (dispatch/register-handler!
    :session/set-prompt-mode
@@ -549,7 +542,7 @@
    ;; scope: :session (default) — runtime only
    ;;        :project           — persist to .psi/project.edn
    ;;        :user              — persist to ~/.psi/agent/config.edn
-   (fn [_ctx {:keys [mode scope]}]
+   (fn [ctx {:keys [mode scope]}]
      (let [validated      (if (#{:lambda :prose} mode) mode :lambda)
            persist-effect (case (or scope :session)
                             :project {:effect/type :persist/project-prefs-update
@@ -557,21 +550,21 @@
                             :user    {:effect/type :persist/user-config-update
                                       :prefs {:prompt-mode validated}}
                             nil)]
-       {:root-state-update (session/session-update #(assoc % :prompt-mode validated))
+       {:root-state-update (session/session-update (session/active-session-id-in ctx) #(assoc % :prompt-mode validated))
         :effects (cond-> [{:effect/type :runtime/refresh-system-prompt}]
                    persist-effect (conj persist-effect))})))
 
   (dispatch/register-handler!
    :session/set-system-prompt-build-opts
    {}
-   (fn [_ctx {:keys [opts]}]
-     {:root-state-update (session/session-update #(assoc % :system-prompt-build-opts opts))}))
+   (fn [ctx {:keys [opts]}]
+     {:root-state-update (session/session-update (session/active-session-id-in ctx) #(assoc % :system-prompt-build-opts opts))}))
 
   (dispatch/register-handler!
    :session/set-session-name
    {}
-   (fn [_ctx {:keys [name]}]
-     {:root-state-update (session/session-update #(assoc % :session-name name))
+   (fn [ctx {:keys [name]}]
+     {:root-state-update (session/session-update (session/active-session-id-in ctx) #(assoc % :session-name name))
       :effects [{:effect/type :persist/journal-append-session-info-entry
                  :name name}]
       :return {:session-name name}}))
@@ -593,7 +586,7 @@
                [full full])
              (let [b (or (:base-system-prompt sd) (:system-prompt sd) "")]
                [b (sys-prompt/apply-prompt-contributions b contrib)]))]
-       {:root-state-update (session/session-update #(assoc %
+       {:root-state-update (session/session-update (session/active-session-id-in ctx) #(assoc %
                                                            :base-system-prompt base
                                                            :system-prompt prompt))
         :effects [{:effect/type :runtime/agent-set-system-prompt
@@ -606,7 +599,7 @@
      (let [base*   (or prompt "")
            contrib (session/list-prompt-contributions-in ctx)
            prompt* (sys-prompt/apply-prompt-contributions base* contrib)]
-       {:root-state-update (session/session-update #(assoc %
+       {:root-state-update (session/session-update (session/active-session-id-in ctx) #(assoc %
                                                            :base-system-prompt base*
                                                            :system-prompt prompt*))
         :effects [{:effect/type :runtime/agent-set-system-prompt
@@ -620,7 +613,7 @@
            id*       (str id)
            norm      (normalize-prompt-contribution ext-path* id* contribution)]
        {:root-state-update
-        (session/session-update
+        (session/session-update (session/active-session-id-in ctx)
          (fn [sd]
            (let [xs    (or (:prompt-contributions sd) [])
                  xs*   (vec (remove #(and (= ext-path* (:ext-path %))
@@ -675,7 +668,7 @@
                prompt* (sys-prompt/apply-prompt-contributions
                         base
                         (session/sorted-prompt-contributions next*))]
-           {:root-state-update (session/session-update #(assoc %
+           {:root-state-update (session/session-update (session/active-session-id-in ctx) #(assoc %
                                                                :prompt-contributions next*
                                                                :system-prompt prompt*))
             :effects [{:effect/type :runtime/agent-set-system-prompt
@@ -703,7 +696,7 @@
                prompt* (sys-prompt/apply-prompt-contributions
                         base
                         (session/sorted-prompt-contributions next*))]
-           {:root-state-update (session/session-update #(assoc %
+           {:root-state-update (session/session-update (session/active-session-id-in ctx) #(assoc %
                                                                :prompt-contributions next*
                                                                :system-prompt prompt*))
             :effects [{:effect/type :runtime/agent-set-system-prompt
@@ -714,8 +707,8 @@
   (dispatch/register-handler!
    :session/set-active-tools
    {}
-   (fn [_ctx {:keys [tool-maps]}]
-     {:root-state-update (session/session-update #(assoc %
+   (fn [ctx {:keys [tool-maps]}]
+     {:root-state-update (session/session-update (session/active-session-id-in ctx) #(assoc %
                                                          :active-tools (->> tool-maps (map :name) set)
                                                          :tool-schemas (vec tool-maps)))
       :effects [{:effect/type :runtime/agent-set-tools
@@ -725,8 +718,8 @@
   (dispatch/register-handler!
    :session/startup-bootstrap-begin
    {}
-   (fn [_ctx {:keys [started-at]}]
-     {:root-state-update (session/session-update #(assoc %
+   (fn [ctx {:keys [started-at]}]
+     {:root-state-update (session/session-update (session/active-session-id-in ctx) #(assoc %
                                                          :startup-bootstrap-started-at started-at
                                                          :startup-bootstrap-completed? false
                                                          :startup-bootstrap-completed-at nil
@@ -735,15 +728,15 @@
   (dispatch/register-handler!
    :session/record-startup-message-id
    {}
-   (fn [_ctx {:keys [message-id]}]
+   (fn [ctx {:keys [message-id]}]
      (when message-id
-       {:root-state-update (session/session-update #(update % :startup-message-ids (fnil conj []) message-id))})))
+       {:root-state-update (session/session-update (session/active-session-id-in ctx) #(update % :startup-message-ids (fnil conj []) message-id))})))
 
   (dispatch/register-handler!
    :session/startup-bootstrap-complete
    {}
-   (fn [_ctx {:keys [startup-prompts completed-at]}]
-     {:root-state-update (session/session-update
+   (fn [ctx {:keys [startup-prompts completed-at]}]
+     {:root-state-update (session/session-update (session/active-session-id-in ctx)
                           (fn [sd]
                             (cond-> (assoc sd
                                            :startup-bootstrap-completed? true
@@ -754,20 +747,20 @@
   (dispatch/register-handler!
    :session/set-startup-bootstrap-summary
    {}
-   (fn [_ctx {:keys [summary]}]
-     {:root-state-update (session/session-update #(assoc % :startup-bootstrap summary))}))
+   (fn [ctx {:keys [summary]}]
+     {:root-state-update (session/session-update (session/active-session-id-in ctx) #(assoc % :startup-bootstrap summary))}))
 
   (dispatch/register-handler!
    :session/update-context-usage
    {}
-   (fn [_ctx {:keys [tokens window]}]
-     {:root-state-update (session/session-update #(assoc % :context-tokens tokens :context-window window))}))
+   (fn [ctx {:keys [tokens window]}]
+     {:root-state-update (session/session-update (session/active-session-id-in ctx) #(assoc % :context-tokens tokens :context-window window))}))
 
   (dispatch/register-handler!
    :session/record-extension-prompt
    {}
-   (fn [_ctx {:keys [source delivery at]}]
-     {:root-state-update (session/session-update #(assoc %
+   (fn [ctx {:keys [source delivery at]}]
+     {:root-state-update (session/session-update (session/active-session-id-in ctx) #(assoc %
                                                          :extension-last-prompt-source (some-> source str)
                                                          :extension-last-prompt-delivery delivery
                                                          :extension-last-prompt-at at))}))
@@ -813,79 +806,73 @@
   (dispatch/register-handler!
    :session/set-turn-context
    {}
-   (fn [_ctx {:keys [turn-ctx]}]
+   (fn [_ctx {:keys [session-id turn-ctx]}]
      {:root-state-update (fn [state]
-                           (let [sid (get-in state [:agent-session :active-session-id])]
-                             (assoc-in state (session-turn-ctx-path sid) turn-ctx)))}))
+                           (assoc-in state (session-turn-ctx-path session-id) turn-ctx))}))
 
   (dispatch/register-handler!
    :session/append-tool-call-attempt
    {}
-   (fn [_ctx {:keys [attempt]}]
+   (fn [_ctx {:keys [session-id attempt]}]
      {:root-state-update (fn [state]
-                           (let [sid (get-in state [:agent-session :active-session-id])]
-                             (update-in state (session-telemetry-path sid :tool-call-attempts)
-                                        (fnil conj [])
-                                        (assoc attempt :timestamp (java.time.Instant/now)))))}))
+                           (update-in state (session-telemetry-path session-id :tool-call-attempts)
+                                      (fnil conj [])
+                                      (assoc attempt :timestamp (java.time.Instant/now))))}))
 
   (dispatch/register-handler!
    :session/append-provider-request-capture
    {}
-   (fn [_ctx {:keys [capture]}]
+   (fn [_ctx {:keys [session-id capture]}]
      (let [entry (assoc capture :timestamp (java.time.Instant/now))]
        {:root-state-update
         (fn [state]
-          (let [sid (get-in state [:agent-session :active-session-id])]
-            (update-in state (session-telemetry-path sid :provider-requests)
-                       (fn [entries]
-                         (let [entries* (conj (vec (or entries [])) entry)
-                               n        (count entries*)]
-                           (if (> n 100)
-                             (subvec entries* (- n 100))
-                             entries*))))))})))
+          (update-in state (session-telemetry-path session-id :provider-requests)
+                     (fn [entries]
+                       (let [entries* (conj (vec (or entries [])) entry)
+                             n        (count entries*)]
+                         (if (> n 100)
+                           (subvec entries* (- n 100))
+                           entries*)))))})))
 
   (dispatch/register-handler!
    :session/append-provider-reply-capture
    {}
-   (fn [_ctx {:keys [capture]}]
+   (fn [_ctx {:keys [session-id capture]}]
      (let [entry (assoc capture :timestamp (java.time.Instant/now))]
        {:root-state-update
         (fn [state]
-          (let [sid (get-in state [:agent-session :active-session-id])]
-            (update-in state (session-telemetry-path sid :provider-replies)
-                       (fn [entries]
-                         (let [entries* (conj (vec (or entries [])) entry)
-                               n        (count entries*)]
-                           (if (> n 1000)
-                             (subvec entries* (- n 1000))
-                             entries*))))))})))
+          (update-in state (session-telemetry-path session-id :provider-replies)
+                     (fn [entries]
+                       (let [entries* (conj (vec (or entries [])) entry)
+                             n        (count entries*)]
+                         (if (> n 1000)
+                           (subvec entries* (- n 1000))
+                           entries*)))))})))
 
   (dispatch/register-handler!
    :session/record-tool-output-stat
    {}
-   (fn [_ctx {:keys [stat context-bytes-added limit-hit?]}]
+   (fn [_ctx {:keys [session-id stat context-bytes-added limit-hit?]}]
      {:root-state-update
       (fn [state]
-        (let [sid (get-in state [:agent-session :active-session-id])]
-          (update-in state (session-telemetry-path sid :tool-output-stats)
-                     (fn [ts]
-                       (-> ts
-                           (update :calls (fnil conj []) stat)
-                           (update-in [:aggregates :total-context-bytes] (fnil + 0) context-bytes-added)
-                           (update-in [:aggregates :by-tool (:tool-name stat)] (fnil + 0) context-bytes-added)
-                           (update-in [:aggregates :limit-hits-by-tool (:tool-name stat)]
-                                      (fnil + 0)
-                                      (if limit-hit? 1 0)))))))}))
+        (update-in state (session-telemetry-path session-id :tool-output-stats)
+                   (fn [ts]
+                     (-> ts
+                         (update :calls (fnil conj []) stat)
+                         (update-in [:aggregates :total-context-bytes] (fnil + 0) context-bytes-added)
+                         (update-in [:aggregates :by-tool (:tool-name stat)] (fnil + 0) context-bytes-added)
+                         (update-in [:aggregates :limit-hits-by-tool (:tool-name stat)]
+                                    (fnil + 0)
+                                    (if limit-hit? 1 0))))))}))
 
   (dispatch/register-handler!
    :session/tool-lifecycle-event
    {}
-   (fn [_ctx {:keys [entry]}]
+   (fn [_ctx {:keys [session-id entry]}]
      {:root-state-update (fn [state]
-                           (let [sid (get-in state [:agent-session :active-session-id])]
-                             (update-in state (session-telemetry-path sid :tool-lifecycle-events)
-                                        (fnil conj [])
-                                        (assoc entry :timestamp (java.time.Instant/now)))))}))
+                           (update-in state (session-telemetry-path session-id :tool-lifecycle-events)
+                                      (fnil conj [])
+                                      (assoc entry :timestamp (java.time.Instant/now))))}))
 
   (dispatch/register-handler!
    :session/tool-agent-start
@@ -931,14 +918,6 @@
                  :parsed-args parsed-args
                  :progress-queue progress-queue}]
       :return-effect-result? true}))
-
-  (dispatch/register-handler!
-   :session/set-context-active-session
-   {}
-   (fn [_ctx {:keys [session-id]}]
-     {:root-state-update #(update-context-active-session-state % session-id)
-      :return             session-id}))
-  ;; return-key was [:agent-session :context-index] — now just returns session-id
 
   (dispatch/register-handler!
    :session/new-initialize
@@ -1007,8 +986,8 @@
   (dispatch/register-handler!
    :session/enqueue-steering-message
    {}
-   (fn [_ctx {:keys [text]}]
-     {:root-state-update (session/session-update #(update % :steering-messages (fnil conj []) text))
+   (fn [ctx {:keys [text]}]
+     {:root-state-update (session/session-update (session/active-session-id-in ctx) #(update % :steering-messages (fnil conj []) text))
       :effects [{:effect/type :runtime/agent-queue-steering
                  :message {:role      "user"
                            :content   [{:type :text :text text}]
@@ -1017,8 +996,8 @@
   (dispatch/register-handler!
    :session/enqueue-follow-up-message
    {}
-   (fn [_ctx {:keys [text]}]
-     {:root-state-update (session/session-update #(update % :follow-up-messages (fnil conj []) text))
+   (fn [ctx {:keys [text]}]
+     {:root-state-update (session/session-update (session/active-session-id-in ctx) #(update % :follow-up-messages (fnil conj []) text))
       :effects [{:effect/type :runtime/agent-queue-follow-up
                  :message {:role      "user"
                            :content   [{:type :text :text text}]
@@ -1027,16 +1006,16 @@
   (dispatch/register-handler!
    :session/clear-queued-messages
    {}
-   (fn [_ctx _data]
-     {:root-state-update (session/session-update #(assoc % :steering-messages [] :follow-up-messages []))
+   (fn [ctx _data]
+     {:root-state-update (session/session-update (session/active-session-id-in ctx) #(assoc % :steering-messages [] :follow-up-messages []))
       :effects [{:effect/type :runtime/agent-clear-steering-queue}
                 {:effect/type :runtime/agent-clear-follow-up-queue}]}))
 
   (dispatch/register-handler!
    :session/compaction-finished
    {}
-   (fn [_ctx {:keys [messages]}]
-     (cond-> {:root-state-update (session/session-update #(assoc % :is-compacting false :context-tokens nil))}
+   (fn [ctx {:keys [messages]}]
+     (cond-> {:root-state-update (session/session-update (session/active-session-id-in ctx) #(assoc % :is-compacting false :context-tokens nil))}
        messages
        (assoc :effects [{:effect/type :runtime/agent-replace-messages
                          :messages messages}]))))
@@ -1044,8 +1023,8 @@
   (dispatch/register-handler!
    :session/reset-prompt-contributions
    {}
-   (fn [_ctx _data]
-     {:root-state-update (session/session-update #(assoc % :prompt-contributions []))}))
+   (fn [ctx _data]
+     {:root-state-update (session/session-update (session/active-session-id-in ctx) #(assoc % :prompt-contributions []))}))
 
   (dispatch/register-handler!
    :session/register-prompt-template
@@ -1057,7 +1036,7 @@
        (cond-> {:return {:added? (not existing?)
                          :count  next-count}}
          (not existing?)
-         (assoc :root-state-update (session/session-update #(update % :prompt-templates (fnil conj []) template)))))))
+         (assoc :root-state-update (session/session-update (session/active-session-id-in ctx) #(update % :prompt-templates (fnil conj []) template)))))))
 
   (dispatch/register-handler!
    :session/register-skill
@@ -1069,7 +1048,7 @@
        (cond-> {:return {:added? (not existing?)
                          :count  next-count}}
          (not existing?)
-         (assoc :root-state-update (session/session-update #(update % :skills (fnil conj []) skill)))))))
+         (assoc :root-state-update (session/session-update (session/active-session-id-in ctx) #(update % :skills (fnil conj []) skill)))))))
 
   (dispatch/register-handler!
    :session/request-interrupt
@@ -1077,7 +1056,7 @@
    (fn [ctx {:keys [already-pending? requested-at]}]
      (let [sd (session/get-session-data-in ctx)]
        {:root-state-update
-        (session/session-update
+        (session/session-update (session/active-session-id-in ctx)
          (fn [_]
            (cond-> (assoc sd
                           :interrupt-pending true
@@ -1089,8 +1068,8 @@
   (dispatch/register-handler!
    :session/bootstrap-prompt-state
    {}
-   (fn [_ctx {:keys [system-prompt developer-prompt developer-prompt-source]}]
-     {:root-state-update (session/session-update #(assoc %
+   (fn [ctx {:keys [system-prompt developer-prompt developer-prompt-source]}]
+     {:root-state-update (session/session-update (session/active-session-id-in ctx) #(assoc %
                                                          :base-system-prompt system-prompt
                                                          :system-prompt system-prompt
                                                          :developer-prompt developer-prompt
@@ -1102,7 +1081,7 @@
    (fn [ctx _data]
      (let [sd (session/get-session-data-in ctx)]
        (when-not (contains? sd :base-system-prompt)
-         {:root-state-update (session/session-update #(assoc % :base-system-prompt (or (:system-prompt sd) "")))}))))
+         {:root-state-update (session/session-update (session/active-session-id-in ctx) #(assoc % :base-system-prompt (or (:system-prompt sd) "")))}))))
 
   (dispatch/register-handler!
    :session/send-extension-message

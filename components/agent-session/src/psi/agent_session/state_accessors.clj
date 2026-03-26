@@ -105,7 +105,7 @@
    Intended for executor/runtime introspection plumbing.
    Routed through the dispatch pipeline."
   [ctx turn-ctx]
-  (dispatch/dispatch! ctx :session/set-turn-context {:turn-ctx turn-ctx} {:origin :core})
+  (dispatch/dispatch! ctx :session/set-turn-context {:session-id (session/active-session-id-in ctx) :turn-ctx turn-ctx} {:origin :core})
   (turn-context-in ctx))
 
 (defn append-tool-call-attempt-in!
@@ -113,7 +113,7 @@
    Intended for executor-side telemetry capture.
    Routed through the dispatch pipeline."
   [ctx attempt]
-  (dispatch/dispatch! ctx :session/append-tool-call-attempt {:attempt attempt} {:origin :core})
+  (dispatch/dispatch! ctx :session/append-tool-call-attempt {:session-id (session/active-session-id-in ctx) :attempt attempt} {:origin :core})
   (tool-call-attempts-in ctx))
 
 (defn append-provider-request-capture-in!
@@ -121,7 +121,7 @@
    Intended for executor-side provider telemetry capture.
    Routed through the dispatch pipeline."
   [ctx capture]
-  (dispatch/dispatch! ctx :session/append-provider-request-capture {:capture capture} {:origin :core})
+  (dispatch/dispatch! ctx :session/append-provider-request-capture {:session-id (session/active-session-id-in ctx) :capture capture} {:origin :core})
   (provider-requests-in ctx))
 
 (defn append-provider-reply-capture-in!
@@ -129,7 +129,7 @@
    Intended for executor-side provider telemetry capture.
    Routed through the dispatch pipeline."
   [ctx capture]
-  (dispatch/dispatch! ctx :session/append-provider-reply-capture {:capture capture} {:origin :core})
+  (dispatch/dispatch! ctx :session/append-provider-reply-capture {:session-id (session/active-session-id-in ctx) :capture capture} {:origin :core})
   (provider-replies-in ctx))
 
 (defn record-tool-output-stat-in!
@@ -139,9 +139,10 @@
   [ctx stat context-bytes-added limit-hit?]
   (dispatch/dispatch! ctx
                       :session/record-tool-output-stat
-                      {:stat stat
+                      {:session-id          (session/active-session-id-in ctx)
+                       :stat                stat
                        :context-bytes-added context-bytes-added
-                       :limit-hit? limit-hit?}
+                       :limit-hit?          limit-hit?}
                       {:origin :core})
   (tool-output-stats-in ctx))
 

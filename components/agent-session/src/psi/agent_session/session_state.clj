@@ -11,32 +11,33 @@
    {:agent-session {:sessions {sid {:data {session-map...}
                                     :telemetry {...}
                                     :persistence {:journal [] :flush-state {...}}
-                                    :turn {:ctx nil}}}
-                    :active-session-id sid}
+                                    :turn {:ctx nil}}}}
     :runtime ...
     :background-jobs ...
     :ui ...
     :recursion ...
-    :oauth ...}"
+    :oauth ...}
+
+   Session targeting
+   ─────────────────
+   Session scoping uses :target-session-id on ctx. Adapters (RPC, TUI) set
+   this before calling into core. There is no shared current-session concept."
   (:require
-   [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.statechart :as sc]))
 
 ;;; Active session resolution
 
-(defn active-session-id
-  "Return the active session id from root state map (not atom)."
-  [state]
-  (get-in state [:agent-session :active-session-id]))
-
 (defn active-session-id-in
-  "Return the target session id for ctx.
-  Uses :target-session-id if set (for child session execution),
-  otherwise falls back to the context's active-session-id."
+  "Return the current session id for ctx.
+  Reads :target-session-id from ctx. Adapters must set this before calling core."
   [ctx]
-  (or (:target-session-id ctx)
-      (get-in @(:state* ctx) [:agent-session :active-session-id])))
+  (:target-session-id ctx))
+
+(defn retarget-ctx
+  "Return ctx scoped to explicit session-id."
+  [ctx session-id]
+  (assoc ctx :target-session-id session-id))
 
 ;;; Per-session runtime handle accessors
 
@@ -169,14 +170,12 @@
 ;;; Session update mechanics
 
 (defn session-update
-  "Wrap a session-data transform into a root-state transform.
-   Resolves the active session id from the state map.
+  "Wrap a session-data transform into a root-state transform for session `sid`.
    Use in dispatch handler results:
-     {:root-state-update (session-update #(assoc % :session-name name))}"
-  [f]
+     {:root-state-update (session-update sid #(assoc % :session-name name))}"
+  [sid f]
   (fn [state]
-    (let [sid (active-session-id state)]
-      (update-in state (session-data-path sid) f))))
+    (update-in state (session-data-path sid) f)))
 
 (defn apply-root-state-update-in!
   "Apply a pure root-state update function to canonical state in `ctx`.
@@ -237,14 +236,8 @@
          (sort-by :session-id)
          vec)))
 
-(defn set-context-active-session-in!
-  "Set active default-routing session id.
-   Routed through the dispatch pipeline."
-  [ctx session-id]
-  (dispatch/dispatch! ctx
-                      :session/set-context-active-session
-                      {:session-id session-id}
-                      {:origin :core}))
+;; set-context-active-session-in! removed — adapters own focus locally.
+;; Session targeting is via :target-session-id on ctx.
 
 ;;; Statechart phase queries
 

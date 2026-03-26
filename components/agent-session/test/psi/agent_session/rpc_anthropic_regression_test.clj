@@ -65,10 +65,10 @@
     (let [cwd     (str (System/getProperty "java.io.tmpdir") "/psi-rpc-anthropic-resume-" (java.util.UUID/randomUUID))
           _       (.mkdirs (java.io.File. cwd))
           ctx     (session/create-context {:cwd cwd})
-          _       (session/new-session-in! ctx)
-          path1   (:session-file (ss/get-session-data-in ctx))
+          sd1     (session/new-session-in! ctx)
+          path1   (:session-file sd1)
           _       (persist/flush-journal! (java.io.File. path1)
-                                          (:session-id (ss/get-session-data-in ctx))
+                                          (:session-id sd1)
                                           cwd
                                           nil
                                           nil
@@ -79,7 +79,7 @@
           state   (atom {:ready? true
                          :pending {}
                          :subscribed-topics #{"session/rehydrated"}})
-          handler (rpc/make-session-request-handler ctx)
+          handler (rpc/make-session-request-handler (ss/retarget-ctx ctx (:session-id sd1)))
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"c1\" :kind :request :op \"command\" :params {:text \"/resume " path1 "\"}}\n")
           {:keys [out-lines]} (run-loop input handler state)

@@ -756,8 +756,7 @@
                sessions))))
 
 (def ^:private tree-selector-query
-  [:psi.agent-session/context-active-session-id
-   {:psi.agent-session/context-sessions
+  [{:psi.agent-session/context-sessions
     [:psi.session-info/id
      :psi.session-info/path
      :psi.session-info/name
@@ -862,16 +861,17 @@
 
 (defn- session-selector-init-from-context
   "Build selector state from the live context snapshot query.
-   Falls back to persisted /resume-style listing when query is unavailable."
+   Falls back to persisted /resume-style listing when query is unavailable.
+   Uses TUI-local :focus-session-id as the active session highlight."
   [state]
-  (let [cwd                 (:cwd state)
+  (let [cwd                  (:cwd state)
         current-session-file (:current-session-file state)
-        query-fn            (:query-fn state)]
+        active-id            (:focus-session-id state)
+        query-fn             (:query-fn state)]
     (if-not query-fn
       (session-selector-init cwd current-session-file)
       (try
         (let [data      (or (query-fn tree-selector-query) {})
-              active-id (:psi.agent-session/context-active-session-id data)
               sessions  (->> (or (:psi.agent-session/context-sessions data) [])
                              (mapv (partial context-session->selector-session cwd))
                              tree-sort-context-sessions)
@@ -1023,6 +1023,7 @@
                           (query-fn [:psi.agent-session/prompt-templates
                                      :psi.agent-session/skills
                                      :psi.agent-session/extension-summary
+                                     :psi.agent-session/session-id
                                      :psi.agent-session/session-file
                                      :psi.extension/command-names]))
            queue        (or (:event-queue opts) (LinkedBlockingQueue.))]
@@ -1046,6 +1047,8 @@
          :double-press-window-ms (or (:double-press-window-ms opts) 500)
          :double-escape-action  (or (:double-escape-action opts) :none)
          :cwd                   (or (:cwd opts) (System/getProperty "user.dir"))
+         :focus-session-id      (or (:focus-session-id opts)
+                                    (:psi.agent-session/session-id introspected))
          :current-session-file  (or (:current-session-file opts)
                                     (:psi.agent-session/session-file introspected))
          :resume-fn!            (:resume-fn! opts)
@@ -1114,6 +1117,7 @@
                 restored-tool-order (if (map? restored) (:tool-order restored) nil)]
             [(-> state
                  (assoc :phase :idle
+                        :focus-session-id sid
                         :messages (vec (or restored-msgs []))
                         :stream-text nil
                         :stream-thinking nil
@@ -1137,8 +1141,13 @@
       (let [rehydrate (:rehydrate result)
             restored-msgs (when (map? rehydrate) (:messages rehydrate))
             restored-tool-calls (when (map? rehydrate) (:tool-calls rehydrate))
-            restored-tool-order (when (map? rehydrate) (:tool-order rehydrate))]
+            restored-tool-order (when (map? rehydrate) (:tool-order rehydrate))
+            ;; Query the new session-id to update TUI focus
+            new-sid (when-let [qfn (:query-fn state)]
+                      (try (:psi.agent-session/session-id (qfn [:psi.agent-session/session-id]))
+                           (catch Exception _ nil)))]
         [(-> state
+             (cond-> new-sid (assoc :focus-session-id new-sid))
              (assoc :messages (vec (or restored-msgs []))
                     :tool-calls (or restored-tool-calls {})
                     :tool-order (vec (or restored-tool-order []))
@@ -1247,6 +1256,7 @@
                   restored-tool-order (if (map? restored) (:tool-order restored) nil)
                   new-state       (-> state
                                       (assoc :phase :idle
+                                             :focus-session-id sid
                                              :session-selector nil
                                              :session-selector-mode nil
                                              :messages (vec (or restored-msgs []))

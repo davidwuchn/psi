@@ -65,9 +65,9 @@
          (> tokens cutoff))))
 
 (defn- current-session-data [data]
-  (let [state @(get-in data [:ctx :state*])
-        sid   (get-in state [:agent-session :active-session-id])]
-    (get-in state [:agent-session :sessions sid :data])))
+  (let [ctx (:ctx data)
+        sid (or (:session-id data) (:target-session-id ctx))]
+    (get-in @(:state* ctx) [:agent-session :sessions sid :data])))
 
 (defn- auto-compaction-reason [data]
   (let [sd      (current-session-data data)

@@ -945,7 +945,8 @@ Also tolerates cumulative snapshots that differ near previous tail
   [agent-session-ctx _progress-queue lifecycle-event]
   (dispatch/dispatch! agent-session-ctx
                       :session/tool-lifecycle-event
-                      {:entry lifecycle-event}
+                      {:session-id (session/active-session-id-in agent-session-ctx)
+                       :entry      lifecycle-event}
                       {:origin :core})
   lifecycle-event)
 

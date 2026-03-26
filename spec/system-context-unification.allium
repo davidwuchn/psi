@@ -29,8 +29,12 @@ entity RuntimeState {
     context_id: String
 
     sessions: Map<session_core/SessionId, session_mgmt/AgentSession>
-    active_session_id: session_core/SessionId?
     session_context_state: session_core/AgentContext
+
+    @guidance
+        -- active_session_id is NOT part of RuntimeState.
+        -- Each adapter (TUI, RPC, Emacs) owns its own focus pointer.
+        -- Core operations always receive an explicit session_id.
 
     journal_present: Boolean
     flush_state_present: Boolean
@@ -213,7 +217,6 @@ rule BootstrapCreatesCanonicalSystemContext {
     ensures: RuntimeState.created(
         context_id: CurrentSystemContextId(),
         sessions: {},
-        active_session_id: null,
         session_context_state: InitialAgentContextState(cwd),
         journal_present: true,
         flush_state_present: true,

@@ -358,7 +358,6 @@
   [db]
   (when (map? db)
     {:root-keys            (-> db keys vec sort)
-     :active-session-id    (get-in db [:agent-session :active-session-id])
      :session-count        (count (get-in db [:agent-session :sessions]))
      :has-background-jobs? (boolean (get-in db [:background-jobs :store]))
      :has-turn-ctx?        (boolean (get-in db [:turn :ctx]))}))

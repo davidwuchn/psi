@@ -71,9 +71,9 @@
    [psi.ai.models :as models]
    [psi.system-bootstrap.core :as bootstrap]
    [psi.memory.runtime :as memory-runtime]
-   [psi.recursion.core :as recursion]
+   [psi.recursion.core :as recursion])
    ;; [psi.tui.app :as tui-app]  ; Removed - circular dependency fix
-   )
+
   (:gen-class))
 
 ;; ============================================================
@@ -516,13 +516,17 @@
   "Create a fresh session branch and run configured startup prompts.
 
    Returns map:
-   {:agent-messages [...]
+   {:session-id     string
+    :agent-messages [...]
     :messages [...]
     :tool-calls {...}
     :tool-order [...]}"
   [ctx ai-ctx ai-model]
-  (session/new-session-in! ctx)
-  (startup-rehydrate-from-current-session! ctx ai-ctx ai-model))
+  (let [sd  (session/new-session-in! ctx)
+        sid (:session-id sd)
+        ctx (assoc ctx :target-session-id sid)]
+    (assoc (startup-rehydrate-from-current-session! ctx ai-ctx ai-model)
+           :session-id sid)))
 
 (defn- create-runtime-session-context
   "Create a live session context with runtime/session state prepared, but not bootstrapped.
@@ -564,10 +568,11 @@
         recursion-ctx            (recursion/create-hosted-context ctx (ss/state-path :recursion))
         ctx                      (assoc ctx :recursion-ctx recursion-ctx)]
     (service/initialize! ctx)
-    (session/new-session-in! ctx)
-    {:ctx       ctx
-     :oauth-ctx oauth-ctx
-     :cwd       cwd}))
+    (let [sd  (session/new-session-in! ctx)
+          ctx (assoc ctx :target-session-id (:session-id sd))]
+      {:ctx       ctx
+       :oauth-ctx oauth-ctx
+       :cwd       cwd})))
 
 (defn- bootstrap-runtime-session!
   "Bootstrap a live session context shared by CLI/TUI/RPC modes.
@@ -661,85 +666,94 @@
    (run-session model-key memory-runtime-opts {}))
   ([model-key memory-runtime-opts session-config]
    (let [ai-model  (resolve-model model-key)
-         ;; ai context: nil signals the executor to use the public ai/stream-response API
          ai-ctx    nil
          {:keys [ctx oauth-ctx]}
          (create-runtime-session-context ai-model {:session-config session-config
                                                    :ui-type :console})
          {:keys [templates skills startup-rehydrate]}
          (bootstrap-runtime-session! ctx ai-model {:memory-runtime-opts memory-runtime-opts})]
-     ;; Expose state for nREPL introspection
-     (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model
-                            :oauth-ctx oauth-ctx
-                            :nrepl-runtime-atom nrepl-runtime})
-     (print-banner ai-model templates skills ctx)
-     (print-initial-transcript! startup-rehydrate)
-     (let [cmd-opts {:oauth-ctx oauth-ctx
-                     :ai-model ai-model
-                     :supports-session-tree? false
-                     :on-new-session! (fn []
-                                        (start-new-session-with-startup! ctx ai-ctx ai-model))}]
-       (loop []
-         (print "刀: ")
-         (flush)
-         (when-let [line (try (read-line) (catch Exception _ nil))]
-           (let [trimmed (str/trim line)
-                 result  (when-not (str/blank? trimmed)
-                           (commands/dispatch ctx trimmed cmd-opts))]
-             (when result
-               ;; Keep command inputs in the session journal for parity with RPC transport.
-               (runtime/journal-user-message-in! ctx trimmed))
-             (cond
-               (nil? result)
-               (if (str/blank? trimmed)
-                 (recur)
-                 (do (try
-                       (run-prompt! ctx ai-ctx ai-model trimmed)
+     (let [cli-focus* (atom (:target-session-id ctx))
+           focus-ctx  (fn [] (assoc ctx :target-session-id @cli-focus*))]
+       (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model
+                              :oauth-ctx oauth-ctx
+                              :nrepl-runtime-atom nrepl-runtime})
+       (print-banner ai-model templates skills ctx)
+       (print-initial-transcript! startup-rehydrate)
+       (let [cmd-opts {:oauth-ctx oauth-ctx
+                       :ai-model ai-model
+                       :supports-session-tree? false
+                       :on-new-session! (fn []
+                                          (let [result (start-new-session-with-startup! (focus-ctx) ai-ctx ai-model)]
+                                            (reset! cli-focus* (:session-id result))
+                                            result))}]
+         (loop []
+           (print "刀: ")
+           (flush)
+           (when-let [line (try (read-line) (catch Exception _ nil))]
+             (let [trimmed (str/trim line)
+                   fctx    (focus-ctx)
+                   result  (when-not (str/blank? trimmed)
+                             (commands/dispatch fctx trimmed cmd-opts))]
+               (when result
+                 (runtime/journal-user-message-in! fctx trimmed))
+               (cond
+                 (nil? result)
+                 (if (str/blank? trimmed)
+                   (recur)
+                   (do
+                     (try
+                       (run-prompt! (focus-ctx) ai-ctx ai-model trimmed)
                        (catch Exception e
                          (println (str "\n[Error: " (ex-message e) "]\n"))))
                      (recur)))
 
-               (= :quit (:type result))
-               (println "\nψ: Goodbye.\n")
+                 (= :quit (:type result))
+                 (println "\nψ: Goodbye.\n")
 
-               (= :resume (:type result))
-               (do (println "\n  /resume is only available in TUI mode (--tui).\n")
+                 (= :resume (:type result))
+                 (do
+                   (println "\n  /resume is only available in TUI mode (--tui).\n")
                    (recur))
 
-               (#{:text :new-session :logout} (:type result))
-               (do
-                 (when (= :new-session (:type result))
-                   (print-initial-transcript! (:rehydrate result)))
-                 (println (str "\n" (:message result) "\n"))
-                 (recur))
+                 (#{:text :new-session :logout} (:type result))
+                 (do
+                   (when (= :new-session (:type result))
+                     (print-initial-transcript! (:rehydrate result)))
+                   (println (str "\n" (:message result) "\n"))
+                   (recur))
 
-               (= :login-start (:type result))
-               (do (println "\n── OAuth Login ────────────────────────")
+                 (= :login-start (:type result))
+                 (do
+                   (println "\n── OAuth Login ────────────────────────")
                    (let [{:keys [provider url login-state uses-callback-server]} result]
                      (println (str "  Open: " url "\n"))
                      (if uses-callback-server
-                       (do (println "  Waiting for browser callback…")
+                       (do
+                         (println "  Waiting for browser callback…")
+                         (try
+                           (oauth/complete-login! oauth-ctx (:id provider) nil login-state)
+                           (println (str "\n  ✓ Logged in to " (:name provider) "\n"))
+                           (catch Exception e
+                             (println (str "\n  ✗ Login failed: " (ex-message e) "\n")))))
+                       (do
+                         (print "  Paste authorization code: ")
+                         (flush)
+                         (when-let [code (try (read-line) (catch Exception _ nil))]
                            (try
-                             (oauth/complete-login! oauth-ctx (:id provider) nil login-state)
+                             (oauth/complete-login! oauth-ctx (:id provider) (str/trim code) login-state)
                              (println (str "\n  ✓ Logged in to " (:name provider) "\n"))
                              (catch Exception e
-                               (println (str "\n  ✗ Login failed: " (ex-message e) "\n")))))
-                       (do (print "  Paste authorization code: ")
-                           (flush)
-                           (when-let [code (try (read-line) (catch Exception _ nil))]
-                             (try
-                               (oauth/complete-login! oauth-ctx (:id provider) (str/trim code) login-state)
-                               (println (str "\n  ✓ Logged in to " (:name provider) "\n"))
-                               (catch Exception e
-                                 (println (str "\n  ✗ Login failed: " (ex-message e) "\n"))))))))
+                               (println (str "\n  ✗ Login failed: " (ex-message e) "\n"))))))))
                    (recur))
 
-               (= :login-error (:type result))
-               (do (println (str "\n  " (:message result) "\n"))
+                 (= :login-error (:type result))
+                 (do
+                   (println (str "\n  " (:message result) "\n"))
                    (recur))
 
-               (= :extension-cmd (:type result))
-               (do (try
+                 (= :extension-cmd (:type result))
+                 (do
+                   (try
                      (when-let [handler (:handler result)]
                        (let [captured (with-out-str (handler (:args result)))]
                          (when-not (str/blank? captured)
@@ -748,11 +762,11 @@
                        (println (str "\n[Command error: " (ex-message e) "]\n"))))
                    (recur))
 
-               :else
-               (do (println (str "\n" result "\n"))
-                   (recur))))))))))
+                 :else
+                 (do
+                   (println (str "\n" result "\n"))
+                   (recur)))))))))))
 
-;; ============================================================
 ;; TUI session (charm.clj Elm Architecture)
 ;; ============================================================
 
@@ -784,10 +798,15 @@
          (bootstrap-runtime-session! ctx ai-model {:memory-runtime-opts memory-runtime-opts
                                                    :cwd cwd})
 
+         ;; TUI-local focus atom — all closures read this to scope ctx
+         tui-focus* (atom (:target-session-id ctx))
+         focus-ctx  (fn [] (assoc ctx :target-session-id @tui-focus*))
+
          ;; Expose state for nREPL introspection
          _         (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model
                                           :oauth-ctx oauth-ctx
-                                          :nrepl-runtime-atom nrepl-runtime})
+                                          :nrepl-runtime-atom nrepl-runtime
+                                          :tui-focus* tui-focus*})
 
          ;; Helper: put an immediate assistant message on the TUI queue.
          reply!    (fn [^java.util.concurrent.LinkedBlockingQueue queue text]
@@ -799,9 +818,10 @@
          ;; Returns TUI resume state maps to display immediately after loading.
          resume-fn! (fn [session-path]
                       (try
-                        (session/resume-session-in! ctx session-path)
-                        (let [messages (:messages (agent/get-data-in (ss/agent-ctx-in ctx)))]
-                          (agent-messages->tui-resume-state messages))
+                        (let [sd   (session/resume-session-in! (focus-ctx) session-path)
+                              _    (reset! tui-focus* (:session-id sd))
+                              msgs (:messages (agent/get-data-in (ss/agent-ctx-in (focus-ctx))))]
+                          (agent-messages->tui-resume-state msgs))
                         (catch Exception e
                           (timbre/error e "Resume failed:" session-path)
                           {:messages [{:role :assistant
@@ -811,9 +831,10 @@
 
          switch-session-fn! (fn [session-id]
                               (try
-                                (session/ensure-session-loaded-in! ctx session-id)
-                                (let [messages (:messages (agent/get-data-in (ss/agent-ctx-in ctx)))]
-                                  (agent-messages->tui-resume-state messages))
+                                (let [sd   (session/ensure-session-loaded-in! (focus-ctx) session-id)
+                                      _    (reset! tui-focus* (:session-id sd))
+                                      msgs (:messages (agent/get-data-in (ss/agent-ctx-in (focus-ctx))))]
+                                  (agent-messages->tui-resume-state msgs))
                                 (catch Exception e
                                   (timbre/error e "Session switch failed:" session-id)
                                   {:messages [{:role :assistant
@@ -825,7 +846,9 @@
                     :ai-model ai-model
                     :supports-session-tree? true
                     :on-new-session! (fn []
-                                       (start-new-session-with-startup! ctx ai-ctx ai-model))}
+                                       (let [result (start-new-session-with-startup! (focus-ctx) ai-ctx ai-model)]
+                                         (reset! tui-focus* (:session-id result))
+                                         result))}
 
          ;; dispatch-fn — called synchronously by the TUI on submit.
          ;; Returns a command result map, or nil if not a command.
@@ -834,18 +857,14 @@
          dispatch-fn (fn [text]
                        (if (:pending-login @session-state)
                          nil  ;; fall through to run-agent-fn! for login code
-                         (let [result (commands/dispatch ctx text cmd-opts)]
+                         (let [fctx   (focus-ctx)
+                               result (commands/dispatch fctx text cmd-opts)]
                            (when result
                              ;; Keep command inputs in the session journal for parity with RPC/CLI.
-                             (runtime/journal-user-message-in! ctx text))
+                             (runtime/journal-user-message-in! fctx text))
                            (when (= :login-start (:type result))
                              (if (:uses-callback-server result)
-                               ;; Callback-server: start async completion in background.
-                               ;; TUI shows URL immediately; future will put completion
-                               ;; message on the session when callback arrives.
-                               ;; (The TUI can't receive this — it's fire-and-forget.)
                                nil
-                               ;; Manual-code: store pending state so next input is the code.
                                (swap! session-state assoc :pending-login
                                       {:provider-id   (get-in result [:provider :id])
                                        :provider-name (get-in result [:provider :name])
@@ -853,11 +872,9 @@
                            result)))
 
          ;; Called by TUI Escape during active work.
-         ;; Aborts current run and returns queued steering/follow-up text
-         ;; so input can be restored in the editor.
          on-interrupt-fn! (fn [_state]
-                            (session/abort-in! ctx)
-                            {:queued-text (session/consume-queued-input-text-in! ctx)
+                            (session/abort-in! (focus-ctx))
+                            {:queued-text (session/consume-queued-input-text-in! (focus-ctx))
                              :message "Interrupted active work."})
 
          ;; run-agent-fn! — called by the TUI for non-command input.
@@ -882,10 +899,11 @@
                              :else
                              (future
                                (try
-                                 (let [{:keys [user-message]} (runtime/prepare-user-message-in! ctx text)
-                                       api-key  (runtime/resolve-api-key-in ctx ai-model)
+                                 (let [fctx (focus-ctx)
+                                       {:keys [user-message]} (runtime/prepare-user-message-in! fctx text)
+                                       api-key  (runtime/resolve-api-key-in fctx ai-model)
                                        result   (runtime/run-agent-loop-in!
-                                                 ctx ai-ctx ai-model [user-message]
+                                                 fctx ai-ctx ai-model [user-message]
                                                  {:api-key api-key
                                                   :progress-queue queue
                                                   :sync-on-git-head-change? true})]
@@ -894,22 +912,24 @@
                                    (.put queue {:kind :error :message (ex-message e)})))))))]
 
      (tui-start-fn! (:name ai-model) run-agent-fn!
-                    {:query-fn             (fn [q] (session/query-in ctx q))
+                    {:query-fn             (fn [q] (session/query-in (focus-ctx) q))
                      :ui-state*        (ss/ui-state-view-in ctx)
                      :dispatch-fn          dispatch-fn
                      :on-interrupt-fn!     on-interrupt-fn!
                      :on-queue-input-fn!   (fn [text _state]
-                                             (if (= :streaming (ss/sc-phase-in ctx))
-                                               (do
-                                                 (session/steer-in! ctx text)
-                                                 {:message "Queued steering message."})
-                                               (do
-                                                 (session/follow-up-in! ctx text)
-                                                 {:message "Queued follow-up message."})))
+                                             (let [fctx (focus-ctx)]
+                                               (if (= :streaming (ss/sc-phase-in fctx))
+                                                 (do
+                                                   (session/steer-in! fctx text)
+                                                   {:message "Queued steering message."})
+                                                 (do
+                                                   (session/follow-up-in! fctx text)
+                                                   {:message "Queued follow-up message."}))))
                      :double-press-window-ms 500
                      :double-escape-action :none
                      :cwd                  cwd
-                     :current-session-file (:session-file (ss/get-session-data-in ctx))
+                     :focus-session-id     @tui-focus*
+                     :current-session-file (:session-file (ss/get-session-data-in (focus-ctx)))
                      :initial-messages     (vec (or (:messages startup-rehydrate) []))
                      :initial-tool-calls   (or (:tool-calls startup-rehydrate) {})
                      :initial-tool-order   (vec (or (:tool-order startup-rehydrate) []))
@@ -976,13 +996,19 @@
                                          (spit path (str (pr-str entry) "\n") :append true)))))
                                  (catch Throwable t
                                    (timbre/warn t "Failed to write rpc trace event"))))
-               state         (atom {:handshake-server-info-fn (fn [] (assoc (rpc/session->handshake-server-info ctx)
+               focus-atom    (atom (:target-session-id ctx))
+               focus-ctx     (fn [] (assoc ctx :target-session-id @focus-atom))
+               state         (atom {:handshake-server-info-fn (fn [] (assoc (rpc/session->handshake-server-info (focus-ctx))
                                                                             :ui-type :emacs))
-                                    :handshake-context-updated-payload-fn (fn [] (#'rpc/context-updated-payload ctx))
+                                    :handshake-context-updated-payload-fn (fn [] {:active-session-id @focus-atom
+                                                                                  :sessions []})
+                                    :focus-session-id* focus-atom
                                     :subscribed-topics #{}
                                     :rpc-ai-model ai-model
                                     :on-new-session! (fn []
-                                                       (start-new-session-with-startup! ctx nil ai-model))})
+                                                       (let [result (start-new-session-with-startup! (focus-ctx) nil ai-model)]
+                                                         (reset! focus-atom (:session-id result))
+                                                         result))})
                request-handler (rpc/make-session-request-handler ctx)]
            (reset! session-state {:ctx ctx
                                   :ai-model ai-model

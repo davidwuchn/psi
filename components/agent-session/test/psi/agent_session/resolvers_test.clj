@@ -179,9 +179,9 @@
     (let [cwd      (str (System/getProperty "java.io.tmpdir") "/psi-resolvers-context-" (java.util.UUID/randomUUID))
           _        (.mkdirs (java.io.File. cwd))
           ctx      (session/create-context {:cwd cwd})
-          _        (session/new-session-in! ctx)
-          sid-1    (:session-id (ss/get-session-data-in ctx))
-          path-1   (:session-file (ss/get-session-data-in ctx))
+          sd-1     (session/new-session-in! ctx)
+          sid-1    (:session-id sd-1)
+          path-1   (:session-file sd-1)
           _        (persist/flush-journal! (java.io.File. path-1)
                                            sid-1
                                            cwd
@@ -189,9 +189,10 @@
                                            nil
                                            [(persist/thinking-level-entry :off)
                                             (persist/session-info-entry "alpha")])
-          _        (session/new-session-in! ctx)
-          sid-2    (:session-id (ss/get-session-data-in ctx))
-          path-2   (:session-file (ss/get-session-data-in ctx))
+          sd-2     (session/new-session-in! (ss/retarget-ctx ctx sid-1))
+          sid-2    (:session-id sd-2)
+          path-2   (:session-file sd-2)
+          ctx      (ss/retarget-ctx ctx sid-2)
           _        (persist/flush-journal! (java.io.File. path-2)
                                            sid-2
                                            cwd
@@ -200,8 +201,7 @@
                                            [(persist/thinking-level-entry :off)
                                             (persist/session-info-entry "beta")])
           process-result
-          (q-in ctx [:psi.agent-session/context-active-session-id
-                     :psi.agent-session/context-session-count
+          (q-in ctx [:psi.agent-session/context-session-count
                      {:psi.agent-session/context-sessions
                       [:psi.session-info/id
                        :psi.session-info/path
@@ -219,7 +219,6 @@
                        :psi.session-info/message-count]}])
           context-sessions (:psi.agent-session/context-sessions process-result)
           persisted    (:psi.session/list persisted-result)]
-      (is (= sid-2 (:psi.agent-session/context-active-session-id process-result)))
       (is (= 2 (:psi.agent-session/context-session-count process-result)))
       (is (some #(= sid-1 (:psi.session-info/id %)) context-sessions))
       (is (some #(= sid-2 (:psi.session-info/id %)) context-sessions))

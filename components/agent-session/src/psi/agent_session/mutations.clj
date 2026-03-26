@@ -629,13 +629,14 @@
                   :psi.agent-session/session-name
                   :psi.agent-session/cwd
                   :psi.agent-session/thinking-level]}
-  (let [_  (core/new-session-in! agent-session-ctx {:session-name  session-name
-                                                    :worktree-path worktree-path})
-        _  (when system-prompt
-             (dispatch/dispatch! agent-session-ctx :session/set-system-prompt {:prompt system-prompt} {:origin :mutations}))
-        _  (when thinking-level
-             (dispatch/dispatch! agent-session-ctx :session/set-thinking-level {:level thinking-level} {:origin :mutations}))
-        sd (ss/get-session-data-in agent-session-ctx)]
+  (let [sd  (core/new-session-in! agent-session-ctx {:session-name  session-name
+                                                     :worktree-path worktree-path})
+        ctx (assoc agent-session-ctx :target-session-id (:session-id sd))
+        _   (when system-prompt
+              (dispatch/dispatch! ctx :session/set-system-prompt {:prompt system-prompt} {:origin :mutations}))
+        _   (when thinking-level
+              (dispatch/dispatch! ctx :session/set-thinking-level {:level thinking-level} {:origin :mutations}))
+        sd  (ss/get-session-data-in ctx)]
     {:psi.agent-session/session-id     (:session-id sd)
      :psi.agent-session/session-name   (:session-name sd)
      :psi.agent-session/cwd            (:worktree-path sd)

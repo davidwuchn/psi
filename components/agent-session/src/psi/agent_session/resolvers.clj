@@ -12,7 +12,6 @@
    :psi.agent-session/session-id
    :psi.agent-session/session-file
    :psi.agent-session/session-name
-   :psi.agent-session/context-active-session-id
    :psi.agent-session/context-session-count
    :psi.agent-session/context-sessions
    :psi.agent-session/model
@@ -394,13 +393,13 @@
 ;; ── Core session fields ─────────────────────────────────
 
 (pco/defresolver agent-session-identity
-  "Resolve stable identity, naming, and context session registry fields."
+  "Resolve stable identity, naming, and context session registry fields.
+   Note: :context-active-session-id removed — adapters (RPC, TUI) own focus locally."
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.agent-session/session-id
                  :psi.agent-session/session-file
                  :psi.agent-session/session-name
-                 :psi.agent-session/context-active-session-id
                  :psi.agent-session/context-session-count
                  {:psi.agent-session/context-sessions
                   [:psi.session-info/id
@@ -413,7 +412,6 @@
                    :psi.session-info/created]}]}
   (let [sd         (session/get-session-data-in agent-session-ctx)
         state      @(:state* agent-session-ctx)
-        active-sid (get-in state [:agent-session :active-session-id])
         sessions   (get-in state [:agent-session :sessions])
         hs         (->> (vals sessions)
                         (map :data)
@@ -423,7 +421,6 @@
     {:psi.agent-session/session-id              (:session-id sd)
      :psi.agent-session/session-file            (:session-file sd)
      :psi.agent-session/session-name            (:session-name sd)
-     :psi.agent-session/context-active-session-id  active-sid
      :psi.agent-session/context-session-count      (count hs)
      :psi.agent-session/context-sessions
      (mapv (fn [m]

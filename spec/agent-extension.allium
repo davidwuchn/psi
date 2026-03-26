@@ -302,9 +302,8 @@ rule AgentExecutesViaCoreContext {
     let ctx = CoreContext(context_id)
     let agent_ctx = core/SessionEntry(ctx, session_id).agent_ctx
 
-    -- Switch the context's active session to the agent session for the duration
-    -- of execution, then restore the parent session when done.
-    -- Alternatively, the executor accepts an explicit session_id parameter.
+    -- The executor receives an explicit session_id parameter; there is no
+    -- "active session" concept in core to switch or restore.
 
     ensures: core/ExecutorRunAgentLoop(ctx, session_id, agent_ctx, model, prompt)
 

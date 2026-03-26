@@ -42,8 +42,12 @@ value ContextIndexEntry {
     context_id: String
     project_id: String?
     worktree_path: String
-    active_session_id: String?
     session_count: Integer
+
+    @guidance
+        -- active_session_id is not stored in the context index.
+        -- Session focus is an adapter concern; persistence tracks only
+        -- what sessions exist, not which one is selected.
 }
 
 entity SessionFile {
@@ -220,12 +224,16 @@ rule ContextIndexBuilt {
     )
 }
 
-rule ContextIndexResolvesActiveSession {
+rule ContextIndexListsSessions {
     when: ContextIndexRequested()
 
     ensures:
         for e in ContextIndex.entries:
-            e.active_session_id = ResolveActiveSessionForContext(e.context_id)
+            e.session_count = CountSessionsForContext(e.context_id)
+
+    @guidance
+        -- The context index records which sessions exist on disk.
+        -- It does not track which session is active; that is an adapter concern.
 }
 
 surface SessionPersistenceApi {

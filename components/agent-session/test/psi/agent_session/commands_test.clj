@@ -65,14 +65,14 @@
     (is (= {:type :quit} (commands/dispatch ctx "/exit" cmd-opts)))))
 
 (deftest dispatch-new-session-test
-  (let [ctx (make-test-ctx)
-        _   (session/new-session-in! ctx)
-        old-id (:session-id (ss/get-session-data-in ctx))
+  (let [ctx    (make-test-ctx)
+        sd-old (session/new-session-in! ctx)
+        ctx    (assoc ctx :target-session-id (:session-id sd-old))
+        old-id (:session-id sd-old)
         result (commands/dispatch ctx "/new" cmd-opts)]
     (is (= :new-session (:type result)))
     (is (string? (:message result)))
-    ;; Session ID should have changed
-    (is (not= old-id (:session-id (ss/get-session-data-in ctx))))))
+    (is (not= old-id (get-in result [:rehydrate :session-id])))))
 
 (deftest dispatch-new-session-uses-callback-when-provided-test
   (let [ctx (make-test-ctx)
@@ -109,10 +109,10 @@
 
 (deftest dispatch-tree-switch-by-id-test
   (let [ctx        (make-test-ctx)
-        _          (session/new-session-in! ctx)
-        active-id  (:session-id (ss/get-session-data-in ctx))
+        sd         (session/new-session-in! ctx)
+        ctx        (assoc ctx :target-session-id (:session-id sd))
+        active-id  (:session-id sd)
         result     (commands/dispatch ctx (str "/tree " active-id) cmd-opts)]
-    ;; Explicit ids should be parsed as ids, not mistaken for bare /tree.
     (is (string? active-id))
     (is (not= :tree-open (:type result)))))
 

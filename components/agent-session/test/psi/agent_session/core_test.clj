@@ -29,6 +29,10 @@
   (:import
    (java.io File)))
 
+(defn- retarget
+  [ctx sid-or-sd]
+  (ss/retarget-ctx ctx (if (map? sid-or-sd) (:session-id sid-or-sd) sid-or-sd)))
+
 ;; ── Context creation and isolation ─────────────────────────────────────────
 
 (deftest context-isolation-test
@@ -46,8 +50,8 @@
 
   (testing "session lifecycle events can be routed through dispatch statechart boundary"
     (dispatch/clear-event-log!)
-    (let [ctx (session/create-context {:persist? false})]
-      (session/new-session-in! ctx)
+    (let [ctx (session/create-context {:persist? false})
+          ctx (retarget ctx (session/new-session-in! ctx))]
       (is (= :idle (ss/sc-phase-in ctx)))
       (session/prompt-in! ctx "hello")
       (is (= :streaming (ss/sc-phase-in ctx)))
@@ -65,8 +69,8 @@
 
   (testing "statechart action handlers use pure session-update results"
     (dispatch/clear-event-log!)
-    (let [ctx (session/create-context {:persist? false})]
-      (session/new-session-in! ctx)
+    (let [ctx (session/create-context {:persist? false})
+          ctx (retarget ctx (session/new-session-in! ctx))]
       (is (false? (:is-streaming (ss/get-session-data-in ctx))))
       (dispatch/dispatch! ctx :on-streaming-entered nil {:origin :statechart})
       (let [sd    (ss/get-session-data-in ctx)
@@ -84,81 +88,85 @@
 
   (testing "new-session-in! registers first real session and sets it active"
     (let [ctx        (session/create-context)
-          seed-id    (:session-id (ss/get-session-data-in ctx))]
-      (session/new-session-in! ctx)
-      (let [sid-after (:session-id (ss/get-session-data-in ctx))]
-        (is (not= seed-id sid-after))
-        (is (= sid-after (ss/active-session-id-in ctx)))
-        (is (= #{sid-after} (set (keys (ss/get-sessions-map-in ctx))))))))
+          seed-id    (:session-id (ss/get-session-data-in ctx))
+          sd-after   (session/new-session-in! ctx)
+          ctx        (retarget ctx sd-after)
+          sid-after  (:session-id sd-after)]
+      (is (not= seed-id sid-after))
+      (is (= sid-after (ss/active-session-id-in ctx)))
+      (is (= #{sid-after} (set (keys (ss/get-sessions-map-in ctx)))))))
 
   (testing "ensure-session-loaded-in! resumes by context session id"
     (let [cwd   (str (System/getProperty "java.io.tmpdir") "/psi-context-load-" (java.util.UUID/randomUUID))
           _     (.mkdirs (java.io.File. cwd))
           ctx   (session/create-context {:cwd cwd})
-          _     (session/new-session-in! ctx)
-          sid1  (:session-id (ss/get-session-data-in ctx))
-          path1 (:session-file (ss/get-session-data-in ctx))
+          sd1   (session/new-session-in! ctx)
+          sid1  (:session-id sd1)
+          path1 (:session-file sd1)
           _     (persist/flush-journal! (java.io.File. path1)
                                         sid1
                                         cwd
                                         nil
                                         nil
                                         [(persist/thinking-level-entry :off)])
-          _     (session/new-session-in! ctx)
-          sid2  (:session-id (ss/get-session-data-in ctx))]
+          sd2   (session/new-session-in! (retarget ctx sd1))
+          sid2  (:session-id sd2)
+          sd1*  (session/ensure-session-loaded-in! (retarget ctx sd2) sid1)
+          ctx   (retarget ctx sd1*)]
       (is (not= sid1 sid2))
-      (session/ensure-session-loaded-in! ctx sid1)
       (is (= sid1 (:session-id (ss/get-session-data-in ctx))))
       (is (= sid1 (ss/active-session-id-in ctx)))))
 
-  (testing "set-context-active-session-in! changes active session when id exists"
+  (testing "target-session-id scoping changes active session"
     (let [ctx (session/create-context)]
-      (session/new-session-in! ctx)
-      (let [first-id (:session-id (ss/get-session-data-in ctx))]
-        (session/new-session-in! ctx)
-        (let [second-id (:session-id (ss/get-session-data-in ctx))]
-          (ss/set-context-active-session-in! ctx first-id)
-          (is (= first-id (ss/active-session-id-in ctx)))
-          (ss/set-context-active-session-in! ctx second-id)
-          (is (= second-id (ss/active-session-id-in ctx)))))))
+      (let [sd1 (session/new-session-in! ctx)
+            first-id (:session-id sd1)
+            ctx1 (assoc ctx :target-session-id first-id)]
+        (let [sd2 (session/new-session-in! ctx1)
+              second-id (:session-id sd2)]
+          (is (= first-id (ss/active-session-id-in (assoc ctx :target-session-id first-id))))
+          (is (= second-id (ss/active-session-id-in (assoc ctx :target-session-id second-id))))))))
 
   (testing "new-session-in! accepts explicit worktree-path and session-name and keeps prior context peer"
-    (let [ctx (session/create-context {:cwd "/repo/main"
-                                       :initial-session {:worktree-path "/repo/main"}})]
-      (session/new-session-in! ctx {:session-name "main"
-                                    :worktree-path "/repo/main"})
-      (let [sid-1     (:session-id (ss/get-session-data-in ctx))
-            created-1 (:created-at (ss/get-session-data-in ctx sid-1))]
-        (Thread/sleep 5)
-        (session/new-session-in! ctx {:session-name "feature work"
-                                      :worktree-path "/repo/feature-work"})
-        (let [sd        (ss/get-session-data-in ctx)
-              sid-2     (:session-id sd)
-              sessions  (ss/get-sessions-map-in ctx)
-              created-2 (:created-at (ss/get-session-data-in ctx sid-2))]
-          (is (= "feature work" (:session-name sd)))
-          (is (= "/repo/feature-work" (:worktree-path sd)))
-          (is (= sid-2 (ss/active-session-id-in ctx)))
-          (is (= #{sid-1 sid-2} (set (keys sessions))))
-          (is (= "/repo/main" (:worktree-path (ss/get-session-data-in ctx sid-1))))
-          (is (instance? java.time.Instant created-1))
-          (is (instance? java.time.Instant created-2))
-          (is (= created-1 (:created-at (ss/get-session-data-in ctx sid-1))) "existing session keeps original created-at")
-          (is (not= created-1 created-2) "new session gets distinct created-at"))))))
+    (let [ctx   (session/create-context {:cwd "/repo/main"
+                                         :initial-session {:worktree-path "/repo/main"}})
+          sd-1  (session/new-session-in! ctx {:session-name "main"
+                                              :worktree-path "/repo/main"})
+          ctx-1 (retarget ctx sd-1)
+          sid-1 (:session-id sd-1)
+          created-1 (:created-at (ss/get-session-data-in ctx-1 sid-1))]
+      (Thread/sleep 5)
+      (let [sd-2     (session/new-session-in! ctx-1 {:session-name "feature work"
+                                                     :worktree-path "/repo/feature-work"})
+            ctx-2    (retarget ctx sd-2)
+            sd       (ss/get-session-data-in ctx-2)
+            sid-2    (:session-id sd)
+            sessions (ss/get-sessions-map-in ctx-2)
+            created-2 (:created-at (ss/get-session-data-in ctx-2 sid-2))]
+        (is (= "feature work" (:session-name sd)))
+        (is (= "/repo/feature-work" (:worktree-path sd)))
+        (is (= sid-2 (ss/active-session-id-in ctx-2)))
+        (is (= #{sid-1 sid-2} (set (keys sessions))))
+        (is (= "/repo/main" (:worktree-path (ss/get-session-data-in ctx-2 sid-1))))
+        (is (instance? java.time.Instant created-1))
+        (is (instance? java.time.Instant created-2))
+        (is (= created-1 (:created-at (ss/get-session-data-in ctx-2 sid-1))) "existing session keeps original created-at")
+        (is (not= created-1 created-2) "new session gets distinct created-at")))))
 
 (deftest new-session-test
   (testing "new-session-in! resets session-id"
     (let [ctx    (session/create-context)
-          old-id (:session-id (ss/get-session-data-in ctx))]
-      (session/new-session-in! ctx)
-      (let [new-id (:session-id (ss/get-session-data-in ctx))]
-        (is (not= old-id new-id)))))
+          old-id (:session-id (ss/get-session-data-in ctx))
+          sd     (session/new-session-in! ctx)
+          ctx    (retarget ctx sd)
+          new-id (:session-id (ss/get-session-data-in ctx))]
+      (is (not= old-id new-id))))
 
   (testing "new-session-in! clears queues"
     (let [ctx (session/create-context)]
       (session/steer-in! ctx "steer me")
-      (session/new-session-in! ctx)
-      (let [sd (ss/get-session-data-in ctx)]
+      (let [ctx (retarget ctx (session/new-session-in! ctx))
+            sd  (ss/get-session-data-in ctx)]
         (is (= [] (:steering-messages sd))))))
 
   (testing "new-session-in! is cancelled when extension returns cancel"
@@ -169,13 +177,12 @@
                                 (fn [_] {:cancel true}))
       (let [old-id (:session-id (ss/get-session-data-in ctx))]
         (session/new-session-in! ctx)
-        ;; session-id unchanged because cancelled
         (is (= old-id (:session-id (ss/get-session-data-in ctx)))))))
 
   (testing "new-session-in! appends active model entry when model exists"
     (let [model {:provider "anthropic" :id "claude-3-5-sonnet" :reasoning false}
-          ctx   (session/create-context {:initial-session {:model model}})]
-      (session/new-session-in! ctx)
+          ctx   (session/create-context {:initial-session {:model model}})
+          ctx   (retarget ctx (session/new-session-in! ctx))]
       (is (some #(and (= :model (:kind %))
                       (= "anthropic" (get-in % [:data :provider]))
                       (= "claude-3-5-sonnet" (get-in % [:data :model-id])))
@@ -187,8 +194,8 @@
                                :startup-bootstrap-completed? true
                                :startup-bootstrap-started-at (java.time.Instant/now)
                                :startup-bootstrap-completed-at (java.time.Instant/now)
-                               :startup-message-ids ["m1"]}})]
-      (session/new-session-in! ctx)
+                               :startup-message-ids ["m1"]}})
+          ctx (retarget ctx (session/new-session-in! ctx))]
       (let [sd (ss/get-session-data-in ctx)]
         (is (= [] (:startup-prompts sd)))
         (is (false? (:startup-bootstrap-completed? sd)))
@@ -197,8 +204,8 @@
         (is (= [] (:startup-message-ids sd)))))))
 
 (deftest fork-session-resets-startup-telemetry-test
-  (let [ctx (test-support/make-session-ctx {})]
-    (session/new-session-in! ctx)
+  (let [ctx (test-support/make-session-ctx {})
+        ctx (retarget ctx (session/new-session-in! ctx))]
     (let [entry-id (:id (ss/journal-append-in! ctx (persist/message-entry {:role "user"
                                                                            :content [{:type :text :text "hello"}]
                                                                            :timestamp (java.time.Instant/now)})))]
@@ -207,8 +214,8 @@
                                                            :startup-bootstrap-started-at (java.time.Instant/now)
                                                            :startup-bootstrap-completed-at (java.time.Instant/now)
                                                            :startup-message-ids ["m1"]})
-      (session/fork-session-in! ctx entry-id)
-      (let [sd (ss/get-session-data-in ctx)]
+      (let [ctx (retarget ctx (session/fork-session-in! ctx entry-id))
+            sd  (ss/get-session-data-in ctx)]
         (is (= [] (:startup-prompts sd)))
         (is (false? (:startup-bootstrap-completed? sd)))
         (is (nil? (:startup-bootstrap-started-at sd)))
@@ -216,16 +223,16 @@
         (is (= [] (:startup-message-ids sd)))))))
 
 (deftest fork-session-persists-child-file-with-parent-lineage-test
-  (let [cwd        (str (System/getProperty "java.io.tmpdir") "/psi-fork-" (java.util.UUID/randomUUID))
-        _          (.mkdirs (java.io.File. cwd))
-        ctx        (session/create-context {:cwd cwd})
-        _          (session/new-session-in! ctx)
-        parent-sd  (ss/get-session-data-in ctx)
+  (let [cwd         (str (System/getProperty "java.io.tmpdir") "/psi-fork-" (java.util.UUID/randomUUID))
+        _           (.mkdirs (java.io.File. cwd))
+        ctx         (session/create-context {:cwd cwd})
+        ctx         (retarget ctx (session/new-session-in! ctx))
+        parent-sd   (ss/get-session-data-in ctx)
         parent-file (:session-file parent-sd)
-        entry-id   (:id (ss/journal-append-in! ctx (persist/message-entry {:role "user"
-                                                                           :content [{:type :text :text "branch-here"}]
-                                                                           :timestamp (java.time.Instant/now)})))]
-    (session/fork-session-in! ctx entry-id)
+        entry-id    (:id (ss/journal-append-in! ctx (persist/message-entry {:role "user"
+                                                                            :content [{:type :text :text "branch-here"}]
+                                                                            :timestamp (java.time.Instant/now)})))
+        ctx         (retarget ctx (session/fork-session-in! ctx entry-id))]
     (let [child-sd     (ss/get-session-data-in ctx)
           child-file   (:session-file child-sd)
           loaded-child (persist/load-session-file child-file)]
@@ -248,11 +255,11 @@
                                                  :timestamp (java.time.Instant/now)})]]
       (.deleteOnExit f)
       (persist/flush-journal! f "sess-no-model" "/tmp/project" nil entries)
-      (session/resume-session-in! ctx (.getAbsolutePath f))
-      (let [sd (ss/get-session-data-in ctx)
-            r  (session/query-in ctx [:psi.agent-session/model-provider
-                                      :psi.agent-session/model-id
-                                      :psi.agent-session/thinking-level])]
+      (let [ctx (retarget ctx (session/resume-session-in! ctx (.getAbsolutePath f)))
+            sd  (ss/get-session-data-in ctx)
+            r   (session/query-in ctx [:psi.agent-session/model-provider
+                                       :psi.agent-session/model-id
+                                       :psi.agent-session/thinking-level])]
         (is (= initial-model (:model sd)))
         (is (= :minimal (:thinking-level sd)))
         (is (= "openai" (:psi.agent-session/model-provider r)))
@@ -271,8 +278,8 @@
                    "{:id \"e1\" :parent-id nil :timestamp #inst \"2024-01-01T00:00:01Z\" :kind :thinking-level :data {:thinking-level :medium}}\n"
                    "{:id \"e2\" :parent-id \"e1\" :timestamp #inst \"2024-01-01T00:00:02Z\" :kind :session-info :data {:name \"Feature X\"}}\n"
                    "{:id \"e3\" :parent-id \"e2\" :timestamp #inst \"2024-01-01T00:00:03Z\" :kind :message :data {:message {:role \"assistant\" :content [{:type :text :text \"hello\"}]}}}\n"))
-      (session/resume-session-in! ctx (.getAbsolutePath f))
-      (let [sd     (ss/get-session-data-in ctx)
+      (let [ctx    (retarget ctx (session/resume-session-in! ctx (.getAbsolutePath f)))
+            sd     (ss/get-session-data-in ctx)
             result (session/query-in ctx [:psi.agent-session/cwd
                                           :psi.agent-session/session-name
                                           :psi.agent-session/system-prompt])]
@@ -286,8 +293,8 @@
   (testing "resume-session-in! missing-file fallback is logged through dispatch"
     (dispatch/clear-event-log!)
     (let [f   (str (System/getProperty "java.io.tmpdir") "/psi-missing-" (java.util.UUID/randomUUID) ".ndedn")
-          ctx (session/create-context {:persist? false})]
-      (session/resume-session-in! ctx f)
+          ctx (session/create-context {:persist? false})
+          ctx (retarget ctx (session/resume-session-in! ctx f))]
       (let [sd    (ss/get-session-data-in ctx)
             entry (first (filter #(= :session/resume-missing-initialize (:event-type %))
                                  (dispatch/event-log-entries)))]
@@ -444,24 +451,21 @@
       (dispatch/dispatch! ctx :session/set-worktree-path {:worktree-path "/repo/replay"} {:origin :core})
       (is (= "replay me" (:session-name (ss/get-session-data-in ctx))))
       (is (= "/repo/replay" (:worktree-path (ss/get-session-data-in ctx))))
-      (ss/apply-root-state-update-in! ctx (ss/session-update #(assoc % :session-name "before" :worktree-path "/repo/main")))
+      (ss/apply-root-state-update-in! ctx (ss/session-update (ss/active-session-id-in ctx) #(assoc % :session-name "before" :worktree-path "/repo/main")))
       (session/replay-dispatch-event-log-in! ctx)
       (let [sd (ss/get-session-data-in ctx)]
         (is (= "replay me" (:session-name sd)))
         (is (= "/repo/replay" (:worktree-path sd))))))
 
-  (testing "set-context-active-session-in! is logged through dispatch"
-    (dispatch/clear-event-log!)
-    (let [ctx (session/create-context)]
-      (session/new-session-in! ctx)
-      (let [first-id (:session-id (ss/get-session-data-in ctx))]
-        (session/new-session-in! ctx)
-        (ss/set-context-active-session-in! ctx first-id)
-        (let [entries (dispatch/event-log-entries)
-              entry   (last entries)]
-          (is (= :session/set-context-active-session (:event-type entry)))
-          (is (= :core (:origin entry)))
-          (is (= {:session-id first-id} (:event-data entry)))))))
+  (testing "target-session-id scopes session reads correctly"
+    (let [ctx (session/create-context)
+          sd1 (session/new-session-in! ctx)
+          first-id (:session-id sd1)
+          ctx (assoc ctx :target-session-id first-id)
+          sd2 (session/new-session-in! ctx)
+          second-id (:session-id sd2)]
+      (is (= first-id (ss/active-session-id-in (assoc ctx :target-session-id first-id))))
+      (is (= second-id (ss/active-session-id-in (assoc ctx :target-session-id second-id))))))
 
   (testing "new-session-in! initialization is logged through dispatch"
     (dispatch/clear-event-log!)
@@ -514,7 +518,7 @@
 (deftest session-update-helper-consolidation-test
   (testing "session-update wrapper composes with apply-root-state-update-in! to update session data and context index"
     (let [ctx (session/create-context)]
-      (ss/apply-root-state-update-in! ctx (ss/session-update #(assoc % :session-name "helper-name")))
+      (ss/apply-root-state-update-in! ctx (ss/session-update (ss/active-session-id-in ctx) #(assoc % :session-name "helper-name")))
       (let [sd  (ss/get-session-data-in ctx)
             sid (:session-id sd)]
         (is (= "helper-name" (:session-name sd)))
@@ -556,7 +560,7 @@
             _    (sa/record-tool-output-stat-in! ctx stat 12 false)
             state @(:state* ctx)
             events (mapv :event-type (dispatch/event-log-entries))]
-        (let [sid (get-in state [:agent-session :active-session-id])]
+        (let [sid (ss/active-session-id-in ctx)]
           (is (= {:turn-id "t-1"} (get-in state [:agent-session :sessions sid :turn :ctx])))
           (is (= "tc-1" (get-in state [:agent-session :sessions sid :telemetry :tool-call-attempts 0 :id])))
           (is (= "anthropic" (get-in state [:agent-session :sessions sid :telemetry :provider-requests 0 :provider])))
@@ -942,8 +946,8 @@
       (test-support/update-state! ctx :session-data merge {:worktree-path "/tmp/main"
                                                            :base-system-prompt base
                                                            :system-prompt base})
-      (session/new-session-in! ctx {:worktree-path "/tmp/worktree"})
-      (let [sd (ss/get-session-data-in ctx)]
+      (let [ctx (retarget ctx (session/new-session-in! ctx {:worktree-path "/tmp/worktree"}))
+            sd  (ss/get-session-data-in ctx)]
         ;; Prompt cwd is frozen at context creation — does not change with worktree
         (is (str/includes? (:system-prompt sd) "Current working directory: /tmp/main"))
         (is (= (:base-system-prompt sd) (:system-prompt sd))))))

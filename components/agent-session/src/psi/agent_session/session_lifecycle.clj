@@ -38,16 +38,18 @@
                               :spawn-mode (or (:spawn-mode opts) :new-root)
                               :session-file session-file}
                              {:origin :core})
-         (dispatch/dispatch! ctx :session/retarget-runtime-prompt-metadata nil {:origin :core})
-         (when session-name
-           (session/journal-append-in! ctx (persist/session-info-entry session-name)))
-         (session/journal-append-in! ctx
-                                     (persist/thinking-level-entry
-                                      (:thinking-level (session/get-session-data-in ctx))))
-         (when-let [model (:model (session/get-session-data-in ctx))]
-           (session/journal-append-in! ctx (persist/model-entry (:provider model) (:id model)))))
-       (ext/dispatch-in reg "session_switch" {:reason :new})
-       (session/get-session-data-in ctx)))))
+         ;; Re-scope ctx to the new session for subsequent initialization reads
+         (let [ctx (assoc ctx :target-session-id new-session-id)]
+           (dispatch/dispatch! ctx :session/retarget-runtime-prompt-metadata nil {:origin :core})
+           (when session-name
+             (session/journal-append-in! ctx (persist/session-info-entry session-name)))
+           (session/journal-append-in! ctx
+                                       (persist/thinking-level-entry
+                                        (:thinking-level (session/get-session-data-in ctx))))
+           (when-let [model (:model (session/get-session-data-in ctx))]
+             (session/journal-append-in! ctx (persist/model-entry (:provider model) (:id model))))
+           (ext/dispatch-in reg "session_switch" {:reason :new})
+           (session/get-session-data-in ctx)))))))
 
 (defn resume-session-in!
   "Load and resume a session from `session-path`.
@@ -60,17 +62,19 @@
       (wf/clear-all-in! (:workflow-registry ctx))
       (let [loaded (persist/load-session-file session-path)]
         (if-not loaded
-          ;; File missing or invalid — treat as new session at that path
-          (dispatch/dispatch! ctx
-                              :session/resume-missing-initialize
-                              {:session-path session-path}
-                              {:origin :core})
+          (do
+            ;; File missing or invalid — treat as new session at that path
+            (dispatch/dispatch! ctx
+                                :session/resume-missing-initialize
+                                {:session-path session-path}
+                                {:origin :core})
+            (ext/dispatch-in reg "session_switch" {:reason :resume})
+            (session/get-session-data-in ctx))
           (let [{:keys [header entries]} loaded
                 session-id             (:id header)
                 current-sd             (session/get-session-data-in ctx)
                 current-model          (:model current-sd)
                 current-thinking-level (:thinking-level current-sd)
-                ;; Restore model/thinking from last model/thinking entries.
                 model-entry            (last (filter #(= :model (:kind %)) entries))
                 thinking-entry         (last (filter #(= :thinking-level (:kind %)) entries))
                 model-from-entry       (let [provider (get-in model-entry [:data :provider])
@@ -78,13 +82,10 @@
                                          (when (and provider model-id)
                                            {:provider provider
                                             :id       model-id}))
-                ;; Some sessions (especially older ones) may have no model entry.
-                ;; Fall back to the currently configured model in that case.
                 model                  (or model-from-entry current-model)
                 thinking-level         (or (get-in thinking-entry [:data :thinking-level])
                                            current-thinking-level
                                            :off)
-                ;; Rebuild agent messages from journal (handles compaction)
                 messages               (compaction/rebuild-messages-from-journal-entries (vec entries))]
             (dispatch/dispatch! ctx
                                 :session/resume-loaded
@@ -98,11 +99,11 @@
                                  :model model
                                  :messages (vec messages)}
                                 {:origin :core})
-            ;; Legacy sessions may not persist base prompt fields.
-            (dispatch/dispatch! ctx :session/ensure-base-system-prompt nil {:origin :core})
-            (dispatch/dispatch! ctx :session/retarget-runtime-prompt-metadata nil {:origin :core})))
-        (ext/dispatch-in reg "session_switch" {:reason :resume})
-        (session/get-session-data-in ctx)))))
+            (let [ctx (assoc ctx :target-session-id session-id)]
+              (dispatch/dispatch! ctx :session/ensure-base-system-prompt nil {:origin :core})
+              (dispatch/dispatch! ctx :session/retarget-runtime-prompt-metadata nil {:origin :core})
+              (ext/dispatch-in reg "session_switch" {:reason :resume})
+              (session/get-session-data-in ctx))))))))
 
 (defn fork-session-in!
   "Fork the session from `entry-id`, creating a new session branch.
@@ -136,16 +137,17 @@
                            :session-file session-file
                            :messages messages}
                           {:origin :core})
+      ;; Re-scope ctx to the forked session
+      (let [ctx (assoc ctx :target-session-id new-session-id)]
+        ;; Fork persistence: create/write child file immediately with lineage header.
+        (when session-file
+          (let [file (io/file session-file)]
+            (persist/flush-journal! file
+                                    new-session-id
+                                    (session/effective-cwd-in ctx)
+                                    parent-session-id
+                                    parent-session-file
+                                    branch-entries)))
 
-      ;; Fork persistence: create/write child file immediately with lineage header.
-      (when session-file
-        (let [file (io/file session-file)]
-          (persist/flush-journal! file
-                                  new-session-id
-                                  (session/effective-cwd-in ctx)
-                                  parent-session-id
-                                  parent-session-file
-                                  branch-entries)))
-
-      (ext/dispatch-in reg "session_fork" {})
-      (session/get-session-data-in ctx))))
+        (ext/dispatch-in reg "session_fork" {})
+        (session/get-session-data-in ctx)))))

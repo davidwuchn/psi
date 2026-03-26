@@ -89,6 +89,13 @@ value ContextSessionSlot {
 value ContextUpdatedPayload {
     active_session_id: String?
     sessions: List<ContextSessionSlot>
+
+    @guidance
+        -- active_session_id is the RPC adapter's own focus pointer.
+        -- It is NOT read from core state; the RPC layer owns and maintains it.
+        -- Core operations always receive an explicit session_id from the adapter.
+        -- active_session_id here is the session the client is currently viewing,
+        -- used only for UI synchronisation across connected clients.
 }
 
 entity RpcEndpoint {
@@ -253,6 +260,11 @@ rule ContextUpdatedPayloadCanonicalAcrossFrontends {
 
     ensures: EventPayloadType(frame.data) = ContextUpdatedPayload
     ensures: RequiredPayloadKeys(frame.data) = {"active-session-id", "sessions"}
+
+    @guidance
+        -- active-session-id in this event is the RPC adapter's focus pointer,
+        -- not a value sourced from core state. The RPC layer computes it from
+        -- its own tracking and includes it here for client UI synchronisation.
     ensures: ForEach(frame.data.sessions, slot => HasKey(slot, "id"))
     ensures: ForEach(frame.data.sessions, slot => HasKey(slot, "created-at"))
     ensures: system_ctx/QuerySeededByCanonicalRoot(endpoint.session.context.id)

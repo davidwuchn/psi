@@ -27,7 +27,6 @@ When debugging a live issue, prefer:
 
 ```clojure
 [:psi.agent-session/session-id
- :psi.agent-session/context-active-session-id
  :psi.agent-session/session-file
  :psi.agent-session/model-provider
  :psi.agent-session/model-id
@@ -38,11 +37,11 @@ When debugging a live issue, prefer:
 
 ```clojure
 (require 'psi.agent-session.main)
-(require 'psi.agent-session.core)
+(require 'psi.agent-session.session-state)
 
 (let [ctx (:ctx @psi.agent-session.main/session-state)]
-  {:session-id (:session-id (psi.agent-session.core/get-session-data-in ctx))
-   :active-session-id (:active-session-id (psi.agent-session.core/get-context-index-in ctx))})
+  {:target-session-id (psi.agent-session.session-state/active-session-id-in ctx)
+   :session-id (:session-id (psi.agent-session.session-state/get-session-data-in ctx))})
 ```
 
 3. If needed, read the persisted session file recorded by EQL.
@@ -139,7 +138,6 @@ This gives protocol-level evidence for exactly what crossed the stdio boundary.
 
 ```clojure
 [:psi.agent-session/session-id
- :psi.agent-session/context-active-session-id
  :psi.agent-session/session-file
  :psi.agent-session/cwd
  :psi.agent-session/model

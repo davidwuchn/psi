@@ -408,9 +408,9 @@
 
 (defn get-session-data-in
   "Read session data from canonical root state in `ctx`.
-   Without session-id, returns the active session's data."
+   Without session-id, returns the targeted session's data via :target-session-id."
   ([ctx]
-   (let [sid (get-in @(:state* ctx) [:agent-session :active-session-id])]
+   (let [sid (:target-session-id ctx)]
      (get-state-value-in ctx (session-data-path sid))))
   ([ctx sid]
    (get-state-value-in ctx (session-data-path sid))))

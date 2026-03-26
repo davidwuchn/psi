@@ -87,12 +87,10 @@
 (def ^:dynamic *session-file-lock-max-attempts* 400)
 
 (defn- active-session-id-from-ctx
-  "Return the target session id from ctx.
-  Uses :target-session-id if set (for child session execution),
-  otherwise falls back to the context's active-session-id."
+  "Return the current session id from ctx.
+  Reads :target-session-id from ctx."
   [ctx]
-  (or (:target-session-id ctx)
-      (get-in @(:state* ctx) [:agent-session :active-session-id])))
+  (:target-session-id ctx))
 
 (defn- journal-path
   "Build the per-session journal path for the active session in ctx."

@@ -155,20 +155,29 @@ rule UserPrompts {
     )
 }
 
-rule PromptRoutingDefaultsToContextActiveSession {
-    when: PromptRequested(context, text, images, session_id)
-    requires: session_id = null
-    requires: context.active_session_id != null
-
-    ensures: UserPrompts(SessionById(context, context.active_session_id), text, images)
-}
-
-rule PromptRoutingUsesExplicitSession {
+rule PromptRoutingRequiresExplicitSessionId {
     when: PromptRequested(context, text, images, session_id)
     requires: session_id != null
     requires: SessionById(context, session_id) != null
 
     ensures: UserPrompts(SessionById(context, session_id), text, images)
+
+    @guidance
+        -- Core always requires an explicit session_id.
+        -- Adapters (TUI, RPC, Emacs) maintain their own focus pointer and
+        -- resolve it to a session_id before calling into core.
+        -- There is no implicit "active session" fallback in the core.
+}
+
+rule PromptRoutingRejectsMissingSessionId {
+    when: PromptRequested(context, text, images, session_id)
+    requires: session_id = null
+
+    ensures: OperationRejected(null, "session_id is required")
+
+    @guidance
+        -- A null session_id is an adapter error; the adapter must resolve
+        -- its focus pointer to a concrete session_id before dispatching.
 }
 
 rule UserPromptsWhileStreaming {
@@ -343,7 +352,8 @@ rule ServiceRoutesToSessionBySessionId {
     @guidance
         -- The service surface resolves session_id to the session entry in
         -- canonical state. The consumer never sees the process-scoped ctx.
-        -- If session_id is null, the active_session_id is used as default.
+        -- session_id is always required; there is no active_session_id fallback
+        -- in core. Adapters resolve their own focus pointer before calling in.
 }
 
 rule ServiceRejectsUnknownSessionId {

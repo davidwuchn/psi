@@ -4,6 +4,7 @@
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.core :as session]
+   [psi.agent-session.session-state :as ss]
    [psi.agent-session.tools :as tools]))
 
 (deftest app-query-tool-schema-test
@@ -118,10 +119,10 @@
 (deftest app-query-tool-integration-test
   (testing "app-query-tool works with a real session context"
     (let [ctx      (session/create-context {:persist? false})
-          _        (session/new-session-in! ctx)
+          sd       (session/new-session-in! ctx)
+          ctx      (ss/retarget-ctx ctx (:session-id sd))
           tool     (tools/make-app-query-tool (fn [q] (session/query-in ctx q)))
           exec     (:execute tool)
-          ;; Query session phase
           result   (exec {"query" "[:psi.agent-session/phase]"})
           parsed   (read-string (:content result))]
       (is (false? (:is-error result)))
@@ -129,7 +130,8 @@
 
   (testing "app-query-tool returns session-id from live context"
     (let [ctx      (session/create-context {:persist? false})
-          _        (session/new-session-in! ctx)
+          sd       (session/new-session-in! ctx)
+          ctx      (ss/retarget-ctx ctx (:session-id sd))
           tool     (tools/make-app-query-tool (fn [q] (session/query-in ctx q)))
           exec     (:execute tool)
           result   (exec {"query" "[:psi.agent-session/session-id]"})

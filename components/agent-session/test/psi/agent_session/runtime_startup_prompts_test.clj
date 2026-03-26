@@ -13,9 +13,10 @@
    :content [{:type :text :text "ok"}]})
 
 (deftest run-startup-prompts-in-persists-telemetry-test
-  (let [ctx (session/create-context {:persist? false})
+  (let [ctx   (session/create-context {:persist? false})
+        sd    (session/new-session-in! ctx)
+        ctx   (ss/retarget-ctx ctx (:session-id sd))
         calls (atom [])]
-    (session/new-session-in! ctx)
     (with-redefs [psi.agent-session.startup-prompts/discover-rules
                   (fn [_]
                     [{:id "s1" :phase :system-bootstrap :priority 1 :source :project :text "one"}
@@ -52,9 +53,10 @@
             (is (= ["one" "two"] user-texts))))))))
 
 (deftest run-startup-prompts-in-continues-after-prompt-failure-by-default-test
-  (let [ctx (session/create-context {:persist? false})
+  (let [ctx   (session/create-context {:persist? false})
+        sd    (session/new-session-in! ctx)
+        ctx   (ss/retarget-ctx ctx (:session-id sd))
         calls (atom [])]
-    (session/new-session-in! ctx)
     (with-redefs [psi.agent-session.startup-prompts/discover-rules
                   (fn [_]
                     [{:id "s1" :phase :system-bootstrap :priority 1 :source :project :text "one"}
@@ -78,8 +80,9 @@
 
 (deftest run-startup-prompts-in-fail-fast-stops-after-first-failure-test
   (let [ctx (session/create-context {:persist? false})
+        sd  (session/new-session-in! ctx)
+        ctx (ss/retarget-ctx ctx (:session-id sd))
         calls (atom [])]
-    (session/new-session-in! ctx)
     (with-redefs [psi.agent-session.startup-prompts/discover-rules
                   (fn [_]
                     [{:id "s1" :phase :system-bootstrap :priority 1 :source :project :text "one"}
@@ -102,9 +105,10 @@
         (is (nil? (get by-id "s2")))))))
 
 (deftest run-startup-prompts-in-skips-fork-by-default-test
-  (let [ctx (session/create-context {:persist? false})
+  (let [ctx   (session/create-context {:persist? false})
+        sd    (session/new-session-in! ctx)
+        ctx   (ss/retarget-ctx ctx (:session-id sd))
         calls (atom [])]
-    (session/new-session-in! ctx)
     (with-redefs [psi.agent-session.startup-prompts/discover-rules
                   (fn [_]
                     [{:id "s1" :phase :system-bootstrap :priority 1 :source :project :text "one"}])

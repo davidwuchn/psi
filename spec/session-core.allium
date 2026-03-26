@@ -41,8 +41,14 @@ entity AgentContext {
     available_skills: Set<String>
     loaded_extensions: Set<String>
 
-    active_session_id: SessionId?
     status: active | closed
+
+    @guidance
+        -- active_session_id is NOT owned by AgentContext.
+        -- Selection of which session is currently focused is a UI/adapter concern
+        -- (TUI, RPC, Emacs). The core manages sessions by SessionId only.
+        -- Adapters maintain their own focus pointer and pass session_id explicitly
+        -- on every operation.
 }
 
 entity AgentSession {
@@ -126,7 +132,6 @@ rule ContextInitializedExplicitly {
         available_prompt_templates: {},
         available_skills: {},
         loaded_extensions: {},
-        active_session_id: null,
         status: active
     )
 }
@@ -274,9 +279,11 @@ surface SessionCoreApi {
         -- UI projections may expose this timestamp so clients can render relative age
         -- without losing the canonical underlying value.
 
-    @guarantee ActiveSessionIsFocusNotExistence
-        -- active_session_id is the default routing focus for prompts and UI selection.
-        -- Switching focus does not destroy or reset sibling sessions.
+    @guarantee ActiveSessionSelectionBelongsToAdapters
+        -- There is no active_session_id in the core.
+        -- Session focus/selection is owned by each adapter (TUI, RPC, Emacs).
+        -- Every core operation takes an explicit session_id.
+        -- Switching focus in a UI does not affect any other adapter or the core.
 
     @guarantee ConcurrentSessionExecution
         -- Multiple sessions within a context may execute concurrently.

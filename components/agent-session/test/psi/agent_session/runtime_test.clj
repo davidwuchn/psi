@@ -131,13 +131,13 @@
   (let [extension-events (atom [])
         sid              "runtime-event"
         ctx              {:cwd "/tmp/psi-runtime-event"
+                          :target-session-id sid
                           :recursion-ctx (recursion/create-context)
                           :extension-registry {:state (atom {:registration-order []
                                                              :extensions {}})}
                           :state* (atom {:agent-session {:sessions {sid {:data      {:worktree-path "/tmp/psi-runtime-event"
                                                                                      :session-id    sid}
-                                                                         :agent-ctx {}}}
-                                                         :active-session-id sid}})}]
+                                                                         :agent-ctx {}}}}})}]
     (with-redefs [runtime/safe-maybe-sync-on-git-head-change!
                   (fn [ctx]
                     (let [git-sync {:ok? true

@@ -1,46 +1,77 @@
 # Plan
 
-## Active — vui branch
+## Completed — remove the temporary ctx current-session bridge
 
-### 1. Polish agent widget node tree (small)
-Compose full top-line from query data:
-- status icon, phase badge, turns, elapsed-s, agent-name, fork tag, task preview
-- all fields available in `{:psi.extension.workflow/detail [...]}` result
-- replace pre-computed text with composed `:content-path` + `:hstack` nodes
-- action line (cont/remove) conditioned on done?/error? — needs
-  conditional visibility or always-present muted text
+The agent-session refactor is complete.
 
-### 2. Merge vui → master
-- rebase clean (done once already)
-- run full test suite
-- merge
+### Final outcome
 
-### 3. ExtensionInstanceState storage (from master PLAN item 12)
+- ✓ `:active-session-id` removed from root state atom
+- ✓ RPC focus moved to endpoint-local atom
+- ✓ TUI focus moved to TUI-local state
+- ✓ `:psi.agent-session/context-active-session-id` removed from resolver surface
+- ✓ service made explicit-only
+- ✓ shared ctx `:current-session-id*` removed
+- ✓ core now routes only through explicit `session-id` or scoped `:target-session-id`
+- ✓ tests green
+
+## Implemented design
+
+> Core has no shared current session concept.
+> RPC/UI layers own focus.
+> Core logic uses explicit `session-id` or scoped child-session ctx only.
+
+## Completed steps
+
+### Step 1 — Move RPC focus to endpoint-local atom  ✓
+- RPC runtime state owns `focus-session-id*`
+- request routing scopes from explicit `:session-id` or RPC-local focus
+- lifecycle flows update RPC-local focus
+
+### Step 2 — Move TUI focus to TUI-local state only  ✓
+- TUI owns `:focus-session-id`
+- tree selector no longer depends on core-projected active-session attr
+- session switching updates TUI-local focus directly
+
+### Step 3 — Remove `:psi.agent-session/context-active-session-id` from core resolver surface  ✓
+- attr removed from resolver outputs
+- graph surface/tests updated
+
+### Step 4 — Remove implicit current-session fallback from service  ✓
+- service APIs now require explicit `session-id`
+- no fallback to shared ctx current session
+
+### Step 5 — Remove `:current-session-id*` from shared ctx  ✓
+- ctx construction no longer includes `:current-session-id*`
+- `ss/active-session-id-in` now reads only `:target-session-id`
+- lifecycle flows re-scope locally instead of mutating shared ctx focus
+- tests/helpers updated to use explicit re-scoping
+
+## Success criteria achieved
+
+- ✓ no `:active-session-id` in root state
+- ✓ no `:current-session-id*` in shared ctx
+- ✓ RPC owns focus locally
+- ✓ TUI owns focus locally
+- ✓ core resolvers/service no longer expose or depend on shared current-session state
+- ✓ all tests green
+
+## Deferred / next
+
+### ExtensionInstanceState storage
 - `:extension-instance-state` path in `:state*`
 - get/set operations + EQL resolvers
 - steering-mode/follow-up-mode stored there (not session data)
 
-### 4. Retire agent-core from remaining consumers (from master PLAN item 11)
+### Retire agent-core from remaining consumers
 - dispatch-effects still sync to agent-core (RPC resume, session switch, bootstrap)
 - core.clj still creates agent-ctx in `create-context`
 - migrate each consumer to session-data reads, then remove agent-ctx from session entries
 
-### 5. Configuration scope (from master PLAN item 8)
+### Configuration scope
 - config setters need to take scope: session > project > system
 
-### 6. Cache stability (from master PLAN item 5)
+### Cache stability
 - change injected prompt time to session creation time
 - add time instant to each request/response
 - set cache breakpoints on last three messages
-
-## Deferred widget-spec items
-- Per-button in-flight correlation via event payload
-- Cross-widget composition
-- Conditional widget visibility
-- Placement vocabulary extension
-
-## Success shape
-- widget-spec system in production use across agent + agent-chain
-- agent widget shows live progress (phase/turns/elapsed) without polling
-- vui branch merged to master
-- ExtensionInstanceState enables clean extension state isolation

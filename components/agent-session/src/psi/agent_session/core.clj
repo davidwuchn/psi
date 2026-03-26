@@ -178,8 +178,7 @@
                                                                                       :provider-replies []}
                                                                           :persistence {:journal []
                                                                                         :flush-state {:flushed? false :session-file nil}}
-                                                                          :turn {:ctx nil}}}
-                                                  :active-session-id initial-sid}
+                                                                          :turn {:ctx nil}}}}
                                   :runtime {:nrepl (or (some-> nrepl-runtime-atom deref) nil)
                                             :rpc-trace {:enabled? false
                                                         :file nil}}
@@ -193,6 +192,7 @@
          ctx0              {:sc-env                sc-env
                             :started-at            (java.time.Instant/now)
                             :state*                state*
+                            :target-session-id     initial-sid
                             :nrepl-runtime-atom    nrepl-runtime-atom
                             :extension-registry    ext-reg
                             :workflow-registry     wf-reg
@@ -245,6 +245,7 @@
      ;; Start the session statechart with working memory containing ctx + actions-fn
      (sc/start-session! sc-env sc-session-id
                         {:ctx        ctx
+                         :session-id initial-sid
                          :actions-fn actions-fn
                          :config     merged-config})
 
@@ -277,16 +278,16 @@
 
    Behavior:
    - if session-id is nil, no-op
-   - if already current, only updates the context active pointer
-   - if known in context session index with a session-file path, resumes that file and
-     marks it active
-   - otherwise throws ex-info with :error-code request/not-found"
+   - if already the targeted session, returns its data
+   - if known in context session index with a session-file path, resumes that file
+   - otherwise throws ex-info with :error-code request/not-found
+
+   Returns session-data for the loaded session."
   [ctx session-id]
   (when session-id
     (let [current-id (:session-id (ss/get-session-data-in ctx))]
       (if (= current-id session-id)
-        (do (ss/set-context-active-session-in! ctx session-id)
-            (ss/get-session-data-in ctx))
+        (ss/get-session-data-in ctx)
         (let [sessions (ss/get-sessions-map-in ctx)
               target   (get sessions session-id)
               path     (get-in target [:data :session-file])]
@@ -302,10 +303,7 @@
                              :session-id session-id}))
 
             :else
-            (do
-              (resume-session-in! ctx path)
-              (ss/set-context-active-session-in! ctx session-id)
-              (ss/get-session-data-in ctx))))))))
+            (resume-session-in! ctx path)))))))
 
 ;;; Prompting
 

@@ -17,7 +17,11 @@ external entity AgentContext {
     worktree_path: String
     baseline_system_prompt: String
     loaded_extensions: Set<String>
-    active_session_id: String?
+
+    @guidance
+        -- active_session_id is NOT part of AgentContext.
+        -- Extensions that need to address a session must receive an explicit
+        -- session_id from the adapter or event payload.
 }
 
 external entity AgentSession {

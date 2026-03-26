@@ -99,9 +99,7 @@
     (let [result     (q [:psi.graph/root-queryable-attrs :psi.graph/edges])
           root-attrs (:psi.graph/root-queryable-attrs result)
           edge-attrs (keep :attribute (:psi.graph/edges result))]
-      (is (graph-attr-present? root-attrs :psi.agent-session/context-active-session-id))
       (is (graph-attr-present? root-attrs :psi.agent-session/context-session-count))
-      (is (graph-attr-present? edge-attrs :psi.agent-session/context-active-session-id))
       (is (graph-attr-present? edge-attrs :psi.agent-session/context-session-count))
       (is (graph-attr-present? edge-attrs :psi.agent-session/context-sessions)))))
 

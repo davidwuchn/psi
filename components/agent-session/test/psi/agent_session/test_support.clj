@@ -71,11 +71,10 @@
                                                                    :provider-replies []}
                                                        :persistence {:journal []
                                                                      :flush-state {:flushed? false :session-file nil}}
-                                                       :turn {:ctx nil}}}
-                                       :active-session-id sid}
+                                                       :turn {:ctx nil}}}}
                        :background-jobs {:store (bg-jobs/empty-state)}
                        :ui {:extension-ui @(ui-state/create-ui-state)}}
-        state*        (atom (merge base-state (or state {})))
+        state*               (atom (merge base-state (or state {})))
         ext-reg       (ext/create-registry)
         wf-reg        (wf/create-registry)
         sc-env        (session-sc/create-sc-env)
@@ -84,6 +83,7 @@
                            (executor/run-tool-call-through-runtime-effect!
                             ctx tool-call parsed-args progress-queue))
         ctx           {:state*                       state*
+                       :target-session-id            sid
                        :sc-env                       sc-env
                        :config                       {}
                        :extension-registry           ext-reg
@@ -117,6 +117,7 @@
         _             (dispatch-handlers/register-all! ctx)]
     (session-sc/start-session! sc-env sc-session-id
                                {:ctx        ctx
+                                :session-id sid
                                 :actions-fn nil
                                 :config     {}})
     ctx))

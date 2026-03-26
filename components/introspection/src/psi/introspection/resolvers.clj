@@ -48,6 +48,7 @@
      :psi.startup/mutations              — mutation symbols used"
   (:require
    [com.wsscode.pathom3.connect.operation :as pco]
+   [psi.agent-session.session-state :as ss]
    [psi.engine.core :as engine]
    [psi.introspection.graph :as graph]
    [psi.query.core :as query]
@@ -177,8 +178,8 @@
                  :psi.startup/extension-error-count
                  :psi.startup/extension-errors
                  :psi.startup/mutations]}
-  (let [state   @(:state* agent-session-ctx)
-        sid     (get-in state [:agent-session :active-session-id])
+  (let [sid     (ss/active-session-id-in agent-session-ctx)
+        state   @(:state* agent-session-ctx)
         summary (get-in state [:agent-session :sessions sid :data :startup-bootstrap])]
     {:psi.startup/bootstrap-summary      summary
      :psi.startup/bootstrap-timestamp    (:timestamp summary)
