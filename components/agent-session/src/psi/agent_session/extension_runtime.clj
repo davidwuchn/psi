@@ -71,7 +71,91 @@
 
      :ui-context-fn
      (fn [ext-path]
-       (ui-state/create-ui-context (ss/ui-state-view-in ctx) ext-path))
+       (let [ext-id   (str ext-path)
+             ui-path  (ss/state-path :ui-state)
+             base-ui  (ui-state/create-ui-context (ss/atom-view-in ctx ui-path) ext-path)]
+         (when base-ui
+           (assoc base-ui
+                  :set-widget
+                  (fn [widget-id placement content]
+                    (dispatch/dispatch! ctx :session/ui-set-widget
+                                        {:extension-id ext-id
+                                         :widget-id widget-id
+                                         :placement placement
+                                         :content content}
+                                        {:origin :extension}))
+
+                  :clear-widget
+                  (fn [widget-id]
+                    (dispatch/dispatch! ctx :session/ui-clear-widget
+                                        {:extension-id ext-id
+                                         :widget-id widget-id}
+                                        {:origin :extension}))
+
+                  :set-widget-spec
+                  (fn [spec]
+                    (let [{:keys [accepted? errors]}
+                          (dispatch/dispatch! ctx :session/ui-set-widget-spec
+                                              {:extension-id ext-id
+                                               :spec spec}
+                                              {:origin :extension})]
+                      (when-not accepted?
+                        {:errors errors})))
+
+                  :clear-widget-spec
+                  (fn [widget-id]
+                    (dispatch/dispatch! ctx :session/ui-clear-widget-spec
+                                        {:extension-id ext-id
+                                         :widget-id widget-id}
+                                        {:origin :extension}))
+
+                  :set-status
+                  (fn [text]
+                    (dispatch/dispatch! ctx :session/ui-set-status
+                                        {:extension-id ext-id
+                                         :text text}
+                                        {:origin :extension}))
+
+                  :clear-status
+                  (fn []
+                    (dispatch/dispatch! ctx :session/ui-clear-status
+                                        {:extension-id ext-id}
+                                        {:origin :extension}))
+
+                  :notify
+                  (fn [message level]
+                    (dispatch/dispatch! ctx :session/ui-notify
+                                        {:extension-id ext-id
+                                         :message message
+                                         :level level}
+                                        {:origin :extension}))
+
+                  :register-tool-renderer
+                  (fn [tool-name render-call-fn render-result-fn]
+                    (dispatch/dispatch! ctx :session/ui-register-tool-renderer
+                                        {:tool-name tool-name
+                                         :extension-id ext-id
+                                         :render-call-fn render-call-fn
+                                         :render-result-fn render-result-fn}
+                                        {:origin :extension}))
+
+                  :register-message-renderer
+                  (fn [custom-type render-fn]
+                    (dispatch/dispatch! ctx :session/ui-register-message-renderer
+                                        {:custom-type custom-type
+                                         :extension-id ext-id
+                                         :render-fn render-fn}
+                                        {:origin :extension}))
+
+                  :get-tools-expanded
+                  (fn []
+                    (boolean (get (ss/get-state-value-in ctx ui-path) :tools-expanded? false)))
+
+                  :set-tools-expanded
+                  (fn [expanded?]
+                    (dispatch/dispatch! ctx :session/ui-set-tools-expanded
+                                        {:expanded? expanded?}
+                                        {:origin :extension}))))))
 
      :log-fn
      (fn [text]

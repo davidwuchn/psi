@@ -480,6 +480,67 @@
     (swap! ui-state-atom assoc :tools-expanded? (boolean expanded?))))
 
 ;; ============================================================
+;; Pure(ish) reducers over a UI state map
+;; ============================================================
+
+(defn- reduce-ui
+  "Apply atom-based op `f` over a plain ui-state map.
+   Returns {:state ui-state' :result x}."
+  [ui-state f & args]
+  (let [ui* (atom (or ui-state {}))
+        ret (apply f ui* args)]
+    {:state @ui*
+     :result ret}))
+
+(defn set-widget
+  [ui-state ext-id widget-id placement content]
+  (reduce-ui ui-state set-widget! ext-id widget-id placement content))
+
+(defn clear-widget
+  [ui-state ext-id widget-id]
+  (reduce-ui ui-state clear-widget! ext-id widget-id))
+
+(defn set-widget-spec
+  [ui-state ext-id spec]
+  (reduce-ui ui-state set-widget-spec! ext-id spec))
+
+(defn clear-widget-spec
+  [ui-state ext-id widget-id]
+  (reduce-ui ui-state clear-widget-spec! ext-id widget-id))
+
+(defn resolve-dialog
+  [ui-state dialog-id result]
+  (reduce-ui ui-state resolve-dialog! dialog-id result))
+
+(defn cancel-dialog
+  [ui-state]
+  (reduce-ui ui-state cancel-dialog!))
+
+(defn set-status
+  [ui-state ext-id text]
+  (reduce-ui ui-state set-status! ext-id text))
+
+(defn clear-status
+  [ui-state ext-id]
+  (reduce-ui ui-state clear-status! ext-id))
+
+(defn notify
+  [ui-state ext-id message level]
+  (reduce-ui ui-state notify! ext-id message level))
+
+(defn register-tool-renderer
+  [ui-state tool-name ext-path render-call-fn render-result-fn]
+  (reduce-ui ui-state register-tool-renderer! tool-name ext-path render-call-fn render-result-fn))
+
+(defn register-message-renderer
+  [ui-state custom-type ext-path render-fn]
+  (reduce-ui ui-state register-message-renderer! custom-type ext-path render-fn))
+
+(defn set-tools-expanded
+  [ui-state expanded?]
+  (reduce-ui ui-state set-tools-expanded! expanded?))
+
+;; ============================================================
 ;; Clear all (for extension reload)
 ;; ============================================================
 

@@ -492,3 +492,18 @@ The live Anthropic request capture showed a failure shape that higher-level requ
 - when rebuilding provider history from persisted transcript messages
 - treat structurally empty assistant turns as absent history, not as empty text blocks
 - validate message meaning, not just role alternation
+
+## 2026-03-26 - Removing `ui-state-view-in` while keeping adapter behavior stable
+
+### λ Dispatch-first migration can land before full adapter API redesign
+
+Moving extension UI writes to dispatch events (`:session/ui-*`) first made it possible to remove the `ui-state-view-in` anomaly without a risky big-bang TUI redesign. Pathom mutations, RPC dialog accessors, and extension runtime UI methods now converge on one mutation pipeline.
+
+### λ Option A is an effective bridge for architecture convergence
+
+Using canonical path atom-view (`ss/atom-view-in ctx (ss/state-path :ui-state)`) preserved TUI behavior while removing a special-purpose compatibility API. This kept user-visible behavior stable and still reduced architectural drift.
+
+### λ Reducer-style transforms can coexist with legacy atom wrappers during migration
+
+Adding reducer-style UI functions in `psi.ui.state` (`{:state ... :result ...}`) while retaining `...!` wrappers provided a safe migration path: dispatch handlers could switch to reducer outputs immediately, while older code paths remain compatible until fully removed.
+

@@ -18,8 +18,7 @@
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.tool-plan :as tool-plan]
    [psi.ai.models :as models]
-   [psi.agent-session.workflows :as wf]
-   [psi.ui.state :as ui-state]))
+   [psi.agent-session.workflows :as wf]))
 
 ;;; Prompt-contribution helper
 
@@ -834,16 +833,14 @@
    ::pco/params  [:psi/agent-session-ctx :spec]
    ::pco/output  [:psi.ui/widget-spec-accepted?
                   :psi.ui/widget-spec-errors]}
-  (let [ui-atom (ss/ui-state-view-in agent-session-ctx)
-        ;; Extension id is derived from the spec's :extension-id field,
-        ;; falling back to a generic sentinel. Extensions should set :extension-id.
-        ext-id  (or (:extension-id spec) "unknown")
-        result  (ui-state/set-widget-spec! ui-atom ext-id spec)]
-    (if result
-      {:psi.ui/widget-spec-accepted? false
-       :psi.ui/widget-spec-errors    (:errors result)}
-      {:psi.ui/widget-spec-accepted? true
-       :psi.ui/widget-spec-errors    nil})))
+  (let [{:keys [accepted? errors]}
+        (dispatch/dispatch! agent-session-ctx
+                            :session/ui-set-widget-spec
+                            {:extension-id (or (:extension-id spec) "unknown")
+                             :spec spec}
+                            {:origin :mutations})]
+    {:psi.ui/widget-spec-accepted? (boolean accepted?)
+     :psi.ui/widget-spec-errors    errors}))
 
 (pco/defmutation clear-widget-spec
   "Remove a declarative WidgetSpec by widget-id for the calling extension."
@@ -851,9 +848,12 @@
   {::pco/op-name 'psi.ui/clear-widget-spec
    ::pco/params  [:psi/agent-session-ctx :extension-id :widget-id]
    ::pco/output  [:psi.ui/widget-spec-cleared?]}
-  (let [ui-atom (ss/ui-state-view-in agent-session-ctx)]
-    (ui-state/clear-widget-spec! ui-atom extension-id widget-id)
-    {:psi.ui/widget-spec-cleared? true}))
+  (dispatch/dispatch! agent-session-ctx
+                      :session/ui-clear-widget-spec
+                      {:extension-id extension-id
+                       :widget-id widget-id}
+                      {:origin :mutations})
+  {:psi.ui/widget-spec-cleared? true})
 
 ;;; Registry
 

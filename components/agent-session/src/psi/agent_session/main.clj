@@ -913,7 +913,7 @@
 
      (tui-start-fn! (:name ai-model) run-agent-fn!
                     {:query-fn             (fn [q] (session/query-in (focus-ctx) q))
-                     :ui-state*        (ss/ui-state-view-in ctx)
+                     :ui-state*        (ss/atom-view-in ctx (ss/state-path :ui-state))
                      :dispatch-fn          dispatch-fn
                      :on-interrupt-fn!     on-interrupt-fn!
                      :on-queue-input-fn!   (fn [text _state]

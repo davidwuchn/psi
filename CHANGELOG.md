@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-03-26
+
+- λ Δ Removed `ui-state-view-in` compatibility anomaly from `agent-session` and moved extension UI state writes onto dispatch-owned events.
+- λ Δ Added dispatch UI mutation handlers for widgets, widget specs, status, notifications, dialog resolution/cancel, renderer registration, and tools-expanded toggle.
+- λ Δ Routed UI mutation callsites through dispatch:
+  - Pathom UI mutations (`psi.ui/set-widget-spec`, `psi.ui/clear-widget-spec`)
+  - RPC dialog resolve/cancel accessors
+  - extension runtime `:ui` context write methods
+- λ Δ Added pure(ish) ui-state reducers in `components/ui-state/src/psi/ui/state.clj` and switched dispatch handlers to reducer-based updates against canonical `[:ui :extension-ui]` state.
+- λ Δ Executed Phase 4A: TUI/extension/rpc integration now uses canonical `:ui-state` path atom-view (`ss/atom-view-in ctx (ss/state-path :ui-state)`) instead of `ss/ui-state-view-in`.
+- ✓ Verification: `bb clojure:test:unit` (935 tests, 5582 assertions, 0 failures).
+
 ## 2026-03-22
 
 - λ Δ Sharpened tool-history resolver docs so canonical consumers default to lifecycle read models:

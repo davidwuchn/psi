@@ -82,6 +82,7 @@ internal mutable lifecycle. They are not queryable domain state.
   - startup/bootstrap lifecycle + summary writes
   - context usage / extension prompt telemetry / runtime prompt retargeting
   - rpc trace / oauth projection / recursion projection setters
+  - extension UI mutations (widget/widget-spec/status/notify/dialog + renderer registration)
 - Remaining direct mutation pockets still exist outside those migrated slices.
 - Treat `dispatch_pipeline_active` as "dispatch active for migrated slices"
   during migration, not yet "all mutations converge through dispatch".

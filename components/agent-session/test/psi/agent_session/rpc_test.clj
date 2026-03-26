@@ -47,7 +47,7 @@
 
 (defn- ui-view
   [ctx]
-  (ss/ui-state-view-in ctx))
+  (ss/atom-view-in ctx (ss/state-path :ui-state)))
 
 (defn- stream-body
   [s]

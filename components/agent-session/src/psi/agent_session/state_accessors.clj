@@ -4,8 +4,7 @@
   (:require
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.oauth.core :as oauth]
-   [psi.agent-session.session-state :as session]
-   [psi.ui.state :as ui-state]))
+   [psi.agent-session.session-state :as session]))
 
 ;;; Readers
 
@@ -175,13 +174,23 @@
   "Resolve the active canonical UI dialog and advance the queue.
    Public named API so transport code does not own dialog queue transition logic."
   [ctx dialog-id result]
-  (ui-state/resolve-dialog! (session/ui-state-view-in ctx) dialog-id result))
+  (-> (dispatch/dispatch! ctx
+                          :session/ui-resolve-dialog
+                          {:dialog-id dialog-id :result result}
+                          {:origin :rpc})
+      :accepted?
+      boolean))
 
 (defn cancel-active-dialog-in!
   "Cancel the active canonical UI dialog and advance the queue.
    Public named API so transport code does not own dialog queue transition logic."
   [ctx]
-  (ui-state/cancel-dialog! (session/ui-state-view-in ctx)))
+  (-> (dispatch/dispatch! ctx
+                          :session/ui-cancel-dialog
+                          nil
+                          {:origin :rpc})
+      :accepted?
+      boolean))
 
 (defn set-oauth-pending-login-in!
   "Set the canonical oauth pending-login projection.

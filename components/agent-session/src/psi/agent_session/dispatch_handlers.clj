@@ -13,7 +13,8 @@
    [psi.agent-session.session :as session-data]
    [psi.agent-session.session-state :as session]
    [psi.agent-session.statechart :as sc]
-   [psi.agent-session.system-prompt :as sys-prompt]))
+   [psi.agent-session.system-prompt :as sys-prompt]
+   [psi.ui.state :as ui-state]))
 
 ;;; Thread utilities
 
@@ -116,6 +117,7 @@
 (defn- session-flush-state-path [sid] [:agent-session :sessions sid :persistence :flush-state])
 (defn- session-telemetry-path [sid k] [:agent-session :sessions sid :telemetry k])
 (defn- session-turn-ctx-path [sid] [:agent-session :sessions sid :turn :ctx])
+(def ^:private ui-state-path [:ui :extension-ui])
 
 (defn- update-runtime-rpc-trace-state
   [state enabled? file]
@@ -466,6 +468,102 @@
    {}
    (fn [ctx {:keys [ui-type]}]
      {:root-state-update (session/session-update (session/active-session-id-in ctx) #(assoc % :ui-type ui-type))}))
+
+  ;; UI state mutations (dispatch-owned)
+  (dispatch/register-handler!
+   :session/ui-set-widget-spec
+   {}
+   (fn [ctx {:keys [extension-id spec]}]
+     (let [ext-id (or extension-id (:extension-id spec) "unknown")
+           {:keys [state result]} (ui-state/set-widget-spec (or (session/get-state-value-in ctx ui-state-path) {}) ext-id spec)]
+       {:root-state-update (fn [root] (assoc-in root ui-state-path state))
+        :return (if result
+                  {:accepted? false :errors (:errors result)}
+                  {:accepted? true :errors nil})})))
+
+  (dispatch/register-handler!
+   :session/ui-set-widget
+   {}
+   (fn [ctx {:keys [extension-id widget-id placement content]}]
+     (let [{:keys [state]} (ui-state/set-widget (or (session/get-state-value-in ctx ui-state-path) {}) extension-id widget-id placement content)]
+       {:root-state-update (fn [root] (assoc-in root ui-state-path state))
+        :return {:accepted? true}})))
+
+  (dispatch/register-handler!
+   :session/ui-clear-widget
+   {}
+   (fn [ctx {:keys [extension-id widget-id]}]
+     (let [{:keys [state]} (ui-state/clear-widget (or (session/get-state-value-in ctx ui-state-path) {}) extension-id widget-id)]
+       {:root-state-update (fn [root] (assoc-in root ui-state-path state))
+        :return {:cleared? true}})))
+
+  (dispatch/register-handler!
+   :session/ui-clear-widget-spec
+   {}
+   (fn [ctx {:keys [extension-id widget-id]}]
+     (let [{:keys [state]} (ui-state/clear-widget-spec (or (session/get-state-value-in ctx ui-state-path) {}) extension-id widget-id)]
+       {:root-state-update (fn [root] (assoc-in root ui-state-path state))
+        :return {:cleared? true}})))
+
+  (dispatch/register-handler!
+   :session/ui-resolve-dialog
+   {}
+   (fn [ctx {:keys [dialog-id result]}]
+     (let [{:keys [state result]} (ui-state/resolve-dialog (or (session/get-state-value-in ctx ui-state-path) {}) dialog-id result)
+           accepted? result]
+       {:root-state-update (fn [root] (assoc-in root ui-state-path state))
+        :return {:accepted? (boolean accepted?)}})))
+
+  (dispatch/register-handler!
+   :session/ui-cancel-dialog
+   {}
+   (fn [ctx _]
+     (let [{:keys [state result]} (ui-state/cancel-dialog (or (session/get-state-value-in ctx ui-state-path) {}))]
+       {:root-state-update (fn [root] (assoc-in root ui-state-path state))
+        :return {:accepted? (boolean result)}})))
+
+  (dispatch/register-handler!
+   :session/ui-set-status
+   {}
+   (fn [ctx {:keys [extension-id text]}]
+     (let [{:keys [state]} (ui-state/set-status (or (session/get-state-value-in ctx ui-state-path) {}) extension-id text)]
+       {:root-state-update (fn [root] (assoc-in root ui-state-path state))})))
+
+  (dispatch/register-handler!
+   :session/ui-clear-status
+   {}
+   (fn [ctx {:keys [extension-id]}]
+     (let [{:keys [state]} (ui-state/clear-status (or (session/get-state-value-in ctx ui-state-path) {}) extension-id)]
+       {:root-state-update (fn [root] (assoc-in root ui-state-path state))})))
+
+  (dispatch/register-handler!
+   :session/ui-register-tool-renderer
+   {}
+   (fn [ctx {:keys [tool-name extension-id render-call-fn render-result-fn]}]
+     (let [{:keys [state]} (ui-state/register-tool-renderer (or (session/get-state-value-in ctx ui-state-path) {}) tool-name extension-id render-call-fn render-result-fn)]
+       {:root-state-update (fn [root] (assoc-in root ui-state-path state))})))
+
+  (dispatch/register-handler!
+   :session/ui-register-message-renderer
+   {}
+   (fn [ctx {:keys [custom-type extension-id render-fn]}]
+     (let [{:keys [state]} (ui-state/register-message-renderer (or (session/get-state-value-in ctx ui-state-path) {}) custom-type extension-id render-fn)]
+       {:root-state-update (fn [root] (assoc-in root ui-state-path state))})))
+
+  (dispatch/register-handler!
+   :session/ui-set-tools-expanded
+   {}
+   (fn [ctx {:keys [expanded?]}]
+     (let [{:keys [state]} (ui-state/set-tools-expanded (or (session/get-state-value-in ctx ui-state-path) {}) expanded?)]
+       {:root-state-update (fn [root] (assoc-in root ui-state-path state))
+        :return {:tools-expanded? (boolean expanded?)}})))
+
+  (dispatch/register-handler!
+   :session/ui-notify
+   {}
+   (fn [ctx {:keys [extension-id message level]}]
+     (let [{:keys [state]} (ui-state/notify (or (session/get-state-value-in ctx ui-state-path) {}) extension-id message level)]
+       {:root-state-update (fn [root] (assoc-in root ui-state-path state))})))
 
   (dispatch/register-handler!
    :session/set-model

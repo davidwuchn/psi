@@ -271,7 +271,10 @@
 
 ;;; UI state compatibility
 
-(defn- state-backed-atom-view
+(defn atom-view-in
+  "Return an atom-like view over canonical root state at `path`.
+   Compatibility boundary for integration code that still expects swap!/deref
+   semantics while canonical state remains rooted in :state*."
   [ctx path]
   (let [store (get-state-in* ctx path)]
     (when (some? store)
@@ -305,11 +308,3 @@
           (let [newv (apply f (get-state-in* ctx path) a b xs)]
             (assoc-state-in!* ctx path newv)
             newv))))))
-
-(defn ui-state-view-in
-  "Return an atom-like view over canonical extension UI state.
-   This is an intentional compatibility boundary for UI integration code that
-   still expects swap!/deref semantics. It is not a second source of truth; it
-   is a root-backed view over canonical state."
-  [ctx]
-  (state-backed-atom-view ctx ui-state-path))
