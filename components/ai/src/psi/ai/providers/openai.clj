@@ -85,6 +85,9 @@
 
 (defn- extract-reasoning-delta
   [delta]
+  ;; Multi-branch `or` intentionally normalises across observed provider response
+  ;; shapes: flat keys, nested maps, sequential content blocks, and legacy fields.
+  ;; Each branch handles a distinct variant seen in the wild — not dead code.
   (let [reasoning (:reasoning delta)]
     (or
      (string-fragment (get-in delta [:reasoning :content]))
@@ -308,8 +311,8 @@
                         (seq tool-defs)        (assoc :tools tool-defs)
                         effort                 (assoc :reasoning_effort effort))]
     {:headers {"Content-Type"  "application/json"
-               "Authorization" (str "Bearer " (:api-key options
-                                                        (System/getenv "OPENAI_API_KEY")))}
+               "Authorization" (str "Bearer " (or (:api-key options)
+                                                   (System/getenv "OPENAI_API_KEY")))}
      :body    (json/generate-string body)}))
 
 (defn- safe-call!
@@ -422,6 +425,9 @@
     (cond-> {:type :error :error-message full-msg}
       status (assoc :http-status status))))
 
+(defn- new-msg-id  [] (str "msg_"  (UUID/randomUUID)))
+(defn- new-call-id [] (str "call_" (UUID/randomUUID)))
+
 (defn stream-openai
   "Stream response from OpenAI Chat Completions API.
 
@@ -483,7 +489,7 @@
 
             (start-tool-if-ready! [idx force?]
               (let [{:keys [id name started? args-buffer]} (get @tool-state idx)
-                    id* (or id (when force? (str "call_" (UUID/randomUUID))))]
+                    id* (or id (when force? (new-call-id)))]
                 (when (and (not started?) (seq name) (seq id*))
                   (swap! tool-state assoc idx
                          {:id id*
@@ -652,10 +658,6 @@
     (catch Exception _
       nil)))
 
-(defn- user-text
-  [msg]
-  (user-message-text msg))
-
 (defn- assistant-content->codex-items
   "Convert one assistant message to Responses API input items."
   [msg]
@@ -669,12 +671,12 @@
                           {"type"    "message"
                            "role"    "assistant"
                            "status"  "completed"
-                           "id"      (str "msg_" (UUID/randomUUID))
+                           "id"      (new-msg-id)
                            "content" [{"type" "output_text"
                                        "text" text
                                        "annotations" []}]})
             tool-items  (map (fn [tc]
-                               (let [raw-id          (or (:id tc) (str "call_" (UUID/randomUUID)))
+                               (let [raw-id          (or (:id tc) (new-call-id))
                                      [call-id item-id] (if (str/includes? raw-id "|")
                                                          (str/split raw-id #"\|" 2)
                                                          [raw-id nil])]
@@ -691,7 +693,7 @@
           [{"type"    "message"
             "role"    "assistant"
             "status"  "completed"
-            "id"      (str "msg_" (UUID/randomUUID))
+            "id"      (new-msg-id)
             "content" [{"type" "output_text"
                         "text" text
                         "annotations" []}]}]
@@ -701,7 +703,7 @@
   [msg]
   (let [raw-id  (or (:tool-call-id msg) "")
         call-id (or (first (str/split raw-id #"\|" 2))
-                    (str "call_" (UUID/randomUUID)))
+                    (new-call-id))
         text    (if (map? (:content msg))
                   (or (get-in msg [:content :text]) "")
                   (str (:content msg)))]
@@ -718,7 +720,7 @@
                    :user
                    [{"role"    "user"
                      "content" [{"type" "input_text"
-                                 "text" (user-text msg)}]}]
+                                 "text" (user-message-text msg)}]}]
 
                    :assistant
                    (assistant-content->codex-items msg)
@@ -761,7 +763,7 @@
     {:input-tokens       (max 0 (- input-tokens cached))
      :output-tokens      output-tokens
      :cache-read-tokens  cached
-     :cache-write-tokens 0
+     :cache-write-tokens 0  ;; Codex API does not expose cache write tokens
      :total-tokens       total}))
 
 (defn- codex-status->reason
@@ -785,30 +787,30 @@
     (when-not (seq account-id)
       (throw (ex-info "OpenAI Codex requires ChatGPT OAuth access token (missing chatgpt_account_id)"
                       {:provider :openai :api :openai-codex-responses})))
-    (let [headers (cond-> {"Content-Type"       "application/json"
-                           "Authorization"      (str "Bearer " api-key)
-                           "accept"             "text/event-stream"
-                           "OpenAI-Beta"        codex-beta-header
-                           "originator"         "psi"
-                           "chatgpt-account-id" account-id}
-                    (:session-id options)
-                    (assoc "session_id"      (:session-id options)
-                           "conversation_id" (:session-id options)))
+    (let [tools     (codex-tools conversation)
+          reasoning (codex-reasoning model options)
+          headers   (cond-> {"Content-Type"       "application/json"
+                             "Authorization"      (str "Bearer " api-key)
+                             "accept"             "text/event-stream"
+                             "OpenAI-Beta"        codex-beta-header
+                             "originator"         "psi"
+                             "chatgpt-account-id" account-id}
+                      (:session-id options)
+                      (assoc "session_id"      (:session-id options)
+                             "conversation_id" (:session-id options)))
           ;; ChatGPT Codex backend currently rejects top-level `temperature`
           ;; with 400 unsupported parameter, so we intentionally omit it.
-          body    (cond-> {"model"               (:id model)
-                           "store"               false
-                           "stream"              true
-                           "instructions"        (:system-prompt conversation)
-                           "input"               (codex-input-messages conversation)
-                           "text"                {"verbosity" "medium"}
-                           "tool_choice"         "auto"
-                           "parallel_tool_calls" true}
-                    (:session-id options)  (assoc "prompt_cache_key" (:session-id options))
-                    (seq (codex-tools conversation))
-                    (assoc "tools" (codex-tools conversation))
-                    (codex-reasoning model options)
-                    (assoc "reasoning" (codex-reasoning model options)))]
+          body      (cond-> {"model"               (:id model)
+                             "store"               false
+                             "stream"              true
+                             "instructions"        (:system-prompt conversation)
+                             "input"               (codex-input-messages conversation)
+                             "text"                {"verbosity" "medium"}
+                             "tool_choice"         "auto"
+                             "parallel_tool_calls" true}
+                      (:session-id options) (assoc "prompt_cache_key" (:session-id options))
+                      (seq tools)           (assoc "tools" tools)
+                      reasoning             (assoc "reasoning" reasoning))]
       {:headers headers
        :body    (json/generate-string body)})))
 
@@ -932,7 +934,7 @@
                         "function_call"
                         (let [idx        (register-tool-index! event item)
                               call-id    (or (:call_id item)
-                                             (str "call_" (UUID/randomUUID)))
+                                             (new-call-id))
                               item-id    (:id item)
                               tool-id    (if (seq item-id)
                                            (str call-id "|" item-id)
