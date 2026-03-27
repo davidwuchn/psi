@@ -56,9 +56,10 @@
 
 (defn- exception->error-event
   [e]
-  (cond-> {:type :error
-           :error-message (str e)}
-    (:status (ex-data e)) (assoc :http-status (:status (ex-data e)))))
+  (let [data (ex-data e)]
+    (cond-> {:type          :error
+             :error-message (str e)}
+      (:status data) (assoc :http-status (:status data)))))
 
 ;; ───────────────────────────────────────────────────────────────────────────
 ;; Callback-based streaming (preferred)
@@ -115,12 +116,12 @@
 
 (defn- stream-response-queue
   [provider-impl conversation model options]
-  (let [queue              (LinkedBlockingQueue. 100)
-        {bg :future
-         session :session} (stream-response provider-impl conversation model
-                                            options #(.put queue %))]
+  (let [queue                       (LinkedBlockingQueue. 100)
+        {stream-future :future
+         session       :session} (stream-response provider-impl conversation model
+                                                  options #(.put queue %))]
     (future
-      @bg
+      @stream-future
       (.put queue sentinel))
     {:queue queue
      :session session}))

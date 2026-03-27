@@ -27,6 +27,11 @@
 (def ^:private prompt-caching-beta "prompt-caching-2024-07-31")
 (def ^:private prompt-caching-scope-beta "prompt-caching-scope-2026-01-05")
 
+(defn- coerce-str
+  "Coerce any value to a string; nil and false become \"\"."
+  [x]
+  (str (or x "")))
+
 (defn- valid-anthropic-tool-id?
   [id]
   (and (string? id)
@@ -40,7 +45,7 @@
   "Return an Anthropic-safe tool id (alnum, underscore, hyphen only).
    Generates a fallback when id is nil/blank/invalid."
   [id]
-  (let [s (str (or id ""))
+  (let [s (coerce-str id)
         sanitized (-> s
                       (str/replace #"[^a-zA-Z0-9_-]" "_")
                       (str/replace #"_+" "_")
@@ -56,7 +61,7 @@
   []
   (let [tool-id-map (atom {})]
     (fn [raw-id]
-      (let [key (str (or raw-id ""))]
+      (let [key (coerce-str raw-id)]
         (or (get @tool-id-map key)
             (let [canonical-id (ensure-anthropic-tool-id raw-id)]
               (swap! tool-id-map assoc key canonical-id)
@@ -104,6 +109,8 @@
            vec)
 
       :else
+      ;; Last-resort coercion: wrap whatever arrived as a plain text block so
+      ;; the message list is never empty and the API call can still proceed.
       [{:type "text"
         :text (get-in msg [:content :text]
                       (str content))}])))
@@ -130,6 +137,8 @@
                                   {})}
       (:cache-control block))
 
+    ;; Intentional fallback: unknown block kinds are stringified as plain text
+    ;; rather than dropped, so future block types degrade gracefully.
     {:type "text"
      :text (str block)}))
 
@@ -258,15 +267,13 @@
 
 (defn- request-headers
   [api-key thinking prompt-caching?]
-  (let [oauth?  (oauth-api-key? api-key)
-        headers (if oauth?
-                  {"Content-Type"      "application/json"
-                   "Authorization"     (str "Bearer " api-key)
-                   "anthropic-version" anthropic-version}
-                  {"Content-Type"      "application/json"
-                   "x-api-key"         api-key
-                   "anthropic-version" anthropic-version})
-        beta    (beta-header oauth? thinking prompt-caching?)]
+  (let [oauth?       (oauth-api-key? api-key)
+        base-headers {"Content-Type"      "application/json"
+                      "anthropic-version" anthropic-version}
+        headers      (if oauth?
+                       (assoc base-headers "Authorization" (str "Bearer " api-key))
+                       (assoc base-headers "x-api-key" api-key))
+        beta         (beta-header oauth? thinking prompt-caching?)]
     (cond-> headers
       beta (assoc "anthropic-beta" beta))))
 
@@ -468,6 +475,9 @@
      :body    (json/generate-string body*)}))
 
 (defn- safe-call!
+  "Invoke `f` with `payload` if `f` is a function, returning nil otherwise.
+   Exceptions are swallowed and nil is returned — intentional defensive
+   programming so optional callback hooks never crash the streaming loop."
   [f payload]
   (when (fn? f)
     (try
@@ -618,6 +628,8 @@
   [body]
   (try
     (cond
+      ;; Explicit nil → nil (not "") so callers can use (seq body-text) to
+      ;; distinguish "no body" from "empty body string".
       (nil? body) nil
       (string? body) body
       (instance? InputStream body) (slurp (io/reader body))
@@ -687,6 +699,24 @@
       (when (seq parts)
         (str " request{" (str/join ", " parts) "}")))))
 
+(defn- augment-400-message
+  "Append diagnostic context to a generic 400 base-msg when Anthropic returns
+   no actionable error detail. Only applied when base-msg is the fallback
+   'Anthropic rejected the request' string."
+  [base-msg body-text oauth? request]
+  (if (= base-msg "Anthropic rejected the request")
+    (str base-msg
+         " ("
+         (if (str/blank? body-text)
+           "no error body returned"
+           "provider response omitted actionable details")
+         "; possible causes: model access, unsupported beta header, or invalid request payload"
+         (when oauth?
+           "; oauth token in use")
+         ")"
+         (or (request-diagnostic-hint request) ""))
+    base-msg))
+
 (defn- error-from-response-data
   [{:keys [status headers body-text fallback-message request]}]
   (let [parsed-body (when (seq body-text)
@@ -702,19 +732,8 @@
                           fallback-message)
                         (fallback-status-message status))
         oauth?      (oauth-auth-request? request)
-        base-msg    (if (and (= 400 status)
-                             (= base-msg "Anthropic rejected the request"))
-                      (str base-msg
-                           " ("
-                           (if (str/blank? body-text)
-                             "no error body returned"
-                             "provider response omitted actionable details")
-                           "; possible causes: model access, unsupported beta header, or invalid request payload"
-                           (when oauth?
-                             "; oauth token in use")
-                           ")"
-                           (or (request-diagnostic-hint request) ""))
-                      base-msg)
+        base-msg    (cond-> base-msg
+                      (= 400 status) (augment-400-message body-text oauth? request))
         req-id      (request-id-from-headers headers)
         full-msg    (str base-msg
                          (when status
@@ -906,11 +925,7 @@
         done?       (atom false)]
     (try
       (capture-request! options url request)
-      (letfn [(post-stream [req]
-                (http/post url
-                           (merge req {:as :stream
-                                       :throw-exceptions false})))
-              (consume-stream-response! [response]
+      (letfn [(consume-stream-response! [response]
                 (with-open [reader (io/reader (:body response))]
                   (doseq [line (line-seq reader)]
                     (when-let [event-data (parse-sse-line line)]
@@ -951,7 +966,7 @@
                           (consume-fn {:type :done :reason :stop}))
 
                         nil)))))]
-        (let [response (post-stream request)
+        (let [response (http/post url (merge request {:as :stream :throw-exceptions false}))
               status   (:status response)]
           (cond
             (= 400 status)
@@ -963,7 +978,7 @@
                                                       :retrying-with-compatibility-fallback true
                                                       :retry-fallback-steps retry-steps))
                 (capture-request! options url retry-request)
-                (let [retry-response (post-stream retry-request)
+                (let [retry-response (http/post url (merge retry-request {:as :stream :throw-exceptions false}))
                       retry-status   (:status retry-response)]
                   (if (and (number? retry-status) (>= retry-status 400))
                     (let [err (response->error retry-response retry-request)]

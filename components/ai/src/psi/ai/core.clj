@@ -118,7 +118,7 @@
   ([system-prompt-or-options]
    (conversation/create system-prompt-or-options))
   ([]
-   (conversation/create {:system-prompt nil})))
+   (conversation/create nil)))
 
 (defn send-message
   "Add a user message to a conversation."
@@ -181,6 +181,11 @@
 ;; Public API — streaming (global wrappers)
 ;; ───────────────────────────────────────────────────────────────────────────
 
+(defn- global-ctx
+  "Build a context map backed by the global provider registry."
+  []
+  {:provider-registry provider-registry})
+
 (defn stream-response
   "Stream assistant response using `consume-fn` callback.
 
@@ -189,8 +194,7 @@
 
    See `psi.ai.streaming/stream-response` for event shapes."
   [conversation model options consume-fn]
-  (stream-response-in {:provider-registry provider-registry}
-                      conversation model options consume-fn))
+  (stream-response-in (global-ctx) conversation model options consume-fn))
 
 (defn stream-response-seq
   "Stream assistant response as a lazy sequence of events.
@@ -200,8 +204,7 @@
 
    See `psi.ai.streaming/stream-response-seq` for event shapes."
   [conversation model options]
-  (stream-response-seq-in {:provider-registry provider-registry}
-                          conversation model options))
+  (stream-response-seq-in (global-ctx) conversation model options))
 
 ;; ───────────────────────────────────────────────────────────────────────────
 ;; Public API — models
