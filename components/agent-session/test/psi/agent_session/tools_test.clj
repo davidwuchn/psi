@@ -83,6 +83,22 @@
           result ((:execute tool) {"query" "#=(+ 1 2)"})]
       (is (true? (:is-error result))))))
 
+(deftest make-app-query-tool-sanitizes-recursive-session-ctx-test
+  (testing "result maps containing :psi/agent-session-ctx do not overflow printer"
+    (let [cyclic (let [l (java.util.ArrayList.)]
+                   (.add l l)
+                   l)
+          tool   (tools/make-app-query-tool
+                  (fn [_q]
+                    {:psi.agent-session/api-errors
+                     [{:psi.api-error/http-status 400
+                       :psi/agent-session-ctx     {:cyclic cyclic}}]}))
+          result ((:execute tool) {"query" "[:psi.agent-session/api-errors]"})]
+      (is (false? (:is-error result)))
+      (is (string? (:content result)))
+      (is (re-find #"api-errors" (:content result)))
+      (is (not (re-find #":psi/agent-session-ctx" (:content result)))))))
+
 (deftest execute-tool-dispatch-test
   (testing "built-in dispatch handles read/bash/edit/write"
     (let [tmp (java.io.File/createTempFile "psi-dispatch-test" "")]

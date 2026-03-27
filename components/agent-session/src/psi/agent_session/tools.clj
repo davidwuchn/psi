@@ -7,6 +7,7 @@
    [babashka.process :as proc]
    [clojure.java.io :as io]
    [clojure.string :as str]
+   [clojure.walk :as walk]
    [psi.agent-session.tool-output :as tool-output]
    [psi.agent-session.tool-path :as tool-path])
   (:import
@@ -551,6 +552,23 @@
      {:content  (str "Successfully wrote " bytes " bytes to " fpath)
       :is-error false})))
 
+(defn- sanitize-app-query-result
+  "Remove recursive/non-printable session roots from query results before pr-str.
+
+   Some resolver entities intentionally include :psi/agent-session-ctx for join
+   continuity. When app-query-tool renders full EDN, that can create cyclic data
+   graphs and trigger StackOverflowError during printing.
+
+   This sanitizer removes root context pointers that are not part of the public
+   query surface while preserving all user-facing diagnostic attrs."
+  [result]
+  (walk/postwalk
+   (fn [x]
+     (if (map? x)
+       (dissoc x :psi/agent-session-ctx :psi/memory-ctx :psi/recursion-ctx :psi/engine-ctx)
+       x))
+   result))
+
 (defn make-app-query-tool
   "Create an app-query tool with an :execute fn that closes over `query-fn`.
    `query-fn` should be (fn [eql-query-vec] -> result-map), typically
@@ -571,7 +589,8 @@
                 (when-not (vector? q)
                   (throw (ex-info "Query must be an EDN vector" {:input query})))
                 (let [result      (query-fn q)
-                      output      (pr-str result)
+                      safe-result (sanitize-app-query-result result)
+                      output      (pr-str safe-result)
                       policy      (tool-output/effective-policy (or overrides {}) "app-query-tool")
                       truncation  (tool-output/head-truncate output policy)
                       truncated?  (:truncated truncation)
@@ -592,6 +611,9 @@
                     {:content  (:content truncation)
                      :is-error false
                      :details  nil})))
+              (catch StackOverflowError _
+                {:content  "EQL query error: result contains recursive data that overflowed printer stack"
+                 :is-error true})
               (catch Exception e
                 {:content  (str "EQL query error: " (ex-message e))
                  :is-error true}))))))
