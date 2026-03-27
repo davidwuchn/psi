@@ -960,7 +960,8 @@
                     "response.output_item.done"
                     (let [item      (:item event)
                           item-type (:type item)]
-                      (when (= "function_call" item-type)
+                      (case item-type
+                        "function_call"
                         (let [idx (or (resolve-tool-index event)
                                       (register-tool-index! event item))]
                           (when (number? idx)
@@ -980,7 +981,19 @@
                             (when (contains? @open-tool-indexes idx)
                               (swap! open-tool-indexes disj idx)
                               (consume-fn {:type :toolcall-end
-                                           :content-index idx}))))))
+                                           :content-index idx}))))
+
+                        "reasoning"
+                        ;; Some Codex streams emit no reasoning delta events and only
+                        ;; include the completed reasoning item here (often encrypted).
+                        ;; Surface a boundary so downstream turn assembly / UI can show
+                        ;; a thinking block even when textual reasoning is unavailable.
+                        (do
+                          (emit-start!)
+                          (consume-fn {:type :thinking-start :content-index 0})
+                          (consume-fn {:type :thinking-end :content-index 0}))
+
+                        nil))
 
                     "response.output_text.delta"
                     (when-let [delta (string-fragment (:delta event))]

@@ -202,6 +202,36 @@
                       (= "Plan chunk" (:delta %)))
                 @events)))))
 
+(deftest codex-reasoning-output-item-done-emits-thinking-boundary-test
+  (testing "response.output_item.done reasoning emits thinking start/end even without reasoning delta events"
+    (let [model  (models/get-model :gpt-5.3-codex)
+          token  (jwt-with-account-id "acc_test")
+          convo  (-> (conv/create "sys") (conv/add-user-message "think"))
+          events (atom [])
+          sse    (str
+                  "data: " (json/generate-string
+                            {:type "response.output_item.added"
+                             :output_index 0
+                             :item {:type "reasoning" :id "rs_1"}}) "\n\n"
+                  "data: " (json/generate-string
+                            {:type "response.output_item.done"
+                             :output_index 0
+                             :item {:type "reasoning"
+                                    :id "rs_1"
+                                    :encrypted_content "enc"}}) "\n\n"
+                  "data: " (json/generate-string
+                            {:type "response.completed"
+                             :response {:status "completed"}}) "\n\n")]
+      (with-redefs [http/post (fn [_url _req]
+                                {:body (stream-body sse)})]
+        ((:stream openai/provider)
+         convo model {:api-key token}
+         (fn [ev] (swap! events conj ev))))
+
+      (let [types (mapv :type @events)]
+        (is (some #{:thinking-start} types))
+        (is (some #{:thinking-end} types))))))
+
 (deftest codex-thinking-level-maps-to-reasoning-effort-test
   (let [model (models/get-model :gpt-5.3-codex)]
     (is (= {"effort" "high" "summary" "auto"}

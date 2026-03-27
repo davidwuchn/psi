@@ -663,6 +663,30 @@ Also tolerates cumulative snapshots that differ near previous tail
           :else
           (recur))))))
 
+(defn- provider-id
+  [provider]
+  (cond
+    (keyword? provider) (name provider)
+    (symbol? provider)  (name provider)
+    (string? provider)  provider
+    :else               (str (or provider ""))))
+
+(defn- anthropic-provider?
+  [ai-model]
+  (= "anthropic" (provider-id (:provider ai-model))))
+
+(defn- reset-thinking-buffers-on-toolcall-start!
+  "Tool-call boundaries split thinking segments.
+
+   Anthropic has explicit thinking block lifecycle + per-content-index semantics,
+   so we only clear the matching index.
+   OpenAI-style reasoning deltas are unframed; any toolcall marks a boundary, so
+   clear all thinking buffers to avoid cross-boundary prefix accumulation."
+  [thinking-buffers ai-model content-index]
+  (if (anthropic-provider? ai-model)
+    (swap! thinking-buffers dissoc content-index)
+    (reset! thinking-buffers {})))
+
 (defn- stream-turn!
   "Stream one LLM response into agent-core via the per-turn statechart.
 
@@ -793,18 +817,19 @@ Also tolerates cumulative snapshots that differ near previous tail
 
                       :toolcall-start
                       (do
-                        (swap! thinking-buffers dissoc (or (:content-index event) 0))
-                        (append-tool-call-attempt!
-                         agent-session-ctx
-                         {:turn-id       turn-id
-                          :event-kind    :toolcall-start
-                          :content-index (:content-index event)
-                          :id            (:id event)
-                          :name          (:name event)})
-                        (turn-sc/send-event! turn-ctx :turn/toolcall-start
-                                             {:content-index (:content-index event)
-                                              :tool-id       (:id event)
-                                              :tool-name     (:name event)}))
+                        (let [idx (or (:content-index event) 0)]
+                          (reset-thinking-buffers-on-toolcall-start! thinking-buffers ai-model idx)
+                          (append-tool-call-attempt!
+                           agent-session-ctx
+                           {:turn-id       turn-id
+                            :event-kind    :toolcall-start
+                            :content-index (:content-index event)
+                            :id            (:id event)
+                            :name          (:name event)})
+                          (turn-sc/send-event! turn-ctx :turn/toolcall-start
+                                               {:content-index (:content-index event)
+                                                :tool-id       (:id event)
+                                                :tool-name     (:name event)})))
 
                       :toolcall-delta
                       (do
@@ -1119,7 +1144,7 @@ Also tolerates cumulative snapshots that differ near previous tail
 
    Outcome shapes:
    - {:turn/outcome :turn.outcome/stop     :assistant-message msg}
-   - {:turn/outcome :turn.outcome/tool-use :assistant-message msg :tool-calls [...]} 
+   - {:turn/outcome :turn.outcome/tool-use :assistant-message msg :tool-calls [...]}
    - {:turn/outcome :turn.outcome/error    :assistant-message msg}
 
    This keeps stream assembly (`stream-turn!`) separate from the decision about

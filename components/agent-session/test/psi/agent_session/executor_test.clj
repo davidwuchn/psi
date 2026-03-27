@@ -163,6 +163,21 @@
         (is (= :thinking (get-in td [:content-blocks 0 :kind])))
         (is (= 1 (get-in td [:content-blocks 0 :delta-count])))))))
 
+(deftest thinking-start-end-without-delta-still-produces-thinking-block-test
+  (let [agent-ctx   (setup-agent-ctx!)
+        session-ctx (setup-session-ctx! agent-ctx)
+        user-msg    {:role "user" :content [{:type :text :text "hi"}]}
+        stream-fn   (fn [_ai-ctx _conv _model _opts consume-fn]
+                      (consume-fn {:type :start})
+                      (consume-fn {:type :thinking-start :content-index 0})
+                      (consume-fn {:type :thinking-end :content-index 0})
+                      (consume-fn {:type :done :reason :stop}))]
+    (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
+      (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg])
+      (let [td (turn-sc/get-turn-data (ss/get-state-value-in session-ctx (ss/state-path :turn-ctx (ss/active-session-id-in session-ctx))))]
+        (is (= :thinking (get-in td [:content-blocks 0 :kind])))
+        (is (= :closed (get-in td [:content-blocks 0 :status])))))))
+
 (deftest thinking-delta-cumulative-snapshot-normalised-test
   "Anthropic sends thinking_delta events as cumulative snapshots (each event
   contains the full thinking text so far). Verify that the executor normalises
@@ -213,6 +228,32 @@
                        acc))
             thinking-events (filterv #(= :thinking-delta (:event-kind %)) events)]
         (is (= ["plan-1" "plan-2"] (mapv :text thinking-events)))))))
+
+(deftest openai-thinking-delta-resets-after-toolcall-start-with-different-index-test
+  (let [agent-ctx    (setup-agent-ctx!)
+        session-ctx  (setup-session-ctx! agent-ctx)
+        user-msg     {:role "user" :content [{:type :text :text "hi"}]}
+        q            (LinkedBlockingQueue.)
+        openai-model {:provider "openai" :id "gpt-5.3-codex"}
+        stream-fn    (fn [_ai-ctx _conv _model _opts consume-fn]
+                       (consume-fn {:type :start})
+                       ;; thinking on idx 0
+                       (consume-fn {:type :thinking-delta :content-index 0 :delta "plan-1"})
+                       ;; tool call on idx 1 (different index)
+                       (consume-fn {:type :toolcall-start :content-index 1 :id "t1" :name "read"})
+                       ;; next thinking segment should start fresh (not plan-1plan-2)
+                       (consume-fn {:type :thinking-delta :content-index 0 :delta "plan-2"})
+                       (consume-fn {:type :done :reason :stop}))]
+    (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
+      (executor/run-agent-loop! nil session-ctx agent-ctx openai-model [user-msg]
+                                {:progress-queue q})
+      (let [events          (loop [acc []]
+                              (if-let [e (.poll q 5 TimeUnit/MILLISECONDS)]
+                                (recur (conj acc e))
+                                acc))
+            thinking-events (filterv #(= :thinking-delta (:event-kind %)) events)]
+        (is (= ["plan-1" "plan-2"]
+               (mapv :text thinking-events)))))))
 
 (deftest toolcall-assembly-emits-live-progress-events-with-canonical-id-test
   (let [agent-ctx   (setup-agent-ctx!)
