@@ -802,7 +802,6 @@
                            "instructions"        (:system-prompt conversation)
                            "input"               (codex-input-messages conversation)
                            "text"                {"verbosity" "medium"}
-                           "include"             ["reasoning.encrypted_content"]
                            "tool_choice"         "auto"
                            "parallel_tool_calls" true}
                     (:session-id options)  (assoc "prompt_cache_key" (:session-id options))
