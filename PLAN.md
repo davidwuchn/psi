@@ -67,7 +67,13 @@ Lint check: ✓
 
 `⚒ Δ Make session-id explicit on dispatch events`
 
-## Planned — Emacs UI tracking migration (offsets/ranges -> IDs + properties + markers)
+## Active — Emacs UI tracking migration (offsets/ranges -> IDs + properties + markers)
+
+### Current progress snapshot
+
+- Status: **in progress** (Phases 0–5 largely complete; Phase 6 partial; Phase 7 pending)
+- Baseline: `bb emacs:test` green (346/346)
+- Next focus: complete Phase 6 recovery tests, then remove legacy range-first paths in Phase 7
 
 ### Decision
 
@@ -114,59 +120,62 @@ New module:
 ### Phased checklist
 
 #### Phase 0 — Baseline + guardrails
-- [ ] Run and record baseline: `bb emacs:test`
-- [ ] Add migration search guard notes:
-  - [ ] `rg "assistant-range|thinking-range|projection-range|input-separator-marker" components/emacs-ui`
-  - [ ] `rg "psi-region-id|psi-region-kind" components/emacs-ui`
+- [x] Run and record baseline: `bb emacs:test`
+- [x] Add migration search guard notes:
+  - [x] `rg "assistant-range|thinking-range|projection-range|input-separator-marker" components/emacs-ui`
+  - [x] `rg "psi-region-id|psi-region-kind" components/emacs-ui`
 
 #### Phase 1 — Introduce region/property layer (no behavior change)
-- [ ] Add `psi-regions.el` with helpers:
-  - [ ] `region-key`, `region-register`, `region-bounds`, `region-delete`, `region-annotate`, `region-find-by-property`
-- [ ] Extend frontend state with region index + active ids:
-  - [ ] `regions`
-  - [ ] `active-assistant-id`
-  - [ ] `active-thinking-id`
-- [ ] Ensure lifecycle teardown/reset clears region index and markers
+- [x] Add `psi-regions.el` with helpers:
+  - [x] `region-key`, `region-register`, `region-bounds`, `region-delete`, `region-annotate`, `region-find-by-property`
+- [x] Extend frontend state with region index + active ids:
+  - [x] `regions`
+  - [x] `active-assistant-id`
+  - [x] `active-thinking-id`
+- [x] Ensure lifecycle teardown/reset clears region index and markers
 
 #### Phase 2 — Dual-write properties on existing inserts
-- [ ] Assistant render paths annotate assistant spans with:
-  - [ ] `psi-region-kind=assistant`
-  - [ ] `psi-region-id=<assistant-id>`
-- [ ] Thinking paths annotate thinking spans similarly
-- [ ] Tool row inserts annotate spans with `tool-row` + `tool-id`
-- [ ] Projection/separator inserts annotate spans with dedicated kinds/ids
+- [x] Assistant render paths annotate assistant spans with:
+  - [x] `psi-region-kind=assistant`
+  - [x] `psi-region-id=<assistant-id>`
+- [x] Thinking paths annotate thinking spans similarly
+- [x] Tool row inserts annotate spans with `tool-row` + `tool-id`
+- [x] Projection/separator inserts annotate spans with dedicated kinds/ids
 
 #### Phase 3 — Migrate assistant/thinking lookups to region helpers
-- [ ] `psi-assistant-render.el` resolves bounds property-first, marker-fallback
-- [ ] Keep legacy range fields in sync during compatibility period
-- [ ] Preserve existing streaming/finalize semantics and ordering
+- [x] `psi-assistant-render.el` resolves bounds property-first, marker-fallback
+- [x] Keep legacy range fields in sync during compatibility period
+- [x] Preserve existing streaming/finalize semantics and ordering
 
 #### Phase 4 — Migrate tool rows (highest value)
-- [ ] `psi-tool-rows.el` row updates resolve by region id first
+- [x] `psi-tool-rows.el` row updates resolve by region id first
 - [ ] Reduce/remove marker-collision repair branches once stable
-- [ ] Keep `tool-id` as canonical key
+- [x] Keep `tool-id` as canonical key
+- [x] Tool row assistant-boundary handling now reads assistant start/end through region-backed recovery helpers (no direct state range reads)
 
 #### Phase 5 — Migrate input separator + projection lookups
-- [ ] `psi-compose.el` separator validity uses property+marker checks
-- [ ] `psi-projection.el` projection block identity anchored by region id
-- [ ] Preserve current width-refresh and footer behavior
+- [x] `psi-compose.el` separator validity uses property+marker checks
+- [x] `psi-projection.el` projection block identity anchored by region id
+- [x] Preserve current width-refresh and footer behavior
 
 #### Phase 6 — Verification + regression coverage
-- [ ] Existing drift regressions remain green
-- [ ] Add tests for property-first recovery when markers are nil/drifted:
-  - [ ] assistant span recovery
-  - [ ] tool row recovery
-  - [ ] input separator recovery
-  - [ ] projection identity stability
-- [ ] Run full suite: `bb emacs:test`
+- [x] Existing drift regressions remain green
+- [x] Add tests for property-first recovery when markers are nil/drifted:
+  - [x] assistant span recovery
+  - [x] tool row recovery
+  - [x] input separator recovery
+  - [x] projection identity stability
+  - [x] thinking visibility when provider emits reasoning boundaries without textual deltas
+  - [x] empty non-slash compose input is blocked locally (prevents backend `request/invalid-params` noise)
+- [x] Run full suite: `bb emacs:test`
 
 #### Phase 7 — Decommission legacy range-first paths
 - [ ] Remove/deprecate direct use of:
   - [ ] `assistant-range`
   - [ ] `thinking-range`
-  - [ ] `projection-range`
+  - [x] `projection-range`
   - [ ] `input-separator-marker` (or keep as cache only)
-- [ ] Remove compatibility fallback branches once tests pass consistently
+- [x] Remove compatibility fallback branches once tests pass consistently
 
 ### Commit strategy (small, reversible)
 
@@ -182,6 +191,6 @@ New module:
 
 - [ ] interactions resolve by region IDs/properties, not raw offsets
 - [ ] marker drift no longer causes content identity loss
-- [ ] user-visible behavior unchanged
-- [ ] emacs test suite green (`bb emacs:test`)
+- [x] user-visible behavior unchanged
+- [x] emacs test suite green (`bb emacs:test`)
 - [ ] legacy range-first paths removed or explicitly cache-only

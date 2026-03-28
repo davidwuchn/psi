@@ -2108,6 +2108,30 @@ thinking prefix.
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
+(ert-deftest psi-assistant-streaming-recovers-span-from-region-identity-when-range-missing ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (psi-emacs--ensure-input-area)
+    (psi-emacs--handle-rpc-event
+     '((:event . "assistant/delta") (:data . ((:text . "Hello")))))
+    (let ((assistant-id (psi-emacs-state-active-assistant-id psi-emacs--state)))
+      (should assistant-id)
+      (should (psi-emacs--region-bounds 'assistant assistant-id))
+      ;; Simulate lost compatibility cache while property identity remains in buffer.
+      (setf (psi-emacs-state-assistant-range psi-emacs--state) nil)
+      (psi-emacs--handle-rpc-event
+       '((:event . "assistant/delta") (:data . ((:text . " world")))))
+      (let* ((content (buffer-substring-no-properties
+                       (point-min)
+                       (psi-emacs--input-separator-position)))
+             (assistant-lines (cl-remove-if-not
+                               (lambda (line) (string-prefix-p "ψ: " line))
+                               (split-string content "\n" t))))
+        (should (= 1 (length assistant-lines)))
+        (should (equal "ψ: Hello world" (car assistant-lines)))
+        (should (psi-emacs--assistant-range-current))))))
+
 (ert-deftest psi-assistant-streaming-cumulative-snapshots-replace-in-place ()
   (with-temp-buffer
     (psi-emacs-mode)
@@ -2459,6 +2483,36 @@ both rows) leaving only the second row's updated content."
             (should (string-match-p "read" content))  ;; read row
             (should (= 2 (hash-table-count (psi-emacs-state-tool-rows psi-emacs--state))))))
       nil)))
+
+(ert-deftest psi-tool-row-recovers-from-region-identity-when-markers-missing ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (psi-emacs--ensure-input-area)
+    (psi-emacs--handle-rpc-event
+     '((:event . "tool/start") (:data . ((:tool-id . "t-recover") (:tool-name . "bash")))))
+    (let* ((rows (psi-emacs-state-tool-rows psi-emacs--state))
+           (row (gethash "t-recover" rows)))
+      (should row)
+      (should (psi-emacs--region-bounds 'tool-row "t-recover"))
+      ;; Simulate lost row markers while text properties remain intact.
+      (puthash "t-recover"
+               (plist-put (plist-put row :start nil) :end nil)
+               rows))
+    (psi-emacs--handle-rpc-event
+     '((:event . "tool/result") (:data . ((:tool-id . "t-recover")
+                                           (:tool-name . "bash")
+                                           (:result-text . "ok")))))
+    (let* ((rows (psi-emacs-state-tool-rows psi-emacs--state))
+           (row (gethash "t-recover" rows))
+           (content (buffer-substring-no-properties
+                     (point-min)
+                     (psi-emacs--input-separator-position))))
+      (should (markerp (plist-get row :start)))
+      (should (markerp (plist-get row :end)))
+      (should (string-match-p "success" content))
+      (should-not (string-match-p "pending" content))
+      (should (= 1 (hash-table-count rows))))))
 
 (ert-deftest psi-assistant-delta-not-duplicated-when-tool-row-longer-than-assistant-content ()
   "Assistant streaming text must not be duplicated when a tool row longer than the
