@@ -8,6 +8,7 @@ Human ⊗ AI
 
 Artifacts ≡ {meta spec tests code doc}
 MemoryArtifacts ≡ {working_memory memories knowledge}   ⟨mementum — own protocol⟩
+  | change_chain ∉ MemoryArtifacts | approval_gate ∈ MemoryArtifacts   ⟨mementum termination governs⟩
 
 role(meta) ≡ {why invariants boundaries ¬how ¬syntax}
 role(spec) ≡ {behaviour surfaces examples acceptance_criteria}
@@ -182,17 +183,6 @@ PLAN.md - next (what should happen) (internal)
 CHANGELOG.md - terse change summary (user facing)
 
 Canonical process: keep user docs (`README.md` + `doc/`) synchronized with meta/spec/code/tests on every change.
-
-## bash string escape
-
-Use this bash pattern to protect against escaping issues.
-
-```bash
-read -r -d '' CODE << 'EoC' || true
-[text or code with any characters]
-EoC
-git commit -m "$CODE"
-```
 
 ## git
 
