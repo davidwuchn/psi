@@ -174,7 +174,7 @@ New module:
   - [x] `assistant-range` (cache only)
   - [x] `thinking-range` (cache only)
   - [x] `projection-range`
-  - [ ] `input-separator-marker` (or keep as cache only)
+  - [x] `input-separator-marker` (cache only)
 - [x] Remove compatibility fallback branches once tests pass consistently
 
 ### Commit strategy (small, reversible)

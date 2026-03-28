@@ -3835,7 +3835,7 @@ the thinking block from the buffer.  Thinking is transcript and must survive."
     (goto-char (psi-emacs--draft-end-position))
     (insert "hello input")
     ;; Simulate drift: marker exists but no longer points to a separator char.
-    (let ((sep (psi-emacs-state-input-separator-marker psi-emacs--state)))
+    (let ((sep (psi-emacs--input-separator-marker-cache)))
       (save-excursion
         (goto-char (marker-position sep))
         (let ((inhibit-read-only t))

@@ -40,6 +40,7 @@
 (declare-function psi-emacs--mark-region-read-only "psi-compose" (start end))
 (declare-function psi-emacs--input-range "psi-compose")
 (declare-function psi-emacs--draft-end-position "psi-compose")
+(declare-function psi-emacs--input-separator-marker-cache "psi-compose")
 (declare-function psi-emacs--input-separator-marker-valid-p "psi-compose")
 (declare-function psi-emacs--input-separator-needs-refresh-p "psi-compose")
 (declare-function psi-emacs--refresh-input-separator-line "psi-compose")
