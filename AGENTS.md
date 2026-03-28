@@ -7,13 +7,14 @@ Human ⊗ AI
 λ identity(x). ai_agent | terse | concise
 
 Artifacts ≡ {meta spec tests code doc}
+MemoryArtifacts ≡ {working_memory memories knowledge}   ⟨mementum — own protocol⟩
 
 role(meta) ≡ {why invariants boundaries ¬how ¬syntax}
 role(spec) ≡ {behaviour surfaces examples acceptance_criteria}
 role(tests) ≡ executable_proof(spec)
 role(code) ≡ mechanism_satisfying(tests)
 
-source_of_truth ≡ meta ∪ spec ∪ tests
+source_of_truth ≡ working_memory`∪`memories ∪ knowledge ∪ meta ∪ spec ∪ tests
 ¬source_of_truth(code)
 
 TraceID ≡ λx. ∃ι. ref(meta,ι,x) ∧ ref(spec,ι,x) ∧ ref(tests,ι,x) ∧ (ref(code,ι,x) ∨ inferable(code,ι,x))
@@ -21,7 +22,7 @@ TraceID ≡ λx. ∃ι. ref(meta,ι,x) ∧ ref(spec,ι,x) ∧ ref(tests,ι,x) �
 derive_tests ≡ λσ.
   acceptance_criteria(σ) → tests_from(σ)
 
-change_chain ≡ λδ.
+change_chain ≡ λδ. δ ∉ MemoryArtifacts →
   classify(δ,{intent behaviour proof mechanism}) →
   update(meta,δ|intent) →
   update(spec,δ|behaviour) →
@@ -107,8 +108,6 @@ iterate_to_fix  spec_step matches intention spec0
   ∧ ∀y.(code(y) ∧ y ≠ code → orthogonal(code, y))
   ∧ shaped_by(code, formalisms) → enforceable(invariants(code))
 
-∀x. include(LEARNING.md,x) ↔ information(x) ∧ reflects(x,actual-learned-context) ∧ ¬trivially-inferable-from(x,project-contents-itself)
-
 λ shape(x).   topology(x) ≡ contract(x) | unreachable > forbidden | invert(topology) → instance
 λ compile(λ). semantic(λ) ∥ structural(λ) | align > conflict | resonate(one_pass) > reduce(multi_step)
 λ create(f).  ∃request(f) ∨ (∃synthesis(f) ∧ knowledge(f)) → create(f) | ask(f)
@@ -125,12 +124,11 @@ iterate_to_fix  spec_step matches intention spec0
 λ search(q).  recall(persisted) > search(history) > search(content) | prior_knowledge_before_exploration
 λ assert(x).  runtime(x) > source(x) > docs(x) > assumption(x) | runtime ≡ truth, file ≡ memory
 λ context(x). sip(input) → dribble(output) | minimal(x) > comprehensive(x)
-λ learn(x).   explore(x) → synthesize(x) → persist(x) → recallable(x)
 
 
 # Vocabulary
 
-Use the vocabulary to mark things in commit messages. User types labels,
+Use the vocabulary to mark things in (non-memory) commit messages. User types labels,
 AI renders labels and symbols. This vocabulary embeds symbols for
 tracking into your memory. Vocabulary + git = efficient memory
 search. Add new vocabulary sparingly, with user direction.
@@ -144,7 +142,7 @@ Example: `⚒ Add nrepl task to bb.edn`
 | 刀     | user  | Human (Observer) |
 | ψ      | psi   | Agent            |
 
-## Modes
+## Modes (¬mementum)
 
 | Symbol | Label   | Meaning                |
 | ------ | ------- | ---------------------- |
@@ -170,9 +168,9 @@ Example: `⚒ Add nrepl task to bb.edn`
 | ↔         | Interface, boundary |
 | ⊕ ⊖       | Add, remove         |
 
-# Files
+# Additional Files
 
-what does future ψ need to be maximally effective?
+what does future ψ need on top of mememntum to be maximally effective?
 
 AGENTS.md - bootstrap system
 README.md - primary top-level user documentation
@@ -180,10 +178,8 @@ README.md - primary top-level user documentation
 doc/ - user-facing documentation (guides, references, workflows)
 
 META.md - psi meta model (internal)
-STATE.md - now (what is true) (internal)
 PLAN.md - next (what should happen) (internal)
-LEARNING.md - past (what was discovered) (internal)
-CHANGELOG.md - terse change summary (internal memory)
+CHANGELOG.md - terse change summary (user facing)
 
 Canonical process: keep user docs (`README.md` + `doc/`) synchronized with meta/spec/code/tests on every change.
 
@@ -289,4 +285,4 @@ Explicit interceptor chain + event log + effect-as-data = unlock replay + time-t
 # Guide
 
 λα. ¬compat(backward)
-λ刀. guided(刀) ∧ narrate(workflows ∧ patterns ∧ decisions ∧ reasoning) → brief ∧ concurrent(action)
+λ刀. narrate(workflows ∧ patterns ∧ decisions ∧ reasoning) → brief ∧ concurrent(action)
