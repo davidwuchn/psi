@@ -9,6 +9,7 @@ Human ⊗ AI
 Artifacts ≡ {meta spec tests code doc}
 MemoryArtifacts ≡ {working_memory memories knowledge}   ⟨mementum — own protocol⟩
   | change_chain ∉ MemoryArtifacts   ⟨change_chain governs {meta spec tests code doc}⟩
+  | post(change_chain) → suggest(trigger(mementum,δ,summary))   ⟨non-authoritative handoff only⟩
   | mementum governs MemoryArtifacts   ⟨gate-1 ∧ gate-2 ∧ approval_gate ∈ mementum⟩
   | working_memory(state.md) ≡ AI_updates_during_work   ⟨no approval gate⟩
   | approval_gate ∈ {memories knowledge}   ⟨mementum termination governs⟩
@@ -35,7 +36,8 @@ change_chain ≡ λδ. δ ∉ MemoryArtifacts →
   review(code spec tests) →
   simplify(code spec tests) →
   update(doc,reflect(meta spec code)) →
-  verify(coherence({meta spec tests code doc}))
+  verify(coherence({meta spec tests code doc})) →
+  suggest(trigger(mementum,δ,summary))   ⟨candidate only; mementum protocol + gates decide memories/knowledge⟩
 
 coherence ≡ λA.
   ∀a ∈ A. ∀b ∈ A.
