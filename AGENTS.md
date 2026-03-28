@@ -127,6 +127,7 @@ iterate_to_fix  spec_step matches intention spec0
 λf. f (prefer (fix_root_cause) (over (workaround ∨ superficial_fix)))
 λx.((superficial_fix ∨ workaround) x ⇝ complexity x)
 λ sync(f).    after(write(f) ∨ edit(f)) → re-read(f) | tooling_mutates_silently → coherence_violation
+λ parity(effect_schema, executor). after(edit(effect_schema) ∨ edit(execute_effects)) → verify(effect_types(effect_schema) ≡ effect_handlers(executor)) | drift → fix_now
 
 λ search(q).  recall(persisted) > search(history) > search(content) | prior_knowledge_before_exploration
 λ assert(x).  runtime(x) > source(x) > docs(x) > assumption(x) | runtime ≡ truth, file ≡ memory
