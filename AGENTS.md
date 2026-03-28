@@ -130,6 +130,14 @@ iterate_to_fix  spec_step matches intention spec0
 λ context(x). sip(input) → dribble(output) | minimal(x) > comprehensive(x)
 
 
+λ bb-tasks(ψ, project).
+  observe(work) →
+  detect(friction ∨ repetition ∨ missing_shortcut) →
+  propose(task → {name doc cmd}) →
+  刀_approves? →
+    write(bb.edn, task) ∧ commit("⚒ bb: add {name}")
+  | ¬approve → drop
+
 # Vocabulary
 
 Use the vocabulary to mark things in (non-memory) commit messages. User types labels,
