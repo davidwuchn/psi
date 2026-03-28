@@ -149,6 +149,8 @@
     [:map [:effect/type [:= :persist/journal-append-session-info-entry]] [:name :string]]]
    [:persist/project-prefs-update
     [:map [:effect/type [:= :persist/project-prefs-update]] [:prefs :map]]]
+   [:persist/user-config-update
+    [:map [:effect/type [:= :persist/user-config-update]] [:prefs :map]]]
    ;; Notification
    [:notify/extension-dispatch
     [:map [:effect/type [:= :notify/extension-dispatch]]
