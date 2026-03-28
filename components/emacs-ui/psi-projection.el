@@ -429,10 +429,7 @@ tracks transcript growth like a terminal footer."
   (when psi-emacs--state
     ;; Keep dedicated input separator width aligned with current visible window
     ;; whenever projection is re-rendered (notably after startup hydration).
-    (when (and (fboundp 'psi-emacs--input-separator-marker-valid-p)
-               (fboundp 'psi-emacs--input-separator-needs-refresh-p)
-               (fboundp 'psi-emacs--refresh-input-separator-line)
-               (psi-emacs--input-separator-marker-valid-p)
+    (when (and (psi-emacs--input-separator-marker-valid-p)
                (psi-emacs--input-separator-needs-refresh-p))
       (psi-emacs--refresh-input-separator-line))
     (let* ((follow-anchor (psi-emacs--draft-anchor-at-end-p))
@@ -450,8 +447,7 @@ tracks transcript growth like a terminal footer."
                    (marker-buffer end))
           (save-excursion
             (delete-region start end))
-          (when (fboundp 'psi-emacs--region-unregister)
-            (psi-emacs--region-unregister 'projection 'main))
+          (psi-emacs--region-unregister 'projection 'main)
           (set-marker start nil)
           (set-marker end nil)
           (setf (psi-emacs-state-projection-range psi-emacs--state) nil))

@@ -164,7 +164,7 @@ frontend state boundaries."
             (psi-emacs--ensure-startup-banner)
             (psi-emacs--focus-input-area)
             (when (and (null (psi-emacs-state-projection-footer state))
-                       (null (psi-emacs-state-projection-range state)))
+                       (null (psi-emacs--region-bounds 'projection 'main)))
               (psi-emacs--show-connecting-affordances buffer))
             ;; Recover from stale/disconnected buffer state (e.g. after code
             ;; reload or failed startup handshake) by restarting transport.
