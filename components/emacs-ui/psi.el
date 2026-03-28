@@ -76,6 +76,10 @@ Used to detect stalled streaming runs and transition to deterministic recovery."
   projection-notification-seq
   projection-notification-timers
   projection-range
+  regions
+  region-seq
+  active-assistant-id
+  active-thinking-id
   input-separator-marker
   draft-anchor
   input-history
@@ -131,6 +135,7 @@ not fall through to normal prompt dispatch.")
 ;;;###autoload (autoload 'psi-emacs-project "psi-entry" "Start or switch to a project-scoped psi buffer/session." t)
 
 (require 'psi-run-state)
+(require 'psi-regions)
 (require 'psi-assistant-render)
 (require 'psi-tool-rows)
 (require 'psi-session-commands)

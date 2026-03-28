@@ -39,6 +39,10 @@
    :projection-notification-seq 0
    :projection-notification-timers (make-hash-table :test #'equal)
    :projection-range nil
+   :regions (make-hash-table :test #'equal)
+   :region-seq 0
+   :active-assistant-id nil
+   :active-thinking-id nil
    :input-separator-marker nil
    :draft-anchor nil
    :input-history nil
@@ -202,6 +206,9 @@ Returns non-nil when request dispatch was accepted by transport."
     (process-put psi-emacs--owned-process 'psi-rpc-stop-requested t)
     (delete-process psi-emacs--owned-process))
   (when (and psi-emacs--state
+             (fboundp 'psi-emacs--regions-clear))
+    (psi-emacs--regions-clear))
+  (when (and psi-emacs--state
              (markerp (psi-emacs-state-draft-anchor psi-emacs--state)))
     (set-marker (psi-emacs-state-draft-anchor psi-emacs--state) nil))
   (when (and psi-emacs--state
@@ -316,6 +323,8 @@ When PRESERVE-TOOL-OUTPUT-VIEW-MODE is non-nil, keep the current
     (psi-emacs--clear-last-error psi-emacs--state)
     (setf (psi-emacs-state-assistant-in-progress psi-emacs--state) nil)
     (setf (psi-emacs-state-assistant-range psi-emacs--state) nil)
+    (when (fboundp 'psi-emacs--regions-clear)
+      (psi-emacs--regions-clear))
     (setf (psi-emacs-state-thinking-in-progress psi-emacs--state) nil)
     (setf (psi-emacs-state-thinking-range psi-emacs--state) nil)
     (setf (psi-emacs-state-thinking-archived-ranges psi-emacs--state) nil)
