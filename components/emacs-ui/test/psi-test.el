@@ -3498,7 +3498,7 @@ the thinking block from the buffer.  Thinking is transcript and must survive."
       (should (= 20 (psi-emacs--input-separator-current-width))))
     ;; Simulate input-separator drift: marker exists but no longer points at a
     ;; separator character. `psi-emacs--ensure-input-area` should repair it.
-    (let ((sep (psi-emacs-state-input-separator-marker psi-emacs--state)))
+    (let ((sep (psi-emacs--input-separator-marker-cache)))
       (save-excursion
         (goto-char (marker-position sep))
         (delete-char 1)
@@ -3758,7 +3758,7 @@ the thinking block from the buffer.  Thinking is transcript and must survive."
     (cl-letf (((symbol-function 'psi-emacs--projection-window-width)
                (lambda () 20)))
       (psi-emacs--ensure-input-area)
-      (let ((sep (psi-emacs-state-input-separator-marker psi-emacs--state)))
+      (let ((sep (psi-emacs--input-separator-marker-cache)))
         (should (markerp sep))
         (should (eq ?─ (char-after (marker-position sep))))
         (should (= 20 (psi-emacs--input-separator-current-width)))
@@ -3803,7 +3803,7 @@ the thinking block from the buffer.  Thinking is transcript and must survive."
     (psi-emacs--ensure-input-area)
     ;; Reproduce startup edge case: stale draft anchor points at separator line.
     (setf (psi-emacs-state-draft-anchor psi-emacs--state)
-          (copy-marker (marker-position (psi-emacs-state-input-separator-marker psi-emacs--state)) nil))
+          (copy-marker (marker-position (psi-emacs--input-separator-marker-cache)) nil))
     (goto-char (psi-emacs--draft-end-position))
     (insert "hello input")
     (should (equal "hello input" (psi-emacs--tail-draft-text)))

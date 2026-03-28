@@ -59,7 +59,7 @@
   "Return input separator position when marker is valid, else nil."
   (when (and psi-emacs--state
              (psi-emacs--input-separator-marker-valid-p))
-    (marker-position (psi-emacs-state-input-separator-marker psi-emacs--state))))
+    (marker-position (psi-emacs--input-separator-marker-cache))))
 
 (defun psi-e2e--projection-read-only-position ()
   "Return a stable interior position for projection/footer read-only checks.

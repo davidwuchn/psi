@@ -67,21 +67,31 @@ Otherwise, draft ends at `point-max'."
       (car bounds)
     (point-max)))
 
+(defun psi-emacs--input-separator-marker-cache ()
+  "Return compatibility marker cache for the input separator region."
+  (when psi-emacs--state
+    (psi-emacs-state-input-separator-marker psi-emacs--state)))
+
+(defun psi-emacs--set-input-separator-marker-cache (marker)
+  "Store compatibility MARKER cache for the input separator region."
+  (when psi-emacs--state
+    (setf (psi-emacs-state-input-separator-marker psi-emacs--state) marker)))
+
 (defun psi-emacs--input-separator-marker-valid-p ()
   "Return non-nil when input separator marker is live and points to separator line start.
 
 When marker state drifted, attempt property-backed recovery first."
   (when psi-emacs--state
     (when-let ((bounds (psi-emacs--region-bounds 'input-separator 'main)))
-      (let ((marker (psi-emacs-state-input-separator-marker psi-emacs--state)))
+      (let ((marker (psi-emacs--input-separator-marker-cache)))
         (unless (and (markerp marker) (marker-buffer marker))
           (setq marker (copy-marker (car bounds) t))
           (set-marker-insertion-type marker t)
-          (setf (psi-emacs-state-input-separator-marker psi-emacs--state) marker))
+          (psi-emacs--set-input-separator-marker-cache marker))
         (set-marker marker (car bounds))))
-    (and (markerp (psi-emacs-state-input-separator-marker psi-emacs--state))
-         (marker-buffer (psi-emacs-state-input-separator-marker psi-emacs--state))
-         (let ((pos (marker-position (psi-emacs-state-input-separator-marker psi-emacs--state))))
+    (and (markerp (psi-emacs--input-separator-marker-cache))
+         (marker-buffer (psi-emacs--input-separator-marker-cache))
+         (let ((pos (marker-position (psi-emacs--input-separator-marker-cache))))
            (and (<= pos (point-max))
                 (save-excursion
                   (goto-char pos)
@@ -91,13 +101,13 @@ When marker state drifted, attempt property-backed recovery first."
 (defun psi-emacs--input-separator-position ()
   "Return buffer position of input separator marker, or nil."
   (when (psi-emacs--input-separator-marker-valid-p)
-    (marker-position (psi-emacs-state-input-separator-marker psi-emacs--state))))
+    (marker-position (psi-emacs--input-separator-marker-cache))))
 
 (defun psi-emacs--input-separator-draft-start-position ()
   "Return first editable draft position after separator line, or nil."
   (when (psi-emacs--input-separator-marker-valid-p)
     (save-excursion
-      (goto-char (marker-position (psi-emacs-state-input-separator-marker psi-emacs--state)))
+      (goto-char (marker-position (psi-emacs--input-separator-marker-cache)))
       (let ((line-end (line-end-position)))
         (if (< line-end (point-max))
             (1+ line-end)
@@ -113,7 +123,7 @@ When marker state drifted, attempt property-backed recovery first."
   "Return current rendered width of input separator line, or nil."
   (when (psi-emacs--input-separator-marker-valid-p)
     (save-excursion
-      (goto-char (marker-position (psi-emacs-state-input-separator-marker psi-emacs--state)))
+      (goto-char (marker-position (psi-emacs--input-separator-marker-cache)))
       (- (line-end-position) (line-beginning-position)))))
 
 (defun psi-emacs--input-separator-needs-refresh-p ()
@@ -133,7 +143,7 @@ When marker state drifted, attempt property-backed recovery first."
 (defun psi-emacs--refresh-input-separator-line ()
   "Refresh existing input separator line to current window width."
   (when (psi-emacs--input-separator-marker-valid-p)
-    (let* ((separator-marker (psi-emacs-state-input-separator-marker psi-emacs--state))
+    (let* ((separator-marker (psi-emacs--input-separator-marker-cache))
            (separator-start (marker-position separator-marker))
            (line (psi-emacs--input-separator-line)))
       (save-excursion
@@ -191,8 +201,7 @@ When marker state drifted, attempt property-backed recovery first."
               (insert (psi-emacs--input-separator-line))
               (let ((separator-marker (copy-marker separator-start t)))
                 (set-marker-insertion-type separator-marker t)
-                (setf (psi-emacs-state-input-separator-marker psi-emacs--state)
-                      separator-marker)
+                (psi-emacs--set-input-separator-marker-cache separator-marker)
                 (psi-emacs--region-register 'input-separator
                                             'main
                                             separator-start
