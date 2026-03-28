@@ -244,18 +244,18 @@ search text (file contents): `git grep "λ"`
 | Layer | Owns | Current State |
 |-------|------|---------------|
 | Atom (S1) | State identity | ✓ Canonical root state |
-| Handlers (S1) | Pure transforms | ? Purity not enforced |
-| Effects (S1) | Impure boundary | ? Partial data-description |
+| Handlers (S1) | Pure transforms | ~ Migration in progress — pure-result shape defined, legacy handlers coexist |
+| Effects (S1) | Impure boundary | ✓ Effect schema + effect-interceptor — tool execution still executor-owned |
 | Adapters (S1) | Presentation | ✓ TUI + RPC exist |
 | Resolvers (S1) | Federated reads | ✓ Pathom graph |
-| Permissions (S2) | Extension safety | ? Implicit |
-| Validation (S2) | Schema enforcement | ? Partial |
+| Permissions (S2) | Extension safety | ✓ permission-interceptor — manifest `:allowed-events` enforced when declared |
+| Validation (S2) | Schema enforcement | ✓ validate-interceptor + malli effect/pure-result schemas |
 | Statecharts (S3) | Protocol | ✓ Engine exists |
-| Interceptors (S3) | Cross-cutting | ✗ Not explicit |
-| Dispatch (S3) | Coordination | ✓ Event dispatch |
-| Event log (S4) | Audit + replay | ✗ Provider captures only |
+| Interceptors (S3) | Cross-cutting | ✓ Explicit chain: permission → log → statechart → handler → effect → trim-replay → validate → apply |
+| Dispatch (S3) | Coordination | ✓ Event dispatch with normalized event map |
+| Event log (S4) | Audit + replay | ✓ Bounded ring buffer (1000 entries) + replay-event-log! — suppresses effects on replay |
 | Introspection (S4) | Self-awareness | ✓ EQL graph |
-| Time-travel (S4) | Debugging | ✗ Depends on event log |
+| Time-travel (S4) | Debugging | ~ Replay infrastructure exists; full time-travel blocked by executor-owned tool execution |
 
 ### Recursive Structure
 
@@ -264,7 +264,10 @@ S1(code) → S2(manifest/permissions) → S3(dispatch/subscribe) → S4(introspe
 
 ### Frontier
 
-Explicit interceptor chain + event log + effect-as-data = unlock replay + time-travel + full S4
+- **Handler purity**: pure-result shape (`{:root-state-update f :effects [...]}`) defined and validated; legacy handlers still perform side effects inline — migration ongoing
+- **Tool execution boundary**: actual tool execution is intentionally executor-owned and has not moved under dispatch-owned runtime effects — blocks full replay fidelity
+- **Validation rollback**: validate-interceptor is post-apply; invalid results suppress effects but do not roll back already-applied state
+- **Manifest permissions**: `allowed-events` only enforced when explicitly declared; missing manifests get compatibility-allow — implicit permissions still exist
 
 ## Verify Runtime
 
