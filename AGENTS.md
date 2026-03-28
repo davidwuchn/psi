@@ -245,37 +245,40 @@ search text (file contents): `git grep "λ"`
 
 λ S3(psi).  coordination(dispatch ∧ intercept ∧ enforce)
   | dispatch: event → interceptor_chain → handler(pure) → effects(data) → execute(boundary)
-  | intercept: [permission → log → statechart → handler → validate → trim_replay]
+  | intercept: [auth → permission → log → statechart → handler → validate → trim_replay]
   | enforce: statechart(valid_transition ∨ reject)
   | invariant: same(db, event) → same(db', effects)
 
-λ S2(psi).  regulation(permissions ∧ validation ∧ recovery)
+λ S2(psi).  regulation(authn ∧ authz ∧ permissions ∧ validation ∧ recovery)
+  | authn: oauth(token_validation ∧ issuer/audience_checks ∧ expiry/refresh) ∧ system_scope(¬agent_session_scope)
+  | authz: scopes → allowed_events ∧ principals → capabilities
   | protect: ¬direct_atom_access(extensions) ∧ manifest_permissions(events)
   | validate: state → schema → ok ∨ error
   | buffer: stream(tokens) → flush_on_complete → message
   | heal: tool_error → retry ∨ skip ∨ cancel
 
 λ S1(psi).  operations(atom ∧ handlers ∧ effects ∧ adapters ∧ resolvers)
-  | atom: single_map{sessions, extensions, statecharts, ui}
+  | atom: single_map{sessions, oauth, extensions, statecharts, ui}
   | handlers: event_type → pure(db, event) → {db', effects}
-  | effects: impure{ai/generate, tool/execute, http, schedule, notify}
+  | effects: impure{ai/generate, tool/execute, oauth/exchange, http, schedule, notify}
   | adapters: TUI(terminal) ∥ RPC(stdio ∧ EDN ∧ emacs)
-  | resolvers: local(session) ∧ cross_source(git, files, tests)
+  | resolvers: local(session) ∧ local(oauth) ∧ cross_source(git, files, tests)
 ```
 
 ### Layer Map
 
 | Layer | Owns | Current State |
 |-------|------|---------------|
-| Atom (S1) | State identity | ✓ Canonical root state |
+| Atom (S1) | State identity | ✓ Canonical root state (includes system-scoped oauth state; ¬agent-session-scoped) |
 | Handlers (S1) | Pure transforms | ~ Migration in progress — pure-result shape defined, legacy handlers coexist |
 | Effects (S1) | Impure boundary | ✓ Effect schema + effect-interceptor — tool execution still executor-owned |
 | Adapters (S1) | Presentation | ✓ TUI + RPC exist |
 | Resolvers (S1) | Federated reads | ✓ Pathom graph |
-| Permissions (S2) | Extension safety | ✓ permission-interceptor — manifest `:allowed-events` enforced when declared |
+| OAuth/Authn (S2) | Identity verification | ~ Modelled in VSM; implementation wiring/status tracked in runtime work |
+| Authz/Permissions (S2) | Capability safety | ✓ permission-interceptor — manifest `:allowed-events` enforced when declared |
 | Validation (S2) | Schema enforcement | ✓ validate-interceptor + malli effect/pure-result schemas |
 | Statecharts (S3) | Protocol | ✓ Engine exists |
-| Interceptors (S3) | Cross-cutting | ✓ Explicit chain: permission → log → statechart → handler → effect → trim-replay → validate → apply |
+| Interceptors (S3) | Cross-cutting | ✓ Explicit chain: auth → permission → log → statechart → handler → effect → trim-replay → validate → apply |
 | Dispatch (S3) | Coordination | ✓ Event dispatch with normalized event map |
 | Event log (S4) | Audit + replay | ✓ Bounded ring buffer (1000 entries) + replay-event-log! — suppresses effects on replay |
 | Introspection (S4) | Self-awareness | ✓ EQL graph |
