@@ -171,8 +171,8 @@ New module:
 
 #### Phase 7 — Decommission legacy range-first paths
 - [ ] Remove/deprecate direct use of:
-  - [ ] `assistant-range`
-  - [ ] `thinking-range`
+  - [x] `assistant-range` (cache only)
+  - [x] `thinking-range` (cache only)
   - [x] `projection-range`
   - [ ] `input-separator-marker` (or keep as cache only)
 - [x] Remove compatibility fallback branches once tests pass consistently
