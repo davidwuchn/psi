@@ -58,7 +58,6 @@
 (defun psi-e2e--separator-position ()
   "Return input separator position when marker is valid, else nil."
   (when (and psi-emacs--state
-             (fboundp 'psi-emacs--input-separator-marker-valid-p)
              (psi-emacs--input-separator-marker-valid-p))
     (marker-position (psi-emacs-state-input-separator-marker psi-emacs--state))))
 

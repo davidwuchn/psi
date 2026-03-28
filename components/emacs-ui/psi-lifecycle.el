@@ -38,7 +38,6 @@
    :projection-notifications nil
    :projection-notification-seq 0
    :projection-notification-timers (make-hash-table :test #'equal)
-   :projection-range nil
    :regions (make-hash-table :test #'equal)
    :region-seq 0
    :active-assistant-id nil
@@ -228,10 +227,6 @@ Returns non-nil when request dispatch was accepted by transport."
         (set-marker (car range) nil))
       (when (and (consp range) (markerp (cdr range)))
         (set-marker (cdr range) nil))))
-  (when (and psi-emacs--state
-             (consp (psi-emacs-state-projection-range psi-emacs--state)))
-    (set-marker (car (psi-emacs-state-projection-range psi-emacs--state)) nil)
-    (set-marker (cdr (psi-emacs-state-projection-range psi-emacs--state)) nil))
   (psi-emacs--clear-notification-lifecycle psi-emacs--state)
   (when psi-emacs--state
     (maphash (lambda (_ row)
@@ -337,7 +332,6 @@ When PRESERVE-TOOL-OUTPUT-VIEW-MODE is non-nil, keep the current
                                    (psi-emacs--region-bounds 'projection 'main)
                                    'main)))
       (psi-emacs--region-unregister 'projection projection-id))
-    (setf (psi-emacs-state-projection-range psi-emacs--state) nil)
     (when (markerp (psi-emacs-state-input-separator-marker psi-emacs--state))
       (set-marker (psi-emacs-state-input-separator-marker psi-emacs--state) nil))
     (setf (psi-emacs-state-input-separator-marker psi-emacs--state) nil)

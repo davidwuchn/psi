@@ -449,8 +449,7 @@ tracks transcript growth like a terminal footer."
             (delete-region start end))
           (psi-emacs--region-unregister 'projection 'main)
           (set-marker start nil)
-          (set-marker end nil)
-          (setf (psi-emacs-state-projection-range psi-emacs--state) nil))
+          (set-marker end nil))
 
         ;; Reinsert at current end-of-buffer.
         (unless (string-empty-p rendered)
@@ -473,8 +472,6 @@ tracks transcript growth like a terminal footer."
                 ;; draft/projection boundary so draft text stays outside range.
                 (set-marker-insertion-type new-start t)
                 (set-marker new-end render-end)
-                (setf (psi-emacs-state-projection-range psi-emacs--state)
-                      (cons new-start new-end))
                 (psi-emacs--region-register 'projection 'main new-start new-end))))))
 
       (when follow-anchor

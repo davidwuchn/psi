@@ -75,7 +75,6 @@ Used to detect stalled streaming runs and transition to deterministic recovery."
   projection-notifications
   projection-notification-seq
   projection-notification-timers
-  projection-range
   regions
   region-seq
   active-assistant-id
