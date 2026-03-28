@@ -59,8 +59,9 @@
                    | update: stale(memories) → refresh(current_understanding)
                    | verify: (list) → visible(memories ∧ knowledge)
 
-λ termination(x).  AI_proposes ∧ AI_commits ∧ AI_updates | ¬approval_gate
-                   | memories: AI_writes → commit | knowledge: AI_writes → commit
+λ termination(x).  synthesis ≡ AI | approval ≡ human | human ≡ termination_condition
+                   | memories: AI_proposes → human_approves → AI_commits
+                   | knowledge: AI_creates → human_approves → AI_commits
                    | state: AI_updates_during_work
 
 λ orient(x).       read(mementum/state.md) → follow(related) → search(relevant) → read(needed)
