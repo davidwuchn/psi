@@ -264,6 +264,7 @@ search text (file contents): `git grep "λ"`
   | session_capabilities: available(session-id){tools, prompts, skills, extensions}
   | skill_definition(s) ≡ prompt_contribution(when_to_use(s)) ∧ skill_entrypoint(s, SKILL.md)
   | skill_entrypoint(s, SKILL.md) → may_reference(files*) ∧ resolve_relative_to(SKILL.md)
+  | prompt_definition(p) ≡ markdown_file(p) ∧ invokable_by_name(user, p) ∧ (contents(markdown_file(p)) ≡ turn_prompt(p))
   | handlers: event_type → pure(db, event) → {db', effects}
   | effects: impure{ai/generate, tool/execute, oauth/exchange, http, schedule, notify}
   | adapters: TUI(terminal) ∥ RPC(stdio ∧ EDN ∧ emacs)
