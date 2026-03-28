@@ -55,8 +55,7 @@
 
 (defun psi-emacs--assistant-range-current ()
   "Return live assistant range, recovering from region properties when needed."
-  (let ((range (and psi-emacs--state
-                    (psi-emacs-state-assistant-range psi-emacs--state))))
+  (let ((range (psi-emacs--assistant-range-cache)))
     (if (psi-emacs--assistant-range-live-p range)
         range
       (when-let* ((id (psi-emacs--assistant-active-id nil))
@@ -65,13 +64,22 @@
                   (end (cdr bounds)))
         (let ((restored (cons (copy-marker start nil)
                               (copy-marker end nil))))
-          (setf (psi-emacs-state-assistant-range psi-emacs--state) restored)
+          (psi-emacs--set-assistant-range-cache restored)
           restored)))))
+
+(defun psi-emacs--thinking-range-cache ()
+  "Return compatibility marker cache for the active thinking region."
+  (when psi-emacs--state
+    (psi-emacs-state-thinking-range psi-emacs--state)))
+
+(defun psi-emacs--set-thinking-range-cache (range)
+  "Store compatibility marker RANGE cache for the active thinking region."
+  (when psi-emacs--state
+    (setf (psi-emacs-state-thinking-range psi-emacs--state) range)))
 
 (defun psi-emacs--thinking-range-current ()
   "Return live thinking range, recovering from region properties when needed."
-  (let ((range (and psi-emacs--state
-                    (psi-emacs-state-thinking-range psi-emacs--state))))
+  (let ((range (psi-emacs--thinking-range-cache)))
     (if (psi-emacs--assistant-range-live-p range)
         range
       (when-let* ((id (psi-emacs--thinking-active-id nil))
@@ -80,7 +88,7 @@
                   (end (cdr bounds)))
         (let ((restored (cons (copy-marker start nil)
                               (copy-marker end nil))))
-          (setf (psi-emacs-state-thinking-range psi-emacs--state) restored)
+          (psi-emacs--set-thinking-range-cache restored)
           restored)))))
 
 (defun psi-emacs--assistant-start-marker ()
@@ -103,6 +111,16 @@
     (set-marker (cdr range) nil))
   nil)
 
+(defun psi-emacs--assistant-range-cache ()
+  "Return compatibility marker cache for the active assistant region."
+  (when psi-emacs--state
+    (psi-emacs-state-assistant-range psi-emacs--state)))
+
+(defun psi-emacs--set-assistant-range-cache (range)
+  "Store compatibility marker RANGE cache for the active assistant region."
+  (when psi-emacs--state
+    (setf (psi-emacs-state-assistant-range psi-emacs--state) range)))
+
 (defun psi-emacs--clear-assistant-render-state ()
   "Clear transient assistant render state without editing transcript text."
   (when psi-emacs--state
@@ -110,9 +128,9 @@
     (when-let ((id (psi-emacs-state-active-assistant-id psi-emacs--state)))
       (psi-emacs--region-unregister 'assistant id))
     (setf (psi-emacs-state-active-assistant-id psi-emacs--state) nil)
-    (setf (psi-emacs-state-assistant-range psi-emacs--state)
-          (psi-emacs--clear-marker-range
-           (psi-emacs-state-assistant-range psi-emacs--state)))))
+    (psi-emacs--set-assistant-range-cache
+     (psi-emacs--clear-marker-range
+      (psi-emacs--assistant-range-cache)))))
 
 (defun psi-emacs--clear-thinking-render-state (&optional clear-archived)
   "Clear transient thinking render state without editing transcript text.
@@ -123,9 +141,9 @@ When CLEAR-ARCHIVED is non-nil, also clear archived thinking marker ranges."
     (when-let ((id (psi-emacs-state-active-thinking-id psi-emacs--state)))
       (psi-emacs--region-unregister 'thinking id))
     (setf (psi-emacs-state-active-thinking-id psi-emacs--state) nil)
-    (setf (psi-emacs-state-thinking-range psi-emacs--state)
-          (psi-emacs--clear-marker-range
-           (psi-emacs-state-thinking-range psi-emacs--state)))
+    (psi-emacs--set-thinking-range-cache
+     (psi-emacs--clear-marker-range
+      (psi-emacs--thinking-range-cache)))
     (when clear-archived
       (dolist (range (psi-emacs-state-thinking-archived-ranges psi-emacs--state))
         (psi-emacs--clear-marker-range range))
@@ -246,10 +264,9 @@ while streaming; markdown processing is deferred until finalization."
               (insert (psi-emacs--render-assistant-line text))
               (psi-emacs--mark-region-read-only start (point)))
             (set-marker end (point))
-            (setf (psi-emacs-state-assistant-range psi-emacs--state)
-                  (cons start end))
+            (psi-emacs--set-assistant-range-cache (cons start end))
             (psi-emacs--sync-assistant-region start end))))
-      (let ((updated-range (psi-emacs-state-assistant-range psi-emacs--state)))
+      (let ((updated-range (psi-emacs--assistant-range-cache)))
         (when (psi-emacs--assistant-range-live-p updated-range)
           (save-excursion
             (goto-char (marker-position (car updated-range)))
@@ -293,8 +310,7 @@ while streaming; markdown processing is deferred until finalization."
                       (insert (psi-emacs--render-thinking-line text))
                       (psi-emacs--mark-region-read-only start (point)))
                     (set-marker end (point))
-                    (setf (psi-emacs-state-thinking-range psi-emacs--state)
-                          (cons start end))
+                    (psi-emacs--set-thinking-range-cache (cons start end))
                     (psi-emacs--sync-thinking-region start end)
                     (set-marker assistant-start-marker (point))))
               (progn
@@ -305,8 +321,7 @@ while streaming; markdown processing is deferred until finalization."
                     (insert (psi-emacs--render-thinking-line text))
                     (psi-emacs--mark-region-read-only start (point)))
                   (set-marker end (point))
-                  (setf (psi-emacs-state-thinking-range psi-emacs--state)
-                        (cons start end))
+                  (psi-emacs--set-thinking-range-cache (cons start end))
                   (psi-emacs--sync-thinking-region start end)))))))
       (let ((updated-range (psi-emacs--thinking-range-current)))
         (when (psi-emacs--assistant-range-live-p updated-range)
@@ -336,7 +351,7 @@ while streaming; markdown processing is deferred until finalization."
       (when-let ((id (psi-emacs-state-active-thinking-id psi-emacs--state)))
         (psi-emacs--region-unregister 'thinking id))
       (setf (psi-emacs-state-active-thinking-id psi-emacs--state) nil)
-      (setf (psi-emacs-state-thinking-range psi-emacs--state) nil)
+      (psi-emacs--set-thinking-range-cache nil)
       (setf (psi-emacs-state-thinking-in-progress psi-emacs--state) nil))))
 
 (defun psi-emacs--clear-thinking-line ()
@@ -354,7 +369,7 @@ while streaming; markdown processing is deferred until finalization."
       (when-let ((id (psi-emacs-state-active-thinking-id psi-emacs--state)))
         (psi-emacs--region-unregister 'thinking id))
       (setf (psi-emacs-state-active-thinking-id psi-emacs--state) nil)
-      (setf (psi-emacs-state-thinking-range psi-emacs--state) nil)
+      (psi-emacs--set-thinking-range-cache nil)
       (setf (psi-emacs-state-thinking-in-progress psi-emacs--state) nil))))
 
 (defun psi-emacs--common-prefix-length (a b)
@@ -443,7 +458,7 @@ so the next thinking delta still starts a fresh block."
           (when-let ((id (psi-emacs-state-active-thinking-id psi-emacs--state)))
             (psi-emacs--region-unregister 'thinking id))
           (setf (psi-emacs-state-active-thinking-id psi-emacs--state) nil)
-          (setf (psi-emacs-state-thinking-range psi-emacs--state) nil)
+          (psi-emacs--set-thinking-range-cache nil)
           (setf (psi-emacs-state-thinking-in-progress psi-emacs--state) nil))))))
 
 (defun psi-emacs--assistant-finalize (text)
@@ -471,7 +486,7 @@ from the next user prompt."
       (when-let ((id (psi-emacs-state-active-assistant-id psi-emacs--state)))
         (psi-emacs--region-unregister 'assistant id))
       (setf (psi-emacs-state-active-assistant-id psi-emacs--state) nil)
-      (setf (psi-emacs-state-assistant-range psi-emacs--state) nil)
+      (psi-emacs--set-assistant-range-cache nil)
       ;; Archive (not clear) any live thinking block — it is part of the
       ;; transcript and must remain visible after the reply is finalized.
       (psi-emacs--archive-thinking-line)
