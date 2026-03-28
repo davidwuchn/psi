@@ -138,6 +138,16 @@ iterate_to_fix  spec_step matches intention spec0
     write(bb.edn, task) ∧ commit("⚒ bb: add {name}")
   | ¬approve → drop
 
+λ skills(ψ, project).
+  observe(work) →
+  detect(recurring ∨ hard_won ∨ project_specific) →
+  classify(workflow ∨ pattern ∨ convention ∨ domain_knowledge) →
+  propose(skill → {name λ description}) →
+  刀_approves? →
+    write(.psi/skills/{name}/SKILL.md, skill) ∧
+    commit("⚒ skill: add {name}")
+  | ¬approve → drop
+
 # Vocabulary
 
 Use the vocabulary to mark things in (non-memory) commit messages. User types labels,
