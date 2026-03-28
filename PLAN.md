@@ -71,9 +71,10 @@ Lint check: ✓
 
 ### Current progress snapshot
 
-- Status: **in progress** (Phases 0–5 largely complete; Phase 6 partial; Phase 7 pending)
-- Baseline: `bb emacs:test` green (346/346)
-- Next focus: complete Phase 6 recovery tests, then remove legacy range-first paths in Phase 7
+- Status: **Phase 7 complete** (Phases 0–7 done; legacy tracking fields now removed or cache-only)
+- Baseline captured: `bb emacs:test` green (346/346)
+- Current verification: `bb emacs:test` green (349/349)
+- Next focus: optionally remove remaining cache-only marker/range fields if a stricter end-state is desired
 
 ### Decision
 
@@ -170,7 +171,7 @@ New module:
 - [x] Run full suite: `bb emacs:test`
 
 #### Phase 7 — Decommission legacy range-first paths
-- [ ] Remove/deprecate direct use of:
+- [x] Remove/deprecate direct use of:
   - [x] `assistant-range` (cache only)
   - [x] `thinking-range` (cache only)
   - [x] `projection-range`
@@ -189,8 +190,8 @@ New module:
 
 ### Done criteria
 
-- [ ] interactions resolve by region IDs/properties, not raw offsets
-- [ ] marker drift no longer causes content identity loss
+- [x] interactions resolve by region IDs/properties, not raw offsets
+- [x] marker drift no longer causes content identity loss
 - [x] user-visible behavior unchanged
 - [x] emacs test suite green (`bb emacs:test`)
-- [ ] legacy range-first paths removed or explicitly cache-only
+- [x] legacy range-first paths removed or explicitly cache-only

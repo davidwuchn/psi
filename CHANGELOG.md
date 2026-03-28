@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-03-28
+
+- λ Δ Completed the Emacs UI region-identity migration for transcript/projection/input tracking:
+  - projection identity is now region-registry-backed; `projection-range` compatibility state was removed
+  - assistant/thinking range fields are now explicit cache-only compatibility markers over region identity
+  - input separator marker is now explicit cache-only compatibility state over region identity
+  - added regression coverage for assistant-span and tool-row recovery when legacy marker caches are missing
+  - blocked empty non-slash compose sends locally to avoid backend `request/invalid-params` noise
+- ✓ Verification:
+  - `bb emacs:test` (349 tests, 0 unexpected)
+
 ## 2026-03-26
 
 - λ Δ Removed `ui-state-view-in` compatibility anomaly from `agent-session` and moved extension UI state writes onto dispatch-owned events.

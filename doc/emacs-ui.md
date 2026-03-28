@@ -117,6 +117,12 @@ Completion behavior knobs live in customize group `psi-emacs-completion`.
 
 ## Rendering, status, and errors
 
+Implementation note: transcript and footer identity are now region/property-backed.
+Legacy marker/range fields that remain in frontend state (`assistant-range`,
+`thinking-range`, `input-separator-marker`) are compatibility caches only, not
+source-of-truth identity.
+
+
 - Assistant streaming uses a single in-progress block updated by
   `assistant/delta` and finalized by `assistant/message`.
 - Tool lifecycle rows render inline for
