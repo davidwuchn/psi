@@ -95,6 +95,42 @@
     (when (psi-emacs--assistant-range-live-p range)
       (cdr range))))
 
+(defun psi-emacs--clear-marker-range (range)
+  "Clear marker RANGE and return nil."
+  (when (and (consp range) (markerp (car range)))
+    (set-marker (car range) nil))
+  (when (and (consp range) (markerp (cdr range)))
+    (set-marker (cdr range) nil))
+  nil)
+
+(defun psi-emacs--clear-assistant-render-state ()
+  "Clear transient assistant render state without editing transcript text."
+  (when psi-emacs--state
+    (setf (psi-emacs-state-assistant-in-progress psi-emacs--state) nil)
+    (when-let ((id (psi-emacs-state-active-assistant-id psi-emacs--state)))
+      (psi-emacs--region-unregister 'assistant id))
+    (setf (psi-emacs-state-active-assistant-id psi-emacs--state) nil)
+    (setf (psi-emacs-state-assistant-range psi-emacs--state)
+          (psi-emacs--clear-marker-range
+           (psi-emacs-state-assistant-range psi-emacs--state)))))
+
+(defun psi-emacs--clear-thinking-render-state (&optional clear-archived)
+  "Clear transient thinking render state without editing transcript text.
+
+When CLEAR-ARCHIVED is non-nil, also clear archived thinking marker ranges."
+  (when psi-emacs--state
+    (setf (psi-emacs-state-thinking-in-progress psi-emacs--state) nil)
+    (when-let ((id (psi-emacs-state-active-thinking-id psi-emacs--state)))
+      (psi-emacs--region-unregister 'thinking id))
+    (setf (psi-emacs-state-active-thinking-id psi-emacs--state) nil)
+    (setf (psi-emacs-state-thinking-range psi-emacs--state)
+          (psi-emacs--clear-marker-range
+           (psi-emacs-state-thinking-range psi-emacs--state)))
+    (when clear-archived
+      (dolist (range (psi-emacs-state-thinking-archived-ranges psi-emacs--state))
+        (psi-emacs--clear-marker-range range))
+      (setf (psi-emacs-state-thinking-archived-ranges psi-emacs--state) nil))))
+
 (defun psi-emacs--render-assistant-line (text)
   "Render assistant TEXT in canonical line format."
   (concat psi-emacs--assistant-line-prefix (or text "") "\n"))

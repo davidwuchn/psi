@@ -504,11 +504,7 @@ When idle, this is a silent no-op."
   (interactive)
   (psi-emacs--dispatch-request "abort" nil)
   (when psi-emacs--state
-    (setf (psi-emacs-state-assistant-in-progress psi-emacs--state) nil)
-    (when-let ((id (psi-emacs-state-active-assistant-id psi-emacs--state)))
-      (psi-emacs--region-unregister 'assistant id))
-    (setf (psi-emacs-state-active-assistant-id psi-emacs--state) nil)
-    (setf (psi-emacs-state-assistant-range psi-emacs--state) nil)
+    (psi-emacs--clear-assistant-render-state)
     (psi-emacs--clear-thinking-line)
     (psi-emacs--disarm-stream-watchdog psi-emacs--state)
     (psi-emacs--set-run-state psi-emacs--state 'idle)))

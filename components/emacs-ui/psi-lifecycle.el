@@ -213,20 +213,9 @@ Returns non-nil when request dispatch was accepted by transport."
   (when (and psi-emacs--state
              (markerp (psi-emacs-state-input-separator-marker psi-emacs--state)))
     (set-marker (psi-emacs-state-input-separator-marker psi-emacs--state) nil))
-  (when (and psi-emacs--state
-             (consp (psi-emacs-state-assistant-range psi-emacs--state)))
-    (set-marker (car (psi-emacs-state-assistant-range psi-emacs--state)) nil)
-    (set-marker (cdr (psi-emacs-state-assistant-range psi-emacs--state)) nil))
-  (when (and psi-emacs--state
-             (consp (psi-emacs-state-thinking-range psi-emacs--state)))
-    (set-marker (car (psi-emacs-state-thinking-range psi-emacs--state)) nil)
-    (set-marker (cdr (psi-emacs-state-thinking-range psi-emacs--state)) nil))
   (when psi-emacs--state
-    (dolist (range (psi-emacs-state-thinking-archived-ranges psi-emacs--state))
-      (when (and (consp range) (markerp (car range)))
-        (set-marker (car range) nil))
-      (when (and (consp range) (markerp (cdr range)))
-        (set-marker (cdr range) nil))))
+    (psi-emacs--clear-assistant-render-state)
+    (psi-emacs--clear-thinking-render-state t))
   (psi-emacs--clear-notification-lifecycle psi-emacs--state)
   (when psi-emacs--state
     (maphash (lambda (_ row)
@@ -316,13 +305,10 @@ When PRESERVE-TOOL-OUTPUT-VIEW-MODE is non-nil, keep the current
   (when psi-emacs--state
     (psi-emacs--disarm-stream-watchdog psi-emacs--state)
     (psi-emacs--clear-last-error psi-emacs--state)
-    (setf (psi-emacs-state-assistant-in-progress psi-emacs--state) nil)
-    (setf (psi-emacs-state-assistant-range psi-emacs--state) nil)
+    (psi-emacs--clear-assistant-render-state)
+    (psi-emacs--clear-thinking-render-state t)
     (when (fboundp 'psi-emacs--regions-clear)
       (psi-emacs--regions-clear))
-    (setf (psi-emacs-state-thinking-in-progress psi-emacs--state) nil)
-    (setf (psi-emacs-state-thinking-range psi-emacs--state) nil)
-    (setf (psi-emacs-state-thinking-archived-ranges psi-emacs--state) nil)
     (clrhash (psi-emacs-state-tool-rows psi-emacs--state))
     (setf (psi-emacs-state-projection-widgets psi-emacs--state) nil)
     (setf (psi-emacs-state-projection-statuses psi-emacs--state) nil)

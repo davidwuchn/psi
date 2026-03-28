@@ -27,6 +27,8 @@
 (declare-function psi-emacs--assistant-before-tool-event "psi-assistant-render")
 (declare-function psi-emacs--assistant-start-marker "psi-assistant-render")
 (declare-function psi-emacs--assistant-end-marker "psi-assistant-render")
+(declare-function psi-emacs--clear-assistant-render-state "psi-assistant-render")
+(declare-function psi-emacs--clear-thinking-render-state "psi-assistant-render" (&optional clear-archived))
 (declare-function psi-emacs--region-register "psi-regions" (kind id start end &optional props))
 (declare-function psi-emacs--region-bounds "psi-regions" (kind id))
 (declare-function psi-emacs--region-find-by-property "psi-regions" (kind id &optional start end))
