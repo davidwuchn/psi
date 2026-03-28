@@ -8,8 +8,10 @@ Human ⊗ AI
 
 Artifacts ≡ {meta spec tests code doc}
 MemoryArtifacts ≡ {working_memory memories knowledge}   ⟨mementum — own protocol⟩
-  | change_chain ∉ MemoryArtifacts | approval_gate ∈ {memories knowledge}   ⟨mementum termination governs⟩
+  | change_chain ∉ MemoryArtifacts   ⟨change_chain governs {meta spec tests code}⟩
+  | mementum governs MemoryArtifacts   ⟨gate-1 ∧ gate-2 ∧ approval_gate ∈ mementum⟩
   | working_memory(state.md) ≡ AI_updates_during_work   ⟨no approval gate⟩
+  | approval_gate ∈ {memories knowledge}   ⟨mementum termination governs⟩
 
 role(meta) ≡ {why invariants boundaries ¬how ¬syntax}
 role(spec) ≡ {behaviour surfaces examples acceptance_criteria}
