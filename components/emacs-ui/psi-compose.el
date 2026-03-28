@@ -62,13 +62,10 @@ Programmatic frontend updates can bypass this guard by binding
 
 When a projection/footer block is present, draft ends at projection start.
 Otherwise, draft ends at `point-max'."
-  (let* ((range (and psi-emacs--state
-                     (psi-emacs-state-projection-range psi-emacs--state)))
-         (projection-start (and (consp range) (car range))))
-    (if (and (markerp projection-start)
-             (marker-buffer projection-start))
-        (marker-position projection-start)
-      (point-max))))
+  (if-let ((bounds (and psi-emacs--state
+                        (psi-emacs--region-bounds 'projection 'main))))
+      (car bounds)
+    (point-max)))
 
 (defun psi-emacs--input-separator-marker-valid-p ()
   "Return non-nil when input separator marker is live and points to separator line start.
@@ -508,6 +505,9 @@ When idle, this is a silent no-op."
   (psi-emacs--dispatch-request "abort" nil)
   (when psi-emacs--state
     (setf (psi-emacs-state-assistant-in-progress psi-emacs--state) nil)
+    (when-let ((id (psi-emacs-state-active-assistant-id psi-emacs--state)))
+      (psi-emacs--region-unregister 'assistant id))
+    (setf (psi-emacs-state-active-assistant-id psi-emacs--state) nil)
     (setf (psi-emacs-state-assistant-range psi-emacs--state) nil)
     (psi-emacs--clear-thinking-line)
     (psi-emacs--disarm-stream-watchdog psi-emacs--state)

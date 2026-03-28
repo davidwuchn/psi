@@ -314,12 +314,9 @@ properties and recreate live markers. Returns updated row plist or ROW."
 
 (defun psi-emacs--projection-start-position ()
   "Return projection block start position, or nil when absent."
-  (let* ((range (and psi-emacs--state
-                     (psi-emacs-state-projection-range psi-emacs--state)))
-         (start (and (consp range) (car range))))
-    (when (and (markerp start)
-               (marker-buffer start))
-      (marker-position start))))
+  (when-let ((bounds (and psi-emacs--state
+                          (psi-emacs--region-bounds 'projection 'main))))
+    (car bounds)))
 
 (defun psi-emacs--tool-row-safe-end-position (end-marker)
   "Return safe end position for END-MARKER that never crosses projection start."
@@ -427,8 +424,7 @@ Rows are rendered according to global tool-output-view-mode."
                 ;; (due to the delete above collapsing markers at that position),
                 ;; advance it to the tool row end so the assistant range still
                 ;; covers only the assistant line and not this tool row.
-                (let* ((ar (psi-emacs-state-assistant-range psi-emacs--state))
-                       (as (and (psi-emacs--assistant-range-live-p ar) (car ar))))
+                (let ((as (psi-emacs--assistant-start-marker)))
                   (when (and as (= (marker-position as) start-pos))
                     (set-marker as (point))))
                 ;; Fix any other tool row start markers that collapsed to
@@ -468,10 +464,7 @@ Rows are rendered according to global tool-output-view-mode."
           ;; accidentally swallow the assistant line, and vice-versa.
           ;; When no assistant range is live, fall back to the normal
           ;; transcript-append position (just above the input separator).
-          (let* ((assistant-range (psi-emacs-state-assistant-range psi-emacs--state))
-                 (assistant-start-marker
-                  (and (psi-emacs--assistant-range-live-p assistant-range)
-                       (car assistant-range)))
+          (let* ((assistant-start-marker (psi-emacs--assistant-start-marker))
                  (insert-pos (and assistant-start-marker
                                   (marker-position assistant-start-marker))))
             (if insert-pos
@@ -500,8 +493,7 @@ Rows are rendered according to global tool-output-view-mode."
                     ;; content, leaving stale assistant text in the buffer and
                     ;; corrupting the tool row.  Advance end to at least start
                     ;; so the range is always non-inverted.
-                    (let ((ae (and (psi-emacs--assistant-range-live-p assistant-range)
-                                   (cdr assistant-range))))
+                    (let ((ae (psi-emacs--assistant-end-marker)))
                       (when (and ae (< (marker-position ae) (point)))
                         (set-marker ae (point))))
                     (let ((new-row (list :id tool-id
