@@ -284,6 +284,34 @@ with latest snapshot semantics."
       (concat previous next))
      (t previous))))
 
+(defun psi-emacs--tool-row-live-markers-p (start end)
+  "Return non-nil when START/END tool row markers are live."
+  (and (markerp start)
+       (markerp end)
+       (marker-buffer start)
+       (marker-buffer end)))
+
+(defun psi-emacs--tool-row-restore-markers (tool-id row)
+  "Return ROW with restored :start/:end markers for TOOL-ID when recoverable.
+
+When ROW markers drifted or were lost, recover bounds from region identity
+properties and recreate live markers. Returns updated row plist or ROW."
+  (let ((start (plist-get row :start))
+        (end (plist-get row :end)))
+    (if (psi-emacs--tool-row-live-markers-p start end)
+        row
+      (if-let ((bounds (psi-emacs--region-bounds 'tool-row tool-id)))
+          (let ((start* (copy-marker (car bounds) nil))
+                (end* (copy-marker (cdr bounds) nil)))
+            (set-marker-insertion-type end* nil)
+            (plist-put (plist-put row :start start*) :end end*))
+        row))))
+
+(defun psi-emacs--sync-tool-row-region (tool-id start end)
+  "Register tool row region identity for TOOL-ID over START..END."
+  (when tool-id
+    (psi-emacs--region-register 'tool-row tool-id start end)))
+
 (defun psi-emacs--projection-start-position ()
   "Return projection block start position, or nil when absent."
   (let* ((range (and psi-emacs--state
@@ -359,7 +387,7 @@ Rows are rendered according to global tool-output-view-mode."
     (let* ((follow-anchor (psi-emacs--draft-anchor-at-end-p))
            (rows (psi-emacs-state-tool-rows psi-emacs--state))
            (view-mode (psi-emacs-state-tool-output-view-mode psi-emacs--state))
-           (row (gethash tool-id rows))
+           (row (psi-emacs--tool-row-restore-markers tool-id (gethash tool-id rows)))
            (start (plist-get row :start))
            (end (plist-get row :end))
            (tool-name* (or tool-name (plist-get row :tool-name)))
@@ -418,20 +446,21 @@ Rows are rendered according to global tool-output-view-mode."
                                           (= (marker-position other-start) start-pos))
                                  (set-marker other-start (point))))))
                          rows)))
-            (puthash tool-id (list :id tool-id
-                                   :tool-name tool-name*
-                                   :arguments arguments*
-                                   :parsed-args parsed-args*
-                                   :details details*
-                                   :is-error is-error*
-                                   :stage stage
-                                   :status status
-                                   :text text
-                                   :tool-summary tool-summary
-                                   :accumulated-text accumulated
-                                   :start start
-                                   :end end)
-                     rows))
+            (let ((updated (list :id tool-id
+                                 :tool-name tool-name*
+                                 :arguments arguments*
+                                 :parsed-args parsed-args*
+                                 :details details*
+                                 :is-error is-error*
+                                 :stage stage
+                                 :status status
+                                 :text text
+                                 :tool-summary tool-summary
+                                 :accumulated-text accumulated
+                                 :start start
+                                 :end end)))
+              (puthash tool-id updated rows)
+              (psi-emacs--sync-tool-row-region tool-id start end)))
         (save-excursion
           ;; New tool rows must be inserted before the live assistant line (if
           ;; one exists) so that their markers never overlap the assistant range.
@@ -475,20 +504,21 @@ Rows are rendered according to global tool-output-view-mode."
                                    (cdr assistant-range))))
                       (when (and ae (< (marker-position ae) (point)))
                         (set-marker ae (point))))
-                    (puthash tool-id (list :id tool-id
-                                           :tool-name tool-name*
-                                           :arguments arguments*
-                                           :parsed-args parsed-args*
-                                           :details details*
-                                           :is-error is-error*
-                                           :stage stage
-                                           :status status
-                                           :text text
-                                           :tool-summary tool-summary
-                                           :accumulated-text accumulated
-                                           :start new-start
-                                           :end new-end)
-                             rows)))
+                    (let ((new-row (list :id tool-id
+                                         :tool-name tool-name*
+                                         :arguments arguments*
+                                         :parsed-args parsed-args*
+                                         :details details*
+                                         :is-error is-error*
+                                         :stage stage
+                                         :status status
+                                         :text text
+                                         :tool-summary tool-summary
+                                         :accumulated-text accumulated
+                                         :start new-start
+                                         :end new-end)))
+                      (puthash tool-id new-row rows)
+                      (psi-emacs--sync-tool-row-region tool-id new-start new-end))))
               (psi-emacs--ensure-newline-before-append)
               (let ((new-start (copy-marker (point) nil))
                     ;; Keep insertion-type nil so projection/footer inserted at the
@@ -498,20 +528,21 @@ Rows are rendered according to global tool-output-view-mode."
                   (insert rendered))
                 (set-marker new-end (point))
                 (set-marker-insertion-type new-end nil)
-                (puthash tool-id (list :id tool-id
-                                       :tool-name tool-name*
-                                       :arguments arguments*
-                                       :parsed-args parsed-args*
-                                       :details details*
-                                       :is-error is-error*
-                                       :stage stage
-                                       :status status
-                                       :text text
-                                       :tool-summary tool-summary
-                                       :accumulated-text accumulated
-                                       :start new-start
-                                       :end new-end)
-                         rows))))))
+                (let ((new-row (list :id tool-id
+                                     :tool-name tool-name*
+                                     :arguments arguments*
+                                     :parsed-args parsed-args*
+                                     :details details*
+                                     :is-error is-error*
+                                     :stage stage
+                                     :status status
+                                     :text text
+                                     :tool-summary tool-summary
+                                     :accumulated-text accumulated
+                                     :start new-start
+                                     :end new-end)))
+                  (puthash tool-id new-row rows)
+                  (psi-emacs--sync-tool-row-region tool-id new-start new-end)))))))
       (when follow-anchor
         (psi-emacs--set-draft-anchor-to-end)))))
 
