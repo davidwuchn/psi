@@ -46,12 +46,13 @@
   (when (and (integerp start)
              (integerp end)
              (< start end))
-    (add-text-properties
-     start
-     end
-     (append (list psi-emacs--region-kind-property kind
-                   psi-emacs--region-id-property id)
-             props))))
+    (let ((inhibit-read-only t))
+      (add-text-properties
+       start
+       end
+       (append (list psi-emacs--region-kind-property kind
+                     psi-emacs--region-id-property id)
+               props)))))
 
 (defun psi-emacs--region-find-by-property (kind id &optional start end)
   "Find contiguous region bounds with KIND/ID properties between START and END.

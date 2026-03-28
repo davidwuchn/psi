@@ -17,6 +17,72 @@
 (defconst psi-emacs--assistant-stream-verbatim-property 'psi-emacs-stream-verbatim
   "Text property used to mark in-progress assistant content as verbatim.")
 
+(defun psi-emacs--assistant-active-id (&optional ensure)
+  "Return active assistant region id, creating one when ENSURE is non-nil."
+  (or (and psi-emacs--state
+           (psi-emacs-state-active-assistant-id psi-emacs--state))
+      (when (and ensure psi-emacs--state)
+        (let ((id (psi-emacs--next-region-id 'assistant)))
+          (setf (psi-emacs-state-active-assistant-id psi-emacs--state) id)
+          id))))
+
+(defun psi-emacs--thinking-active-id (&optional ensure)
+  "Return active thinking region id, creating one when ENSURE is non-nil."
+  (or (and psi-emacs--state
+           (psi-emacs-state-active-thinking-id psi-emacs--state))
+      (when (and ensure psi-emacs--state)
+        (let ((id (psi-emacs--next-region-id 'thinking)))
+          (setf (psi-emacs-state-active-thinking-id psi-emacs--state) id)
+          id))))
+
+(defun psi-emacs--sync-assistant-region (start end)
+  "Register assistant region identity for START..END."
+  (when-let ((id (psi-emacs--assistant-active-id t)))
+    (psi-emacs--region-register 'assistant id start end)))
+
+(defun psi-emacs--sync-thinking-region (start end)
+  "Register thinking region identity for START..END."
+  (when-let ((id (psi-emacs--thinking-active-id t)))
+    (psi-emacs--region-register 'thinking id start end)))
+
+(defun psi-emacs--assistant-range-live-p (range)
+  "Return non-nil when assistant RANGE markers are live in a buffer."
+  (and (consp range)
+       (markerp (car range))
+       (markerp (cdr range))
+       (marker-buffer (car range))
+       (marker-buffer (cdr range))))
+
+(defun psi-emacs--assistant-range-current ()
+  "Return live assistant range, recovering from region properties when needed."
+  (let ((range (and psi-emacs--state
+                    (psi-emacs-state-assistant-range psi-emacs--state))))
+    (if (psi-emacs--assistant-range-live-p range)
+        range
+      (when-let* ((id (psi-emacs--assistant-active-id nil))
+                  (bounds (psi-emacs--region-bounds 'assistant id))
+                  (start (car bounds))
+                  (end (cdr bounds)))
+        (let ((restored (cons (copy-marker start nil)
+                              (copy-marker end nil))))
+          (setf (psi-emacs-state-assistant-range psi-emacs--state) restored)
+          restored)))))
+
+(defun psi-emacs--thinking-range-current ()
+  "Return live thinking range, recovering from region properties when needed."
+  (let ((range (and psi-emacs--state
+                    (psi-emacs-state-thinking-range psi-emacs--state))))
+    (if (psi-emacs--assistant-range-live-p range)
+        range
+      (when-let* ((id (psi-emacs--thinking-active-id nil))
+                  (bounds (psi-emacs--region-bounds 'thinking id))
+                  (start (car bounds))
+                  (end (cdr bounds)))
+        (let ((restored (cons (copy-marker start nil)
+                              (copy-marker end nil))))
+          (setf (psi-emacs-state-thinking-range psi-emacs--state) restored)
+          restored)))))
+
 (defun psi-emacs--render-assistant-line (text)
   "Render assistant TEXT in canonical line format."
   (concat psi-emacs--assistant-line-prefix (or text "") "\n"))
@@ -36,14 +102,6 @@
         (overlay-put ov 'face face)
         (overlay-put ov 'priority 1000)
         (overlay-put ov 'evaporate t)))))
-
-(defun psi-emacs--assistant-range-live-p (range)
-  "Return non-nil when assistant RANGE markers are live in a buffer."
-  (and (consp range)
-       (markerp (car range))
-       (markerp (cdr range))
-       (marker-buffer (car range))
-       (marker-buffer (cdr range))))
 
 (defun psi-emacs--assistant-content-range (range)
   "Return assistant content (not prefix/newline) region for RANGE."
@@ -116,7 +174,7 @@ while streaming; markdown processing is deferred until finalization."
   (when psi-emacs--state
     (let ((buffer-undo-list (if stream-verbatim t buffer-undo-list))
           (follow-anchor (psi-emacs--draft-anchor-at-end-p))
-          (range (psi-emacs-state-assistant-range psi-emacs--state)))
+          (range (psi-emacs--assistant-range-current)))
       (if (psi-emacs--assistant-range-live-p range)
           (save-excursion
             (let ((start (car range))
@@ -126,7 +184,8 @@ while streaming; markdown processing is deferred until finalization."
                 (delete-region start end)
                 (insert (psi-emacs--render-assistant-line text))
                 (psi-emacs--mark-region-read-only start (point))
-                (set-marker end (point)))))
+                (set-marker end (point))
+                (psi-emacs--sync-assistant-region start end))))
         (save-excursion
           (psi-emacs--ensure-newline-before-append)
           (let ((start (copy-marker (point) nil))
@@ -140,7 +199,8 @@ while streaming; markdown processing is deferred until finalization."
               (psi-emacs--mark-region-read-only start (point)))
             (set-marker end (point))
             (setf (psi-emacs-state-assistant-range psi-emacs--state)
-                  (cons start end)))))
+                  (cons start end))
+            (psi-emacs--sync-assistant-region start end))))
       (let ((updated-range (psi-emacs-state-assistant-range psi-emacs--state)))
         (when (psi-emacs--assistant-range-live-p updated-range)
           (save-excursion
@@ -160,7 +220,7 @@ while streaming; markdown processing is deferred until finalization."
   (when psi-emacs--state
     (let ((buffer-undo-list t)
           (follow-anchor (psi-emacs--draft-anchor-at-end-p))
-          (range (psi-emacs-state-thinking-range psi-emacs--state)))
+          (range (psi-emacs--thinking-range-current)))
       (if (psi-emacs--assistant-range-live-p range)
           (save-excursion
             (let ((start (car range))
@@ -170,11 +230,12 @@ while streaming; markdown processing is deferred until finalization."
                 (delete-region start end)
                 (insert (psi-emacs--render-thinking-line text))
                 (psi-emacs--mark-region-read-only start (point))
-                (set-marker end (point)))))
+                (set-marker end (point))
+                (psi-emacs--sync-thinking-region start end))))
         (save-excursion
           (let* ((assistant-range (psi-emacs-state-assistant-range psi-emacs--state))
                  (assistant-start-marker (and (psi-emacs--assistant-range-live-p assistant-range)
-                                            (car assistant-range))))
+                                              (car assistant-range))))
             (if assistant-start-marker
                 (progn
                   (goto-char (marker-position assistant-start-marker))
@@ -188,6 +249,7 @@ while streaming; markdown processing is deferred until finalization."
                     (set-marker end (point))
                     (setf (psi-emacs-state-thinking-range psi-emacs--state)
                           (cons start end))
+                    (psi-emacs--sync-thinking-region start end)
                     (set-marker assistant-start-marker (point))))
               (progn
                 (psi-emacs--ensure-newline-before-append)
@@ -198,8 +260,9 @@ while streaming; markdown processing is deferred until finalization."
                     (psi-emacs--mark-region-read-only start (point)))
                   (set-marker end (point))
                   (setf (psi-emacs-state-thinking-range psi-emacs--state)
-                        (cons start end))))))))
-      (let ((updated-range (psi-emacs-state-thinking-range psi-emacs--state)))
+                        (cons start end))
+                  (psi-emacs--sync-thinking-region start end)))))))
+      (let ((updated-range (psi-emacs--thinking-range-current)))
         (when (psi-emacs--assistant-range-live-p updated-range)
           (save-excursion
             (goto-char (marker-position (car updated-range)))
@@ -213,7 +276,7 @@ while streaming; markdown processing is deferred until finalization."
 (defun psi-emacs--archive-thinking-line ()
   "Freeze current thinking line as transcript history and clear in-progress state."
   (when psi-emacs--state
-    (let ((range (psi-emacs-state-thinking-range psi-emacs--state)))
+    (let ((range (psi-emacs--thinking-range-current)))
       (when (psi-emacs--assistant-range-live-p range)
         (let ((archived (cons (copy-marker (marker-position (car range)) nil)
                               (copy-marker (marker-position (cdr range)) nil))))
@@ -224,6 +287,9 @@ while streaming; markdown processing is deferred until finalization."
         (set-marker (car range) nil))
       (when (and (consp range) (markerp (cdr range)))
         (set-marker (cdr range) nil))
+      (when-let ((id (psi-emacs-state-active-thinking-id psi-emacs--state)))
+        (psi-emacs--region-unregister 'thinking id))
+      (setf (psi-emacs-state-active-thinking-id psi-emacs--state) nil)
       (setf (psi-emacs-state-thinking-range psi-emacs--state) nil)
       (setf (psi-emacs-state-thinking-in-progress psi-emacs--state) nil))))
 
@@ -239,6 +305,9 @@ while streaming; markdown processing is deferred until finalization."
         (set-marker (car range) nil))
       (when (and (consp range) (markerp (cdr range)))
         (set-marker (cdr range) nil))
+      (when-let ((id (psi-emacs-state-active-thinking-id psi-emacs--state)))
+        (psi-emacs--region-unregister 'thinking id))
+      (setf (psi-emacs-state-active-thinking-id psi-emacs--state) nil)
       (setf (psi-emacs-state-thinking-range psi-emacs--state) nil)
       (setf (psi-emacs-state-thinking-in-progress psi-emacs--state) nil))))
 
@@ -316,7 +385,7 @@ so the next thinking delta still starts a fresh block."
     (let* ((thinking-text (or (psi-emacs-state-thinking-in-progress psi-emacs--state) ""))
            (has-thinking-text (not (string-empty-p thinking-text)))
            (range-live (psi-emacs--assistant-range-live-p
-                        (psi-emacs-state-thinking-range psi-emacs--state))))
+                        (psi-emacs--thinking-range-current))))
       (when has-thinking-text
         (if range-live
             (psi-emacs--archive-thinking-line)
@@ -325,6 +394,9 @@ so the next thinking delta still starts a fresh block."
               (set-marker (car range) nil))
             (when (and (consp range) (markerp (cdr range)))
               (set-marker (cdr range) nil)))
+          (when-let ((id (psi-emacs-state-active-thinking-id psi-emacs--state)))
+            (psi-emacs--region-unregister 'thinking id))
+          (setf (psi-emacs-state-active-thinking-id psi-emacs--state) nil)
           (setf (psi-emacs-state-thinking-range psi-emacs--state) nil)
           (setf (psi-emacs-state-thinking-in-progress psi-emacs--state) nil))))))
 
@@ -350,6 +422,9 @@ from the next user prompt."
       (psi-emacs--process-finalized-assistant-range
        (psi-emacs-state-assistant-range psi-emacs--state))
       (setf (psi-emacs-state-assistant-in-progress psi-emacs--state) nil)
+      (when-let ((id (psi-emacs-state-active-assistant-id psi-emacs--state)))
+        (psi-emacs--region-unregister 'assistant id))
+      (setf (psi-emacs-state-active-assistant-id psi-emacs--state) nil)
       (setf (psi-emacs-state-assistant-range psi-emacs--state) nil)
       ;; Archive (not clear) any live thinking block — it is part of the
       ;; transcript and must remain visible after the reply is finalized.
