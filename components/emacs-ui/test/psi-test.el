@@ -637,16 +637,16 @@
                         (lambda ()
                           (setf (psi-emacs-state-run-state psi-emacs--state) 'idle)
                           (psi-emacs-send-from-buffer nil)
+                          ;; Input is consumed after first dispatch; subsequent
+                          ;; non-slash sends are blank and should be blocked locally.
                           (psi-emacs-send-from-buffer nil)
                           (psi-emacs-send-from-buffer '(4))))))
             (should (eq 'streaming (psi-emacs-state-run-state psi-emacs--state)))
+            (should (= 1 (length calls)))
             (should (equal "prompt" (caar calls)))
             (should (equal '((:message . "hello")) (cadar calls)))
-            (should (equal "prompt_while_streaming" (caadr calls)))
-            (should (equal '((:message . "") (:behavior . "steer")) (cadadr calls)))
-            (should (equal "prompt_while_streaming" (caaddr calls)))
-            (should (equal '((:message . "") (:behavior . "queue"))
-                           (cadr (nth 2 calls))))))
+            (should (equal "Cannot send empty input."
+                           (psi-emacs-state-last-error psi-emacs--state)))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
@@ -663,12 +663,15 @@
                         (lambda ()
                           (setf (psi-emacs-state-run-state psi-emacs--state) 'streaming)
                           (psi-emacs-queue-from-buffer)
+                          ;; Input is consumed after first dispatch; second non-slash
+                          ;; queue send is blank and blocked locally.
                           (setf (psi-emacs-state-run-state psi-emacs--state) 'idle)
                           (psi-emacs-queue-from-buffer)))))
+            (should (= 1 (length calls)))
             (should (equal "prompt_while_streaming" (caar calls)))
             (should (equal '((:message . "queued") (:behavior . "queue")) (cadar calls)))
-            (should (equal "prompt" (caadr calls)))
-            (should (equal '((:message . "")) (cadadr calls)))))
+            (should (equal "Cannot send empty input."
+                           (psi-emacs-state-last-error psi-emacs--state)))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
@@ -732,6 +735,25 @@
                      (psi-emacs-state-last-error psi-emacs--state)))
       (should (equal "hello" (psi-emacs--tail-draft-text)))
       (should-not (string-match-p "^User: hello$" (buffer-string))))))
+
+(ert-deftest psi-send-empty-input-is-blocked-locally ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-run-state psi-emacs--state) 'streaming)
+    (psi-emacs--ensure-input-area)
+    (let ((calls nil))
+      (cl-letf (((symbol-value 'psi-emacs--send-request-function)
+                 (lambda (_state op params &optional _callback)
+                   (push (list op params) calls)
+                   t)))
+        (psi-emacs-send-from-buffer nil))
+      (should (equal '() calls))
+      ;; Blank input guard is local validation only; it does not mutate run-state.
+      (should (eq 'streaming (psi-emacs-state-run-state psi-emacs--state)))
+      (should (equal "Cannot send empty input."
+                     (psi-emacs-state-last-error psi-emacs--state)))
+      (should-not (string-match-p "^User:" (buffer-string))))))
 
 (ert-deftest psi-set-model-dispatches-canonical-rpc-op ()
   (with-temp-buffer

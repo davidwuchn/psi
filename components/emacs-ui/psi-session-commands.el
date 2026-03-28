@@ -908,21 +908,29 @@ frontend is streaming.
 Returns plist:
   :dispatched?  non-nil when dispatched remotely
   :local-only?  always nil in the backend-owned slash architecture."
-  (let* ((slash-candidate? (and psi-emacs--state
-                                (psi-emacs--slash-command-candidate-p message)))
+  (let* ((message* (or message ""))
+         (slash-candidate? (and psi-emacs--state
+                                (psi-emacs--slash-command-candidate-p message*)))
+         (blank-non-slash? (and (not slash-candidate?)
+                                (string-empty-p (string-trim message*))))
          (streaming? (and psi-emacs--state
                           (memq (psi-emacs-state-run-state psi-emacs--state)
                                 '(streaming interrupt_pending))))
          (sent? (cond
+                 (blank-non-slash?
+                  (let ((msg "Cannot send empty input."))
+                    (psi-emacs--set-last-error psi-emacs--state msg)
+                    (message "psi: %s" msg)
+                    nil))
                  (slash-candidate?
-                  (psi-emacs--dispatch-request "command" `((:text . ,message))))
+                  (psi-emacs--dispatch-request "command" `((:text . ,message*))))
                  (streaming?
                   (psi-emacs--dispatch-request
                    "prompt_while_streaming"
-                   `((:message . ,message)
+                   `((:message . ,message*)
                      (:behavior . ,(or behavior "steer")))))
                  (t
-                  (psi-emacs--dispatch-request "prompt" `((:message . ,message)))))))
+                  (psi-emacs--dispatch-request "prompt" `((:message . ,message*)))))))
     (when sent?
       (psi-emacs--set-run-state psi-emacs--state 'streaming)
       (psi-emacs--reset-stream-watchdog psi-emacs--state))
