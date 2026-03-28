@@ -255,7 +255,7 @@ Returns non-nil when request dispatch was accepted by transport."
     ;; Re-render projection block when present so footer/projection separator
     ;; widths track the current visible window after resize/split changes.
     (when (and (fboundp 'psi-emacs--upsert-projection-block)
-               (consp (psi-emacs-state-projection-range psi-emacs--state)))
+               (psi-emacs--region-bounds 'projection 'main))
       (psi-emacs--upsert-projection-block))))
 
 (defun psi-emacs--live-owned-process ()
@@ -333,9 +333,10 @@ When PRESERVE-TOOL-OUTPUT-VIEW-MODE is non-nil, keep the current
     (setf (psi-emacs-state-projection-statuses psi-emacs--state) nil)
     (setf (psi-emacs-state-projection-footer psi-emacs--state) nil)
     (psi-emacs--clear-notification-lifecycle psi-emacs--state)
-    (when (consp (psi-emacs-state-projection-range psi-emacs--state))
-      (set-marker (car (psi-emacs-state-projection-range psi-emacs--state)) nil)
-      (set-marker (cdr (psi-emacs-state-projection-range psi-emacs--state)) nil))
+    (when-let ((projection-id (and psi-emacs--state
+                                   (psi-emacs--region-bounds 'projection 'main)
+                                   'main)))
+      (psi-emacs--region-unregister 'projection projection-id))
     (setf (psi-emacs-state-projection-range psi-emacs--state) nil)
     (when (markerp (psi-emacs-state-input-separator-marker psi-emacs--state))
       (set-marker (psi-emacs-state-input-separator-marker psi-emacs--state) nil))

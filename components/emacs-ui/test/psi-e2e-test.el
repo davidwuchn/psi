@@ -65,18 +65,12 @@
 (defun psi-e2e--projection-read-only-position ()
   "Return a stable interior position for projection/footer read-only checks.
 
-Returns nil when no projection range is present."
-  (let* ((range (and psi-emacs--state
-                     (psi-emacs-state-projection-range psi-emacs--state)))
-         (start (and (consp range) (car range)))
-         (end (and (consp range) (cdr range))))
-    (when (and (markerp start)
-               (markerp end)
-               (marker-buffer start)
-               (marker-buffer end)
-               (< (marker-position start) (marker-position end)))
-      (let ((start-pos (marker-position start))
-            (end-pos (marker-position end)))
+Returns nil when no projection region is present."
+  (when-let ((bounds (and psi-emacs--state
+                          (psi-emacs--region-bounds 'projection 'main))))
+    (let ((start-pos (car bounds))
+          (end-pos (cdr bounds)))
+      (when (< start-pos end-pos)
         (if (> (- end-pos start-pos) 1)
             (1- end-pos)
           start-pos)))))
