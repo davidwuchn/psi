@@ -436,7 +436,10 @@ tracks transcript growth like a terminal footer."
                (psi-emacs--input-separator-needs-refresh-p))
       (psi-emacs--refresh-input-separator-line))
     (let* ((follow-anchor (psi-emacs--draft-anchor-at-end-p))
-           (range (psi-emacs-state-projection-range psi-emacs--state))
+           (range (or (psi-emacs-state-projection-range psi-emacs--state)
+                      (when-let ((bounds (psi-emacs--region-bounds 'projection 'main)))
+                        (cons (copy-marker (car bounds) nil)
+                              (copy-marker (cdr bounds) nil)))))
            (start (and (consp range) (car range)))
            (end (and (consp range) (cdr range)))
            (rendered (psi-emacs--projection-render-block psi-emacs--state)))
@@ -474,7 +477,8 @@ tracks transcript growth like a terminal footer."
                 (set-marker-insertion-type new-start t)
                 (set-marker new-end render-end)
                 (setf (psi-emacs-state-projection-range psi-emacs--state)
-                      (cons new-start new-end)))))))
+                      (cons new-start new-end))
+                (psi-emacs--region-register 'projection 'main new-start new-end))))))
 
       (when follow-anchor
         (psi-emacs--set-draft-anchor-to-end)))))

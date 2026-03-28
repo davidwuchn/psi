@@ -71,16 +71,25 @@ Otherwise, draft ends at `point-max'."
       (point-max))))
 
 (defun psi-emacs--input-separator-marker-valid-p ()
-  "Return non-nil when input separator marker is live and points to separator line start."
-  (and psi-emacs--state
-       (markerp (psi-emacs-state-input-separator-marker psi-emacs--state))
-       (marker-buffer (psi-emacs-state-input-separator-marker psi-emacs--state))
-       (let ((pos (marker-position (psi-emacs-state-input-separator-marker psi-emacs--state))))
-         (and (<= pos (point-max))
-              (save-excursion
-                (goto-char pos)
-                (= pos (line-beginning-position)))
-              (eq (char-after pos) ?─)))))
+  "Return non-nil when input separator marker is live and points to separator line start.
+
+When marker state drifted, attempt property-backed recovery first."
+  (when psi-emacs--state
+    (when-let ((bounds (psi-emacs--region-bounds 'input-separator 'main)))
+      (let ((marker (psi-emacs-state-input-separator-marker psi-emacs--state)))
+        (unless (and (markerp marker) (marker-buffer marker))
+          (setq marker (copy-marker (car bounds) t))
+          (set-marker-insertion-type marker t)
+          (setf (psi-emacs-state-input-separator-marker psi-emacs--state) marker))
+        (set-marker marker (car bounds))))
+    (and (markerp (psi-emacs-state-input-separator-marker psi-emacs--state))
+         (marker-buffer (psi-emacs-state-input-separator-marker psi-emacs--state))
+         (let ((pos (marker-position (psi-emacs-state-input-separator-marker psi-emacs--state))))
+           (and (<= pos (point-max))
+                (save-excursion
+                  (goto-char pos)
+                  (= pos (line-beginning-position)))
+                (eq (char-after pos) ?─))))))
 
 (defun psi-emacs--input-separator-position ()
   "Return buffer position of input separator marker, or nil."
@@ -138,7 +147,11 @@ Otherwise, draft ends at `point-max'."
           (delete-region bol (min (point-max) (1+ eol)))
           (goto-char bol)
           (insert line)
-          (set-marker separator-marker bol))))))
+          (set-marker separator-marker bol)
+          (psi-emacs--region-register 'input-separator
+                                      'main
+                                      bol
+                                      (max (1+ bol) (line-end-position))))))))
 
 (defun psi-emacs--draft-anchor-valid-p ()
   "Return non-nil when the current draft anchor marker is valid."
@@ -182,7 +195,11 @@ Otherwise, draft ends at `point-max'."
               (let ((separator-marker (copy-marker separator-start t)))
                 (set-marker-insertion-type separator-marker t)
                 (setf (psi-emacs-state-input-separator-marker psi-emacs--state)
-                      separator-marker))
+                      separator-marker)
+                (psi-emacs--region-register 'input-separator
+                                            'main
+                                            separator-start
+                                            (max (1+ separator-start) (1- (point)))))
               (setf (psi-emacs-state-draft-anchor psi-emacs--state)
                     (copy-marker (point) nil))
               (insert existing-input))))
