@@ -52,7 +52,7 @@
    [psi.agent-session.commands :as commands]
    [psi.agent-session.core :as session]
    [psi.agent-session.mutations :as mutations]
-   [psi.agent-session.service :as service]
+
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.state-accessors :as sa]
@@ -86,6 +86,17 @@
 (defonce nrepl-runtime
   (atom nil))
 
+(defn- default-session-id-in
+  [ctx]
+  (some-> (ss/list-context-sessions-in ctx) first :session-id))
+
+(defn- active-session-id-in-session-state
+  []
+  (let [{:keys [ctx focus-session-id* tui-focus*]} @session-state]
+    (or (some-> focus-session-id* deref)
+        (some-> tui-focus* deref)
+        (default-session-id-in ctx))))
+
 ;; ============================================================
 ;; nREPL server (started conditionally via --nrepl)
 ;; ============================================================
@@ -102,11 +113,13 @@
                            :port (:port server)
                            :endpoint (str host ":" (:port server))})
     (when-let [ctx (:ctx @session-state)]
-      (psi.agent-session.state-accessors/set-nrepl-runtime-in!
-       ctx
-       {:host host
-        :port (:port server)
-        :endpoint (str host ":" (:port server))}))
+      (when-let [session-id (active-session-id-in-session-state)]
+        (psi.agent-session.state-accessors/set-nrepl-runtime-in!
+         ctx
+         session-id
+         {:host host
+          :port (:port server)
+          :endpoint (str host ":" (:port server))})))
     (spit port-file (str (:port server)))
     (.deleteOnExit port-file)
     (.println System/err (str "  nREPL : " host ":" (:port server)
@@ -119,7 +132,8 @@
           port-file   (java.io.File. ".nrepl-port")]
       (reset! nrepl-runtime nil)
       (when-let [ctx (:ctx @session-state)]
-        (psi.agent-session.state-accessors/set-nrepl-runtime-in! ctx nil))
+        (when-let [session-id (active-session-id-in-session-state)]
+          (psi.agent-session.state-accessors/set-nrepl-runtime-in! ctx session-id nil)))
       (stop-server server)
       (when (.exists port-file)
         (when (= (str/trim (slurp port-file)) (str (:port server)))
@@ -474,13 +488,13 @@
       nil)))
 
 (defn- run-prompt!
-  "Send `text` to the agent and block until done, printing the response.
+  "Send `text` to `session-id` and block until done, printing the response.
    Uses shared runtime prompt preparation for parity with RPC/TUI."
-  [ctx ai-ctx ai-model text]
-  (let [{:keys [user-message expansion]} (runtime/prepare-user-message-in! ctx text)
+  [ctx session-id ai-ctx ai-model text]
+  (let [{:keys [user-message expansion]} (runtime/prepare-user-message-in! ctx session-id text nil)
         _       (print-expansion-banner! expansion)
-        api-key (runtime/resolve-api-key-in ctx ai-model)
-        result  (runtime/run-agent-loop-in! ctx ai-ctx ai-model [user-message]
+        api-key (runtime/resolve-api-key-in ctx session-id ai-model)
+        result  (runtime/run-agent-loop-in! ctx session-id ai-ctx ai-model [user-message]
                                             {:api-key api-key
                                              :sync-on-git-head-change? true})]
     (print-assistant-message result)))
@@ -496,19 +510,19 @@
       [])))
 
 (defn- startup-rehydrate-from-current-session!
-  "Run startup prompts in the current session and return rehydrate payload.
+  "Run startup prompts in `session-id` and return rehydrate payload.
 
    Returns map:
    {:agent-messages [...]
     :messages [...]
     :tool-calls {...}
     :tool-order [...]}"
-  [ctx ai-ctx ai-model]
+  [ctx session-id ai-ctx ai-model]
   (try
-    (runtime/run-startup-prompts-in! ctx {:ai-ctx ai-ctx :ai-model ai-model :spawn-mode :new-root})
+    (runtime/run-startup-prompts-in! ctx session-id {:ai-ctx ai-ctx :ai-model ai-model :spawn-mode :new-root})
     (catch Throwable t
       (timbre/warn t "Startup prompts failed; continuing with empty startup transcript")))
-  (let [agent-messages (:messages (agent/get-data-in (ss/agent-ctx-in ctx)))
+  (let [agent-messages (:messages (agent/get-data-in (ss/agent-ctx-in ctx session-id)))
         tui-state      (agent-messages->tui-resume-state agent-messages)]
     (assoc tui-state :agent-messages agent-messages)))
 
@@ -521,11 +535,10 @@
     :messages [...]
     :tool-calls {...}
     :tool-order [...]}"
-  [ctx ai-ctx ai-model]
-  (let [sd  (session/new-session-in! ctx)
-        sid (:session-id sd)
-        ctx (assoc ctx :target-session-id sid)]
-    (assoc (startup-rehydrate-from-current-session! ctx ai-ctx ai-model)
+  [ctx source-session-id ai-ctx ai-model]
+  (let [sd  (session/new-session-in! ctx source-session-id {})
+        sid (:session-id sd)]
+    (assoc (startup-rehydrate-from-current-session! ctx sid ai-ctx ai-model)
            :session-id sid)))
 
 (defn- create-runtime-session-context
@@ -548,7 +561,7 @@
                                   {:reasoning (:supports-reasoning effective-model)})
         effective-prompt-mode    (config-res/resolved-prompt-mode cfg)
         nucleus-prelude-override (config-res/resolved-nucleus-prelude-override cfg)
-        ctx                      (session/create-context
+        [ctx seed-id]            (session/create-context
                                   {:initial-session {:model {:provider  (name (:provider effective-model))
                                                              :id        (:id effective-model)
                                                              :reasoning (:supports-reasoning effective-model)}
@@ -563,16 +576,15 @@
                                    :ui-type ui-type
                                    :mutations mutations/all-mutations})
         _                        (when-not (sa/recursion-state-in ctx)
-                                   (sa/set-recursion-state-in! ctx
-                                                               (recursion/initial-state)))
+                                   (sa/set-recursion-state-in! ctx seed-id (recursion/initial-state)))
         recursion-ctx            (recursion/create-hosted-context ctx (ss/state-path :recursion))
-        ctx                      (assoc ctx :recursion-ctx recursion-ctx)]
-    (service/initialize! ctx)
-    (let [sd  (session/new-session-in! ctx)
-          ctx (assoc ctx :target-session-id (:session-id sd))]
-      {:ctx       ctx
-       :oauth-ctx oauth-ctx
-       :cwd       cwd})))
+        ctx                      (assoc ctx :recursion-ctx recursion-ctx)
+        sd                       (session/new-session-in! ctx seed-id {})
+        session-id               (:session-id sd)]
+    {:ctx        ctx
+     :oauth-ctx  oauth-ctx
+     :cwd        cwd
+     :session-id session-id}))
 
 (defn- bootstrap-runtime-session!
   "Bootstrap a live session context shared by CLI/TUI/RPC modes.
@@ -593,19 +605,19 @@
      (bootstrap-runtime-session! x y {})
      (let [ai-model x
            opts     y
-           {:keys [ctx oauth-ctx cwd]} (create-runtime-session-context ai-model {:cwd (:cwd opts)
-                                                                                 :session-config (:session-config opts)
-                                                                                 :ui-type (or (:ui-type opts) :console)})
-           result (bootstrap-runtime-session! ctx ai-model opts)]
-       (assoc result :ctx ctx :oauth-ctx oauth-ctx :cwd cwd))))
-  ([ctx ai-model {:keys [memory-runtime-opts cwd]}]
+           {:keys [ctx oauth-ctx cwd session-id]} (create-runtime-session-context ai-model {:cwd (:cwd opts)
+                                                                                            :session-config (:session-config opts)
+                                                                                            :ui-type (or (:ui-type opts) :console)})
+           result (bootstrap-runtime-session! ctx session-id ai-model opts)]
+       (assoc result :ctx ctx :oauth-ctx oauth-ctx :cwd cwd :session-id session-id))))
+  ([ctx session-id ai-model {:keys [memory-runtime-opts cwd]}]
    (let [templates        (pt/discover-templates)
          {:keys [skills diagnostics]} (skills/discover-skills)
          _                (doseq [d diagnostics]
                             (timbre/warn "Skill" (:type d) ":" (:message d) (:path d)))
          cwd              (or cwd (System/getProperty "user.dir"))
          ctx-files        (sys-prompt/discover-context-files cwd)
-         sd               (ss/get-session-data-in ctx)
+         sd               (ss/get-session-data-in ctx session-id)
          prompt-mode      (or (:prompt-mode sd) :lambda)
          prelude-override (:nucleus-prelude-override sd)
          base-prompt-opts {:cwd                      cwd
@@ -616,36 +628,37 @@
                            :skills                   skills}
          base-prompt      (sys-prompt/build-system-prompt base-prompt-opts)
          developer-prompt (developer-prompt-from-env)
-         _                (dispatch/dispatch! ctx :session/set-system-prompt {:prompt base-prompt} {:origin :core})
+         _                (dispatch/dispatch! ctx :session/set-system-prompt {:session-id session-id :prompt base-prompt} {:origin :core})
          ext-paths        (ext/discover-extension-paths [] cwd)
-         app-query-tool   (tools/make-app-query-tool (fn [q] (session/query-in ctx q)))
+         app-query-tool   (tools/make-app-query-tool (fn [q] (session/query-in ctx session-id q)))
          summary          (session-bootstrap/bootstrap-in!
-                           ctx {:register-global-query? false
-                                :base-tools             (conj (vec tools/all-tools) app-query-tool)
-                                :system-prompt          base-prompt
-                                :developer-prompt       developer-prompt
-                                :developer-prompt-source (if developer-prompt :env :fallback)
-                                :templates              templates
-                                :skills                 skills
-                                :extension-paths        ext-paths})
+                           ctx session-id
+                           {:register-global-query? false
+                            :base-tools             (conj (vec tools/all-tools) app-query-tool)
+                            :system-prompt          base-prompt
+                            :developer-prompt       developer-prompt
+                            :developer-prompt-source (if developer-prompt :env :fallback)
+                            :templates              templates
+                            :skills                 skills
+                            :extension-paths        ext-paths})
          _                (bootstrap/register-all-domains!)
          graph-caps       (graph-capabilities-in ctx)
          build-opts       (assoc base-prompt-opts :graph-capabilities graph-caps)
          system-prompt    (sys-prompt/build-system-prompt build-opts)
-         _                (dispatch/dispatch! ctx :session/set-system-prompt {:prompt system-prompt} {:origin :core})
+         _                (dispatch/dispatch! ctx :session/set-system-prompt {:session-id session-id :prompt system-prompt} {:origin :core})
          _                (dispatch/dispatch! ctx :session/set-system-prompt-build-opts
-                                              {:opts (dissoc build-opts :prompt-mode)}
+                                              {:session-id session-id :opts (dissoc build-opts :prompt-mode)}
                                               {:origin :core})
          _                (memory-runtime/sync-memory-layer! (merge {:cwd cwd}
                                                                     (or memory-runtime-opts {})))
-         startup-rehydrate (startup-rehydrate-from-current-session! ctx nil ai-model)]
+         startup-rehydrate (startup-rehydrate-from-current-session! ctx session-id nil ai-model)]
      (doseq [{:keys [path error]} (:extension-errors summary)]
        (timbre/warn "Extension error:" path error))
      (when (pos? (:extension-loaded-count summary))
        (timbre/debug "Extensions loaded:" (:extension-loaded-count summary)))
     ;; Register extension run-fn so extension-initiated prompts (e.g. PSL)
     ;; actually invoke the LLM instead of orphaning a user message in agent-core.
-     (runtime/register-extension-run-fn-in! ctx nil ai-model)
+     (runtime/register-extension-run-fn-in! ctx session-id nil ai-model)
      {:ctx               ctx
       :templates         templates
       :skills            skills
@@ -665,55 +678,55 @@
   ([model-key memory-runtime-opts]
    (run-session model-key memory-runtime-opts {}))
   ([model-key memory-runtime-opts session-config]
-   (let [ai-model  (resolve-model model-key)
-         ai-ctx    nil
-         {:keys [ctx oauth-ctx]}
+   (let [ai-model   (resolve-model model-key)
+         ai-ctx     nil
+         {:keys [ctx oauth-ctx session-id]}
          (create-runtime-session-context ai-model {:session-config session-config
                                                    :ui-type :console})
          {:keys [templates skills startup-rehydrate]}
-         (bootstrap-runtime-session! ctx ai-model {:memory-runtime-opts memory-runtime-opts})]
-     (let [cli-focus* (atom (:target-session-id ctx))
-           focus-ctx  (fn [] (assoc ctx :target-session-id @cli-focus*))]
-       (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model
-                              :oauth-ctx oauth-ctx
-                              :nrepl-runtime-atom nrepl-runtime})
-       (print-banner ai-model templates skills ctx)
-       (print-initial-transcript! startup-rehydrate)
-       (let [cmd-opts {:oauth-ctx oauth-ctx
-                       :ai-model ai-model
-                       :supports-session-tree? false
-                       :on-new-session! (fn []
-                                          (let [result (start-new-session-with-startup! (focus-ctx) ai-ctx ai-model)]
-                                            (reset! cli-focus* (:session-id result))
-                                            result))}]
-         (loop []
-           (print "刀: ")
-           (flush)
-           (when-let [line (try (read-line) (catch Exception _ nil))]
-             (let [trimmed (str/trim line)
-                   fctx    (focus-ctx)
-                   result  (when-not (str/blank? trimmed)
-                             (commands/dispatch fctx trimmed cmd-opts))]
-               (when result
-                 (runtime/journal-user-message-in! fctx trimmed))
-               (cond
-                 (nil? result)
-                 (if (str/blank? trimmed)
-                   (recur)
-                   (do
-                     (try
-                       (run-prompt! (focus-ctx) ai-ctx ai-model trimmed)
-                       (catch Exception e
-                         (println (str "\n[Error: " (ex-message e) "]\n"))))
-                     (recur)))
+         (bootstrap-runtime-session! ctx session-id ai-model {:memory-runtime-opts memory-runtime-opts})
+         cli-focus* (atom session-id)]
+     (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model
+                            :oauth-ctx oauth-ctx
+                            :nrepl-runtime-atom nrepl-runtime})
+     (print-banner ai-model templates skills ctx)
+     (print-initial-transcript! startup-rehydrate)
+     (let [cmd-opts {:oauth-ctx oauth-ctx
+                     :ai-model ai-model
+                     :supports-session-tree? false
+                     :on-new-session! (fn []
+                                        (let [source-session-id @cli-focus*
+                                              result             (start-new-session-with-startup! ctx source-session-id ai-ctx ai-model)]
+                                          (reset! cli-focus* (:session-id result))
+                                          result))}]
+       (loop []
+         (print "刀: ")
+         (flush)
+         (when-let [line (try (read-line) (catch Exception _ nil))]
+           (let [trimmed (str/trim line)
+                 sid     @cli-focus*
+                 result  (when-not (str/blank? trimmed)
+                           (commands/dispatch-in ctx sid trimmed cmd-opts))]
+             (when result
+               (runtime/journal-user-message-in! ctx sid trimmed nil))
+             (cond
+               (nil? result)
+               (if (str/blank? trimmed)
+                 (recur)
+                 (do
+                   (try
+                     (run-prompt! ctx sid ai-ctx ai-model trimmed)
+                     (catch Exception e
+                       (println (str "\n[Error: " (ex-message e) "]\n"))))
+                   (recur)))
 
                  (= :quit (:type result))
                  (println "\nψ: Goodbye.\n")
 
-                 (= :resume (:type result))
-                 (do
-                   (println "\n  /resume is only available in TUI mode (--tui).\n")
-                   (recur))
+               (= :resume (:type result))
+               (do
+                 (println "\n  /resume is only available in TUI mode (--tui).\n")
+                 (recur))
 
                  (#{:text :new-session :logout} (:type result))
                  (do
@@ -722,50 +735,50 @@
                    (println (str "\n" (:message result) "\n"))
                    (recur))
 
-                 (= :login-start (:type result))
-                 (do
-                   (println "\n── OAuth Login ────────────────────────")
-                   (let [{:keys [provider url login-state uses-callback-server]} result]
-                     (println (str "  Open: " url "\n"))
-                     (if uses-callback-server
-                       (do
-                         (println "  Waiting for browser callback…")
+               (= :login-start (:type result))
+               (do
+                 (println "\n── OAuth Login ────────────────────────")
+                 (let [{:keys [provider url login-state uses-callback-server]} result]
+                   (println (str "  Open: " url "\n"))
+                   (if uses-callback-server
+                     (do
+                       (println "  Waiting for browser callback…")
+                       (try
+                         (oauth/complete-login! oauth-ctx (:id provider) nil login-state)
+                         (println (str "\n  ✓ Logged in to " (:name provider) "\n"))
+                         (catch Exception e
+                           (println (str "\n  ✗ Login failed: " (ex-message e) "\n")))))
+                     (do
+                       (print "  Paste authorization code: ")
+                       (flush)
+                       (when-let [code (try (read-line) (catch Exception _ nil))]
                          (try
-                           (oauth/complete-login! oauth-ctx (:id provider) nil login-state)
+                           (oauth/complete-login! oauth-ctx (:id provider) (str/trim code) login-state)
                            (println (str "\n  ✓ Logged in to " (:name provider) "\n"))
                            (catch Exception e
-                             (println (str "\n  ✗ Login failed: " (ex-message e) "\n")))))
-                       (do
-                         (print "  Paste authorization code: ")
-                         (flush)
-                         (when-let [code (try (read-line) (catch Exception _ nil))]
-                           (try
-                             (oauth/complete-login! oauth-ctx (:id provider) (str/trim code) login-state)
-                             (println (str "\n  ✓ Logged in to " (:name provider) "\n"))
-                             (catch Exception e
-                               (println (str "\n  ✗ Login failed: " (ex-message e) "\n"))))))))
-                   (recur))
+                             (println (str "\n  ✗ Login failed: " (ex-message e) "\n"))))))))
+                 (recur))
 
-                 (= :login-error (:type result))
-                 (do
-                   (println (str "\n  " (:message result) "\n"))
-                   (recur))
+               (= :login-error (:type result))
+               (do
+                 (println (str "\n  " (:message result) "\n"))
+                 (recur))
 
-                 (= :extension-cmd (:type result))
-                 (do
-                   (try
-                     (when-let [handler (:handler result)]
-                       (let [captured (with-out-str (handler (:args result)))]
-                         (when-not (str/blank? captured)
-                           (println (str "\n" (str/trimr captured) "\n")))))
-                     (catch Exception e
-                       (println (str "\n[Command error: " (ex-message e) "]\n"))))
-                   (recur))
+               (= :extension-cmd (:type result))
+               (do
+                 (try
+                   (when-let [handler (:handler result)]
+                     (let [captured (with-out-str (handler (:args result)))]
+                       (when-not (str/blank? captured)
+                         (println (str "\n" (str/trimr captured) "\n")))))
+                   (catch Exception e
+                     (println (str "\n[Command error: " (ex-message e) "]\n"))))
+                 (recur))
 
-                 :else
-                 (do
-                   (println (str "\n" result "\n"))
-                   (recur)))))))))))
+               :else
+               (do
+                 (println (str "\n" result "\n"))
+                 (recur))))))))))
 
 ;; TUI session (charm.clj Elm Architecture)
 ;; ============================================================
@@ -773,8 +786,8 @@
 (defn new-session-with-startup-in!
   "Public helper for runtimes/tests: create new session and run startup prompts.
    Returns rehydrate payload map with :agent-messages + TUI projection."
-  [ctx ai-ctx ai-model]
-  (start-new-session-with-startup! ctx ai-ctx ai-model))
+  [ctx source-session-id ai-ctx ai-model]
+  (start-new-session-with-startup! ctx source-session-id ai-ctx ai-model))
 
 (defn run-tui-session-with-interface!
   "Create a session and run it with a provided TUI interface function.
@@ -790,13 +803,16 @@
    (let [ai-model    (resolve-model model-key)
          ai-ctx      nil
          event-queue (java.util.concurrent.LinkedBlockingQueue.)
-         {:keys [ctx oauth-ctx cwd]}
+         {:keys [ctx oauth-ctx cwd session-id]}
          (create-runtime-session-context ai-model {:event-queue event-queue
                                                    :session-config session-config
                                                    :ui-type :tui})
          {:keys [startup-rehydrate]}
-         (bootstrap-runtime-session! ctx ai-model {:memory-runtime-opts memory-runtime-opts
-                                                   :cwd cwd})
+         (bootstrap-runtime-session! ctx session-id ai-model {:memory-runtime-opts memory-runtime-opts
+                                                              :cwd cwd})
+
+         ;; TUI-local focus atom — tracks active session-id
+         tui-focus* (atom session-id)
 
          ;; TUI-local focus atom — all closures read this to scope ctx
          tui-focus* (atom (:target-session-id ctx))
@@ -818,9 +834,11 @@
          ;; Returns TUI resume state maps to display immediately after loading.
          resume-fn! (fn [session-path]
                       (try
-                        (let [sd   (session/resume-session-in! (focus-ctx) session-path)
-                              _    (reset! tui-focus* (:session-id sd))
-                              msgs (:messages (agent/get-data-in (ss/agent-ctx-in (focus-ctx))))]
+                        (let [current-sid @tui-focus*
+                              sd          (session/resume-session-in! ctx current-sid session-path)
+                              sid         (:session-id sd)
+                              _           (reset! tui-focus* sid)
+                              msgs        (:messages (agent/get-data-in (ss/agent-ctx-in ctx sid)))]
                           (agent-messages->tui-resume-state msgs))
                         (catch Exception e
                           (timbre/error e "Resume failed:" session-path)
@@ -831,9 +849,11 @@
 
          switch-session-fn! (fn [session-id]
                               (try
-                                (let [sd   (session/ensure-session-loaded-in! (focus-ctx) session-id)
-                                      _    (reset! tui-focus* (:session-id sd))
-                                      msgs (:messages (agent/get-data-in (ss/agent-ctx-in (focus-ctx))))]
+                                (let [source-session-id @tui-focus*
+                                      sd                 (session/ensure-session-loaded-in! ctx source-session-id session-id)
+                                      sid                (:session-id sd)
+                                      _                  (reset! tui-focus* sid)
+                                      msgs               (:messages (agent/get-data-in (ss/agent-ctx-in ctx sid)))]
                                   (agent-messages->tui-resume-state msgs))
                                 (catch Exception e
                                   (timbre/error e "Session switch failed:" session-id)
@@ -846,7 +866,8 @@
                     :ai-model ai-model
                     :supports-session-tree? true
                     :on-new-session! (fn []
-                                       (let [result (start-new-session-with-startup! (focus-ctx) ai-ctx ai-model)]
+                                       (let [source-session-id @tui-focus*
+                                             result             (start-new-session-with-startup! ctx source-session-id ai-ctx ai-model)]
                                          (reset! tui-focus* (:session-id result))
                                          result))}
 
@@ -857,11 +878,11 @@
          dispatch-fn (fn [text]
                        (if (:pending-login @session-state)
                          nil  ;; fall through to run-agent-fn! for login code
-                         (let [fctx   (focus-ctx)
-                               result (commands/dispatch fctx text cmd-opts)]
+                         (let [sid    @tui-focus*
+                               result (commands/dispatch-in ctx sid text cmd-opts)]
                            (when result
                              ;; Keep command inputs in the session journal for parity with RPC/CLI.
-                             (runtime/journal-user-message-in! fctx text))
+                             (runtime/journal-user-message-in! ctx sid text nil))
                            (when (= :login-start (:type result))
                              (if (:uses-callback-server result)
                                nil
@@ -873,9 +894,10 @@
 
          ;; Called by TUI Escape during active work.
          on-interrupt-fn! (fn [_state]
-                            (session/abort-in! (focus-ctx))
-                            {:queued-text (session/consume-queued-input-text-in! (focus-ctx))
-                             :message "Interrupted active work."})
+                            (let [sid @tui-focus*]
+                              (session/abort-in! ctx sid)
+                              {:queued-text (session/consume-queued-input-text-in! ctx sid)
+                               :message "Interrupted active work."}))
 
          ;; run-agent-fn! — called by the TUI for non-command input.
          ;; Handles pending-login step 2 and agent execution.
@@ -899,11 +921,11 @@
                              :else
                              (future
                                (try
-                                 (let [fctx (focus-ctx)
-                                       {:keys [user-message]} (runtime/prepare-user-message-in! fctx text)
-                                       api-key  (runtime/resolve-api-key-in fctx ai-model)
+                                 (let [sid      @tui-focus*
+                                       {:keys [user-message]} (runtime/prepare-user-message-in! ctx sid text nil)
+                                       api-key  (runtime/resolve-api-key-in ctx sid ai-model)
                                        result   (runtime/run-agent-loop-in!
-                                                 fctx ai-ctx ai-model [user-message]
+                                                 ctx sid ai-ctx ai-model [user-message]
                                                  {:api-key api-key
                                                   :progress-queue queue
                                                   :sync-on-git-head-change? true})]
@@ -912,24 +934,24 @@
                                    (.put queue {:kind :error :message (ex-message e)})))))))]
 
      (tui-start-fn! (:name ai-model) run-agent-fn!
-                    {:query-fn             (fn [q] (session/query-in (focus-ctx) q))
+                    {:query-fn             (fn [q] (session/query-in ctx @tui-focus* q))
                      :ui-state*        (ss/atom-view-in ctx (ss/state-path :ui-state))
                      :dispatch-fn          dispatch-fn
                      :on-interrupt-fn!     on-interrupt-fn!
                      :on-queue-input-fn!   (fn [text _state]
-                                             (let [fctx (focus-ctx)]
-                                               (if (= :streaming (ss/sc-phase-in fctx))
+                                             (let [sid @tui-focus*]
+                                               (if (= :streaming (ss/sc-phase-in ctx sid))
                                                  (do
-                                                   (session/steer-in! fctx text)
+                                                   (session/queue-while-streaming-in! ctx sid text :steer)
                                                    {:message "Queued steering message."})
                                                  (do
-                                                   (session/follow-up-in! fctx text)
+                                                   (session/queue-while-streaming-in! ctx sid text :queue)
                                                    {:message "Queued follow-up message."}))))
                      :double-press-window-ms 500
                      :double-escape-action :none
                      :cwd                  cwd
                      :focus-session-id     @tui-focus*
-                     :current-session-file (:session-file (ss/get-session-data-in (focus-ctx)))
+                     :current-session-file (:session-file (ss/get-session-data-in ctx @tui-focus*))
                      :initial-messages     (vec (or (:messages startup-rehydrate) []))
                      :initial-tool-calls   (or (:tool-calls startup-rehydrate) {})
                      :initial-tool-order   (vec (or (:tool-order startup-rehydrate) []))
@@ -966,15 +988,15 @@
        (binding [*out* *err*]
          (let [ai-model      (resolve-model model-key)
                event-queue   (java.util.concurrent.LinkedBlockingQueue.)
-               {:keys [ctx oauth-ctx cwd]}
+               {:keys [ctx oauth-ctx cwd session-id]}
                (create-runtime-session-context ai-model {:event-queue event-queue
                                                          :session-config session-config
                                                          :ui-type :emacs})
-               _             (bootstrap-runtime-session! ctx ai-model {:memory-runtime-opts memory-runtime-opts
-                                                                       :cwd cwd})
+               _             (bootstrap-runtime-session! ctx session-id ai-model {:memory-runtime-opts memory-runtime-opts
+                                                                                   :cwd cwd})
                trace-file*   (when-not (str/blank? rpc-trace-file)
                                rpc-trace-file)
-               _             (dispatch/dispatch! ctx :session/set-rpc-trace {:enabled? (boolean trace-file*) :file trace-file*} {:origin :core})
+               _             (dispatch/dispatch! ctx :session/set-rpc-trace {:session-id session-id :enabled? (boolean trace-file*) :file trace-file*} {:origin :core})
                trace-lock    (Object.)
                trace-fn      (fn [{:keys [dir raw frame parse-error]}]
                                (try
@@ -996,9 +1018,8 @@
                                          (spit path (str (pr-str entry) "\n") :append true)))))
                                  (catch Throwable t
                                    (timbre/warn t "Failed to write rpc trace event"))))
-               focus-atom    (atom (:target-session-id ctx))
-               focus-ctx     (fn [] (assoc ctx :target-session-id @focus-atom))
-               state         (atom {:handshake-server-info-fn (fn [] (assoc (rpc/session->handshake-server-info (focus-ctx))
+               focus-atom    (atom session-id)
+               state         (atom {:handshake-server-info-fn (fn [] (assoc (rpc/session->handshake-server-info ctx @focus-atom)
                                                                             :ui-type :emacs))
                                     :handshake-context-updated-payload-fn (fn [] {:active-session-id @focus-atom
                                                                                   :sessions []})
@@ -1006,7 +1027,8 @@
                                     :subscribed-topics #{}
                                     :rpc-ai-model ai-model
                                     :on-new-session! (fn []
-                                                       (let [result (start-new-session-with-startup! (focus-ctx) nil ai-model)]
+                                                       (let [source-session-id @focus-atom
+                                                             result             (start-new-session-with-startup! ctx source-session-id nil ai-model)]
                                                          (reset! focus-atom (:session-id result))
                                                          result))})
                request-handler (rpc/make-session-request-handler ctx)]

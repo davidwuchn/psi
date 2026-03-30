@@ -291,12 +291,15 @@
 ;; ============================================================
 
 (defn normalize-event
-  "Normalize public dispatch inputs into one canonical internal event value."
+  "Normalize public dispatch inputs into one canonical internal event value.
+   Lifts :session-id from event-data to :event/session-id so interceptors
+   and effect handlers can access it without reading ctx."
   [event-type event-data opts]
-  {:event/type      event-type
-   :event/data      event-data
-   :event/origin    (or (:origin opts) :core)
-   :event/ext-id    (:ext-id opts)
+  {:event/type       event-type
+   :event/data       event-data
+   :event/session-id (:session-id event-data)
+   :event/origin     (or (:origin opts) :core)
+   :event/ext-id     (:ext-id opts)
    :event/replaying? (boolean (:replaying? opts))})
 
 (defn- event-type-of [ictx]
@@ -320,6 +323,10 @@
 (defn- event-replaying?-of [ictx]
   (or (:replaying? ictx)
       (boolean (get-in ictx [:event :event/replaying?]))))
+
+(defn- event-session-id-of [ictx]
+  (or (:session-id ictx)
+      (get-in ictx [:event :event/session-id])))
 
 ;; ============================================================
 ;; Built-in interceptors
@@ -549,6 +556,10 @@
   "Looks up and invokes the registered handler for the event type.
    Sets :result on the interceptor context.
 
+   Ensures handlers always receive :session-id when the event carries one.
+   The session-id is sourced from event-data (via the interceptor context),
+   never from ctx.
+
    If the handler returns a pure result map ({:session-update fn :effects [...]}),
    it is stored as :pure-result for the apply interceptor.
    Otherwise, the handler is legacy and its return value is stored as :result."
@@ -559,9 +570,17 @@
       (if (:blocked? ictx)
         ictx
         (if-let [entry (handler-entry (event-type-of ictx))]
-          (let [handler-fn (:fn entry)
+          (let [handler-fn   (:fn entry)
+                ctx          (:ctx ictx)
+                raw-data     (event-data-of ictx)
+                ;; Ensure :session-id is in handler data when the event
+                ;; carries one (sourced from ictx, never from ctx).
+                eff-sid      (:session-id ictx)
+                handler-data (if (and eff-sid (not (:session-id raw-data)))
+                               (assoc (or raw-data {}) :session-id eff-sid)
+                               raw-data)
                 result (try
-                         (handler-fn (:ctx ictx) (event-data-of ictx))
+                         (handler-fn ctx handler-data)
                          (catch Exception e
                            (timbre/warn "Dispatch handler error"
                                         (event-type-of ictx)
@@ -631,9 +650,16 @@
     (fn [ictx]
       (let [ctx         (:ctx ictx)
             execute-fn  (:execute-dispatch-effect-fn ctx)
-            effects     (:applied-effects ictx)]
-        (if (and (fn? execute-fn) (seq effects))
-          (let [results (mapv (fn [effect] (execute-fn ctx effect)) effects)]
+            effects     (:applied-effects ictx)
+            ;; Inject the resolved session-id into each effect that doesn't
+            ;; already carry one, so effect handlers never need to read ctx.
+            eff-sid     (:session-id ictx)
+            effects*    (if eff-sid
+                          (mapv (fn [e] (if (:session-id e) e (assoc e :session-id eff-sid)))
+                                effects)
+                          effects)]
+        (if (and (fn? execute-fn) (seq effects*))
+          (let [results (mapv (fn [effect] (execute-fn ctx effect)) effects*)]
             (cond-> ictx
               (and (:return-effect-result? ictx)
                    (nil? (:result ictx))
@@ -779,8 +805,10 @@
   ([ctx event-type event-data]
    (dispatch! ctx event-type event-data nil))
   ([ctx event-type event-data opts]
-   (let [event (normalize-event event-type event-data opts)
+   (let [event      (normalize-event event-type event-data opts)
+         session-id (event-session-id-of {:event event})
          ictx  {:ctx        ctx
+                :session-id session-id
                 :event      event
                 :event-type (:event/type event)
                 :event-data (:event/data event)

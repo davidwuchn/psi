@@ -458,7 +458,7 @@
                     :content "Review the following: $@"
                     :source :project
                     :file-path "/review.md"}]
-        ctx (session-core/create-context
+        [ctx _] (session-core/create-context
              {:initial-session {:prompt-templates templates}})]
 
     (testing "query template count via EQL"
@@ -489,7 +489,7 @@
                     :content "Hello $1 and $2!"
                     :source :user
                     :file-path "/greet.md"}]
-        ctx (session-core/create-context
+        [ctx _] (session-core/create-context
              {:initial-session {:prompt-templates templates}})
         env (pci/register resolvers/all-resolvers)
         result (p.eql/process env

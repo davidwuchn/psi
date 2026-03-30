@@ -133,6 +133,10 @@
 (defn create-context
   "Create an isolated session context.
 
+  Returns [ctx seed-id] where seed-id is the ephemeral seed session-id
+  that must be passed to new-session-in! or resume-session-in! to create
+  the first real session.
+
   Options (all optional):
     :initial-session   — overrides merged into the initial AgentSession data map
     :compaction-fn     — (fn [session-data preparation instructions]) → CompactionResult
@@ -214,8 +218,14 @@
                             :dispatch-statechart-event-fn dispatch-handlers/dispatch-statechart-event-in!
                             :runtime-tool-executor-fn tool-plan/default-execute-runtime-tool-in!
                             :execute-tool-runtime-fn #'tool-plan/execute-tool-runtime-in!
-                            :refresh-system-prompt-fn (fn [ctx] (dispatch/dispatch! ctx :session/refresh-system-prompt nil {:origin :core}))
-                            :execute-compaction-fn execute-compaction-in!
+                            :refresh-system-prompt-fn (fn
+                                                         ([_ctx]
+                                                          (throw (ex-info "refresh-system-prompt-fn requires explicit session-id"
+                                                                          {:callback :refresh-system-prompt-fn})))
+                                                         ([ctx session-id]
+                                                          (dispatch/dispatch! ctx :session/refresh-system-prompt {:session-id session-id} {:origin :core})))
+                            :execute-compaction-fn (fn [ctx session-id custom-instructions]
+                                                     (execute-compaction-in! ctx session-id custom-instructions))
                             :send-extension-message-fn #'ext-rt/send-extension-message-in!
                             :register-resolvers-fn (fn [qctx rebuild?] (register-resolvers-in! qctx rebuild?))
                             :register-mutations-fn (fn [qctx mutations rebuild?] (register-mutations-in! qctx mutations rebuild?))
@@ -223,13 +233,18 @@
                             :emit-background-job-terminal-messages-fn bg-rt/maybe-emit-background-job-terminal-messages!
                             :reconcile-and-emit-background-job-terminals-fn bg-rt/reconcile-and-emit-background-job-terminals-in!
                             :journal-append-fn ss/journal-append-in!
-                            :effective-cwd-fn (fn [ctx] (ss/effective-cwd-in ctx))
+                            :effective-cwd-fn (fn
+                                                 ([_ctx]
+                                                  (throw (ex-info "effective-cwd-fn requires explicit session-id"
+                                                                  {:callback :effective-cwd-fn})))
+                                                 ([ctx session-id]
+                                                  (ss/effective-cwd-in ctx session-id)))
                             :daemon-thread-fn dispatch-handlers/daemon-thread
                             :drop-trailing-overflow-error-fn dispatch-handlers/drop-trailing-overflow-error!
                             :validate-dispatch-result-fn dispatch/validate-dispatch-schemas
                             :all-mutations mutations}
-         run-tool-call-fn  (fn [ctx {:keys [tool-call parsed-args progress-queue]}]
-                             (executor/run-tool-call-through-runtime-effect! ctx tool-call parsed-args progress-queue))
+         run-tool-call-fn  (fn [ctx {:keys [session-id tool-call parsed-args progress-queue]}]
+                             (executor/run-tool-call-through-runtime-effect! ctx session-id tool-call parsed-args progress-queue))
          ctx               (assoc ctx0 :run-tool-call-fn run-tool-call-fn)
          _                 (dispatch-handlers/register-all! ctx)
          actions-fn        (dispatch-handlers/make-actions-fn ctx)]
@@ -252,63 +267,60 @@
      ;; Start agent-core
      (agent/create-agent-in! agent-ctx (or agent-initial {}))
 
-     ctx)))
+     [ctx initial-sid])))
 
 ;;; Session lifecycle — delegates directly to session-lifecycle.clj
 
 (defn new-session-in!
   "Start a fresh session."
-  ([ctx]
-   (lifecycle/new-session-in! ctx))
-  ([ctx opts]
-   (lifecycle/new-session-in! ctx opts)))
+  [ctx source-session-id opts]
+  (lifecycle/new-session-in! ctx source-session-id opts))
 
 (defn resume-session-in!
   "Load and resume a session from session-path."
-  [ctx session-path]
-  (lifecycle/resume-session-in! ctx session-path))
+  [ctx source-session-id session-path]
+  (lifecycle/resume-session-in! ctx source-session-id session-path))
 
 (defn fork-session-in!
-  "Fork the session from entry-id."
-  [ctx entry-id]
-  (lifecycle/fork-session-in! ctx entry-id))
+  "Fork `parent-session-id` from `entry-id`."
+  [ctx parent-session-id entry-id]
+  (lifecycle/fork-session-in! ctx parent-session-id entry-id))
 
 (defn ensure-session-loaded-in!
   "Ensure `session-id` is loaded as the active runtime session in this context.
 
    Behavior:
    - if session-id is nil, no-op
-   - if already the targeted session, returns its data
+   - if already the source session, returns its data
    - if known in context session index with a session-file path, resumes that file
    - otherwise throws ex-info with :error-code request/not-found
 
    Returns session-data for the loaded session."
-  [ctx session-id]
+  [ctx source-session-id session-id]
   (when session-id
-    (let [current-id (:session-id (ss/get-session-data-in ctx))]
-      (if (= current-id session-id)
-        (ss/get-session-data-in ctx)
-        (let [sessions (ss/get-sessions-map-in ctx)
-              target   (get sessions session-id)
-              path     (get-in target [:data :session-file])]
-          (cond
-            (nil? target)
-            (throw (ex-info "session id not found in context session index"
-                            {:error-code "request/not-found"
-                             :session-id session-id}))
+    (if (= source-session-id session-id)
+      (ss/get-session-data-in ctx session-id)
+      (let [sessions (ss/get-sessions-map-in ctx)
+            target   (get sessions session-id)
+            path     (get-in target [:data :session-file])]
+        (cond
+          (nil? target)
+          (throw (ex-info "session id not found in context session index"
+                          {:error-code "request/not-found"
+                           :session-id session-id}))
 
-            (or (nil? path) (str/blank? path))
-            (throw (ex-info "session id is not resumable (missing session file)"
-                            {:error-code "request/not-found"
-                             :session-id session-id}))
+          (or (nil? path) (str/blank? path))
+          (throw (ex-info "session id is not resumable (missing session file)"
+                          {:error-code "request/not-found"
+                           :session-id session-id}))
 
-            :else
-            (resume-session-in! ctx path)))))))
+          :else
+          (resume-session-in! ctx source-session-id path))))))
 
 ;;; Prompting
 
 (defn prompt-in!
-  "Submit `text` (and optional `images`) to the agent.
+  "Submit `text` (and optional `images`) to the agent for `session-id`.
   Requires the session to be idle.
 
    Current conforming-slice direction:
@@ -318,32 +330,33 @@
    `:session/prompt-submit` handler/effect path; agent start-loop and
    background-job reconciliation are emitted as dispatch-owned effects rather
    than local orchestration in this entrypoint."
-  ([ctx text] (prompt-in! ctx text nil))
-  ([ctx text images]
-   (when-not (ss/idle-in? ctx)
-     (throw (ex-info "Session is not idle" {:phase (ss/sc-phase-in ctx)})))
+  ([ctx session-id text]
+   (prompt-in! ctx session-id text nil))
+  ([ctx session-id text images]
+   (when-not (ss/idle-in? ctx session-id)
+     (throw (ex-info "Session is not idle" {:phase (ss/sc-phase-in ctx session-id)})))
    (let [user-msg {:role      "user"
                    :content   (cond-> [{:type :text :text text}]
                                 images (into images))
                    :timestamp (java.time.Instant/now)}]
-     (dispatch/dispatch! ctx :session/prompt-submit {:user-msg user-msg} {:origin :core})
-     (dispatch/dispatch! ctx :session/prompt nil {:origin :core})
-     (dispatch/dispatch! ctx :session/prompt-execute {:user-msg user-msg} {:origin :core}))))
+     (dispatch/dispatch! ctx :session/prompt-submit {:session-id session-id :user-msg user-msg} {:origin :core})
+     (dispatch/dispatch! ctx :session/prompt {:session-id session-id} {:origin :core})
+     (dispatch/dispatch! ctx :session/prompt-execute {:session-id session-id :user-msg user-msg} {:origin :core}))))
 
 (defn steer-in!
-  "Inject a steering message while the agent is streaming.
+  "Inject a steering message while the agent is streaming for `session-id`.
    State recording and agent-core queue mutation are both dispatch-owned."
-  [ctx text]
-  (dispatch/dispatch! ctx :session/enqueue-steering-message {:text text} {:origin :core}))
+  [ctx session-id text]
+  (dispatch/dispatch! ctx :session/enqueue-steering-message {:session-id session-id :text text} {:origin :core}))
 
 (defn follow-up-in!
-  "Queue a follow-up message for delivery after the current agent run.
+  "Queue a follow-up message for delivery after the current agent run for `session-id`.
    State recording and agent-core queue mutation are both dispatch-owned."
-  [ctx text]
-  (dispatch/dispatch! ctx :session/enqueue-follow-up-message {:text text} {:origin :core}))
+  [ctx session-id text]
+  (dispatch/dispatch! ctx :session/enqueue-follow-up-message {:session-id session-id :text text} {:origin :core}))
 
 (defn queue-while-streaming-in!
-  "Queue prompt text while streaming.
+  "Queue prompt text while streaming for `session-id`.
 
    Behavior:
    - when interrupt is pending, both steer/queue inputs are coerced to follow-up
@@ -351,24 +364,24 @@
 
    Returns {:accepted? bool :behavior keyword} where behavior is
    :steer | :queue | :coerced-follow-up."
-  [ctx text behavior]
-  (let [sd                (ss/get-session-data-in ctx)
+  [ctx session-id text behavior]
+  (let [sd                 (ss/get-session-data-in ctx session-id)
         interrupt-pending? (boolean (:interrupt-pending sd))
-        mode              (cond
-                            interrupt-pending? :coerced-follow-up
-                            (= behavior :steer) :steer
-                            :else :queue)]
+        mode               (cond
+                             interrupt-pending? :coerced-follow-up
+                             (= behavior :steer) :steer
+                             :else :queue)]
     (case mode
       :steer
-      (do (steer-in! ctx text)
+      (do (steer-in! ctx session-id text)
           {:accepted? true :behavior :steer})
 
       (:queue :coerced-follow-up)
-      (do (follow-up-in! ctx text)
+      (do (follow-up-in! ctx session-id text)
           {:accepted? true :behavior (if interrupt-pending? :coerced-follow-up :queue)}))))
 
 (defn request-interrupt-in!
-  "Request a deferred interrupt at the next turn boundary.
+  "Request a deferred interrupt at the next turn boundary for `session-id`.
 
    Behavior:
    - while streaming, not yet pending: mark :interrupt-pending, drop steering
@@ -377,13 +390,13 @@
    - while idle: silent no-op
 
    Returns {:accepted? bool :pending? bool :dropped-steering-text string}."
-  [ctx]
-  (let [phase (ss/sc-phase-in ctx)
-        sd    (ss/get-session-data-in ctx)]
+  [ctx session-id]
+  (let [phase (ss/sc-phase-in ctx session-id)
+        sd    (ss/get-session-data-in ctx session-id)]
     (if (= :streaming phase)
-      (let [already-pending?     (boolean (:interrupt-pending sd))
-            agent-data           (agent/get-data-in (ss/agent-ctx-in ctx))
-            queued-steering-msgs (:steering-queue agent-data)
+      (let [already-pending?      (boolean (:interrupt-pending sd))
+            agent-data            (agent/get-data-in (ss/agent-ctx-in ctx session-id))
+            queued-steering-msgs  (:steering-queue agent-data)
             queued-steering-texts (keep (fn [msg]
                                           (some (fn [block]
                                                   (when (= :text (:type block))
@@ -391,15 +404,16 @@
                                                 (:content msg)))
                                         queued-steering-msgs)
             session-steering-texts (:steering-messages sd)
-            dropped-texts         (->> (concat queued-steering-texts session-steering-texts)
-                                       (keep #(when (string? %) (str/trim %)))
-                                       (remove str/blank?)
-                                       distinct)
-            dropped-text          (str/join "\n" dropped-texts)]
+            dropped-texts          (->> (concat queued-steering-texts session-steering-texts)
+                                        (keep #(when (string? %) (str/trim %)))
+                                        (remove str/blank?)
+                                        distinct)
+            dropped-text           (str/join "\n" dropped-texts)]
         (dispatch/dispatch! ctx
                             :session/request-interrupt
-                            {:already-pending? already-pending?
-                             :requested-at (java.time.Instant/now)}
+                            {:session-id       session-id
+                             :already-pending? already-pending?
+                             :requested-at     (java.time.Instant/now)}
                             {:origin :core})
         ;; Agent-core steering queue cleared via dispatch effect
         {:accepted? (not already-pending?)
@@ -410,60 +424,87 @@
        :dropped-steering-text ""})))
 
 (defn abort-in!
-  "Abort the current agent run immediately. Prefer `request-interrupt-in!` for deferred semantics."
-  [ctx]
-  (dispatch/dispatch! ctx :session/abort nil {:origin :core}))
+  "Abort the current agent run immediately for `session-id`. Prefer `request-interrupt-in!` for deferred semantics."
+  [ctx session-id]
+  (dispatch/dispatch! ctx :session/abort {:session-id session-id} {:origin :core}))
 
 (defn consume-queued-input-text-in!
-  "Return queued steering/follow-up text (joined by newlines) and clear queues.
+  "Return queued steering/follow-up text (joined by newlines) and clear queues for `session-id`.
    State clearing and agent-core queue clearing are both dispatch-owned.
    This is used by legacy immediate-abort TUI interrupt flows.
 
    For deferred interrupt semantics, prefer `request-interrupt-in!` which only
    drops steering and preserves follow-ups."
-  [ctx]
-  (let [agent-data       (agent/get-data-in (ss/agent-ctx-in ctx))
-        queued-agent-msgs (concat (:steering-queue agent-data)
-                                  (:follow-up-queue agent-data))
-        queued-agent-texts (keep (fn [msg]
-                                   (some (fn [block]
-                                           (when (= :text (:type block))
-                                             (:text block)))
-                                         (:content msg)))
-                                 queued-agent-msgs)
-        sd               (ss/get-session-data-in ctx)
+  [ctx session-id]
+  (let [agent-data           (agent/get-data-in (ss/agent-ctx-in ctx session-id))
+        queued-agent-msgs    (concat (:steering-queue agent-data)
+                                     (:follow-up-queue agent-data))
+        queued-agent-texts   (keep (fn [msg]
+                                     (some (fn [block]
+                                             (when (= :text (:type block))
+                                               (:text block)))
+                                           (:content msg)))
+                                   queued-agent-msgs)
+        sd                   (ss/get-session-data-in ctx session-id)
         queued-session-texts (concat (:steering-messages sd)
                                      (:follow-up-messages sd))
-        all-texts        (->> (concat queued-agent-texts queued-session-texts)
-                              (keep #(when (string? %) (str/trim %)))
-                              (remove str/blank?)
-                              distinct)
-        merged           (str/join "\n" all-texts)]
-    (dispatch/dispatch! ctx :session/clear-queued-messages nil {:origin :core})
+        all-texts            (->> (concat queued-agent-texts queued-session-texts)
+                                  (keep #(when (string? %) (str/trim %)))
+                                  (remove str/blank?)
+                                  distinct)
+        merged               (str/join "\n" all-texts)]
+    (dispatch/dispatch! ctx :session/clear-queued-messages {:session-id session-id} {:origin :core})
     merged))
 
 ;;; Model and thinking level
 
+(declare set-model-in! set-thinking-level-in!)
+
 (defn cycle-model-in!
-  "Cycle to the next available scoped model."
-  [ctx direction]
-  (let [sd         (ss/get-session-data-in ctx)
+  "Cycle to the next available scoped model for `session-id`."
+  [ctx session-id direction]
+  (let [sd         (ss/get-session-data-in ctx session-id)
         candidates (seq (:scoped-models sd))
         next-m     (when candidates
                      (session/next-model candidates (:model sd) direction))]
     (when next-m
-      (dispatch/dispatch! ctx :session/set-model {:model next-m} {:origin :core}))
-    (ss/get-session-data-in ctx)))
+      (set-model-in! ctx session-id next-m))
+    (ss/get-session-data-in ctx session-id)))
+
+(defn set-model-in!
+  "Set the session model for `session-id`."
+  [ctx session-id model]
+  (dispatch/dispatch! ctx :session/set-model {:session-id session-id :model model} {:origin :core}))
 
 (defn cycle-thinking-level-in!
-  "Cycle to the next thinking level."
-  [ctx]
-  (let [sd    (ss/get-session-data-in ctx)
+  "Cycle to the next thinking level for `session-id`."
+  [ctx session-id]
+  (let [sd    (ss/get-session-data-in ctx session-id)
         model (:model sd)]
     (when (:reasoning model)
       (let [next-l (session/next-thinking-level (:thinking-level sd) model)]
-        (dispatch/dispatch! ctx :session/set-thinking-level {:level next-l} {:origin :core})))
-    (ss/get-session-data-in ctx)))
+        (set-thinking-level-in! ctx session-id next-l)))
+    (ss/get-session-data-in ctx session-id)))
+
+(defn set-thinking-level-in!
+  "Set the thinking level for `session-id`."
+  [ctx session-id level]
+  (dispatch/dispatch! ctx :session/set-thinking-level {:session-id session-id :level level} {:origin :core}))
+
+(defn set-session-name-in!
+  "Set the session name for `session-id`."
+  [ctx session-id name]
+  (dispatch/dispatch! ctx :session/set-session-name {:session-id session-id :name name} {:origin :core}))
+
+(defn set-auto-compaction-in!
+  "Enable or disable auto-compaction for `session-id`."
+  [ctx session-id enabled?]
+  (dispatch/dispatch! ctx :session/set-auto-compaction {:session-id session-id :enabled? enabled?} {:origin :core}))
+
+(defn set-auto-retry-in!
+  "Enable or disable auto-retry for `session-id`."
+  [ctx session-id enabled?]
+  (dispatch/dispatch! ctx :session/set-auto-retry {:session-id session-id :enabled? enabled?} {:origin :core}))
 
 ;;; Compaction
 
@@ -471,31 +512,30 @@
   "Execute a compaction cycle: prepare → dispatch before-compact → run
   compaction-fn → append entry → rebuild agent messages → dispatch compact.
   Returns the CompactionResult, or nil when cancelled or no-op."
-  ([ctx] (execute-compaction-in! ctx nil))
-  ([ctx custom-instructions]
-   (let [sd                (ss/get-session-data-in ctx)
-         keep-recent       (get-in ctx [:config :auto-compaction-keep-recent-tokens] 20000)
-         preparation       (compaction/prepare-compaction sd keep-recent)
-         reg               (:extension-registry ctx)]
-     (when preparation
-       (let [{:keys [cancelled? override]}
-             (ext/dispatch-in reg "session_before_compact"
-                              {:preparation         preparation
-                               :branch-entries      (:session-entries sd)
-                               :custom-instructions custom-instructions})]
-         (when-not cancelled?
-           (let [from-extension? (some? override)
-                 result   (or override
-                              ((:compaction-fn ctx) sd preparation custom-instructions))
-                 entry    (persist/compaction-entry result from-extension?)
-                 new-msgs (compaction/rebuild-messages-from-entries result sd)]
-             (ss/journal-append-in! ctx entry)
-             (dispatch/dispatch! ctx :session/compaction-finished
-                                 {:messages new-msgs} {:origin :core})
-             (ext/dispatch-in reg "session_compact"
-                              {:compaction-entry entry
-                               :from-extension  from-extension?})
-             result)))))))
+  [ctx session-id custom-instructions]
+  (let [sd          (ss/get-session-data-in ctx session-id)
+        keep-recent (get-in ctx [:config :auto-compaction-keep-recent-tokens] 20000)
+        preparation (compaction/prepare-compaction sd keep-recent)
+        reg         (:extension-registry ctx)]
+    (when preparation
+      (let [{:keys [cancelled? override]}
+            (ext/dispatch-in reg "session_before_compact"
+                             {:preparation         preparation
+                              :branch-entries      (:session-entries sd)
+                              :custom-instructions custom-instructions})]
+        (when-not cancelled?
+          (let [from-extension? (some? override)
+                result   (or override
+                             ((:compaction-fn ctx) sd preparation custom-instructions))
+                entry    (persist/compaction-entry result from-extension?)
+                new-msgs (compaction/rebuild-messages-from-entries result sd)]
+            (ss/journal-append-in! ctx session-id entry)
+            (dispatch/dispatch! ctx :session/compaction-finished
+                                {:session-id session-id :messages new-msgs} {:origin :core})
+            (ext/dispatch-in reg "session_compact"
+                             {:compaction-entry entry
+                              :from-extension  from-extension?})
+            result))))))
 (defn manual-compact-in!
   "User-triggered compaction. Aborts agent if running, then compacts through
    a dispatch-shaped vertical slice:
@@ -503,17 +543,16 @@
 
    The execution step remains an intentional synchronous dispatch handler so the
    caller can still receive the compaction result directly."
-  ([ctx] (manual-compact-in! ctx nil))
-  ([ctx custom-instructions]
-   (when-not (ss/idle-in? ctx)
-     (abort-in! ctx))
-   (dispatch/dispatch! ctx :session/compact-start nil {:origin :core})
-   (let [result (dispatch/dispatch! ctx
-                                    :session/manual-compaction-execute
-                                    {:custom-instructions custom-instructions}
-                                    {:origin :core})]
-     (dispatch/dispatch! ctx :session/compact-done nil {:origin :core})
-     result)))
+  [ctx session-id custom-instructions]
+  (when-not (ss/idle-in? ctx session-id)
+    (abort-in! ctx session-id))
+  (dispatch/dispatch! ctx :session/compact-start {:session-id session-id} {:origin :core})
+  (let [result (dispatch/dispatch! ctx
+                                   :session/manual-compaction-execute
+                                   {:session-id session-id :custom-instructions custom-instructions}
+                                   {:origin :core})]
+    (dispatch/dispatch! ctx :session/compact-done {:session-id session-id} {:origin :core})
+    result))
 
 ;;; Replay
 
@@ -522,22 +561,24 @@
 
    Accepts either an explicit `entries` collection or, with one arity, replays
    the full retained dispatch event log in order. Effects are suppressed;
-   only pure state application is performed."
+   only pure state application is performed.
+
+   Returns the updated root state map."
   ([ctx]
    (replay-dispatch-event-log-in! ctx (dispatch/event-log-entries)))
   ([ctx entries]
    (dispatch/replay-event-log! ctx entries)
-   (ss/get-session-data-in ctx)))
+   @(:state* ctx)))
 
 ;;; Introspection
 
 (defn diagnostics-in
   "Return a diagnostic snapshot map."
-  [ctx]
-  (let [sd    (ss/get-session-data-in ctx)
-        phase (ss/sc-phase-in ctx)]
+  [ctx session-id]
+  (let [sd    (ss/get-session-data-in ctx session-id)
+        phase (ss/sc-phase-in ctx session-id)]
     {:phase                   phase
-     :session-id              (:session-id sd)
+     :session-id              session-id
      :is-idle                 (= phase :idle)
      :is-streaming            (= phase :streaming)
      :is-compacting           (= phase :compacting)
@@ -552,41 +593,22 @@
      :extension-count         (ext/extension-count-in (:extension-registry ctx))
      :workflow-count          (wf/workflow-count-in (:workflow-registry ctx))
      :workflow-running-count  (wf/running-count-in (:workflow-registry ctx))
-     :journal-entries         (count (ss/get-state-value-in ctx (ss/state-path :journal (ss/active-session-id-in ctx))))
-     :agent-diagnostics       (agent/diagnostics-in (ss/agent-ctx-in ctx))}))
+     :journal-entries         (count (ss/get-state-value-in ctx (ss/state-path :journal session-id)))
+     :agent-diagnostics       (agent/diagnostics-in (ss/agent-ctx-in ctx session-id))}))
 
 ;;; EQL query surface
 
 (defn query-in
   "Run EQL `q` against `ctx` through the component's Pathom resolvers.
-   Optional `extra-entity` map is merged into the Pathom query entity."
-  ([ctx q] (resolvers/query-in ctx q))
-  ([ctx q extra-entity] (resolvers/query-in ctx q extra-entity)))
+   Optional explicit `session-id` and `extra-entity` map are merged into the
+   Pathom query entity."
+  ([ctx q]
+   (resolvers/query-in ctx q))
+  ([ctx x y]
+   (if (or (vector? x) (list? x))
+     (resolvers/query-in ctx x y)
+     (resolvers/query-in ctx y {:psi.agent-session/session-id x})))
+  ([ctx session-id q extra-entity]
+   (resolvers/query-in ctx q (assoc (or extra-entity {}) :psi.agent-session/session-id session-id))))
 
-;;; REPL convenience wrappers — delegate through service surface
-;;; Uses requiring-resolve to avoid core ↔ service circular dependency.
 
-(defn- svc [sym]
-  @(requiring-resolve (symbol "psi.agent-session.service" (name sym))))
-
-(defn create-session!
-  "Start or reset the global session. Initializes the service."
-  ([] (let [ctx (create-context)]
-        ((svc 'initialize!) ctx)
-        ctx))
-  ([opts] (let [ctx (create-context opts)]
-            ((svc 'initialize!) ctx)
-            ctx)))
-
-(defn get-session-data  [] ((svc 'get-session-data)))
-(defn idle?             [] ((svc 'idle?)))
-
-(defn prompt!           [text]   ((svc 'prompt!) text))
-(defn steer!            [text]   ((svc 'steer!) text))
-(defn follow-up!        [text]   ((svc 'follow-up!) text))
-(defn abort!            []       ((svc 'abort!)))
-
-(defn query
-  "Run EQL `q` against the active session."
-  [q]
-  ((svc 'query) q))

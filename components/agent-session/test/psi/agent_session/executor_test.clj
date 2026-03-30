@@ -41,6 +41,7 @@
     ctx))
 
 (defn- setup-session-ctx!
+  "Returns [ctx session-id]."
   [agent-ctx]
   (test-support/make-session-ctx {:agent-ctx agent-ctx}))
 
@@ -49,30 +50,30 @@
 
 (deftest text-only-response-test
   (let [agent-ctx    (setup-agent-ctx!)
-        session-ctx  (setup-session-ctx! agent-ctx)
+        [session-ctx session-ctx-id]  (setup-session-ctx! agent-ctx)
         user-msg     {:role "user" :content [{:type :text :text "hello"}]}]
     (with-redefs [psi.agent-session.executor/do-stream!
                   (stub-text-stream "Hello! I'm here to help.")]
       (let [result (executor/run-agent-loop!
-                    nil session-ctx agent-ctx stub-model [user-msg])]
+                    nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])]
         (is (= "assistant" (:role result)))
         (is (= :stop (:stop-reason result)))
         (is (= "Hello! I'm here to help."
                (some #(when (= :text (:type %)) (:text %))
                      (:content result))))
-        (let [turn-ctx (ss/get-state-value-in session-ctx (ss/state-path :turn-ctx (ss/active-session-id-in session-ctx)))]
+        (let [turn-ctx (ss/get-state-value-in session-ctx (ss/state-path :turn-ctx session-ctx-id))]
           (is (some? turn-ctx))
           (is (= :done (turn-sc/turn-phase turn-ctx))))))))
 
 (deftest error-response-test
   (let [agent-ctx   (setup-agent-ctx!)
-        session-ctx (setup-session-ctx! agent-ctx)
+        [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
         user-msg    {:role "user" :content [{:type :text :text "hello"}]}]
     (with-redefs [psi.agent-session.executor/do-stream!
                   (stub-error-stream "Connection refused")]
       (let [result   (executor/run-agent-loop!
-                      nil session-ctx agent-ctx stub-model [user-msg])
-            turn-ctx (ss/get-state-value-in session-ctx (ss/state-path :turn-ctx (ss/active-session-id-in session-ctx)))]
+                      nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])
+            turn-ctx (ss/get-state-value-in session-ctx (ss/state-path :turn-ctx session-ctx-id))]
         (is (= :error (:stop-reason result)))
         (is (= :error (turn-sc/turn-phase turn-ctx)))
         (is (= "Connection refused"
@@ -80,9 +81,8 @@
 
 (defn- journal-messages
   "Derive messages from the persistence journal in ctx."
-  [ctx]
-  (let [sid     (ss/active-session-id-in ctx)
-        journal (ss/get-state-value-in ctx (ss/state-path :journal sid))]
+  [ctx session-id]
+  (let [journal (ss/get-state-value-in ctx (ss/state-path :journal session-id))]
     (->> journal
          (filter #(= :message (:kind %)))
          (mapv #(get-in % [:data :message])))))
@@ -90,12 +90,13 @@
 (deftest agent-core-lifecycle-test
   ;; After run-agent-loop!, the persistence journal contains user + assistant messages.
   (let [agent-ctx   (setup-agent-ctx!)
-        session-ctx (setup-session-ctx! agent-ctx)
+        [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
         user-msg    {:role "user" :content [{:type :text :text "hi"}]}]
     (with-redefs [psi.agent-session.executor/do-stream!
                   (stub-text-stream "response")]
-      (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg])
-      (let [msgs (journal-messages session-ctx)]
+      (executor/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])
+      (let [session-id session-ctx-id
+            msgs       (journal-messages session-ctx session-id)]
         (is (>= (count msgs) 2)
             (str "expected >= 2 messages, got " (count msgs)))
         (is (= "user" (:role (first msgs))))
@@ -103,28 +104,28 @@
 
 (deftest turn-ctx-atom-test
   (let [agent-ctx   (setup-agent-ctx!)
-        session-ctx (setup-session-ctx! agent-ctx)
+        [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
         user-msg    {:role "user" :content [{:type :text :text "hi"}]}]
     (with-redefs [psi.agent-session.executor/do-stream!
                   (stub-text-stream "ok")]
       (let [result (executor/run-agent-loop!
-                    nil session-ctx agent-ctx stub-model [user-msg])]
+                    nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])]
         (is (= "assistant" (:role result))))))
 
   (let [agent-ctx   (setup-agent-ctx!)
-        session-ctx (setup-session-ctx! agent-ctx)
+        [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
         user-msg    {:role "user" :content [{:type :text :text "hi"}]}]
     (with-redefs [psi.agent-session.executor/do-stream!
                   (stub-text-stream "hello world")]
-      (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg])
-      (let [turn-ctx (ss/get-state-value-in session-ctx (ss/state-path :turn-ctx (ss/active-session-id-in session-ctx)))
+      (executor/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])
+      (let [turn-ctx (ss/get-state-value-in session-ctx (ss/state-path :turn-ctx session-ctx-id))
             td       (turn-sc/get-turn-data turn-ctx)]
         (is (= "hello world" (:text-buffer td)))
         (is (some? (:final-message td)))))))
 
 (deftest multiple-text-deltas-test
   (let [agent-ctx   (setup-agent-ctx!)
-        session-ctx (setup-session-ctx! agent-ctx)
+        [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
         user-msg    {:role "user" :content [{:type :text :text "hi"}]}
         stream-fn   (fn [_ai-ctx _conv _model _opts consume-fn]
                       (consume-fn {:type :start})
@@ -134,14 +135,14 @@
                       (consume-fn {:type :done :reason :stop}))]
     (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
       (let [result (executor/run-agent-loop!
-                    nil session-ctx agent-ctx stub-model [user-msg])]
+                    nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])]
         (is (= "Hello there!"
                (some #(when (= :text (:type %)) (:text %))
                      (:content result))))))))
 
 (deftest thinking-delta-emits-progress-event-test
   (let [agent-ctx   (setup-agent-ctx!)
-        session-ctx (setup-session-ctx! agent-ctx)
+        [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
         user-msg    {:role "user" :content [{:type :text :text "hi"}]}
         q           (LinkedBlockingQueue.)
         stream-fn   (fn [_ai-ctx _conv _model _opts consume-fn]
@@ -149,14 +150,14 @@
                       (consume-fn {:type :thinking-delta :content-index 0 :delta "plan"})
                       (consume-fn {:type :done :reason :stop}))]
     (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
-      (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg]
+      (executor/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg]
                                 {:progress-queue q})
       (let [events (loop [acc []]
                      (if-let [e (.poll q 5 TimeUnit/MILLISECONDS)]
                        (recur (conj acc e))
                        acc))
             thinking (some #(when (= :thinking-delta (:event-kind %)) %) events)
-            td       (turn-sc/get-turn-data (ss/get-state-value-in session-ctx (ss/state-path :turn-ctx (ss/active-session-id-in session-ctx))))]
+            td       (turn-sc/get-turn-data (ss/get-state-value-in session-ctx (ss/state-path :turn-ctx session-ctx-id)))]
         (is (some? thinking))
         (is (= "plan" (:text thinking)))
         (is (= :done (get-in td [:last-provider-event :type])))
@@ -183,7 +184,7 @@
   contains the full thinking text so far). Verify that the executor normalises
   these into non-duplicating accumulated text so consumers can safely replace."
   (let [agent-ctx   (setup-agent-ctx!)
-        session-ctx (setup-session-ctx! agent-ctx)
+        [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
         user-msg    {:role "user" :content [{:type :text :text "hi"}]}
         q           (LinkedBlockingQueue.)
         ;; Simulate Anthropic cumulative snapshots: each delta = full text so far
@@ -194,7 +195,7 @@
                       (consume-fn {:type :thinking-delta :content-index 0 :delta "Now I see the flow"})
                       (consume-fn {:type :done :reason :stop}))]
     (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
-      (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg]
+      (executor/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg]
                                 {:progress-queue q})
       (let [events (loop [acc []]
                      (if-let [e (.poll q 5 TimeUnit/MILLISECONDS)]
@@ -210,7 +211,7 @@
 
 (deftest thinking-delta-resets-after-toolcall-start-test
   (let [agent-ctx   (setup-agent-ctx!)
-        session-ctx (setup-session-ctx! agent-ctx)
+        [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
         user-msg    {:role "user" :content [{:type :text :text "hi"}]}
         q           (LinkedBlockingQueue.)
         stream-fn   (fn [_ai-ctx _conv _model _opts consume-fn]
@@ -220,7 +221,7 @@
                       (consume-fn {:type :thinking-delta :content-index 0 :delta "plan-2"})
                       (consume-fn {:type :done :reason :stop}))]
     (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
-      (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg]
+      (executor/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg]
                                 {:progress-queue q})
       (let [events (loop [acc []]
                      (if-let [e (.poll q 5 TimeUnit/MILLISECONDS)]
@@ -257,7 +258,7 @@
 
 (deftest toolcall-assembly-emits-live-progress-events-with-canonical-id-test
   (let [agent-ctx   (setup-agent-ctx!)
-        session-ctx (setup-session-ctx! agent-ctx)
+        [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
         q           (LinkedBlockingQueue.)
         stream-fn   (fn [_ai-ctx _conv _model _opts consume-fn]
                       (consume-fn {:type :start})
@@ -267,7 +268,7 @@
                       (consume-fn {:type :toolcall-end :content-index 1})
                       (consume-fn {:type :done :reason :stop}))]
     (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
-      (let [{:keys [assistant-message]} (#'executor/execute-one-turn! nil session-ctx agent-ctx stub-model nil q)
+      (let [{:keys [assistant-message]} (#'executor/execute-one-turn! nil session-ctx session-ctx-id agent-ctx stub-model nil q)
             events      (loop [acc []]
                           (if-let [e (.poll q 5 TimeUnit/MILLISECONDS)]
                             (recur (conj acc e))
@@ -291,7 +292,7 @@
 
 (deftest toolcall-assembly-preserves-provider-id-when-present-test
   (let [agent-ctx   (setup-agent-ctx!)
-        session-ctx (setup-session-ctx! agent-ctx)
+        [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
         q           (LinkedBlockingQueue.)
         stream-fn   (fn [_ai-ctx _conv _model _opts consume-fn]
                       (consume-fn {:type :start})
@@ -300,7 +301,7 @@
                       (consume-fn {:type :toolcall-end :content-index 2})
                       (consume-fn {:type :done :reason :stop}))]
     (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
-      (let [{:keys [assistant-message]} (#'executor/execute-one-turn! nil session-ctx agent-ctx stub-model nil q)
+      (let [{:keys [assistant-message]} (#'executor/execute-one-turn! nil session-ctx session-ctx-id agent-ctx stub-model nil q)
             events (loop [acc []]
                      (if-let [e (.poll q 5 TimeUnit/MILLISECONDS)]
                        (recur (conj acc e))
@@ -313,8 +314,8 @@
 (deftest cross-provider-thinking-is-not-replayed-into-anthropic-request-test
   (testing "OpenAI thinking deltas remain transient and are not included in later Anthropic messages"
     (let [agent-ctx   (setup-agent-ctx!)
-          session-ctx (setup-session-ctx! agent-ctx)
-          _           (ss/update-state-value-in! session-ctx (ss/state-path :session-data (ss/active-session-id-in session-ctx))
+          [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
+          _           (ss/update-state-value-in! session-ctx (ss/state-path :session-data session-ctx-id)
                                                  assoc :thinking-level :high)
           user-msg    {:role "user" :content [{:type :text :text "hi"}]}
           openai-model {:provider "openai" :id "gpt-5.4"}
@@ -324,12 +325,12 @@
                         (consume-fn {:type :text-delta :content-index 1 :delta "Done"})
                         (consume-fn {:type :done :reason :stop}))]
       (with-redefs [psi.agent-session.executor/do-stream! openai-turn]
-        (let [result (executor/run-agent-loop! nil session-ctx agent-ctx openai-model [user-msg])]
+        (let [result (executor/run-agent-loop! nil session-ctx session-ctx-id agent-ctx openai-model [user-msg])]
           (is (= :stop (:stop-reason result)))
           (is (= "Done"
                  (some #(when (= :text (:type %)) (:text %))
                        (:content result))))))
-      (let [messages        (journal-messages session-ctx)
+      (let [messages        (journal-messages session-ctx session-ctx-id)
             assistant       (last messages)
             anthropic-model (models/get-model :sonnet-4.6)
             conv            (#'executor/agent-messages->ai-conversation
@@ -352,8 +353,8 @@
 (deftest anthropic-thinking-blocks-roundtrip-into-follow-up-request-test
   (testing "Anthropic thinking blocks with signatures are preserved for the next Anthropic request"
     (let [agent-ctx   (setup-agent-ctx!)
-          session-ctx (setup-session-ctx! agent-ctx)
-          _           (ss/update-state-value-in! session-ctx (ss/state-path :session-data (ss/active-session-id-in session-ctx))
+          [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
+          _           (ss/update-state-value-in! session-ctx (ss/state-path :session-data session-ctx-id)
                                                  assoc :thinking-level :high)
           user-msg    {:role "user" :content [{:type :text :text "hi"}]}
           anthropic-model {:provider "anthropic" :id "claude-sonnet-4-6"}
@@ -368,9 +369,9 @@
                         (consume-fn {:type :done :reason :tool_use}))]
       (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
         (agent/start-loop-in! agent-ctx [user-msg])
-        (ss/journal-append-in! session-ctx (persist/message-entry user-msg))
-        (let [result (#'executor/stream-turn! nil session-ctx agent-ctx anthropic-model nil nil)
-              msgs   (journal-messages session-ctx)
+        (ss/journal-append-in! session-ctx session-ctx-id (persist/message-entry user-msg))
+        (let [result (#'executor/stream-turn! nil session-ctx session-ctx-id agent-ctx anthropic-model nil nil)
+              msgs   (journal-messages session-ctx session-ctx-id)
               conv   (#'executor/agent-messages->ai-conversation
                       "sys" msgs [] {:cache-breakpoints #{:system}})
               body   (json/parse-string
@@ -391,7 +392,7 @@
 
 (deftest idle-timeout-resets-on-stream-progress-test
   (let [agent-ctx   (setup-agent-ctx!)
-        session-ctx (setup-session-ctx! agent-ctx)
+        [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
         user-msg    {:role "user" :content [{:type :text :text "hi"}]}
         stream-fn   (fn [_ai-ctx _conv _model _opts consume-fn]
                       (future
@@ -405,12 +406,12 @@
     (with-redefs [psi.agent-session.executor/do-stream! stream-fn
                   psi.agent-session.executor/llm-stream-idle-timeout-ms 200
                   psi.agent-session.executor/llm-stream-wait-poll-ms 20]
-      (let [result (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg])]
+      (let [result (executor/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])]
         (is (= :stop (:stop-reason result)))))))
 
 (deftest idle-timeout-errors-when-stream-stalls-test
   (let [agent-ctx   (setup-agent-ctx!)
-        session-ctx (setup-session-ctx! agent-ctx)
+        [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
         user-msg    {:role "user" :content [{:type :text :text "hi"}]}
         stream-fn   (fn [_ai-ctx _conv _model _opts consume-fn]
                       (future
@@ -420,8 +421,8 @@
     (with-redefs [psi.agent-session.executor/do-stream! stream-fn
                   psi.agent-session.executor/llm-stream-idle-timeout-ms 120
                   psi.agent-session.executor/llm-stream-wait-poll-ms 20]
-      (let [result   (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg])
-            turn-ctx (ss/get-state-value-in session-ctx (ss/state-path :turn-ctx (ss/active-session-id-in session-ctx)))
+      (let [result   (executor/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])
+            turn-ctx (ss/get-state-value-in session-ctx (ss/state-path :turn-ctx session-ctx-id))
             td       (turn-sc/get-turn-data turn-ctx)]
         (is (= :error (:stop-reason result)))
         (is (= "Timeout waiting for LLM response" (:error-message result)))
@@ -431,8 +432,8 @@
 
 (deftest thinking-level-is-forwarded-to-ai-options-test
   (let [agent-ctx   (setup-agent-ctx!)
-        session-ctx (setup-session-ctx! agent-ctx)
-        _           (ss/update-state-value-in! session-ctx (ss/state-path :session-data (ss/active-session-id-in session-ctx))
+        [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
+        _           (ss/update-state-value-in! session-ctx (ss/state-path :session-data session-ctx-id)
                                                assoc :thinking-level :high)
         user-msg    {:role "user" :content [{:type :text :text "hi"}]}
         seen-opts   (atom nil)
@@ -441,13 +442,13 @@
                       (consume-fn {:type :start})
                       (consume-fn {:type :done :reason :stop}))]
     (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
-      (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg])
+      (executor/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])
       (is (= :high (:thinking-level @seen-opts))))))
 
 (deftest session-idle-timeout-config-is-forwarded-to-ai-options-test
   (let [agent-ctx   (setup-agent-ctx!)
-        session-ctx (assoc (setup-session-ctx! agent-ctx)
-                           :config {:llm-stream-idle-timeout-ms 777})
+        [session-ctx* session-ctx-id] (setup-session-ctx! agent-ctx)
+        session-ctx (assoc session-ctx* :config {:llm-stream-idle-timeout-ms 777})
         user-msg    {:role "user" :content [{:type :text :text "hi"}]}
         seen-opts   (atom nil)
         stream-fn   (fn [_ai-ctx _conv _model opts consume-fn]
@@ -455,12 +456,12 @@
                       (consume-fn {:type :start})
                       (consume-fn {:type :done :reason :stop}))]
     (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
-      (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg])
+      (executor/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])
       (is (= 777 (:llm-stream-idle-timeout-ms @seen-opts))))))
 
 (deftest text-boundary-events-are-recorded-in-turn-data-test
   (let [agent-ctx   (setup-agent-ctx!)
-        session-ctx (setup-session-ctx! agent-ctx)
+        [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
         user-msg    {:role "user" :content [{:type :text :text "hi"}]}
         stream-fn   (fn [_ai-ctx _conv _model _opts consume-fn]
                       (consume-fn {:type :start})
@@ -469,8 +470,8 @@
                       (consume-fn {:type :text-end :content-index 0})
                       (consume-fn {:type :done :reason :stop}))]
     (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
-      (let [result   (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg])
-            turn-ctx (ss/get-state-value-in session-ctx (ss/state-path :turn-ctx (ss/active-session-id-in session-ctx)))
+      (let [result   (executor/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])
+            turn-ctx (ss/get-state-value-in session-ctx (ss/state-path :turn-ctx session-ctx-id))
             td       (turn-sc/get-turn-data turn-ctx)]
         (is (= "Hello"
                (some #(when (= :text (:type %)) (:text %))
@@ -482,7 +483,7 @@
 
 (deftest cumulative-snapshot-text-deltas-replace-instead-of-repeating-test
   (let [agent-ctx   (setup-agent-ctx!)
-        session-ctx (setup-session-ctx! agent-ctx)
+        [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
         user-msg    {:role "user" :content [{:type :text :text "hi"}]}
         stream-fn   (fn [_ai-ctx _conv _model _opts consume-fn]
                       (consume-fn {:type :start})
@@ -493,14 +494,14 @@
                       (consume-fn {:type :text-delta :delta "Hel\n"})
                       (consume-fn {:type :done :reason :stop}))]
     (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
-      (let [result (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg])]
+      (let [result (executor/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])]
         (is (= "Hel\n"
                (some #(when (= :text (:type %)) (:text %))
                      (:content result))))))))
 
 (deftest incremental-short-prefix-delta-does-not-shrink-streamed-text-test
   (let [agent-ctx   (setup-agent-ctx!)
-        session-ctx (setup-session-ctx! agent-ctx)
+        [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
         user-msg    {:role "user" :content [{:type :text :text "hi"}]}
         stream-fn   (fn [_ai-ctx _conv _model _opts consume-fn]
                       (consume-fn {:type :start})
@@ -511,7 +512,7 @@
                       (consume-fn {:type :text-delta :delta " contents:"})
                       (consume-fn {:type :done :reason :stop}))]
     (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
-      (let [result (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg])]
+      (let [result (executor/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])]
         (is (= "`deps.edn` contents:"
                (some #(when (= :text (:type %)) (:text %))
                      (:content result))))))))
@@ -679,11 +680,11 @@
 (deftest agent-loop-options-test
   (testing "builds effective AI options from api key, thinking level, and idle timeout"
     (let [agent-ctx   (setup-agent-ctx!)
-          session-ctx (assoc (setup-session-ctx! agent-ctx)
-                             :config {:llm-stream-idle-timeout-ms 777})
-          _           (ss/update-state-value-in! session-ctx (ss/state-path :session-data (ss/active-session-id-in session-ctx))
+          [session-ctx* session-ctx-id] (setup-session-ctx! agent-ctx)
+          session-ctx (assoc session-ctx* :config {:llm-stream-idle-timeout-ms 777})
+          _           (ss/update-state-value-in! session-ctx (ss/state-path :session-data session-ctx-id)
                                                  assoc :thinking-level :high)
-          opts        (#'executor/agent-loop-options session-ctx {:api-key "secret"})]
+          opts        (#'executor/agent-loop-options session-ctx session-ctx-id {:api-key "secret"})]
       (is (= "secret" (:api-key opts)))
       (is (= :high (:thinking-level opts)))
       (is (= 777 (:llm-stream-idle-timeout-ms opts))))))
@@ -692,48 +693,48 @@
   ;; finish-agent-loop! sends :agent-end to session statechart and returns result.
   (testing "success path returns result"
     (let [agent-ctx   (setup-agent-ctx!)
-          session-ctx (setup-session-ctx! agent-ctx)
+          [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
           result      {:role "assistant" :content [] :stop-reason :stop}]
-      (is (= result (#'executor/finish-agent-loop! session-ctx agent-ctx result)))))
+      (is (= result (#'executor/finish-agent-loop! session-ctx session-ctx-id agent-ctx result)))))
 
   (testing "error path returns result"
     (let [agent-ctx   (setup-agent-ctx!)
-          session-ctx (setup-session-ctx! agent-ctx)
+          [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
           result      {:role "assistant" :content [] :stop-reason :error :error-message "boom"}]
-      (is (= result (#'executor/finish-agent-loop! session-ctx agent-ctx result))))))
+      (is (= result (#'executor/finish-agent-loop! session-ctx session-ctx-id agent-ctx result))))))
 
 (deftest run-agent-loop-lifecycle-test
   ;; run-agent-loop! journals user messages, runs body, then finishes.
   (testing "run-agent-loop! journals messages, runs body, and finishes"
     (let [agent-ctx   (setup-agent-ctx!)
-          session-ctx (setup-session-ctx! agent-ctx)
+          [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
           user-msg    {:role "user" :content [{:type :text :text "hi"}]}
           calls       (atom [])]
       (with-redefs [psi.agent-session.executor/run-agent-loop-body!
-                    (fn [_ _ _ _ extra-ai-options progress-queue]
+                    (fn [_ _ _ _ _ extra-ai-options progress-queue]
                       (swap! calls conj [:body extra-ai-options progress-queue])
                       {:role "assistant" :content [{:type :text :text "done"}] :stop-reason :stop})
                     psi.agent-session.executor/finish-agent-loop!
-                    (fn [_ _ result]
+                    (fn [_ _ _ result]
                       (swap! calls conj [:finish (:stop-reason result)])
                       result)]
-        (let [result (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg]
+        (let [result (executor/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg]
                                                {:api-key "k"})]
           (is (= :stop (:stop-reason result)))
           (is (= :body (ffirst @calls)))
           (is (= :finish (first (second @calls))))
           ;; User message is journaled
-          (is (= 1 (count (journal-messages session-ctx)))))))))
+          (is (= 1 (count (journal-messages session-ctx session-ctx-id)))))))))
 
 (deftest execute-one-turn-test
   (testing "single-turn execution returns assistant message and explicit outcome"
     (let [agent-ctx   (setup-agent-ctx!)
-          session-ctx (setup-session-ctx! agent-ctx)
+          [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
           user-msg    {:role "user" :content [{:type :text :text "hi"}]}]
       (agent/start-loop-in! agent-ctx [user-msg])
       (with-redefs [psi.agent-session.executor/do-stream!
                     (stub-text-stream "one-turn")]
-        (let [result (#'executor/execute-one-turn! nil session-ctx agent-ctx stub-model nil nil)]
+        (let [result (#'executor/execute-one-turn! nil session-ctx session-ctx-id agent-ctx stub-model nil nil)]
           (is (= "assistant" (get-in result [:assistant-message :role])))
           (is (= :turn.outcome/stop (get-in result [:outcome :turn/outcome])))
           (is (= "one-turn"
@@ -743,10 +744,10 @@
 (deftest run-turn-loop-test
   (testing "multi-turn loop separates one-turn execution from recursive control"
     (let [agent-ctx   (setup-agent-ctx!)
-          session-ctx (setup-session-ctx! agent-ctx)
+          [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
           calls       (atom [])]
       (with-redefs [psi.agent-session.executor/execute-one-turn!
-                    (fn [_ _ _ _ _ _]
+                    (fn [_ _ _ _ _ _ _]
                       (let [n (count @calls)]
                         (if (zero? n)
                           {:assistant-message {:role "assistant"
@@ -765,12 +766,12 @@
                                                          :content [{:type :text :text "done"}]
                                                          :stop-reason :stop}}})))
                     psi.agent-session.executor/continue-after-tool-use!
-                    (fn [_ outcome _]
+                    (fn [_ _ outcome _]
                       (swap! calls conj (:turn/outcome outcome))
                       {:turn/continuation :turn.continue/next-turn
                        :assistant-message (:assistant-message outcome)
                        :tool-results [{:tool-call-id "call-1"}]})]
-        (let [result (#'executor/run-turn-loop! nil session-ctx agent-ctx stub-model nil nil)]
+        (let [result (#'executor/run-turn-loop! nil session-ctx session-ctx-id agent-ctx stub-model nil nil)]
           (is (= [":turn.outcome/tool-use"] (mapv str @calls)))
           (is (= :stop (:stop-reason result)))
           (is (= "done"
@@ -780,7 +781,7 @@
 (deftest continue-after-tool-use-test
   (testing "tool-use continuation executes all tool calls and returns next-turn continuation"
     (let [agent-ctx   (setup-agent-ctx!)
-          session-ctx (setup-session-ctx! agent-ctx)
+          [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
           outcome     {:turn/outcome :turn.outcome/tool-use
                        :assistant-message {:role "assistant"
                                            :content [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}
@@ -790,13 +791,13 @@
                                     {:type :tool-call :id "call-2" :name "bash" :arguments "{}"}]}
           calls       (atom [])]
       (with-redefs [psi.agent-session.executor/run-tool-call!
-                    (fn [_ tc _]
+                    (fn [_ _ tc _]
                       (swap! calls conj (:id tc))
                       {:role "toolResult"
                        :tool-call-id (:id tc)
                        :tool-name (:name tc)
                        :content [{:type :text :text (str "ok-" (:id tc))}]})]
-        (let [result (#'executor/continue-after-tool-use! session-ctx outcome nil)]
+        (let [result (#'executor/continue-after-tool-use! session-ctx session-ctx-id outcome nil)]
           (is (= :turn.continue/next-turn (:turn/continuation result)))
           (is (= ["call-1" "call-2"] @calls))
           (is (= ["call-1" "call-2"] (mapv :tool-call-id (:tool-results result))))
@@ -820,7 +821,7 @@
 (deftest dispatch-visible-tool-lifecycle-test
   (testing "tool lifecycle stages are appended through dispatch-visible session events"
     (let [agent-ctx   (setup-agent-ctx!)
-          session-ctx (setup-session-ctx! agent-ctx)
+          [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
           tc          {:id "call-life" :name "read" :arguments "{}"}]
       (with-redefs [tool-plan/execute-tool-runtime-in!
                     (fn [_ _ _ opts]
@@ -831,8 +832,8 @@
                     agent/emit-tool-start-in! (fn [_ _] nil)
                     agent/emit-tool-end-in! (fn [_ _ _ _] nil)
                     agent/record-tool-result-in! (fn [_ _] nil)]
-        (#'executor/run-tool-call! session-ctx tc nil)
-        (let [events (ss/get-state-value-in session-ctx (ss/state-path :tool-lifecycle-events (ss/active-session-id-in session-ctx)))
+        (#'executor/run-tool-call! session-ctx session-ctx-id tc nil)
+        (let [events (ss/get-state-value-in session-ctx (ss/state-path :tool-lifecycle-events session-ctx-id))
               lifecycle (filterv #(contains? #{:tool-start :tool-executing :tool-execution-update :tool-result}
                                              (:event-kind %))
                                  events)]
@@ -844,7 +845,7 @@
 (deftest runtime-effect-tool-run-helper-test
   (testing "runtime tool-run helper owns the full tool-call transaction"
     (let [agent-ctx   (setup-agent-ctx!)
-          session-ctx (setup-session-ctx! agent-ctx)
+          [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
           tc          {:id "call-effect" :name "read" :arguments "{}"}
           events      (atom [])]
       (with-redefs [tool-plan/execute-tool-runtime-in!
@@ -860,7 +861,7 @@
                       (fn [ctx event-type event-data opts]
                         (swap! events conj event-type)
                         (orig ctx event-type event-data opts)))]
-        (let [result (executor/run-tool-call-through-runtime-effect! session-ctx tc {} nil)]
+        (let [result (executor/run-tool-call-through-runtime-effect! session-ctx session-ctx-id tc {} nil)]
           (is (= "call-effect" (:tool-call-id result)))
           (is (some #{:session/tool-agent-start} @events))
           (is (some #{:session/tool-execute} @events))
@@ -870,7 +871,7 @@
 (deftest execute-tool-call-test
   (testing "tool execution is shaped before recording"
     (let [agent-ctx   (setup-agent-ctx!)
-          session-ctx (setup-session-ctx! agent-ctx)
+          [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
           tc          {:id "call-x" :name "read" :arguments "{}"}
           q           (LinkedBlockingQueue.)]
       (with-redefs [tool-plan/execute-tool-runtime-in!
@@ -879,7 +880,7 @@
                       {:content [{:type :text :text "hello"}]
                        :is-error false
                        :details {:truncation {:truncated false}}})]
-        (let [result (#'executor/execute-tool-call! session-ctx tc q)]
+        (let [result (#'executor/execute-tool-call! session-ctx session-ctx-id tc q)]
           (is (= tc (:tool-call result)))
           (is (= "call-x" (get-in result [:result-message :tool-call-id])))
           (is (= [{:type :text :text "hello"}] (get-in result [:result-message :content])))
@@ -890,7 +891,7 @@
 (deftest tool-run-dispatch-boundary-test
   (testing "tool execution now enters through one explicit session/tool-run dispatch boundary"
     (let [agent-ctx   (setup-agent-ctx!)
-          session-ctx (setup-session-ctx! agent-ctx)
+          [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
           tc          {:id "call-dispatch" :name "read" :arguments "{}"}
           q           (LinkedBlockingQueue.)
           events      (atom [])]
@@ -903,7 +904,7 @@
                       (fn [ctx event-type event-data opts]
                         (swap! events conj event-type)
                         (orig ctx event-type event-data opts)))]
-        (let [result (#'executor/run-tool-call! session-ctx tc q)]
+        (let [result (#'executor/run-tool-call! session-ctx session-ctx-id tc q)]
           (is (= "call-dispatch" (:tool-call-id result)))
           (is (some #{:session/tool-run} @events))
           (is (some #{:session/tool-execute} @events)))))))
@@ -911,7 +912,7 @@
 (deftest record-tool-call-result-test
   (testing "recording step emits progress, telemetry, and agent-core result from shaped execution"
     (let [agent-ctx   (setup-agent-ctx!)
-          session-ctx (setup-session-ctx! agent-ctx)
+          [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
           q           (LinkedBlockingQueue.)
           recorded    (atom nil)
           shaped      {:tool-call {:id "call-y" :name "bash" :arguments "{}"}
@@ -928,8 +929,8 @@
                        :effective-policy {:max-lines 10 :max-bytes 20}}]
       (with-redefs [agent/emit-tool-end-in! (fn [_ _ _ _] nil)
                     agent/record-tool-result-in! (fn [_ msg] (reset! recorded msg) nil)]
-        (let [result (#'executor/record-tool-call-result! session-ctx shaped q)
-              stats  (ss/get-state-value-in session-ctx (ss/state-path :tool-output-stats (ss/active-session-id-in session-ctx)))]
+        (let [result (#'executor/record-tool-call-result! session-ctx session-ctx-id shaped q)
+              stats  (ss/get-state-value-in session-ctx (ss/state-path :tool-output-stats session-ctx-id))]
           (is (= "call-y" (:tool-call-id result)))
           (is (= "call-y" (:tool-call-id @recorded)))
           (is (= 1 (count (:calls stats))))
@@ -938,7 +939,7 @@
 (deftest tool-output-accounting-test
   (testing "captures per-call stats and aggregates, including limit-hit"
     (let [agent-ctx   (setup-agent-ctx!)
-          session-ctx (setup-session-ctx! agent-ctx)
+          [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
           tc          {:id "call-1" :name "bash" :arguments "{}"}]
       (with-redefs [tool-plan/execute-tool-runtime-in!
                     (fn [_ _ _ _]
@@ -948,8 +949,8 @@
                     agent/emit-tool-start-in! (fn [_ _] nil)
                     agent/emit-tool-end-in! (fn [_ _ _ _] nil)
                     agent/record-tool-result-in! (fn [_ _] nil)]
-        (#'psi.agent-session.executor/run-tool-call! session-ctx tc nil)
-        (let [stats (ss/get-state-value-in session-ctx (ss/state-path :tool-output-stats (ss/active-session-id-in session-ctx)))
+        (#'psi.agent-session.executor/run-tool-call! session-ctx session-ctx-id tc nil)
+        (let [stats (ss/get-state-value-in session-ctx (ss/state-path :tool-output-stats session-ctx-id))
               call  (first (:calls stats))]
           (is (= "call-1" (:tool-call-id call)))
           (is (= "bash" (:tool-name call)))
@@ -964,7 +965,7 @@
 
   (testing "context-bytes-added reflects shaped content"
     (let [agent-ctx   (setup-agent-ctx!)
-          session-ctx (setup-session-ctx! agent-ctx)
+          [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
           tc          {:id "call-2" :name "read" :arguments "{}"}
           raw         (apply str (repeat 1000 "x"))
           shaped      (subs raw 0 20)]
@@ -976,15 +977,15 @@
                     agent/emit-tool-start-in! (fn [_ _] nil)
                     agent/emit-tool-end-in! (fn [_ _ _ _] nil)
                     agent/record-tool-result-in! (fn [_ _] nil)]
-        (#'psi.agent-session.executor/run-tool-call! session-ctx tc nil)
-        (let [call (first (:calls (ss/get-state-value-in session-ctx (ss/state-path :tool-output-stats (ss/active-session-id-in session-ctx)))))]
+        (#'psi.agent-session.executor/run-tool-call! session-ctx session-ctx-id tc nil)
+        (let [call (first (:calls (ss/get-state-value-in session-ctx (ss/state-path :tool-output-stats session-ctx-id))))]
           (is (= (count (.getBytes shaped "UTF-8"))
                  (:context-bytes-added call)))
           (is (= (:context-bytes-added call) (:output-bytes call)))))))
 
   (testing "structured content blocks are preserved and progress events include rich payload"
     (let [agent-ctx   (setup-agent-ctx!)
-          session-ctx (setup-session-ctx! agent-ctx)
+          [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
           tc          {:id "call-3" :name "read" :arguments "{}"}
           q           (LinkedBlockingQueue.)
           blocks      [{:type :text :text "hello"}
@@ -1002,7 +1003,7 @@
                     (fn [_ msg]
                       (reset! results msg)
                       nil)]
-        (#'psi.agent-session.executor/run-tool-call! session-ctx tc q)
+        (#'psi.agent-session.executor/run-tool-call! session-ctx session-ctx-id tc q)
         (let [events   (loop [acc []]
                          (if-let [e (.poll q 5 TimeUnit/MILLISECONDS)]
                            (recur (conj acc e))
@@ -1044,9 +1045,9 @@
                  (assoc-in [:agent-session :sessions child-id :turn] {:ctx nil}))))))
 
 (defn- scoped-ctx
-  "Return a copy of ctx with :target-session-id set to child-id."
-  [ctx child-id]
-  (assoc ctx :target-session-id child-id))
+  "Return ctx unchanged; child routing is now explicit via session-id args."
+  [ctx _child-id]
+  ctx)
 
 (defn- journal-for-session
   "Return the raw journal vector for session-id sid."
@@ -1054,35 +1055,30 @@
   (ss/get-state-value-in ctx (ss/state-path :journal sid)))
 
 (deftest child-session-target-routing-test
-  ;; :target-session-id on the ctx overrides active-session-id-in and
-  ;; get-session-data-in to read from the child session, not the parent.
+  ;; Child session reads are explicit via session-id args.
   (let [agent-ctx   (setup-agent-ctx!)
-        session-ctx (setup-session-ctx! agent-ctx)
-        parent-id   (ss/active-session-id-in session-ctx)
+        [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
+        parent-id   session-ctx-id
         child-id    (make-child-session-id)
         child-sd    {:session-id  child-id
                      :session-name "child"
                      :spawn-mode  :agent
                      :parent-session-id parent-id}
-        _           (add-child-session-to-state! session-ctx child-id child-sd)
-        scoped      (scoped-ctx session-ctx child-id)]
-    (testing "child session target-session-id routing"
-      (testing "active-session-id-in returns child id when target is set"
-        (is (= child-id (ss/active-session-id-in scoped))
-            "target-session-id should override active session resolution"))
-      (testing "get-session-data-in returns child data"
-        (is (= "child" (:session-name (ss/get-session-data-in scoped)))
+        _           (add-child-session-to-state! session-ctx child-id child-sd)]
+    (testing "child session routing is explicit"
+      (testing "get-session-data-in returns child data when child id is passed"
+        (is (= "child" (:session-name (ss/get-session-data-in session-ctx child-id)))
             "should read from child session, not parent"))
       (testing "parent session data is unaffected"
-        (is (= parent-id (:session-id (ss/get-session-data-in session-ctx)))
+        (is (= parent-id session-ctx-id)
             "parent ctx still sees parent session")))))
 
 (deftest child-session-journal-isolation-test
   ;; Writes via journal-append-in! on a scoped ctx land in the child journal
   ;; without touching the parent journal.
   (let [agent-ctx   (setup-agent-ctx!)
-        session-ctx (setup-session-ctx! agent-ctx)
-        parent-id   (ss/active-session-id-in session-ctx)
+        [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
+        parent-id   session-ctx-id
         child-id    (make-child-session-id)
         child-sd    {:session-id child-id :spawn-mode :agent
                      :parent-session-id parent-id}
@@ -1092,7 +1088,7 @@
                      :content [{:type :text :text "child msg"}]
                      :timestamp (java.time.Instant/now)}]
     (testing "child session journal isolation"
-      (ss/journal-append-in! scoped (persist/message-entry test-msg))
+      (ss/journal-append-in! scoped child-id (persist/message-entry test-msg))
       (testing "entry appears in child journal"
         (let [child-journal (journal-for-session session-ctx child-id)]
           (is (= 1 (count child-journal))
@@ -1105,11 +1101,11 @@
               (str "parent journal should be empty, got " (count parent-journal))))))))
 
 (deftest executor-child-session-end-to-end-test
-  ;; run-agent-loop! on a scoped ctx with :target-session-id writes messages
-  ;; into the child journal and does not modify the parent journal.
+  ;; run-agent-loop! with explicit child session-id writes messages into the
+  ;; child journal and does not modify the parent journal.
   (let [agent-ctx   (setup-agent-ctx!)
-        session-ctx (setup-session-ctx! agent-ctx)
-        parent-id   (ss/active-session-id-in session-ctx)
+        [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
+        parent-id   session-ctx-id
         child-id    (make-child-session-id)
         child-sd    {:session-id     child-id
                      :spawn-mode     :agent
@@ -1124,7 +1120,7 @@
     (testing "executor child session end-to-end"
       (with-redefs [psi.agent-session.executor/do-stream!
                     (stub-text-stream "child response")]
-        (executor/run-agent-loop! nil scoped agent-ctx stub-model [user-msg]))
+        (executor/run-agent-loop! nil scoped child-id agent-ctx stub-model [user-msg]))
       (testing "child journal contains both user and assistant messages"
         (let [child-journal  (journal-for-session session-ctx child-id)
               child-messages (->> child-journal
@@ -1143,17 +1139,18 @@
 
 (deftest finish-agent-loop-skips-statechart-for-child-test
   ;; finish-agent-loop! must not crash or attempt statechart dispatch when
-  ;; :target-session-id is set (child session path has no statechart lifecycle).
+  ;; session has spawn-mode :agent (child session path has no statechart lifecycle).
   (let [agent-ctx   (setup-agent-ctx!)
-        session-ctx (setup-session-ctx! agent-ctx)
+        [session-ctx _] (setup-session-ctx! agent-ctx)
         child-id    (make-child-session-id)
-        scoped      (scoped-ctx session-ctx child-id)
+        child-sd    {:session-id child-id :spawn-mode :agent}
+        _           (add-child-session-to-state! session-ctx child-id child-sd)
         result      {:role "assistant"
                      :content [{:type :text :text "done"}]
                      :stop-reason :stop}]
-    (testing "finish-agent-loop! with target-session-id"
+    (testing "finish-agent-loop! with child session (spawn-mode :agent)"
       (testing "returns result without error"
         (let [returned (#'psi.agent-session.executor/finish-agent-loop!
-                        scoped agent-ctx result)]
+                        session-ctx child-id agent-ctx result)]
           (is (= result returned)
               "should return the result unchanged"))))))

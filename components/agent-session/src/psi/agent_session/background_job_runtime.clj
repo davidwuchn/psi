@@ -18,7 +18,7 @@
 
 (defn maybe-track-background-workflow-job!
   "Track a workflow mutation as a background job if applicable."
-  [ctx op-sym full-params payload]
+  [ctx session-id op-sym full-params payload]
   (let [store (ss/get-state-value-in ctx (ss/state-path :background-jobs))]
     (when (and (contains? #{'psi.extension.workflow/create
                             'psi.extension.workflow/send-event}
@@ -43,7 +43,6 @@
                                  (:tool-call-id full-params)
                                  (str (if created-op? "workflow-create-" "workflow-send-event-")
                                       (or ext-path "ext") "-" (or wf-id (java.util.UUID/randomUUID))))
-                thread-id    (:session-id (ss/get-session-data-in ctx))
                 job-kind     (when wf-type :workflow)
                 tool-name    (if wf-type
                                (str "workflow/" (name wf-type))
@@ -59,7 +58,7 @@
                                   (let [state' (:state (bg-jobs/start-background-job
                                                         store
                                                         {:tool-call-id      (str tool-call-id)
-                                                         :thread-id         (str thread-id)
+                                                         :thread-id         (str session-id)
                                                          :tool-name         tool-name
                                                          :job-id            (str "job-" (java.util.UUID/randomUUID))
                                                          :job-kind          job-kind
@@ -110,16 +109,17 @@
 
 (defn maybe-emit-background-job-terminal-messages!
   "Emit terminal job messages via the ctx-provided send-extension-message-fn."
-  [ctx]
-  (let [store     (ss/get-state-value-in ctx (ss/state-path :background-jobs))
-        thread-id (:session-id (ss/get-session-data-in ctx))
-        send-msg  (:send-extension-message-fn ctx)]
-    (when (and store thread-id send-msg)
-      (doseq [job (bg-jobs/pending-terminal-jobs-in store thread-id)]
+  [ctx session-id]
+  (let [store    (ss/get-state-value-in ctx (ss/state-path :background-jobs))
+        send-msg (:send-extension-message-fn ctx)]
+    (when (and store session-id send-msg)
+      (doseq [job (bg-jobs/pending-terminal-jobs-in store session-id)]
         (let [claim* (atom nil)]
           (dispatch/dispatch! ctx :session/update-background-jobs-state
                               {:update-fn (fn [store]
-                                            (let [result (bg-jobs/claim-terminal-message-emission store {:job-id (:job-id job)})]
+                                            (let [result (bg-jobs/claim-terminal-message-emission
+                                                          store
+                                                          {:job-id (:job-id job)})]
                                               (reset! claim* result)
                                               (:state result)))}
                               {:origin :core})
@@ -130,13 +130,13 @@
                     wf          (when (and wf-ext-path wf-id)
                                   (wf/workflow-in (:workflow-registry ctx) wf-ext-path wf-id))
                     payload     (or (:terminal-payload job)
-                                    {:job-id (:job-id job)
-                                     :status (:status job)
-                                     :result (:result wf)
+                                    {:job-id        (:job-id job)
+                                     :status        (:status job)
+                                     :result        (:result wf)
                                      :error-message (:error-message wf)})
                     payload-edn (pr-str payload)
                     policy      (tool-output/effective-policy
-                                 (or (:tool-output-overrides (ss/get-session-data-in ctx)) {})
+                                 (or (:tool-output-overrides (ss/get-session-data-in ctx session-id)) {})
                                  (or (:tool-name job) "workflow"))
                     truncation  (tool-output/head-truncate payload-edn policy)
                     spill-path  (when (:truncated truncation)
@@ -148,20 +148,26 @@
                                   (let [state' (bg-jobs/set-terminal-payload-file
                                                 state
                                                 {:job-id (:job-id job)
-                                                 :path spill-path})]
-                                    (dispatch/dispatch! ctx :session/update-background-jobs-state {:update-fn (constantly state')} {:origin :core})))
+                                                 :path   spill-path})]
+                                    (dispatch/dispatch! ctx
+                                                        :session/update-background-jobs-state
+                                                        {:update-fn (constantly state')}
+                                                        {:origin :core})))
                     content     (if spill-path
                                   (str (:content truncation)
                                        "\n\nTerminal payload exceeded output limits. See temp file: "
                                        spill-path)
                                   payload-edn)]
-                (send-msg ctx "assistant" content "background-job-terminal")))))))))
+                (try
+                  (send-msg ctx session-id "assistant" content "background-job-terminal")
+                  (catch clojure.lang.ArityException _
+                    (send-msg ctx "assistant" content "background-job-terminal")))))))))))
 
 (defn reconcile-and-emit-background-job-terminals-in!
   "Reconcile workflow-backed background jobs and emit any newly terminal job messages."
-  [ctx]
+  [ctx session-id]
   (maybe-mark-workflow-jobs-terminal! ctx)
-  (maybe-emit-background-job-terminal-messages! ctx)
+  (maybe-emit-background-job-terminal-messages! ctx session-id)
   (background-jobs-state-in ctx))
 
 (defn reconcile-workflow-background-jobs-in!

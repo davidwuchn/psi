@@ -9,8 +9,8 @@
 
 (defn- operation-metadata
   []
-  (let [session-ctx (agent-session/create-context)
-        ctx         (introspection/create-context {:agent-session-ctx session-ctx})
+  (let [[session-ctx _] (agent-session/create-context)
+        ctx              (introspection/create-context {:agent-session-ctx session-ctx})
         qctx        (:query-ctx ctx)]
     (engine/bootstrap-system-in! (:engine-ctx ctx))
     (introspection/register-resolvers-in! ctx)

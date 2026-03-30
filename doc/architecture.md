@@ -127,7 +127,6 @@ just event type and timing. Current log entries include:
   - blocked?
   - block reason
   - replaying?
-  - replay class (`:replayable`, `:projection`, `:diagnostic`)
   - statechart-claimed?
   - validation error
 - pure-result/effect shape:
@@ -143,16 +142,9 @@ just event type and timing. Current log entries include:
 
 Retention/volume tradeoff:
 - the log keeps bounded summaries rather than full root-state snapshots
-- replay classification now makes one narrower contract explicit:
-  - `:replayable` entries are the current retained replay substrate subset
-  - `:projection` entries are retained observability/projection history, not replay inputs
-  - `:diagnostic` entries remain useful history without a replay guarantee
-- replayable retained entries now have their own bounded retained store instead
-  of competing with `:projection` / `:diagnostic` entries inside one mixed log
-- the mixed dispatch log remains bounded for observability/debugging
-- the replayable-only log remains bounded for replay substrate use
-- this improves debugging signal without turning the retained in-process log into
-  a full replay store or large memory sink
+- all entries are replay-safe by construction: replay suppresses effects and applies
+  only pure state transforms, so no classification is needed to determine safety
+- the single bounded log serves both observability/debugging and replay substrate use
 
 ## Conforming vertical slice — manual compaction
 

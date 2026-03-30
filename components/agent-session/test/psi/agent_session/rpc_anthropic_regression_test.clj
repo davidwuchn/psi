@@ -34,19 +34,19 @@
 
 (deftest rpc-new-session-rehydrates-agent-messages-not-tui-projection-test
   (testing "new_session emits canonical agent messages so the next Anthropic request preserves role/content shape"
-    (let [ctx (session/create-context)
-          state (atom {:ready? true
-                       :pending {}
-                       :subscribed-topics #{"session/rehydrated"}
-                       :on-new-session! (fn []
-                                          {:agent-messages [{:role "assistant"
-                                                             :content [{:type :text :text "[New session started]"}]}
-                                                            {:role "user"
-                                                             :content [{:type :text :text "who are you?"}]}]
-                                           :messages [{:role :assistant :text "[New session started]"}
-                                                      {:role :user :text "who are you?"}]
-                                           :tool-calls {}
-                                           :tool-order []})})
+    (let [[ctx _] (session/create-context)
+          state   (atom {:ready? true
+                         :pending {}
+                         :subscribed-topics #{"session/rehydrated"}
+                         :on-new-session! (fn []
+                                            {:agent-messages [{:role "assistant"
+                                                               :content [{:type :text :text "[New session started]"}]}
+                                                              {:role "user"
+                                                               :content [{:type :text :text "who are you?"}]}]
+                                             :messages [{:role :assistant :text "[New session started]"}
+                                                        {:role :user :text "who are you?"}]
+                                             :tool-calls {}
+                                             :tool-order []})})
           handler (rpc/make-session-request-handler ctx)
           input (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                      "{:id \"n1\" :kind :request :op \"new_session\"}\n")
@@ -62,29 +62,30 @@
 
 (deftest rpc-resume-session-rehydrates-agent-messages-not-tui-projection-test
   (testing "resume emits canonical agent messages from the journal"
-    (let [cwd     (str (System/getProperty "java.io.tmpdir") "/psi-rpc-anthropic-resume-" (java.util.UUID/randomUUID))
-          _       (.mkdirs (java.io.File. cwd))
-          ctx     (session/create-context {:cwd cwd})
-          sd1     (session/new-session-in! ctx)
-          path1   (:session-file sd1)
-          _       (persist/flush-journal! (java.io.File. path1)
-                                          (:session-id sd1)
-                                          cwd
-                                          nil
-                                          nil
-                                          [(persist/message-entry {:role "assistant"
-                                                                   :content [{:type :text :text "[New session started]"}]})
-                                           (persist/message-entry {:role "user"
-                                                                   :content [{:type :text :text "who are you?"}]})])
-          state   (atom {:ready? true
-                         :pending {}
-                         :subscribed-topics #{"session/rehydrated"}})
-          handler (rpc/make-session-request-handler (ss/retarget-ctx ctx (:session-id sd1)))
-          input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
-                       "{:id \"c1\" :kind :request :op \"command\" :params {:text \"/resume " path1 "\"}}\n")
+    (let [cwd                (str (System/getProperty "java.io.tmpdir") "/psi-rpc-anthropic-resume-" (java.util.UUID/randomUUID))
+          _                  (.mkdirs (java.io.File. cwd))
+          [ctx seed-id]      (session/create-context {:cwd cwd})
+          sd1                (session/new-session-in! ctx seed-id {})
+          session-id         (:session-id sd1)
+          path1              (:session-file sd1)
+          _                  (persist/flush-journal! (java.io.File. path1)
+                                                     session-id
+                                                     cwd
+                                                     nil
+                                                     nil
+                                                     [(persist/message-entry {:role "assistant"
+                                                                              :content [{:type :text :text "[New session started]"}]})
+                                                      (persist/message-entry {:role "user"
+                                                                              :content [{:type :text :text "who are you?"}]})])
+          state              (atom {:ready? true
+                                    :pending {}
+                                    :subscribed-topics #{"session/rehydrated"}})
+          handler            (rpc/make-session-request-handler ctx)
+          input              (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                                  "{:id \"c1\" :kind :request :op \"command\" :params {:text \"/resume " path1 "\"}}\n")
           {:keys [out-lines]} (run-loop input handler state)
-          frames (parse-frames out-lines)
-          rehydrate-event (some #(when (= "session/rehydrated" (:event %)) %) frames)]
+          frames             (parse-frames out-lines)
+          rehydrate-event    (some #(when (= "session/rehydrated" (:event %)) %) frames)]
       (is (some? rehydrate-event))
       (is (= [{:role "assistant"
                :content [{:type :text :text "[New session started]"}]}

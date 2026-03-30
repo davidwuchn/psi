@@ -54,6 +54,14 @@
       (is (str/includes? error "OPENAI_API_KEY"))
       (is (str/includes? error "anthropic")))))
 
+(defn- active-session-id
+  [ctx]
+  (or (->> (ss/list-context-sessions-in ctx)
+           (map :session-id)
+           first)
+      (->> (keys (ss/get-sessions-map-in ctx))
+           first)))
+
 (defn- with-main-bootstrap-stubs
   [f]
   (with-redefs [psi.agent-session.main/resolve-model
@@ -70,7 +78,7 @@
                 sys-prompt/build-system-prompt (fn [_] "")
                 ext/discover-extension-paths (fn [& _] [])
                 bootstrap/bootstrap-in!
-                (fn [_ctx _]
+                (fn [_ctx _session-id _]
                   {:extension-errors [] :extension-loaded-count 0})]
     (f)))
 
@@ -85,8 +93,9 @@
                                                      "/quit"
                                                      nil)))]
             (main/run-session :ignored)
-            (let [ctx (:ctx @main/session-state)
-                  sd  (ss/get-session-data-in ctx)]
+            (let [ctx        (:ctx @main/session-state)
+                  session-id (active-session-id ctx)
+                  sd         (ss/get-session-data-in ctx session-id)]
               (is (some? ctx))
               (is (string? (:session-file sd)))
               (is (= :console (:ui-type sd)))))))
@@ -105,11 +114,12 @@
                                                      2 "/quit"
                                                      nil)))]
             (main/run-session :ignored)
-            (let [ctx (:ctx @main/session-state)
-                  msg-texts (->> (persist/all-entries-in ctx)
-                                 (filter #(= :message (:kind %)))
-                                 (map #(get-in % [:data :message :content 0 :text]))
-                                 set)]
+            (let [ctx        (:ctx @main/session-state)
+                  session-id (active-session-id ctx)
+                  msg-texts  (->> (persist/all-entries-in ctx session-id)
+                                  (filter #(= :message (:kind %)))
+                                  (map #(get-in % [:data :message :content 0 :text]))
+                                  set)]
               (is (contains? msg-texts "/history"))
               (is (contains? msg-texts "/quit"))))))
       (finally
@@ -128,7 +138,8 @@
             (is (string? (:current-session-file @captured)))
             (is (fn? (:dispatch-fn @captured)))
             (is (fn? (:on-interrupt-fn! @captured)))
-            (is (= :tui (:ui-type (ss/get-session-data-in (:ctx @main/session-state))))))))
+            (let [ctx (:ctx @main/session-state)]
+              (is (= :tui (:ui-type (ss/get-session-data-in ctx (active-session-id ctx)))))))))
       (finally
         (reset! main/session-state orig-state)))))
 
@@ -141,11 +152,12 @@
                                   ((:dispatch-fn opts) "/history")
                                   :ok)]
             (is (= :ok (main/run-tui-session-with-interface! mock-tui-start! :ignored)))
-            (let [ctx (:ctx @main/session-state)
-                  msg-texts (->> (persist/all-entries-in ctx)
-                                 (filter #(= :message (:kind %)))
-                                 (map #(get-in % [:data :message :content 0 :text]))
-                                 set)]
+            (let [ctx        (:ctx @main/session-state)
+                  session-id (active-session-id ctx)
+                  msg-texts  (->> (persist/all-entries-in ctx session-id)
+                                  (filter #(= :message (:kind %)))
+                                  (map #(get-in % [:data :message :content 0 :text]))
+                                  set)]
               (is (contains? msg-texts "/history"))))))
       (finally
         (reset! main/session-state orig-state)))))
@@ -161,9 +173,10 @@
                           (reset! captured opts)
                           :ok)]
             (#'main/run-rpc-edn-session! :ignored)
-            (let [ctx (:ctx @main/session-state)
-                  sd  (ss/get-session-data-in ctx)
-                  hs  (:handshake-server-info-fn @(:state @captured))]
+            (let [ctx        (:ctx @main/session-state)
+                  session-id (active-session-id ctx)
+                  sd         (ss/get-session-data-in ctx session-id)
+                  hs         (:handshake-server-info-fn @(:state @captured))]
               (is (some? ctx))
               (is (string? (:session-file sd)))
               (is (= :emacs (:ui-type sd)))
@@ -198,7 +211,7 @@
                 (is (= :session/set-rpc-trace (:event-type entry)))
                 (is (= :core (:origin entry)))
                 (is (= {:enabled? true :file trace-file}
-                       (:event-data entry))))
+                       (dissoc (:event-data entry) :session-id))))
 
               (trace-fn {:dir :in
                          :raw "{:id \"1\" :kind :request :op \"ping\"}"
@@ -324,7 +337,7 @@
                 introspection/register-resolvers! (fn [] nil)
                 memory-runtime/sync-memory-layer! (fn [_] {:ok? true})
                 bootstrap/bootstrap-in!
-                (fn [_ctx _]
+                (fn [_ctx _session-id _]
                   {:extension-errors [] :extension-loaded-count 0})]
     (let [{:keys [ctx]} (#'main/bootstrap-runtime-session!
                          {:provider :anthropic
@@ -332,11 +345,12 @@
                           :name "Test Model"
                           :supports-reasoning false}
                          {})
-          sd       (ss/get-session-data-in ctx)
-          sessions (ss/get-sessions-map-in ctx)]
+          session-id (active-session-id ctx)
+          sd         (ss/get-session-data-in ctx session-id)
+          sessions   (ss/get-sessions-map-in ctx)]
       (is (= 1 (count sessions)))
-      (is (= (:session-id sd) (ss/active-session-id-in ctx)))
-      (is (= [(:session-id sd)] (vec (keys sessions)))))))
+      (is (= session-id (:session-id sd)))
+      (is (= [session-id] (vec (keys sessions)))))))
 
 (deftest bootstrap-runtime-session-passes-memory-runtime-opts-to-sync-test
   (let [captured (atom nil)]
@@ -351,7 +365,7 @@
                                                       (reset! captured opts)
                                                       {:ok? true})
                   bootstrap/bootstrap-in!
-                  (fn [_ctx _]
+                  (fn [_ctx _session-id _]
                     {:extension-errors [] :extension-loaded-count 0})]
       (let [{:keys [ctx]} (#'main/bootstrap-runtime-session!
                            {:provider :anthropic
@@ -377,8 +391,7 @@
                 introspection/register-resolvers! (fn [] nil)
                 memory-runtime/sync-memory-layer! (fn [_] {:ok? true})
                 bootstrap/bootstrap-in!
-                (fn [ctx _]
-                  (session/new-session-in! ctx)
+                (fn [_ctx _session-id _]
                   {:extension-errors [] :extension-loaded-count 0})]
     (let [{:keys [ctx]} (#'main/bootstrap-runtime-session!
                          {:provider :anthropic
@@ -386,8 +399,9 @@
                           :name "Test Model"
                           :supports-reasoning false}
                          {})
+          sid    (active-session-id ctx)
           prompt (:psi.agent-session/system-prompt
-                  (session/query-in ctx [:psi.agent-session/system-prompt]))]
+                  (session/query-in ctx sid [:psi.agent-session/system-prompt]))]
       ;; Lambda mode is default — graph capabilities appear after lambda graph discovery
       (is (str/includes? prompt "λ graph(eql)."))
       (is (str/includes? prompt "- agent-session (ops=")))))
@@ -407,8 +421,7 @@
                     introspection/register-resolvers! (fn [] nil)
                     memory-runtime/sync-memory-layer! (fn [_] {:ok? true})
                     bootstrap/bootstrap-in!
-                    (fn [ctx _]
-                      (session/new-session-in! ctx)
+                    (fn [_ctx _session-id _]
                       {:extension-errors [] :extension-loaded-count 0})]
         (let [{:keys [ctx]} (#'main/bootstrap-runtime-session!
                              {:provider :anthropic
@@ -440,9 +453,9 @@
             cwd (System/getProperty "user.dir")]
         (try
           (is (pos-int? (:port srv)))
-          (let [ctx (session/create-context {:persist? false
-                                             :cwd cwd
-                                             :nrepl-runtime-atom main/nrepl-runtime})
+          (let [[ctx _] (session/create-context {:persist? false
+                                                 :cwd cwd
+                                                 :nrepl-runtime-atom main/nrepl-runtime})
                 result (session/query-in ctx [:psi.runtime/nrepl-host
                                               :psi.runtime/nrepl-port
                                               :psi.runtime/nrepl-endpoint])
@@ -455,9 +468,9 @@
             (is (= expected-endpoint (:psi.runtime/nrepl-endpoint result))))
           (finally
             (#'main/stop-nrepl! srv))))
-      (let [ctx-after-stop (session/create-context {:persist? false
-                                                    :cwd (System/getProperty "user.dir")
-                                                    :nrepl-runtime-atom main/nrepl-runtime})
+      (let [[ctx-after-stop _] (session/create-context {:persist? false
+                                                        :cwd (System/getProperty "user.dir")
+                                                        :nrepl-runtime-atom main/nrepl-runtime})
             result-after-stop (session/query-in ctx-after-stop
                                                 [:psi.runtime/nrepl-host
                                                  :psi.runtime/nrepl-port
@@ -486,8 +499,7 @@
                   introspection/register-resolvers! (fn [] nil)
                   memory-runtime/sync-memory-layer! (fn [_] {:ok? true})
                   bootstrap/bootstrap-in!
-                  (fn [ctx _]
-                    (session/new-session-in! ctx)
+                  (fn [_ctx _session-id _]
                     {:extension-errors [] :extension-loaded-count 0})]
       (let [{:keys [ctx]} (#'main/bootstrap-runtime-session!
                            {:provider :anthropic
@@ -495,7 +507,8 @@
                             :name "Claude Sonnet 4.6"
                             :supports-reasoning true}
                            {:cwd cwd})
-            sd (ss/get-session-data-in ctx)]
+            session-id      (active-session-id ctx)
+            sd              (ss/get-session-data-in ctx session-id)]
         (is (= "openai" (get-in sd [:model :provider])))
         (is (= "gpt-5.3-codex" (get-in sd [:model :id])))
         (is (= :high (:thinking-level sd)))))))
@@ -517,8 +530,7 @@
                   introspection/register-resolvers! (fn [] nil)
                   memory-runtime/sync-memory-layer! (fn [_] {:ok? true})
                   bootstrap/bootstrap-in!
-                  (fn [ctx _]
-                    (session/new-session-in! ctx)
+                  (fn [_ctx _session-id _]
                     {:extension-errors [] :extension-loaded-count 0})]
       (let [{:keys [ctx]} (#'main/bootstrap-runtime-session!
                            {:provider :anthropic
@@ -526,7 +538,8 @@
                             :name "Claude Sonnet 4.6"
                             :supports-reasoning false}
                            {:cwd cwd})
-            sd (ss/get-session-data-in ctx)]
+            session-id      (active-session-id ctx)
+            sd              (ss/get-session-data-in ctx session-id)]
         (is (= "anthropic" (get-in sd [:model :provider])))
         (is (= "claude-sonnet-4-6" (get-in sd [:model :id])))
         (is (= :off (:thinking-level sd)))))))

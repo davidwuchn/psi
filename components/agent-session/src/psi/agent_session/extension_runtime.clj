@@ -23,32 +23,74 @@
 
 ;;; Extension query/mutation capability
 
+(def ^:private session-scoped-extension-mutation-ops
+  #{'psi.extension/set-session-name
+    'psi.extension/set-active-tools
+    'psi.extension/set-model
+    'psi.extension/create-child-session
+    'psi.extension/set-rpc-trace
+    'psi.extension/interrupt
+    'psi.extension/compact
+    'psi.extension/append-entry
+    'psi.extension/register-prompt-contribution
+    'psi.extension/update-prompt-contribution
+    'psi.extension/unregister-prompt-contribution
+    'psi.extension.tool/read
+    'psi.extension.tool/bash
+    'psi.extension.tool/write
+    'psi.extension.tool/update
+    'psi.extension/run-tool-plan
+    'psi.extension.tool/chain
+    'psi.extension/send-message
+    'psi.extension/send-prompt})
+
+(def ^:private lifecycle-extension-mutation-param-builders
+  {'psi.extension/create-session
+   (fn [session-id params]
+     (assoc params :parent-session-id session-id))
+
+   'psi.extension/switch-session
+   (fn [session-id params]
+     (assoc params :source-session-id session-id))})
+
 (defn- run-extension-mutation-in!
   "Execute a single EQL mutation op against `ctx` and return its payload.
    `op-sym` must be a qualified mutation symbol."
-  [ctx op-sym params]
+  [ctx session-id op-sym params]
   (let [register-resolvers! (:register-resolvers-fn ctx)
         register-mutations! (:register-mutations-fn ctx)
-        qctx (query/create-query-context)
-        _    (register-resolvers! qctx false)
-        _    (register-mutations! qctx (:all-mutations ctx) true)
-        git-ctx (history-git/create-context (ss/effective-cwd-in ctx))
-        seed {:psi/agent-session-ctx ctx
-              :git/context git-ctx}
-        full-params (assoc params
-                           :psi/agent-session-ctx ctx
-                           :git/context git-ctx)
-        payload (get (query/query-in qctx seed [(list op-sym full-params)]) op-sym)]
-    (bg-rt/maybe-track-background-workflow-job! ctx op-sym full-params payload)
+        qctx                (query/create-query-context)
+        _                   (register-resolvers! qctx false)
+        _                   (register-mutations! qctx (:all-mutations ctx) true)
+        git-ctx             (history-git/create-context (ss/effective-cwd-in ctx session-id))
+        seed                {:psi/agent-session-ctx ctx
+                             :git/context git-ctx}
+        full-params         (let [base-params (assoc params
+                                                :psi/agent-session-ctx ctx
+                                                :git/context git-ctx)]
+                              (cond
+                                (contains? session-scoped-extension-mutation-ops op-sym)
+                                (assoc base-params :session-id session-id)
+
+                                (contains? lifecycle-extension-mutation-param-builders op-sym)
+                                ((get lifecycle-extension-mutation-param-builders op-sym) session-id base-params)
+
+                                :else
+                                base-params))
+        payload             (get (query/query-in qctx seed [(list op-sym full-params)]) op-sym)]
+    (bg-rt/maybe-track-background-workflow-job! ctx session-id op-sym full-params payload)
     payload))
+
 
 (defn- make-extension-runtime-fns
   "Build the runtime-fns map for extension API EQL access.
    Extensions interact with session state via query/mutation only.
    Secrets are exposed via narrow capability fns (not queryable resolvers)."
-  [ctx]
+  [ctx session-id]
   (let [register-resolvers! (:register-resolvers-fn ctx)
-        register-mutations! (:register-mutations-fn ctx)]
+        register-mutations! (:register-mutations-fn ctx)
+        current-session-data (fn []
+                               (ss/get-session-data-in ctx session-id))]
     {:query-fn
      (fn [eql-query]
        (let [qctx (query/create-query-context)
@@ -58,7 +100,7 @@
 
      :mutate-fn
      (fn [op-sym params]
-       (run-extension-mutation-in! ctx op-sym params))
+       (run-extension-mutation-in! ctx session-id op-sym params))
 
      :get-api-key-fn
      (fn [provider]
@@ -67,37 +109,40 @@
 
      :ui-type-fn
      (fn []
-       (:ui-type (ss/get-session-data-in ctx)))
+       (:ui-type (current-session-data)))
 
      :ui-context-fn
      (fn [ext-path]
-       (let [ext-id   (str ext-path)
-             ui-path  (ss/state-path :ui-state)
-             base-ui  (ui-state/create-ui-context (ss/atom-view-in ctx ui-path) ext-path)]
+       (let [ext-id     (str ext-path)
+             ui-path    (ss/state-path :ui-state)
+             base-ui    (ui-state/create-ui-context (ss/atom-view-in ctx ui-path) ext-path)]
          (when base-ui
            (assoc base-ui
                   :set-widget
                   (fn [widget-id placement content]
                     (dispatch/dispatch! ctx :session/ui-set-widget
-                                        {:extension-id ext-id
-                                         :widget-id widget-id
-                                         :placement placement
-                                         :content content}
+                                        {:session-id   session-id
+                                         :extension-id ext-id
+                                         :widget-id    widget-id
+                                         :placement    placement
+                                         :content      content}
                                         {:origin :extension}))
 
                   :clear-widget
                   (fn [widget-id]
                     (dispatch/dispatch! ctx :session/ui-clear-widget
-                                        {:extension-id ext-id
-                                         :widget-id widget-id}
+                                        {:session-id   session-id
+                                         :extension-id ext-id
+                                         :widget-id    widget-id}
                                         {:origin :extension}))
 
                   :set-widget-spec
                   (fn [spec]
                     (let [{:keys [accepted? errors]}
                           (dispatch/dispatch! ctx :session/ui-set-widget-spec
-                                              {:extension-id ext-id
-                                               :spec spec}
+                                              {:session-id   session-id
+                                               :extension-id ext-id
+                                               :spec         spec}
                                               {:origin :extension})]
                       (when-not accepted?
                         {:errors errors})))
@@ -105,46 +150,52 @@
                   :clear-widget-spec
                   (fn [widget-id]
                     (dispatch/dispatch! ctx :session/ui-clear-widget-spec
-                                        {:extension-id ext-id
-                                         :widget-id widget-id}
+                                        {:session-id   session-id
+                                         :extension-id ext-id
+                                         :widget-id    widget-id}
                                         {:origin :extension}))
 
                   :set-status
                   (fn [text]
                     (dispatch/dispatch! ctx :session/ui-set-status
-                                        {:extension-id ext-id
-                                         :text text}
+                                        {:session-id   session-id
+                                         :extension-id ext-id
+                                         :text         text}
                                         {:origin :extension}))
 
                   :clear-status
                   (fn []
                     (dispatch/dispatch! ctx :session/ui-clear-status
-                                        {:extension-id ext-id}
+                                        {:session-id   session-id
+                                         :extension-id ext-id}
                                         {:origin :extension}))
 
                   :notify
                   (fn [message level]
                     (dispatch/dispatch! ctx :session/ui-notify
-                                        {:extension-id ext-id
-                                         :message message
-                                         :level level}
+                                        {:session-id   session-id
+                                         :extension-id ext-id
+                                         :message      message
+                                         :level        level}
                                         {:origin :extension}))
 
                   :register-tool-renderer
                   (fn [tool-name render-call-fn render-result-fn]
                     (dispatch/dispatch! ctx :session/ui-register-tool-renderer
-                                        {:tool-name tool-name
-                                         :extension-id ext-id
-                                         :render-call-fn render-call-fn
+                                        {:session-id       session-id
+                                         :tool-name        tool-name
+                                         :extension-id     ext-id
+                                         :render-call-fn   render-call-fn
                                          :render-result-fn render-result-fn}
                                         {:origin :extension}))
 
                   :register-message-renderer
                   (fn [custom-type render-fn]
                     (dispatch/dispatch! ctx :session/ui-register-message-renderer
-                                        {:custom-type custom-type
+                                        {:session-id   session-id
+                                         :custom-type  custom-type
                                          :extension-id ext-id
-                                         :render-fn render-fn}
+                                         :render-fn    render-fn}
                                         {:origin :extension}))
 
                   :get-tools-expanded
@@ -154,7 +205,8 @@
                   :set-tools-expanded
                   (fn [expanded?]
                     (dispatch/dispatch! ctx :session/ui-set-tools-expanded
-                                        {:expanded? expanded?}
+                                        {:session-id session-id
+                                         :expanded?  expanded?}
                                         {:origin :extension}))))))
 
      :log-fn
@@ -168,11 +220,12 @@
   "Discover and load all extensions into this session's registry.
    `configured-paths` are explicit CLI paths.
    Returns {:loaded [paths] :errors [{:path :error}]}."
-  ([ctx] (load-extensions-in! ctx []))
-  ([ctx configured-paths]
-   (load-extensions-in! ctx configured-paths nil))
-  ([ctx configured-paths cwd]
-   (let [runtime-fns (make-extension-runtime-fns ctx)]
+  ([ctx] (throw (ex-info "load-extensions-in! requires explicit session-id"
+                         {:fn :load-extensions-in!})))
+  ([ctx session-id configured-paths]
+   (load-extensions-in! ctx session-id configured-paths nil))
+  ([ctx session-id configured-paths cwd]
+   (let [runtime-fns (make-extension-runtime-fns ctx session-id)]
      (ext/load-extensions-in! (:extension-registry ctx) runtime-fns
                               configured-paths cwd))))
 
@@ -181,28 +234,32 @@
 
    Clears extension-owned prompt contributions before reload so stale
    fragments do not persist when extension composition changes."
-  ([ctx] (reload-extensions-in! ctx []))
-  ([ctx configured-paths]
-   (reload-extensions-in! ctx configured-paths nil))
-  ([ctx configured-paths cwd]
-   (dispatch/dispatch! ctx :session/reset-prompt-contributions nil {:origin :core})
-   (let [runtime-fns (make-extension-runtime-fns ctx)
+  ([ctx] (throw (ex-info "reload-extensions-in! requires explicit session-id"
+                         {:fn :reload-extensions-in!})))
+  ([ctx session-id configured-paths]
+   (reload-extensions-in! ctx session-id configured-paths nil))
+  ([ctx session-id configured-paths cwd]
+   (dispatch/dispatch! ctx :session/reset-prompt-contributions {:session-id session-id} {:origin :core})
+   (let [runtime-fns (make-extension-runtime-fns ctx session-id)
          result      (ext/reload-extensions-in! (:extension-registry ctx) runtime-fns
                                                 configured-paths cwd)]
-     (dispatch/dispatch! ctx :session/refresh-system-prompt nil {:origin :core})
+     (dispatch/dispatch! ctx :session/refresh-system-prompt {:session-id session-id} {:origin :core})
      result)))
 
 (defn add-extension-in!
   "Load one extension file path into this session's extension registry.
    Returns {:loaded? bool :path string? :error string?}."
-  [ctx path]
-  (let [{:keys [extension error]}
-        (ext/load-extension-in! (:extension-registry ctx)
-                                path
-                                (make-extension-runtime-fns ctx))]
-    {:loaded? (some? extension)
-     :path    extension
-     :error   error}))
+  ([ctx path]
+   (throw (ex-info "add-extension-in! requires explicit session-id"
+                   {:fn :add-extension-in!})))
+  ([ctx session-id path]
+   (let [{:keys [extension error]}
+         (ext/load-extension-in! (:extension-registry ctx)
+                                 path
+                                 (make-extension-runtime-fns ctx session-id))]
+     {:loaded? (some? extension)
+      :path    extension
+      :error   error})))
 
 ;;; Extension messaging and prompt delivery
 
@@ -214,7 +271,7 @@
    appended to LLM history — it is only forwarded to the event queue so the
    UI can display it as a transient notification without corrupting the
    conversation context."
-  [ctx role content custom-type]
+  [ctx session-id role content custom-type]
   (let [msg {:role      role
              :content   [{:type :text :text (str content)}]
              :timestamp (java.time.Instant/now)}
@@ -222,7 +279,7 @@
               custom-type (assoc :custom-type custom-type))]
     (dispatch/dispatch! ctx
                         :session/send-extension-message
-                        {:message msg}
+                        {:session-id session-id :message msg}
                         {:origin :core})
     msg))
 
@@ -231,17 +288,17 @@
    `run-fn` is (fn [text source]) — it journals the user message and runs
    the full agent loop (LLM call included) in a background thread.
    Called by the runtime layer (main/RPC) after bootstrap."
-  [ctx run-fn]
+  [ctx session-id run-fn]
   (reset! (:extension-run-fn-atom ctx) run-fn)
-  (when (ss/idle-in? ctx)
-    (bg-rt/reconcile-and-emit-background-job-terminals-in! ctx)))
+  (when (ss/idle-in? ctx session-id)
+    (bg-rt/reconcile-and-emit-background-job-terminals-in! ctx session-id)))
 
 (defn- deliver-extension-prompt!
   "Deliver extension prompt text via the best available channel.
    Returns the delivery mode keyword."
-  [ctx text source]
+  [ctx session-id text source]
   (let [run-fn @(:extension-run-fn-atom ctx)
-        idle?  (ss/idle-in? ctx)]
+        idle?  (ss/idle-in? ctx session-id)]
     (cond
       (and run-fn idle?)
       (do (future (run-fn (str text) source))
@@ -255,7 +312,7 @@
       ;; least the text is not silently dropped (caller can drain it).
       :else
       (do (dispatch/dispatch! ctx :session/enqueue-follow-up-message
-                              {:text (str text)} {:origin :core})
+                              {:session-id session-id :text (str text)} {:origin :core})
           :follow-up))))
 
 (defn send-extension-prompt-in!
@@ -265,14 +322,15 @@
    - run-fn registered + idle      -> run immediately in background (:prompt)
    - run-fn registered + streaming -> run deferred in background (:deferred)
    - no run-fn registered          -> queue follow-up text (:follow-up)"
-  [ctx text source]
-  (let [delivery (deliver-extension-prompt! ctx text source)]
+  [ctx session-id text source]
+  (let [delivery (deliver-extension-prompt! ctx session-id text source)]
     (dispatch/dispatch! ctx
                         :session/record-extension-prompt
-                        {:source source
-                         :delivery delivery
-                         :at (java.time.Instant/now)}
+                        {:session-id session-id
+                         :source     source
+                         :delivery   delivery
+                         :at         (java.time.Instant/now)}
                         {:origin :core})
-    (when (ss/idle-in? ctx)
-      (bg-rt/reconcile-and-emit-background-job-terminals-in! ctx))
+    (when (ss/idle-in? ctx session-id)
+      (bg-rt/reconcile-and-emit-background-job-terminals-in! ctx session-id))
     {:accepted true :delivery delivery}))

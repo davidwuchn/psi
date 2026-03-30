@@ -39,8 +39,8 @@
   (bj/request-cancel-in! store params))
 
 (defn- pending-background-terminal-message-count
-  [ctx]
-  (->> (:messages (agent-core/get-data-in (ss/agent-ctx-in ctx)))
+  [ctx session-id]
+  (->> (:messages (agent-core/get-data-in (ss/agent-ctx-in ctx session-id)))
        (filter #(= "assistant" (:role %)))
        (filter #(= "background-job-terminal" (:custom-type %)))
        count))
@@ -273,8 +273,8 @@
 
 (deftest e7-idle-completion-wakes-turn-boundary-test
   (testing "E7: idle terminal outcome requests next turn boundary"
-    (let [ctx (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
-          thread-id (:session-id (ss/get-session-data-in ctx))]
+    (let [[ctx seed-id] (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
+          thread-id seed-id]
       (dispatch/dispatch! ctx :session/update-background-jobs-state
                           {:update-fn (fn [store]
                                         (-> store
@@ -287,10 +287,10 @@
                                                                :outcome :completed
                                                                :payload {:ok true}})))}
                           {:origin :core})
-      (is (= 0 (pending-background-terminal-message-count ctx)))
-      (ext-rt/set-extension-run-fn-in! ctx (fn [_ _] nil))
+      (is (= 0 (pending-background-terminal-message-count ctx thread-id)))
+      (ext-rt/set-extension-run-fn-in! ctx thread-id (fn [_ _] nil))
       (Thread/sleep 30)
-      (is (= 1 (pending-background-terminal-message-count ctx)))
+      (is (= 1 (pending-background-terminal-message-count ctx thread-id)))
       (is (true? (:terminal-message-emitted (bj/get-job-in (ss/get-state-value-in ctx (ss/state-path :background-jobs)) "job-e7")))))))
 
 (deftest e8-cross-thread-list-cancel-isolation-test
@@ -361,8 +361,8 @@
 
 (deftest e13-retryable-llm-http-errors-are-internal-test
   (testing "E13: internal retryable LLM HTTP errors do not trigger external injection"
-    (let [ctx (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
-          thread-id (:session-id (ss/get-session-data-in ctx))]
+    (let [[ctx seed-id] (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
+          thread-id seed-id]
       (dispatch/dispatch! ctx :session/update-background-jobs-state
                           {:update-fn (fn [store]
                                         (:state (bj/start-background-job
@@ -374,10 +374,10 @@
                           {:origin :core})
       ;; Simulate internal retryable error handling path: job remains running and no terminal outcome marked.
       (is (= :running (:status (bj/get-job-in (ss/get-state-value-in ctx (ss/state-path :background-jobs)) "job-e13"))))
-      (ext-rt/set-extension-run-fn-in! ctx (fn [_ _] nil))
+      (ext-rt/set-extension-run-fn-in! ctx thread-id (fn [_ _] nil))
       (Thread/sleep 30)
       (is (= :running (:status (bj/get-job-in (ss/get-state-value-in ctx (ss/state-path :background-jobs)) "job-e13"))))
-      (is (= 0 (pending-background-terminal-message-count ctx)))
+      (is (= 0 (pending-background-terminal-message-count ctx thread-id)))
       (is (empty? (bj/pending-terminal-jobs-in (ss/get-state-value-in ctx (ss/state-path :background-jobs)) thread-id))))))
 
 ;; ---------------------------------------------------------------------------
@@ -449,8 +449,8 @@
 
 (deftest b4-at-most-once-under-concurrent-emitters-test
   (testing "B4: concurrent emit attempts still produce one terminal message"
-    (let [ctx (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
-          thread-id (:session-id (ss/get-session-data-in ctx))
+    (let [[ctx seed-id] (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
+          thread-id seed-id
           _     (dispatch/dispatch! ctx :session/update-background-jobs-state
                                     {:update-fn (fn [store]
                                                   (-> store
@@ -461,12 +461,12 @@
                                                           :state)
                                                       (bj/mark-terminal {:job-id "job-b4" :outcome :completed :payload {:ok true}})))}
                                     {:origin :core})
-          f1    (future (ext-rt/set-extension-run-fn-in! ctx (fn [_ _] nil)) true)
-          f2    (future (ext-rt/set-extension-run-fn-in! ctx (fn [_ _] nil)) true)
+          f1    (future (ext-rt/set-extension-run-fn-in! ctx thread-id (fn [_ _] nil)) true)
+          f2    (future (ext-rt/set-extension-run-fn-in! ctx thread-id (fn [_ _] nil)) true)
           _     @f1
           _     @f2
           pending (bj/pending-terminal-jobs-in (ss/get-state-value-in ctx (ss/state-path :background-jobs)) thread-id)]
-      (is (= 1 (pending-background-terminal-message-count ctx)))
+      (is (= 1 (pending-background-terminal-message-count ctx thread-id)))
       (is (empty? pending))
       (is (true? (:terminal-message-emitted (bj/get-job-in (ss/get-state-value-in ctx (ss/state-path :background-jobs)) "job-b4")))))))
 
@@ -549,10 +549,10 @@
 
 (deftest send-message-triggers-workflow-job-terminal-detection-test
   (testing "send-message mutation marks workflow-backed background jobs terminal"
-    (let [ctx       (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
+    (let [[ctx seed-id] (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
           ext-path  "/test/send-message-regression.clj"
           wf-id     "wf-sm-1"
-          thread-id (:session-id (ss/get-session-data-in ctx))
+          thread-id seed-id
           reg       (:workflow-registry ctx)
           qctx      (query/create-query-context)
           _         (session/register-resolvers-in! qctx false)
@@ -560,7 +560,9 @@
           mutate    (fn [op params]
                       (get (query/query-in qctx
                                            {:psi/agent-session-ctx ctx}
-                                           [(list op (assoc params :psi/agent-session-ctx ctx))])
+                                           [(list op (cond-> (assoc params :psi/agent-session-ctx ctx)
+                       (not (contains? params :session-id))
+                       (assoc :session-id thread-id)))])
                            op))]
       ;; Register workflow type and create/start a workflow instance
       (wf/register-type-in! reg ext-path {:type :instant-done :chart instant-done-chart})
@@ -616,10 +618,10 @@
 
 (deftest send-message-terminal-detection-handles-workflow-completion-race-test
   (testing "send-message eventually marks job terminal when workflow completes just after message"
-    (let [ctx       (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
+    (let [[ctx seed-id] (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
           ext-path  "/test/send-message-race.clj"
           wf-id     "wf-sm-race"
-          thread-id (:session-id (ss/get-session-data-in ctx))
+          thread-id seed-id
           reg       (:workflow-registry ctx)
           qctx      (query/create-query-context)
           _         (session/register-resolvers-in! qctx false)
@@ -627,7 +629,9 @@
           mutate    (fn [op params]
                       (get (query/query-in qctx
                                            {:psi/agent-session-ctx ctx}
-                                           [(list op (assoc params :psi/agent-session-ctx ctx))])
+                                           [(list op (cond-> (assoc params :psi/agent-session-ctx ctx)
+                       (not (contains? params :session-id))
+                       (assoc :session-id thread-id)))])
                            op))]
       (wf/register-type-in! reg ext-path {:type :delayed-done :chart delayed-done-chart})
       (wf/ensure-pump! reg)
@@ -660,10 +664,10 @@
 
 (deftest background-job-resolver-self-heals-stale-workflow-status-test
   (testing "background-job resolver reconciles stale workflow-backed running jobs"
-    (let [ctx       (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
+    (let [[ctx seed-id] (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
           ext-path  "/test/resolver-reconcile.clj"
           wf-id     "wf-resolve-1"
-          thread-id (:session-id (ss/get-session-data-in ctx))
+          thread-id seed-id
           reg       (:workflow-registry ctx)]
       (wf/register-type-in! reg ext-path {:type :instant-done :chart instant-done-chart})
       (wf/ensure-pump! reg)

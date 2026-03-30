@@ -390,6 +390,16 @@
 
 (declare tool-lifecycle-summaries)
 
+(def ^:dynamic *session-id* nil)
+
+(defn- resolver-session-id
+  "Resolve the session-id for resolver/helper execution.
+   Prefers the query-bound explicit session-id, then the first context session.
+   This preserves non-query helper/test behavior while removing ctx targeting."
+  [agent-session-ctx]
+  (or *session-id*
+      (some-> (ss/list-context-sessions-in agent-session-ctx) first :session-id)))
+
 ;; ── Core session fields ─────────────────────────────────
 
 (pco/defresolver agent-session-identity
@@ -410,7 +420,7 @@
                    :psi.session-info/parent-session-id
                    :psi.session-info/parent-session-path
                    :psi.session-info/created]}]}
-  (let [sd         (session/get-session-data-in agent-session-ctx)
+  (let [sd         (session/get-session-data-in agent-session-ctx (resolver-session-id agent-session-ctx))
         state      @(:state* agent-session-ctx)
         sessions   (get-in state [:agent-session :sessions])
         hs         (->> (vals sessions)
@@ -445,7 +455,7 @@
                  :psi.agent-session/is-compacting
                  :psi.agent-session/is-idle]}
   (let [sc-env       (:sc-env agent-session-ctx)
-        sc-session-id (ss/sc-session-id-in agent-session-ctx)
+        sc-session-id (ss/sc-session-id-in agent-session-ctx (resolver-session-id agent-session-ctx))
         phase (sc/sc-phase sc-env sc-session-id)]
     {:psi.agent-session/phase        phase
      :psi.agent-session/is-streaming (= phase :streaming)
@@ -462,7 +472,7 @@
                  :psi.agent-session/thinking-level
                  :psi.agent-session/prompt-mode
                  :psi.agent-session/ui-type]}
-  (let [sd (session/get-session-data-in agent-session-ctx)]
+  (let [sd (session/get-session-data-in agent-session-ctx (resolver-session-id agent-session-ctx))]
     {:psi.agent-session/model          (:model sd)
      :psi.agent-session/thinking-level (:thinking-level sd)
      :psi.agent-session/prompt-mode    (:prompt-mode sd)
@@ -495,7 +505,7 @@
                  :psi.agent-session/has-pending-messages
                  :psi.agent-session/steering-messages
                  :psi.agent-session/follow-up-messages]}
-  (let [sd         (session/get-session-data-in agent-session-ctx)
+  (let [sd         (session/get-session-data-in agent-session-ctx (resolver-session-id agent-session-ctx))
         base       (:base-system-prompt sd)
         sys        (:system-prompt sd)
         dev        (:developer-prompt sd)
@@ -526,7 +536,7 @@
                  :psi.agent-session/auto-retry-enabled
                  :psi.agent-session/auto-compaction-enabled
                  :psi.agent-session/scoped-models]}
-  (let [sd (session/get-session-data-in agent-session-ctx)]
+  (let [sd (session/get-session-data-in agent-session-ctx (resolver-session-id agent-session-ctx))]
     {:psi.agent-session/retry-attempt           (:retry-attempt sd)
      :psi.agent-session/auto-retry-enabled      (:auto-retry-enabled sd)
      :psi.agent-session/auto-compaction-enabled (:auto-compaction-enabled sd)
@@ -540,7 +550,7 @@
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.agent-session/skills
                  :psi.agent-session/prompt-templates]}
-  (let [sd (session/get-session-data-in agent-session-ctx)]
+  (let [sd (session/get-session-data-in agent-session-ctx (resolver-session-id agent-session-ctx))]
     {:psi.agent-session/skills           (:skills sd)
      :psi.agent-session/prompt-templates (:prompt-templates sd)}))
 
@@ -554,7 +564,7 @@
                  :psi.agent-session/extension-last-prompt-source
                  :psi.agent-session/extension-last-prompt-delivery
                  :psi.agent-session/extension-last-prompt-at]}
-  (let [sd (session/get-session-data-in agent-session-ctx)]
+  (let [sd (session/get-session-data-in agent-session-ctx (resolver-session-id agent-session-ctx))]
     {:psi.agent-session/extension-summary              (ext/summary-in (:extension-registry agent-session-ctx))
      :psi.agent-session/extension-last-prompt-source   (:extension-last-prompt-source sd)
      :psi.agent-session/extension-last-prompt-delivery (:extension-last-prompt-delivery sd)
@@ -631,7 +641,7 @@
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.extension/prompt-contributions
                  :psi.extension/prompt-contribution-count]}
-  (let [contribs (->> (or (:prompt-contributions (session/get-session-data-in agent-session-ctx)) [])
+  (let [contribs (->> (or (:prompt-contributions (session/get-session-data-in agent-session-ctx (resolver-session-id agent-session-ctx))) [])
                       (filter map?)
                       (sort-by (fn [{:keys [priority ext-path id]}]
                                  [(or priority 1000)
@@ -851,7 +861,7 @@
 
 (defn- session-thread-id
   [agent-session-ctx]
-  (:session-id (session/get-session-data-in agent-session-ctx)))
+  (:session-id (session/get-session-data-in agent-session-ctx (resolver-session-id agent-session-ctx))))
 
 (defn- reconcile-workflow-background-jobs!
   [agent-session-ctx]
@@ -944,7 +954,7 @@
    ::pco/output [:psi.agent-session/context-tokens
                  :psi.agent-session/context-window
                  :psi.agent-session/context-fraction]}
-  (let [sd (session/get-session-data-in agent-session-ctx)]
+  (let [sd (session/get-session-data-in agent-session-ctx (resolver-session-id agent-session-ctx))]
     {:psi.agent-session/context-tokens   (:context-tokens sd)
      :psi.agent-session/context-window   (:context-window sd)
      :psi.agent-session/context-fraction (session/context-fraction-used sd)}))
@@ -973,7 +983,7 @@
   {:psi.tool-output/default-max-lines tool-output/default-max-lines
    :psi.tool-output/default-max-bytes tool-output/default-max-bytes
    :psi.tool-output/overrides         (or (:tool-output-overrides
-                                           (session/get-session-data-in agent-session-ctx))
+                                           (session/get-session-data-in agent-session-ctx (resolver-session-id agent-session-ctx)))
                                           {})})
 
 (pco/defresolver tool-output-calls
@@ -991,7 +1001,7 @@
                    :psi.tool-output.call/output-bytes
                    :psi.tool-output.call/context-bytes-added]}]}
   {:psi.tool-output/calls
-   (let [sid (ss/active-session-id-in agent-session-ctx)]
+   (let [sid (resolver-session-id agent-session-ctx)]
      (mapv tool-output-call->eql
            (or (:calls (session/get-state-value-in agent-session-ctx (session/state-path :tool-output-stats sid))) [])))})
 
@@ -1001,7 +1011,7 @@
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.tool-output/stats]}
   {:psi.tool-output/stats
-   (let [sid        (ss/active-session-id-in agent-session-ctx)
+   (let [sid        (resolver-session-id agent-session-ctx)
          aggregates (:aggregates (session/get-state-value-in agent-session-ctx (session/state-path :tool-output-stats sid)))]
      {:total-context-bytes (or (:total-context-bytes aggregates) 0)
       :by-tool             (or (:by-tool aggregates) {})
@@ -1021,8 +1031,9 @@
                    :psi.session-entry/timestamp
                    :psi.session-entry/kind
                    :psi.session-entry/data]}]}
-  (let [entries  ((resolve 'psi.agent-session.state-accessors/journal-state-in) agent-session-ctx)
-        flushed? (:flushed? ((resolve 'psi.agent-session.state-accessors/flush-state-in) agent-session-ctx))]
+  (let [session-id (:session-id (session/get-session-data-in agent-session-ctx (resolver-session-id agent-session-ctx)))
+        entries  ((resolve 'psi.agent-session.state-accessors/journal-state-in) agent-session-ctx session-id)
+        flushed? (:flushed? ((resolve 'psi.agent-session.state-accessors/flush-state-in) agent-session-ctx session-id))]
     {:psi.agent-session/session-entry-count (count entries)
      :psi.agent-session/journal-flushed?    flushed?
      :psi.agent-session/session-entries
@@ -1044,8 +1055,8 @@
    - this may differ from tool lifecycle summary count, which is derived from
      canonical lifecycle telemetry in `:tool-lifecycle-events`"
   [agent-session-ctx]
-  (let [sd      (session/get-session-data-in agent-session-ctx)
-        journal ((resolve 'psi.agent-session.state-accessors/journal-state-in) agent-session-ctx)
+  (let [sd      (session/get-session-data-in agent-session-ctx (resolver-session-id agent-session-ctx))
+        journal ((resolve 'psi.agent-session.state-accessors/journal-state-in) agent-session-ctx (:session-id sd))
         msgs    (keep #(when (= :message (:kind %)) (get-in % [:data :message])) journal)]
     {:session-id         (:session-id sd)
      :session-file       (:session-file sd)
@@ -1062,9 +1073,9 @@
 
 (defn- canonical-start-time
   [agent-session-ctx]
-  (let [sd      (session/get-session-data-in agent-session-ctx)
+  (let [sd      (session/get-session-data-in agent-session-ctx (resolver-session-id agent-session-ctx))
         startup (:startup-bootstrap sd)
-        journal ((resolve 'psi.agent-session.state-accessors/journal-state-in) agent-session-ctx)
+        journal ((resolve 'psi.agent-session.state-accessors/journal-state-in) agent-session-ctx (:session-id sd))
         first-ts (:timestamp (first journal))]
     (or (:timestamp startup)
         first-ts
@@ -1112,7 +1123,7 @@
 (defn- agent-core-messages
   "Extract the message vec from agent-core inside a session context."
   [agent-session-ctx]
-  (:messages (psi.agent-core.core/get-data-in (ss/agent-ctx-in agent-session-ctx))))
+  (:messages (psi.agent-core.core/get-data-in (ss/agent-ctx-in agent-session-ctx (resolver-session-id agent-session-ctx)))))
 
 (defn- utf8-byte-count
   [s]
@@ -1120,7 +1131,7 @@
 
 (defn- tool-call-attempt-events
   [agent-session-ctx]
-  (let [sid (ss/active-session-id-in agent-session-ctx)]
+  (let [sid (resolver-session-id agent-session-ctx)]
     (vec (or (session/get-state-value-in agent-session-ctx (session/state-path :tool-call-attempts sid))
              []))))
 
@@ -1227,7 +1238,7 @@
 
 (defn- tool-lifecycle-events
   [agent-session-ctx]
-  (let [sid (ss/active-session-id-in agent-session-ctx)]
+  (let [sid (resolver-session-id agent-session-ctx)]
     (vec (or (session/get-state-value-in agent-session-ctx (session/state-path :tool-lifecycle-events sid))
              []))))
 
@@ -1347,19 +1358,19 @@
 
 (defn- provider-requests
   [agent-session-ctx]
-  (let [sid (ss/active-session-id-in agent-session-ctx)]
+  (let [sid (resolver-session-id agent-session-ctx)]
     (vec (or (session/get-state-value-in agent-session-ctx (session/state-path :provider-requests sid))
              []))))
 
 (defn- provider-nonerror-replies
   [agent-session-ctx]
-  (let [sid (ss/active-session-id-in agent-session-ctx)]
+  (let [sid (resolver-session-id agent-session-ctx)]
     (vec (or (session/get-state-value-in agent-session-ctx (session/state-path :provider-replies sid))
              []))))
 
 (defn- provider-error-replies
   [agent-session-ctx]
-  (vec (or (:provider-error-replies (session/get-session-data-in agent-session-ctx))
+  (vec (or (:provider-error-replies (session/get-session-data-in agent-session-ctx (resolver-session-id agent-session-ctx)))
            [])))
 
 (defn- provider-replies
@@ -1510,7 +1521,7 @@
 
 (defn- api-errors-from-messages
   [agent-session-ctx]
-  (if-not (ss/agent-ctx-in agent-session-ctx)
+  (if-not (ss/agent-ctx-in agent-session-ctx (resolver-session-id agent-session-ctx))
     []
     (let [msgs (agent-core-messages agent-session-ctx)]
       (->> msgs
@@ -1723,7 +1734,7 @@
 (defn- resolve-context-window
   "Best-effort context window from session data or model config atom."
   [agent-session-ctx]
-  (or (:context-window (session/get-session-data-in agent-session-ctx))
+  (or (:context-window (session/get-session-data-in agent-session-ctx (resolver-session-id agent-session-ctx)))
       (some-> (:model-config-atom agent-session-ctx) deref :context-window)
       200000))
 
@@ -1813,7 +1824,7 @@
   [{:keys [psi.api-error/message-index psi/agent-session-ctx]}]
   {::pco/input  [:psi.api-error/message-index :psi/agent-session-ctx]
    ::pco/output [{:psi.api-error/request-shape request-shape-output}]}
-  (let [data      (agent/get-data-in (ss/agent-ctx-in agent-session-ctx))
+  (let [data      (agent/get-data-in (ss/agent-ctx-in agent-session-ctx (resolver-session-id agent-session-ctx)))
         msgs      (:messages data)
         pre-error (subvec (vec msgs) 0 (min message-index (count msgs)))]
     {:psi.api-error/request-shape
@@ -1832,7 +1843,7 @@
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [{:psi.agent-session/request-shape request-shape-output}]}
-  (let [data (agent/get-data-in (ss/agent-ctx-in agent-session-ctx))]
+  (let [data (agent/get-data-in (ss/agent-ctx-in agent-session-ctx (resolver-session-id agent-session-ctx)))]
     {:psi.agent-session/request-shape
      (compute-request-shape (:system-prompt data)
                             (:messages data)
@@ -1860,35 +1871,36 @@
                  :psi.turn/is-tool-accumulating
                  :psi.turn/is-done
                  :psi.turn/is-error]}
-  (if-let [turn-ctx ((resolve 'psi.agent-session.state-accessors/turn-context-in) agent-session-ctx)]
-    (let [phase (turn-sc/turn-phase turn-ctx)
-          td    (turn-sc/get-turn-data turn-ctx)]
-      {:psi.turn/phase                phase
-       :psi.turn/is-streaming         (boolean (#{:text-accumulating :tool-accumulating} phase))
-       :psi.turn/text                 (:text-buffer td)
-       :psi.turn/tool-calls           (vec (vals (:tool-calls td)))
-       :psi.turn/tool-call-count      (count (:tool-calls td))
-       :psi.turn/final-message        (:final-message td)
-       :psi.turn/error-message        (:error-message td)
-       :psi.turn/last-provider-event  (:last-provider-event td)
-       :psi.turn/content-blocks       (vec (vals (:content-blocks td)))
-       :psi.turn/is-text-accumulating (= :text-accumulating phase)
-       :psi.turn/is-tool-accumulating (= :tool-accumulating phase)
-       :psi.turn/is-done              (= :done phase)
-       :psi.turn/is-error             (= :error phase)})
-    {:psi.turn/phase                nil
-     :psi.turn/is-streaming         false
-     :psi.turn/text                 nil
-     :psi.turn/tool-calls           []
-     :psi.turn/tool-call-count      0
-     :psi.turn/final-message        nil
-     :psi.turn/error-message        nil
-     :psi.turn/last-provider-event  nil
-     :psi.turn/content-blocks       []
-     :psi.turn/is-text-accumulating false
-     :psi.turn/is-tool-accumulating false
-     :psi.turn/is-done              false
-     :psi.turn/is-error             false}))
+  (let [session-id (:session-id (session/get-session-data-in agent-session-ctx (resolver-session-id agent-session-ctx)))]
+    (if-let [turn-ctx ((resolve 'psi.agent-session.state-accessors/turn-context-in) agent-session-ctx session-id)]
+      (let [phase (turn-sc/turn-phase turn-ctx)
+            td    (turn-sc/get-turn-data turn-ctx)]
+        {:psi.turn/phase                phase
+         :psi.turn/is-streaming         (boolean (#{:text-accumulating :tool-accumulating} phase))
+         :psi.turn/text                 (:text-buffer td)
+         :psi.turn/tool-calls           (vec (vals (:tool-calls td)))
+         :psi.turn/tool-call-count      (count (:tool-calls td))
+         :psi.turn/final-message        (:final-message td)
+         :psi.turn/error-message        (:error-message td)
+         :psi.turn/last-provider-event  (:last-provider-event td)
+         :psi.turn/content-blocks       (vec (vals (:content-blocks td)))
+         :psi.turn/is-text-accumulating (= :text-accumulating phase)
+         :psi.turn/is-tool-accumulating (= :tool-accumulating phase)
+         :psi.turn/is-done              (= :done phase)
+         :psi.turn/is-error             (= :error phase)})
+      {:psi.turn/phase                nil
+       :psi.turn/is-streaming         false
+       :psi.turn/text                 nil
+       :psi.turn/tool-calls           []
+       :psi.turn/tool-call-count      0
+       :psi.turn/final-message        nil
+       :psi.turn/error-message        nil
+       :psi.turn/last-provider-event  nil
+       :psi.turn/content-blocks       []
+       :psi.turn/is-text-accumulating false
+       :psi.turn/is-tool-accumulating false
+       :psi.turn/is-done              false
+       :psi.turn/is-error             false})))
 
 ;; ── Prompt template introspection ────────────────────────
 
@@ -1900,7 +1912,7 @@
                  :psi.prompt-template/names
                  :psi.prompt-template/count
                  :psi.prompt-template/by-source]}
-  (let [templates (:prompt-templates (session/get-session-data-in agent-session-ctx))]
+  (let [templates (:prompt-templates (session/get-session-data-in agent-session-ctx (resolver-session-id agent-session-ctx)))]
     {:psi.prompt-template/summary   (pt/template-summary templates)
      :psi.prompt-template/names     (pt/template-names templates)
      :psi.prompt-template/count     (count templates)
@@ -1912,7 +1924,7 @@
   [{:keys [psi/agent-session-ctx psi.prompt-template/name]}]
   {::pco/input  [:psi/agent-session-ctx :psi.prompt-template/name]
    ::pco/output [:psi.prompt-template/detail]}
-  (let [templates (:prompt-templates (session/get-session-data-in agent-session-ctx))
+  (let [templates (:prompt-templates (session/get-session-data-in agent-session-ctx (resolver-session-id agent-session-ctx)))
         tpl       (pt/find-template templates name)]
     {:psi.prompt-template/detail
      (when tpl (pt/enrich-template tpl))}))
@@ -1929,7 +1941,7 @@
                  :psi.skill/visible-count
                  :psi.skill/hidden-count
                  :psi.skill/by-source]}
-  (let [all-skills (:skills (session/get-session-data-in agent-session-ctx))
+  (let [all-skills (:skills (session/get-session-data-in agent-session-ctx (resolver-session-id agent-session-ctx)))
         summary    (skills/skill-summary all-skills)]
     {:psi.skill/summary       summary
      :psi.skill/names         (skills/skill-names all-skills)
@@ -1944,7 +1956,7 @@
   [{:keys [psi/agent-session-ctx psi.skill/name]}]
   {::pco/input  [:psi/agent-session-ctx :psi.skill/name]
    ::pco/output [:psi.skill/detail]}
-  (let [all-skills (:skills (session/get-session-data-in agent-session-ctx))
+  (let [all-skills (:skills (session/get-session-data-in agent-session-ctx (resolver-session-id agent-session-ctx)))
         skill      (skills/find-skill all-skills name)]
     {:psi.skill/detail
      (when skill (skills/enrich-skill skill))}))
@@ -1958,7 +1970,7 @@
    ::pco/output [:psi.tool/summary
                  :psi.tool/names
                  :psi.tool/count]}
-  (let [tools (:tools (agent/get-data-in (ss/agent-ctx-in agent-session-ctx)))
+  (let [tools (:tools (agent/get-data-in (ss/agent-ctx-in agent-session-ctx (resolver-session-id agent-session-ctx))))
         names (mapv :name tools)]
     {:psi.tool/summary {:tool-count (count tools)
                         :tools      (mapv #(select-keys % [:name :label :description]) tools)}
@@ -1971,7 +1983,7 @@
   [{:keys [psi/agent-session-ctx psi.tool/name]}]
   {::pco/input  [:psi/agent-session-ctx :psi.tool/name]
    ::pco/output [:psi.tool/detail]}
-  (let [tools (:tools (agent/get-data-in (ss/agent-ctx-in agent-session-ctx)))
+  (let [tools (:tools (agent/get-data-in (ss/agent-ctx-in agent-session-ctx (resolver-session-id agent-session-ctx))))
         tool  (first (filter #(= (:name %) name) tools))]
     {:psi.tool/detail tool}))
 
@@ -2015,7 +2027,7 @@
    (mapv session-info->eql
          (persist/list-sessions
           (persist/session-dir-for
-           (or (:worktree-path (session/get-session-data-in agent-session-ctx))
+           (or (:worktree-path (session/get-session-data-in agent-session-ctx (resolver-session-id agent-session-ctx)))
                (:cwd agent-session-ctx)))))})
 
 (pco/defresolver session-list-all-resolver
@@ -2090,14 +2102,14 @@
 
 (defn- session-usage-totals
   [agent-session-ctx]
-  (let [current-session-id (:session-id (session/get-session-data-in agent-session-ctx))]
+  (let [session-id (:session-id (session/get-session-data-in agent-session-ctx (resolver-session-id agent-session-ctx)))]
     (reduce
      (fn [acc entry]
        (let [msg       (get-in entry [:data :message])
              entry-sid (:session-id entry)]
          (if (and (= :message (:kind entry))
                   (or (nil? entry-sid)
-                      (= current-session-id entry-sid))
+                      (= session-id entry-sid))
                   (= "assistant" (:role msg))
                   (map? (:usage msg)))
            (let [u (:usage msg)]
@@ -2109,7 +2121,7 @@
                  (update :cost + (usage-cost-total u))))
            acc)))
      {:input 0 :output 0 :cache-read 0 :cache-write 0 :cost 0.0}
-     (session/get-state-value-in agent-session-ctx (session/state-path :journal (ss/active-session-id-in agent-session-ctx))))))
+     (session/get-state-value-in agent-session-ctx (session/state-path :journal (resolver-session-id agent-session-ctx))))))
 
 (defn- find-git-head-path
   [cwd]
@@ -2152,7 +2164,7 @@
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.agent-session/cwd]}
-  (let [sd (session/get-session-data-in agent-session-ctx)]
+  (let [sd (session/get-session-data-in agent-session-ctx (resolver-session-id agent-session-ctx))]
     {:psi.agent-session/cwd (or (:worktree-path sd)
                                 (:cwd agent-session-ctx))}))
 
@@ -2232,14 +2244,14 @@
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.agent-session/model-provider]}
-  {:psi.agent-session/model-provider (:provider (:model (session/get-session-data-in agent-session-ctx)))})
+  {:psi.agent-session/model-provider (:provider (:model (session/get-session-data-in agent-session-ctx (resolver-session-id agent-session-ctx))))})
 
 (pco/defresolver agent-session-model-id
   "Resolve active model id from session state."
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.agent-session/model-id]}
-  {:psi.agent-session/model-id (:id (:model (session/get-session-data-in agent-session-ctx)))})
+  {:psi.agent-session/model-id (:id (:model (session/get-session-data-in agent-session-ctx (resolver-session-id agent-session-ctx))))})
 
 (def ^:private thinking-level->reasoning-effort
   {:off nil
@@ -2260,7 +2272,7 @@
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.agent-session/model-reasoning
                  :psi.agent-session/effective-reasoning-effort]}
-  (let [sd    (session/get-session-data-in agent-session-ctx)
+  (let [sd    (session/get-session-data-in agent-session-ctx (resolver-session-id agent-session-ctx))
         model (:model sd)
         level (:thinking-level sd)]
     {:psi.agent-session/model-reasoning
@@ -2331,7 +2343,7 @@
                  :psi.agent-session/startup-bootstrap-started-at
                  :psi.agent-session/startup-bootstrap-completed-at
                  :psi.agent-session/startup-message-ids]}
-  (let [sd (session/get-session-data-in agent-session-ctx)]
+  (let [sd (session/get-session-data-in agent-session-ctx (resolver-session-id agent-session-ctx))]
     {:psi.agent-session/startup-prompts               (:startup-prompts sd [])
      :psi.agent-session/startup-bootstrap-completed?  (boolean (:startup-bootstrap-completed? sd))
      :psi.agent-session/startup-bootstrap-started-at  (:startup-bootstrap-started-at sd)
@@ -2351,7 +2363,7 @@
                  :psi.startup/extension-error-count
                  :psi.startup/extension-errors
                  :psi.startup/mutations]}
-  (let [summary (:startup-bootstrap (session/get-session-data-in agent-session-ctx))]
+  (let [summary (:startup-bootstrap (session/get-session-data-in agent-session-ctx (resolver-session-id agent-session-ctx)))]
     {:psi.startup/bootstrap-summary      summary
      :psi.startup/bootstrap-timestamp    (:timestamp summary)
      :psi.startup/prompt-count           (:prompt-count summary 0)
@@ -2556,6 +2568,7 @@
   "Run EQL `q` against `ctx` using this component's Pathom graph.
    Transparently seeds root contexts so callers don't need to pass them:
    - :psi/agent-session-ctx (always)
+   - :psi.agent-session/session-id (extra-entity, ctx fallback, or first context session)
    - :psi/memory-ctx (session or global)
    - :psi/recursion-ctx (session or global)
    - :psi/engine-ctx (session override or read-only global snapshot)
@@ -2569,11 +2582,15 @@
          recursion-ctx (or (:recursion-ctx ctx)
                            (recursion/global-context))
          engine-ctx    (or (:engine-ctx ctx)
-                           (snapshot-engine-context))]
-     (p.eql/process (ensure-query-env!)
-                    (merge extra-entity
-                           {:psi/agent-session-ctx ctx
-                            :psi/memory-ctx        memory-ctx
-                            :psi/recursion-ctx     recursion-ctx
-                            :psi/engine-ctx        engine-ctx})
-                    q))))
+                           (snapshot-engine-context))
+         session-id    (or (:psi.agent-session/session-id extra-entity)
+                           (some-> (ss/list-context-sessions-in ctx) first :session-id))]
+     (binding [*session-id* session-id]
+       (p.eql/process (ensure-query-env!)
+                      (merge extra-entity
+                             {:psi/agent-session-ctx        ctx
+                              :psi.agent-session/session-id session-id
+                              :psi/memory-ctx               memory-ctx
+                              :psi/recursion-ctx            recursion-ctx
+                              :psi/engine-ctx               engine-ctx})
+                      q)))))

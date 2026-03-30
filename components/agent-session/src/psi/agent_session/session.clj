@@ -407,13 +407,9 @@
   (swap! (:state* ctx) assoc-in path value))
 
 (defn get-session-data-in
-  "Read session data from canonical root state in `ctx`.
-   Without session-id, returns the targeted session's data via :target-session-id."
-  ([ctx]
-   (let [sid (:target-session-id ctx)]
-     (get-state-value-in ctx (session-data-path sid))))
-  ([ctx sid]
-   (get-state-value-in ctx (session-data-path sid))))
+  "Read session data for `sid` from canonical root state in `ctx`."
+  [ctx sid]
+  (get-state-value-in ctx (session-data-path sid)))
 
 ;; ── Retry backoff ───────────────────────────────────────
 

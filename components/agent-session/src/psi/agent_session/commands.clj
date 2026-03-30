@@ -21,7 +21,6 @@
    [clojure.string :as str]
    [psi.agent-session.background-job-runtime :as bg-rt]
    [psi.agent-session.core :as session]
-   [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.prompt-templates :as pt]
@@ -36,8 +35,8 @@
 
 (defn format-status
   "Return a status string for the current session."
-  [ctx]
-  (let [d (session/query-in ctx
+  [ctx session-id]
+  (let [d (session/query-in ctx session-id
                             [:psi.agent-session/phase
                              :psi.agent-session/session-id
                              :psi.agent-session/model
@@ -72,8 +71,8 @@
 
 (defn format-history
   "Return a history string for the current message list."
-  [ctx]
-  (let [msgs (:messages (agent/get-data-in (ss/agent-ctx-in ctx)))]
+  [ctx session-id]
+  (let [msgs (:messages (agent/get-data-in (ss/agent-ctx-in ctx session-id)))]
     (str "── Message history ────────────────────\n"
          (if (empty? msgs)
            "  (empty)"
@@ -108,8 +107,8 @@
 
 (defn format-help
   "Return a help string listing all available commands."
-  [ctx]
-  (let [sd            (ss/get-session-data-in ctx)
+  [ctx session-id]
+  (let [sd            (ss/get-session-data-in ctx session-id)
         templates     (:prompt-templates sd)
         loaded-skills (:skills sd)
         ext-cmds      (ext/all-commands-in (:extension-registry ctx))]
@@ -160,8 +159,9 @@
 
 (defn format-prompts
   "Return a string listing available prompt templates."
-  [ctx]
-  (let [templates (:prompt-templates (ss/get-session-data-in ctx))]
+  [ctx session-id]
+  (let [sd        (ss/get-session-data-in ctx session-id)
+        templates (:prompt-templates sd)]
     (str "── Prompt Templates ───────────────────\n"
          (if (empty? templates)
            "  (none discovered)"
@@ -178,8 +178,9 @@
 
 (defn format-skills
   "Return a string listing available skills."
-  [ctx]
-  (let [loaded-skills (:skills (ss/get-session-data-in ctx))]
+  [ctx session-id]
+  (let [sd            (ss/get-session-data-in ctx session-id)
+        loaded-skills (:skills sd)]
     (str "── Skills ─────────────────────────────\n"
          (if (empty? loaded-skills)
            "  (none discovered)"
@@ -194,8 +195,8 @@
 
 (defn format-worktree
   "Return a deterministic git worktree status string for the session cwd."
-  [ctx]
-  (let [d (session/query-in ctx
+  [ctx session-id]
+  (let [d (session/query-in ctx session-id
                             [:psi.agent-session/cwd
                              :psi.agent-session/git-branch
                              :git.worktree/inside-repo?
@@ -249,12 +250,11 @@
   (= :ready (:psi.memory/status (session/query-in ctx [:psi.memory/status]))))
 
 (defn- remember-provenance
-  [ctx]
-  (let [session-id (get-in (ss/get-session-data-in ctx) [:session-id])
-        cwd        (ss/effective-cwd-in ctx)
+  [ctx session-id]
+  (let [cwd        (ss/effective-cwd-in ctx session-id)
         git-branch (try
                      (:psi.agent-session/git-branch
-                      (session/query-in ctx [:psi.agent-session/git-branch]))
+                      (session/query-in ctx session-id [:psi.agent-session/git-branch]))
                      (catch Exception _
                        nil))]
     {:source :remember
@@ -263,14 +263,14 @@
      :gitBranch git-branch}))
 
 (defn- remember-text!
-  [ctx text]
+  [ctx session-id text]
   (let [reason (or (not-empty (some-> text str/trim)) "manual /remember")
         result (memory/remember-in!
                 (:memory-ctx ctx)
                 {:content-type :note
                  :content reason
                  :tags [:remember :manual]
-                 :provenance (remember-provenance ctx)})
+                 :provenance (remember-provenance ctx session-id)})
         store-result (:store result)]
     (if (:ok? result)
       (if (false? (:ok? store-result))
@@ -350,17 +350,11 @@
 ;; Central command dispatch
 ;; ============================================================
 
-(defn dispatch
-  "Dispatch a /command string. Returns a result map, or nil if not a command.
+(defn- dispatch*
+  "Single command dispatch pipeline.
 
-   Arguments:
-     ctx       — session context
-     text      — raw user input (trimmed)
-     opts      — {:oauth-ctx   oauth context
-                  :ai-model    resolved model map}
-
-   Result types — see ns docstring."
-  [ctx text {:keys [oauth-ctx ai-model on-new-session! supports-session-tree?]}]
+   Requires explicit `session-id` for session-scoped commands."
+  [ctx session-id text {:keys [oauth-ctx ai-model on-new-session! supports-session-tree?]}]
   (let [trimmed (str/trim text)]
     (cond
       ;; Quit
@@ -371,7 +365,7 @@
       (= trimmed "/new")
       (let [rehydrate (if on-new-session!
                         (on-new-session!)
-                        (let [sd (session/new-session-in! ctx)]
+                        (let [sd (session/new-session-in! ctx session-id {})]
                           {:session-id (:session-id sd) :messages [] :tool-calls {} :tool-order []}))]
         {:type :new-session
          :message "[New session started]"
@@ -387,13 +381,13 @@
       (if-not supports-session-tree?
         {:type :text
          :message "[/tree is only available in TUI mode (--tui)]"}
-        (let [arg        (-> (str/replace trimmed #"^/tree\s*" "") str/trim)
-              current-id (:session-id (ss/get-session-data-in ctx))
-              active-id  (or (ss/active-session-id-in ctx) current-id)
+        (let [arg       (-> (str/replace trimmed #"^/tree\s*" "") str/trim)
+              sd        (ss/get-session-data-in ctx session-id)
+              active-id session-id
               sessions0 (vec (or (ss/list-context-sessions-in ctx) []))
               sessions  (if (seq sessions0)
                           sessions0
-                          [(select-keys (ss/get-session-data-in ctx)
+                          [(select-keys sd
                                         [:session-id :session-name :worktree-path])])]
           (cond
             (str/blank? arg)
@@ -429,38 +423,37 @@
 
       ;; Status
       (= trimmed "/status")
-      {:type :text :message (format-status ctx)}
+      {:type :text :message (format-status ctx session-id)}
 
       ;; History
       (= trimmed "/history")
-      {:type :text :message (format-history ctx)}
+      {:type :text :message (format-history ctx session-id)}
 
       ;; Help
       (or (= trimmed "/help") (= trimmed "/?"))
-      {:type :text :message (format-help ctx)}
+      {:type :text :message (format-help ctx session-id)}
 
       ;; Prompts
       (= trimmed "/prompts")
-      {:type :text :message (format-prompts ctx)}
+      {:type :text :message (format-prompts ctx session-id)}
 
       ;; Skills
       (= trimmed "/skills")
-      {:type :text :message (format-skills ctx)}
+      {:type :text :message (format-skills ctx session-id)}
 
       ;; Worktree
       (= trimmed "/worktree")
-      {:type :text :message (format-worktree ctx)}
+      {:type :text :message (format-worktree ctx session-id)}
 
       ;; Background jobs list
       (or (= trimmed "/jobs")
           (str/starts-with? trimmed "/jobs "))
-      (let [tail      (-> (str/replace trimmed #"^/jobs\s*" "") str/trim)
-            statuses  (parse-job-statuses tail)
-            invalid?  (and (not (str/blank? tail)) (empty? statuses))
-            thread-id (:session-id (ss/get-session-data-in ctx))
-            jobs      (if statuses
-                        (bg-rt/list-background-jobs-in! ctx thread-id statuses)
-                        (bg-rt/list-background-jobs-in! ctx thread-id))]
+      (let [tail     (-> (str/replace trimmed #"^/jobs\s*" "") str/trim)
+            statuses (parse-job-statuses tail)
+            invalid? (and (not (str/blank? tail)) (empty? statuses))
+            jobs     (if statuses
+                       (bg-rt/list-background-jobs-in! ctx session-id statuses)
+                       (bg-rt/list-background-jobs-in! ctx session-id))]
         (if invalid?
           {:type :text :message "Usage: /jobs [status ...]"}
           {:type :text
@@ -478,11 +471,10 @@
       ;; Background job inspect
       (or (= trimmed "/job")
           (str/starts-with? trimmed "/job "))
-      (let [job-id    (-> (str/replace trimmed #"^/job\s*" "") str/trim)
-            thread-id (:session-id (ss/get-session-data-in ctx))]
+      (let [job-id (-> (str/replace trimmed #"^/job\s*" "") str/trim)]
         (if (str/blank? job-id)
           {:type :text :message "Usage: /job <job-id>"}
-          (let [job (bg-rt/inspect-background-job-in! ctx thread-id job-id)]
+          (let [job (bg-rt/inspect-background-job-in! ctx session-id job-id)]
             {:type :text
              :message (str "── Background job ──────────────────────\n"
                            (safe-pr-str job)
@@ -491,11 +483,10 @@
       ;; Background job cancel
       (or (= trimmed "/cancel-job")
           (str/starts-with? trimmed "/cancel-job "))
-      (let [job-id    (-> (str/replace trimmed #"^/cancel-job\s*" "") str/trim)
-            thread-id (:session-id (ss/get-session-data-in ctx))]
+      (let [job-id (-> (str/replace trimmed #"^/cancel-job\s*" "") str/trim)]
         (if (str/blank? job-id)
           {:type :text :message "Usage: /cancel-job <job-id>"}
-          (let [job (bg-rt/cancel-background-job-in! ctx thread-id job-id :user)]
+          (let [job (bg-rt/cancel-background-job-in! ctx session-id job-id :user)]
             {:type :text
              :message (str "Cancellation requested for " job-id
                            " (status=" (name (:status job)) ")")})))
@@ -511,7 +502,7 @@
                          "\n  detail: :psi.memory/status must be :ready")}
           (let [reason (-> (str/replace trimmed #"^/remember\s*" "") str/trim not-empty)]
             {:type :text
-             :message (remember-text! (assoc ctx :memory-ctx memory-ctx) reason)}))
+             :message (remember-text! (assoc ctx :memory-ctx memory-ctx) session-id reason)}))
         {:type :text
          :message "✗ Memory context not configured."})
 
@@ -519,9 +510,10 @@
       (or (= trimmed "/model")
           (str/starts-with? trimmed "/model "))
       (let [args (-> (str/replace trimmed #"^/model\s*" "")
-                     str/trim)]
+                     str/trim)
+            sd   (ss/get-session-data-in ctx session-id)]
         (if (str/blank? args)
-          (let [m (:model (ss/get-session-data-in ctx))]
+          (let [m (:model sd)]
             {:type :text
              :message (if m
                         (str "Current model: " (:provider m) " " (:id m))
@@ -539,7 +531,7 @@
                         model {:provider provider-str
                                :id (:id resolved)
                                :reasoning (:supports-reasoning resolved)}
-                        result (dispatch/dispatch! ctx :session/set-model {:model model} {:origin :core})]
+                        result (session/set-model-in! ctx session-id model)]
                     {:type :text
                      :message (str "✓ Model set to "
                                    (get-in result [:model :provider]) " "
@@ -549,9 +541,10 @@
       (or (= trimmed "/thinking")
           (str/starts-with? trimmed "/thinking "))
       (let [args (-> (str/replace trimmed #"^/thinking\s*" "")
-                     str/trim)]
+                     str/trim)
+            sd   (ss/get-session-data-in ctx session-id)]
         (if (str/blank? args)
-          (let [level (:thinking-level (ss/get-session-data-in ctx))]
+          (let [level (:thinking-level sd)]
             {:type :text
              :message (str "Current thinking level: " (name (or level :off)))})
           (let [tokens (str/split args #"\s+")]
@@ -563,7 +556,7 @@
                 (if-not (known-thinking-level? level)
                   {:type :text
                    :message (unknown-thinking-level-message level-input)}
-                  (let [result (dispatch/dispatch! ctx :session/set-thinking-level {:level level} {:origin :core})]
+                  (let [result (session/set-thinking-level-in! ctx session-id level)]
                     {:type :text
                      :message (str "✓ Thinking level set to "
                                    (name (:thinking-level result)))})))))))
@@ -618,4 +611,9 @@
       ;; Not a command
       :else
       nil)))
+
+(defn dispatch-in
+  "Explicit session-targeted command dispatch over the shared pipeline."
+  [ctx session-id text opts]
+  (dispatch* ctx session-id text opts))
 

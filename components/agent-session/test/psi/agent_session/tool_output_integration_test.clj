@@ -26,12 +26,12 @@
 
 (deftest bash-limit-hit-eql-telemetry-test
   (testing "bash truncation persists full output and is queryable via EQL"
-    (let [ctx (session/create-context)
+    (let [[ctx session-id] (session/create-context)
           tc  {:id "bash-limit-1"
                :name "bash"
                :arguments (json/generate-string
                            {"command" (large-bash-command)})}
-          result (#'psi.agent-session.executor/run-tool-call! ctx tc nil)
+          result (#'psi.agent-session.executor/run-tool-call! ctx session-id tc nil)
           truncation (get-in result [:details :truncation])
           full-path  (get-in result [:details :full-output-path])
           eql-result (session/query-in ctx
@@ -62,12 +62,12 @@
     (let [f   (doto (java.io.File/createTempFile "psi-read-ok" ".txt")
                 (.deleteOnExit))
           _   (spit f "alpha\nbeta\ngamma\n")
-          ctx (session/create-context)
+          [ctx session-id] (session/create-context)
           tc  {:id "read-ok-1"
                :name "read"
                :arguments (json/generate-string
                            {"filePath" (.getAbsolutePath f)})}
-          _   (#'psi.agent-session.executor/run-tool-call! ctx tc nil)
+          _   (#'psi.agent-session.executor/run-tool-call! ctx session-id tc nil)
           eql-result (session/query-in ctx
                                        [{:psi.tool-output/calls
                                          [:psi.tool-output.call/tool-name
@@ -85,12 +85,12 @@
     (let [f   (doto (java.io.File/createTempFile "psi-read-agg" ".txt")
                 (.deleteOnExit))
           _   (spit f "small\nfile\n")
-          ctx (session/create-context)
+          [ctx session-id] (session/create-context)
           bash-args (json/generate-string {"command" (large-bash-command)})
           read-args (json/generate-string {"filePath" (.getAbsolutePath f)})]
-      (#'psi.agent-session.executor/run-tool-call! ctx {:id "b1" :name "bash" :arguments bash-args} nil)
-      (#'psi.agent-session.executor/run-tool-call! ctx {:id "r1" :name "read" :arguments read-args} nil)
-      (#'psi.agent-session.executor/run-tool-call! ctx {:id "b2" :name "bash" :arguments bash-args} nil)
+      (#'psi.agent-session.executor/run-tool-call! ctx session-id {:id "b1" :name "bash" :arguments bash-args} nil)
+      (#'psi.agent-session.executor/run-tool-call! ctx session-id {:id "r1" :name "read" :arguments read-args} nil)
+      (#'psi.agent-session.executor/run-tool-call! ctx session-id {:id "b2" :name "bash" :arguments bash-args} nil)
       (let [eql-result (session/query-in ctx
                                          [{:psi.tool-output/calls
                                            [:psi.tool-output.call/tool-name

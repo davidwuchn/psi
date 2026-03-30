@@ -5,15 +5,15 @@
    [psi.agent-session.test-support :as test-support]))
 
 (deftest startup-prompt-attrs-queryable-test
-  (let [ctx (test-support/make-session-ctx
-             {:session-data {:startup-prompts [{:id "engage-nucleus"
-                                                :source :project
-                                                :phase :system-bootstrap
-                                                :priority 100}]
-                             :startup-bootstrap-completed? true
-                             :startup-bootstrap-started-at (java.time.Instant/now)
-                             :startup-bootstrap-completed-at (java.time.Instant/now)
-                             :startup-message-ids ["m1" "m2"]}})
+  (let [[ctx _] (test-support/make-session-ctx
+                 {:session-data {:startup-prompts [{:id "engage-nucleus"
+                                                    :source :project
+                                                    :phase :system-bootstrap
+                                                    :priority 100}]
+                                 :startup-bootstrap-completed? true
+                                 :startup-bootstrap-started-at (java.time.Instant/now)
+                                 :startup-bootstrap-completed-at (java.time.Instant/now)
+                                 :startup-message-ids ["m1" "m2"]}})
         r   (session/query-in ctx
                               [:psi.agent-session/startup-prompts
                                :psi.agent-session/startup-bootstrap-completed?
@@ -28,7 +28,7 @@
 
 (deftest startup-prompt-attrs-discoverable-in-graph-bridge-test
   (testing "startup attrs appear in graph edge metadata and resolver symbols"
-    (let [ctx (session/create-context {:persist? false})
+    (let [[ctx _] (session/create-context {:persist? false})
           r   (session/query-in ctx [:psi.graph/resolver-syms :psi.graph/edges :psi.graph/domain-coverage])
           attrs (set (map :attribute (:psi.graph/edges r)))
           syms  (:psi.graph/resolver-syms r)

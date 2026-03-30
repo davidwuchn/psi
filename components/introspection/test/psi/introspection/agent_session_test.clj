@@ -25,13 +25,14 @@
 
 (defn- session-introspection-ctx
   "Create a fully isolated introspection context with a fresh agent-session
-   context attached.  Resolvers are registered and engine is bootstrapped."
+   context attached.  Resolvers are registered and engine is bootstrapped.
+   Returns the context map with :seed-id for tests that dispatch events."
   []
-  (let [session-ctx (session/create-context {:cwd (temp-cwd) :persist? false})
-        ctx         (introspection/create-context {:agent-session-ctx session-ctx})]
+  (let [[session-ctx seed-id] (session/create-context {:cwd (temp-cwd) :persist? false})
+        ctx              (introspection/create-context {:agent-session-ctx session-ctx})]
     (engine/bootstrap-system-in! (:engine-ctx ctx))
     (introspection/register-resolvers-in! ctx)
-    ctx))
+    (assoc ctx :seed-id seed-id)))
 
 ;; ─────────────────────────────────────────────────────────────────────────────
 ;; Context creation
@@ -39,8 +40,8 @@
 
 (deftest create-context-with-agent-session-test
   (testing "create-context accepts :agent-session-ctx option"
-    (let [session-ctx (session/create-context)
-          ctx         (introspection/create-context {:agent-session-ctx session-ctx})]
+    (let [[session-ctx _] (session/create-context)
+          ctx              (introspection/create-context {:agent-session-ctx session-ctx})]
       (is (some? (:agent-session-ctx ctx))
           ":agent-session-ctx should be stored in context")))
 
@@ -59,8 +60,8 @@
 
 (deftest register-resolvers-in!-with-session-test
   (testing "register-resolvers-in! registers agent-session resolvers/mutations when ctx has session"
-    (let [session-ctx (session/create-context)
-          ctx         (introspection/create-context {:agent-session-ctx session-ctx})]
+    (let [[session-ctx _] (session/create-context)
+          ctx              (introspection/create-context {:agent-session-ctx session-ctx})]
       (introspection/register-resolvers-in! ctx)
       (let [result  (introspection/query-graph-summary-in ctx)
             r-syms  (:psi.graph/resolver-syms result)
@@ -128,8 +129,9 @@
   (testing "query-agent-session-in reflects model after set-model-in!"
     (let [ctx         (session-introspection-ctx)
           session-ctx (:agent-session-ctx ctx)
+          seed-id     (:seed-id ctx)
           model       {:provider "x" :id "test-model" :reasoning false}]
-      (dispatch/dispatch! session-ctx :session/set-model {:model model} {:origin :core})
+      (dispatch/dispatch! session-ctx :session/set-model {:session-id seed-id :model model} {:origin :core})
       (let [result (introspection/query-agent-session-in
                     ctx [:psi.agent-session/model])]
         (is (= model (:psi.agent-session/model result))))))
@@ -160,18 +162,19 @@
 
 (deftest startup-bootstrap-introspection-test
   (testing "startup bootstrap summary is queryable via introspection graph"
-    (let [session-ctx (session/create-context)
-          _           (bootstrap/bootstrap-in!
-                       session-ctx {:register-global-query? false
-                                    :base-tools             []
-                                    :system-prompt          "sys"
-                                    :templates              [{:name "greet"
-                                                              :description "desc"
-                                                              :content "body"
-                                                              :source :project
-                                                              :file-path "/tmp/greet.md"}]
-                                    :skills                 []
-                                    :extension-paths        []})
+    (let [[session-ctx _] (session/create-context)
+          _               (bootstrap/bootstrap-in!
+                           session-ctx (:target-session-id session-ctx)
+                           {:register-global-query? false
+                            :base-tools             []
+                            :system-prompt          "sys"
+                            :templates              [{:name "greet"
+                                                      :description "desc"
+                                                      :content "body"
+                                                      :source :project
+                                                      :file-path "/tmp/greet.md"}]
+                            :skills                 []
+                            :extension-paths        []})
           ctx         (introspection/create-context {:agent-session-ctx session-ctx})]
       (engine/bootstrap-system-in! (:engine-ctx ctx))
       (introspection/register-resolvers-in! ctx)

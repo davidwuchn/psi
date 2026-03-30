@@ -86,21 +86,15 @@
 (def ^:dynamic *session-file-lock-retry-ms* 25)
 (def ^:dynamic *session-file-lock-max-attempts* 400)
 
-(defn- active-session-id-from-ctx
-  "Return the current session id from ctx.
-  Reads :target-session-id from ctx."
-  [ctx]
-  (:target-session-id ctx))
-
 (defn- journal-path
-  "Build the per-session journal path for the active session in ctx."
-  [ctx]
-  (session/state-path :journal (active-session-id-from-ctx ctx)))
+  "Build the per-session journal path for `session-id` in ctx."
+  [_ctx session-id]
+  (session/state-path :journal session-id))
 
 (defn- flush-state-path
-  "Build the per-session flush-state path for the active session in ctx."
-  [ctx]
-  (session/state-path :flush-state (active-session-id-from-ctx ctx)))
+  "Build the per-session flush-state path for `session-id` in ctx."
+  [_ctx session-id]
+  (session/state-path :flush-state session-id))
 
 (defn- state*
   [ctx]
@@ -177,26 +171,26 @@
         (entries-up-to journal-atom entry-id)))
 
 (defn append-entry-in!
-  "Append `entry` to the canonical journal in ctx. Returns `entry`."
-  [ctx entry]
-  (update-state-in! ctx (journal-path ctx) conj entry)
+  "Append `entry` to the canonical journal for `session-id` in ctx. Returns `entry`."
+  [ctx session-id entry]
+  (update-state-in! ctx (journal-path ctx session-id) conj entry)
   entry)
 
 (defn all-entries-in
-  "Return all canonical journal entries from ctx as a vector."
-  [ctx]
-  (vec (or (get-state-in ctx (journal-path ctx)) [])))
+  "Return all canonical journal entries for `session-id` from ctx as a vector."
+  [ctx session-id]
+  (vec (or (get-state-in ctx (journal-path ctx session-id)) [])))
 
 (defn entries-of-kind-in
-  "Return canonical journal entries of `kind` from ctx."
-  [ctx kind]
-  (filterv #(= (:kind %) kind) (all-entries-in ctx)))
+  "Return canonical journal entries of `kind` for `session-id` from ctx."
+  [ctx session-id kind]
+  (filterv #(= (:kind %) kind) (all-entries-in ctx session-id)))
 
 (defn entries-up-to-in
-  "Return canonical journal entries up to and including `entry-id`.
+  "Return canonical journal entries for `session-id` up to and including `entry-id`.
    Returns full journal if `entry-id` is nil or not found."
-  [ctx entry-id]
-  (let [entries (all-entries-in ctx)]
+  [ctx session-id entry-id]
+  (let [entries (all-entries-in ctx session-id)]
     (if (nil? entry-id)
       entries
       (let [idx (first (keep-indexed #(when (= (:id %2) entry-id) %1) entries))]
@@ -205,25 +199,25 @@
           entries)))))
 
 (defn last-entry-of-kind-in
-  "Return the most recent canonical journal entry of `kind`, or nil."
-  [ctx kind]
-  (last (entries-of-kind-in ctx kind)))
+  "Return the most recent canonical journal entry of `kind` for `session-id`, or nil."
+  [ctx session-id kind]
+  (last (entries-of-kind-in ctx session-id kind)))
 
 (defn messages-from-entries-in
-  "Extract agent messages from canonical journal message entries in ctx."
-  [ctx]
+  "Extract agent messages from canonical journal message entries for `session-id` in ctx."
+  [ctx session-id]
   (keep (fn [entry]
           (when (= (:kind entry) :message)
             (get-in entry [:data :message])))
-        (all-entries-in ctx)))
+        (all-entries-in ctx session-id)))
 
 (defn messages-up-to-in
-  "Extract agent messages from canonical journal entries up to `entry-id`."
-  [ctx entry-id]
+  "Extract agent messages from canonical journal entries for `session-id` up to `entry-id`."
+  [ctx session-id entry-id]
   (keep (fn [entry]
           (when (= (:kind entry) :message)
             (get-in entry [:data :message])))
-        (entries-up-to-in ctx entry-id)))
+        (entries-up-to-in ctx session-id entry-id)))
 
 ;;; ============================================================
 ;;; Flush state
@@ -477,10 +471,10 @@
   ([ctx session-id cwd parent-session-path]
    (persist-entry-in! ctx session-id cwd nil parent-session-path))
   ([ctx session-id cwd parent-session-id parent-session-path]
-   (let [fp           (flush-state-path ctx)
+   (let [fp           (flush-state-path ctx session-id)
          flush-state  (get-state-in ctx fp)
          session-file (:session-file flush-state)
-         entries      (all-entries-in ctx)]
+         entries      (all-entries-in ctx session-id)]
      (when session-file
        (let [has-assistant (some (fn [e]
                                    (and (= :message (:kind e))

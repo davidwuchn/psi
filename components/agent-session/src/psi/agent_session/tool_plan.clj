@@ -18,8 +18,8 @@
 
    agent-ctx may be nil (e.g. child/agent sessions that have no dedicated
    agent-core context). Falls back to extension registry in that case."
-  [ctx tool-name]
-  (let [agent-ctx (ss/agent-ctx-in ctx)
+  [ctx session-id tool-name]
+  (let [agent-ctx   (ss/agent-ctx-in ctx session-id)
         from-agent (when agent-ctx
                      (some #(when (= tool-name (:name %)) %)
                            (:tools (agent/get-data-in agent-ctx))))
@@ -38,8 +38,8 @@
 
    This is the default concrete runtime invocation behind the higher-level
    ctx-provided runtime tool executor boundary."
-  [ctx tool-name args opts]
-  (let [tool-def   (find-tool-def ctx tool-name)
+  [ctx session-id tool-name args opts]
+  (let [tool-def   (find-tool-def ctx session-id tool-name)
         execute-fn (:execute tool-def)]
     (if (fn? execute-fn)
       (try
@@ -53,10 +53,13 @@
 
    Falls back to `default-execute-runtime-tool-in!` when no custom runtime
    executor is installed on the session context."
-  [ctx tool-name args opts]
+  [ctx session-id tool-name args opts]
   (let [runtime-execute-fn (or (:runtime-tool-executor-fn ctx)
                                default-execute-runtime-tool-in!)]
-    (runtime-execute-fn ctx tool-name args opts)))
+    (try
+      (runtime-execute-fn ctx session-id tool-name args opts)
+      (catch clojure.lang.ArityException _
+        (runtime-execute-fn ctx tool-name args opts)))))
 
 ;;; Tool plan helpers
 
@@ -138,25 +141,25 @@
    This keeps tool-plan execution aligned with `execute-tool-runtime-in!` so
    custom runtime tool executors apply consistently across both interactive
    tool-use and data-driven tool-plan paths."
-  [ctx step-id tool-name args]
-  (let [reg         (:extension-registry ctx)
+  [ctx session-id step-id tool-name args]
+  (let [reg          (:extension-registry ctx)
         tool-call-id (str "plan-" step-id "-" (java.util.UUID/randomUUID))
-        blocked?    (ext/dispatch-tool-call-in reg tool-name tool-call-id args)]
+        blocked?     (ext/dispatch-tool-call-in reg tool-name tool-call-id args)]
     (if (:block blocked?)
       {:content  (or (:reason blocked?)
                      "Tool execution was blocked by an extension")
        :is-error true
        :details  {:blocked true}}
-      (let [opts      {:cwd          (ss/effective-cwd-in ctx)
-                       :overrides    (:tool-output-overrides (ss/get-session-data-in ctx))
-                       :tool-call-id tool-call-id}
-            result    (try
-                        (execute-tool-runtime-in! ctx tool-name args opts)
-                        (catch Exception e
-                          {:content  (str "Error: " (ex-message e))
-                           :is-error true}))
-            modified  (ext/dispatch-tool-result-in
-                       reg tool-name tool-call-id args result (:is-error result))]
+      (let [opts     {:cwd          (ss/effective-cwd-in ctx session-id)
+                      :overrides    (:tool-output-overrides (ss/get-session-data-in ctx session-id))
+                      :tool-call-id tool-call-id}
+            result   (try
+                       (execute-tool-runtime-in! ctx session-id tool-name args opts)
+                       (catch Exception e
+                         {:content  (str "Error: " (ex-message e))
+                          :is-error true}))
+            modified (ext/dispatch-tool-result-in
+                      reg tool-name tool-call-id args result (:is-error result))]
         (cond-> result
           (contains? modified :content)  (assoc :content (:content modified))
           (contains? modified :details)  (assoc :details (:details modified))
@@ -176,8 +179,8 @@
    - :continue-on-error? optional per-step override to continue despite error
 
    Returns summary map with :results and :result-by-id for downstream use."
-  [ctx {:keys [steps stop-on-error?]
-        :or   {steps [] stop-on-error? true}}]
+  [ctx session-id {:keys [steps stop-on-error?]
+                   :or   {steps [] stop-on-error? true}}]
   (if-not (vector? steps)
     {:succeeded?      false
      :step-count      0
@@ -213,7 +216,7 @@
                                                                {:step step :step-id step-id})))
                               args-template  (or (step-field step :args) {})
                               resolved-args  (resolve-step-args args-template by-id)
-                              tool-result    (run-tool-plan-step-in! ctx step-id tool-name resolved-args)
+                              tool-result    (run-tool-plan-step-in! ctx session-id step-id tool-name resolved-args)
                               step-result    {:id        step-id
                                               :tool-name tool-name
                                               :args      resolved-args
@@ -240,24 +243,24 @@
                            :results results
                            :by-id   by-id
                            :error   (ex-message e)}))]
-          (case (:status outcome)
-            :continue
-            (recur (inc idx) (rest remaining) (:results outcome) (:by-id outcome))
+           (case (:status outcome)
+             :continue
+             (recur (inc idx) (rest remaining) (:results outcome) (:by-id outcome))
 
-            :stop
-            {:succeeded?      false
-             :step-count      (count steps)
-             :completed-count (count (:results outcome))
-             :failed-step-id  (:step-id outcome)
-             :results         (:results outcome)
-             :result-by-id    (:by-id outcome)
-             :error           (:error outcome)}
+             :stop
+             {:succeeded?      false
+              :step-count      (count steps)
+              :completed-count (count (:results outcome))
+              :failed-step-id  (:step-id outcome)
+              :results         (:results outcome)
+              :result-by-id    (:by-id outcome)
+              :error           (:error outcome)}
 
-            :error
-            {:succeeded?      false
-             :step-count      (count steps)
-             :completed-count (count (:results outcome))
-             :failed-step-id  (:step-id outcome)
-             :results         (:results outcome)
-             :result-by-id    (:by-id outcome)
-             :error           (:error outcome)}))))))
+             :error
+             {:succeeded?      false
+              :step-count      (count steps)
+              :completed-count (count (:results outcome))
+              :failed-step-id  (:step-id outcome)
+              :results         (:results outcome)
+              :result-by-id    (:by-id outcome)
+              :error           (:error outcome)}))))))

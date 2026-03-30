@@ -22,71 +22,93 @@
 
 (defmethod execute-effect! :default [_ctx _effect] nil)
 
+(defn- effect-session-id
+  "Resolve the session-id for an effect.  Effects carry :session-id
+   explicitly — the effect interceptor in dispatch.clj injects it from
+   the event when the handler didn't set it."
+  [_ctx effect]
+  (:session-id effect))
+
+(defn- effect-agent-ctx
+  [ctx effect]
+  (ss/agent-ctx-in ctx (effect-session-id ctx effect)))
+
+(defn- effect-sc-session-id
+  [ctx effect]
+  (ss/sc-session-id-in ctx (effect-session-id ctx effect)))
+
 ;;; runtime/agent-* — delegate to agent-core (skipped for child sessions without agent-ctx)
 
-(defmethod execute-effect! :runtime/agent-abort [ctx _effect]
-  (when-let [ac (ss/agent-ctx-in ctx)] (agent/abort-in! ac)))
+(defmethod execute-effect! :runtime/agent-abort [ctx effect]
+  (when-let [ac (effect-agent-ctx ctx effect)] (agent/abort-in! ac)))
 
 (defmethod execute-effect! :runtime/agent-queue-steering [ctx effect]
-  (when-let [ac (ss/agent-ctx-in ctx)] (agent/queue-steering-in! ac (:message effect))))
+  (when-let [ac (effect-agent-ctx ctx effect)] (agent/queue-steering-in! ac (:message effect))))
 
 (defmethod execute-effect! :runtime/agent-queue-follow-up [ctx effect]
-  (when-let [ac (ss/agent-ctx-in ctx)] (agent/queue-follow-up-in! ac (:message effect))))
+  (when-let [ac (effect-agent-ctx ctx effect)] (agent/queue-follow-up-in! ac (:message effect))))
 
-(defmethod execute-effect! :runtime/agent-clear-steering-queue [ctx _effect]
-  (when-let [ac (ss/agent-ctx-in ctx)] (agent/clear-steering-queue-in! ac)))
+(defmethod execute-effect! :runtime/agent-clear-steering-queue [ctx effect]
+  (when-let [ac (effect-agent-ctx ctx effect)] (agent/clear-steering-queue-in! ac)))
 
-(defmethod execute-effect! :runtime/agent-clear-follow-up-queue [ctx _effect]
-  (when-let [ac (ss/agent-ctx-in ctx)] (agent/clear-follow-up-queue-in! ac)))
+(defmethod execute-effect! :runtime/agent-clear-follow-up-queue [ctx effect]
+  (when-let [ac (effect-agent-ctx ctx effect)] (agent/clear-follow-up-queue-in! ac)))
 
-(defmethod execute-effect! :runtime/agent-start-loop [ctx _effect]
-  (when-let [ac (ss/agent-ctx-in ctx)] (agent/start-loop-in! ac [])))
+(defmethod execute-effect! :runtime/agent-start-loop [ctx effect]
+  (when-let [ac (effect-agent-ctx ctx effect)] (agent/start-loop-in! ac [])))
 
 (defmethod execute-effect! :runtime/agent-start-loop-with-messages [ctx effect]
-  (when-let [ac (ss/agent-ctx-in ctx)] (agent/start-loop-in! ac (vec (:messages effect)))))
+  (when-let [ac (effect-agent-ctx ctx effect)] (agent/start-loop-in! ac (vec (:messages effect)))))
 
 (defmethod execute-effect! :runtime/agent-set-model [ctx effect]
-  (when-let [ac (ss/agent-ctx-in ctx)] (agent/set-model-in! ac (:model effect))))
+  (when-let [ac (effect-agent-ctx ctx effect)] (agent/set-model-in! ac (:model effect))))
 
 (defmethod execute-effect! :runtime/agent-set-thinking-level [ctx effect]
-  (when-let [ac (ss/agent-ctx-in ctx)] (agent/set-thinking-level-in! ac (:level effect))))
+  (when-let [ac (effect-agent-ctx ctx effect)] (agent/set-thinking-level-in! ac (:level effect))))
 
 (defmethod execute-effect! :runtime/agent-set-system-prompt [ctx effect]
-  (when-let [ac (ss/agent-ctx-in ctx)] (agent/set-system-prompt-in! ac (:prompt effect))))
+  (when-let [ac (effect-agent-ctx ctx effect)] (agent/set-system-prompt-in! ac (:prompt effect))))
 
 (defmethod execute-effect! :runtime/agent-set-tools [ctx effect]
-  (when-let [ac (ss/agent-ctx-in ctx)] (agent/set-tools-in! ac (:tool-maps effect))))
+  (when-let [ac (effect-agent-ctx ctx effect)] (agent/set-tools-in! ac (:tool-maps effect))))
 
-(defmethod execute-effect! :runtime/agent-reset [ctx _effect]
-  (when-let [ac (ss/agent-ctx-in ctx)] (agent/reset-agent-in! ac)))
+(defmethod execute-effect! :runtime/agent-reset [ctx effect]
+  (when-let [ac (effect-agent-ctx ctx effect)] (agent/reset-agent-in! ac)))
 
 (defmethod execute-effect! :runtime/agent-replace-messages [ctx effect]
-  (when-let [ac (ss/agent-ctx-in ctx)] (agent/replace-messages-in! ac (vec (:messages effect)))))
+  (when-let [ac (effect-agent-ctx ctx effect)] (agent/replace-messages-in! ac (vec (:messages effect)))))
 
 (defmethod execute-effect! :runtime/agent-append-message [ctx effect]
-  (when-let [ac (ss/agent-ctx-in ctx)] (agent/append-message-in! ac (:message effect))))
+  (when-let [ac (effect-agent-ctx ctx effect)] (agent/append-message-in! ac (:message effect))))
 
 (defmethod execute-effect! :runtime/agent-emit [ctx effect]
-  (when-let [ac (ss/agent-ctx-in ctx)] (agent/emit-in! ac (:event effect))))
+  (when-let [ac (effect-agent-ctx ctx effect)] (agent/emit-in! ac (:event effect))))
 
 (defmethod execute-effect! :runtime/agent-emit-tool-start [ctx effect]
-  (when-let [ac (ss/agent-ctx-in ctx)] (agent/emit-tool-start-in! ac (:tool-call effect))))
+  (when-let [ac (effect-agent-ctx ctx effect)] (agent/emit-tool-start-in! ac (:tool-call effect))))
 
 (defmethod execute-effect! :runtime/agent-emit-tool-end [ctx effect]
-  (when-let [ac (ss/agent-ctx-in ctx)]
+  (when-let [ac (effect-agent-ctx ctx effect)]
     (agent/emit-tool-end-in! ac (:tool-call effect) (:result effect) (:is-error? effect))))
 
 (defmethod execute-effect! :runtime/agent-record-tool-result [ctx effect]
-  (when-let [ac (ss/agent-ctx-in ctx)] (agent/record-tool-result-in! ac (:tool-result-msg effect))))
+  (when-let [ac (effect-agent-ctx ctx effect)] (agent/record-tool-result-in! ac (:tool-result-msg effect))))
 
 ;;; runtime/tool-* — tool execution boundary
 
 (defmethod execute-effect! :runtime/tool-execute [ctx effect]
   (try
-    ((:execute-tool-runtime-fn ctx) ctx
-                                    (:tool-name effect)
-                                    (:args effect)
-                                    (:opts effect))
+    (try
+      ((:execute-tool-runtime-fn ctx) ctx
+                                      (:session-id effect)
+                                      (:tool-name effect)
+                                      (:args effect)
+                                      (:opts effect))
+      (catch clojure.lang.ArityException _
+        ((:execute-tool-runtime-fn ctx) ctx
+                                        (:tool-name effect)
+                                        (:args effect)
+                                        (:opts effect))))
     (catch Exception e
       {:content  (str "Error: " (ex-message e))
        :is-error true})))
@@ -103,11 +125,11 @@
 (defmethod execute-effect! :runtime/mark-workflow-jobs-terminal [ctx _effect]
   ((:mark-workflow-jobs-terminal-fn ctx) ctx))
 
-(defmethod execute-effect! :runtime/emit-background-job-terminal-messages [ctx _effect]
-  ((:emit-background-job-terminal-messages-fn ctx) ctx))
+(defmethod execute-effect! :runtime/emit-background-job-terminal-messages [ctx effect]
+  ((:emit-background-job-terminal-messages-fn ctx) ctx (effect-session-id ctx effect)))
 
-(defmethod execute-effect! :runtime/reconcile-and-emit-background-job-terminals [ctx _effect]
-  ((:reconcile-and-emit-background-job-terminals-fn ctx) ctx))
+(defmethod execute-effect! :runtime/reconcile-and-emit-background-job-terminals [ctx effect]
+  ((:reconcile-and-emit-background-job-terminals-fn ctx) ctx (effect-session-id ctx effect)))
 
 ;;; Event queue
 
@@ -117,41 +139,44 @@
 
 ;;; System prompt — via ctx callback
 
-(defmethod execute-effect! :runtime/refresh-system-prompt [ctx _effect]
-  ((:refresh-system-prompt-fn ctx) ctx))
+(defmethod execute-effect! :runtime/refresh-system-prompt [ctx effect]
+  (let [session-id (effect-session-id ctx effect)]
+    ((:refresh-system-prompt-fn ctx) ctx session-id)))
 
 ;;; Scheduling
 
 (defmethod execute-effect! :runtime/schedule-thread-sleep-send-event [ctx effect]
-  ((:daemon-thread-fn ctx)
-   (fn []
-     (Thread/sleep ^long (:delay-ms effect))
-     (sc/send-event! (:sc-env ctx) (ss/sc-session-id-in ctx) (:event effect)))))
+  (let [sc-session-id (effect-sc-session-id ctx effect)]
+    ((:daemon-thread-fn ctx)
+     (fn []
+       (Thread/sleep ^long (:delay-ms effect))
+       (sc/send-event! (:sc-env ctx) sc-session-id (:event effect))))))
 
 ;;; Statechart
 
 (defmethod execute-effect! :statechart/send-event [ctx effect]
-  (sc/send-event! (:sc-env ctx) (ss/sc-session-id-in ctx) (:event effect)))
+  (sc/send-event! (:sc-env ctx) (effect-sc-session-id ctx effect) (:event effect)))
 
 ;;; persist/* — journal and preferences
 
 (defmethod execute-effect! :persist/journal-append-model-entry [ctx effect]
-  ((:journal-append-fn ctx) ctx (persist/model-entry (:provider effect) (:model-id effect))))
+  ((:journal-append-fn ctx) ctx (effect-session-id ctx effect) (persist/model-entry (:provider effect) (:model-id effect))))
 
 (defmethod execute-effect! :persist/journal-append-message-entry [ctx effect]
-  ((:journal-append-fn ctx) ctx (persist/message-entry (:message effect))))
+  ((:journal-append-fn ctx) ctx (effect-session-id ctx effect) (persist/message-entry (:message effect))))
 
 (defmethod execute-effect! :persist/journal-append-thinking-level-entry [ctx effect]
-  ((:journal-append-fn ctx) ctx (persist/thinking-level-entry (:level effect))))
+  ((:journal-append-fn ctx) ctx (effect-session-id ctx effect) (persist/thinking-level-entry (:level effect))))
 
 (defmethod execute-effect! :persist/journal-append-session-info-entry [ctx effect]
-  ((:journal-append-fn ctx) ctx (persist/session-info-entry (:name effect))))
+  ((:journal-append-fn ctx) ctx (effect-session-id ctx effect) (persist/session-info-entry (:name effect))))
 
 (defmethod execute-effect! :persist/project-prefs-update [ctx effect]
   (try
-    (project-prefs/update-agent-session!
-     ((:effective-cwd-fn ctx) ctx)
-     (:prefs effect))
+    (let [session-id (effect-session-id ctx effect)]
+      (project-prefs/update-agent-session!
+       ((:effective-cwd-fn ctx) ctx session-id)
+       (:prefs effect)))
     (catch Exception _
       nil)))
 
@@ -172,24 +197,26 @@
 
 (defn- execute-auto-compact-workflow!
   [ctx effect]
-  (let [reason      (:reason effect)
+  (let [session-id  (effect-session-id ctx effect)
+        sc-sid      (effect-sc-session-id ctx effect)
+        reason      (:reason effect)
         will-retry? (boolean (:will-retry? effect))
         continue?   (atom false)
         reg         (:extension-registry ctx)]
     (ext/dispatch-in reg "auto_compaction_start" {:reason reason})
     (when will-retry?
-      ((:drop-trailing-overflow-error-fn ctx) ctx))
+      ((:drop-trailing-overflow-error-fn ctx) ctx session-id))
     ((:daemon-thread-fn ctx)
      (fn []
        (try
-         (let [result ((:execute-compaction-fn ctx) ctx nil)]
+         (let [result ((:execute-compaction-fn ctx) ctx session-id nil)]
            (if result
              (do
                (ext/dispatch-in reg "auto_compaction_end"
                                 {:result     result
                                  :aborted    false
                                  :will-retry will-retry?})
-               (let [sd (ss/get-session-data-in ctx)]
+               (let [sd (ss/get-session-data-in ctx session-id)]
                  (when (or will-retry?
                            (seq (:steering-messages sd))
                            (seq (:follow-up-messages sd)))
@@ -205,11 +232,12 @@
                              :will-retry    false
                              :error-message (ex-message e)}))
          (finally
-           (sc/send-event! (:sc-env ctx) (ss/sc-session-id-in ctx)
+           (sc/send-event! (:sc-env ctx) sc-sid
                            :session/compact-done)
            (when @continue?
-             (sc/send-event! (:sc-env ctx) (ss/sc-session-id-in ctx) :session/prompt)
-             (agent/start-loop-in! (ss/agent-ctx-in ctx) []))))))))
+             (sc/send-event! (:sc-env ctx) sc-sid :session/prompt)
+             (when-let [ac (ss/agent-ctx-in ctx session-id)]
+               (agent/start-loop-in! ac [])))))))))
 
 (defmethod execute-effect! :runtime/auto-compact-workflow [ctx effect]
   (execute-auto-compact-workflow! ctx effect))

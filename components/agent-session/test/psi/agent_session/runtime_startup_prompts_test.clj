@@ -13,21 +13,25 @@
    :content [{:type :text :text "ok"}]})
 
 (deftest run-startup-prompts-in-persists-telemetry-test
-  (let [ctx   (session/create-context {:persist? false})
-        sd    (session/new-session-in! ctx)
-        ctx   (ss/retarget-ctx ctx (:session-id sd))
-        calls (atom [])]
+  (let [[ctx seed-id]      (session/create-context {:persist? false})
+        sd                 (session/new-session-in! ctx seed-id {})
+        session-id         (:session-id sd)
+        calls              (atom [])]
     (with-redefs [psi.agent-session.startup-prompts/discover-rules
                   (fn [_]
                     [{:id "s1" :phase :system-bootstrap :priority 1 :source :project :text "one"}
                      {:id "s2" :phase :project-bootstrap :priority 2 :source :global :text "two"}])
                   runtime/run-agent-loop-in!
-                  (fn [_ctx _ai-ctx _ai-model user-messages _opts]
-                    (swap! calls conj user-messages)
-                    {:role "assistant" :content [{:type :text :text "ok"}]})]
-      (let [result (runtime/run-startup-prompts-in! ctx {:ai-ctx nil :ai-model {:provider :anthropic :id "m"}
-                                                         :run-loop-fn fake-runner})
-            sd (ss/get-session-data-in ctx)]
+                  (fn
+                    ([_ctx _ai-ctx _ai-model user-messages _opts]
+                     (swap! calls conj user-messages)
+                     {:role "assistant" :content [{:type :text :text "ok"}]})
+                    ([_ctx _session-id _ai-ctx _ai-model user-messages _opts]
+                     (swap! calls conj user-messages)
+                     {:role "assistant" :content [{:type :text :text "ok"}]}))]
+      (let [result (runtime/run-startup-prompts-in! ctx session-id {:ai-ctx nil :ai-model {:provider :anthropic :id "m"}
+                                                                    :run-loop-fn fake-runner})
+            sd     (ss/get-session-data-in ctx session-id)]
         (testing "runs all discovered startup prompts"
           (is (= 2 (count (:rules result))))
           (is (= 2 (count @calls))))
@@ -44,7 +48,7 @@
           (is (= [] (:errors result))))
 
         (testing "startup prompts are recorded as visible user entries in journal"
-          (let [user-texts (->> (persist/all-entries-in ctx)
+          (let [user-texts (->> (persist/all-entries-in ctx session-id)
                                 (filter #(= :message (:kind %)))
                                 (map #(get-in % [:data :message]))
                                 (filter #(= "user" (:role %)))
@@ -53,25 +57,32 @@
             (is (= ["one" "two"] user-texts))))))))
 
 (deftest run-startup-prompts-in-continues-after-prompt-failure-by-default-test
-  (let [ctx   (session/create-context {:persist? false})
-        sd    (session/new-session-in! ctx)
-        ctx   (ss/retarget-ctx ctx (:session-id sd))
-        calls (atom [])]
+  (let [[ctx seed-id]      (session/create-context {:persist? false})
+        sd                 (session/new-session-in! ctx seed-id {})
+        session-id         (:session-id sd)
+        calls              (atom [])]
     (with-redefs [psi.agent-session.startup-prompts/discover-rules
                   (fn [_]
                     [{:id "s1" :phase :system-bootstrap :priority 1 :source :project :text "one"}
                      {:id "s2" :phase :project-bootstrap :priority 2 :source :global :text "two"}])
                   runtime/run-agent-loop-in!
-                  (fn [_ctx _ai-ctx _ai-model user-messages _opts]
-                    (let [txt (get-in (first user-messages) [:content 0 :text])]
-                      (swap! calls conj txt)
-                      (if (= "one" txt)
-                        (throw (ex-info "boom" {:rule "s1"}))
-                        {:role "assistant" :content [{:type :text :text "ok"}]})))]
-      (let [result (runtime/run-startup-prompts-in! ctx {:ai-ctx nil :ai-model {:provider :anthropic :id "m"}
-                                                         :run-loop-fn fake-runner})
-            sd (ss/get-session-data-in ctx)
-            by-id (into {} (map (juxt :id identity)) (:applied result))]
+                  (fn
+                    ([_ctx _ai-ctx _ai-model user-messages _opts]
+                     (let [txt (get-in (first user-messages) [:content 0 :text])]
+                       (swap! calls conj txt)
+                       (if (= "one" txt)
+                         (throw (ex-info "boom" {:rule "s1"}))
+                         {:role "assistant" :content [{:type :text :text "ok"}]})))
+                    ([_ctx _session-id _ai-ctx _ai-model user-messages _opts]
+                     (let [txt (get-in (first user-messages) [:content 0 :text])]
+                       (swap! calls conj txt)
+                       (if (= "one" txt)
+                         (throw (ex-info "boom" {:rule "s1"}))
+                         {:role "assistant" :content [{:type :text :text "ok"}]}))))]
+      (let [result (runtime/run-startup-prompts-in! ctx session-id {:ai-ctx nil :ai-model {:provider :anthropic :id "m"}
+                                                                    :run-loop-fn fake-runner})
+            sd     (ss/get-session-data-in ctx session-id)
+            by-id  (into {} (map (juxt :id identity)) (:applied result))]
         (is (= ["one" "two"] @calls))
         (is (= 1 (count (:errors result))))
         (is (= :error (:status (get by-id "s1"))))
@@ -79,36 +90,43 @@
         (is (true? (:startup-bootstrap-completed? sd)))))))
 
 (deftest run-startup-prompts-in-fail-fast-stops-after-first-failure-test
-  (let [ctx (session/create-context {:persist? false})
-        sd  (session/new-session-in! ctx)
-        ctx (ss/retarget-ctx ctx (:session-id sd))
-        calls (atom [])]
+  (let [[ctx seed-id]      (session/create-context {:persist? false})
+        sd                 (session/new-session-in! ctx seed-id {})
+        session-id         (:session-id sd)
+        calls              (atom [])]
     (with-redefs [psi.agent-session.startup-prompts/discover-rules
                   (fn [_]
                     [{:id "s1" :phase :system-bootstrap :priority 1 :source :project :text "one"}
                      {:id "s2" :phase :project-bootstrap :priority 2 :source :global :text "two"}])
                   runtime/run-agent-loop-in!
-                  (fn [_ctx _ai-ctx _ai-model user-messages _opts]
-                    (let [txt (get-in (first user-messages) [:content 0 :text])]
-                      (swap! calls conj txt)
-                      (if (= "one" txt)
-                        (throw (ex-info "boom" {:rule "s1"}))
-                        {:role "assistant" :content [{:type :text :text "ok"}]})))]
-      (let [result (runtime/run-startup-prompts-in! ctx {:ai-ctx nil
-                                                         :ai-model {:provider :anthropic :id "m"}
-                                                         :run-loop-fn fake-runner
-                                                         :fail-fast? true})
-            by-id (into {} (map (juxt :id identity)) (:applied result))]
+                  (fn
+                    ([_ctx _ai-ctx _ai-model user-messages _opts]
+                     (let [txt (get-in (first user-messages) [:content 0 :text])]
+                       (swap! calls conj txt)
+                       (if (= "one" txt)
+                         (throw (ex-info "boom" {:rule "s1"}))
+                         {:role "assistant" :content [{:type :text :text "ok"}]})))
+                    ([_ctx _session-id _ai-ctx _ai-model user-messages _opts]
+                     (let [txt (get-in (first user-messages) [:content 0 :text])]
+                       (swap! calls conj txt)
+                       (if (= "one" txt)
+                         (throw (ex-info "boom" {:rule "s1"}))
+                         {:role "assistant" :content [{:type :text :text "ok"}]}))))]
+      (let [result (runtime/run-startup-prompts-in! ctx session-id {:ai-ctx nil
+                                                                    :ai-model {:provider :anthropic :id "m"}
+                                                                    :run-loop-fn fake-runner
+                                                                    :fail-fast? true})
+            by-id  (into {} (map (juxt :id identity)) (:applied result))]
         (is (= ["one"] @calls))
         (is (= 1 (count (:errors result))))
         (is (= :error (:status (get by-id "s1"))))
         (is (nil? (get by-id "s2")))))))
 
 (deftest run-startup-prompts-in-skips-fork-by-default-test
-  (let [ctx   (session/create-context {:persist? false})
-        sd    (session/new-session-in! ctx)
-        ctx   (ss/retarget-ctx ctx (:session-id sd))
-        calls (atom [])]
+  (let [[ctx seed-id]      (session/create-context {:persist? false})
+        sd                 (session/new-session-in! ctx seed-id {})
+        session-id         (:session-id sd)
+        calls              (atom [])]
     (with-redefs [psi.agent-session.startup-prompts/discover-rules
                   (fn [_]
                     [{:id "s1" :phase :system-bootstrap :priority 1 :source :project :text "one"}])
@@ -116,10 +134,10 @@
                   (fn [_ctx _ai-ctx _ai-model user-messages _opts]
                     (swap! calls conj user-messages)
                     {:role "assistant" :content [{:type :text :text "ok"}]})]
-      (let [result (runtime/run-startup-prompts-in! ctx {:ai-ctx nil
-                                                         :ai-model {:provider :anthropic :id "m"}
-                                                         :spawn-mode :fork-head})
-            sd (ss/get-session-data-in ctx)]
+      (let [result (runtime/run-startup-prompts-in! ctx session-id {:ai-ctx nil
+                                                                    :ai-model {:provider :anthropic :id "m"}
+                                                                    :spawn-mode :fork-head})
+            sd     (ss/get-session-data-in ctx session-id)]
         (is (= [] (:rules result)))
         (is (= [] @calls))
         (is (= [] (:startup-prompts sd)))

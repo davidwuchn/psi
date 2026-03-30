@@ -15,47 +15,45 @@
 
    opts:
    - :spawn-mode (keyword) default :new-root"
-  ([ctx] (new-session-in! ctx {}))
-  ([ctx opts]
-   (let [reg                  (:extension-registry ctx)
-         {:keys [cancelled?]} (ext/dispatch-in reg "session_before_switch" {:reason :new})]
-     (when-not cancelled?
-       (wf/clear-all-in! (:workflow-registry ctx))
-       (let [new-session-id (str (java.util.UUID/randomUUID))
-             current-sd     (session/get-session-data-in ctx)
-             worktree-path  (or (:worktree-path opts)
-                                (:worktree-path current-sd))
-             session-name   (:session-name opts)
-             session-file   (when (:persist? ctx)
-                              (let [session-dir (persist/session-dir-for (session/effective-cwd-in ctx))
-                                    file        (persist/new-session-file-path session-dir new-session-id)]
-                                (str file)))]
-         (dispatch/dispatch! ctx
-                             :session/new-initialize
-                             {:new-session-id new-session-id
-                              :worktree-path worktree-path
-                              :session-name session-name
-                              :spawn-mode (or (:spawn-mode opts) :new-root)
-                              :session-file session-file}
-                             {:origin :core})
-         ;; Re-scope ctx to the new session for subsequent initialization reads
-         (let [ctx (assoc ctx :target-session-id new-session-id)]
-           (dispatch/dispatch! ctx :session/retarget-runtime-prompt-metadata nil {:origin :core})
-           (when session-name
-             (session/journal-append-in! ctx (persist/session-info-entry session-name)))
-           (session/journal-append-in! ctx
-                                       (persist/thinking-level-entry
-                                        (:thinking-level (session/get-session-data-in ctx))))
-           (when-let [model (:model (session/get-session-data-in ctx))]
-             (session/journal-append-in! ctx (persist/model-entry (:provider model) (:id model))))
-           (ext/dispatch-in reg "session_switch" {:reason :new})
-           (session/get-session-data-in ctx)))))))
+  [ctx source-session-id opts]
+  (let [reg                  (:extension-registry ctx)
+        {:keys [cancelled?]} (ext/dispatch-in reg "session_before_switch" {:reason :new})]
+    (when-not cancelled?
+      (wf/clear-all-in! (:workflow-registry ctx))
+      (let [new-session-id     (str (java.util.UUID/randomUUID))
+            source-sd          (session/get-session-data-in ctx source-session-id)
+            worktree-path      (or (:worktree-path opts)
+                                   (:worktree-path source-sd))
+            session-name       (:session-name opts)
+            session-file       (when (:persist? ctx)
+                                 (let [session-dir (persist/session-dir-for (session/effective-cwd-in ctx source-session-id))
+                                       file        (persist/new-session-file-path session-dir new-session-id)]
+                                   (str file)))]
+        (dispatch/dispatch! ctx
+                            :session/new-initialize
+                            {:session-id     source-session-id
+                             :new-session-id new-session-id
+                             :worktree-path  worktree-path
+                             :session-name   session-name
+                             :spawn-mode     (or (:spawn-mode opts) :new-root)
+                             :session-file   session-file}
+                            {:origin :core})
+        (dispatch/dispatch! ctx :session/retarget-runtime-prompt-metadata {:session-id new-session-id} {:origin :core})
+        (when session-name
+          (session/journal-append-in! ctx new-session-id (persist/session-info-entry session-name)))
+        (session/journal-append-in! ctx new-session-id
+                                    (persist/thinking-level-entry
+                                     (:thinking-level (session/get-session-data-in ctx new-session-id))))
+        (when-let [model (:model (session/get-session-data-in ctx new-session-id))]
+          (session/journal-append-in! ctx new-session-id (persist/model-entry (:provider model) (:id model))))
+        (ext/dispatch-in reg "session_switch" {:reason :new})
+        (session/get-session-data-in ctx new-session-id)))))
 
 (defn resume-session-in!
   "Load and resume a session from `session-path`.
   Parses the NDEDN file, migrates if needed, rebuilds the agent message list,
   and restores model/thinking-level from the journal."
-  [ctx session-path]
+  [ctx source-session-id session-path]
   (let [reg                  (:extension-registry ctx)
         {:keys [cancelled?]} (ext/dispatch-in reg "session_before_switch" {:reason :resume})]
     (when-not cancelled?
@@ -63,47 +61,46 @@
       (let [loaded (persist/load-session-file session-path)]
         (if-not loaded
           (do
-            ;; File missing or invalid — treat as new session at that path
             (dispatch/dispatch! ctx
                                 :session/resume-missing-initialize
-                                {:session-path session-path}
+                                {:session-id   source-session-id
+                                 :session-path session-path}
                                 {:origin :core})
             (ext/dispatch-in reg "session_switch" {:reason :resume})
-            (session/get-session-data-in ctx))
+            (session/get-session-data-in ctx source-session-id))
           (let [{:keys [header entries]} loaded
                 session-id             (:id header)
-                current-sd             (session/get-session-data-in ctx)
-                current-model          (:model current-sd)
-                current-thinking-level (:thinking-level current-sd)
+                source-sd              (session/get-session-data-in ctx source-session-id)
+                source-model           (:model source-sd)
+                source-thinking-level  (:thinking-level source-sd)
                 model-entry            (last (filter #(= :model (:kind %)) entries))
                 thinking-entry         (last (filter #(= :thinking-level (:kind %)) entries))
                 model-from-entry       (let [provider (get-in model-entry [:data :provider])
                                              model-id (get-in model-entry [:data :model-id])]
                                          (when (and provider model-id)
-                                           {:provider provider
-                                            :id       model-id}))
-                model                  (or model-from-entry current-model)
+                                           {:provider provider :id model-id}))
+                model                  (or model-from-entry source-model)
                 thinking-level         (or (get-in thinking-entry [:data :thinking-level])
-                                           current-thinking-level
+                                           source-thinking-level
                                            :off)
                 messages               (compaction/rebuild-messages-from-journal-entries (vec entries))]
             (dispatch/dispatch! ctx
                                 :session/resume-loaded
-                                {:session-id session-id
-                                 :session-path session-path
-                                 :header header
-                                 :entries entries
-                                 :worktree-path (or (:worktree-path header) (:cwd header))
-                                 :entry-count (count entries)
-                                 :thinking-level thinking-level
-                                 :model model
-                                 :messages (vec messages)}
+                                {:session-id        session-id
+                                 :source-session-id source-session-id
+                                 :session-path      session-path
+                                 :header            header
+                                 :entries           entries
+                                 :worktree-path     (or (:worktree-path header) (:cwd header))
+                                 :entry-count       (count entries)
+                                 :thinking-level    thinking-level
+                                 :model             model
+                                 :messages          (vec messages)}
                                 {:origin :core})
-            (let [ctx (assoc ctx :target-session-id session-id)]
-              (dispatch/dispatch! ctx :session/ensure-base-system-prompt nil {:origin :core})
-              (dispatch/dispatch! ctx :session/retarget-runtime-prompt-metadata nil {:origin :core})
-              (ext/dispatch-in reg "session_switch" {:reason :resume})
-              (session/get-session-data-in ctx))))))))
+            (dispatch/dispatch! ctx :session/ensure-base-system-prompt {:session-id session-id} {:origin :core})
+            (dispatch/dispatch! ctx :session/retarget-runtime-prompt-metadata {:session-id session-id} {:origin :core})
+            (ext/dispatch-in reg "session_switch" {:reason :resume})
+            (session/get-session-data-in ctx session-id)))))))
 
 (defn fork-session-in!
   "Fork the session from `entry-id`, creating a new session branch.
@@ -113,41 +110,39 @@
   - child journal contains entries/messages up to `entry-id`
   - child session file is written immediately with `:parent-session`
     pointing at the parent session file (when available)"
-  [ctx entry-id]
+  [ctx parent-session-id entry-id]
   (let [reg (:extension-registry ctx)]
     (ext/dispatch-in reg "session_before_fork" {:entry-id entry-id})
-    (let [parent-sd           (session/get-session-data-in ctx)
-          parent-session-id   (:session-id parent-sd)
+    (let [parent-sd           (session/get-session-data-in ctx parent-session-id)
           parent-session-file (:session-file parent-sd)
           new-session-id      (str (java.util.UUID/randomUUID))
-          messages            (vec (persist/messages-up-to-in ctx entry-id))
-          branch-entries      (vec (persist/entries-up-to-in ctx entry-id))
+          messages            (vec (persist/messages-up-to-in ctx parent-session-id entry-id))
+          branch-entries      (vec (persist/entries-up-to-in ctx parent-session-id entry-id))
           session-file        (when (:persist? ctx)
-                                (let [session-dir (persist/session-dir-for (session/effective-cwd-in ctx))
+                                (let [session-dir (persist/session-dir-for (session/effective-cwd-in ctx parent-session-id))
                                       file        (persist/new-session-file-path session-dir new-session-id)]
                                   (str file)))]
       (dispatch/dispatch! ctx
                           :session/fork-initialize
-                          {:new-session-id new-session-id
-                           :branch-entries branch-entries
-                           :entry-id entry-id
-                           :entry-count (count branch-entries)
-                           :parent-session-id parent-session-id
+                          {:session-id          parent-session-id
+                           :new-session-id      new-session-id
+                           :branch-entries      branch-entries
+                           :entry-id            entry-id
+                           :entry-count         (count branch-entries)
+                           :parent-session-id   parent-session-id
                            :parent-session-path parent-session-file
-                           :session-file session-file
-                           :messages messages}
+                           :session-file        session-file
+                           :messages            messages}
                           {:origin :core})
-      ;; Re-scope ctx to the forked session
-      (let [ctx (assoc ctx :target-session-id new-session-id)]
-        ;; Fork persistence: create/write child file immediately with lineage header.
-        (when session-file
-          (let [file (io/file session-file)]
-            (persist/flush-journal! file
-                                    new-session-id
-                                    (session/effective-cwd-in ctx)
-                                    parent-session-id
-                                    parent-session-file
-                                    branch-entries)))
+     ;; Fork persistence: create/write child file immediately with lineage header.
+      (when session-file
+        (let [file (io/file session-file)]
+          (persist/flush-journal! file
+                                  new-session-id
+                                  (session/effective-cwd-in ctx new-session-id)
+                                  parent-session-id
+                                  parent-session-file
+                                  branch-entries)))
 
-        (ext/dispatch-in reg "session_fork" {})
-        (session/get-session-data-in ctx)))))
+      (ext/dispatch-in reg "session_fork" {})
+      (session/get-session-data-in ctx new-session-id))))

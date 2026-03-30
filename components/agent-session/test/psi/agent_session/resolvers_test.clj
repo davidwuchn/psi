@@ -29,7 +29,8 @@
 (defn- q
   "Run EQL query against a fresh session context."
   [eql]
-  (session/query-in (session/create-context {:persist? false}) eql))
+  (let [[ctx _] (session/create-context {:persist? false})]
+    (session/query-in ctx eql)))
 
 (defn- q-in
   "Run EQL query against explicit session context CTX."
@@ -81,8 +82,9 @@
           "fresh session has no executed tools")))
 
   (testing "executed-tool-count follows canonical lifecycle summaries rather than transcript tool results"
-    (let [ctx (session/create-context {:persist? false})]
-      (ss/update-state-value-in! ctx (ss/state-path :journal (ss/active-session-id-in ctx)) into
+    (let [[ctx seed-id] (session/create-context {:persist? false})
+          session-id    seed-id]
+      (ss/update-state-value-in! ctx (ss/state-path :journal session-id) into
                                  [{:kind :message
                                    :data {:message {:role "assistant"
                                                     :content [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}
@@ -93,7 +95,7 @@
                                                     :tool-name "read"
                                                     :content [{:type :text :text "done"}]
                                                     :is-error false}}}])
-      (ss/update-state-value-in! ctx (ss/state-path :tool-lifecycle-events (ss/active-session-id-in ctx)) into
+      (ss/update-state-value-in! ctx (ss/state-path :tool-lifecycle-events session-id) into
                                  [{:event-kind :tool-result :tool-id "call-1" :tool-name "read"}
                                   {:event-kind :tool-result :tool-id "call-2" :tool-name "bash"}])
       (let [result (q-in ctx [:psi.agent-session/tool-call-count
@@ -176,49 +178,46 @@
 
 (deftest multi-session-context-eql-process-and-persisted-test
   (testing "context session attrs expose process sessions and persisted session list remains queryable"
-    (let [cwd      (str (System/getProperty "java.io.tmpdir") "/psi-resolvers-context-" (java.util.UUID/randomUUID))
-          _        (.mkdirs (java.io.File. cwd))
-          ctx      (session/create-context {:cwd cwd})
-          sd-1     (session/new-session-in! ctx)
-          sid-1    (:session-id sd-1)
-          path-1   (:session-file sd-1)
-          _        (persist/flush-journal! (java.io.File. path-1)
-                                           sid-1
-                                           cwd
-                                           nil
-                                           nil
-                                           [(persist/thinking-level-entry :off)
-                                            (persist/session-info-entry "alpha")])
-          sd-2     (session/new-session-in! (ss/retarget-ctx ctx sid-1))
-          sid-2    (:session-id sd-2)
-          path-2   (:session-file sd-2)
-          ctx      (ss/retarget-ctx ctx sid-2)
-          _        (persist/flush-journal! (java.io.File. path-2)
-                                           sid-2
-                                           cwd
-                                           nil
-                                           nil
-                                           [(persist/thinking-level-entry :off)
-                                            (persist/session-info-entry "beta")])
-          process-result
-          (q-in ctx [:psi.agent-session/context-session-count
-                     {:psi.agent-session/context-sessions
-                      [:psi.session-info/id
-                       :psi.session-info/path
-                       :psi.session-info/cwd
-                       :psi.session-info/worktree-path
-                       :psi.session-info/name
-                       :psi.session-info/created]}])
-          persisted-result
-          (q-in ctx [{:psi.session/list
-                      [:psi.session-info/id
-                       :psi.session-info/path
-                       :psi.session-info/cwd
-                       :psi.session-info/worktree-path
-                       :psi.session-info/name
-                       :psi.session-info/message-count]}])
-          context-sessions (:psi.agent-session/context-sessions process-result)
-          persisted    (:psi.session/list persisted-result)]
+    (let [cwd                (str (System/getProperty "java.io.tmpdir") "/psi-resolvers-context-" (java.util.UUID/randomUUID))
+          _                  (.mkdirs (java.io.File. cwd))
+          [ctx seed-id]      (session/create-context {:cwd cwd})
+          sd-1               (session/new-session-in! ctx seed-id {})
+          sid-1              (:session-id sd-1)
+          path-1             (:session-file sd-1)
+          _                  (persist/flush-journal! (java.io.File. path-1)
+                                                     sid-1
+                                                     cwd
+                                                     nil
+                                                     nil
+                                                     [(persist/thinking-level-entry :off)
+                                                      (persist/session-info-entry "alpha")])
+          sd-2               (session/new-session-in! ctx sid-1 {})
+          sid-2              (:session-id sd-2)
+          path-2             (:session-file sd-2)
+          _                  (persist/flush-journal! (java.io.File. path-2)
+                                                     sid-2
+                                                     cwd
+                                                     nil
+                                                     nil
+                                                     [(persist/thinking-level-entry :off)
+                                                      (persist/session-info-entry "beta")])
+          process-result     (q-in ctx [:psi.agent-session/context-session-count
+                                        {:psi.agent-session/context-sessions
+                                         [:psi.session-info/id
+                                          :psi.session-info/path
+                                          :psi.session-info/cwd
+                                          :psi.session-info/worktree-path
+                                          :psi.session-info/name
+                                          :psi.session-info/created]}])
+          persisted-result   (q-in ctx [{:psi.session/list
+                                         [:psi.session-info/id
+                                          :psi.session-info/path
+                                          :psi.session-info/cwd
+                                          :psi.session-info/worktree-path
+                                          :psi.session-info/name
+                                          :psi.session-info/message-count]}])
+          context-sessions   (:psi.agent-session/context-sessions process-result)
+          persisted          (:psi.session/list persisted-result)]
       (is (= 2 (:psi.agent-session/context-session-count process-result)))
       (is (some #(= sid-1 (:psi.session-info/id %)) context-sessions))
       (is (some #(= sid-2 (:psi.session-info/id %)) context-sessions))
@@ -266,7 +265,7 @@
     (let [runtime-atom (atom {:host "localhost"
                               :port 7888
                               :endpoint "localhost:7888"})
-          ctx          (session/create-context {:persist? false
+          [ctx _]      (session/create-context {:persist? false
                                                 :nrepl-runtime-atom runtime-atom})
           result       (q-in ctx [:psi.runtime/nrepl-host
                                   :psi.runtime/nrepl-port
@@ -297,7 +296,7 @@
                                                 :access "test-access"
                                                 :refresh "test-refresh"
                                                 :expires (+ (System/currentTimeMillis) 3600000)}}})
-          ctx      (session/create-context {:persist? false :oauth-ctx oauth-ctx})
+          [ctx _]  (session/create-context {:persist? false :oauth-ctx oauth-ctx})
           result   (q-in ctx [:psi.agent-session/authenticated-providers])
           providers (:psi.agent-session/authenticated-providers result)]
       (is (vector? providers))
@@ -356,9 +355,9 @@
         (is (map? (:git.worktree/current result))))))
 
   (testing ":psi.agent-session/cwd prefers session worktree-path"
-    (let [ctx    (session/create-context {:cwd "/repo/main"
-                                          :initial-session {:worktree-path "/repo/feature-x"}
-                                          :persist? false})
+    (let [[ctx _] (session/create-context {:cwd "/repo/main"
+                                           :initial-session {:worktree-path "/repo/feature-x"}
+                                           :persist? false})
           result (q-in ctx [:psi.agent-session/cwd])]
       (is (= "/repo/feature-x" (:psi.agent-session/cwd result))))))
 
@@ -366,8 +365,8 @@
 
 (deftest background-jobs-resolver-test
   (testing "background job attrs resolve from session root and include nested job entities"
-    (let [ctx       (session/create-context {:persist? false})
-          thread-id (:session-id (ss/get-session-data-in ctx))
+    (let [[ctx seed-id] (session/create-context {:persist? false})
+          thread-id     seed-id
           _         (dispatch/dispatch! ctx :session/update-background-jobs-state
                                         {:update-fn (fn [store]
                                                       (:state (bg-jobs/start-background-job
@@ -451,8 +450,8 @@
 (deftest register-resolvers-in-includes-history-resolvers-test
   (testing "register-resolvers-in! includes history resolvers so worktree attrs are resolvable
             (regression: extension query-fn uses isolated qctx via register-resolvers-in!)"
-    (let [ctx    (session/create-context {:persist? false})
-          qctx   (query/create-query-context)
+    (let [[ctx _] (session/create-context {:persist? false})
+          qctx    (query/create-query-context)
           _      (session/register-resolvers-in! qctx false)
           _      (session/register-mutations-in! qctx mutations/all-mutations true)
           result (query/query-in qctx {:psi/agent-session-ctx ctx}

@@ -134,26 +134,26 @@
 
 (deftest app-query-tool-integration-test
   (testing "app-query-tool works with a real session context"
-    (let [ctx      (session/create-context {:persist? false})
-          sd       (session/new-session-in! ctx)
-          ctx      (ss/retarget-ctx ctx (:session-id sd))
-          tool     (tools/make-app-query-tool (fn [q] (session/query-in ctx q)))
-          exec     (:execute tool)
-          result   (exec {"query" "[:psi.agent-session/phase]"})
-          parsed   (read-string (:content result))]
+    (let [[ctx seed-id]      (session/create-context {:persist? false})
+          sd                 (session/new-session-in! ctx seed-id {})
+          session-id         (:session-id sd)
+          tool               (tools/make-app-query-tool (fn [q] (session/query-in ctx session-id q)))
+          exec               (:execute tool)
+          result             (exec {"query" "[:psi.agent-session/phase]"})
+          parsed             (read-string (:content result))]
       (is (false? (:is-error result)))
       (is (= :idle (:psi.agent-session/phase parsed)))))
 
   (testing "app-query-tool returns session-id from live context"
-    (let [ctx      (session/create-context {:persist? false})
-          sd       (session/new-session-in! ctx)
-          ctx      (ss/retarget-ctx ctx (:session-id sd))
-          tool     (tools/make-app-query-tool (fn [q] (session/query-in ctx q)))
-          exec     (:execute tool)
-          result   (exec {"query" "[:psi.agent-session/session-id]"})
-          parsed   (read-string (:content result))]
+    (let [[ctx seed-id]      (session/create-context {:persist? false})
+          sd                 (session/new-session-in! ctx seed-id {})
+          session-id         (:session-id sd)
+          tool               (tools/make-app-query-tool (fn [q] (session/query-in ctx session-id q)))
+          exec               (:execute tool)
+          result             (exec {"query" "[:psi.agent-session/session-id]"})
+          parsed             (read-string (:content result))]
       (is (false? (:is-error result)))
-      (is (string? (:psi.agent-session/session-id parsed))))))
+      (is (= session-id (:psi.agent-session/session-id parsed))))))
 
 ;;; CWD support tests
 

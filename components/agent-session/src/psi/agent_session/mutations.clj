@@ -37,41 +37,41 @@
 
 (pco/defmutation set-session-name
   "Set the human-readable name of the current session."
-  [_ {:keys [psi/agent-session-ctx name]}]
+  [_ {:keys [psi/agent-session-ctx session-id name]}]
   {::pco/op-name 'psi.extension/set-session-name
-   ::pco/params  [:psi/agent-session-ctx :name]
+   ::pco/params  [:psi/agent-session-ctx :session-id :name]
    ::pco/output  [:psi.agent-session/session-name]}
-  (dispatch/dispatch! agent-session-ctx :session/set-session-name {:name name} {:origin :mutations})
+  (dispatch/dispatch! agent-session-ctx :session/set-session-name {:session-id session-id :name name} {:origin :mutations})
   {:psi.agent-session/session-name name})
 
 ;;; Prompt-template and skill registration mutations
 
 (pco/defmutation add-prompt-template
   "Add a prompt template to the session if its :name is not already present."
-  [_ {:keys [psi/agent-session-ctx template]}]
+  [_ {:keys [psi/agent-session-ctx session-id template]}]
   {::pco/op-name 'psi.extension/add-prompt-template
-   ::pco/params  [:psi/agent-session-ctx :template]
+   ::pco/params  [:psi/agent-session-ctx :session-id :template]
    ::pco/output  [:psi.prompt-template/added?
                   :psi.prompt-template/count]}
   (let [{:keys [added? count]}
         (dispatch/dispatch! agent-session-ctx
                             :session/register-prompt-template
-                            {:template template}
+                            {:session-id session-id :template template}
                             {:origin :mutations})]
     {:psi.prompt-template/added? (boolean added?)
      :psi.prompt-template/count  (or count 0)}))
 
 (pco/defmutation add-skill
   "Add a skill to the session if its :name is not already present."
-  [_ {:keys [psi/agent-session-ctx skill]}]
+  [_ {:keys [psi/agent-session-ctx session-id skill]}]
   {::pco/op-name 'psi.extension/add-skill
-   ::pco/params  [:psi/agent-session-ctx :skill]
+   ::pco/params  [:psi/agent-session-ctx :session-id :skill]
    ::pco/output  [:psi.skill/added?
                   :psi.skill/count]}
   (let [{:keys [added? count]}
         (dispatch/dispatch! agent-session-ctx
                             :session/register-skill
-                            {:skill skill}
+                            {:session-id session-id :skill skill}
                             {:origin :mutations})]
     {:psi.skill/added? (boolean added?)
      :psi.skill/count  (or count 0)}))
@@ -80,15 +80,15 @@
 
 (pco/defmutation add-tool
   "Add a tool to the active agent tool set if its :name is not already present."
-  [_ {:keys [psi/agent-session-ctx tool]}]
+  [_ {:keys [psi/agent-session-ctx session-id tool]}]
   {::pco/op-name 'psi.extension/add-tool
-   ::pco/params  [:psi/agent-session-ctx :tool]
+   ::pco/params  [:psi/agent-session-ctx :session-id :tool]
    ::pco/output  [:psi.tool/added?
                   :psi.tool/count]}
   (let [{:keys [added? count]}
         (or (dispatch/dispatch! agent-session-ctx
                                 :session/add-tool
-                                {:tool tool}
+                                {:session-id session-id :tool tool}
                                 {:origin :mutations})
             {:added? false :count 0})]
     {:psi.tool/added? (boolean added?)
@@ -96,18 +96,18 @@
 
 (pco/defmutation set-active-tools
   "Replace the agent's active tool set with the named subset."
-  [_ {:keys [psi/agent-session-ctx tool-names]}]
+  [_ {:keys [psi/agent-session-ctx session-id tool-names]}]
   {::pco/op-name 'psi.extension/set-active-tools
-   ::pco/params  [:psi/agent-session-ctx :tool-names]
+   ::pco/params  [:psi/agent-session-ctx :session-id :tool-names]
    ::pco/output  [:psi.tool/count
                   :psi.tool/names]}
-  (let [agent-ctx      (ss/agent-ctx-in agent-session-ctx)
+  (let [agent-ctx      (ss/agent-ctx-in agent-session-ctx session-id)
         current-tools  (:tools (agent/get-data-in agent-ctx))
         by-name        (into {} (map (juxt :name identity)) current-tools)
         selected-tools (vec (keep by-name tool-names))]
     (dispatch/dispatch! agent-session-ctx
                         :session/set-active-tools
-                        {:tool-maps selected-tools}
+                        {:session-id session-id :tool-maps selected-tools}
                         {:origin :mutations})
     {:psi.tool/count (count selected-tools)
      :psi.tool/names (mapv :name selected-tools)}))
@@ -176,9 +176,9 @@
 
 (pco/defmutation register-prompt-contribution
   "Register or replace an extension-owned prompt contribution by id."
-  [_ {:keys [psi/agent-session-ctx ext-path id contribution]}]
+  [_ {:keys [psi/agent-session-ctx session-id ext-path id contribution]}]
   {::pco/op-name 'psi.extension/register-prompt-contribution
-   ::pco/params  [:psi/agent-session-ctx :ext-path :id :contribution]
+   ::pco/params  [:psi/agent-session-ctx :session-id :ext-path :id :contribution]
    ::pco/output  [:psi.extension/path
                   :psi.extension.prompt-contribution/id
                   :psi.extension.prompt-contribution/registered?
@@ -193,7 +193,7 @@
   (let [{:keys [registered? contribution count]}
         (dispatch/dispatch! agent-session-ctx
                             :session/register-prompt-contribution
-                            {:ext-path ext-path :id id :contribution contribution}
+                            {:session-id session-id :ext-path ext-path :id id :contribution contribution}
                             {:origin :mutations})]
     (merge {:psi.extension/path                            (str ext-path)
             :psi.extension.prompt-contribution/id          (str id)
@@ -203,9 +203,9 @@
 
 (pco/defmutation update-prompt-contribution
   "Patch an existing extension-owned prompt contribution."
-  [_ {:keys [psi/agent-session-ctx ext-path id patch]}]
+  [_ {:keys [psi/agent-session-ctx session-id ext-path id patch]}]
   {::pco/op-name 'psi.extension/update-prompt-contribution
-   ::pco/params  [:psi/agent-session-ctx :ext-path :id :patch]
+   ::pco/params  [:psi/agent-session-ctx :session-id :ext-path :id :patch]
    ::pco/output  [:psi.extension/path
                   :psi.extension.prompt-contribution/id
                   :psi.extension.prompt-contribution/updated?
@@ -220,7 +220,7 @@
   (let [{:keys [updated? contribution count]}
         (dispatch/dispatch! agent-session-ctx
                             :session/update-prompt-contribution
-                            {:ext-path ext-path :id id :patch patch}
+                            {:session-id session-id :ext-path ext-path :id id :patch patch}
                             {:origin :mutations})]
     (merge {:psi.extension/path                         (str ext-path)
             :psi.extension.prompt-contribution/id       (str id)
@@ -231,9 +231,9 @@
 
 (pco/defmutation unregister-prompt-contribution
   "Remove an extension-owned prompt contribution by id."
-  [_ {:keys [psi/agent-session-ctx ext-path id]}]
+  [_ {:keys [psi/agent-session-ctx session-id ext-path id]}]
   {::pco/op-name 'psi.extension/unregister-prompt-contribution
-   ::pco/params  [:psi/agent-session-ctx :ext-path :id]
+   ::pco/params  [:psi/agent-session-ctx :session-id :ext-path :id]
    ::pco/output  [:psi.extension/path
                   :psi.extension.prompt-contribution/id
                   :psi.extension.prompt-contribution/removed?
@@ -241,7 +241,7 @@
   (let [{:keys [removed? count]}
         (dispatch/dispatch! agent-session-ctx
                             :session/unregister-prompt-contribution
-                            {:ext-path ext-path :id id}
+                            {:session-id session-id :ext-path ext-path :id id}
                             {:origin :mutations})]
     {:psi.extension/path                          (str ext-path)
      :psi.extension.prompt-contribution/id        (str id)
@@ -253,13 +253,14 @@
 (pco/defmutation set-model
   "Set the active model and clamp thinking-level for the current session.
    Optional :scope — :session (runtime only), :project (default), :user (user-global)."
-  [_ {:keys [psi/agent-session-ctx model scope]}]
+  [_ {:keys [psi/agent-session-ctx session-id model scope]}]
   {::pco/op-name 'psi.extension/set-model
-   ::pco/params  [:psi/agent-session-ctx :model]
+   ::pco/params  [:psi/agent-session-ctx :session-id :model]
    ::pco/output  [:psi.agent-session/model
                   :psi.agent-session/thinking-level]}
   (let [result (dispatch/dispatch! agent-session-ctx :session/set-model
-                                   (cond-> {:model model} scope (assoc :scope scope))
+                                   (cond-> {:session-id session-id :model model}
+                                     scope (assoc :scope scope))
                                    {:origin :mutations})]
     {:psi.agent-session/model          (:model result)
      :psi.agent-session/thinking-level (:thinking-level result)}))
@@ -268,14 +269,14 @@
 
 (defn- run-tool-mutation-in!
   "Execute a single tool call and normalize result attrs for mutation payloads."
-  [ctx tool-name args]
+  [ctx session-id tool-name args]
   (when-not (map? args)
     (throw (ex-info "Tool args must be a map"
                     {:tool tool-name
                      :args args})))
   (let [step-id         (keyword (str "tool-" tool-name "-" (java.util.UUID/randomUUID)))
         normalized-args (walk/stringify-keys args)
-        result          (tool-plan/run-tool-plan-step-in! ctx step-id tool-name normalized-args)]
+        result          (tool-plan/run-tool-plan-step-in! ctx session-id step-id tool-name normalized-args)]
     {:psi.extension.tool/name     tool-name
      :psi.extension.tool/content  (:content result)
      :psi.extension.tool/is-error (boolean (:is-error result))
@@ -283,11 +284,11 @@
      :psi.extension.tool/result   result}))
 
 (defn- run-tool-plan-mutation-payload
-  [ctx steps stop-on-error?]
+  [ctx session-id steps stop-on-error?]
   (let [plan-opts   (cond-> {:steps steps}
                       (some? stop-on-error?) (assoc :stop-on-error? stop-on-error?))
         {:keys [succeeded? step-count completed-count failed-step-id results result-by-id error]}
-        (tool-plan/run-tool-plan-in! ctx plan-opts)]
+        (tool-plan/run-tool-plan-in! ctx session-id plan-opts)]
     {:psi.extension.tool-plan/succeeded?      succeeded?
      :psi.extension.tool-plan/step-count      step-count
      :psi.extension.tool-plan/completed-count completed-count
@@ -298,9 +299,9 @@
 
 (pco/defmutation run-read-tool
   "Read a file via the runtime tool executor."
-  [_ {:keys [psi/agent-session-ctx path offset limit]}]
+  [_ {:keys [psi/agent-session-ctx session-id path offset limit]}]
   {::pco/op-name 'psi.extension.tool/read
-   ::pco/params  [:psi/agent-session-ctx :path]
+   ::pco/params  [:psi/agent-session-ctx :session-id :path]
    ::pco/output  [:psi.extension.tool/name
                   :psi.extension.tool/content
                   :psi.extension.tool/is-error
@@ -308,6 +309,7 @@
                   :psi.extension.tool/result]}
   (run-tool-mutation-in!
    agent-session-ctx
+   session-id
    "read"
    (cond-> {:path path}
      (some? offset) (assoc :offset offset)
@@ -315,9 +317,9 @@
 
 (pco/defmutation run-bash-tool
   "Run a bash command via the runtime tool executor."
-  [_ {:keys [psi/agent-session-ctx command timeout]}]
+  [_ {:keys [psi/agent-session-ctx session-id command timeout]}]
   {::pco/op-name 'psi.extension.tool/bash
-   ::pco/params  [:psi/agent-session-ctx :command]
+   ::pco/params  [:psi/agent-session-ctx :session-id :command]
    ::pco/output  [:psi.extension.tool/name
                   :psi.extension.tool/content
                   :psi.extension.tool/is-error
@@ -325,15 +327,16 @@
                   :psi.extension.tool/result]}
   (run-tool-mutation-in!
    agent-session-ctx
+   session-id
    "bash"
    (cond-> {:command command}
      (some? timeout) (assoc :timeout timeout))))
 
 (pco/defmutation run-write-tool
   "Write a file via the runtime tool executor."
-  [_ {:keys [psi/agent-session-ctx path content]}]
+  [_ {:keys [psi/agent-session-ctx session-id path content]}]
   {::pco/op-name 'psi.extension.tool/write
-   ::pco/params  [:psi/agent-session-ctx :path :content]
+   ::pco/params  [:psi/agent-session-ctx :session-id :path :content]
    ::pco/output  [:psi.extension.tool/name
                   :psi.extension.tool/content
                   :psi.extension.tool/is-error
@@ -341,15 +344,16 @@
                   :psi.extension.tool/result]}
   (run-tool-mutation-in!
    agent-session-ctx
+   session-id
    "write"
    {:path path
     :content content}))
 
 (pco/defmutation run-update-tool
   "Apply a text update to a file via the runtime tool executor."
-  [_ {:keys [psi/agent-session-ctx path oldText newText]}]
+  [_ {:keys [psi/agent-session-ctx session-id path oldText newText]}]
   {::pco/op-name 'psi.extension.tool/update
-   ::pco/params  [:psi/agent-session-ctx :path :oldText :newText]
+   ::pco/params  [:psi/agent-session-ctx :session-id :path :oldText :newText]
    ::pco/output  [:psi.extension.tool/name
                   :psi.extension.tool/content
                   :psi.extension.tool/is-error
@@ -357,6 +361,7 @@
                   :psi.extension.tool/result]}
   (run-tool-mutation-in!
    agent-session-ctx
+   session-id
    "edit"
    {:path path
     :oldText oldText
@@ -364,9 +369,9 @@
 
 (pco/defmutation run-tool-plan
   "Execute a data-driven sequential tool plan."
-  [_ {:keys [psi/agent-session-ctx steps stop-on-error?]}]
+  [_ {:keys [psi/agent-session-ctx session-id steps stop-on-error?]}]
   {::pco/op-name 'psi.extension/run-tool-plan
-   ::pco/params  [:psi/agent-session-ctx :steps]
+   ::pco/params  [:psi/agent-session-ctx :session-id :steps]
    ::pco/output  [:psi.extension.tool-plan/succeeded?
                   :psi.extension.tool-plan/step-count
                   :psi.extension.tool-plan/completed-count
@@ -374,13 +379,13 @@
                   :psi.extension.tool-plan/results
                   :psi.extension.tool-plan/result-by-id
                   :psi.extension.tool-plan/error]}
-  (run-tool-plan-mutation-payload agent-session-ctx steps stop-on-error?))
+  (run-tool-plan-mutation-payload agent-session-ctx session-id steps stop-on-error?))
 
 (pco/defmutation run-chain-tool
   "Execute a chained multi-step tool plan."
-  [_ {:keys [psi/agent-session-ctx steps stop-on-error?]}]
+  [_ {:keys [psi/agent-session-ctx session-id steps stop-on-error?]}]
   {::pco/op-name 'psi.extension.tool/chain
-   ::pco/params  [:psi/agent-session-ctx :steps]
+   ::pco/params  [:psi/agent-session-ctx :session-id :steps]
    ::pco/output  [:psi.extension.tool-plan/succeeded?
                   :psi.extension.tool-plan/step-count
                   :psi.extension.tool-plan/completed-count
@@ -388,7 +393,7 @@
                   :psi.extension.tool-plan/results
                   :psi.extension.tool-plan/result-by-id
                   :psi.extension.tool-plan/error]}
-  (run-tool-plan-mutation-payload agent-session-ctx steps stop-on-error?))
+  (run-tool-plan-mutation-payload agent-session-ctx session-id steps stop-on-error?))
 
 ;;; Workflow helpers
 
@@ -455,10 +460,10 @@
 
 (pco/defmutation create-workflow
   "Create a workflow instance for an extension."
-  [_ {:keys [psi/agent-session-ctx ext-path type id input meta auto-start? start-event
+  [_ {:keys [psi/agent-session-ctx session-id ext-path type id input meta auto-start? start-event
              track-background-job?]}]
   {::pco/op-name 'psi.extension.workflow/create
-   ::pco/params  [:psi/agent-session-ctx :ext-path :type]
+   ::pco/params  [:psi/agent-session-ctx :session-id :ext-path :type]
    ::pco/output  [:psi.extension.workflow/created?
                   :psi.extension.workflow/error
                   :psi.extension.workflow/id
@@ -495,9 +500,10 @@
         payload (merge {:psi.extension.workflow/created? created?
                         :psi.extension.workflow/error    error}
                        (workflow->attrs workflow))
-        job     (when created?
+        job     (when (and created? session-id)
                   (bg-rt/maybe-track-background-workflow-job!
                    agent-session-ctx
+                   session-id
                    'psi.extension.workflow/create
                    (cond-> {:ext-path ext-path :type type :id id :input input :meta meta
                             :auto-start? auto-start? :start-event start-event}
@@ -509,9 +515,9 @@
 
 (pco/defmutation send-workflow-event
   "Send an event to an extension workflow instance."
-  [_ {:keys [psi/agent-session-ctx ext-path id event data track-background-job?]}]
+  [_ {:keys [psi/agent-session-ctx session-id ext-path id event data track-background-job?]}]
   {::pco/op-name 'psi.extension.workflow/send-event
-   ::pco/params  [:psi/agent-session-ctx :ext-path :id :event]
+   ::pco/params  [:psi/agent-session-ctx :session-id :ext-path :id :event]
    ::pco/output  [:psi.extension.workflow/event-accepted?
                   :psi.extension.workflow/error
                   :psi.extension.workflow/id
@@ -541,9 +547,10 @@
         payload (merge {:psi.extension.workflow/event-accepted? event-accepted?
                         :psi.extension.workflow/error           error}
                        (workflow->attrs workflow))
-        job     (when event-accepted?
+        job     (when (and event-accepted? session-id)
                   (bg-rt/maybe-track-background-workflow-job!
                    agent-session-ctx
+                   session-id
                    'psi.extension.workflow/send-event
                    (cond-> {:ext-path ext-path
                             :id id
@@ -608,34 +615,34 @@
 
 (pco/defmutation add-extension
   "Load an extension into the current session by path."
-  [_ {:keys [psi/agent-session-ctx path]}]
+  [_ {:keys [psi/agent-session-ctx session-id path]}]
   {::pco/op-name 'psi.extension/add-extension
-   ::pco/params  [:psi/agent-session-ctx :path]
+   ::pco/params  [:psi/agent-session-ctx :session-id :path]
    ::pco/output  [:psi.extension/loaded?
                   :psi.extension/path
                   :psi.extension/error]}
-  (let [{:keys [loaded? error]} (ext-rt/add-extension-in! agent-session-ctx path)]
+  (let [{:keys [loaded? error]} (ext-rt/add-extension-in! agent-session-ctx session-id path)]
     {:psi.extension/loaded? loaded?
      :psi.extension/path    path
      :psi.extension/error   error}))
 
 (pco/defmutation create-session
   "Create a new session branch with optional name, worktree, system prompt, and thinking level."
-  [_ {:keys [psi/agent-session-ctx session-name worktree-path system-prompt thinking-level]}]
+  [_ {:keys [psi/agent-session-ctx parent-session-id session-name worktree-path system-prompt thinking-level]}]
   {::pco/op-name 'psi.extension/create-session
-   ::pco/params  [:psi/agent-session-ctx]
+   ::pco/params  [:psi/agent-session-ctx :parent-session-id]
    ::pco/output  [:psi.agent-session/session-id
                   :psi.agent-session/session-name
                   :psi.agent-session/cwd
                   :psi.agent-session/thinking-level]}
-  (let [sd  (core/new-session-in! agent-session-ctx {:session-name  session-name
-                                                     :worktree-path worktree-path})
-        ctx (assoc agent-session-ctx :target-session-id (:session-id sd))
-        _   (when system-prompt
-              (dispatch/dispatch! ctx :session/set-system-prompt {:prompt system-prompt} {:origin :mutations}))
-        _   (when thinking-level
-              (dispatch/dispatch! ctx :session/set-thinking-level {:level thinking-level} {:origin :mutations}))
-        sd  (ss/get-session-data-in ctx)]
+  (let [sd                 (core/new-session-in! agent-session-ctx parent-session-id {:session-name  session-name
+                                                                                        :worktree-path worktree-path})
+        new-sid            (:session-id sd)
+        _       (when system-prompt
+                  (dispatch/dispatch! agent-session-ctx :session/set-system-prompt {:session-id new-sid :prompt system-prompt} {:origin :mutations}))
+        _       (when thinking-level
+                  (dispatch/dispatch! agent-session-ctx :session/set-thinking-level {:session-id new-sid :level thinking-level} {:origin :mutations}))
+        sd      (ss/get-session-data-in agent-session-ctx new-sid)]
     {:psi.agent-session/session-id     (:session-id sd)
      :psi.agent-session/session-name   (:session-name sd)
      :psi.agent-session/cwd            (:worktree-path sd)
@@ -645,14 +652,15 @@
   "Create a child session for agent execution without switching active session.
   Returns the child session-id. The child shares the parent's context but has
   its own journal, telemetry, and session data."
-  [_ {:keys [psi/agent-session-ctx session-name system-prompt tool-schemas thinking-level]}]
+  [_ {:keys [psi/agent-session-ctx session-id session-name system-prompt tool-schemas thinking-level]}]
   {::pco/op-name 'psi.extension/create-child-session
-   ::pco/params  [:psi/agent-session-ctx]
+   ::pco/params  [:psi/agent-session-ctx :session-id]
    ::pco/output  [:psi.agent-session/session-id]}
-  (let [child-sid (str (java.util.UUID/randomUUID))]
+  (let [child-sid  (str (java.util.UUID/randomUUID))]
     (dispatch/dispatch! agent-session-ctx
                         :session/create-child
-                        {:child-session-id child-sid
+                        {:session-id       session-id
+                         :child-session-id child-sid
                          :session-name     session-name
                          :system-prompt    system-prompt
                          :tool-schemas     tool-schemas
@@ -671,9 +679,8 @@
                   :psi.agent-session/agent-run-text
                   :psi.agent-session/agent-run-elapsed-ms
                   :psi.agent-session/agent-run-error-message]}
-  (let [scoped-ctx  (assoc agent-session-ctx :target-session-id session-id)
-        ;; Resolve model to full schema from models/all-models
-        session-model (:model (ss/get-session-data-in scoped-ctx))
+  (let [;; Resolve model to full schema from models/all-models
+        session-model (:model (ss/get-session-data-in agent-session-ctx session-id))
         resolved-model (or model
                            (when session-model
                              (some (fn [m]
@@ -682,12 +689,12 @@
                                        m))
                                    (vals models/all-models)))
                            (get models/all-models :sonnet-4.6))
-        user-msg   {:role      "user"
-                    :content   [{:type :text :text (or prompt "")}]
-                    :timestamp (java.time.Instant/now)}]
+        user-msg      {:role      "user"
+                       :content   [{:type :text :text (or prompt "")}]
+                       :timestamp (java.time.Instant/now)}]
     (try
       (let [result (executor/run-agent-loop!
-                    nil scoped-ctx nil
+                    nil agent-session-ctx session-id nil
                     resolved-model
                     [user-msg]
                     (cond-> {}
@@ -712,22 +719,23 @@
 
 (pco/defmutation switch-session
   "Switch the active session to the given session-id."
-  [_ {:keys [psi/agent-session-ctx session-id]}]
+  [_ {:keys [psi/agent-session-ctx source-session-id session-id]}]
   {::pco/op-name 'psi.extension/switch-session
    ::pco/params  [:psi/agent-session-ctx :session-id]
    ::pco/output  [:psi.agent-session/session-id
                   :psi.agent-session/session-name
                   :psi.agent-session/cwd]}
-  (let [sd (core/ensure-session-loaded-in! agent-session-ctx session-id)]
+  (let [origin-session-id (or source-session-id session-id)
+        sd                (core/ensure-session-loaded-in! agent-session-ctx origin-session-id session-id)]
     {:psi.agent-session/session-id   (:session-id sd)
      :psi.agent-session/session-name (:session-name sd)
      :psi.agent-session/cwd          (:worktree-path sd)}))
 
 (pco/defmutation set-rpc-trace
   "Enable, disable, or toggle RPC trace logging for the current session."
-  [_ {:keys [psi/agent-session-ctx enabled file] :as params}]
+  [_ {:keys [psi/agent-session-ctx session-id enabled file] :as params}]
   {::pco/op-name 'psi.extension/set-rpc-trace
-   ::pco/params  [:psi/agent-session-ctx]
+   ::pco/params  [:psi/agent-session-ctx :session-id]
    ::pco/output  [:psi.agent-session/rpc-trace-enabled
                   :psi.agent-session/rpc-trace-file]}
   (let [current       (or (session/get-state-value-in agent-session-ctx
@@ -744,51 +752,52 @@
     (when (and enabled? (str/blank? file*))
       (throw (ex-info "rpc trace requires a non-empty :file when enabled"
                       {:error-code "request/invalid-params"})))
-    (dispatch/dispatch! agent-session-ctx :session/set-rpc-trace {:enabled? enabled? :file file*} {:origin :mutations})
+    (dispatch/dispatch! agent-session-ctx :session/set-rpc-trace {:session-id session-id :enabled? enabled? :file file*} {:origin :mutations})
     {:psi.agent-session/rpc-trace-enabled enabled?
      :psi.agent-session/rpc-trace-file    file*}))
 
 (pco/defmutation interrupt
   "Request an interrupt at the next turn boundary."
-  [_ {:keys [psi/agent-session-ctx]}]
+  [_ {:keys [psi/agent-session-ctx session-id]}]
   {::pco/op-name 'psi.extension/interrupt
-   ::pco/params  [:psi/agent-session-ctx]
+   ::pco/params  [:psi/agent-session-ctx :session-id]
    ::pco/output  [:psi.agent-session/interrupt-pending
                   :psi.agent-session/is-idle]}
-  (let [{:keys [pending?]} (core/request-interrupt-in! agent-session-ctx)]
+  (let [{:keys [pending?]} (core/request-interrupt-in! agent-session-ctx session-id)]
     {:psi.agent-session/interrupt-pending (boolean pending?)
-     :psi.agent-session/is-idle           (ss/idle-in? agent-session-ctx)}))
+     :psi.agent-session/is-idle           (ss/idle-in? agent-session-ctx session-id)}))
 
 (pco/defmutation compact
   "Trigger manual context compaction for the current session."
-  [_ {:keys [psi/agent-session-ctx instructions]}]
+  [_ {:keys [psi/agent-session-ctx session-id instructions]}]
   {::pco/op-name 'psi.extension/compact
-   ::pco/params  [:psi/agent-session-ctx]
+   ::pco/params  [:psi/agent-session-ctx :session-id]
    ::pco/output  [:psi.agent-session/is-compacting
                   :psi.agent-session/session-entry-count]}
-  (core/manual-compact-in! agent-session-ctx instructions)
+  (core/manual-compact-in! agent-session-ctx session-id instructions)
   {:psi.agent-session/is-compacting     false
    :psi.agent-session/session-entry-count
-   (count (session/get-state-value-in agent-session-ctx (session/state-path :journal (ss/active-session-id-in agent-session-ctx))))})
+   (count (session/get-state-value-in agent-session-ctx (session/state-path :journal session-id)))})
 
 (pco/defmutation append-entry
   "Append a custom journal entry to the current session."
-  [_ {:keys [psi/agent-session-ctx custom-type data]}]
+  [_ {:keys [psi/agent-session-ctx session-id custom-type data]}]
   {::pco/op-name 'psi.extension/append-entry
-   ::pco/params  [:psi/agent-session-ctx :custom-type]
+   ::pco/params  [:psi/agent-session-ctx :session-id :custom-type]
    ::pco/output  [:psi.agent-session/session-entry-count]}
-  (ss/journal-append-in! agent-session-ctx
+  (ss/journal-append-in! agent-session-ctx session-id
                          (persist/custom-message-entry custom-type (str data) nil false))
   {:psi.agent-session/session-entry-count
-   (count (session/get-state-value-in agent-session-ctx (session/state-path :journal (ss/active-session-id-in agent-session-ctx))))})
+   (count (session/get-state-value-in agent-session-ctx (session/state-path :journal session-id)))})
 
 (pco/defmutation send-message
   "Inject an extension message into the session journal."
-  [_ {:keys [psi/agent-session-ctx role content custom-type]}]
+  [_ {:keys [psi/agent-session-ctx session-id role content custom-type]}]
   {::pco/op-name 'psi.extension/send-message
-   ::pco/params  [:psi/agent-session-ctx :role :content]
+   ::pco/params  [:psi/agent-session-ctx :session-id :role :content]
    ::pco/output  [:psi.extension/message]}
   (let [msg (ext-rt/send-extension-message-in! agent-session-ctx
+                                               session-id
                                                (or role "assistant")
                                                (or content "")
                                                custom-type)]
@@ -801,24 +810,24 @@
     ;; workflow completion races (workflow flips to :done/:error shortly after
     ;; message injection).
     (when agent-session-ctx
-      (bg-rt/reconcile-and-emit-background-job-terminals-in! agent-session-ctx)
+      (bg-rt/reconcile-and-emit-background-job-terminals-in! agent-session-ctx session-id)
       (future
         (dotimes [_ 12]
           (Thread/sleep 100)
           (try
-            (bg-rt/reconcile-and-emit-background-job-terminals-in! agent-session-ctx)
+            (bg-rt/reconcile-and-emit-background-job-terminals-in! agent-session-ctx session-id)
             (catch Exception _ nil)))))
     {:psi.extension/message msg}))
 
 (pco/defmutation send-prompt
   "Send an extension prompt to the current session."
-  [_ {:keys [psi/agent-session-ctx content source]}]
+  [_ {:keys [psi/agent-session-ctx session-id content source]}]
   {::pco/op-name 'psi.extension/send-prompt
-   ::pco/params  [:psi/agent-session-ctx :content]
+   ::pco/params  [:psi/agent-session-ctx :session-id :content]
    ::pco/output  [:psi.extension/prompt-accepted?
                   :psi.extension/prompt-delivery]}
   (let [{:keys [accepted delivery]}
-        (ext-rt/send-extension-prompt-in! agent-session-ctx (or content "") source)]
+        (ext-rt/send-extension-prompt-in! agent-session-ctx session-id (or content "") source)]
     {:psi.extension/prompt-accepted? accepted
      :psi.extension/prompt-delivery  delivery}))
 
@@ -828,30 +837,32 @@
   "Register or replace a declarative WidgetSpec for the calling extension.
    `spec` must be a valid psi.ui.widget-spec map (see psi.ui.widget-spec/validate-spec).
    Returns {:psi.ui/widget-spec-accepted? true} on success, or an error."
-  [_ {:keys [psi/agent-session-ctx spec]}]
+  [_ {:keys [psi/agent-session-ctx session-id spec]}]
   {::pco/op-name 'psi.ui/set-widget-spec
-   ::pco/params  [:psi/agent-session-ctx :spec]
+   ::pco/params  [:psi/agent-session-ctx :session-id :spec]
    ::pco/output  [:psi.ui/widget-spec-accepted?
                   :psi.ui/widget-spec-errors]}
   (let [{:keys [accepted? errors]}
         (dispatch/dispatch! agent-session-ctx
                             :session/ui-set-widget-spec
-                            {:extension-id (or (:extension-id spec) "unknown")
-                             :spec spec}
+                            {:session-id   session-id
+                             :extension-id (or (:extension-id spec) "unknown")
+                             :spec         spec}
                             {:origin :mutations})]
     {:psi.ui/widget-spec-accepted? (boolean accepted?)
      :psi.ui/widget-spec-errors    errors}))
 
 (pco/defmutation clear-widget-spec
   "Remove a declarative WidgetSpec by widget-id for the calling extension."
-  [_ {:keys [psi/agent-session-ctx extension-id widget-id]}]
+  [_ {:keys [psi/agent-session-ctx session-id extension-id widget-id]}]
   {::pco/op-name 'psi.ui/clear-widget-spec
-   ::pco/params  [:psi/agent-session-ctx :extension-id :widget-id]
+   ::pco/params  [:psi/agent-session-ctx :session-id :extension-id :widget-id]
    ::pco/output  [:psi.ui/widget-spec-cleared?]}
   (dispatch/dispatch! agent-session-ctx
                       :session/ui-clear-widget-spec
-                      {:extension-id extension-id
-                       :widget-id widget-id}
+                      {:session-id   session-id
+                       :extension-id extension-id
+                       :widget-id    widget-id}
                       {:origin :mutations})
   {:psi.ui/widget-spec-cleared? true})
 

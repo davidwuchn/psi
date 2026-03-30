@@ -178,7 +178,7 @@
                  :psi.startup/extension-error-count
                  :psi.startup/extension-errors
                  :psi.startup/mutations]}
-  (let [sid     (ss/active-session-id-in agent-session-ctx)
+  (let [sid     (:session-id (ss/get-session-data-in agent-session-ctx))
         state   @(:state* agent-session-ctx)
         summary (get-in state [:agent-session :sessions sid :data :startup-bootstrap])]
     {:psi.startup/bootstrap-summary      summary

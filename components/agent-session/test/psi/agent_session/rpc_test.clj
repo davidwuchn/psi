@@ -16,6 +16,7 @@
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.rpc :as rpc]
    [psi.agent-session.runtime :as runtime]
+   [psi.agent-session.test-support :as test-support]
    [psi.agent-session.tools :as tools]
    [psi.memory.core :as memory]
    [psi.memory.store :as store]
@@ -60,7 +61,7 @@
   (testing "footer payload mirrors default footer path/stats/status composition"
     (let [home    (System/getProperty "user.home")
           cwd     (str home "/projects/hugoduncan/psi/psi-main")
-          ctx     (session/create-context {:cwd cwd})
+          [ctx _] (session/create-context {:cwd cwd})
           payload (with-redefs [session/query-in
                                 (fn [_ctx q]
                                   (is (= @#'rpc/footer-query q))
@@ -97,7 +98,7 @@
 
 (deftest session-updated-payload-includes-model-metadata-test
   (testing "session payload includes model metadata for frontend header projection"
-    (let [ctx (session/create-context {:initial-session {:session-id "sess-123"
+    (let [[ctx _] (session/create-context {:initial-session {:session-id "sess-123"
                                                          :model {:provider "openai"
                                                                  :id "gpt-5.3-codex"
                                                                  :reasoning true}
@@ -264,7 +265,7 @@
 
 (deftest session-request-handler-query-eql-and-op-mapping-test
   (testing "query_eql routes to session/query-in and returns canonical result envelope"
-    (let [ctx     (session/create-context)
+    (let [[ctx _] (session/create-context)
           state   (atom {:ready? true :pending {}})
           handler (rpc/make-session-request-handler ctx)
           {:keys [out-lines]}
@@ -280,7 +281,7 @@
       (is (contains? (get-in frame [:data :result]) :psi.memory/status))))
 
   (testing "query_eql invalid query EDN returns request/invalid-query"
-    (let [ctx     (session/create-context)
+    (let [[ctx _] (session/create-context)
           state   (atom {:ready? true :pending {}})
           handler (rpc/make-session-request-handler ctx)
           {:keys [out-lines]}
@@ -293,7 +294,7 @@
       (is (= "request/invalid-query" (:error-code frame)))))
 
   (testing "query_eql non-vector query returns request/invalid-query"
-    (let [ctx     (session/create-context)
+    (let [[ctx _] (session/create-context)
           state   (atom {:ready? true :pending {}})
           handler (rpc/make-session-request-handler ctx)
           {:keys [out-lines]}
@@ -305,7 +306,7 @@
       (is (= "request/invalid-query" (:error-code frame)))))
 
   (testing "unknown op returns request/op-not-supported with supported ops"
-    (let [ctx     (session/create-context)
+    (let [[ctx _] (session/create-context)
           state   (atom {:ready? true :pending {}})
           handler (rpc/make-session-request-handler ctx)
           {:keys [out-lines]}
@@ -325,7 +326,7 @@
       (is (some #(= "cancel_background_job" %) supported))))
 
   (testing "subscribe/unsubscribe update shared state and return subscribed topics"
-    (let [ctx     (session/create-context)
+    (let [[ctx _] (session/create-context)
           state   (atom {:ready? true :pending {} :subscribed-topics #{}})
           handler (rpc/make-session-request-handler ctx)
           {:keys [out-lines state]}
@@ -341,8 +342,7 @@
       (is (= #{"assistant/delta"} (:subscribed-topics state)))))
 
   (testing "background job list/inspect/cancel ops route through session job store"
-    (let [ctx       (session/create-context)
-          thread-id (:session-id (ss/get-session-data-in ctx))
+    (let [[ctx thread-id] (session/create-context)
           _         (dispatch/dispatch! ctx :session/update-background-jobs-state
                                         {:update-fn (fn [store]
                                                       (:state (bg-jobs/start-background-job
@@ -382,7 +382,7 @@
 
 (deftest rpc-subscribe-ui-topics-emits-initial-widget-snapshot-test
   (testing "subscribe ui/widgets-updated emits current widget projection immediately"
-    (let [ctx     (session/create-context)
+    (let [[ctx _] (session/create-context)
           ui      (ui-view ctx)
           _       (ui-state/set-widget! ui "ext.demo" "w-1" :above-editor ["hello widget"])
           state   (atom {:ready? true :pending {} :subscribed-topics #{}})
@@ -403,7 +403,7 @@
 
 (deftest rpc-ui-watch-loop-streams-widget-updates-without-prompt-test
   (testing "after subscribe, ui widget updates stream without a prompt request"
-    (let [ctx         (session/create-context)
+    (let [[ctx _]     (session/create-context)
           state       (atom {:ready? true :pending {} :subscribed-topics #{}})
           handler     (rpc/make-session-request-handler ctx)
           in-reader   (java.io.PipedReader.)
@@ -449,7 +449,7 @@
 (deftest rpc-external-message-event-streams-without-prompt-test
   (testing "after subscribe, external-message queue events emit assistant/message"
     (let [event-queue (java.util.concurrent.LinkedBlockingQueue.)
-          ctx         (session/create-context {:event-queue event-queue})
+          [ctx _]     (session/create-context {:event-queue event-queue})
           state       (atom {:ready? true :pending {} :subscribed-topics #{}})
           handler     (rpc/make-session-request-handler ctx)
           in-reader   (java.io.PipedReader.)
@@ -508,13 +508,17 @@
 
 (deftest session-request-handler-prompt-while-streaming-op-test
   (testing "behavior steer routes to session/steer-in!"
-    (let [ctx      (session/create-context)
+    (let [[ctx _]  (session/create-context)
           state    (atom {:ready? true :pending {}})
           handler  (rpc/make-session-request-handler ctx)
           steers   (atom [])
           follows  (atom [])]
-      (with-redefs [session/steer-in! (fn [_ text] (swap! steers conj text))
-                    session/follow-up-in! (fn [_ text] (swap! follows conj text))]
+      (with-redefs [session/steer-in! (fn
+                                       ([_ text] (swap! steers conj text))
+                                       ([_ _ text] (swap! steers conj text)))
+                    session/follow-up-in! (fn
+                                            ([_ text] (swap! follows conj text))
+                                            ([_ _ text] (swap! follows conj text)))]
         (let [{:keys [out-lines]}
               (run-loop "{:id \"ps1\" :kind :request :op \"prompt_while_streaming\" :params {:message \"hello\" :behavior \"steer\"}}\n"
                         handler
@@ -528,13 +532,17 @@
           (is (empty? @follows))))))
 
   (testing "behavior queue routes to session/follow-up-in!"
-    (let [ctx      (session/create-context)
+    (let [[ctx _]  (session/create-context)
           state    (atom {:ready? true :pending {}})
           handler  (rpc/make-session-request-handler ctx)
           steers   (atom [])
           follows  (atom [])]
-      (with-redefs [session/steer-in! (fn [_ text] (swap! steers conj text))
-                    session/follow-up-in! (fn [_ text] (swap! follows conj text))]
+      (with-redefs [session/steer-in! (fn
+                                       ([_ text] (swap! steers conj text))
+                                       ([_ _ text] (swap! steers conj text)))
+                    session/follow-up-in! (fn
+                                            ([_ text] (swap! follows conj text))
+                                            ([_ _ text] (swap! follows conj text)))]
         (let [{:keys [out-lines]}
               (run-loop "{:id \"ps2\" :kind :request :op \"prompt_while_streaming\" :params {:message \"next\" :behavior \"queue\"}}\n"
                         handler
@@ -548,13 +556,17 @@
           (is (= ["next"] @follows))))))
 
   (testing "missing behavior defaults to steer"
-    (let [ctx      (session/create-context)
+    (let [[ctx _]  (session/create-context)
           state    (atom {:ready? true :pending {}})
           handler  (rpc/make-session-request-handler ctx)
           steers   (atom [])
           follows  (atom [])]
-      (with-redefs [session/steer-in! (fn [_ text] (swap! steers conj text))
-                    session/follow-up-in! (fn [_ text] (swap! follows conj text))]
+      (with-redefs [session/steer-in! (fn
+                                       ([_ text] (swap! steers conj text))
+                                       ([_ _ text] (swap! steers conj text)))
+                    session/follow-up-in! (fn
+                                            ([_ text] (swap! follows conj text))
+                                            ([_ _ text] (swap! follows conj text)))]
         (let [{:keys [out-lines]}
               (run-loop "{:id \"ps3\" :kind :request :op \"prompt_while_streaming\" :params {:message \"default\"}}\n"
                         handler
@@ -567,7 +579,7 @@
           (is (empty? @follows))))))
 
   (testing "invalid behavior returns request/invalid-params"
-    (let [ctx     (session/create-context)
+    (let [[ctx _] (session/create-context)
           state   (atom {:ready? true :pending {}})
           handler (rpc/make-session-request-handler ctx)
           {:keys [out-lines]}
@@ -582,7 +594,7 @@
 (deftest rpc-login-ops-test
   (testing "login_begin/login_complete use shared oauth context and persist credentials"
     (let [oauth-ctx (oauth/create-null-context)
-          ctx      (session/create-context {:oauth-ctx oauth-ctx})
+          [ctx _]  (session/create-context {:oauth-ctx oauth-ctx})
           state    (atom {:ready? true
                           :pending {}
                           :rpc-ai-model {:provider :anthropic :id "stub" :supports-reasoning true}})
@@ -612,7 +624,7 @@
         (is (instance? java.time.Instant (:last-login-at oauth-state))))))
 
   (testing "login_begin supports explicit provider override"
-    (let [ctx     (session/create-context {:oauth-ctx (oauth/create-null-context)})
+    (let [[ctx _] (session/create-context {:oauth-ctx (oauth/create-null-context)})
           state   (atom {:ready? true
                          :pending {}
                          :rpc-ai-model {:provider :anthropic :id "stub" :supports-reasoning true}})
@@ -628,7 +640,7 @@
       (is (= :openai (get-in (sa/oauth-projection-in ctx) [:pending-login :provider-id])))))
 
   (testing "login_complete without pending login returns deterministic error"
-    (let [ctx     (session/create-context {:oauth-ctx (oauth/create-null-context)})
+    (let [[ctx _] (session/create-context {:oauth-ctx (oauth/create-null-context)})
           state   (atom {:ready? true :pending {}})
           handler (rpc/make-session-request-handler ctx)
           {:keys [out-lines]}
@@ -641,7 +653,7 @@
       (is (= "request/no-pending-login" (:error-code frame)))))
 
   (testing "login_begin validates provider param type"
-    (let [ctx     (session/create-context {:oauth-ctx (oauth/create-null-context)})
+    (let [[ctx _] (session/create-context {:oauth-ctx (oauth/create-null-context)})
           state   (atom {:ready? true
                          :pending {}
                          :rpc-ai-model {:provider :anthropic :id "stub" :supports-reasoning true}})
@@ -656,7 +668,7 @@
       (is (= "request/invalid-params" (:error-code frame)))))
 
   (testing "login_begin requires provider when no session/rpc model is configured"
-    (let [ctx     (session/create-context {:oauth-ctx (oauth/create-null-context)})
+    (let [[ctx _] (session/create-context {:oauth-ctx (oauth/create-null-context)})
           state   (atom {:ready? true :pending {}})
           handler (rpc/make-session-request-handler ctx)
           {:keys [out-lines]}
@@ -670,8 +682,7 @@
 
 (deftest rpc-handshake-server-info-test
   (testing "handshake emits server-info with protocol/session metadata"
-    (let [ctx     (session/create-context)
-          sid     (:session-id (ss/get-session-data-in ctx))
+    (let [[ctx sid] (session/create-context)
           state   (atom {:handshake-server-info-fn (fn [] (rpc/session->handshake-server-info ctx))
                          :handshake-context-updated-payload-fn (fn [] {:active-session-id sid
                                                                        :sessions []})
@@ -695,12 +706,12 @@
       (is (= ["eql-graph" "eql-memory"] (:features info)))))
 
   (testing "handshake includes runtime ui-type when provided by bootstrap/runtime state"
-    (let [ctx     (session/create-context)
+    (let [[ctx sid] (session/create-context)
           state   (atom {:handshake-server-info-fn (fn [] (assoc (rpc/session->handshake-server-info ctx)
                                                                  :ui-type :emacs))
-                         :handshake-context-updated-payload-fn (fn [] {:active-session-id (:session-id (ss/get-session-data-in ctx))
+                         :handshake-context-updated-payload-fn (fn [] {:active-session-id sid
                                                                        :sessions []})
-                         :focus-session-id* (atom (:session-id (ss/get-session-data-in ctx)))
+                         :focus-session-id* (atom sid)
                          :subscribed-topics #{"context/updated"}})
           handler (rpc/make-session-request-handler ctx)
           {:keys [out-lines]}
@@ -715,7 +726,7 @@
 
 (deftest rpc-dialog-response-ops-test
   (testing "resolve_dialog succeeds with active dialog and matching id"
-    (let [ctx     (session/create-context)
+    (let [[ctx _] (session/create-context)
           ui      (ui-view ctx)
           _       (ui-state/enqueue-dialog! ui {:id "d1" :kind :confirm :title "Confirm" :promise (promise)})
           state   (atom {:ready? true :pending {}})
@@ -732,7 +743,7 @@
       (is (nil? (ui-state/active-dialog ui)))))
 
   (testing "cancel_dialog succeeds with active dialog and matching id"
-    (let [ctx     (session/create-context)
+    (let [[ctx _] (session/create-context)
           ui      (ui-view ctx)
           _       (ui-state/enqueue-dialog! ui {:id "d2" :kind :input :title "Input" :promise (promise)})
           state   (atom {:ready? true :pending {}})
@@ -749,7 +760,7 @@
       (is (nil? (ui-state/active-dialog ui)))))
 
   (testing "resolve_dialog invalid params are deterministic"
-    (let [ctx     (session/create-context)
+    (let [[ctx _] (session/create-context)
           state   (atom {:ready? true :pending {}})
           handler (rpc/make-session-request-handler ctx)
           {:keys [out-lines]}
@@ -762,7 +773,7 @@
       (is (= "request/invalid-params" (:error-code frame)))))
 
   (testing "resolve_dialog no active dialog returns deterministic error"
-    (let [ctx     (session/create-context)
+    (let [[ctx _] (session/create-context)
           state   (atom {:ready? true :pending {}})
           handler (rpc/make-session-request-handler ctx)
           {:keys [out-lines]}
@@ -775,7 +786,7 @@
       (is (= "request/no-active-dialog" (:error-code frame)))))
 
   (testing "cancel_dialog no active dialog returns deterministic error"
-    (let [ctx     (session/create-context)
+    (let [[ctx _] (session/create-context)
           state   (atom {:ready? true :pending {}})
           handler (rpc/make-session-request-handler ctx)
           {:keys [out-lines]}
@@ -788,7 +799,7 @@
       (is (= "request/no-active-dialog" (:error-code frame)))))
 
   (testing "dialog-id mismatch returns deterministic error"
-    (let [ctx     (session/create-context)
+    (let [[ctx _] (session/create-context)
           ui      (ui-view ctx)
           _       (ui-state/enqueue-dialog! ui {:id "d-real" :kind :confirm :title "Confirm" :promise (promise)})
           state   (atom {:ready? true :pending {}})
@@ -804,12 +815,12 @@
 
 (deftest rpc-prompt-streams-events-and-interleaves-test
   (testing "prompt emits canonical events that interleave with accepted response"
-    (let [ctx (session/create-context)
+    (let [[ctx _] (session/create-context)
           _   (ui-state/set-status! (ui-view ctx) "ext.demo" "ready")
           state (atom {:ready? true
                        :pending {}
                        :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
-                       :run-agent-loop-fn (fn [_ai-ctx _ctx _agent-ctx _ai-model _new-messages {:keys [progress-queue]}]
+                       :run-agent-loop-fn (fn [_ai-ctx _ctx _session-id _agent-ctx _ai-model _new-messages {:keys [progress-queue]}]
                                             (.offer ^java.util.concurrent.LinkedBlockingQueue progress-queue
                                                     {:event-kind :text-delta :text "Hello" :type :agent-event})
                                             (.offer ^java.util.concurrent.LinkedBlockingQueue progress-queue
@@ -860,11 +871,11 @@
 
 (deftest rpc-thinking-delta-after-tool-start-begins-fresh-segment-test
   (testing "post-tool thinking delta can start a fresh cumulative segment"
-    (let [ctx (session/create-context)
+    (let [[ctx _] (session/create-context)
           state (atom {:ready? true
                        :pending {}
                        :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
-                       :run-agent-loop-fn (fn [_ai-ctx _ctx _agent-ctx _ai-model _new-messages {:keys [progress-queue]}]
+                       :run-agent-loop-fn (fn [_ai-ctx _ctx _session-id _agent-ctx _ai-model _new-messages {:keys [progress-queue]}]
                                             (.offer ^java.util.concurrent.LinkedBlockingQueue progress-queue
                                                     {:event-kind :thinking-delta :text "plan-1" :type :agent-event})
                                             (.offer ^java.util.concurrent.LinkedBlockingQueue progress-queue
@@ -902,8 +913,8 @@
 
 (deftest rpc-openai-codex-prompt-emits-tool-events-with-final-args-test
   (testing "openai codex tool args from response.output_item.done flow through RPC tool events"
-    (let [ctx       (session/create-context)
-          _         (dispatch/dispatch! ctx :session/set-active-tools {:tool-maps [tools/bash-tool]} {:origin :core})
+    (let [[ctx seed-id]   (session/create-context)
+          _         (dispatch/dispatch! ctx :session/set-active-tools {:session-id seed-id :tool-maps [tools/bash-tool]} {:origin :core})
           state     (atom {:ready? true
                            :pending {}
                            :sync-on-git-head-change? false
@@ -950,7 +961,7 @@
                      "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"tool/start\" \"tool/executing\" \"tool/result\" \"assistant/message\"]}}\n"
                      "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"run pwd\"}}\n")
           {:keys [out-lines]}
-          (with-redefs [runtime/resolve-api-key-in (fn [_ctx _model] openai-chatgpt-test-token)
+          (with-redefs [runtime/resolve-api-key-in (fn [_ctx _session-id _model] openai-chatgpt-test-token)
                         http/post (fn [url req]
                                     (swap! requests conj {:url url :req req})
                                     (let [n (swap! call-n inc)]
@@ -991,8 +1002,8 @@
 
 (deftest rpc-openai-chat-completions-tool-id-late-still-executes-test
   (testing "openai chat completions executes tool calls when streamed id arrives late"
-    (let [ctx       (session/create-context)
-          _         (dispatch/dispatch! ctx :session/set-active-tools {:tool-maps [tools/bash-tool]} {:origin :core})
+    (let [[ctx seed-id]   (session/create-context)
+          _         (dispatch/dispatch! ctx :session/set-active-tools {:session-id seed-id :tool-maps [tools/bash-tool]} {:origin :core})
           state     (atom {:ready? true
                            :pending {}
                            :sync-on-git-head-change? false
@@ -1031,7 +1042,7 @@
                      "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"tool/start\" \"tool/executing\" \"tool/result\" \"assistant/message\"]}}\n"
                      "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"run pwd\"}}\n")
           {:keys [out-lines]}
-          (with-redefs [runtime/resolve-api-key-in (fn [_ctx _model] "sk-test")
+          (with-redefs [runtime/resolve-api-key-in (fn [_ctx _session-id _model] "sk-test")
                         http/post (fn [url req]
                                     (swap! requests conj {:url url :req req})
                                     (let [n (swap! call-n inc)]
@@ -1067,8 +1078,8 @@
 
 (deftest rpc-openai-chat-completions-cumulative-args-executes-once-test
   (testing "openai chat completions cumulative tool args execute with full parsed payload"
-    (let [ctx       (session/create-context)
-          _         (dispatch/dispatch! ctx :session/set-active-tools {:tool-maps [tools/bash-tool]} {:origin :core})
+    (let [[ctx seed-id]   (session/create-context)
+          _         (dispatch/dispatch! ctx :session/set-active-tools {:session-id seed-id :tool-maps [tools/bash-tool]} {:origin :core})
           state     (atom {:ready? true
                            :pending {}
                            :sync-on-git-head-change? false
@@ -1106,7 +1117,7 @@
                      "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"tool/start\" \"tool/executing\" \"tool/result\" \"assistant/message\"]}}\n"
                      "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"run pwd\"}}\n")
           {:keys [out-lines]}
-          (with-redefs [runtime/resolve-api-key-in (fn [_ctx _model] "sk-test")
+          (with-redefs [runtime/resolve-api-key-in (fn [_ctx _session-id _model] "sk-test")
                         http/post (fn [_url _req]
                                     (let [n (swap! call-n inc)]
                                       {:body (stream-body (if (= 1 n) first-sse second-sse))}))]
@@ -1125,7 +1136,7 @@
 
 (deftest rpc-session-resume-and-rehydrate-events-test
   (testing "new_session emits session/resumed and session/rehydrated canonical events"
-    (let [ctx (session/create-context)
+    (let [[ctx _] (session/create-context)
           state (atom {:ready? true
                        :pending {}
                        :subscribed-topics #{"session/resumed" "session/rehydrated"}})
@@ -1142,7 +1153,7 @@
       (is (some #(contains? (:data %) :messages) events))))
 
   (testing "command /new emits session/resumed and session/rehydrated canonical events"
-    (let [ctx (session/create-context)
+    (let [[ctx _] (session/create-context)
           state (atom {:ready? true
                        :pending {}
                        :subscribed-topics #{"session/resumed" "session/rehydrated" "command-result"}})
@@ -1160,22 +1171,23 @@
       (is (= "new_session" (get-in command-result [:data :type])))))
 
   (testing "command /resume <path> emits session/resumed and session/rehydrated canonical events"
-    (let [cwd     (str (System/getProperty "java.io.tmpdir") "/psi-rpc-resume-" (java.util.UUID/randomUUID))
-          _       (.mkdirs (java.io.File. cwd))
-          ctx     (session/create-context {:cwd cwd})
-          sd1     (session/new-session-in! ctx)
-          path1   (:session-file sd1)
-          _       (persist/flush-journal! (java.io.File. path1)
-                                          (:session-id sd1)
-                                          cwd
-                                          nil
-                                          nil
-                                          [(persist/message-entry {:role "user" :content "hi"})
-                                           (persist/message-entry {:role "assistant" :content [{:type :text :text "there"}]})])
-          state   (atom {:ready? true
-                         :pending {}
-                         :subscribed-topics #{"session/resumed" "session/rehydrated" "command-result"}})
-          handler (rpc/make-session-request-handler (ss/retarget-ctx ctx (:session-id sd1)))
+    (let [cwd                (str (System/getProperty "java.io.tmpdir") "/psi-rpc-resume-" (java.util.UUID/randomUUID))
+          _                  (.mkdirs (java.io.File. cwd))
+          [ctx seed-id] (session/create-context {:cwd cwd})
+          sd1                (session/new-session-in! ctx seed-id {})
+          session-id         (:session-id sd1)
+          path1              (:session-file sd1)
+          _                  (persist/flush-journal! (java.io.File. path1)
+                                                     session-id
+                                                     cwd
+                                                     nil
+                                                     nil
+                                                     [(persist/message-entry {:role "user" :content "hi"})
+                                                      (persist/message-entry {:role "assistant" :content [{:type :text :text "there"}]})])
+          state              (atom {:ready? true
+                                    :pending {}
+                                    :subscribed-topics #{"session/resumed" "session/rehydrated" "command-result"}})
+          handler            (rpc/make-session-request-handler ctx)
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"c1\" :kind :request :op \"command\" :params {:text \"/resume " path1 "\"}}\n")
           {:keys [out-lines]} (run-loop input handler state)
@@ -1192,23 +1204,23 @@
                      [:data :messages])))))
 
   (testing "command /tree <session-id> emits session/resumed and session/rehydrated canonical events"
-    (let [cwd     (str (System/getProperty "java.io.tmpdir") "/psi-rpc-tree-" (java.util.UUID/randomUUID))
-          _       (.mkdirs (java.io.File. cwd))
-          ctx     (session/create-context {:cwd cwd})
-          sd1     (session/new-session-in! ctx)
-          sid1    (:session-id sd1)
-          path1   (:session-file sd1)
-          _       (persist/flush-journal! (java.io.File. path1)
-                                          sid1
-                                          cwd
-                                          nil
-                                          nil
-                                          [(persist/message-entry {:role "assistant" :content [{:type :text :text "root"}]})])
-          _       (session/new-session-in! (ss/retarget-ctx ctx sid1))
-          state   (atom {:ready? true
-                         :pending {}
-                         :subscribed-topics #{"session/resumed" "session/rehydrated" "command-result"}})
-          handler (rpc/make-session-request-handler (ss/retarget-ctx ctx sid1))
+    (let [cwd                (str (System/getProperty "java.io.tmpdir") "/psi-rpc-tree-" (java.util.UUID/randomUUID))
+          _                  (.mkdirs (java.io.File. cwd))
+          [ctx seed-id] (session/create-context {:cwd cwd})
+          sd1                (session/new-session-in! ctx seed-id {})
+          sid1               (:session-id sd1)
+          path1              (:session-file sd1)
+          _                  (persist/flush-journal! (java.io.File. path1)
+                                                     sid1
+                                                     cwd
+                                                     nil
+                                                     nil
+                                                     [(persist/message-entry {:role "assistant" :content [{:type :text :text "root"}]})])
+          _                  (session/new-session-in! ctx sid1 {})
+          state              (atom {:ready? true
+                                    :pending {}
+                                    :subscribed-topics #{"session/resumed" "session/rehydrated" "command-result"}})
+          handler            (rpc/make-session-request-handler ctx)
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"c1\" :kind :request :op \"command\" :params {:text \"/tree " sid1 "\"}}\n")
           {:keys [out-lines]} (run-loop input handler state)
@@ -1226,12 +1238,11 @@
 
 (deftest rpc-multi-session-context-routing-test
   (testing "list_sessions returns context snapshot with active-session-id"
-    (let [cwd     (str (System/getProperty "java.io.tmpdir") "/psi-rpc-context-" (java.util.UUID/randomUUID))
-          _       (.mkdirs (java.io.File. cwd))
-          ctx     (session/create-context {:cwd cwd})
-          _       (:session-id (ss/get-session-data-in ctx))
-          state   (atom {:ready? true :pending {}})
-          handler (rpc/make-session-request-handler (ss/retarget-ctx ctx (:target-session-id ctx)))
+    (let [cwd                (str (System/getProperty "java.io.tmpdir") "/psi-rpc-context-" (java.util.UUID/randomUUID))
+          _                  (.mkdirs (java.io.File. cwd))
+          [ctx seed-id] (session/create-context {:cwd cwd})
+          state              (atom {:ready? true :pending {}})
+          handler            (rpc/make-session-request-handler ctx)
           input   (str "{:id \"n1\" :kind :request :op \"new_session\"}\n"
                        "{:id \"l1\" :kind :request :op \"list_sessions\"}\n")
           {:keys [out-lines]} (run-loop input handler state)
@@ -1251,26 +1262,26 @@
       (is (some #(= sid1 (:session-id %)) sessions))))
 
   (testing "switch_session accepts :session-id and restores that runtime session"
-    (let [cwd     (str (System/getProperty "java.io.tmpdir") "/psi-rpc-switch-" (java.util.UUID/randomUUID))
-          _       (.mkdirs (java.io.File. cwd))
-          ctx     (session/create-context {:cwd cwd})
-          sd1     (session/new-session-in! ctx)
-          sid1    (:session-id sd1)
-          path1   (:session-file sd1)
-          _       (persist/flush-journal! (java.io.File. path1)
-                                          sid1
-                                          cwd
-                                          nil
-                                          nil
-                                          [(persist/thinking-level-entry :off)])
-          sd2     (session/new-session-in! (ss/retarget-ctx ctx sid1))
-          sid2    (:session-id sd2)
-          sd3     (session/new-session-in! (ss/retarget-ctx ctx sid2))
-          current-before (:session-id sd3)
-          state   (atom {:ready? true
-                         :pending {}
-                         :subscribed-topics #{"session/resumed"}})
-          handler (rpc/make-session-request-handler (ss/retarget-ctx ctx current-before))
+    (let [cwd                (str (System/getProperty "java.io.tmpdir") "/psi-rpc-switch-" (java.util.UUID/randomUUID))
+          _                  (.mkdirs (java.io.File. cwd))
+          [ctx seed-id] (session/create-context {:cwd cwd})
+          sd1                (session/new-session-in! ctx seed-id {})
+          sid1               (:session-id sd1)
+          path1              (:session-file sd1)
+          _                  (persist/flush-journal! (java.io.File. path1)
+                                                     sid1
+                                                     cwd
+                                                     nil
+                                                     nil
+                                                     [(persist/thinking-level-entry :off)])
+          sd2                (session/new-session-in! ctx sid1 {})
+          sid2               (:session-id sd2)
+          sd3                (session/new-session-in! ctx sid2 {})
+          current-before     (:session-id sd3)
+          state              (atom {:ready? true
+                                    :pending {}
+                                    :subscribed-topics #{"session/resumed"}})
+          handler            (rpc/make-session-request-handler ctx)
           input   (str "{:id \"s1\" :kind :request :op \"switch_session\" :params {:session-id \"" sid1 "\"}}\n")
           {:keys [out-lines]} (run-loop input handler state)
           frames    (parse-frames out-lines)
@@ -1286,24 +1297,24 @@
       (is (= sid1 (get-in resumed-e [:data :session-id])))))
 
   (testing "targetable ops accept :session-id and route to that session"
-    (let [cwd            (str (System/getProperty "java.io.tmpdir") "/psi-rpc-target-" (java.util.UUID/randomUUID))
-          _              (.mkdirs (java.io.File. cwd))
-          ctx            (session/create-context {:cwd cwd})
-          sd1            (session/new-session-in! ctx)
-          sid1           (:session-id sd1)
-          path1          (:session-file sd1)
-          _              (persist/flush-journal! (java.io.File. path1)
-                                                 sid1
-                                                 cwd
-                                                 nil
-                                                 nil
-                                                 [(persist/thinking-level-entry :off)])
-          sd2            (session/new-session-in! (ss/retarget-ctx ctx sid1))
-          sid2           (:session-id sd2)
-          sd3            (session/new-session-in! (ss/retarget-ctx ctx sid2))
-          current-before (:session-id sd3)
-          state          (atom {:ready? true :pending {}})
-          handler        (rpc/make-session-request-handler (ss/retarget-ctx ctx current-before))
+    (let [cwd                (str (System/getProperty "java.io.tmpdir") "/psi-rpc-target-" (java.util.UUID/randomUUID))
+          _                  (.mkdirs (java.io.File. cwd))
+          [ctx seed-id] (session/create-context {:cwd cwd})
+          sd1                (session/new-session-in! ctx seed-id {})
+          sid1               (:session-id sd1)
+          path1              (:session-file sd1)
+          _                  (persist/flush-journal! (java.io.File. path1)
+                                                     sid1
+                                                     cwd
+                                                     nil
+                                                     nil
+                                                     [(persist/thinking-level-entry :off)])
+          sd2                (session/new-session-in! ctx sid1 {})
+          sid2               (:session-id sd2)
+          sd3                (session/new-session-in! ctx sid2 {})
+          current-before     (:session-id sd3)
+          state              (atom {:ready? true :pending {}})
+          handler            (rpc/make-session-request-handler ctx)
           input          (str "{:id \"m1\" :kind :request :op \"set_session_name\" :params {:session-id \"" sid1 "\" :name \"alpha\"}}\n")
           {:keys [out-lines]} (run-loop input handler state)
           frame          (-> out-lines first edn/read-string)
@@ -1317,7 +1328,7 @@
       (is (= "alpha" (:session-name sd1)))))
 
   (testing "targetable op rejects invalid :session-id param"
-    (let [ctx     (session/create-context)
+    (let [[ctx _] (session/create-context)
           state   (atom {:ready? true :pending {}})
           handler (rpc/make-session-request-handler ctx)
           {:keys [out-lines]}
@@ -1334,18 +1345,18 @@
   #_(testing "targetable op rejects cross-session routing while prompt is in-flight when lock enforcement is enabled"
       (let [cwd     (str (System/getProperty "java.io.tmpdir") "/psi-rpc-routing-lock-" (java.util.UUID/randomUUID))
             _       (.mkdirs (java.io.File. cwd))
-            ctx     (session/create-context {:cwd cwd})
-            _       (session/new-session-in! ctx)
-            sid1    (:session-id (ss/get-session-data-in ctx))
-            path1   (:session-file (ss/get-session-data-in ctx))
+            [ctx seed-id] (session/create-context {:cwd cwd})
+            _                  (session/new-session-in! ctx seed-id {})
+            sid1               (-> ctx ss/list-context-sessions-in last :session-id)
+            path1   (:session-file (ss/get-session-data-in ctx sid1))
             _       (persist/flush-journal! (java.io.File. path1)
                                             sid1
                                             cwd
                                             nil
                                             nil
                                             [(persist/thinking-level-entry :off)])
-            _       (session/new-session-in! ctx)
-            sid2    (:session-id (ss/get-session-data-in ctx))
+            _       (session/new-session-in! ctx sid1 {})
+            sid2    (-> ctx ss/list-context-sessions-in last :session-id)
             gate    (promise)
             release (promise)
             state   (atom {:ready? true
@@ -1389,7 +1400,7 @@
             (is (some? conflict))
             (is (= "request/session-routing-conflict" (:error-code conflict)))
             (is (= sid1 (get-in conflict [:data :inflight-session-id])))
-            (is (= sid2 (get-in conflict [:data :target-session-id]))))
+            (is (= sid2 (get-in conflict [:data :requested-session-id]))))
           (finally
             (deliver release true)
             (when-let [f (:ui-watch-loop @state)]
@@ -1403,10 +1414,10 @@
   #_(testing "exclusive ops are rejected while prompt is in-flight when lock enforcement is enabled"
       (let [cwd     (str (System/getProperty "java.io.tmpdir") "/psi-rpc-routing-lock-exclusive-" (java.util.UUID/randomUUID))
             _       (.mkdirs (java.io.File. cwd))
-            ctx     (session/create-context {:cwd cwd})
-            _       (session/new-session-in! ctx)
-            sid1    (:session-id (ss/get-session-data-in ctx))
-            path1   (:session-file (ss/get-session-data-in ctx))
+            [ctx seed-id] (session/create-context {:cwd cwd})
+            _                  (session/new-session-in! ctx seed-id {})
+            sid1               (-> ctx ss/list-context-sessions-in last :session-id)
+            path1   (:session-file (ss/get-session-data-in ctx sid1))
             _       (persist/flush-journal! (java.io.File. path1)
                                             sid1
                                             cwd
@@ -1456,7 +1467,7 @@
             (is (some? conflict))
             (is (= "request/session-routing-conflict" (:error-code conflict)))
             (is (= sid1 (get-in conflict [:data :inflight-session-id])))
-            (is (= sid1 (get-in conflict [:data :target-session-id]))))
+            (is (= sid1 (get-in conflict [:data :requested-session-id]))))
           (finally
             (deliver release true)
             (when-let [f (:ui-watch-loop @state)]
@@ -1469,7 +1480,7 @@
 
 (deftest rpc-new-session-uses-callback-rehydrate-payload-test
   (testing "new_session uses on-new-session! callback when provided"
-    (let [ctx (session/create-context)
+    (let [[ctx _] (session/create-context)
           called? (atom 0)
           state (atom {:ready? true
                        :pending {}
@@ -1497,16 +1508,16 @@
 
 (deftest rpc-new-session-footer-usage-is-session-scoped-test
   (testing "new_session footer/updated does not carry usage totals from previous session"
-    (let [ctx     (session/create-context)
-          state   (atom {:ready? true
-                         :pending {}
-                         :subscribed-topics #{"footer/updated"}})
-          handler (rpc/make-session-request-handler ctx)
-          _       (ss/journal-append-in! ctx {:kind :message
-                                              :session-id (:session-id (ss/get-session-data-in ctx))
-                                              :data {:message {:role "assistant"
-                                                               :usage {:input-tokens 111
-                                                                       :output-tokens 22}}}})
+    (let [[ctx session-id] (session/create-context)
+          state      (atom {:ready? true
+                            :pending {}
+                            :subscribed-topics #{"footer/updated"}})
+          handler    (rpc/make-session-request-handler ctx)
+          _          (ss/journal-append-in! ctx session-id {:kind :message
+                                                 :session-id session-id
+                                                 :data {:message {:role "assistant"
+                                                                  :usage {:input-tokens 111
+                                                                          :output-tokens 22}}}})
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"n1\" :kind :request :op \"new_session\"}\n")
           {:keys [out-lines]} (run-loop input handler state)
@@ -1520,17 +1531,17 @@
 
 (deftest footer-updated-payload-includes-model-and-thinking-when-session-reasoning-enabled-test
   (testing "footer payload includes model/thinking details from active session query"
-    (let [ctx (session/create-context)
-          _   (dispatch/dispatch! ctx :session/set-model
-                                  {:model {:provider "openai" :id "gpt-5.3-codex" :reasoning true}}
-                                  {:origin :core})
-          _   (dispatch/dispatch! ctx :session/set-thinking-level {:level :high} {:origin :core})
-          _   (dispatch/dispatch! ctx :session/update-context-usage {:tokens 4000 :window 100000} {:origin :core})
-          _   (ss/journal-append-in! ctx {:kind :message
-                                          :session-id (:session-id (ss/get-session-data-in ctx))
-                                          :data {:message {:role "assistant"
-                                                           :usage {:input-tokens 111
-                                                                   :output-tokens 22}}}})
+    (let [[ctx session-id] (session/create-context)
+          _          (dispatch/dispatch! ctx :session/set-model
+                                         {:session-id session-id :model {:provider "openai" :id "gpt-5.3-codex" :reasoning true}}
+                                         {:origin :core})
+          _          (dispatch/dispatch! ctx :session/set-thinking-level {:session-id session-id :level :high} {:origin :core})
+          _          (dispatch/dispatch! ctx :session/update-context-usage {:session-id session-id :tokens 4000 :window 100000} {:origin :core})
+          _          (ss/journal-append-in! ctx session-id {:kind :message
+                                                 :session-id session-id
+                                                 :data {:message {:role "assistant"
+                                                                  :usage {:input-tokens 111
+                                                                          :output-tokens 22}}}})
           payload (#'rpc/footer-updated-payload ctx)
           stats-line (:stats-line payload)]
       (is (string? stats-line))
@@ -1541,7 +1552,7 @@
 
 (deftest rpc-subscribe-emits-context-updated-test
   (testing "subscribe emits context/updated with active-session-id and sessions list"
-    (let [ctx     (session/create-context)
+    (let [[ctx _] (session/create-context)
           state   (atom {:ready? true
                          :pending {}
                          :subscribed-topics #{"context/updated"}})
@@ -1561,11 +1572,11 @@
   (testing "fork emits context/updated with new session in sessions list"
     (let [cwd     (str (System/getProperty "java.io.tmpdir") "/psi-rpc-fork-" (java.util.UUID/randomUUID))
           _       (.mkdirs (java.io.File. cwd))
-          ctx     (session/create-context {:cwd cwd})
-          _       (dispatch/dispatch! ctx :session/set-model {:model {:provider "anthropic" :id "claude-sonnet"}} {:origin :core})
+          [ctx session-id] (session/create-context {:cwd cwd})
+          _       (dispatch/dispatch! ctx :session/set-model {:session-id session-id :model {:provider "anthropic" :id "claude-sonnet"}} {:origin :core})
           ;; Append a message entry so fork has an entry-id to branch from
           entry   (persist/message-entry {:role "user" :content "hi"})
-          _       (ss/journal-append-in! ctx entry)
+          _       (ss/journal-append-in! ctx session-id entry)
           entry-id (:id entry)
           state   (atom {:ready? true
                          :pending {}
@@ -1590,7 +1601,7 @@
 
 (deftest rpc-new-session-emits-context-updated-test
   (testing "new_session emits context/updated event"
-    (let [ctx     (session/create-context)
+    (let [[ctx _] (session/create-context)
           state   (atom {:ready? true
                          :pending {}
                          :subscribed-topics #{"context/updated"}})
@@ -1610,11 +1621,11 @@
 
 (deftest rpc-e2e-handshake-query-and-streaming-test
   (testing "handshake -> query_eql -> prompt with interleaved events"
-    (let [ctx (session/create-context)
+    (let [[ctx _] (session/create-context)
           state (atom {:ready? true
                        :pending {}
                        :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
-                       :run-agent-loop-fn (fn [_ai-ctx _ctx _agent-ctx _ai-model _new-messages {:keys [progress-queue]}]
+                       :run-agent-loop-fn (fn [_ai-ctx _ctx _session-id _agent-ctx _ai-model _new-messages {:keys [progress-queue]}]
                                             (.offer ^java.util.concurrent.LinkedBlockingQueue progress-queue
                                                     {:event-kind :text-delta :text "Hello" :type :agent-event})
                                             {:role "assistant"
@@ -1643,9 +1654,40 @@
       (is (some #(< prompt-response-index %) event-indexes))
       (is (some #(= "assistant/delta" (:event %)) (filter #(= :event (:kind %)) frames))))))
 
+(deftest rpc-prompt-honors-explicit-session-id-test
+  (testing "prompt worker uses explicit :session-id routing, even when focus points elsewhere"
+    (let [[ctx _] (test-support/make-session-ctx {:session-data {:session-id "a"
+                                                                 :worktree-path "/tmp/psi-rpc-a"}})
+          _       (dispatch/dispatch! ctx
+                                      :session/new-initialize
+                                      {:session-id "a"
+                                       :new-session-id "z"
+                                       :worktree-path "/tmp/psi-rpc-z"
+                                       :session-name nil
+                                       :spawn-mode :new-root
+                                       :session-file nil}
+                                      {:origin :core})
+          captured (atom nil)
+          state    (atom {:ready? true
+                          :pending {}
+                          :focus-session-id* (atom "a")
+                          :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
+                          :run-agent-loop-fn (fn [_ai-ctx _ctx sid _agent-ctx _ai-model _new-messages _opts]
+                                               (reset! captured sid)
+                                               {:role "assistant"
+                                                :content [{:type :text :text "ok"}]})})
+          handler  (rpc/make-session-request-handler ctx)
+          input    (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                        "{:id \"p1\" :kind :request :op \"prompt\" :params {:session-id \"z\" :message \"hi\"}}\n")]
+      (run-loop input handler state 300)
+      (dotimes [_ 20]
+        (when-not @captured
+          (Thread/sleep 50)))
+      (is (= "z" @captured)))))
+
 (deftest rpc-prompt-slash-dispatch-gate-test
-  (testing "when commands/dispatch returns non-nil, run-agent-loop-fn is NOT called"
-    (let [ctx          (session/create-context)
+  (testing "when commands/dispatch-in returns non-nil, run-agent-loop-fn is NOT called"
+    (let [[ctx _]      (session/create-context)
           loop-called? (atom false)
           state        (atom {:ready? true
                               :pending {}
@@ -1657,7 +1699,7 @@
           input        (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                             "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\" \"session/updated\" \"footer/updated\"]}}\n"
                             "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/history\"}}\n")]
-      (with-redefs [commands/dispatch (fn [_ctx _text _opts]
+      (with-redefs [commands/dispatch-in (fn [_ctx _session-id _text _opts]
                                         {:type :text :message "history output"})]
         (let [{:keys [out-lines]} (run-loop input handler state 250)
               frames  (->> out-lines
@@ -1678,8 +1720,8 @@
                     (get-in msg-evt [:data :content]))
               "assistant/message content must include command output text")))))
 
-  (testing "when commands/dispatch returns nil, run-agent-loop-fn IS called"
-    (let [ctx          (session/create-context)
+  (testing "when commands/dispatch-in returns nil, run-agent-loop-fn IS called"
+    (let [[ctx _]      (session/create-context)
           loop-called? (atom false)
           state        (atom {:ready? true
                               :pending {}
@@ -1690,7 +1732,7 @@
           handler      (rpc/make-session-request-handler ctx)
           input        (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                             "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"plain text\"}}\n")]
-      (with-redefs [commands/dispatch (fn [_ctx _text _opts] nil)]
+      (with-redefs [commands/dispatch-in (fn [_ctx _session-id _text _opts] nil)]
         (run-loop input handler state 250)
         (is (true? @loop-called?)
             "run-agent-loop-fn must be called when dispatch returns nil")))))
@@ -1706,12 +1748,12 @@
                        :base-dir (.getParent skill-file)
                        :source :path
                        :disable-model-invocation false}
-          ctx         (session/create-context {:initial-session {:skills [skill]}})
+          [ctx _]     (session/create-context {:initial-session {:skills [skill]}})
           captured    (atom nil)
           state       (atom {:ready? true
                              :pending {}
                              :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
-                             :run-agent-loop-fn (fn [_ai-ctx _ctx _agent-ctx _ai-model new-messages _opts]
+                             :run-agent-loop-fn (fn [_ai-ctx _ctx _session-id _agent-ctx _ai-model new-messages _opts]
                                                   (reset! captured (-> new-messages first :content first :text))
                                                   {:role "assistant"
                                                    :content [{:type :text :text "ok"}]})})
@@ -1727,26 +1769,26 @@
 
 (deftest rpc-prompt-passes-resolved-api-key-to-agent-loop-test
   (testing "non-command prompt forwards runtime-resolved api-key to run-loop opts"
-    (let [ctx        (session/create-context)
+    (let [[ctx _]    (session/create-context)
           captured   (atom nil)
           state      (atom {:ready? true
                             :pending {}
                             :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
-                            :run-agent-loop-fn (fn [_ai-ctx _ctx _agent-ctx _ai-model _new-messages opts]
+                            :run-agent-loop-fn (fn [_ai-ctx _ctx _session-id _agent-ctx _ai-model _new-messages opts]
                                                  (reset! captured opts)
                                                  {:role "assistant"
                                                   :content [{:type :text :text "ok"}]})})
           handler    (rpc/make-session-request-handler ctx)
           input      (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                           "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"plain text\"}}\n")]
-      (with-redefs [runtime/resolve-api-key-in (fn [_ctx _model] "test-api-key")
-                    commands/dispatch (fn [_ctx _text _opts] nil)]
+      (with-redefs [runtime/resolve-api-key-in (fn [_ctx _session-id _model] "test-api-key")
+                    commands/dispatch-in (fn [_ctx _session-id _text _opts] nil)]
         (run-loop input handler state 250)
         (is (= "test-api-key" (:api-key @captured)))))))
 
 (deftest rpc-prompt-handle-command-result-types-test
   (testing "text-command-emits-assistant-message with session/updated and footer/updated"
-    (let [ctx    (session/create-context)
+    (let [[ctx _]    (session/create-context)
           state  (atom {:ready? true
                         :pending {}
                         :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
@@ -1755,7 +1797,7 @@
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\" \"session/updated\" \"footer/updated\"]}}\n"
                        "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/history\"}}\n")]
-      (with-redefs [commands/dispatch (fn [_ctx _text _opts]
+      (with-redefs [commands/dispatch-in (fn [_ctx _session-id _text _opts]
                                         {:type :text :message "<history output>"})]
         (let [{:keys [out-lines]} (run-loop input handler state 250)
               frames  (->> out-lines
@@ -1772,7 +1814,7 @@
           (is (contains? topics "footer/updated") "footer/updated must be emitted")))))
 
   (testing "extension-cmd-executes-handler and captures stdout"
-    (let [ctx    (session/create-context)
+    (let [[ctx _]    (session/create-context)
           loop-called? (atom false)
           received-args (atom nil)
           state  (atom {:ready? true
@@ -1785,7 +1827,7 @@
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
                        "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/ext-cmd\"}}\n")]
-      (with-redefs [commands/dispatch (fn [_ctx _text _opts]
+      (with-redefs [commands/dispatch-in (fn [_ctx _session-id _text _opts]
                                         {:type    :extension-cmd
                                          :name    "test-cmd"
                                          :args    "some args"
@@ -1807,7 +1849,7 @@
               "stdout from extension handler must appear in assistant/message")))))
 
   (testing "extension-cmd-handler-error-surfaced deterministically"
-    (let [ctx    (session/create-context)
+    (let [[ctx _]    (session/create-context)
           loop-called? (atom false)
           state  (atom {:ready? true
                         :pending {}
@@ -1819,7 +1861,7 @@
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
                        "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/ext-err\"}}\n")]
-      (with-redefs [commands/dispatch (fn [_ctx _text _opts]
+      (with-redefs [commands/dispatch-in (fn [_ctx _session-id _text _opts]
                                         {:type    :extension-cmd
                                          :name    "err-cmd"
                                          :args    ""
@@ -1837,7 +1879,7 @@
               "error message must be surfaced in assistant/message")))))
 
   (testing "login-start-emits-url-text"
-    (let [ctx    (session/create-context)
+    (let [[ctx _]    (session/create-context)
           state  (atom {:ready? true
                         :pending {}
                         :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
@@ -1846,7 +1888,7 @@
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
                        "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/login\"}}\n")]
-      (with-redefs [commands/dispatch (fn [_ctx _text _opts]
+      (with-redefs [commands/dispatch-in (fn [_ctx _session-id _text _opts]
                                         {:type     :login-start
                                          :provider {:name "Anthropic"}
                                          :url      "https://example.com/auth"})]
@@ -1862,7 +1904,7 @@
               "URL must appear in assistant/message content")))))
 
   (testing "login-start manual flow uses pending-code path and shared oauth completion"
-    (let [ctx          (session/create-context {:oauth-ctx {:mode :test}})
+    (let [[ctx _]      (session/create-context {:oauth-ctx {:mode :test}})
           loop-called? (atom false)
           dispatches   (atom [])
           completions  (atom [])
@@ -1873,8 +1915,8 @@
                                                    (reset! loop-called? true)
                                                    {:role "assistant" :content []})})
           handler      (rpc/make-session-request-handler ctx)]
-      (with-redefs [commands/dispatch
-                    (fn [_ctx text _opts]
+      (with-redefs [commands/dispatch-in
+                    (fn [_ctx _session-id text _opts]
                       (swap! dispatches conj text)
                       (when (= text "/login")
                         {:type                 :login-start
@@ -1904,12 +1946,12 @@
         (is (nil? (:pending-login (sa/oauth-projection-in ctx)))
             "pending-login should clear from canonical oauth state after completion attempt")
         (is (= ["/login"] @dispatches)
-            "second prompt must bypass commands/dispatch while login is pending")
+            "second prompt must bypass commands/dispatch-in while login is pending")
         (is (false? @loop-called?)
             "agent loop must not run during manual login completion"))))
 
   (testing "login-start callback flow auto-completes with nil input"
-    (let [ctx          (session/create-context {:oauth-ctx {:mode :test}})
+    (let [[ctx _]      (session/create-context {:oauth-ctx {:mode :test}})
           loop-called? (atom false)
           completions  (atom [])
           state        (atom {:ready? true
@@ -1919,8 +1961,8 @@
                                                    (reset! loop-called? true)
                                                    {:role "assistant" :content []})})
           handler      (rpc/make-session-request-handler ctx)]
-      (with-redefs [commands/dispatch
-                    (fn [_ctx text _opts]
+      (with-redefs [commands/dispatch-in
+                    (fn [_ctx _session-id text _opts]
                       (when (= text "/login")
                         {:type                 :login-start
                          :provider             {:id :openai :name "OpenAI"}
@@ -1953,7 +1995,7 @@
               "callback flow should emit completion text")))))
 
   (testing "quit-emits-fallback-text"
-    (let [ctx    (session/create-context)
+    (let [[ctx _]    (session/create-context)
           state  (atom {:ready? true
                         :pending {}
                         :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
@@ -1962,7 +2004,7 @@
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
                        "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/quit\"}}\n")]
-      (with-redefs [commands/dispatch (fn [_ctx _text _opts]
+      (with-redefs [commands/dispatch-in (fn [_ctx _session-id _text _opts]
                                         {:type :quit})]
         (let [{:keys [out-lines]} (run-loop input handler state 250)
               frames  (->> out-lines
@@ -1976,7 +2018,7 @@
               "fallback text must appear in assistant/message content")))))
 
   (testing "resume-emits-fallback-text"
-    (let [ctx    (session/create-context)
+    (let [[ctx _]    (session/create-context)
           state  (atom {:ready? true
                         :pending {}
                         :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
@@ -1985,7 +2027,7 @@
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
                        "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/resume\"}}\n")]
-      (with-redefs [commands/dispatch (fn [_ctx _text _opts]
+      (with-redefs [commands/dispatch-in (fn [_ctx _session-id _text _opts]
                                         {:type :resume})]
         (let [{:keys [out-lines]} (run-loop input handler state 250)
               frames  (->> out-lines
@@ -1999,7 +2041,8 @@
               "fallback text must appear in assistant/message content")))))
 
   (testing "remember accepted path emits confirmation and writes exactly one record"
-    (let [ctx     (assoc (session/create-context)
+    (let [[ctx* _] (session/create-context)
+          ctx     (assoc ctx*
                          :memory-ctx
                          (memory/create-context {:state-overrides {:status :ready}}))
           state   (atom {:ready? true
@@ -2038,7 +2081,8 @@
       (is (= (:timestamp rec) (:psi.memory.remember/last-capture-at telemetry)))))
 
   (testing "remember emits canonical blocked error when memory is not ready"
-    (let [ctx     (assoc (session/create-context)
+    (let [[ctx* _] (session/create-context)
+          ctx     (assoc ctx*
                          :memory-ctx
                          (memory/create-context
                           {:state-overrides {:status :initializing}}))
@@ -2061,7 +2105,8 @@
       (is (some #(str/includes? % "memory_capture_prerequisites_not_ready") texts))))
 
   (testing "remember emits fallback warning when active store write fails"
-    (let [ctx         (assoc (session/create-context)
+    (let [[ctx* _]    (session/create-context)
+          ctx         (assoc ctx*
                              :memory-ctx
                              (memory/create-context {:state-overrides {:status :ready}}))
           status-atom (atom :ready)
@@ -2107,18 +2152,18 @@
 
 (deftest rpc-prompt-slash-command-journaled-test
   (testing "slash command user message is journaled even when dispatch matches (not only on agent-loop path)"
-    (let [ctx    (session/create-context)
-          state  (atom {:ready? true
-                        :pending {}
-                        :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
-                        :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
-          handler (rpc/make-session-request-handler ctx)
-          input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
-                       "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/history\"}}\n")]
-      (with-redefs [commands/dispatch (fn [_ctx _text _opts]
+    (let [[ctx session-id] (session/create-context)
+          state      (atom {:ready? true
+                            :pending {}
+                            :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
+                            :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
+          handler    (rpc/make-session-request-handler ctx)
+          input      (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                          "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/history\"}}\n")]
+      (with-redefs [commands/dispatch-in (fn [_ctx _session-id _text _opts]
                                         {:type :text :message "history output"})]
         (run-loop input handler state 250)
-        (let [journal-entries (persist/all-entries-in ctx)
+        (let [journal-entries (persist/all-entries-in ctx session-id)
               msg-entries     (filterv #(= :message (:kind %)) journal-entries)
               user-msg        (some #(when (= "user" (get-in % [:data :message :role])) %) msg-entries)]
           (is (seq msg-entries)
@@ -2131,17 +2176,17 @@
 
 (deftest rpc-prompt-plain-text-journaled-test
   (testing "plain text prompt user message is journaled on agent-loop path"
-    (let [ctx    (session/create-context)
-          state  (atom {:ready? true
-                        :pending {}
-                        :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
-                        :run-agent-loop-fn (fn [& _] {:role "assistant" :content [{:type :text :text "ok"}]})})
-          handler (rpc/make-session-request-handler ctx)
-          input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
-                       "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"tell me a joke\"}}\n")]
-      (with-redefs [commands/dispatch (fn [_ctx _text _opts] nil)]
+    (let [[ctx session-id] (session/create-context)
+          state      (atom {:ready? true
+                            :pending {}
+                            :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
+                            :run-agent-loop-fn (fn [& _] {:role "assistant" :content [{:type :text :text "ok"}]})})
+          handler    (rpc/make-session-request-handler ctx)
+          input      (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                          "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"tell me a joke\"}}\n")]
+      (with-redefs [commands/dispatch-in (fn [_ctx _session-id _text _opts] nil)]
         (run-loop input handler state 250)
-        (let [journal-entries (persist/all-entries-in ctx)
+        (let [journal-entries (persist/all-entries-in ctx session-id)
               msg-entries     (filterv #(= :message (:kind %)) journal-entries)
               user-msg        (some #(when (= "user" (get-in % [:data :message :role])) %) msg-entries)]
           (is (some? user-msg)

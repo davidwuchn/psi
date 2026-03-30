@@ -18,7 +18,7 @@
                   :memory-entry-count 42}})
 
 (defn- success-runner
-  [_ai-ctx _ctx _agent-ctx _ai-model _user-messages _opts]
+  [_ai-ctx _ctx _session-id _agent-ctx _ai-model _user-messages _opts]
   {:role "assistant"
    :content []})
 
@@ -26,18 +26,19 @@
   (let [recursion-ctx        (recursion/create-context)
         maybe-sync-calls     (atom [])
         orchestration-calls  (atom [])
-        ctx                  (assoc (test-support/make-session-ctx
-                                     {:agent-ctx {}
-                                      :session-data {:worktree-path "/tmp/psi-runtime-hook-test"
-                                                     :session-id "runtime-test-session"}})
+        [ctx* session-id]             (test-support/make-session-ctx
+                              {:agent-ctx {}
+                               :session-data {:worktree-path "/tmp/psi-runtime-hook-test"
+                                              :session-id "runtime-test-session"}})
+        ctx                  (assoc ctx*
                                     :cwd "/tmp/psi-runtime-hook-test"
                                     :memory-ctx nil
                                     :recursion-ctx recursion-ctx
                                     :extension-registry {:state (atom {:registration-order []
                                                                        :extensions {}})})]
     (with-redefs [runtime/safe-maybe-sync-on-git-head-change!
-                  (fn [ctx]
-                    (swap! maybe-sync-calls conj ctx)
+                  (fn [ctx session-id]
+                    (swap! maybe-sync-calls conj {:ctx ctx :session-id session-id})
                     (let [git-sync {:ok? true
                                     :changed? true
                                     :reason :head-changed
@@ -45,7 +46,7 @@
                                     :previous-head "sha-1"
                                     :sync sync-payload}]
                       (#'runtime/maybe-trigger-recursion-from-git-sync! ctx git-sync)
-                      (#'runtime/maybe-dispatch-git-head-changed-event! ctx git-sync)
+                      (#'runtime/maybe-dispatch-git-head-changed-event! ctx session-id git-sync)
                       git-sync))
                   recursion/orchestrate-manual-trigger-in!
                   (fn [rctx trigger opts]
@@ -56,7 +57,7 @@
                      :phase :completed
                      :trigger-result {:result :accepted}})]
       (let [result (runtime/run-agent-loop-in!
-                    ctx nil {} []
+                    ctx session-id nil {} []
                     {:run-loop-fn success-runner
                      :sync-on-git-head-change? true})
             call   (first @orchestration-calls)]
@@ -64,7 +65,8 @@
           (is (= "assistant" (:role result))))
 
         (testing "git-head hook is called once"
-          (is (= 1 (count @maybe-sync-calls))))
+          (is (= 1 (count @maybe-sync-calls)))
+          (is (= "runtime-test-session" (:session-id (first @maybe-sync-calls)))))
 
         (testing "changed head triggers recursion orchestration"
           (is (= 1 (count @orchestration-calls)))
@@ -76,37 +78,39 @@
           (is (= :stable (get-in call [:opts :graph-state :status]))))))))
 
 (deftest run-agent-loop-without-sync-flag-skips-git-head-hook-test
-  (let [calls (atom 0)
-        ctx   (assoc (test-support/make-session-ctx
-                      {:agent-ctx {}
-                       :session-data {:worktree-path "/tmp/psi-runtime-no-sync-flag"
-                                      :session-id "runtime-no-sync"}})
-                     :cwd "/tmp/psi-runtime-no-sync-flag"
-                     :recursion-ctx (recursion/create-context)
-                     :extension-registry {:state (atom {:registration-order []
-                                                        :extensions {}})})]
+  (let [calls   (atom 0)
+        [ctx* session-id] (test-support/make-session-ctx
+                  {:agent-ctx {}
+                   :session-data {:worktree-path "/tmp/psi-runtime-no-sync-flag"
+                                  :session-id "runtime-no-sync"}})
+        ctx     (assoc ctx*
+                       :cwd "/tmp/psi-runtime-no-sync-flag"
+                       :recursion-ctx (recursion/create-context)
+                       :extension-registry {:state (atom {:registration-order []
+                                                          :extensions {}})})]
     (with-redefs [runtime/safe-maybe-sync-on-git-head-change!
-                  (fn [_]
+                  (fn [_ _]
                     (swap! calls inc)
                     {:ok? true :changed? true})]
       (runtime/run-agent-loop-in!
-       ctx nil {} []
+       ctx session-id nil {} []
        {:run-loop-fn success-runner})
       (is (= 0 @calls)))))
 
 (deftest run-agent-loop-sync-flag-with-unchanged-head-skips-recursion-trigger-test
   (let [orchestration-calls (atom 0)
         extension-events    (atom [])
-        ctx                 (assoc (test-support/make-session-ctx
-                                    {:agent-ctx {}
-                                     :session-data {:worktree-path "/tmp/psi-runtime-unchanged"
-                                                    :session-id "runtime-unchanged"}})
+        [ctx* session-id]            (test-support/make-session-ctx
+                             {:agent-ctx {}
+                              :session-data {:worktree-path "/tmp/psi-runtime-unchanged"
+                                             :session-id "runtime-unchanged"}})
+        ctx                 (assoc ctx*
                                    :cwd "/tmp/psi-runtime-unchanged"
                                    :recursion-ctx (recursion/create-context)
                                    :extension-registry {:state (atom {:registration-order []
                                                                       :extensions {}})})]
     (with-redefs [runtime/safe-maybe-sync-on-git-head-change!
-                  (fn [_]
+                  (fn [_ _]
                     {:ok? true
                      :changed? false
                      :reason :head-unchanged
@@ -121,7 +125,7 @@
                     (swap! extension-events conj {:name event-name :payload payload})
                     {:cancelled? false :override nil :results []})]
       (runtime/run-agent-loop-in!
-       ctx nil {} []
+       ctx session-id nil {} []
        {:run-loop-fn success-runner
         :sync-on-git-head-change? true})
       (is (= 0 @orchestration-calls))
@@ -139,7 +143,7 @@
                                                                                      :session-id    sid}
                                                                          :agent-ctx {}}}}})}]
     (with-redefs [runtime/safe-maybe-sync-on-git-head-change!
-                  (fn [ctx]
+                  (fn [ctx session-id]
                     (let [git-sync {:ok? true
                                     :changed? true
                                     :reason :head-changed
@@ -147,14 +151,14 @@
                                     :previous-head "1111111111111111"
                                     :sync sync-payload}]
                       (#'runtime/maybe-trigger-recursion-from-git-sync! ctx git-sync)
-                      (#'runtime/maybe-dispatch-git-head-changed-event! ctx git-sync)
+                      (#'runtime/maybe-dispatch-git-head-changed-event! ctx session-id git-sync)
                       git-sync))
                   ext/dispatch-in
                   (fn [_ event-name payload]
                     (swap! extension-events conj {:name event-name :payload payload})
                     {:cancelled? false :override nil :results []})]
       (runtime/run-agent-loop-in!
-       ctx nil {} []
+       ctx sid nil {} []
        {:run-loop-fn success-runner
         :sync-on-git-head-change? true})
       (is (= 1 (count @extension-events)))

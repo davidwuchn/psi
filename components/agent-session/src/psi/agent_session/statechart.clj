@@ -66,7 +66,7 @@
 
 (defn- current-session-data [data]
   (let [ctx (:ctx data)
-        sid (or (:session-id data) (:target-session-id ctx))]
+        sid (:session-id data)]
     (get-in @(:state* ctx) [:agent-session :sessions sid :data])))
 
 (defn- auto-compaction-reason [data]
@@ -108,10 +108,7 @@
 
 (defn- dispatch! [data action-key]
   (when-let [af (:actions-fn data)]
-    (try
-      (af action-key data)
-      (catch clojure.lang.ArityException _
-        (af action-key)))))
+    (af action-key data)))
 
 ;; ============================================================
 ;; Statechart definition

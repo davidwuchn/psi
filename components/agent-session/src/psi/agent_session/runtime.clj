@@ -12,7 +12,6 @@
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extension-runtime :as ext-rt]
    [psi.agent-session.session-state :as ss]
-   [psi.agent-session.state-accessors :as sa]
    [psi.agent-session.executor :as executor]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.oauth.core :as oauth]
@@ -34,15 +33,22 @@
                  (seq images) (into images))
     :timestamp (java.time.Instant/now)}))
 
+(defn- require-session-id!
+  [session-id]
+  (when-not (and (string? session-id) (not (str/blank? session-id)))
+    (throw (ex-info "missing or invalid session-id"
+                    {:error-code "request/invalid-session-id"
+                     :session-id session-id})))
+  session-id)
+
 (defn journal-user-message-in!
   "Append a raw user message to the session journal and return it.
    Use for command traces that should not trigger expansion/memory hooks."
-  ([ctx text]
-   (journal-user-message-in! ctx text nil))
-  ([ctx text images]
-   (let [user-msg (make-user-message text images)]
-     (ss/journal-append-in! ctx (persist/message-entry user-msg))
-     user-msg)))
+  [ctx session-id text images]
+  (require-session-id! session-id)
+  (let [user-msg (make-user-message text images)]
+    (ss/journal-append-in! ctx session-id (persist/message-entry user-msg))
+    user-msg))
 
 (defn expand-input-in
   "Expand user input through skills (/skill:name) or prompt templates (/name).
@@ -50,8 +56,8 @@
    Returns:
    {:text <expanded-text>
     :expansion {:kind :skill|:template :name string} | nil}"
-  [ctx text]
-  (let [sd            (ss/get-session-data-in ctx)
+  [ctx session-id text]
+  (let [sd            (ss/get-session-data-in ctx session-id)
         loaded-skills (:skills sd)
         templates     (:prompt-templates sd)
         commands      (ext/command-names-in (:extension-registry ctx))]
@@ -72,11 +78,11 @@
       nil)))
 
 (defn- safe-remember-session-message!
-  [ctx msg]
+  [_ctx session-id msg]
   (try
     (memory-runtime/remember-session-message!
      msg
-     {:session-id (:session-id (ss/get-session-data-in ctx))})
+     {:session-id session-id})
     (catch Exception _
       nil)))
 
@@ -87,21 +93,21 @@
    {:user-message map
     :expanded-text string
     :expansion {:kind ... :name ...} | nil}"
-  ([ctx text]
-   (prepare-user-message-in! ctx text nil))
-  ([ctx text images]
-   (let [{:keys [text expansion]} (expand-input-in ctx text)
-         _        (safe-recover-memory! text)
-         user-msg (make-user-message text images)]
-     (ss/journal-append-in! ctx (persist/message-entry user-msg))
-     (safe-remember-session-message! ctx user-msg)
-     {:user-message  user-msg
-      :expanded-text text
-      :expansion     expansion})))
+  [ctx session-id text images]
+  (require-session-id! session-id)
+  (let [{:keys [text expansion]} (expand-input-in ctx session-id text)
+        _        (safe-recover-memory! text)
+        user-msg (make-user-message text images)]
+    (ss/journal-append-in! ctx session-id (persist/message-entry user-msg))
+    (safe-remember-session-message! ctx session-id user-msg)
+    {:user-message  user-msg
+     :expanded-text text
+     :expansion     expansion}))
 
 (defn resolve-api-key-in
-  "Resolve API key for ai-model provider from session oauth context, if any."
-  [ctx ai-model]
+  "Resolve API key for ai-model provider from session oauth context, if any.
+   `session-id` accepted for call-path symmetry; oauth lookup itself is not session-scoped."
+  [ctx _session-id ai-model]
   (when-let [oauth-ctx (:oauth-ctx ctx)]
     (oauth/get-api-key oauth-ctx (:provider ai-model))))
 
@@ -120,11 +126,11 @@
 
 (defn update-context-usage-from-result-in!
   "Update session context usage from assistant result usage when available."
-  [ctx ai-model result]
+  [ctx session-id ai-model result]
   (let [tokens (usage->context-tokens (:usage result))
         window (:context-window ai-model)]
     (when (and (some? tokens) (number? window) (pos? window))
-      (dispatch/dispatch! ctx :session/update-context-usage {:tokens tokens :window window} {:origin :core}))))
+      (dispatch/dispatch! ctx :session/update-context-usage {:session-id session-id :tokens tokens :window window} {:origin :core}))))
 
 (defn- sync->recursion-trigger-type
   [sync]
@@ -190,30 +196,30 @@
     (sync-fn opts)))
 
 (defn- maybe-dispatch-git-head-changed-event!
-  [ctx git-sync]
+  [ctx session-id git-sync]
   (when (and (true? (:changed? git-sync))
              (string? (:head git-sync))
              (not (str/blank? (:head git-sync))))
     (ext/dispatch-in (:extension-registry ctx)
                      "git_head_changed"
-                     {:cwd (ss/effective-cwd-in ctx)
+                     {:cwd (ss/effective-cwd-in ctx session-id)
                       :head (:head git-sync)
                       :previous-head (:previous-head git-sync)
                       :reason "head-changed"
                       :timestamp (java.time.Instant/now)})))
 
 (defn safe-maybe-sync-on-git-head-change!
-  [ctx]
+  [ctx session-id]
   (try
     (let [git-sync (invoke-git-head-sync!
-                    {:cwd (ss/effective-cwd-in ctx)
+                    {:cwd (ss/effective-cwd-in ctx session-id)
                      :memory-ctx (:memory-ctx ctx)})]
       (try
         (maybe-trigger-recursion-from-git-sync! ctx git-sync)
         (catch Exception _
           nil))
       (try
-        (maybe-dispatch-git-head-changed-event! ctx git-sync)
+        (maybe-dispatch-git-head-changed-event! ctx session-id git-sync)
         (catch Exception _
           nil))
       git-sync)
@@ -228,20 +234,21 @@
    - :api-key       optional provider API key
    - :progress-queue optional LinkedBlockingQueue
    - :sync-on-git-head-change? trigger maybe-sync memory hook after loop (default false)"
-  ([ctx ai-ctx ai-model user-messages]
-   (run-agent-loop-in! ctx ai-ctx ai-model user-messages nil))
-  ([ctx ai-ctx ai-model user-messages {:keys [run-loop-fn api-key progress-queue sync-on-git-head-change?]}]
-   (let [runner (or run-loop-fn executor/run-agent-loop!)
+  ([ctx session-id ai-ctx ai-model user-messages]
+   (run-agent-loop-in! ctx session-id ai-ctx ai-model user-messages nil))
+  ([ctx session-id ai-ctx ai-model user-messages {:keys [run-loop-fn api-key progress-queue sync-on-git-head-change?]}]
+   (let [_      (require-session-id! session-id)
+         runner (or run-loop-fn executor/run-agent-loop!)
          opts   (cond-> {}
                   api-key
                   (assoc :api-key api-key)
 
                   progress-queue
                   (assoc :progress-queue progress-queue))
-         result (runner ai-ctx ctx (ss/agent-ctx-in ctx) ai-model user-messages opts)]
-     (update-context-usage-from-result-in! ctx ai-model result)
+         result (runner ai-ctx ctx session-id (ss/agent-ctx-in ctx session-id) ai-model user-messages opts)]
+     (update-context-usage-from-result-in! ctx session-id ai-model result)
      (when sync-on-git-head-change?
-       (safe-maybe-sync-on-git-head-change! ctx))
+       (safe-maybe-sync-on-git-head-change! ctx session-id))
      result)))
 
 (defn register-extension-run-fn-in!
@@ -254,22 +261,22 @@
    prepares the user message, resolves the API key, and calls `run-agent-loop-in!`.
 
    Call this once after bootstrap, passing the live ai-ctx and ai-model."
-  [ctx ai-ctx ai-model]
-  (let [run-fn (fn [text _source]
-                 (try
-                   (loop [attempt 0]
-                     (if (ss/idle-in? ctx)
-                       (let [{:keys [user-message]} (prepare-user-message-in! ctx text)
-                             api-key (resolve-api-key-in ctx ai-model)]
-                         (run-agent-loop-in! ctx ai-ctx ai-model [user-message]
-                                             {:api-key api-key
-                                              :sync-on-git-head-change? true}))
-                       (when (< attempt 1200) ;; ~5m max wait (250ms backoff)
-                         (Thread/sleep 250)
-                         (recur (inc attempt)))))
-                   (catch Exception e
-                     (timbre/warn e "Extension run-fn failed"))))]
-    (ext-rt/set-extension-run-fn-in! ctx run-fn)))
+  ([ctx session-id ai-ctx ai-model]
+   (let [run-fn (fn [text _source]
+                  (try
+                    (loop [attempt 0]
+                      (if (ss/idle-in? ctx session-id)
+                        (let [{:keys [user-message]} (prepare-user-message-in! ctx session-id text nil)
+                              api-key (resolve-api-key-in ctx session-id ai-model)]
+                          (run-agent-loop-in! ctx session-id ai-ctx ai-model [user-message]
+                                              {:api-key api-key
+                                               :sync-on-git-head-change? true}))
+                        (when (< attempt 1200) ;; ~5m max wait (250ms backoff)
+                          (Thread/sleep 250)
+                          (recur (inc attempt)))))
+                    (catch Exception e
+                      (timbre/warn e "Extension run-fn failed"))))]
+     (ext-rt/set-extension-run-fn-in! ctx session-id run-fn))))
 
 (defn run-startup-prompts-in!
   "Run configured startup prompts as visible user turns.
@@ -286,17 +293,17 @@
    Returns {:rules [...] :applied [...] :errors [...]} where :applied contains
    per-rule outcomes. On prompt execution failure, execution continues by default
    with an error outcome captured in :applied/:errors."
-  [ctx {:keys [ai-ctx ai-model run-loop-fn progress-queue session-mode spawn-mode fail-fast?]
-        :or   {session-mode :build
-               spawn-mode :new-root
-               fail-fast? false}}]
+  [ctx session-id {:keys [ai-ctx ai-model run-loop-fn progress-queue session-mode spawn-mode fail-fast?]
+                   :or   {session-mode :build
+                          spawn-mode :new-root
+                          fail-fast? false}}]
   (let [should-run? (startup-prompts/should-run?
                      {:spawn-mode spawn-mode})
         started-at (java.time.Instant/now)
-        _ (dispatch/dispatch! ctx :session/startup-bootstrap-begin {:started-at started-at} {:origin :core})
+        _ (dispatch/dispatch! ctx :session/startup-bootstrap-begin {:session-id session-id :started-at started-at} {:origin :core})
         rules (if should-run?
                 (startup-prompts/discover-rules
-                 {:cwd (ss/effective-cwd-in ctx)
+                 {:cwd (ss/effective-cwd-in ctx session-id)
                   :session-mode session-mode})
                 [])
         {:keys [applied errors]}
@@ -305,15 +312,15 @@
                errors []]
           (if-let [rule (first remaining)]
             (let [text       (:text rule)
-                  user-msg   (journal-user-message-in! ctx text)
-                  message-id (some-> (sa/journal-state-in ctx) last :id)
-                  api-key    (resolve-api-key-in ctx ai-model)
+                  user-msg   (journal-user-message-in! ctx session-id text nil)
+                  message-id (some-> (ss/get-state-value-in ctx (ss/state-path :journal session-id)) last :id)
+                  api-key    (resolve-api-key-in ctx session-id ai-model)
                   _          (when message-id
-                               (dispatch/dispatch! ctx :session/record-startup-message-id {:message-id message-id} {:origin :core}))
+                               (dispatch/dispatch! ctx :session/record-startup-message-id {:session-id session-id :message-id message-id} {:origin :core}))
                   outcome    (try
                                {:status :ok
                                 :assistant-result
-                                (run-agent-loop-in! ctx ai-ctx ai-model [user-msg]
+                                (run-agent-loop-in! ctx session-id ai-ctx ai-model [user-msg]
                                                     {:run-loop-fn run-loop-fn
                                                      :api-key api-key
                                                      :progress-queue progress-queue
@@ -334,7 +341,7 @@
                 (recur (rest remaining) applied' errors')))
             {:applied applied :errors errors}))
         completed-at (java.time.Instant/now)]
-    (dispatch/dispatch! ctx :session/startup-bootstrap-complete {:startup-prompts (startup-prompts/applied-view rules) :completed-at completed-at} {:origin :core})
+    (dispatch/dispatch! ctx :session/startup-bootstrap-complete {:session-id session-id :startup-prompts (startup-prompts/applied-view rules) :completed-at completed-at} {:origin :core})
     {:rules rules
      :applied applied
      :errors errors}))

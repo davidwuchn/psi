@@ -31,31 +31,34 @@
    :extension-paths — vector of extension file paths
 
    Returns {:prompt-count int :skill-count int :tool-count int :extension-results [result-map ...]}."
-  [ctx {:keys [templates skills tools extension-paths]
-        :or   {templates [] skills [] tools [] extension-paths []}}]
+  [ctx session-id {:keys [templates skills tools extension-paths]
+                   :or   {templates [] skills [] tools [] extension-paths []}}]
   (let [qctx (query/create-query-context)
         _    (session/register-resolvers-in! qctx false)
         _    (session/register-mutations-in! qctx mutations/all-mutations true)]
     (doseq [t templates]
       (run-mutation-in! qctx 'psi.extension/add-prompt-template
                         {:psi/agent-session-ctx ctx
-                         :template              t}))
+                         :session-id           session-id
+                         :template             t}))
     (doseq [s skills]
       (run-mutation-in! qctx 'psi.extension/add-skill
                         {:psi/agent-session-ctx ctx
+                         :session-id           session-id
                          :skill                s}))
     (doseq [tool tools]
       (run-mutation-in! qctx 'psi.extension/add-tool
                         {:psi/agent-session-ctx ctx
+                         :session-id           session-id
                          :tool                 tool}))
     (let [ext-results (mapv (fn [p]
                               (run-mutation-in! qctx 'psi.extension/add-extension
                                                 {:psi/agent-session-ctx ctx
                                                  :path                  p}))
                             extension-paths)]
-      {:prompt-count      (count (:prompt-templates (ss/get-session-data-in ctx)))
-       :skill-count       (count (:skills (ss/get-session-data-in ctx)))
-       :tool-count        (count (:tools (agent/get-data-in (ss/agent-ctx-in ctx))))
+      {:prompt-count      (count (:prompt-templates (ss/get-session-data-in ctx session-id)))
+       :skill-count       (count (:skills (ss/get-session-data-in ctx session-id)))
+       :tool-count        (count (:tools (agent/get-data-in (ss/agent-ctx-in ctx session-id))))
        :extension-results ext-results})))
 
 (defn bootstrap-in!
@@ -83,16 +86,16 @@
    :extension-paths        — extension file paths (default [])
 
    Returns startup summary map stored at :startup-bootstrap."
-  [ctx {:keys [register-global-query? base-tools system-prompt developer-prompt developer-prompt-source templates skills tools extension-paths]
-        :or   {register-global-query? true
-               base-tools             []
-               system-prompt          ""
-               developer-prompt       ::unset
-               developer-prompt-source :fallback
-               templates              []
-               skills                 []
-               tools                  []
-               extension-paths        []}}]
+  [ctx session-id {:keys [register-global-query? base-tools system-prompt developer-prompt developer-prompt-source templates skills tools extension-paths]
+                   :or   {register-global-query? true
+                          base-tools             []
+                          system-prompt          ""
+                          developer-prompt       ::unset
+                          developer-prompt-source :fallback
+                          templates              []
+                          skills                 []
+                          tools                  []
+                          extension-paths        []}}]
   (when register-global-query?
     (session/register-resolvers!)
     (session/register-mutations! mutations/all-mutations))
@@ -104,26 +107,27 @@
                           developer-prompt-source)]
     (dispatch/dispatch! ctx
                         :session/bootstrap-prompt-state
-                        {:system-prompt system-prompt
-                         :developer-prompt resolved-developer-prompt
+                        {:session-id              session-id
+                         :system-prompt           system-prompt
+                         :developer-prompt        resolved-developer-prompt
                          :developer-prompt-source resolved-source}
                         {:origin :core})
-    (dispatch/dispatch! ctx :session/refresh-system-prompt nil {:origin :core}))
+    (dispatch/dispatch! ctx :session/refresh-system-prompt {:session-id session-id} {:origin :core}))
   (let [startup-tools (into (vec base-tools) (vec tools))
         {:keys [prompt-count skill-count tool-count extension-results]}
         (load-startup-resources-via-mutations-in!
-         ctx {:templates templates
-              :skills skills
-              :tools startup-tools
-              :extension-paths extension-paths})
+         ctx session-id {:templates templates
+                         :skills skills
+                         :tools startup-tools
+                         :extension-paths extension-paths})
         ext-errors (keep (fn [r]
                            (when-let [e (:psi.extension/error r)]
                              {:path  (:psi.extension/path r)
                               :error e}))
                          extension-results)
         ext-tools (ext/all-tools-in (:extension-registry ctx))
-        active-tools (:tools (agent/get-data-in (ss/agent-ctx-in ctx)))
-        _         (dispatch/dispatch! ctx :session/set-active-tools {:tool-maps (into (vec active-tools) ext-tools)} {:origin :core})
+        active-tools (:tools (agent/get-data-in (ss/agent-ctx-in ctx session-id)))
+        _         (dispatch/dispatch! ctx :session/set-active-tools {:session-id session-id :tool-maps (into (vec active-tools) ext-tools)} {:origin :core})
         summary   {:timestamp              (java.time.Instant/now)
                    :prompt-count           prompt-count
                    :skill-count            skill-count
@@ -135,5 +139,5 @@
                                             'psi.extension/add-skill
                                             'psi.extension/add-tool
                                             'psi.extension/add-extension]}]
-    (dispatch/dispatch! ctx :session/set-startup-bootstrap-summary {:summary summary} {:origin :core})
+    (dispatch/dispatch! ctx :session/set-startup-bootstrap-summary {:session-id session-id :summary summary} {:origin :core})
     summary))

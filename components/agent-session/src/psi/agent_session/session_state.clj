@@ -20,38 +20,24 @@
 
    Session targeting
    ─────────────────
-   Session scoping uses :target-session-id on ctx. Adapters (RPC, TUI) set
-   this before calling into core. There is no shared current-session concept."
+   Session targeting is explicit at call sites and on dispatch/query payloads.
+   Adapters no longer bake session-id into persistent ctx closures."
   (:require
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.statechart :as sc]))
 
-;;; Active session resolution
-
-(defn active-session-id-in
-  "Return the current session id for ctx.
-  Reads :target-session-id from ctx. Adapters must set this before calling core."
-  [ctx]
-  (:target-session-id ctx))
-
-(defn retarget-ctx
-  "Return ctx scoped to explicit session-id."
-  [ctx session-id]
-  (assoc ctx :target-session-id session-id))
-
 ;;; Per-session runtime handle accessors
 
+
 (defn agent-ctx-in
-  "Return the agent-core context for the active session."
-  [ctx]
-  (let [sid (active-session-id-in ctx)]
-    (get-in @(:state* ctx) [:agent-session :sessions sid :agent-ctx])))
+  "Return the agent-core context for `session-id`."
+  [ctx session-id]
+  (get-in @(:state* ctx) [:agent-session :sessions session-id :agent-ctx]))
 
 (defn sc-session-id-in
-  "Return the statechart session id for the active session."
-  [ctx]
-  (let [sid (active-session-id-in ctx)]
-    (get-in @(:state* ctx) [:agent-session :sessions sid :sc-session-id])))
+  "Return the statechart session id for `session-id`."
+  [ctx session-id]
+  (get-in @(:state* ctx) [:agent-session :sessions session-id :sc-session-id]))
 
 ;;; State path builders
 
@@ -158,14 +144,9 @@
   (apply update-state-in!* ctx path f args))
 
 (defn get-session-data-in
-  "Return the AgentSession data map from `ctx`.
-   Without session-id, returns the active session's data.
-   With session-id, returns that session's data."
-  ([ctx]
-   (let [sid (active-session-id-in ctx)]
-     (get-state-in* ctx (session-data-path sid))))
-  ([ctx sid]
-   (get-state-in* ctx (session-data-path sid))))
+  "Return the AgentSession data map for `session-id` from `ctx`."
+  [ctx session-id]
+  (get-state-in* ctx (session-data-path session-id)))
 
 ;;; Session update mechanics
 
@@ -188,34 +169,34 @@
 ;;; Effective CWD
 
 (defn effective-cwd-in
-  "Return the effective working directory for the active session.
+  "Return the effective working directory for `session-id`.
    Prefers session-scoped :worktree-path over context :cwd."
-  [ctx]
-  (or (:worktree-path (get-session-data-in ctx))
+  [ctx session-id]
+  (or (:worktree-path (get-session-data-in ctx session-id))
       (:cwd ctx)))
 
 ;;; Journal
 
 (defn- journal-append!
-  "Append `entry` to the journal and conditionally persist to disk."
-  [ctx entry]
-  (persist/append-entry-in! ctx entry)
+  "Append `entry` to the journal for `session-id` and conditionally persist to disk."
+  [ctx session-id entry]
+  (persist/append-entry-in! ctx session-id entry)
   (when (:persist? ctx)
-    (let [sd (get-session-data-in ctx)
+    (let [sd (get-session-data-in ctx session-id)
           session-file (:session-file sd)]
       (when session-file
         (persist/persist-entry-in!
          ctx
-         (:session-id sd)
-         (effective-cwd-in ctx)
+         session-id
+         (effective-cwd-in ctx session-id)
          (:parent-session-id sd)
          session-file)))))
 
 (defn journal-append-in!
-  "Append `entry` to the journal and persist.
+  "Append `entry` to the journal for `session-id` and persist.
    Use `persist/message-entry` et al. to build entries."
-  [ctx entry]
-  (journal-append! ctx entry))
+  [ctx session-id entry]
+  (journal-append! ctx session-id entry))
 
 ;;; Session registry helpers
 
@@ -237,19 +218,19 @@
          vec)))
 
 ;; set-context-active-session-in! removed — adapters own focus locally.
-;; Session targeting is via :target-session-id on ctx.
+;; Session targeting is explicit at call sites.
 
 ;;; Statechart phase queries
 
 (defn sc-phase-in
-  "Return the active statechart phase for `ctx`."
-  [ctx]
-  (sc/sc-phase (:sc-env ctx) (sc-session-id-in ctx)))
+  "Return the statechart phase for `session-id`."
+  [ctx session-id]
+  (sc/sc-phase (:sc-env ctx) (sc-session-id-in ctx session-id)))
 
 (defn idle-in?
-  "True when the session phase is :idle."
-  [ctx]
-  (= :idle (sc-phase-in ctx)))
+  "True when the session phase for `session-id` is :idle."
+  [ctx session-id]
+  (= :idle (sc-phase-in ctx session-id)))
 
 ;;; Prompt contribution helpers
 
@@ -265,9 +246,9 @@
        vec))
 
 (defn list-prompt-contributions-in
-  "Return prompt contributions sorted by deterministic render order."
-  [ctx]
-  (sorted-prompt-contributions (:prompt-contributions (get-session-data-in ctx))))
+  "Return prompt contributions for `session-id` sorted by deterministic render order."
+  [ctx session-id]
+  (sorted-prompt-contributions (:prompt-contributions (get-session-data-in ctx session-id))))
 
 ;;; UI state compatibility
 

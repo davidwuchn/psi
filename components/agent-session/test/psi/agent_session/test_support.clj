@@ -24,11 +24,12 @@
     :provider-requests :provider-replies})
 
 (defn- resolve-state-path
-  "Resolve the state path for key k, using the active session id for
+  "Resolve the state path for key k, using the first context session id for
    session-scoped keys."
   [ctx k]
   (if (session-scoped-keys k)
-    (ss/state-path k (ss/active-session-id-in ctx))
+    (let [session-id (some-> (ss/list-context-sessions-in ctx) first :session-id)]
+      (ss/state-path k session-id))
     (ss/state-path k)))
 
 (defn set-state!
@@ -47,6 +48,8 @@
 
 (defn make-session-ctx
   "Create a minimal canonical-root-backed session-like context for tests.
+   Returns [ctx seed-id] where seed-id is the initial ephemeral session id,
+   matching the convention of session/create-context.
    Accepts overrides:
    - :state map merged into canonical root
    - :session-data map merged into [:agent-session :data]
@@ -79,9 +82,9 @@
         wf-reg        (wf/create-registry)
         sc-env        (session-sc/create-sc-env)
         dispatch-statechart-event-fn dispatch-handlers/dispatch-statechart-event-in!
-        run-tool-call-fn (fn [ctx {:keys [tool-call parsed-args progress-queue]}]
+        run-tool-call-fn (fn [ctx {:keys [session-id tool-call parsed-args progress-queue]}]
                            (executor/run-tool-call-through-runtime-effect!
-                            ctx tool-call parsed-args progress-queue))
+                            ctx session-id tool-call parsed-args progress-queue))
         ctx           {:state*                       state*
                        :target-session-id            sid
                        :sc-env                       sc-env
@@ -97,27 +100,40 @@
                        :execute-tool-runtime-fn      #'tool-plan/execute-tool-runtime-in!
                        :run-tool-call-fn             run-tool-call-fn
                        :persist?                     false
-                       :send-extension-message-fn    (fn [ctx role content custom-type]
-                                                       (let [msg {:role      role
-                                                                  :content   [{:type :text :text (str content)}]
-                                                                  :timestamp (java.time.Instant/now)}
-                                                             msg (cond-> msg
-                                                                   custom-type (assoc :custom-type custom-type))]
-                                                         (dispatch/dispatch! ctx
-                                                                             :session/send-extension-message
-                                                                             {:message msg}
-                                                                             {:origin :core})
-                                                         msg))
+                       :send-extension-message-fn    (fn
+                                                       ([ctx role content custom-type]
+                                                        (let [msg {:role      role
+                                                                   :content   [{:type :text :text (str content)}]
+                                                                   :timestamp (java.time.Instant/now)}
+                                                              msg (cond-> msg
+                                                                    custom-type (assoc :custom-type custom-type))
+                                                              session-id (some-> (ss/list-context-sessions-in ctx) first :session-id)]
+                                                          (dispatch/dispatch! ctx
+                                                                              :session/send-extension-message
+                                                                              {:session-id session-id :message msg}
+                                                                              {:origin :core})
+                                                          msg))
+                                                       ([ctx session-id role content custom-type]
+                                                        (let [msg {:role      role
+                                                                   :content   [{:type :text :text (str content)}]
+                                                                   :timestamp (java.time.Instant/now)}
+                                                              msg (cond-> msg
+                                                                    custom-type (assoc :custom-type custom-type))]
+                                                          (dispatch/dispatch! ctx
+                                                                              :session/send-extension-message
+                                                                              {:session-id session-id :message msg}
+                                                                              {:origin :core})
+                                                          msg)))
                        :mark-workflow-jobs-terminal-fn bg-rt/maybe-mark-workflow-jobs-terminal!
                        :emit-background-job-terminal-messages-fn bg-rt/maybe-emit-background-job-terminal-messages!
                        :reconcile-and-emit-background-job-terminals-fn bg-rt/reconcile-and-emit-background-job-terminals-in!
                        :daemon-thread-fn             (fn [f] (doto (Thread. ^Runnable f) (.setDaemon true) (.start)))
-                       :effective-cwd-fn             (fn [ctx] (ss/effective-cwd-in ctx))
-                       :journal-append-fn            (fn [_ctx _entry] nil)}
+                       :effective-cwd-fn             (fn [ctx session-id] (ss/effective-cwd-in ctx session-id))
+                       :journal-append-fn            (fn [_ctx _session-id _entry] nil)}
         _             (dispatch-handlers/register-all! ctx)]
     (session-sc/start-session! sc-env sc-session-id
                                {:ctx        ctx
                                 :session-id sid
                                 :actions-fn nil
                                 :config     {}})
-    ctx))
+    [ctx sid]))

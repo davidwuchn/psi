@@ -17,7 +17,7 @@
    [psi.agent-session.core :as session]))
 
 (def ^:private shared-ctx
-  (delay (session/create-context {:persist? false})))
+  (delay (first (session/create-context {:persist? false}))))
 
 (defn- q
   "Run EQL query against a shared session context."

@@ -80,15 +80,16 @@
                                      {:origin :extension
                                       :ext-id "/ext/test.clj"
                                       :replaying? true})))
-      (is (= {:event {:event/type :normalized
-                      :event/data {:x 1}
-                      :event/origin :extension
-                      :event/ext-id "/ext/test.clj"
+      (is (= {:event {:event/type       :normalized
+                      :event/data       {:x 1}
+                      :event/session-id nil
+                      :event/origin     :extension
+                      :event/ext-id     "/ext/test.clj"
                       :event/replaying? true}
               :event-type :normalized
               :event-data {:x 1}
-              :origin :extension
-              :ext-id "/ext/test.clj"
+              :origin     :extension
+              :ext-id     "/ext/test.clj"
               :replaying? true}
              @seen))))
 
@@ -450,20 +451,20 @@
 ;; ── Origin in log entries ───────────────────────────────────
 
 (deftest startup-bootstrap-dispatch-test
-  (let [ctx (session/create-context {:persist? false})
-        started-at (java.time.Instant/now)
-        completed-at (java.time.Instant/now)
-        prompts [{:id "s1" :source :project :phase :system-bootstrap :priority 1}]
-        summary {:timestamp completed-at :prompt-count 1}]
-    (session/new-session-in! ctx)
-
+  (let [[ctx seed-id]      (session/create-context {:persist? false})
+        sd                 (session/new-session-in! ctx seed-id {})
+        session-id         (:session-id sd)
+        started-at         (java.time.Instant/now)
+        completed-at       (java.time.Instant/now)
+        prompts            [{:id "s1" :source :project :phase :system-bootstrap :priority 1}]
+        summary            {:timestamp completed-at :prompt-count 1}]
     (testing "startup lifecycle helpers route writes through dispatch handlers"
-      (dispatch/dispatch! ctx :session/startup-bootstrap-begin {:started-at started-at} {:origin :core})
-      (dispatch/dispatch! ctx :session/record-startup-message-id {:message-id "m1"} {:origin :core})
-      (dispatch/dispatch! ctx :session/startup-bootstrap-complete {:startup-prompts prompts :completed-at completed-at} {:origin :core})
-      (dispatch/dispatch! ctx :session/set-startup-bootstrap-summary {:summary summary} {:origin :core})
-      (let [sd (ss/get-session-data-in ctx)
-            entries (dispatch/event-log-entries)
+      (dispatch/dispatch! ctx :session/startup-bootstrap-begin {:session-id session-id :started-at started-at} {:origin :core})
+      (dispatch/dispatch! ctx :session/record-startup-message-id {:session-id session-id :message-id "m1"} {:origin :core})
+      (dispatch/dispatch! ctx :session/startup-bootstrap-complete {:session-id session-id :startup-prompts prompts :completed-at completed-at} {:origin :core})
+      (dispatch/dispatch! ctx :session/set-startup-bootstrap-summary {:session-id session-id :summary summary} {:origin :core})
+      (let [sd         (ss/get-session-data-in ctx session-id)
+            entries     (dispatch/event-log-entries)
             event-types (mapv :event-type entries)]
         (is (= started-at (:startup-bootstrap-started-at sd)))
         (is (true? (:startup-bootstrap-completed? sd)))

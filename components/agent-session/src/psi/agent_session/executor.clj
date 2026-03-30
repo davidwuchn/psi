@@ -427,7 +427,7 @@ Also tolerates cumulative snapshots that differ near previous tail
    - content-index is the provisional per-turn identity during assembly
    - every tool call is upgraded to a canonical tool-call-id by execution time
    - lifecycle/result events must target rows by canonical tool-call-id"
-  [agent-session-ctx _agent-ctx done-p progress-queue]
+  [ctx session-id _agent-ctx done-p progress-queue]
   (fn [action-key data]
     (let [td (:turn-data data)]
       (case action-key
@@ -553,7 +553,7 @@ Also tolerates cumulative snapshots that differ near previous tail
           ;; run-tool-call-through-runtime-effect! — no duplicate here.
           (emit-tool-assembly-errors! progress-queue completed)
           (swap! td assoc :final-message final)
-          (session/journal-append-in! agent-session-ctx
+          (session/journal-append-in! ctx session-id
                                       (persist/message-entry final))
           (deliver done-p final))
 
@@ -571,7 +571,7 @@ Also tolerates cumulative snapshots that differ near previous tail
                       (:http-status data) (assoc :http-status (:http-status data)))]
           (note-last-provider-event! td :error data)
           (swap! td assoc :final-message final :error-message err-msg)
-          (session/journal-append-in! agent-session-ctx
+          (session/journal-append-in! ctx session-id
                                       (persist/message-entry final))
           (deliver done-p final))
 
@@ -585,12 +585,12 @@ Also tolerates cumulative snapshots that differ near previous tail
 
 (defn- session-messages
   "Derive the LLM conversation messages from the persistence journal."
-  [ctx]
+  [ctx session-id]
   (into []
         (keep (fn [entry]
                 (when (= :message (:kind entry))
                   (get-in entry [:data :message]))))
-        (sa/journal-state-in ctx)))
+        (sa/journal-state-in ctx session-id)))
 
 (defn- session-tool-schemas
   "Return the active tool schemas from session data."
@@ -615,16 +615,16 @@ Also tolerates cumulative snapshots that differ near previous tail
   (System/currentTimeMillis))
 
 (defn- append-tool-call-attempt!
-  [agent-session-ctx attempt]
-  (sa/append-tool-call-attempt-in! agent-session-ctx attempt))
+  [ctx session-id attempt]
+  (sa/append-tool-call-attempt-in! ctx session-id attempt))
 
 (defn- append-provider-request-capture!
-  [agent-session-ctx capture]
-  (sa/append-provider-request-capture-in! agent-session-ctx capture))
+  [ctx session-id capture]
+  (sa/append-provider-request-capture-in! ctx session-id capture))
 
 (defn- append-provider-reply-capture!
-  [agent-session-ctx capture]
-  (sa/append-provider-reply-capture-in! agent-session-ctx capture))
+  [ctx session-id capture]
+  (sa/append-provider-reply-capture-in! ctx session-id capture))
 
 (defn- chain-callbacks
   [& callbacks]
@@ -699,11 +699,11 @@ Also tolerates cumulative snapshots that differ near previous tail
 
    `extra-ai-options` — merged into the ai-options map sent to the provider
                         (e.g. {:api-key \"...\"})"
-  [ai-ctx agent-session-ctx agent-ctx ai-model extra-ai-options progress-queue]
-  (let [sd               (session/get-session-data-in agent-session-ctx)
+  [ai-ctx ctx session-id agent-ctx ai-model extra-ai-options progress-queue]
+  (let [sd               (session/get-session-data-in ctx session-id)
         turn-id          (str (java.util.UUID/randomUUID))
         system-prompt    (:system-prompt sd)
-        messages         (session-messages agent-session-ctx)
+        messages         (session-messages ctx session-id)
         agent-tools      (session-tool-schemas sd)
         ai-conv          (agent-messages->ai-conversation system-prompt messages agent-tools
                                                           {:cache-breakpoints (:cache-breakpoints sd)})
@@ -714,17 +714,17 @@ Also tolerates cumulative snapshots that differ near previous tail
                                      (:on-provider-request base-ai-options)
                                      (fn [capture]
                                        (append-provider-request-capture!
-                                        agent-session-ctx
+                                        ctx session-id
                                         (assoc capture :turn-id turn-id)))))
                              (assoc :on-provider-response
                                     (chain-callbacks
                                      (:on-provider-response base-ai-options)
                                      (fn [capture]
                                        (append-provider-reply-capture!
-                                        agent-session-ctx
+                                        ctx session-id
                                         (assoc capture :turn-id turn-id))))))
         done-p           (promise)
-        actions-fn        (make-turn-actions agent-session-ctx agent-ctx done-p progress-queue)
+        actions-fn        (make-turn-actions ctx session-id agent-ctx done-p progress-queue)
         turn-ctx          (turn-sc/create-turn-context actions-fn)
         _                 (swap! (:turn-data turn-ctx) assoc :turn-id turn-id)
         last-progress-ms  (atom (now-ms))
@@ -736,7 +736,7 @@ Also tolerates cumulative snapshots that differ near previous tail
         ;; for the block so far (consumers should replace, not append).
         thinking-buffers  (atom {})]
     ;; Expose turn context for nREPL introspection
-    (sa/set-turn-context-in! agent-session-ctx turn-ctx)
+    (sa/set-turn-context-in! ctx session-id turn-ctx)
     ;; Transition: :idle → :text-accumulating (calls begin-stream-in!)
     (turn-sc/send-event! turn-ctx :turn/start)
     ;; Start provider stream — callback translates events to statechart events
@@ -817,24 +817,23 @@ Also tolerates cumulative snapshots that differ near previous tail
 
                       :toolcall-start
                       (do
-                        (let [idx (or (:content-index event) 0)]
-                          (reset-thinking-buffers-on-toolcall-start! thinking-buffers ai-model idx)
-                          (append-tool-call-attempt!
-                           agent-session-ctx
-                           {:turn-id       turn-id
-                            :event-kind    :toolcall-start
-                            :content-index (:content-index event)
-                            :id            (:id event)
-                            :name          (:name event)})
-                          (turn-sc/send-event! turn-ctx :turn/toolcall-start
-                                               {:content-index (:content-index event)
-                                                :tool-id       (:id event)
-                                                :tool-name     (:name event)})))
+                        (swap! thinking-buffers dissoc (or (:content-index event) 0))
+                        (append-tool-call-attempt!
+                         ctx session-id
+                         {:turn-id       turn-id
+                          :event-kind    :toolcall-start
+                          :content-index (:content-index event)
+                          :id            (:id event)
+                          :name          (:name event)})
+                        (turn-sc/send-event! turn-ctx :turn/toolcall-start
+                                             {:content-index (:content-index event)
+                                              :tool-id       (:id event)
+                                              :tool-name     (:name event)}))
 
                       :toolcall-delta
                       (do
                         (append-tool-call-attempt!
-                         agent-session-ctx
+                         ctx session-id
                          {:turn-id       turn-id
                           :event-kind    :toolcall-delta
                           :content-index (:content-index event)
@@ -846,7 +845,7 @@ Also tolerates cumulative snapshots that differ near previous tail
                       :toolcall-end
                       (do
                         (append-tool-call-attempt!
-                         agent-session-ctx
+                         ctx session-id
                          {:turn-id       turn-id
                           :event-kind    :toolcall-end
                           :content-index (:content-index event)})
@@ -896,9 +895,9 @@ Also tolerates cumulative snapshots that differ near previous tail
   (filter #(= :tool-call (:type %)) (:content assistant-msg)))
 
 (defn- effective-tool-output-policy
-  [agent-session-ctx tool-name]
+  [ctx session-id tool-name]
   (tool-output/effective-policy
-   (or (:tool-output-overrides (session/get-session-data-in agent-session-ctx)) {})
+   (or (:tool-output-overrides (session/get-session-data-in ctx session-id)) {})
    tool-name))
 
 (defn- utf8-bytes
@@ -937,7 +936,7 @@ Also tolerates cumulative snapshots that differ near previous tail
     [{:type :text :text (str content)}]))
 
 (defn- record-tool-output-stat!
-  [agent-session-ctx {:keys [tool-call-id tool-name content details effective-policy]}]
+  [ctx session-id {:keys [tool-call-id tool-name content details effective-policy]}]
   (let [truncation          (:truncation details)
         limit-hit?          (boolean (:truncated truncation))
         truncated-by        (or (:truncated-by truncation) :none)
@@ -953,7 +952,7 @@ Also tolerates cumulative snapshots that differ near previous tail
                              :effective-max-bytes  (:max-bytes effective-policy)
                              :output-bytes         output-bytes
                              :context-bytes-added  context-bytes-added}]
-    (sa/record-tool-output-stat-in! agent-session-ctx stat context-bytes-added limit-hit?)))
+    (sa/record-tool-output-stat-in! ctx session-id stat context-bytes-added limit-hit?)))
 
 (defn- tool-lifecycle-event
   "Build one canonical tool lifecycle event shape.
@@ -967,10 +966,10 @@ Also tolerates cumulative snapshots that differ near previous tail
          extra))
 
 (defn- emit-tool-lifecycle!
-  [agent-session-ctx _progress-queue lifecycle-event]
-  (dispatch/dispatch! agent-session-ctx
+  [ctx session-id _progress-queue lifecycle-event]
+  (dispatch/dispatch! ctx
                       :session/tool-lifecycle-event
-                      {:session-id (session/active-session-id-in agent-session-ctx)
+                      {:session-id session-id
                        :entry      lifecycle-event}
                       {:origin :core})
   lifecycle-event)
@@ -985,7 +984,7 @@ Also tolerates cumulative snapshots that differ near previous tail
       :tool-result raw-result
       :result-message tool-result-msg
       :effective-policy policy}"
-  [agent-session-ctx tool-call progress-queue]
+  [ctx session-id tool-call progress-queue]
   (let [call-id  (:id tool-call)
         name     (:name tool-call)
         args     (or (:parsed-args tool-call)
@@ -993,14 +992,14 @@ Also tolerates cumulative snapshots that differ near previous tail
     (emit-progress!
      progress-queue
      (emit-tool-lifecycle!
-      agent-session-ctx progress-queue
+      ctx session-id progress-queue
       (tool-lifecycle-event
        :tool-executing call-id name
        :arguments (:arguments tool-call)
        :parsed-args args)))
-    (let [opts {:cwd          (or (:worktree-path (session/get-session-data-in agent-session-ctx))
-                                  (:cwd agent-session-ctx))
-                :overrides    (:tool-output-overrides (session/get-session-data-in agent-session-ctx))
+    (let [opts {:cwd          (or (:worktree-path (session/get-session-data-in ctx session-id))
+                                  (:cwd ctx))
+                :overrides    (:tool-output-overrides (session/get-session-data-in ctx session-id))
                 :tool-call-id call-id
                 :on-update    (fn [{:keys [content details is-error]}]
                                 (let [content-blocks (normalize-tool-content content)
@@ -1008,7 +1007,7 @@ Also tolerates cumulative snapshots that differ near previous tail
                                   (emit-progress!
                                    progress-queue
                                    (emit-tool-lifecycle!
-                                    agent-session-ctx progress-queue
+                                    ctx session-id progress-queue
                                     (tool-lifecycle-event
                                      :tool-execution-update call-id name
                                      :content content-blocks
@@ -1016,17 +1015,18 @@ Also tolerates cumulative snapshots that differ near previous tail
                                      :details details
                                      :is-error (boolean is-error))))))}
           {:keys [content is-error details] :as tool-result}
-          (or (dispatch/dispatch! agent-session-ctx
+          (or (dispatch/dispatch! ctx
                                   :session/tool-execute
-                                  {:tool-name name
-                                   :args args
-                                   :opts opts}
+                                  {:session-id session-id
+                                   :tool-name  name
+                                   :args       args
+                                   :opts       opts}
                                   {:origin :core})
               {:content "Error: tool execution returned no result"
                :is-error true})
           content-blocks (normalize-tool-content content)
           text-fallback  (tool-content->text content)
-          policy         (effective-tool-output-policy agent-session-ctx name)
+          policy         (effective-tool-output-policy ctx session-id name)
           result-msg     {:role         "toolResult"
                           :tool-call-id call-id
                           :tool-name    name
@@ -1042,7 +1042,7 @@ Also tolerates cumulative snapshots that differ near previous tail
 
 (defn- record-tool-call-result!
   "Record one shaped tool execution result into progress, telemetry, and agent-core."
-  [agent-session-ctx {:keys [tool-call tool-result result-message effective-policy]} progress-queue]
+  [ctx session-id {:keys [tool-call tool-result result-message effective-policy]} progress-queue]
   (let [call-id         (:id tool-call)
         name            (:name tool-call)
         result-text     (or (:result-text result-message)
@@ -1051,7 +1051,7 @@ Also tolerates cumulative snapshots that differ near previous tail
     (emit-progress!
      progress-queue
      (emit-tool-lifecycle!
-      agent-session-ctx progress-queue
+      ctx session-id progress-queue
       (tool-lifecycle-event
        :tool-result call-id name
        :content (:content result-message)
@@ -1059,21 +1059,23 @@ Also tolerates cumulative snapshots that differ near previous tail
        :details details
        :is-error is-error)))
     (record-tool-output-stat!
-     agent-session-ctx
+     ctx session-id
      {:tool-call-id     call-id
       :tool-name        name
       :content          content
       :details          details
       :effective-policy effective-policy})
-    (dispatch/dispatch! agent-session-ctx
+    (dispatch/dispatch! ctx
                         :session/tool-agent-end
-                        {:tool-call tool-call
-                         :result tool-result
-                         :is-error? is-error}
+                        {:session-id session-id
+                         :tool-call  tool-call
+                         :result     tool-result
+                         :is-error?  is-error}
                         {:origin :core})
-    (dispatch/dispatch! agent-session-ctx
+    (dispatch/dispatch! ctx
                         :session/tool-agent-record-result
-                        {:tool-result-msg result-message}
+                        {:session-id      session-id
+                         :tool-result-msg result-message}
                         {:origin :core})
     result-message))
 
@@ -1085,20 +1087,21 @@ Also tolerates cumulative snapshots that differ near previous tail
 
    Exposed as a named runtime helper so core can delegate `:runtime/tool-run`
    here without re-implementing executor-local shaping logic."
-  [agent-session-ctx tool-call parsed-args progress-queue]
+  [ctx session-id tool-call parsed-args progress-queue]
   (emit-progress!
    progress-queue
    (emit-tool-lifecycle!
-    agent-session-ctx progress-queue
+    ctx session-id progress-queue
     (tool-lifecycle-event :tool-start (:id tool-call) (:name tool-call))))
-  (dispatch/dispatch! agent-session-ctx
+  (dispatch/dispatch! ctx
                       :session/tool-agent-start
-                      {:tool-call tool-call}
+                      {:session-id session-id
+                       :tool-call  tool-call}
                       {:origin :core})
   (try
     (record-tool-call-result!
-     agent-session-ctx
-     (execute-tool-call! agent-session-ctx
+     ctx session-id
+     (execute-tool-call! ctx session-id
                          (assoc tool-call :parsed-args parsed-args)
                          progress-queue)
      progress-queue)
@@ -1111,27 +1114,30 @@ Also tolerates cumulative snapshots that differ near previous tail
                         :details      {:exception true}
                         :result-text  (str "Error: " (ex-message e))
                         :timestamp    (java.time.Instant/now)}]
-        (dispatch/dispatch! agent-session-ctx
+        (dispatch/dispatch! ctx
                             :session/tool-agent-end
-                            {:tool-call tool-call
-                             :result {:content (str "Error: " (ex-message e))
-                                      :is-error true}
-                             :is-error? true}
+                            {:session-id session-id
+                             :tool-call  tool-call
+                             :result     {:content (str "Error: " (ex-message e))
+                                          :is-error true}
+                             :is-error?  true}
                             {:origin :core})
-        (dispatch/dispatch! agent-session-ctx
+        (dispatch/dispatch! ctx
                             :session/tool-agent-record-result
-                            {:tool-result-msg result-msg}
+                            {:session-id      session-id
+                             :tool-result-msg result-msg}
                             {:origin :core})
         result-msg))))
 
 (defn- run-tool-call!
   "Execute one tool call through one dispatch-owned runtime boundary."
-  [agent-session-ctx tool-call progress-queue]
-  (dispatch/dispatch! agent-session-ctx
+  [ctx session-id tool-call progress-queue]
+  (dispatch/dispatch! ctx
                       :session/tool-run
-                      {:tool-call tool-call
-                       :parsed-args (or (:parsed-args tool-call)
-                                        (parse-args (:arguments tool-call)))
+                      {:session-id     session-id
+                       :tool-call      tool-call
+                       :parsed-args    (or (:parsed-args tool-call)
+                                           (parse-args (:arguments tool-call)))
                        :progress-queue progress-queue}
                       {:origin :core}))
 
@@ -1175,9 +1181,9 @@ Also tolerates cumulative snapshots that differ near previous tail
    - {:turn/continuation :turn.continue/next-turn
       :assistant-message msg
       :tool-results [...]}"
-  [agent-session-ctx outcome progress-queue]
+  [ctx session-id outcome progress-queue]
   (let [tool-results (mapv (fn [tc]
-                             (run-tool-call! agent-session-ctx tc progress-queue))
+                             (run-tool-call! ctx session-id tc progress-queue))
                            (:tool-calls outcome))]
     {:turn/continuation :turn.continue/next-turn
      :assistant-message (:assistant-message outcome)
@@ -1191,8 +1197,8 @@ Also tolerates cumulative snapshots that differ near previous tail
       :outcome outcome-map}
 
    This isolates single-turn execution from recursive multi-turn orchestration."
-  [ai-ctx agent-session-ctx agent-ctx ai-model extra-ai-options progress-queue]
-  (let [assistant-msg (stream-turn! ai-ctx agent-session-ctx agent-ctx ai-model
+  [ai-ctx ctx session-id agent-ctx ai-model extra-ai-options progress-queue]
+  (let [assistant-msg (stream-turn! ai-ctx ctx session-id agent-ctx ai-model
                                     extra-ai-options progress-queue)
         outcome       (classify-turn-outcome assistant-msg)]
     {:assistant-message assistant-msg
@@ -1203,16 +1209,16 @@ Also tolerates cumulative snapshots that differ near previous tail
 
    Delegates one-turn work to `execute-one-turn!` and only owns the loop control
    that follows explicit turn outcomes and continuations."
-  [ai-ctx agent-session-ctx agent-ctx ai-model extra-ai-options progress-queue]
+  [ai-ctx ctx session-id agent-ctx ai-model extra-ai-options progress-queue]
   (let [{:keys [assistant-message outcome]}
-        (execute-one-turn! ai-ctx agent-session-ctx agent-ctx ai-model
+        (execute-one-turn! ai-ctx ctx session-id agent-ctx ai-model
                            extra-ai-options progress-queue)]
     (case (:turn/outcome outcome)
       :turn.outcome/tool-use
-      (let [continuation (continue-after-tool-use! agent-session-ctx outcome progress-queue)]
+      (let [continuation (continue-after-tool-use! ctx session-id outcome progress-queue)]
         (case (:turn/continuation continuation)
           :turn.continue/next-turn
-          (run-turn-loop! ai-ctx agent-session-ctx agent-ctx ai-model
+          (run-turn-loop! ai-ctx ctx session-id agent-ctx ai-model
                           extra-ai-options progress-queue)
 
           assistant-message))
@@ -1227,38 +1233,39 @@ Also tolerates cumulative snapshots that differ near previous tail
   "Drive one complete agent interaction loop:
      execute one turn → continue after tool-use when needed → loop until terminal.
 
-   `ai-ctx`            — ai component context (has :provider-registry)
-   `agent-session-ctx` — agent session context
-   `agent-ctx`         — agent-core context
-   `ai-model`          — ai.schemas.Model map
-   `extra-ai-options`  — extra options merged into ai-options (e.g. {:api-key \"...\"})
-   `progress-queue`    — optional LinkedBlockingQueue for TUI progress events
+   `ai-ctx`     — ai component context (has :provider-registry)
+   `ctx`        — agent session context
+   `session-id` — target session id
+   `agent-ctx`  — agent-core context
+   `ai-model`   — ai.schemas.Model map
+   `extra-ai-options` — extra options merged into ai-options (e.g. {:api-key \"...\"})
+   `progress-queue`   — optional LinkedBlockingQueue for TUI progress events
 
    Returns the final terminal assistant message map.
    Emits agent-core events throughout."
-  ([ai-ctx agent-session-ctx agent-ctx ai-model]
-   (run-turn! ai-ctx agent-session-ctx agent-ctx ai-model nil nil))
-  ([ai-ctx agent-session-ctx agent-ctx ai-model extra-ai-options]
-   (run-turn! ai-ctx agent-session-ctx agent-ctx ai-model extra-ai-options nil))
-  ([ai-ctx agent-session-ctx agent-ctx ai-model extra-ai-options progress-queue]
-   (run-turn-loop! ai-ctx agent-session-ctx agent-ctx ai-model
+  ([ai-ctx ctx session-id agent-ctx ai-model]
+   (run-turn! ai-ctx ctx session-id agent-ctx ai-model nil nil))
+  ([ai-ctx ctx session-id agent-ctx ai-model extra-ai-options]
+   (run-turn! ai-ctx ctx session-id agent-ctx ai-model extra-ai-options nil))
+  ([ai-ctx ctx session-id agent-ctx ai-model extra-ai-options progress-queue]
+   (run-turn-loop! ai-ctx ctx session-id agent-ctx ai-model
                    extra-ai-options progress-queue)))
 
 (defn- session-thinking-level
-  [agent-session-ctx]
-  (:thinking-level (session/get-session-data-in agent-session-ctx)))
+  [ctx session-id]
+  (:thinking-level (session/get-session-data-in ctx session-id)))
 
 (defn- session-llm-stream-idle-timeout-ms
-  [agent-session-ctx]
-  (let [v (get-in agent-session-ctx [:config :llm-stream-idle-timeout-ms])]
+  [ctx]
+  (let [v (get-in ctx [:config :llm-stream-idle-timeout-ms])]
     (when (and (number? v) (pos? v))
       (long v))))
 
 (defn- agent-loop-options
   "Build the effective AI options for one agent loop from session/runtime inputs."
-  [agent-session-ctx {:keys [api-key]}]
-  (let [thinking-level  (session-thinking-level agent-session-ctx)
-        idle-timeout-ms (session-llm-stream-idle-timeout-ms agent-session-ctx)]
+  [ctx session-id {:keys [api-key]}]
+  (let [thinking-level  (session-thinking-level ctx session-id)
+        idle-timeout-ms (session-llm-stream-idle-timeout-ms ctx)]
     (cond-> {}
       api-key (assoc :api-key api-key)
       (keyword? thinking-level) (assoc :thinking-level thinking-level)
@@ -1269,9 +1276,9 @@ Also tolerates cumulative snapshots that differ near previous tail
 
    Converts unexpected exceptions into canonical assistant error messages so the
    outer lifecycle boundary can finalize success/error uniformly."
-  [ai-ctx agent-session-ctx agent-ctx ai-model extra-ai-options progress-queue]
+  [ai-ctx ctx session-id agent-ctx ai-model extra-ai-options progress-queue]
   (try
-    (run-turn! ai-ctx agent-session-ctx agent-ctx ai-model
+    (run-turn! ai-ctx ctx session-id agent-ctx ai-model
                extra-ai-options progress-queue)
     (catch Throwable e
       (cond-> {:role "assistant" :content []
@@ -1283,13 +1290,13 @@ Also tolerates cumulative snapshots that differ near previous tail
 (defn- finish-agent-loop!
   "Finalize one agent loop lifecycle from the terminal assistant result.
   Sends :agent-end to the session statechart for the main session path.
-  Child sessions (with :target-session-id) skip the statechart event —
+  Child sessions (spawn-mode :agent) skip the statechart event —
   their lifecycle is managed by the workflow engine."
-  [agent-session-ctx _agent-ctx result]
-  (when-not (:target-session-id agent-session-ctx)
-    (let [sc-env     (:sc-env agent-session-ctx)
-          sc-sid     (session/sc-session-id-in agent-session-ctx)
-          messages   (session-messages agent-session-ctx)]
+  [ctx session-id _agent-ctx result]
+  (when (not= :agent (:spawn-mode (session/get-session-data-in ctx session-id)))
+    (let [sc-env   (:sc-env ctx)
+          sc-sid   (session/sc-session-id-in ctx session-id)
+          messages (session-messages ctx session-id)]
       (when (and sc-env sc-sid)
         (sc/send-event! sc-env sc-sid
                         :session/agent-event
@@ -1304,7 +1311,7 @@ Also tolerates cumulative snapshots that differ near previous tail
    This fn drives the internal turn loop and returns when the LLM stops
    requesting tool calls.
 
-   Options (optional 5th arg map):
+   Options (optional 6th arg map):
      :api-key        — API key to pass through to the provider (from OAuth store)
      :progress-queue — LinkedBlockingQueue for TUI progress events
 
@@ -1313,15 +1320,15 @@ Also tolerates cumulative snapshots that differ near previous tail
      Session config key `:llm-stream-idle-timeout-ms` overrides that default.
 
    Returns the final assistant message."
-  ([ai-ctx agent-session-ctx agent-ctx ai-model new-messages]
-   (run-agent-loop! ai-ctx agent-session-ctx agent-ctx ai-model new-messages nil))
-  ([ai-ctx agent-session-ctx agent-ctx ai-model new-messages opts]
+  ([ai-ctx ctx session-id agent-ctx ai-model new-messages]
+   (run-agent-loop! ai-ctx ctx session-id agent-ctx ai-model new-messages nil))
+  ([ai-ctx ctx session-id agent-ctx ai-model new-messages opts]
    ;; Ensure user messages are in the journal before the turn loop reads them.
    ;; For the main session path, prompt-in! already journals user messages via
    ;; :session/prompt-submit. The duplicate append is harmless.
    (doseq [msg new-messages]
-     (session/journal-append-in! agent-session-ctx (persist/message-entry msg)))
-   (let [extra-ai-options (agent-loop-options agent-session-ctx opts)
-         result           (run-agent-loop-body! ai-ctx agent-session-ctx agent-ctx ai-model
+     (session/journal-append-in! ctx session-id (persist/message-entry msg)))
+   (let [extra-ai-options (agent-loop-options ctx session-id opts)
+         result           (run-agent-loop-body! ai-ctx ctx session-id agent-ctx ai-model
                                                 extra-ai-options (:progress-queue opts))]
-     (finish-agent-loop! agent-session-ctx agent-ctx result))))
+     (finish-agent-loop! ctx session-id agent-ctx result))))
