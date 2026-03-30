@@ -8,6 +8,7 @@
    [clojure.string :as str]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.state-accessors :as sa]
+   [psi.rpc.events :as rpc.events]
    [psi.rpc.session :as rpc.session]
    [psi.rpc.transport :as rpc.transport]))
 
@@ -18,11 +19,11 @@
 (def event-frame rpc.transport/event-frame)
 (def run-stdio-loop! rpc.transport/run-stdio-loop!)
 
-(def footer-query rpc.session/footer-query)
-(def footer-updated-payload rpc.session/footer-updated-payload)
-(def session-updated-payload rpc.session/session-updated-payload)
-(def progress-event->rpc-event rpc.session/progress-event->rpc-event)
-(def session->handshake-server-info rpc.session/session->handshake-server-info)
+(def footer-query rpc.events/footer-query)
+(def footer-updated-payload rpc.events/footer-updated-payload)
+(def session-updated-payload rpc.events/session-updated-payload)
+(def progress-event->rpc-event rpc.events/progress-event->rpc-event)
+(def session->handshake-server-info rpc.events/session->handshake-server-info)
 (def make-session-request-handler rpc.session/make-session-request-handler)
 
 (defn start-runtime!
