@@ -166,7 +166,7 @@
 
 (deftest thinking-start-end-without-delta-still-produces-thinking-block-test
   (let [agent-ctx   (setup-agent-ctx!)
-        session-ctx (setup-session-ctx! agent-ctx)
+        [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
         user-msg    {:role "user" :content [{:type :text :text "hi"}]}
         stream-fn   (fn [_ai-ctx _conv _model _opts consume-fn]
                       (consume-fn {:type :start})
@@ -174,8 +174,10 @@
                       (consume-fn {:type :thinking-end :content-index 0})
                       (consume-fn {:type :done :reason :stop}))]
     (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
-      (executor/run-agent-loop! nil session-ctx agent-ctx stub-model [user-msg])
-      (let [td (turn-sc/get-turn-data (ss/get-state-value-in session-ctx (ss/state-path :turn-ctx (ss/active-session-id-in session-ctx))))]
+      (executor/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])
+      (let [td (turn-sc/get-turn-data
+                (ss/get-state-value-in session-ctx
+                                       (ss/state-path :turn-ctx session-ctx-id)))]
         (is (= :thinking (get-in td [:content-blocks 0 :kind])))
         (is (= :closed (get-in td [:content-blocks 0 :status])))))))
 

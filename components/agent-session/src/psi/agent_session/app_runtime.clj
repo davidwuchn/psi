@@ -689,10 +689,6 @@ Available: " (str/join ", " (map name (keys models/all-models))))
          ;; TUI-local focus atom — tracks active session-id
          tui-focus* (atom session-id)
 
-         ;; TUI-local focus atom — all closures read this to scope ctx
-         tui-focus* (atom (:target-session-id ctx))
-         focus-ctx  (fn [] (assoc ctx :target-session-id @tui-focus*))
-
          ;; Expose state for nREPL introspection
          _         (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model
                                           :oauth-ctx oauth-ctx
