@@ -5,7 +5,8 @@
   (:require
    [clojure.string :as str]
    [taoensso.timbre :as timbre]
-   [psi.agent-session.app-runtime :as session-app]
+   [psi.app-runtime :as app-runtime]
+   [psi.rpc :as rpc]
    [psi.tui.app :as tui-app])
   (:gen-class))
 
@@ -108,11 +109,11 @@
         session-runtime-opts (session-runtime-config-from-args args)
         nrepl-port           (nrepl-port-from-args args)
         nrepl-srv            (when nrepl-port
-                               (session-app/start-nrepl! nrepl-port))]
+                               (app-runtime/start-nrepl! nrepl-port))]
     (try
-      (session-app/run-session model-key memory-runtime-opts session-runtime-opts)
+      (app-runtime/run-session model-key memory-runtime-opts session-runtime-opts)
       (finally
-        (session-app/stop-nrepl! nrepl-srv)))))
+        (app-runtime/stop-nrepl! nrepl-srv)))))
 
 (defn run-rpc-session!
   [args]
@@ -123,12 +124,30 @@
         nrepl-port           (nrepl-port-from-args args)
         nrepl-srv            (when nrepl-port
                                (binding [*out* *err*]
-                                 (session-app/start-nrepl! nrepl-port)))]
+                                 (app-runtime/start-nrepl! nrepl-port)))]
     (try
-      (session-app/start-rpc-runtime! model-key memory-runtime-opts session-runtime-opts
-                                      {:rpc-trace-file rpc-trace-file})
+      (rpc/start-runtime!
+       {:model-key           model-key
+        :memory-runtime-opts memory-runtime-opts
+        :session-config      session-runtime-opts
+        :rpc-trace-file      rpc-trace-file
+        :session-state*      app-runtime/session-state
+        :nrepl-runtime       app-runtime/nrepl-runtime
+        :resolve-model       app-runtime/resolve-model
+        :session-ctx-factory (fn [ai-model session-config]
+                               (app-runtime/create-runtime-session-context ai-model {:event-queue (java.util.concurrent.LinkedBlockingQueue.)
+                                                                                     :session-config session-config
+                                                                                     :ui-type :emacs}))
+        :bootstrap-fn!       (fn [ctx session-id ai-model memory-runtime-opts]
+                               (app-runtime/bootstrap-runtime-session! ctx session-id ai-model {:memory-runtime-opts memory-runtime-opts
+                                                                                                :cwd (:cwd ctx)}))
+        :on-new-session!     (fn [source-session-id]
+                               (app-runtime/new-session-with-startup-in! (:ctx @app-runtime/session-state)
+                                                                         source-session-id
+                                                                         nil
+                                                                         (:ai-model @app-runtime/session-state)))})
       (finally
-        (session-app/stop-nrepl! nrepl-srv)))))
+        (app-runtime/stop-nrepl! nrepl-srv)))))
 
 (defn run-tui-session!
   [args]
@@ -137,11 +156,11 @@
         session-runtime-opts (session-runtime-config-from-args args)
         nrepl-port           (nrepl-port-from-args args)
         nrepl-srv            (when nrepl-port
-                               (session-app/start-nrepl! nrepl-port))]
+                               (app-runtime/start-nrepl! nrepl-port))]
     (try
-      (session-app/start-tui-runtime! tui-app/start! model-key memory-runtime-opts session-runtime-opts)
+      (app-runtime/start-tui-runtime! tui-app/start! model-key memory-runtime-opts session-runtime-opts)
       (finally
-        (session-app/stop-nrepl! nrepl-srv)))))
+        (app-runtime/stop-nrepl! nrepl-srv)))))
 
 (defn- exit!
   [code]

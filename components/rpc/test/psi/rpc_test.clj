@@ -1,4 +1,4 @@
-(ns psi.agent-session.rpc-test
+(ns psi.rpc-test
   (:require
    [cheshire.core :as json]
    [clj-http.client :as http]
@@ -14,7 +14,7 @@
    [psi.agent-session.state-accessors :as sa]
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.persistence :as persist]
-   [psi.agent-session.rpc :as rpc]
+   [psi.rpc :as rpc]
    [psi.agent-session.runtime :as runtime]
    [psi.agent-session.test-support :as test-support]
    [psi.agent-session.tools :as tools]

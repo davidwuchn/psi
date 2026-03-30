@@ -1,4 +1,4 @@
-(ns psi.agent-session.rpc-anthropic-regression-test
+(ns psi.rpc-anthropic-regression-test
   (:require
    [clojure.edn :as edn]
    [clojure.string :as str]
@@ -6,7 +6,7 @@
    [psi.agent-session.core :as session]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.persistence :as persist]
-   [psi.agent-session.rpc :as rpc]))
+   [psi.rpc :as rpc]))
 
 (defn- run-loop
   ([input handler]

@@ -579,7 +579,7 @@ All extension and UI state is queryable via EQL from a connected nREPL:
 
 ```clojure
 (require '[psi.agent-session.core :as s])
-(def ctx (:ctx @psi.agent-session.app-runtime/session-state))
+(def ctx (:ctx @psi.app-runtime/session-state))
 
 ;; Extension registry
 (s/query-in ctx [:psi.extension/paths

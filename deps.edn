@@ -13,6 +13,8 @@
         psi/introspection                             {:local/root "components/introspection"}
         psi/memory                                    {:local/root "components/memory"}
         psi/tui                                       {:local/root "components/tui"}
+        psi/rpc                                       {:local/root "components/rpc"}
+        psi/app-runtime                               {:local/root "components/app-runtime"}
         psi/agent-core                                {:local/root "components/agent-core"}
         psi/agent-session                             {:local/root "components/agent-session"}
         psi/recursion                                 {:local/root "components/recursion"}
@@ -21,23 +23,27 @@
  :aliases
  {:dev   {:extra-paths ["dev"]}
   :run   {:extra-paths ["bases/main/src"
+                        "components/app-runtime/src"
                         "components/agent-session/src"
                         "components/agent-core/src"
                         "components/ai/src"
                         "components/engine/src"
                         "components/query/src"
                         "components/tui/src"
+                        "components/rpc/src"
                         "extensions/src"]
           :extra-deps  {nrepl/nrepl {:mvn/version "1.5.1"}}
           :jvm-opts    ["--enable-native-access=ALL-UNNAMED"]
           :main-opts   ["-m" "psi.main"]}
   :psi   {:extra-paths ["bases/main/src"
+                        "components/app-runtime/src"
                         "components/agent-session/src"
                         "components/agent-core/src"
                         "components/ai/src"
                         "components/engine/src"
                         "components/query/src"
                         "components/tui/src"
+                        "components/rpc/src"
                         "extensions/src"]
           :extra-deps  {nrepl/nrepl {:mvn/version "1.5.1"}}
           :jvm-opts    ["--enable-native-access=ALL-UNNAMED"]
@@ -75,6 +81,8 @@
   :test  {:extra-paths ["test-support"
                         "bases/main/test"
                         "bases/main/src"
+                        "components/app-runtime/test"
+                        "components/app-runtime/src"
                         "components/ai/test"
                         "components/query/test"
                         "components/history/test"
@@ -82,6 +90,7 @@
                         "components/memory/test"
                         "components/recursion/test"
                         "components/tui/test"
+                        "components/rpc/test"
                         "components/agent-core/test"
                         "components/agent-session/test"
                         "extensions/test"
@@ -93,6 +102,7 @@
                         "components/memory/src"
                         "components/recursion/src"
                         "components/tui/src"
+                        "components/rpc/src"
                         "components/agent-core/src"
                         "components/agent-session/src"
                         "components/ui-state/src"

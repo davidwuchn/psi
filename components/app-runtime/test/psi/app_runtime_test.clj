@@ -1,4 +1,4 @@
-(ns psi.agent-session.app-runtime-test
+(ns psi.app-runtime-test
   (:require
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
@@ -8,12 +8,11 @@
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extensions :as ext]
-   [psi.agent-session.app-runtime :as app-runtime]
+   [psi.app-runtime :as app-runtime]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.prompt-templates :as pt]
    [psi.agent-session.project-preferences :as project-prefs]
-   [psi.agent-session.rpc :as rpc]
    [psi.agent-session.skills :as skills]
    [psi.agent-session.system-prompt :as sys-prompt]
    [psi.introspection.core :as introspection]
@@ -64,7 +63,7 @@
 
 (defn- with-main-bootstrap-stubs
   [f]
-  (with-redefs [psi.agent-session.app-runtime/resolve-model
+  (with-redefs [psi.app-runtime/resolve-model
                 (fn [_]
                   {:provider           :anthropic
                    :id                 "test-model"
@@ -162,70 +161,6 @@
       (finally
         (reset! app-runtime/session-state orig-state)))))
 
-(deftest start-rpc-runtime-initializes-session-file-test
-  (let [orig-state @app-runtime/session-state
-        captured   (atom nil)]
-    (try
-      (with-main-bootstrap-stubs
-        (fn []
-          (with-redefs [rpc/run-stdio-loop!
-                        (fn [opts]
-                          (reset! captured opts)
-                          :ok)]
-            (app-runtime/start-rpc-runtime! :ignored)
-            (let [ctx        (:ctx @app-runtime/session-state)
-                  session-id (active-session-id ctx)
-                  sd         (ss/get-session-data-in ctx session-id)
-                  hs         (:handshake-server-info-fn @(:state @captured))]
-              (is (some? ctx))
-              (is (string? (:session-file sd)))
-              (is (= :emacs (:ui-type sd)))
-              (is (fn? hs))
-              (is (= :emacs (:ui-type (hs))))
-              (is (fn? (:request-handler @captured)))))))
-      (finally
-        (reset! app-runtime/session-state orig-state)))))
-
-(deftest start-rpc-runtime-enables-rpc-trace-config-test
-  (let [orig-state @app-runtime/session-state
-        captured   (atom nil)
-        trace-file (str (java.nio.file.Files/createTempFile
-                         "psi-rpc-trace-test-"
-                         ".ndedn"
-                         (make-array java.nio.file.attribute.FileAttribute 0)))]
-    (try
-      (with-main-bootstrap-stubs
-        (fn []
-          (with-redefs [rpc/run-stdio-loop!
-                        (fn [opts]
-                          (reset! captured opts)
-                          :ok)]
-            (app-runtime/start-rpc-runtime! :ignored {} {} {:rpc-trace-file trace-file})
-            (let [ctx         (:ctx @app-runtime/session-state)
-                  trace-state (ss/get-state-value-in ctx (ss/state-path :rpc-trace))
-                  trace-fn    (:trace-fn @captured)]
-              (is (fn? trace-fn))
-              (is (= true (:enabled? trace-state)))
-              (is (= trace-file (:file trace-state)))
-              (let [entry (last (dispatch/event-log-entries))]
-                (is (= :session/set-rpc-trace (:event-type entry)))
-                (is (= :core (:origin entry)))
-                (is (= {:enabled? true :file trace-file}
-                       (dissoc (:event-data entry) :session-id))))
-
-              (trace-fn {:dir :in
-                         :raw "{:id \"1\" :kind :request :op \"ping\"}"
-                         :frame {:id "1" :kind :request :op "ping"}})
-              (let [before-disable (count (str/split-lines (slurp trace-file)))]
-                (is (pos? before-disable))
-                (dispatch/dispatch! ctx :session/set-rpc-trace {:enabled? false :file trace-file} {:origin :core})
-                (trace-fn {:dir :out
-                           :raw "{:kind :response :id \"1\" :op \"ping\" :ok true}"
-                           :frame {:kind :response :id "1" :op "ping" :ok true}})
-                (is (= before-disable
-                       (count (str/split-lines (slurp trace-file))))))))))
-      (finally
-        (reset! app-runtime/session-state orig-state)))))
 
 (deftest agent-messages->tui-resume-state-rehydrates-tool-rows-test
   (let [messages [{:role "user"

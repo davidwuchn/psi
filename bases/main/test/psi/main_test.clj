@@ -1,8 +1,9 @@
 (ns psi.main-test
   (:require
    [clojure.test :refer [deftest is testing]]
-   [psi.agent-session.app-runtime :as session-app]
+   [psi.app-runtime :as app-runtime]
    [psi.main :as main]
+   [psi.rpc :as rpc]
    [psi.tui.app :as tui-app]))
 
 (deftest main-routes-console-mode-test
@@ -38,15 +39,15 @@
       (is (= [:tui ["--tui"]] @called))
       (is (= 0 @exited)))))
 
-(deftest run-rpc-session-delegates-to-app-runtime-test
+(deftest run-rpc-session-delegates-to-rpc-runtime-test
   (let [captured (atom nil)]
-    (with-redefs [session-app/start-nrepl! (fn [port] {:server port})
-                  session-app/stop-nrepl! (fn [server] (swap! captured assoc :stopped server))
-                  session-app/start-rpc-runtime! (fn [model-key memory-runtime-opts session-config opts]
-                                                 (reset! captured {:model-key model-key
-                                                                   :memory-runtime-opts memory-runtime-opts
-                                                                   :session-config session-config
-                                                                   :opts opts}))]
+    (with-redefs [app-runtime/start-nrepl! (fn [port] {:server port})
+                  app-runtime/stop-nrepl! (fn [server] (swap! captured assoc :stopped server))
+                  rpc/start-runtime! (fn [{:keys [model-key memory-runtime-opts session-config rpc-trace-file]}]
+                                      (reset! captured {:model-key model-key
+                                                        :memory-runtime-opts memory-runtime-opts
+                                                        :session-config session-config
+                                                        :rpc-trace-file rpc-trace-file}))]
       (main/run-rpc-session! ["--rpc-edn"
                               "--model" "sonnet-4.6"
                               "--memory-store" "in-memory"
@@ -56,14 +57,14 @@
       (is (= :sonnet-4.6 (:model-key @captured)))
       (is (= {:store-provider "in-memory"} (:memory-runtime-opts @captured)))
       (is (= {:llm-stream-idle-timeout-ms 90000} (:session-config @captured)))
-      (is (= {:rpc-trace-file "/tmp/rpc.ndedn"} (:opts @captured)))
+      (is (= "/tmp/rpc.ndedn" (:rpc-trace-file @captured)))
       (is (= {:server 7888} (:stopped @captured))))))
 
-(deftest run-tui-session-delegates-to-app-runtime-test
+(deftest run-tui-session-delegates-to-app-runtime-component-test
   (let [captured (atom nil)]
-    (with-redefs [session-app/start-nrepl! (fn [port] {:server port})
-                  session-app/stop-nrepl! (fn [server] (swap! captured assoc :stopped server))
-                  session-app/start-tui-runtime! (fn [start-fn model-key memory-runtime-opts session-config]
+    (with-redefs [app-runtime/start-nrepl! (fn [port] {:server port})
+                  app-runtime/stop-nrepl! (fn [server] (swap! captured assoc :stopped server))
+                  app-runtime/start-tui-runtime! (fn [start-fn model-key memory-runtime-opts session-config]
                                                                 (reset! captured {:start-fn start-fn
                                                                                   :model-key model-key
                                                                                   :memory-runtime-opts memory-runtime-opts
@@ -79,11 +80,11 @@
       (is (= {:llm-stream-idle-timeout-ms 42000} (:session-config @captured)))
       (is (= {:server 7777} (:stopped @captured))))))
 
-(deftest run-console-session-delegates-to-app-runtime-test
+(deftest run-console-session-delegates-to-app-runtime-component-test
   (let [captured (atom nil)]
-    (with-redefs [session-app/start-nrepl! (fn [port] {:server port})
-                  session-app/stop-nrepl! (fn [server] (swap! captured assoc :stopped server))
-                  session-app/run-session (fn [model-key memory-runtime-opts session-config]
+    (with-redefs [app-runtime/start-nrepl! (fn [port] {:server port})
+                  app-runtime/stop-nrepl! (fn [server] (swap! captured assoc :stopped server))
+                  app-runtime/run-session (fn [model-key memory-runtime-opts session-config]
                                             (reset! captured {:model-key model-key
                                                               :memory-runtime-opts memory-runtime-opts
                                                               :session-config session-config}))]

@@ -1,12 +1,14 @@
-(ns psi.agent-session.app-runtime
-  "Agent session application runtime for console, TUI, and RPC interfaces.
+(ns psi.app-runtime
+  "Agent session application runtime for console and TUI execution.
+
+   This namespace owns live session startup/state for interactive runtimes.
+   RPC transport concerns live in `psi.rpc`.
 
    Usage:
      clojure -M:run
      clojure -M:run --model sonnet-4.6
      clojure -M:run --log-level DEBUG
      clojure -M:run --tui
-     clojure -M:run --rpc-edn         # EDN-lines RPC on stdin/stdout
      clojure -M:run --nrepl            # random port
      clojure -M:run --nrepl 7888       # specific port
      clojure -M:run --tui --nrepl      # TUI + nREPL
@@ -35,9 +37,9 @@
      PSI_MEMORY_RETENTION_DELTAS
 
    nREPL introspection (from a connected REPL):
-     @psi.agent-session.app-runtime/session-state  — live session context
+     @psi.app-runtime/session-state  — live session context
      (require '[psi.agent-session.core :as s])
-     (s/query-in (:ctx @psi.agent-session.app-runtime/session-state)
+     (s/query-in (:ctx @psi.app-runtime/session-state)
        [:psi.agent-session/phase :psi.agent-session/session-id])
 
    Introspection (plain mode only):
@@ -62,7 +64,6 @@
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.prompt-templates :as pt]
    [psi.agent-session.config-resolution :as config-res]
-   [psi.agent-session.rpc :as rpc]
    [psi.agent-session.skills :as skills]
    [psi.agent-session.session :as session-data]
    [psi.agent-session.system-prompt :as sys-prompt]
@@ -419,7 +420,7 @@ Available: " (str/join ", " (map name (keys models/all-models))))
     (assoc (startup-rehydrate-from-current-session! ctx sid ai-ctx ai-model)
            :session-id sid)))
 
-(defn- create-runtime-session-context
+(defn create-runtime-session-context
   "Create a live session context with runtime/session state prepared, but not bootstrapped.
 
    Options:
@@ -464,7 +465,7 @@ Available: " (str/join ", " (map name (keys models/all-models))))
      :cwd        cwd
      :session-id session-id}))
 
-(defn- bootstrap-runtime-session!
+(defn bootstrap-runtime-session!
   "Bootstrap a live session context shared by CLI/TUI/RPC modes.
 
    Calling forms:
@@ -831,85 +832,4 @@ Available: " (str/join ", " (map name (keys models/all-models))))
                      :event-queue          event-queue
                      :alt-screen           false}))))
 
-;; ============================================================
-;; Session interface entry points (used by psi.main)
-;; ============================================================
-
-(defn start-rpc-runtime!
-  "Run RPC EDN transport bound to a live AgentSession context.
-
-   Uses the same session bootstrap path as console/TUI so RPC prompts have
-   system prompt, tools, skills, templates, and extensions loaded.
-
-   In rpc-edn mode, reserve stdout strictly for protocol frames and route
-   incidental println/log output to stderr."
-  ([model-key]
-   (start-rpc-runtime! model-key {} {} {}))
-  ([model-key memory-runtime-opts]
-   (start-rpc-runtime! model-key memory-runtime-opts {} {}))
-  ([model-key memory-runtime-opts session-config]
-   (start-rpc-runtime! model-key memory-runtime-opts session-config {}))
-  ([model-key memory-runtime-opts session-config {:keys [rpc-trace-file]}]
-   (let [protocol-out       *out*
-         original-systemout System/out]
-     (try
-       ;; In rpc-edn mode, stdout is protocol-only. Force any direct System/out
-       ;; writes (including background threads and library logging) onto stderr.
-       (System/setOut (java.io.PrintStream. System/err true))
-       (binding [*out* *err*]
-         (let [ai-model      (resolve-model model-key)
-               event-queue   (java.util.concurrent.LinkedBlockingQueue.)
-               {:keys [ctx oauth-ctx cwd session-id]}
-               (create-runtime-session-context ai-model {:event-queue event-queue
-                                                         :session-config session-config
-                                                         :ui-type :emacs})
-               _             (bootstrap-runtime-session! ctx session-id ai-model {:memory-runtime-opts memory-runtime-opts
-                                                                                   :cwd cwd})
-               trace-file*   (when-not (str/blank? rpc-trace-file)
-                               rpc-trace-file)
-               _             (dispatch/dispatch! ctx :session/set-rpc-trace {:session-id session-id :enabled? (boolean trace-file*) :file trace-file*} {:origin :core})
-               trace-lock    (Object.)
-               trace-fn      (fn [{:keys [dir raw frame parse-error]}]
-                               (try
-                                 (let [cfg      (or (sa/rpc-trace-state-in ctx) {})
-                                       enabled? (boolean (:enabled? cfg))
-                                       path     (:file cfg)]
-                                   (when (and enabled?
-                                              (string? path)
-                                              (not (str/blank? path)))
-                                     (io/make-parents path)
-                                     (let [entry (cond-> {:ts (str (java.time.Instant/now))
-                                                          :dir dir
-                                                          :raw raw}
-                                                   (map? frame) (assoc :frame frame)
-                                                   (and (string? parse-error)
-                                                        (not (str/blank? parse-error)))
-                                                   (assoc :parse-error parse-error))]
-                                       (locking trace-lock
-                                         (spit path (str (pr-str entry) "\n") :append true)))))
-                                 (catch Throwable t
-                                   (timbre/warn t "Failed to write rpc trace event"))))
-               focus-atom    (atom session-id)
-               state         (atom {:handshake-server-info-fn (fn [] (assoc (rpc/session->handshake-server-info ctx @focus-atom)
-                                                                            :ui-type :emacs))
-                                    :handshake-context-updated-payload-fn (fn [] {:active-session-id @focus-atom
-                                                                                  :sessions []})
-                                    :focus-session-id* focus-atom
-                                    :subscribed-topics #{}
-                                    :rpc-ai-model ai-model
-                                    :on-new-session! (fn []
-                                                       (let [source-session-id @focus-atom
-                                                             result             (start-new-session-with-startup! ctx source-session-id nil ai-model)]
-                                                         (reset! focus-atom (:session-id result))
-                                                         result))})
-               request-handler (rpc/make-session-request-handler ctx)]
-           (reset! session-state {:ctx ctx
-                                  :ai-model ai-model
-                                  :oauth-ctx oauth-ctx
-                                  :nrepl-runtime-atom nrepl-runtime})
-           (rpc/run-stdio-loop! {:request-handler request-handler
-                                 :state state
-                                 :out protocol-out
-                                 :trace-fn trace-fn})))
-       (finally
-         (System/setOut original-systemout))))))
+;; RPC runtime moved to psi.rpc.
