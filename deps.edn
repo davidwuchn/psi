@@ -20,24 +20,28 @@
         psi/system-bootstrap                          {:local/root "components/system-bootstrap"}}
  :aliases
  {:dev   {:extra-paths ["dev"]}
-  :run   {:extra-paths ["components/agent-session/src"
+  :run   {:extra-paths ["bases/main/src"
+                        "components/agent-session/src"
                         "components/agent-core/src"
                         "components/ai/src"
                         "components/engine/src"
                         "components/query/src"
+                        "components/tui/src"
                         "extensions/src"]
           :extra-deps  {nrepl/nrepl {:mvn/version "1.5.1"}}
           :jvm-opts    ["--enable-native-access=ALL-UNNAMED"]
-          :main-opts   ["-m" "psi.agent-session.main"]}
-  :psi   {:extra-paths ["components/agent-session/src"
+          :main-opts   ["-m" "psi.main"]}
+  :psi   {:extra-paths ["bases/main/src"
+                        "components/agent-session/src"
                         "components/agent-core/src"
                         "components/ai/src"
                         "components/engine/src"
                         "components/query/src"
+                        "components/tui/src"
                         "extensions/src"]
           :extra-deps  {nrepl/nrepl {:mvn/version "1.5.1"}}
           :jvm-opts    ["--enable-native-access=ALL-UNNAMED"]
-          :main-opts   ["-m" "psi.agent-session.main"]}
+          :main-opts   ["-m" "psi.main"]}
   :nrepl {:extra-deps {nrepl/nrepl {:mvn/version "1.5.1"}}}
   :fmt   {:extra-deps {dev.weavejester/cljfmt {:mvn/version "0.13.1"}}
           :exec-fn    cljfmt.main/check
@@ -45,6 +49,7 @@
                                "deps.edn"
                                ".lsp/config.edn"
                                ".psi/startup-prompts.edn"
+                               "bases"
                                "components"
                                "extensions"
                                "spec"
@@ -60,6 +65,7 @@
                        "deps.edn"
                        ".lsp/config.edn"
                        ".psi/startup-prompts.edn"
+                       "bases"
                        "components"
                        "extensions"
                        "spec"
@@ -67,6 +73,8 @@
                        "tests.edn"
                        "extensions/tests.edn"]}
   :test  {:extra-paths ["test-support"
+                        "bases/main/test"
+                        "bases/main/src"
                         "components/ai/test"
                         "components/query/test"
                         "components/history/test"

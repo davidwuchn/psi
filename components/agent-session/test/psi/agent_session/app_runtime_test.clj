@@ -1,4 +1,4 @@
-(ns psi.agent-session.main-test
+(ns psi.agent-session.app-runtime-test
   (:require
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
@@ -8,7 +8,7 @@
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extensions :as ext]
-   [psi.agent-session.main :as main]
+   [psi.agent-session.app-runtime :as app-runtime]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.prompt-templates :as pt]
@@ -64,7 +64,7 @@
 
 (defn- with-main-bootstrap-stubs
   [f]
-  (with-redefs [psi.agent-session.main/resolve-model
+  (with-redefs [psi.agent-session.app-runtime/resolve-model
                 (fn [_]
                   {:provider           :anthropic
                    :id                 "test-model"
@@ -83,7 +83,7 @@
     (f)))
 
 (deftest run-session-initializes-session-file-test
-  (let [orig-state @main/session-state]
+  (let [orig-state @app-runtime/session-state]
     (try
       (with-main-bootstrap-stubs
         (fn []
@@ -92,18 +92,18 @@
                                                    (if (= 1 (swap! calls inc))
                                                      "/quit"
                                                      nil)))]
-            (main/run-session :ignored)
-            (let [ctx        (:ctx @main/session-state)
+            (app-runtime/run-session :ignored)
+            (let [ctx        (:ctx @app-runtime/session-state)
                   session-id (active-session-id ctx)
                   sd         (ss/get-session-data-in ctx session-id)]
               (is (some? ctx))
               (is (string? (:session-file sd)))
               (is (= :console (:ui-type sd)))))))
       (finally
-        (reset! main/session-state orig-state)))))
+        (reset! app-runtime/session-state orig-state)))))
 
 (deftest run-session-journals-command-inputs-test
-  (let [orig-state @main/session-state]
+  (let [orig-state @app-runtime/session-state]
     (try
       (with-main-bootstrap-stubs
         (fn []
@@ -113,8 +113,8 @@
                                                      1 "/history"
                                                      2 "/quit"
                                                      nil)))]
-            (main/run-session :ignored)
-            (let [ctx        (:ctx @main/session-state)
+            (app-runtime/run-session :ignored)
+            (let [ctx        (:ctx @app-runtime/session-state)
                   session-id (active-session-id ctx)
                   msg-texts  (->> (persist/all-entries-in ctx session-id)
                                   (filter #(= :message (:kind %)))
@@ -123,10 +123,10 @@
               (is (contains? msg-texts "/history"))
               (is (contains? msg-texts "/quit"))))))
       (finally
-        (reset! main/session-state orig-state)))))
+        (reset! app-runtime/session-state orig-state)))))
 
-(deftest run-tui-session-with-interface-passes-current-session-file-test
-  (let [orig-state @main/session-state
+(deftest start-tui-runtime-passes-current-session-file-test
+  (let [orig-state @app-runtime/session-state
         captured   (atom nil)]
     (try
       (with-main-bootstrap-stubs
@@ -134,25 +134,25 @@
           (let [mock-tui-start! (fn [_model-name _run-agent-fn opts]
                                   (reset! captured opts)
                                   :ok)]
-            (is (= :ok (main/run-tui-session-with-interface! mock-tui-start! :ignored)))
+            (is (= :ok (app-runtime/start-tui-runtime! mock-tui-start! :ignored {} {})))
             (is (string? (:current-session-file @captured)))
             (is (fn? (:dispatch-fn @captured)))
             (is (fn? (:on-interrupt-fn! @captured)))
-            (let [ctx (:ctx @main/session-state)]
+            (let [ctx (:ctx @app-runtime/session-state)]
               (is (= :tui (:ui-type (ss/get-session-data-in ctx (active-session-id ctx)))))))))
       (finally
-        (reset! main/session-state orig-state)))))
+        (reset! app-runtime/session-state orig-state)))))
 
-(deftest run-tui-dispatch-with-interface-journals-command-input-test
-  (let [orig-state @main/session-state]
+(deftest start-tui-runtime-journals-command-input-test
+  (let [orig-state @app-runtime/session-state]
     (try
       (with-main-bootstrap-stubs
         (fn []
           (let [mock-tui-start! (fn [_model-name _run-agent-fn opts]
                                   ((:dispatch-fn opts) "/history")
                                   :ok)]
-            (is (= :ok (main/run-tui-session-with-interface! mock-tui-start! :ignored)))
-            (let [ctx        (:ctx @main/session-state)
+            (is (= :ok (app-runtime/start-tui-runtime! mock-tui-start! :ignored {} {})))
+            (let [ctx        (:ctx @app-runtime/session-state)
                   session-id (active-session-id ctx)
                   msg-texts  (->> (persist/all-entries-in ctx session-id)
                                   (filter #(= :message (:kind %)))
@@ -160,10 +160,10 @@
                                   set)]
               (is (contains? msg-texts "/history"))))))
       (finally
-        (reset! main/session-state orig-state)))))
+        (reset! app-runtime/session-state orig-state)))))
 
-(deftest run-rpc-session-initializes-session-file-test
-  (let [orig-state @main/session-state
+(deftest start-rpc-runtime-initializes-session-file-test
+  (let [orig-state @app-runtime/session-state
         captured   (atom nil)]
     (try
       (with-main-bootstrap-stubs
@@ -172,8 +172,8 @@
                         (fn [opts]
                           (reset! captured opts)
                           :ok)]
-            (#'main/run-rpc-edn-session! :ignored)
-            (let [ctx        (:ctx @main/session-state)
+            (app-runtime/start-rpc-runtime! :ignored)
+            (let [ctx        (:ctx @app-runtime/session-state)
                   session-id (active-session-id ctx)
                   sd         (ss/get-session-data-in ctx session-id)
                   hs         (:handshake-server-info-fn @(:state @captured))]
@@ -184,10 +184,10 @@
               (is (= :emacs (:ui-type (hs))))
               (is (fn? (:request-handler @captured)))))))
       (finally
-        (reset! main/session-state orig-state)))))
+        (reset! app-runtime/session-state orig-state)))))
 
-(deftest run-rpc-session-enables-rpc-trace-config-test
-  (let [orig-state @main/session-state
+(deftest start-rpc-runtime-enables-rpc-trace-config-test
+  (let [orig-state @app-runtime/session-state
         captured   (atom nil)
         trace-file (str (java.nio.file.Files/createTempFile
                          "psi-rpc-trace-test-"
@@ -200,8 +200,8 @@
                         (fn [opts]
                           (reset! captured opts)
                           :ok)]
-            (#'main/run-rpc-edn-session! :ignored {} {} {:rpc-trace-file trace-file})
-            (let [ctx         (:ctx @main/session-state)
+            (app-runtime/start-rpc-runtime! :ignored {} {} {:rpc-trace-file trace-file})
+            (let [ctx         (:ctx @app-runtime/session-state)
                   trace-state (ss/get-state-value-in ctx (ss/state-path :rpc-trace))
                   trace-fn    (:trace-fn @captured)]
               (is (fn? trace-fn))
@@ -225,7 +225,7 @@
                 (is (= before-disable
                        (count (str/split-lines (slurp trace-file))))))))))
       (finally
-        (reset! main/session-state orig-state)))))
+        (reset! app-runtime/session-state orig-state)))))
 
 (deftest agent-messages->tui-resume-state-rehydrates-tool-rows-test
   (let [messages [{:role "user"
@@ -244,7 +244,7 @@
                   {:role "assistant"
                    :content [{:type :text :text "done"}]}]
         {:keys [messages tool-calls tool-order]}
-        (#'main/agent-messages->tui-resume-state messages)]
+        (#'app-runtime/agent-messages->tui-resume-state messages)]
     (is (= [{:role :user :text "read file"}
             {:role :assistant :text "Sure"}
             {:role :assistant :text "done"}]
@@ -270,7 +270,7 @@
                    :content {:kind :structured
                              :blocks [{:kind :text :text "done"}]}}]
         {:keys [messages tool-calls tool-order]}
-        (#'main/agent-messages->tui-resume-state messages)]
+        (#'app-runtime/agent-messages->tui-resume-state messages)]
     (is (= [{:role :assistant :text "planning"}
             {:role :assistant :text "done"}]
            messages))
@@ -279,53 +279,56 @@
     (is (= "{:path \"README.md\"}"
            (get-in tool-calls ["call-2" :args])))))
 
-(deftest memory-runtime-opts-from-args-test
+;; moved to psi.main
+#_(deftest memory-runtime-opts-from-args-test
   (is (= {:store-provider "in-memory"
           :auto-store-fallback? false
           :history-commit-limit 99
           :retention-snapshots 12
           :retention-deltas 34}
-         (#'main/memory-runtime-opts-from-args
+         (#'app-runtime/memory-runtime-opts-from-args
           ["--memory-store" "in-memory"
            "--memory-store-fallback" "off"
            "--memory-history-limit" "99"
            "--memory-retention-snapshots" "12"
            "--memory-retention-deltas" "34"])))
   (is (= {}
-         (#'main/memory-runtime-opts-from-args
+         (#'app-runtime/memory-runtime-opts-from-args
           ["--memory-history-limit" "not-a-number"
            "--memory-store-fallback" "maybe"]))))
 
-(deftest session-runtime-config-from-args-test
+;; moved to psi.main
+#_(deftest session-runtime-config-from-args-test
   (testing "CLI flag sets timeout"
     (is (= {:llm-stream-idle-timeout-ms 90000}
-           (#'main/session-runtime-config-from-args
+           (#'app-runtime/session-runtime-config-from-args
             ["--llm-idle-timeout-ms" "90000"]))))
 
   (testing "env var is used when CLI flag is absent"
-    (with-redefs [main/llm-idle-timeout-ms-from-env (fn [] 42000)]
+    (with-redefs [app-runtime/llm-idle-timeout-ms-from-env (fn [] 42000)]
       (is (= {:llm-stream-idle-timeout-ms 42000}
-             (#'main/session-runtime-config-from-args [])))))
+             (#'app-runtime/session-runtime-config-from-args [])))))
 
   (testing "CLI flag wins over env var"
-    (with-redefs [main/llm-idle-timeout-ms-from-env (fn [] 42000)]
+    (with-redefs [app-runtime/llm-idle-timeout-ms-from-env (fn [] 42000)]
       (is (= {:llm-stream-idle-timeout-ms 90000}
-             (#'main/session-runtime-config-from-args
+             (#'app-runtime/session-runtime-config-from-args
               ["--llm-idle-timeout-ms" "90000"])))))
 
   (testing "invalid CLI value does not fall back to env"
-    (with-redefs [main/llm-idle-timeout-ms-from-env (fn [] 42000)]
+    (with-redefs [app-runtime/llm-idle-timeout-ms-from-env (fn [] 42000)]
       (is (= {}
-             (#'main/session-runtime-config-from-args
+             (#'app-runtime/session-runtime-config-from-args
               ["--llm-idle-timeout-ms" "not-a-number"]))))))
 
-(deftest rpc-trace-file-from-args-test
+;; moved to psi.main
+#_(deftest rpc-trace-file-from-args-test
   (is (= "/tmp/rpc-trace.ndedn"
-         (#'main/rpc-trace-file-from-args
+         (#'app-runtime/rpc-trace-file-from-args
           ["--rpc-trace-file" "/tmp/rpc-trace.ndedn"])))
-  (is (nil? (#'main/rpc-trace-file-from-args
+  (is (nil? (#'app-runtime/rpc-trace-file-from-args
              ["--rpc-trace-file" "   "])))
-  (is (nil? (#'main/rpc-trace-file-from-args []))))
+  (is (nil? (#'app-runtime/rpc-trace-file-from-args []))))
 
 (deftest bootstrap-runtime-session-initial-context-index-has-single-session-test
   (with-redefs [oauth/create-context (fn [] nil)
@@ -339,7 +342,7 @@
                 bootstrap/bootstrap-in!
                 (fn [_ctx _session-id _]
                   {:extension-errors [] :extension-loaded-count 0})]
-    (let [{:keys [ctx]} (#'main/bootstrap-runtime-session!
+    (let [{:keys [ctx]} (#'app-runtime/bootstrap-runtime-session!
                          {:provider :anthropic
                           :id "test-model"
                           :name "Test Model"
@@ -367,7 +370,7 @@
                   bootstrap/bootstrap-in!
                   (fn [_ctx _session-id _]
                     {:extension-errors [] :extension-loaded-count 0})]
-      (let [{:keys [ctx]} (#'main/bootstrap-runtime-session!
+      (let [{:keys [ctx]} (#'app-runtime/bootstrap-runtime-session!
                            {:provider :anthropic
                             :id "test-model"
                             :name "Test Model"
@@ -393,7 +396,7 @@
                 bootstrap/bootstrap-in!
                 (fn [_ctx _session-id _]
                   {:extension-errors [] :extension-loaded-count 0})]
-    (let [{:keys [ctx]} (#'main/bootstrap-runtime-session!
+    (let [{:keys [ctx]} (#'app-runtime/bootstrap-runtime-session!
                          {:provider :anthropic
                           :id "test-model"
                           :name "Test Model"
@@ -407,9 +410,9 @@
       (is (str/includes? prompt "- agent-session (ops=")))))
 
 (deftest bootstrap-runtime-session-wires-nrepl-runtime-atom-test
-  (let [orig @main/nrepl-runtime]
+  (let [orig @app-runtime/nrepl-runtime]
     (try
-      (reset! main/nrepl-runtime {:host "localhost"
+      (reset! app-runtime/nrepl-runtime {:host "localhost"
                                   :port 8999
                                   :endpoint "localhost:8999"})
       (with-redefs [oauth/create-context (fn [] nil)
@@ -423,7 +426,7 @@
                     bootstrap/bootstrap-in!
                     (fn [_ctx _session-id _]
                       {:extension-errors [] :extension-loaded-count 0})]
-        (let [{:keys [ctx]} (#'main/bootstrap-runtime-session!
+        (let [{:keys [ctx]} (#'app-runtime/bootstrap-runtime-session!
                              {:provider :anthropic
                               :id "test-model"
                               :name "Test Model"
@@ -436,10 +439,10 @@
           (is (= 8999 (:psi.runtime/nrepl-port result)))
           (is (= "localhost:8999" (:psi.runtime/nrepl-endpoint result)))))
       (finally
-        (reset! main/nrepl-runtime orig)))))
+        (reset! app-runtime/nrepl-runtime orig)))))
 
 (deftest nrepl-runtime-eql-reflects-live-start-stop-test
-  (let [orig-runtime @main/nrepl-runtime
+  (let [orig-runtime @app-runtime/nrepl-runtime
         orig-user-dir (System/getProperty "user.dir")
         tmp-dir-file (java.io.File.
                       (str (System/getProperty "java.io.tmpdir")
@@ -449,13 +452,13 @@
         tmp-dir (.getAbsolutePath tmp-dir-file)]
     (try
       (System/setProperty "user.dir" tmp-dir)
-      (let [srv (#'main/start-nrepl! 0)
+      (let [srv (#'app-runtime/start-nrepl! 0)
             cwd (System/getProperty "user.dir")]
         (try
           (is (pos-int? (:port srv)))
           (let [[ctx _] (session/create-context {:persist? false
                                                  :cwd cwd
-                                                 :nrepl-runtime-atom main/nrepl-runtime})
+                                                 :nrepl-runtime-atom app-runtime/nrepl-runtime})
                 result (session/query-in ctx [:psi.runtime/nrepl-host
                                               :psi.runtime/nrepl-port
                                               :psi.runtime/nrepl-endpoint])
@@ -467,10 +470,10 @@
             (is (= (:port srv) (:psi.runtime/nrepl-port result)))
             (is (= expected-endpoint (:psi.runtime/nrepl-endpoint result))))
           (finally
-            (#'main/stop-nrepl! srv))))
+            (#'app-runtime/stop-nrepl! srv))))
       (let [[ctx-after-stop _] (session/create-context {:persist? false
                                                         :cwd (System/getProperty "user.dir")
-                                                        :nrepl-runtime-atom main/nrepl-runtime})
+                                                        :nrepl-runtime-atom app-runtime/nrepl-runtime})
             result-after-stop (session/query-in ctx-after-stop
                                                 [:psi.runtime/nrepl-host
                                                  :psi.runtime/nrepl-port
@@ -480,7 +483,7 @@
         (is (nil? (:psi.runtime/nrepl-endpoint result-after-stop))))
       (finally
         (System/setProperty "user.dir" orig-user-dir)
-        (reset! main/nrepl-runtime orig-runtime)))))
+        (reset! app-runtime/nrepl-runtime orig-runtime)))))
 
 (deftest bootstrap-runtime-session-applies-project-preferences-test
   (let [cwd (str (System/getProperty "java.io.tmpdir") "/psi-main-project-prefs-" (java.util.UUID/randomUUID))
@@ -501,7 +504,7 @@
                   bootstrap/bootstrap-in!
                   (fn [_ctx _session-id _]
                     {:extension-errors [] :extension-loaded-count 0})]
-      (let [{:keys [ctx]} (#'main/bootstrap-runtime-session!
+      (let [{:keys [ctx]} (#'app-runtime/bootstrap-runtime-session!
                            {:provider :anthropic
                             :id "claude-sonnet-4-6"
                             :name "Claude Sonnet 4.6"
@@ -532,7 +535,7 @@
                   bootstrap/bootstrap-in!
                   (fn [_ctx _session-id _]
                     {:extension-errors [] :extension-loaded-count 0})]
-      (let [{:keys [ctx]} (#'main/bootstrap-runtime-session!
+      (let [{:keys [ctx]} (#'app-runtime/bootstrap-runtime-session!
                            {:provider :anthropic
                             :id "claude-sonnet-4-6"
                             :name "Claude Sonnet 4.6"

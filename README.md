@@ -21,7 +21,7 @@ Define a user alias in `~/.clojure/deps.edn` that points to your local psi clone
 ```clojure
 {:aliases
  {:psi {:replace-deps {psi/psi {:local/root "/path/to/your/psi-main"}}
-        :main-opts ["-m" "psi.agent-session.main"]}}}
+        :main-opts ["-m" "psi.main"]}}}
 ```
 
 Then run psi with that alias:

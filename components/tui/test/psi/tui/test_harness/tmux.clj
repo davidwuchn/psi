@@ -7,7 +7,7 @@
    [psi.tui.ansi :as ansi]))
 
 (def default-launch-command
-  "exec clojure -Sdeps '{:deps {psi/psi-app {:local/root \"components/psi-app\"}}}' -M -m psi.app.main --tui")
+  "exec clojure -M:run --tui")
 
 (def default-startup-timeout-ms 120000)
 (def default-step-timeout-ms 15000)
