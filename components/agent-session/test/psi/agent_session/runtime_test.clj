@@ -135,7 +135,6 @@
   (let [extension-events (atom [])
         sid              "runtime-event"
         ctx              {:cwd "/tmp/psi-runtime-event"
-                          :target-session-id sid
                           :recursion-ctx (recursion/create-context)
                           :extension-registry {:state (atom {:registration-order []
                                                              :extensions {}})}

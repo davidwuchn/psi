@@ -87,7 +87,6 @@
                            (executor/run-tool-call-through-runtime-effect!
                             ctx session-id tool-call parsed-args progress-queue))
         ctx           {:state*                       state*
-                       :target-session-id            sid
                        :sc-env                       sc-env
                        :config                       {}
                        :extension-registry           ext-reg
