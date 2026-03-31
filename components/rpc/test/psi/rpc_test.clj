@@ -703,7 +703,7 @@
                                         :err err
                                         :state state
                                         :request-handler handler
-                                        :handshake-server-info-fn (fn [_state] (rpc/session->handshake-server-info ctx sid))
+                                        :handshake-server-info-fn (fn [_state] (rpc.events/session->handshake-server-info ctx sid))
                                         :handshake-context-updated-payload-fn (fn [_state] {:active-session-id sid
                                                                                              :sessions []})})
           [context-event frame] (parse-frames (->> (str/split-lines (str out))
@@ -732,7 +732,7 @@
                                         :err err
                                         :state state
                                         :request-handler handler
-                                        :handshake-server-info-fn (fn [_state] (assoc (rpc/session->handshake-server-info ctx sid)
+                                        :handshake-server-info-fn (fn [_state] (assoc (rpc.events/session->handshake-server-info ctx sid)
                                                                                       :ui-type :emacs))
                                         :handshake-context-updated-payload-fn (fn [_state] {:active-session-id sid
                                                                                              :sessions []})})

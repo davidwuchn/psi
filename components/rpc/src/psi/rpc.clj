@@ -10,7 +10,6 @@
    the stable facade while allowing REPL reloads of implementation namespaces to
    be observed through the facade on the next call."
   (:require
-   [psi.rpc.events :as rpc.events]
    [psi.rpc.runtime :as rpc.runtime]
    [psi.rpc.session :as rpc.session]
    [psi.rpc.transport :as rpc.transport]))
@@ -34,28 +33,6 @@
 (defn run-stdio-loop!
   [opts]
   (rpc.transport/run-stdio-loop! opts))
-
-(defn footer-updated-payload
-  ([ctx]
-   (rpc.events/footer-updated-payload ctx))
-  ([ctx session-id]
-   (rpc.events/footer-updated-payload ctx session-id)))
-
-(defn session-updated-payload
-  ([ctx]
-   (rpc.events/session-updated-payload ctx))
-  ([ctx session-id]
-   (rpc.events/session-updated-payload ctx session-id)))
-
-(defn progress-event->rpc-event
-  [progress-event]
-  (rpc.events/progress-event->rpc-event progress-event))
-
-(defn session->handshake-server-info
-  ([ctx]
-   (rpc.events/session->handshake-server-info ctx))
-  ([ctx session-id]
-   (rpc.events/session->handshake-server-info ctx session-id)))
 
 (defn make-session-request-handler
   ([ctx]

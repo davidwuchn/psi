@@ -7,6 +7,7 @@
    [psi.agent-session.core :as session]
    [psi.agent-session.runtime :as runtime]
    [psi.rpc :as rpc]
+   [psi.rpc.events :as rpc.events]
    [psi.rpc.state :as rpc.state]))
 
 (defn- run-loop
@@ -109,7 +110,7 @@
                             :request-handler handler
                             :handshake-server-info-fn (fn [_state]
                                                         (reset! right-called? true)
-                                                        (assoc (rpc/session->handshake-server-info ctx sid)
+                                                        (assoc (rpc.events/session->handshake-server-info ctx sid)
                                                                :ui-type :emacs))
                             :handshake-context-updated-payload-fn (fn [_state]
                                                                     {:active-session-id sid
