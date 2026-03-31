@@ -25,7 +25,7 @@
   (:pending-login (or (sa/oauth-projection-in ctx) {})))
 
 (defn handle-login-begin!
-  [{:keys [ctx request params state session-deps current-ai-model]}]
+  [{:keys [ctx request params state session-id session-deps current-ai-model]}]
   (let [oauth-ctx (:oauth-ctx ctx)]
     (when-not oauth-ctx
       (throw (ex-info "OAuth not available."
@@ -37,7 +37,7 @@
           _              (when (= ::invalid provider-param)
                            (throw (ex-info "invalid request parameter :provider: string or keyword"
                                            {:error-code "request/invalid-params"})))
-          ai-model       (current-ai-model ctx session-deps state)
+          ai-model       (current-ai-model ctx session-deps session-id)
           _              (when (and (nil? provider-param) (nil? ai-model))
                            (throw (ex-info "provider is required when session model is not configured"
                                            {:error-code "request/invalid-params"})))
@@ -102,9 +102,8 @@
       (emit/emit-assistant-text! emit! "OAuth not available."))))
 
 (defn handle-login-start-command!
-  [{:keys [ctx state emit-frame! request-id cmd-result emit! start-daemon-thread!]}]
-  (let [session-id    (events/focused-session-id ctx state)
-        provider-id   (get-in cmd-result [:provider :id])
+  [{:keys [ctx state session-id emit-frame! request-id cmd-result emit! start-daemon-thread!]}]
+  (let [provider-id   (get-in cmd-result [:provider :id])
         provider-name (or (get-in cmd-result [:provider :name])
                           (some-> provider-id name)
                           "provider")

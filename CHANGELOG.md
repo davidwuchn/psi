@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-03-31
+
+- λ Δ Removed RPC dynamic request session routing:
+  - deleted `psi.rpc.transport/*request-session-id*`
+  - request handler now resolves target `session-id` once and passes it explicitly through RPC handlers
+  - RPC event payload helpers no longer depend on ambient request session state
+  - handshake bootstrap context now reuses canonical `context/updated` payload shaping
+  - removed `psi.rpc.events/focused-session-id`
+- ✓ Verification:
+  - targeted RPC namespace tests: 46 tests / 408 assertions / 0 failures / 0 errors
+
 ## 2026-03-28
 
 - λ Δ Completed the Emacs UI region-identity migration for transcript/projection/input tracking:

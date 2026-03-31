@@ -14,11 +14,10 @@
    [psi.rpc.transport :refer [response-frame]]))
 
 (defn run-prompt-async!
-  [{:keys [ctx request emit-frame! state session-deps current-ai-model effective-sync-on-git-head-change? start-daemon-thread! login-handle-start-command! login-pending-state login-complete-pending!]}]
+  [{:keys [ctx request emit-frame! state session-id session-deps current-ai-model effective-sync-on-git-head-change? start-daemon-thread! login-handle-start-command! login-pending-state login-complete-pending!]}]
   (let [message      (get-in request [:params :message])
         images       (get-in request [:params :images])
         request-id   (:id request)
-        session-id   (events/focused-session-id ctx state)
         _            (when-not session-id
                        (throw (ex-info "no target session available for prompt"
                                        {:error-code "request/not-found"})))
@@ -41,7 +40,7 @@
                                   :progress-q progress-q
                                   :thread-name "rpc-progress-loop"})]
                             (try
-                              (let [ai-model      (current-ai-model ctx session-deps state session-id)
+                              (let [ai-model      (current-ai-model ctx session-deps session-id)
                                     _             (when-not ai-model
                                                     (throw (ex-info "session model is not configured"
                                                                     {:error-code "request/invalid-params"})))
@@ -63,7 +62,7 @@
                                   (do
                                     (runtime/journal-user-message-in! ctx session-id message images)
                                     (if (= :login-start (:type cmd-result))
-                                      (login-handle-start-command! {:ctx ctx :state state :emit-frame! emit-frame! :request-id request-id :cmd-result cmd-result :emit! emit! :start-daemon-thread! start-daemon-thread!})
+                                      (login-handle-start-command! {:ctx ctx :state state :session-id session-id :emit-frame! emit-frame! :request-id request-id :cmd-result cmd-result :emit! emit! :start-daemon-thread! start-daemon-thread!})
                                       (do
                                         (when (= :new-session (:type cmd-result))
                                           (let [rehydrate (:rehydrate cmd-result)

@@ -10,13 +10,12 @@
    [psi.rpc.transport :refer [response-frame]]))
 
 (defn handle-frontend-action-result!
-  [{:keys [ctx request params state resolve-model]}]
+  [{:keys [ctx request params state session-id resolve-model]}]
   (let [request-id  (:request-id params)
         action-name (:action-name params)
         status      (:status params)
         value       (:value params)
-        emit!       (emit/make-request-emitter (:emit-frame! request) state (:id request))
-        session-id  (events/focused-session-id ctx state)]
+        emit!       (emit/make-request-emitter (:emit-frame! request) state (:id request))]
     (cond
       (= status "cancelled")
       (do

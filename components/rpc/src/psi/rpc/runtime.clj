@@ -46,14 +46,13 @@
   {:transport
    {:handshake-server-info-fn
     (fn [state]
-      (assoc (rpc.events/session->handshake-server-info
-              ctx
-              (rpc.events/focused-session-id ctx state))
-             :ui-type ui-type))
+      (let [session-id (rpc.state/focus-session-id state)]
+        (assoc (rpc.events/session->handshake-server-info ctx session-id)
+               :ui-type ui-type)))
     :handshake-context-updated-payload-fn
     (fn [state]
-      {:active-session-id (rpc.events/focused-session-id ctx state)
-       :sessions []})}
+      (let [session-id (rpc.state/focus-session-id state)]
+        (rpc.events/context-updated-payload ctx state session-id)))}
    :session
    {:rpc-ai-model ai-model
     :on-new-session! on-new-session!

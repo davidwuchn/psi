@@ -6,7 +6,7 @@
    [psi.agent-session.message-text :as message-text]
    [psi.agent-session.session-state :as ss]
    [psi.rpc.state :as rpc.state]
-   [psi.rpc.transport :refer [*request-session-id* default-session-id-in event-frame protocol-version]]))
+   [psi.rpc.transport :refer [default-session-id-in event-frame protocol-version]]))
 
 (def ^:private ui-state-path (ss/state-path :ui-state))
 
@@ -41,7 +41,7 @@
 
 (defn session->handshake-server-info
   ([ctx]
-   (session->handshake-server-info ctx (or *request-session-id* (default-session-id-in ctx))))
+   (session->handshake-server-info ctx (default-session-id-in ctx)))
   ([ctx session-id]
    (let [sd (ss/get-session-data-in ctx session-id)]
      {:protocol-version protocol-version
@@ -147,7 +147,7 @@
 
 (defn session-updated-payload
   ([ctx]
-   (session-updated-payload ctx (or *request-session-id* (default-session-id-in ctx))))
+   (session-updated-payload ctx (default-session-id-in ctx)))
   ([ctx session-id]
    (let [sd               (ss/get-session-data-in ctx session-id)
          model            (:model sd)
@@ -177,11 +177,6 @@
   [state session-id]
   (rpc.state/set-focus-session-id! state session-id))
 
-(defn focused-session-id
-  [ctx state]
-  (or *request-session-id*
-      (focus-session-id state)
-      (default-session-id-in ctx)))
 (defn context-updated-payload
   "Build the `context/updated` event payload from the current context session snapshot.
 
@@ -191,34 +186,31 @@
 
    Each session slot includes :id :name :worktree-path :is-streaming :is-active
    :parent-session-id and :created-at.
-   Sessions are ordered by updated-at ascending (oldest first → stable tree order).
-   Temporary 3-arity form reads a specific session-id explicitly."
-  ([ctx state]
-   (context-updated-payload ctx state (focused-session-id ctx state)))
-  ([ctx state session-id]
-   (let [active-id        (focus-session-id state)
-         sd               (ss/get-session-data-in ctx session-id)
-         current-id       (:session-id sd)
-         indexed-sessions (or (seq (ss/list-context-sessions-in ctx)) [])
-         sessions*        (if (seq indexed-sessions)
-                            (->> indexed-sessions
-                                 (sort-by :updated-at)
-                                 vec)
-                            [(select-keys sd [:session-id :session-name :worktree-path :parent-session-id :created-at])])
-         active-id*       (or active-id current-id)
-         slots            (mapv (fn [m]
-                                  {:id                (:session-id m)
-                                   :name              (:session-name m)
-                                   :worktree-path     (:worktree-path m)
-                                   :is-streaming      (boolean
-                                                       (and (= (:session-id m) current-id)
-                                                            (:is-streaming sd)))
-                                   :is-active         (= (:session-id m) active-id*)
-                                   :parent-session-id (:parent-session-id m)
-                                   :created-at        (:created-at m)})
-                                sessions*)]
-     {:active-session-id active-id*
-      :sessions          slots})))
+   Sessions are ordered by updated-at ascending (oldest first → stable tree order)."
+  [ctx state session-id]
+  (let [active-id        (focus-session-id state)
+        sd               (ss/get-session-data-in ctx session-id)
+        current-id       (:session-id sd)
+        indexed-sessions (or (seq (ss/list-context-sessions-in ctx)) [])
+        sessions*        (if (seq indexed-sessions)
+                           (->> indexed-sessions
+                                (sort-by :updated-at)
+                                vec)
+                           [(select-keys sd [:session-id :session-name :worktree-path :parent-session-id :created-at])])
+        active-id*       (or active-id current-id)
+        slots            (mapv (fn [m]
+                                 {:id                (:session-id m)
+                                  :name              (:session-name m)
+                                  :worktree-path     (:worktree-path m)
+                                  :is-streaming      (boolean
+                                                      (and (= (:session-id m) current-id)
+                                                           (:is-streaming sd)))
+                                  :is-active         (= (:session-id m) active-id*)
+                                  :parent-session-id (:parent-session-id m)
+                                  :created-at        (:created-at m)})
+                               sessions*)]
+    {:active-session-id active-id*
+     :sessions          slots}))
 
 (def footer-query
   [:psi.agent-session/cwd
@@ -293,9 +285,8 @@
       (str "?/" window suffix))))
 
 (defn- footer-path-line
-  [ctx d]
-  (let [session-id   (or *request-session-id* (default-session-id-in ctx))
-        cwd          (or (:psi.agent-session/cwd d)
+  [ctx session-id d]
+  (let [cwd          (or (:psi.agent-session/cwd d)
                          (ss/effective-cwd-in ctx session-id)
                          "")
         git-branch   (:psi.agent-session/git-branch d)
@@ -381,13 +372,14 @@
 
 (defn footer-updated-payload
   ([ctx]
-   (let [d (footer-data ctx)]
-     {:path-line   (footer-path-line ctx d)
+   (let [session-id (default-session-id-in ctx)
+         d          (footer-data ctx)]
+     {:path-line   (footer-path-line ctx session-id d)
       :stats-line  (footer-stats-line d)
       :status-line (footer-status-line (:psi.ui/statuses d))}))
   ([ctx session-id]
    (let [d (footer-data ctx session-id)]
-     {:path-line   (footer-path-line ctx d)
+     {:path-line   (footer-path-line ctx session-id d)
       :stats-line  (footer-stats-line d)
       :status-line (footer-status-line (:psi.ui/statuses d))})))
 

@@ -20,10 +20,8 @@
   (emit! "footer/updated" (events/footer-updated-payload ctx session-id)))
 
 (defn emit-context-updated!
-  ([emit! ctx state]
-   (emit! "context/updated" (events/context-updated-payload ctx state)))
-  ([emit! ctx state session-id]
-   (emit! "context/updated" (events/context-updated-payload ctx state session-id))))
+  [emit! ctx state session-id]
+  (emit! "context/updated" (events/context-updated-payload ctx state session-id)))
 
 (defn emit-session-snapshots!
   ([emit! ctx state session-id]
@@ -33,9 +31,7 @@
    (emit-session-updated! emit! ctx session-id)
    (emit-footer-updated! emit! ctx session-id)
    (when context?
-     (if context-session-id
-       (emit-context-updated! emit! ctx state context-session-id)
-       (emit-context-updated! emit! ctx state)))))
+     (emit-context-updated! emit! ctx state (or context-session-id session-id)))))
 
 (defn emit-session-resumed!
   [emit! {:keys [session-id session-file message-count]}]

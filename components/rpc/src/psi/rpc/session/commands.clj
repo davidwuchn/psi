@@ -132,14 +132,13 @@
       nil)))
 
 (defn run-command!
-  [{:keys [ctx request emit-frame! state session-deps current-ai-model start-daemon-thread! login-handler]}]
+  [{:keys [ctx request emit-frame! state session-id session-deps current-ai-model start-daemon-thread! login-handler]}]
   (let [text       (get-in request [:params :text])
         request-id (:id request)
         emit!      (emit/make-request-emitter emit-frame! state request-id)
-        ai-model   (current-ai-model ctx session-deps state)
+        ai-model   (current-ai-model ctx session-deps session-id)
         oauth-ctx  (:oauth-ctx ctx)
         trimmed    (str/trim text)
-        session-id (events/focused-session-id ctx state)
         cmd-result (commands/dispatch-in ctx session-id text {:oauth-ctx oauth-ctx
                                                               :ai-model ai-model
                                                               :supports-session-tree? false

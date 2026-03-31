@@ -12,7 +12,7 @@
 
 (defn handle-new-session!
   [{:keys [ctx request state on-new-session!]}]
-  (let [source-session-id (events/focused-session-id ctx state)
+  (let [source-session-id (events/focus-session-id state)
         [rehydrate new-sd]
         (if on-new-session!
           [(on-new-session! source-session-id) nil]
@@ -37,13 +37,13 @@
                                                        :session-file (:session-file sd)})))
 
 (defn handle-switch-session!
-  [{:keys [ctx request params state]}]
+  [{:keys [ctx request params state session-id]}]
   (if-let [sid (:session-id params)]
     (do
       (when-not (and (string? sid) (not (str/blank? sid)))
         (throw (ex-info "invalid request parameter :session-id: non-empty string"
                         {:error-code "request/invalid-params"})))
-      (let [source-session-id (events/focused-session-id ctx state)
+      (let [source-session-id session-id
             _    (session/ensure-session-loaded-in! ctx source-session-id sid)
             _    (events/set-focus-session-id! state sid)
             sd   (ss/get-session-data-in ctx sid)
@@ -67,7 +67,7 @@
       (when-not (.exists (io/file session-path))
         (throw (ex-info "session file not found"
                         {:error-code "request/not-found"})))
-      (let [current-sid (events/focused-session-id ctx state)
+      (let [current-sid session-id
             sd          (session/resume-session-in! ctx current-sid session-path)
             sid         (:session-id sd)
             _           (events/set-focus-session-id! state sid)
@@ -86,12 +86,12 @@
                                                               :session-file (:session-file sd)})))))
 
 (defn handle-fork!
-  [{:keys [ctx request params state]}]
+  [{:keys [ctx request params state session-id]}]
   (let [entry-id          (:entry-id params)
         _                 (when-not (and (string? entry-id) (not (str/blank? entry-id)))
                             (throw (ex-info "invalid request parameter :entry-id: non-empty entry id"
                                             {:error-code "request/invalid-params"})))
-        parent-session-id (events/focused-session-id ctx state)
+        parent-session-id session-id
         sd                (session/fork-session-in! ctx parent-session-id entry-id)
         sid               (:session-id sd)
         _                 (events/set-focus-session-id! state sid)

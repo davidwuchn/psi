@@ -67,6 +67,15 @@ Lint check: ✓
 
 `⚒ Δ Make session-id explicit on dispatch events`
 
+### Follow-up — RPC request session routing cleanup
+
+Completed:
+- removed RPC dynamic request-session binding (`psi.rpc.transport/*request-session-id*`)
+- request handler now resolves session-id once per targetable request
+- session-id is passed explicitly into RPC handlers/event payload builders
+- handshake bootstrap context now uses canonical `context-updated-payload`
+- `psi.rpc.events/focused-session-id` removed
+
 ## Active — Emacs UI tracking migration (offsets/ranges -> IDs + properties + markers)
 
 ### Current progress snapshot

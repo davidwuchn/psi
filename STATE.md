@@ -27,6 +27,7 @@ The refactor target is now implemented.
 **RPC**
 - RPC runtime state owns `focus-session-id*`
 - targetable ops are scoped from explicit request `:session-id` or RPC-local focus
+- per-request session routing is explicit; RPC no longer uses dynamic `*request-session-id*` binding
 - lifecycle flows update RPC focus locally
 - no shared ctx focus writes remain
 

@@ -86,8 +86,6 @@
     "get_session_stats"})
 
 
-(def ^:dynamic *request-session-id* nil)
-
 (defn default-session-id-in
   [ctx]
   (some-> (ss/list-context-sessions-in ctx) first :session-id))
