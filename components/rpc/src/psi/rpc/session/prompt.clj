@@ -30,7 +30,7 @@
                         (binding [*out* (rpc.state/err-writer state)
                                   *err* (rpc.state/err-writer state)]
                           (let [emit! (emit/make-request-emitter emit-frame! state request-id)
-                                {:keys [stop? thread] :as progress-loop}
+                                {:keys [stop? thread]}
                                 (streams/start-progress-loop!
                                  {:start-daemon-thread! start-daemon-thread!
                                   :ctx ctx

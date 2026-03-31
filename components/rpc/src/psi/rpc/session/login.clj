@@ -5,7 +5,6 @@
    [psi.agent-session.commands :as commands]
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.state-accessors :as sa]
-   [psi.rpc.events :as events]
    [psi.rpc.session.emit :as emit]
    [psi.rpc.state :as rpc.state]
    [psi.rpc.transport :refer [response-frame]]))
@@ -25,7 +24,7 @@
   (:pending-login (or (sa/oauth-projection-in ctx) {})))
 
 (defn handle-login-begin!
-  [{:keys [ctx request params state session-id session-deps current-ai-model]}]
+  [{:keys [ctx request params session-id session-deps current-ai-model]}]
   (let [oauth-ctx (:oauth-ctx ctx)]
     (when-not oauth-ctx
       (throw (ex-info "OAuth not available."

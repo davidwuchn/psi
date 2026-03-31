@@ -49,7 +49,7 @@
                   :messages msgs
                   :tool-calls {}
                   :tool-order []})
-                (emit/emit-context-updated! emit! ctx state))))
+                (emit/emit-context-updated! emit! ctx state sid))))
 
           "context-session-selector"
           (when (string? value)
@@ -65,7 +65,7 @@
                 :messages msgs
                 :tool-calls {}
                 :tool-order []})
-              (emit/emit-context-updated! emit! ctx state)))
+              (emit/emit-context-updated! emit! ctx state value)))
 
           "model-picker"
           (when (map? value)

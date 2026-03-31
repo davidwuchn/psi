@@ -2,13 +2,8 @@
   "Session-bound RPC op routing, event emission, and async request handling."
   (:require
    [clojure.edn :as edn]
-   [clojure.java.io :as io]
    [clojure.string :as str]
-   [psi.agent-core.core :as agent]
    [psi.agent-session.background-job-runtime :as bg-rt]
-   [psi.agent-session.commands :as commands]
-   [psi.agent-session.core :as session]
-   [psi.agent-session.executor :as executor]
    [psi.agent-session.extension-runtime :as ext-rt]
    [psi.agent-session.runtime :as runtime]
    [psi.agent-session.session-state :as ss]
@@ -24,7 +19,7 @@
    [psi.rpc.session.prompt :as prompt]
    [psi.rpc.session.streams :as streams]
    [psi.rpc.state :as rpc.state]
-   [psi.rpc.transport :refer [default-session-id-in error-frame protocol-version response-frame supported-rpc-ops targetable-rpc-ops]]))
+   [psi.rpc.transport :refer [default-session-id-in error-frame response-frame targetable-rpc-ops]]))
 
 (defn- start-daemon-thread!
   "Start a daemon thread running f with an optional name. Returns the Thread."
@@ -265,7 +260,7 @@
                                     api-key   (runtime/resolve-api-key-in ctx session-id ai-model)
                                     emit!     (emit/make-request-emitter emit-frame! state nil)
                                     progress-q (java.util.concurrent.LinkedBlockingQueue.)
-                                    {:keys [stop? thread] :as progress-loop}
+                                    {:keys [stop? thread]}
                                     (streams/start-progress-loop!
                                      {:start-daemon-thread! start-daemon-thread!
                                       :ctx ctx
