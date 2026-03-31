@@ -2,9 +2,7 @@
   (:require
    [clojure.test :refer [deftest is testing]]
    [psi.app-runtime :as app-runtime]
-   [psi.main :as main]
-   [psi.rpc :as rpc]
-   [psi.tui.app :as tui-app]))
+   [psi.main :as main]))
 
 (deftest main-routes-console-mode-test
   (let [called (atom nil)
@@ -43,11 +41,13 @@
   (let [captured (atom nil)]
     (with-redefs [app-runtime/start-nrepl! (fn [port] {:server port})
                   app-runtime/stop-nrepl! (fn [server] (swap! captured assoc :stopped server))
-                  rpc/start-runtime! (fn [{:keys [model-key memory-runtime-opts session-config rpc-trace-file]}]
-                                      (reset! captured {:model-key model-key
-                                                        :memory-runtime-opts memory-runtime-opts
-                                                        :session-config session-config
-                                                        :rpc-trace-file rpc-trace-file}))]
+                  requiring-resolve (fn [sym]
+                                      (is (= 'psi.rpc/start-runtime! sym))
+                                      (fn [{:keys [model-key memory-runtime-opts session-config rpc-trace-file]}]
+                                        (reset! captured {:model-key model-key
+                                                          :memory-runtime-opts memory-runtime-opts
+                                                          :session-config session-config
+                                                          :rpc-trace-file rpc-trace-file}))) ]
       (main/run-rpc-session! ["--rpc-edn"
                               "--model" "sonnet-4.6"
                               "--memory-store" "in-memory"
@@ -61,20 +61,24 @@
       (is (= {:server 7888} (:stopped @captured))))))
 
 (deftest run-tui-session-delegates-to-app-runtime-component-test
-  (let [captured (atom nil)]
+  (let [captured (atom nil)
+        start-fn (fn [])]
     (with-redefs [app-runtime/start-nrepl! (fn [port] {:server port})
                   app-runtime/stop-nrepl! (fn [server] (swap! captured assoc :stopped server))
-                  app-runtime/start-tui-runtime! (fn [start-fn model-key memory-runtime-opts session-config]
-                                                                (reset! captured {:start-fn start-fn
-                                                                                  :model-key model-key
-                                                                                  :memory-runtime-opts memory-runtime-opts
-                                                                                  :session-config session-config}))]
+                  app-runtime/start-tui-runtime! (fn [resolved-start-fn model-key memory-runtime-opts session-config]
+                                                  (reset! captured {:start-fn resolved-start-fn
+                                                                    :model-key model-key
+                                                                    :memory-runtime-opts memory-runtime-opts
+                                                                    :session-config session-config}))
+                  requiring-resolve (fn [sym]
+                                      (is (= 'psi.tui.app/start! sym))
+                                      start-fn)]
       (main/run-tui-session! ["--tui"
                               "--model" "sonnet-4.6"
                               "--memory-store-fallback" "off"
                               "--llm-idle-timeout-ms" "42000"
                               "--nrepl" "7777"])
-      (is (= tui-app/start! (:start-fn @captured)))
+      (is (= start-fn (:start-fn @captured)))
       (is (= :sonnet-4.6 (:model-key @captured)))
       (is (= {:auto-store-fallback? false} (:memory-runtime-opts @captured)))
       (is (= {:llm-stream-idle-timeout-ms 42000} (:session-config @captured)))

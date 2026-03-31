@@ -5,9 +5,7 @@
   (:require
    [clojure.string :as str]
    [taoensso.timbre :as timbre]
-   [psi.app-runtime :as app-runtime]
-   [psi.rpc :as rpc]
-   [psi.tui.app :as tui-app])
+   [psi.app-runtime :as app-runtime])
   (:gen-class))
 
 (def ^:private valid-log-levels
@@ -117,7 +115,8 @@
 
 (defn run-rpc-session!
   [args]
-  (let [model-key            (model-key-from-args args)
+  (let [start-runtime!       @(requiring-resolve 'psi.rpc/start-runtime!)
+        model-key            (model-key-from-args args)
         memory-runtime-opts  (memory-runtime-opts-from-args args)
         session-runtime-opts (session-runtime-config-from-args args)
         rpc-trace-file       (rpc-trace-file-from-args args)
@@ -126,7 +125,7 @@
                                (binding [*out* *err*]
                                  (app-runtime/start-nrepl! nrepl-port)))]
     (try
-      (rpc/start-runtime!
+      (start-runtime!
        {:model-key           model-key
         :memory-runtime-opts memory-runtime-opts
         :session-config      session-runtime-opts
@@ -151,14 +150,15 @@
 
 (defn run-tui-session!
   [args]
-  (let [model-key            (model-key-from-args args)
+  (let [start!               @(requiring-resolve 'psi.tui.app/start!)
+        model-key            (model-key-from-args args)
         memory-runtime-opts  (memory-runtime-opts-from-args args)
         session-runtime-opts (session-runtime-config-from-args args)
         nrepl-port           (nrepl-port-from-args args)
         nrepl-srv            (when nrepl-port
                                (app-runtime/start-nrepl! nrepl-port))]
     (try
-      (app-runtime/start-tui-runtime! tui-app/start! model-key memory-runtime-opts session-runtime-opts)
+      (app-runtime/start-tui-runtime! start! model-key memory-runtime-opts session-runtime-opts)
       (finally
         (app-runtime/stop-nrepl! nrepl-srv)))))
 
