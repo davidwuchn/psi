@@ -458,7 +458,7 @@ Available: " (str/join ", " (map name (keys models/all-models))))
         ctx                      (assoc ctx :recursion-ctx recursion-ctx)
         _                        (when-not (sa/recursion-state-in ctx)
                                    (sa/set-recursion-state-in! ctx nil (recursion/initial-state)))
-        sd                       (session/new-session-in! ctx seed-id {})
+        sd                       (session/new-session-in! ctx nil {})
         session-id               (:session-id sd)]
     {:ctx        ctx
      :oauth-ctx  oauth-ctx

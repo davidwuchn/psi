@@ -24,10 +24,14 @@
       (let [new-session-id     (str (java.util.UUID/randomUUID))
             source-sd          (session/get-session-data-in ctx source-session-id)
             worktree-path      (or (:worktree-path opts)
-                                   (:worktree-path source-sd))
+                                   (:worktree-path source-sd)
+                                   (:worktree-path (:initial-session ctx))
+                                   (:cwd ctx))
             session-name       (:session-name opts)
             session-file       (when (:persist? ctx)
-                                 (let [session-dir (persist/session-dir-for (session/effective-cwd-in ctx source-session-id))
+                                 (let [session-dir (persist/session-dir-for (or (session/effective-cwd-in ctx source-session-id)
+                                                                                worktree-path
+                                                                                (:cwd ctx)))
                                        file        (persist/new-session-file-path session-dir new-session-id)]
                                    (str file)))]
         (dispatch/dispatch! ctx
