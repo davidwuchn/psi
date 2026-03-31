@@ -71,6 +71,7 @@
    [psi.agent-session.resolvers :as resolvers]
    [psi.agent-session.session :as session]
    [psi.agent-session.session-lifecycle :as lifecycle]
+   [psi.agent-session.session-runtime :as session-runtime]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.statechart :as sc]
    [psi.agent-session.tool-plan :as tool-plan]
@@ -133,9 +134,9 @@
 (defn create-context
   "Create an isolated session context.
 
-  Returns [ctx seed-id] where seed-id is the ephemeral seed session-id
-  that must be passed to new-session-in! or resume-session-in! to create
-  the first real session.
+  Returns [ctx seed-id] where seed-id is the initial session-id. Each session
+  now gets its own runtime handles; the seed is retained for API compatibility
+  and immediate usability in tests/adapters.
 
   Options (all optional):
     :initial-session   — overrides merged into the initial AgentSession data map
@@ -155,13 +156,11 @@
   ([{:keys [initial-session compaction-fn branch-summary-fn agent-initial config cwd persist? event-queue oauth-ctx recursion-ctx nrepl-runtime-atom ui-type mutations]
      :or   {persist? true mutations []}}]
    (let [sc-env            (sc/create-sc-env)
-         sc-session-id     (java.util.UUID/randomUUID)
          resolved-cwd      (or cwd (System/getProperty "user.dir"))
          initial-session*  (cond-> (or initial-session {})
                              (not (contains? (or initial-session {}) :worktree-path))
                              (assoc :worktree-path resolved-cwd)
                              (some? ui-type) (assoc :ui-type ui-type))
-         agent-ctx         (agent/create-context)
          ext-reg           (ext/create-registry)
          wf-reg            (wf/create-registry)
          merged-config     (merge session/default-config (or config {}))
@@ -169,20 +168,7 @@
                                   :provider-error-replies []
                                   :ephemeral-seed? true)
          initial-sid       (:session-id initial-sd)
-         state*            (atom {:agent-session {:sessions {initial-sid {:data          initial-sd
-                                                                          :agent-ctx     agent-ctx
-                                                                          :sc-session-id sc-session-id
-                                                                          :telemetry {:tool-output-stats {:calls []
-                                                                                                          :aggregates {:total-context-bytes 0
-                                                                                                                       :by-tool {}
-                                                                                                                       :limit-hits-by-tool {}}}
-                                                                                      :tool-call-attempts []
-                                                                                      :tool-lifecycle-events []
-                                                                                      :provider-requests []
-                                                                                      :provider-replies []}
-                                                                          :persistence {:journal []
-                                                                                        :flush-state {:flushed? false :session-file nil}}
-                                                                          :turn {:ctx nil}}}}
+         state*            (atom {:agent-session {:sessions {}}
                                   :runtime {:nrepl (or (some-> nrepl-runtime-atom deref) nil)
                                             :rpc-trace {:enabled? false
                                                         :file nil}}
@@ -192,11 +178,12 @@
                                   :oauth {:authenticated-providers []
                                           :last-login-provider nil
                                           :last-login-at nil}})
-         ;; Build ctx without actions-fn so we can close over it
          ctx0              {:sc-env                sc-env
                             :started-at            (java.time.Instant/now)
                             :state*                state*
                             :target-session-id     initial-sid
+                            :initial-session       initial-session*
+                            :agent-initial         agent-initial
                             :nrepl-runtime-atom    nrepl-runtime-atom
                             :extension-registry    ext-reg
                             :workflow-registry     wf-reg
@@ -245,28 +232,22 @@
                             :all-mutations mutations}
          run-tool-call-fn  (fn [ctx {:keys [session-id tool-call parsed-args progress-queue]}]
                              (executor/run-tool-call-through-runtime-effect! ctx session-id tool-call parsed-args progress-queue))
-         ctx               (assoc ctx0 :run-tool-call-fn run-tool-call-fn)
-         _                 (dispatch-handlers/register-all! ctx)
-         actions-fn        (dispatch-handlers/make-actions-fn ctx)]
-
-     ;; NOTE: The events bridge (add-watch on agent-core events-atom) has been
-     ;; removed. Message journaling and session statechart events now go through
-     ;; the executor and dispatch pipeline directly:
-     ;; - Assistant messages: journaled by make-turn-actions in executor.clj
-     ;; - Tool results: journaled by :session/tool-agent-record-result handler
-     ;; - Agent-end: sent to session statechart by finish-agent-loop! in executor.clj
-     ;; - User messages: journaled by :session/prompt-submit handler
-
-     ;; Start the session statechart with working memory containing ctx + actions-fn
-     (sc/start-session! sc-env sc-session-id
-                        {:ctx        ctx
-                         :session-id initial-sid
-                         :actions-fn actions-fn
-                         :config     merged-config})
-
-     ;; Start agent-core
-     (agent/create-agent-in! agent-ctx (or agent-initial {}))
-
+         ctx*              (assoc ctx0 :run-tool-call-fn run-tool-call-fn)
+         _                 (dispatch-handlers/register-all! ctx*)
+         actions-fn        (dispatch-handlers/make-actions-fn ctx*)
+         ctx               (assoc ctx* :session-actions-fn actions-fn)
+         runtime           (session-runtime/create-runtime!
+                            ctx initial-sid
+                            {:session-data initial-sd
+                             :messages []
+                             :agent-initial agent-initial})
+         entry             {:data initial-sd
+                            :agent-ctx (:agent-ctx runtime)
+                            :sc-session-id (:sc-session-id runtime)
+                            :telemetry (session-runtime/telemetry-state)
+                            :persistence (session-runtime/persistence-state nil false)
+                            :turn (session-runtime/turn-state)}]
+     (swap! (:state* ctx) assoc-in [:agent-session :sessions initial-sid] entry)
      [ctx initial-sid])))
 
 ;;; Session lifecycle — delegates directly to session-lifecycle.clj
@@ -287,35 +268,31 @@
   (lifecycle/fork-session-in! ctx parent-session-id entry-id))
 
 (defn ensure-session-loaded-in!
-  "Ensure `session-id` is loaded as the active runtime session in this context.
+  "Ensure `session-id` is available in this context.
 
    Behavior:
    - if session-id is nil, no-op
-   - if already the source session, returns its data
-   - if known in context session index with a session-file path, resumes that file
+   - if already present in the context registry, returns its data
+   - if known only by persisted session-file path, resumes that file
    - otherwise throws ex-info with :error-code request/not-found
 
-   Returns session-data for the loaded session."
-  [ctx source-session-id session-id]
+   Returns session-data for the available session."
+  [ctx _source-session-id session-id]
   (when session-id
-    (if (= source-session-id session-id)
-      (ss/get-session-data-in ctx session-id)
-      (let [sessions (ss/get-sessions-map-in ctx)
-            target   (get sessions session-id)
-            path     (get-in target [:data :session-file])]
-        (cond
-          (nil? target)
-          (throw (ex-info "session id not found in context session index"
-                          {:error-code "request/not-found"
-                           :session-id session-id}))
+    (let [sessions (ss/get-sessions-map-in ctx)
+          target   (get sessions session-id)
+          path     (get-in target [:data :session-file])]
+      (cond
+        target
+        (ss/get-session-data-in ctx session-id)
 
-          (or (nil? path) (str/blank? path))
-          (throw (ex-info "session id is not resumable (missing session file)"
-                          {:error-code "request/not-found"
-                           :session-id session-id}))
+        (and path (not (str/blank? path)))
+        (resume-session-in! ctx session-id path)
 
-          :else
-          (resume-session-in! ctx source-session-id path))))))
+        :else
+        (throw (ex-info "session id not found in context session index"
+                        {:error-code "request/not-found"
+                         :session-id session-id}))))))
 
 ;;; Prompting
 

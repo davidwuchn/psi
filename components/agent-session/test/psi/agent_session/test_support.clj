@@ -58,7 +58,8 @@
   (let [agent-ctx*    (or agent-ctx (agent/create-context))
         sc-session-id (java.util.UUID/randomUUID)
         initial-sd    (merge (assoc (session-data/initial-session {})
-                                    :provider-error-replies [])
+                                    :provider-error-replies []
+                                    :ephemeral-seed? true)
                              (or session-data {}))
         sid           (:session-id initial-sd)
         base-state    {:agent-session {:sessions {sid {:data          initial-sd
@@ -130,10 +131,12 @@
                        :daemon-thread-fn             (fn [f] (doto (Thread. ^Runnable f) (.setDaemon true) (.start)))
                        :effective-cwd-fn             (fn [ctx session-id] (ss/effective-cwd-in ctx session-id))
                        :journal-append-fn            (fn [_ctx _session-id _entry] nil)}
-        _             (dispatch-handlers/register-all! ctx)]
+        _             (dispatch-handlers/register-all! ctx)
+        actions-fn     (dispatch-handlers/make-actions-fn ctx)
+        ctx            (assoc ctx :session-actions-fn actions-fn)]
     (session-sc/start-session! sc-env sc-session-id
                                {:ctx        ctx
                                 :session-id sid
-                                :actions-fn nil
+                                :actions-fn actions-fn
                                 :config     {}})
     [ctx sid]))

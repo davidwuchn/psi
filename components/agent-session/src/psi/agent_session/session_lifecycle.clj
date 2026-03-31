@@ -6,6 +6,7 @@
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.persistence :as persist]
+   [psi.agent-session.session-runtime :as runtime]
    [psi.agent-session.session-state :as session]
    [psi.agent-session.workflows :as wf]))
 
@@ -38,6 +39,18 @@
                              :spawn-mode     (or (:spawn-mode opts) :new-root)
                              :session-file   session-file}
                             {:origin :core})
+        ;; Replace runtime handles with fresh per-session instances.
+        (let [sd      (session/get-session-data-in ctx new-session-id)
+              fresh   (runtime/create-runtime!
+                       ctx new-session-id
+                       {:session-data  sd
+                        :messages      []
+                        :agent-initial (:agent-initial ctx)})]
+          (swap! (:state* ctx)
+                 (fn [state]
+                   (-> state
+                       (assoc-in [:agent-session :sessions new-session-id :agent-ctx] (:agent-ctx fresh))
+                       (assoc-in [:agent-session :sessions new-session-id :sc-session-id] (:sc-session-id fresh))))))
         (dispatch/dispatch! ctx :session/retarget-runtime-prompt-metadata {:session-id new-session-id} {:origin :core})
         (when session-name
           (session/journal-append-in! ctx new-session-id (persist/session-info-entry session-name)))
@@ -97,6 +110,24 @@
                                  :model             model
                                  :messages          (vec messages)}
                                 {:origin :core})
+            ;; Replace runtime handles with fresh per-session instances, preserving
+            ;; current in-memory defaults when the journal does not specify them.
+            (let [sd*   (session/get-session-data-in ctx session-id)
+                  sd    (cond-> sd*
+                          (nil? model) (assoc :model source-model)
+                          (nil? (some-> thinking-entry :data :thinking-level))
+                          (assoc :thinking-level source-thinking-level))
+                  _     (swap! (:state* ctx) assoc-in [:agent-session :sessions session-id :data] sd)
+                  fresh (runtime/create-runtime!
+                         ctx session-id
+                         {:session-data  sd
+                          :messages      messages
+                          :agent-initial (:agent-initial ctx)})]
+              (swap! (:state* ctx)
+                     (fn [state]
+                       (-> state
+                           (assoc-in [:agent-session :sessions session-id :agent-ctx] (:agent-ctx fresh))
+                           (assoc-in [:agent-session :sessions session-id :sc-session-id] (:sc-session-id fresh))))))
             (dispatch/dispatch! ctx :session/ensure-base-system-prompt {:session-id session-id} {:origin :core})
             (dispatch/dispatch! ctx :session/retarget-runtime-prompt-metadata {:session-id session-id} {:origin :core})
             (ext/dispatch-in reg "session_switch" {:reason :resume})
@@ -134,6 +165,18 @@
                            :session-file        session-file
                            :messages            messages}
                           {:origin :core})
+      ;; Replace runtime handles with fresh per-session instances.
+      (let [sd    (session/get-session-data-in ctx new-session-id)
+            fresh (runtime/create-runtime!
+                   ctx new-session-id
+                   {:session-data  sd
+                    :messages      messages
+                    :agent-initial (:agent-initial ctx)})]
+        (swap! (:state* ctx)
+               (fn [state]
+                 (-> state
+                     (assoc-in [:agent-session :sessions new-session-id :agent-ctx] (:agent-ctx fresh))
+                     (assoc-in [:agent-session :sessions new-session-id :sc-session-id] (:sc-session-id fresh))))))
      ;; Fork persistence: create/write child file immediately with lineage header.
       (when session-file
         (let [file (io/file session-file)]

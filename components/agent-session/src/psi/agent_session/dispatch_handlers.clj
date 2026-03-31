@@ -207,7 +207,6 @@
                        :ephemeral-seed? false
                        :created-at (java.time.Instant/now))]
     (cond-> (-> state
-                (carry-runtime-handles source-sid new-session-id)
                 prune-ephemeral-sessions
                 (assoc-in (session-data-path new-session-id) next-sd)
                 (assoc-in (session-journal-path new-session-id) [])
@@ -262,8 +261,7 @@
 
 (defn- initialize-resumed-session-state
   [state current-sd {:keys [session-id source-session-id session-path header entries model thinking-level]}]
-  (let [source-sid   (or source-session-id (:session-id current-sd))
-        session-name (some #(when (= :session-info (:kind %))
+  (let [session-name (some #(when (= :session-info (:kind %))
                               (get-in % [:data :name]))
                            (rseq (vec entries)))
         next-sd      (assoc current-sd
@@ -278,7 +276,7 @@
                             :model model
                             :thinking-level thinking-level)]
     (-> state
-        (carry-runtime-handles source-sid session-id)
+        ;; keep already-loaded peer sessions; only drop ephemeral seeds
         prune-ephemeral-sessions
         (assoc-in (session-journal-path session-id) (vec entries))
         (assoc-in (session-flush-state-path session-id) {:flushed? true

@@ -635,8 +635,8 @@
                   :psi.agent-session/session-name
                   :psi.agent-session/cwd
                   :psi.agent-session/thinking-level]}
-  (let [sd                 (core/new-session-in! agent-session-ctx parent-session-id {:session-name  session-name
-                                                                                        :worktree-path worktree-path})
+  (let [sd                 (core/new-session-in! agent-session-ctx (or parent-session-id (:target-session-id agent-session-ctx)) {:session-name  session-name
+                                                                                                                                    :worktree-path worktree-path})
         new-sid            (:session-id sd)
         _       (when system-prompt
                   (dispatch/dispatch! agent-session-ctx :session/set-system-prompt {:session-id new-sid :prompt system-prompt} {:origin :mutations}))
@@ -694,7 +694,7 @@
                        :timestamp (java.time.Instant/now)}]
     (try
       (let [result (executor/run-agent-loop!
-                    nil agent-session-ctx session-id nil
+                    nil agent-session-ctx session-id (ss/agent-ctx-in agent-session-ctx session-id)
                     resolved-model
                     [user-msg]
                     (cond-> {}

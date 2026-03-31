@@ -440,7 +440,7 @@ Available: " (str/join ", " (map name (keys models/all-models))))
                                   {:reasoning (:supports-reasoning effective-model)})
         effective-prompt-mode    (config-res/resolved-prompt-mode cfg)
         nucleus-prelude-override (config-res/resolved-nucleus-prelude-override cfg)
-        [ctx seed-id]            (session/create-context
+        [ctx seed-id]           (session/create-context
                                   {:initial-session {:model {:provider  (name (:provider effective-model))
                                                              :id        (:id effective-model)
                                                              :reasoning (:supports-reasoning effective-model)}
@@ -454,10 +454,10 @@ Available: " (str/join ", " (map name (keys models/all-models))))
                                    :nrepl-runtime-atom nrepl-runtime
                                    :ui-type ui-type
                                    :mutations mutations/all-mutations})
-        _                        (when-not (sa/recursion-state-in ctx)
-                                   (sa/set-recursion-state-in! ctx seed-id (recursion/initial-state)))
         recursion-ctx            (recursion/create-hosted-context ctx (ss/state-path :recursion))
         ctx                      (assoc ctx :recursion-ctx recursion-ctx)
+        _                        (when-not (sa/recursion-state-in ctx)
+                                   (sa/set-recursion-state-in! ctx nil (recursion/initial-state)))
         sd                       (session/new-session-in! ctx seed-id {})
         session-id               (:session-id sd)]
     {:ctx        ctx
@@ -481,7 +481,7 @@ Available: " (str/join ", " (map name (keys models/all-models))))
    - :cwd optional cwd override (primarily for tests)"
   ([x y]
    (if (:state* x)
-     (bootstrap-runtime-session! x y {})
+     (bootstrap-runtime-session! x nil y {})
      (let [ai-model x
            opts     y
            {:keys [ctx oauth-ctx cwd session-id]} (create-runtime-session-context ai-model {:cwd (:cwd opts)
