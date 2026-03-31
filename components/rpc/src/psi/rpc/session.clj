@@ -21,6 +21,7 @@
    [psi.rpc.session.login :as login]
    [psi.rpc.session.navigation :as navigation]
    [psi.rpc.session.ops :as ops]
+   [psi.rpc.session.prompt :as prompt]
    [psi.rpc.session.streams :as streams]
    [psi.rpc.state :as rpc.state]
    [psi.rpc.transport :refer [*request-session-id* default-session-id-in error-frame protocol-version response-frame supported-rpc-ops targetable-rpc-ops]]))
@@ -376,111 +377,6 @@
      (binding [*request-session-id* session-id]
        (f ctx)))))
 
-(defn- run-prompt-async!
-  [ctx request emit-frame! state session-deps]
-  (let [message      (get-in request [:params :message])
-        images       (get-in request [:params :images])
-        request-id   (:id request)
-        session-id   (events/focused-session-id ctx state)
-        _            (when-not session-id
-                       (throw (ex-info "no target session available for prompt"
-                                       {:error-code "request/not-found"})))
-        run-loop-fn  (or (:run-agent-loop-fn session-deps) executor/run-agent-loop!)
-        sync-on-git-head-change? (effective-sync-on-git-head-change? session-deps)
-        on-new-session! (:on-new-session! session-deps)
-        progress-q   (java.util.concurrent.LinkedBlockingQueue.)
-        worker       (start-daemon-thread!
-                      (fn []
-                        (binding [*out* (rpc.state/err-writer state)
-                                  *err* (rpc.state/err-writer state)]
-                          (let [emit! (emit/make-request-emitter emit-frame! state request-id)
-                                {:keys [stop? thread] :as progress-loop}
-                                (streams/start-progress-loop!
-                                 {:start-daemon-thread! start-daemon-thread!
-                                  :ctx ctx
-                                  :state state
-                                  :session-id session-id
-                                  :emit! emit!
-                                  :progress-q progress-q
-                                  :thread-name "rpc-progress-loop"})]
-                            (try
-                              (let [ai-model      (current-ai-model ctx session-deps state session-id)
-                                    _             (when-not ai-model
-                                                    (throw (ex-info "session model is not configured"
-                                                                    {:error-code "request/invalid-params"})))
-                                    oauth-ctx     (:oauth-ctx ctx)
-                                    pending-login (login/pending-login-state ctx)
-                                    cmd-result    (when-not pending-login
-                                                    (commands/dispatch-in ctx session-id message {:oauth-ctx oauth-ctx
-                                                                                                  :ai-model  ai-model
-                                                                                                  :supports-session-tree? false
-                                                                                                  :on-new-session! on-new-session!}))]
-                                (cond
-                                  pending-login
-                                 ;; Pending two-step OAuth login: next prompt input is the auth code/URL.
-                                  (do
-                                    (runtime/journal-user-message-in! ctx session-id message images)
-                                    (login/complete-pending-login! {:ctx ctx :state state :message message :emit! emit!})
-                                    (emit/emit-session-snapshots! emit! ctx state session-id))
-
-                                  (some? cmd-result)
-                                 ;; Slash command matched — journal raw input and skip agent loop.
-                                  (do
-                                    (runtime/journal-user-message-in! ctx session-id message images)
-                                    (if (= :login-start (:type cmd-result))
-                                      (login/handle-login-start-command! {:ctx ctx :state state :emit-frame! emit-frame! :request-id request-id :cmd-result cmd-result :emit! emit! :start-daemon-thread! start-daemon-thread!})
-                                      (do
-                                        (when (= :new-session (:type cmd-result))
-                                          (let [rehydrate (:rehydrate cmd-result)
-                                                ;; Get new session-id from rehydrate (lifecycle or callback)
-                                                new-sid (:session-id rehydrate)
-                                                _       (when new-sid (events/set-focus-session-id! state new-sid))
-                                                sd      (when new-sid (ss/get-session-data-in ctx new-sid))
-                                                msgs    (or (:agent-messages rehydrate)
-                                                            (when new-sid
-                                                              (:messages (agent/get-data-in (ss/agent-ctx-in ctx new-sid)))))]
-                                            (emit/emit-session-rehydration!
-                                             emit!
-                                             {:session-id (:session-id sd)
-                                              :session-file (:session-file sd)
-                                              :message-count (count msgs)
-                                              :messages msgs
-                                              :tool-calls (or (:tool-calls rehydrate) {})
-                                              :tool-order (or (:tool-order rehydrate) [])})))
-                                        (rpc.commands/handle-prompt-command-result! cmd-result emit!)))
-                                    (emit/emit-session-snapshots! emit! ctx state session-id))
-
-                                  :else
-                                 ;; Not a command — run normal agent loop via shared runtime path.
-                                  (let [_        (emit/emit-session-snapshots! emit! ctx state session-id)
-                                        {:keys [user-message]} (runtime/prepare-user-message-in! ctx session-id message images)
-                                        api-key  (runtime/resolve-api-key-in ctx session-id ai-model)
-                                        result   (runtime/run-agent-loop-in!
-                                                  ctx session-id nil ai-model [user-message]
-                                                  {:run-loop-fn   run-loop-fn
-                                                   :api-key       api-key
-                                                   :progress-queue progress-q
-                                                   :sync-on-git-head-change? sync-on-git-head-change?})]
-                                   ;; Stop background progress polling, flush any
-                                   ;; remaining events, then emit final message.
-                                    (streams/stop-progress-loop! {:stop? stop?
-                                                                  :thread thread
-                                                                  :progress-q progress-q
-                                                                  :emit! emit!})
-                                    (emit/emit-assistant-message! emit! result)
-                                    (emit/emit-session-snapshots! emit! ctx state session-id))))
-                              (catch Throwable t
-                                (emit! "error" {:error-code "runtime/failed"
-                                                :error-message (or (ex-message t) "prompt execution failed")
-                                                :id request-id
-                                                :op "prompt"})
-                                (emit/emit-session-snapshots! emit! ctx state session-id))
-                              (finally
-                                (reset! stop? true)
-                                (.join ^Thread thread 200)))))))]
-    (rpc.state/add-inflight-future! state worker)
-    (response-frame (:id request) "prompt" true {:accepted true})))
-
 (defn make-session-request-handler
   "Create a canonical op router bound to an agent-session context.
 
@@ -531,7 +427,7 @@
 
                              "prompt"
                              (let [_message (req-arg! request params :message #(and (string? %) (not (str/blank? %))) "non-empty string")]
-                               (run-prompt-async! ctx request emit-frame! state session-deps))
+                               (prompt/run-prompt-async! {:ctx ctx :request request :emit-frame! emit-frame! :state state :session-deps session-deps :current-ai-model current-ai-model :effective-sync-on-git-head-change? effective-sync-on-git-head-change? :start-daemon-thread! start-daemon-thread! :login-handle-start-command! login/handle-login-start-command! :login-pending-state login/pending-login-state :login-complete-pending! login/complete-pending-login!}))
 
                              "prompt_while_streaming"
                              (ops/handle-prompt-while-streaming {:ctx ctx :request request :params params :state state})
