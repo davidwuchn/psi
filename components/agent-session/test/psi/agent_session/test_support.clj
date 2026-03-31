@@ -4,6 +4,7 @@
    [psi.agent-core.core :as agent]
    [psi.agent-session.background-jobs :as bg-jobs]
    [psi.agent-session.background-job-runtime :as bg-rt]
+   [psi.agent-session.core :as session-core]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.dispatch-effects :as dispatch-effects]
    [psi.agent-session.dispatch-handlers :as dispatch-handlers]
@@ -140,3 +141,16 @@
                                 :actions-fn actions-fn
                                 :config     {}})
     [ctx sid]))
+
+(defn create-test-session
+  "Create a full session context with a real (non-ephemeral) first session.
+   Returns [ctx session-id] — same shape as create-context but the session-id
+   is a real session created via new-session-in!, not an ephemeral seed.
+
+   Accepts the same options as session/create-context. The :initial-session
+   overrides flow through :session-defaults into the first real session."
+  ([] (create-test-session {}))
+  ([opts]
+   (let [[ctx _seed-id] (session-core/create-context (merge {:persist? false} opts))
+         sd             (session-core/new-session-in! ctx nil {})]
+     [ctx (:session-id sd)])))
