@@ -5,6 +5,7 @@
    [cheshire.core :as json]
    [psi.agent-session.core :as session]
    [psi.agent-session.executor :as executor]
+   [psi.agent-session.test-support :as test-support]
    [psi.agent-session.tool-output :as tool-output]))
 
 (defn- delete-recursively!
@@ -26,7 +27,7 @@
 
 (deftest bash-limit-hit-eql-telemetry-test
   (testing "bash truncation persists full output and is queryable via EQL"
-    (let [[ctx session-id] (session/create-context)
+    (let [[ctx session-id] (test-support/create-test-session)
           tc  {:id "bash-limit-1"
                :name "bash"
                :arguments (json/generate-string
@@ -62,7 +63,7 @@
     (let [f   (doto (java.io.File/createTempFile "psi-read-ok" ".txt")
                 (.deleteOnExit))
           _   (spit f "alpha\nbeta\ngamma\n")
-          [ctx session-id] (session/create-context)
+          [ctx session-id] (test-support/create-test-session)
           tc  {:id "read-ok-1"
                :name "read"
                :arguments (json/generate-string
@@ -85,7 +86,7 @@
     (let [f   (doto (java.io.File/createTempFile "psi-read-agg" ".txt")
                 (.deleteOnExit))
           _   (spit f "small\nfile\n")
-          [ctx session-id] (session/create-context)
+          [ctx session-id] (test-support/create-test-session)
           bash-args (json/generate-string {"command" (large-bash-command)})
           read-args (json/generate-string {"filePath" (.getAbsolutePath f)})]
       (#'psi.agent-session.executor/run-tool-call! ctx session-id {:id "b1" :name "bash" :arguments bash-args} nil)
