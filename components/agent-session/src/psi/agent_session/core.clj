@@ -45,6 +45,9 @@
    :extension-registry  — ExtensionRegistry record
    :workflow-registry   — WorkflowRegistry record
    :cwd                 — working directory string (used for session dir layout)
+   :session-defaults    — resolved session override map (model, thinking-level,
+                          worktree-path, ui-type, etc.) used by new-session-in!
+                          when no source session exists
    :compaction-fn       — (fn [session-data preparation instructions]) → CompactionResult
    :branch-summary-fn   — (fn [session-data entries instructions]) → BranchSummaryResult
    :config              — merged config map (global defaults + per-session overrides)
@@ -139,6 +142,8 @@
 
   Options (all optional):
     :initial-session   — overrides merged into the initial AgentSession data map
+                          Also stored as :session-defaults on ctx for use by
+                          new-session-in! when no source session exists.
     :compaction-fn     — (fn [session-data preparation instructions]) → CompactionResult
                           default: stub (no LLM call)
     :branch-summary-fn — (fn [session-data entries instructions]) → BranchSummaryResult
@@ -181,6 +186,7 @@
                             :started-at            (java.time.Instant/now)
                             :state*                state*
                             :initial-session       initial-session*
+                            :session-defaults      initial-session*
                             :agent-initial         agent-initial
                             :nrepl-runtime-atom    nrepl-runtime-atom
                             :extension-registry    ext-reg

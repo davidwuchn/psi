@@ -25,7 +25,7 @@
             source-sd          (session/get-session-data-in ctx source-session-id)
             worktree-path      (or (:worktree-path opts)
                                    (:worktree-path source-sd)
-                                   (:worktree-path (:initial-session ctx))
+                                   (:worktree-path (:session-defaults ctx))
                                    (:cwd ctx))
             session-name       (:session-name opts)
             session-file       (when (:persist? ctx)

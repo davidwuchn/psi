@@ -1026,7 +1026,7 @@
    {}
    (fn [ctx {:keys [session-id new-session-id worktree-path session-name spawn-mode session-file]}]
      (let [current-sd (or (session/get-session-data-in ctx session-id)
-                          (assoc (session-data/initial-session (:initial-session ctx))
+                          (assoc (session-data/initial-session (:session-defaults ctx))
                                  :provider-error-replies []
                                  :ephemeral-seed? false))
            payload    {:new-session-id new-session-id
