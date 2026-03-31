@@ -273,8 +273,8 @@
 
 (deftest e7-idle-completion-wakes-turn-boundary-test
   (testing "E7: idle terminal outcome requests next turn boundary"
-    (let [[ctx seed-id] (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
-          thread-id seed-id]
+    (let [[ctx session-id] (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
+          thread-id session-id]
       (dispatch/dispatch! ctx :session/update-background-jobs-state
                           {:update-fn (fn [store]
                                         (-> store
@@ -361,8 +361,8 @@
 
 (deftest e13-retryable-llm-http-errors-are-internal-test
   (testing "E13: internal retryable LLM HTTP errors do not trigger external injection"
-    (let [[ctx seed-id] (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
-          thread-id seed-id]
+    (let [[ctx session-id] (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
+          thread-id session-id]
       (dispatch/dispatch! ctx :session/update-background-jobs-state
                           {:update-fn (fn [store]
                                         (:state (bj/start-background-job
@@ -449,8 +449,8 @@
 
 (deftest b4-at-most-once-under-concurrent-emitters-test
   (testing "B4: concurrent emit attempts still produce one terminal message"
-    (let [[ctx seed-id] (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
-          thread-id seed-id
+    (let [[ctx session-id] (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
+          thread-id session-id
           _     (dispatch/dispatch! ctx :session/update-background-jobs-state
                                     {:update-fn (fn [store]
                                                   (-> store
@@ -549,10 +549,10 @@
 
 (deftest send-message-triggers-workflow-job-terminal-detection-test
   (testing "send-message mutation marks workflow-backed background jobs terminal"
-    (let [[ctx seed-id] (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
+    (let [[ctx session-id] (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
           ext-path  "/test/send-message-regression.clj"
           wf-id     "wf-sm-1"
-          thread-id seed-id
+          thread-id session-id
           reg       (:workflow-registry ctx)
           qctx      (query/create-query-context)
           _         (session/register-resolvers-in! qctx false)
@@ -618,10 +618,10 @@
 
 (deftest send-message-terminal-detection-handles-workflow-completion-race-test
   (testing "send-message eventually marks job terminal when workflow completes just after message"
-    (let [[ctx seed-id] (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
+    (let [[ctx session-id] (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
           ext-path  "/test/send-message-race.clj"
           wf-id     "wf-sm-race"
-          thread-id seed-id
+          thread-id session-id
           reg       (:workflow-registry ctx)
           qctx      (query/create-query-context)
           _         (session/register-resolvers-in! qctx false)
@@ -664,10 +664,10 @@
 
 (deftest background-job-resolver-self-heals-stale-workflow-status-test
   (testing "background-job resolver reconciles stale workflow-backed running jobs"
-    (let [[ctx seed-id] (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
+    (let [[ctx session-id] (test-support/make-session-ctx {:session-data {:startup-bootstrap-completed? true}})
           ext-path  "/test/resolver-reconcile.clj"
           wf-id     "wf-resolve-1"
-          thread-id seed-id
+          thread-id session-id
           reg       (:workflow-registry ctx)]
       (wf/register-type-in! reg ext-path {:type :instant-done :chart instant-done-chart})
       (wf/ensure-pump! reg)
