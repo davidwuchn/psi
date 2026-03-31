@@ -49,7 +49,7 @@
 
 (defn make-session-ctx
   "Create a minimal canonical-root-backed session-like context for tests.
-   Returns [ctx seed-id] where seed-id is the initial ephemeral session id,
+   Returns [ctx session-id] where session-id is the initial session id,
    matching the convention of session/create-context.
    Accepts overrides:
    - :state map merged into canonical root

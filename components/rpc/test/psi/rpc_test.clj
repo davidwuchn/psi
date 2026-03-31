@@ -935,8 +935,8 @@
 
 (deftest rpc-openai-codex-prompt-emits-tool-events-with-final-args-test
   (testing "openai codex tool args from response.output_item.done flow through RPC tool events"
-    (let [[ctx seed-id]   (session/create-context)
-          _         (dispatch/dispatch! ctx :session/set-active-tools {:session-id seed-id :tool-maps [tools/bash-tool]} {:origin :core})
+    (let [[ctx session-id]   (session/create-context)
+          _         (dispatch/dispatch! ctx :session/set-active-tools {:session-id session-id :tool-maps [tools/bash-tool]} {:origin :core})
           state     (atom {:ready? true
                            :pending {}
                            :sync-on-git-head-change? false
@@ -1024,8 +1024,8 @@
 
 (deftest rpc-openai-chat-completions-tool-id-late-still-executes-test
   (testing "openai chat completions executes tool calls when streamed id arrives late"
-    (let [[ctx seed-id]   (session/create-context)
-          _         (dispatch/dispatch! ctx :session/set-active-tools {:session-id seed-id :tool-maps [tools/bash-tool]} {:origin :core})
+    (let [[ctx session-id]   (session/create-context)
+          _         (dispatch/dispatch! ctx :session/set-active-tools {:session-id session-id :tool-maps [tools/bash-tool]} {:origin :core})
           state     (atom {:ready? true
                            :pending {}
                            :sync-on-git-head-change? false
@@ -1100,8 +1100,8 @@
 
 (deftest rpc-openai-chat-completions-cumulative-args-executes-once-test
   (testing "openai chat completions cumulative tool args execute with full parsed payload"
-    (let [[ctx seed-id]   (session/create-context)
-          _         (dispatch/dispatch! ctx :session/set-active-tools {:session-id seed-id :tool-maps [tools/bash-tool]} {:origin :core})
+    (let [[ctx session-id]   (session/create-context)
+          _         (dispatch/dispatch! ctx :session/set-active-tools {:session-id session-id :tool-maps [tools/bash-tool]} {:origin :core})
           state     (atom {:ready? true
                            :pending {}
                            :sync-on-git-head-change? false
@@ -1195,8 +1195,8 @@
   (testing "command /resume <path> emits session/resumed and session/rehydrated canonical events"
     (let [cwd                (str (System/getProperty "java.io.tmpdir") "/psi-rpc-resume-" (java.util.UUID/randomUUID))
           _                  (.mkdirs (java.io.File. cwd))
-          [ctx seed-id] (session/create-context {:cwd cwd})
-          sd1                (session/new-session-in! ctx seed-id {})
+          [ctx session-id] (session/create-context {:cwd cwd})
+          sd1                (session/new-session-in! ctx nil {})
           session-id         (:session-id sd1)
           path1              (:session-file sd1)
           _                  (persist/flush-journal! (java.io.File. path1)
@@ -1228,8 +1228,8 @@
   (testing "command /tree <session-id> emits session/resumed and session/rehydrated canonical events"
     (let [cwd                (str (System/getProperty "java.io.tmpdir") "/psi-rpc-tree-" (java.util.UUID/randomUUID))
           _                  (.mkdirs (java.io.File. cwd))
-          [ctx seed-id] (session/create-context {:cwd cwd})
-          sd1                (session/new-session-in! ctx seed-id {})
+          [ctx session-id] (session/create-context {:cwd cwd})
+          sd1                (session/new-session-in! ctx nil {})
           sid1               (:session-id sd1)
           path1              (:session-file sd1)
           _                  (persist/flush-journal! (java.io.File. path1)
@@ -1286,8 +1286,8 @@
   (testing "switch_session accepts :session-id and restores that runtime session"
     (let [cwd                (str (System/getProperty "java.io.tmpdir") "/psi-rpc-switch-" (java.util.UUID/randomUUID))
           _                  (.mkdirs (java.io.File. cwd))
-          [ctx seed-id] (session/create-context {:cwd cwd})
-          sd1                (session/new-session-in! ctx seed-id {})
+          [ctx session-id] (session/create-context {:cwd cwd})
+          sd1                (session/new-session-in! ctx nil {})
           sid1               (:session-id sd1)
           path1              (:session-file sd1)
           _                  (persist/flush-journal! (java.io.File. path1)
@@ -1320,8 +1320,8 @@
   (testing "targetable ops accept :session-id and route to that session"
     (let [cwd                (str (System/getProperty "java.io.tmpdir") "/psi-rpc-target-" (java.util.UUID/randomUUID))
           _                  (.mkdirs (java.io.File. cwd))
-          [ctx seed-id] (session/create-context {:cwd cwd})
-          sd1                (session/new-session-in! ctx seed-id {})
+          [ctx session-id] (session/create-context {:cwd cwd})
+          sd1                (session/new-session-in! ctx nil {})
           sid1               (:session-id sd1)
           path1              (:session-file sd1)
           _                  (persist/flush-journal! (java.io.File. path1)
@@ -1365,8 +1365,8 @@
   #_(testing "targetable op rejects cross-session routing while prompt is in-flight when lock enforcement is enabled"
       (let [cwd     (str (System/getProperty "java.io.tmpdir") "/psi-rpc-routing-lock-" (java.util.UUID/randomUUID))
             _       (.mkdirs (java.io.File. cwd))
-            [ctx seed-id] (session/create-context {:cwd cwd})
-            _                  (session/new-session-in! ctx seed-id {})
+            [ctx session-id] (session/create-context {:cwd cwd})
+            _                  (session/new-session-in! ctx nil {})
             sid1               (-> ctx ss/list-context-sessions-in last :session-id)
             path1   (:session-file (ss/get-session-data-in ctx sid1))
             _       (persist/flush-journal! (java.io.File. path1)
@@ -1434,8 +1434,8 @@
   #_(testing "exclusive ops are rejected while prompt is in-flight when lock enforcement is enabled"
       (let [cwd     (str (System/getProperty "java.io.tmpdir") "/psi-rpc-routing-lock-exclusive-" (java.util.UUID/randomUUID))
             _       (.mkdirs (java.io.File. cwd))
-            [ctx seed-id] (session/create-context {:cwd cwd})
-            _                  (session/new-session-in! ctx seed-id {})
+            [ctx session-id] (session/create-context {:cwd cwd})
+            _                  (session/new-session-in! ctx nil {})
             sid1               (-> ctx ss/list-context-sessions-in last :session-id)
             path1   (:session-file (ss/get-session-data-in ctx sid1))
             _       (persist/flush-journal! (java.io.File. path1)

@@ -26,13 +26,13 @@
 (defn- session-introspection-ctx
   "Create a fully isolated introspection context with a fresh agent-session
    context attached.  Resolvers are registered and engine is bootstrapped.
-   Returns the context map with :seed-id for tests that dispatch events."
+   Returns the context map with :session-id for tests that dispatch events."
   []
-  (let [[session-ctx seed-id] (session/create-context {:cwd (temp-cwd) :persist? false})
+  (let [[session-ctx session-id] (session/create-context {:cwd (temp-cwd) :persist? false})
         ctx              (introspection/create-context {:agent-session-ctx session-ctx})]
     (engine/bootstrap-system-in! (:engine-ctx ctx))
     (introspection/register-resolvers-in! ctx)
-    (assoc ctx :seed-id seed-id)))
+    (assoc ctx :session-id session-id)))
 
 ;; ─────────────────────────────────────────────────────────────────────────────
 ;; Context creation
@@ -129,9 +129,9 @@
   (testing "query-agent-session-in reflects model after set-model-in!"
     (let [ctx         (session-introspection-ctx)
           session-ctx (:agent-session-ctx ctx)
-          seed-id     (:seed-id ctx)
+          session-id  (:session-id ctx)
           model       {:provider "x" :id "test-model" :reasoning false}]
-      (dispatch/dispatch! session-ctx :session/set-model {:session-id seed-id :model model} {:origin :core})
+      (dispatch/dispatch! session-ctx :session/set-model {:session-id session-id :model model} {:origin :core})
       (let [result (introspection/query-agent-session-in
                     ctx [:psi.agent-session/model])]
         (is (= model (:psi.agent-session/model result))))))
