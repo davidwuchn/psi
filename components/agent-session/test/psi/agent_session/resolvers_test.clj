@@ -82,8 +82,7 @@
           "fresh session has no executed tools")))
 
   (testing "executed-tool-count follows canonical lifecycle summaries rather than transcript tool results"
-    (let [[ctx seed-id] (session/create-context {:persist? false})
-          session-id    seed-id]
+    (let [[ctx session-id] (session/create-context {:persist? false})]
       (ss/update-state-value-in! ctx (ss/state-path :journal session-id) into
                                  [{:kind :message
                                    :data {:message {:role "assistant"
@@ -180,8 +179,8 @@
   (testing "context session attrs expose process sessions and persisted session list remains queryable"
     (let [cwd                (str (System/getProperty "java.io.tmpdir") "/psi-resolvers-context-" (java.util.UUID/randomUUID))
           _                  (.mkdirs (java.io.File. cwd))
-          [ctx seed-id]      (session/create-context {:cwd cwd})
-          sd-1               (session/new-session-in! ctx seed-id {})
+          [ctx _]            (session/create-context {:cwd cwd})
+          sd-1               (session/new-session-in! ctx nil {})
           sid-1              (:session-id sd-1)
           path-1             (:session-file sd-1)
           _                  (persist/flush-journal! (java.io.File. path-1)
@@ -365,8 +364,8 @@
 
 (deftest background-jobs-resolver-test
   (testing "background job attrs resolve from session root and include nested job entities"
-    (let [[ctx seed-id] (session/create-context {:persist? false})
-          thread-id     seed-id
+    (let [[ctx session-id] (session/create-context {:persist? false})
+          thread-id     session-id
           _         (dispatch/dispatch! ctx :session/update-background-jobs-state
                                         {:update-fn (fn [store]
                                                       (:state (bg-jobs/start-background-job
