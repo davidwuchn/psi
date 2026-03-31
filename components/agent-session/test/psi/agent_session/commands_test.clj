@@ -28,7 +28,7 @@
 
 (defn- make-test-ctx
   "Create a minimal session context for testing commands.
-   Returns [ctx seed-id]."
+   Returns [ctx session-id]."
   ([] (make-test-ctx {}))
   ([opts]
    (session/create-context
@@ -61,14 +61,13 @@
 ;; ── dispatch tests ──────────────────────────────────────────
 
 (deftest dispatch-quit-test
-  (let [[ctx seed-id] (make-test-ctx)
-        session-id seed-id]
+  (let [[ctx session-id] (make-test-ctx)]
     (is (= {:type :quit} (commands/dispatch-in ctx session-id "/quit" cmd-opts)))
     (is (= {:type :quit} (commands/dispatch-in ctx session-id "/exit" cmd-opts)))))
 
 (deftest dispatch-new-session-test
-  (let [[ctx seed-id] (make-test-ctx)
-        current-id seed-id
+  (let [[ctx session-id] (make-test-ctx)
+        current-id session-id
         sd-old     (session/new-session-in! ctx current-id {})
         ctx        ctx
         old-id     (:session-id sd-old)
@@ -78,8 +77,7 @@
     (is (not= old-id (get-in result [:rehydrate :session-id])))))
 
 (deftest dispatch-new-session-uses-callback-when-provided-test
-  (let [[ctx seed-id] (make-test-ctx)
-        session-id seed-id
+  (let [[ctx session-id] (make-test-ctx)
         called?    (atom 0)
         result     (commands/dispatch-in ctx
                                          session-id
@@ -99,25 +97,22 @@
            (get-in result [:rehydrate :tool-order])))))
 
 (deftest dispatch-resume-test
-  (let [[ctx seed-id] (make-test-ctx)
-        session-id seed-id]
+  (let [[ctx session-id] (make-test-ctx)]
     (is (= {:type :resume} (commands/dispatch-in ctx session-id "/resume" cmd-opts)))))
 
 (deftest dispatch-tree-open-test
-  (let [[ctx seed-id] (make-test-ctx)
-        session-id seed-id]
+  (let [[ctx session-id] (make-test-ctx)]
     (is (= {:type :tree-open} (commands/dispatch-in ctx session-id "/tree" cmd-opts)))))
 
 (deftest dispatch-tree-not-supported-test
-  (let [[ctx seed-id] (make-test-ctx)
-        session-id seed-id
+  (let [[ctx session-id] (make-test-ctx)
         result     (commands/dispatch-in ctx session-id "/tree" (assoc cmd-opts :supports-session-tree? false))]
     (is (= :text (:type result)))
     (is (str/includes? (:message result) "only available in TUI mode"))))
 
 (deftest dispatch-tree-switch-by-id-test
-  (let [[ctx seed-id] (make-test-ctx)
-        sd         (session/new-session-in! ctx seed-id {})
+  (let [[ctx session-id] (make-test-ctx)
+        sd         (session/new-session-in! ctx session-id {})
         ctx        ctx
         active-id  (:session-id sd)
         result     (commands/dispatch-in ctx active-id (str "/tree " active-id) cmd-opts)]
@@ -125,67 +120,60 @@
     (is (not= :tree-open (:type result)))))
 
 (deftest dispatch-tree-active-session-id-is-noop-test
-  (let [[ctx seed-id] (make-test-ctx)
-        active-id seed-id
+  (let [[ctx session-id] (make-test-ctx)
+        active-id session-id
         result    (commands/dispatch-in ctx active-id (str "/tree " active-id) cmd-opts)]
     (is (string? active-id))
     (is (= :text (:type result)))
     (is (str/includes? (:message result) "Already active session"))))
 
 (deftest dispatch-status-test
-  (let [[ctx seed-id] (make-test-ctx)
-        session-id seed-id
+  (let [[ctx session-id] (make-test-ctx)
         result     (commands/dispatch-in ctx session-id "/status" cmd-opts)]
     (is (= :text (:type result)))
     (is (str/includes? (:message result) "Session status"))
     (is (str/includes? (:message result) "Phase"))))
 
 (deftest dispatch-history-test
-  (let [[ctx seed-id] (make-test-ctx)
-        session-id seed-id
+  (let [[ctx session-id] (make-test-ctx)
         result     (commands/dispatch-in ctx session-id "/history" cmd-opts)]
     (is (= :text (:type result)))
     (is (str/includes? (:message result) "Message history"))
     (is (str/includes? (:message result) "(empty)"))))
 
 (deftest dispatch-help-test
-  (let [[ctx seed-id] (make-test-ctx)
-        session-id seed-id
+  (let [[ctx session-id] (make-test-ctx)
         result     (commands/dispatch-in ctx session-id "/help" cmd-opts)]
     (is (= :text (:type result)))
     (is (str/includes? (:message result) "/quit"))
     (is (str/includes? (:message result) "/new"))
     (is (str/includes? (:message result) "/login")))
   (testing "/? is an alias for /help"
-    (let [[ctx seed-id] (make-test-ctx)
-          session-id seed-id]
+    (let [[ctx session-id] (make-test-ctx)]
       (is (= :text (:type (commands/dispatch-in ctx session-id "/?" cmd-opts)))))))
 
 (deftest dispatch-prompts-test
-  (let [[ctx seed-id] (make-test-ctx)
-        session-id seed-id
+  (let [[ctx session-id] (make-test-ctx)
         result     (commands/dispatch-in ctx session-id "/prompts" cmd-opts)]
     (is (= :text (:type result)))
     (is (str/includes? (:message result) "Prompt Templates"))))
 
 (deftest dispatch-skills-test
-  (let [[ctx seed-id] (make-test-ctx)
-        session-id seed-id
+  (let [[ctx session-id] (make-test-ctx)
         result     (commands/dispatch-in ctx session-id "/skills" cmd-opts)]
     (is (= :text (:type result)))
     (is (str/includes? (:message result) "Skills"))))
 
 (deftest dispatch-worktree-test
-  (let [[ctx seed-id] (make-test-ctx)
-        session-id seed-id
+  (let [[ctx session-id] (make-test-ctx)
         result     (commands/dispatch-in ctx session-id "/worktree" cmd-opts)]
     (is (= :text (:type result)))
     (is (str/includes? (:message result) "Git worktrees"))
     (is (str/includes? (:message result) "worktrees:"))))
 
 (deftest dispatch-background-jobs-commands-test
-  (let [[ctx seed-id] (make-test-ctx)
-        thread-id seed-id]
+  (let [[ctx session-id] (make-test-ctx)
+        thread-id session-id]
     (dispatch/dispatch! ctx :session/update-background-jobs-state
                         {:update-fn (fn [store]
                                       (:state (bg-jobs/start-background-job
@@ -229,16 +217,15 @@
       (is (= "Usage: /cancel-job <job-id>" (:message cancel-usage))))))
 
 (deftest dispatch-model-no-arg-test
-  (let [[ctx seed-id] (make-test-ctx)
-        session-id seed-id
+  (let [[ctx session-id] (make-test-ctx)
         result     (commands/dispatch-in ctx session-id "/model" cmd-opts)]
     (is (= :text (:type result)))
     (is (str/includes? (:message result) "Current model:"))))
 
 (deftest workflow-send-event-tracked-job-visible-via-commands-test
   (testing "workflow send-event tracked job is visible via /jobs and /job"
-    (let [[ctx seed-id] (make-test-ctx)
-          thread-id seed-id
+    (let [[ctx session-id] (make-test-ctx)
+          thread-id session-id
           qctx      (query/create-query-context)
           chart     (chart/statechart {:id :cmd-wf}
                                       (ele/state {:id :idle}
@@ -287,8 +274,7 @@
           (is (some #(= job-id (:job-id %)) listed)))))))
 
 (deftest dispatch-model-set-test
-  (let [[ctx seed-id] (make-test-ctx)
-        session-id seed-id
+  (let [[ctx session-id] (make-test-ctx)
         result     (commands/dispatch-in ctx session-id "/model openai gpt-5.3-codex" cmd-opts)]
     (is (= :text (:type result)))
     (is (str/includes? (:message result) "✓ Model set to"))
@@ -296,29 +282,25 @@
     (is (= "gpt-5.3-codex" (get-in (ss/get-session-data-in ctx session-id) [:model :id])))))
 
 (deftest dispatch-model-invalid-arity-test
-  (let [[ctx seed-id] (make-test-ctx)
-        session-id seed-id
+  (let [[ctx session-id] (make-test-ctx)
         result     (commands/dispatch-in ctx session-id "/model openai" cmd-opts)]
     (is (= :text (:type result)))
     (is (= "Usage: /model OR /model <provider> <model-id>" (:message result)))))
 
 (deftest dispatch-model-unknown-test
-  (let [[ctx seed-id] (make-test-ctx)
-        session-id seed-id
+  (let [[ctx session-id] (make-test-ctx)
         result     (commands/dispatch-in ctx session-id "/model openai no-such-model" cmd-opts)]
     (is (= :text (:type result)))
     (is (str/includes? (:message result) "Unknown model:"))))
 
 (deftest dispatch-thinking-no-arg-test
-  (let [[ctx seed-id] (make-test-ctx)
-        session-id seed-id
+  (let [[ctx session-id] (make-test-ctx)
         result     (commands/dispatch-in ctx session-id "/thinking" cmd-opts)]
     (is (= :text (:type result)))
     (is (str/includes? (:message result) "Current thinking level:"))))
 
 (deftest dispatch-thinking-set-test
-  (let [[ctx seed-id] (make-test-ctx)
-        session-id seed-id
+  (let [[ctx session-id] (make-test-ctx)
         result     (commands/dispatch-in ctx session-id "/thinking high" cmd-opts)]
     (is (= :text (:type result)))
     ;; test model in fixture has reasoning false, so level clamps to :off
@@ -326,31 +308,27 @@
     (is (= :off (:thinking-level (ss/get-session-data-in ctx session-id))))))
 
 (deftest dispatch-thinking-unknown-level-test
-  (let [[ctx seed-id] (make-test-ctx)
-        session-id seed-id
+  (let [[ctx session-id] (make-test-ctx)
         result     (commands/dispatch-in ctx session-id "/thinking turbo" cmd-opts)]
     (is (= :text (:type result)))
     (is (str/includes? (:message result) "Unknown thinking level: turbo"))
     (is (str/includes? (:message result) "Allowed:"))))
 
 (deftest dispatch-thinking-invalid-arity-test
-  (let [[ctx seed-id] (make-test-ctx)
-        session-id seed-id
+  (let [[ctx session-id] (make-test-ctx)
         result     (commands/dispatch-in ctx session-id "/thinking high extra" cmd-opts)]
     (is (= :text (:type result)))
     (is (= "Usage: /thinking OR /thinking <level>" (:message result)))))
 
 (deftest dispatch-remember-without-memory-ctx-test
-  (let [[ctx seed-id] (make-test-ctx)
-        session-id seed-id
+  (let [[ctx session-id] (make-test-ctx)
         result     (commands/dispatch-in ctx session-id "/remember" cmd-opts)]
     (is (= :text (:type result)))
     (is (str/includes? (:message result) "Memory context not configured"))))
 
 (deftest dispatch-remember-accepted-test
-  (let [[ctx seed-id] (make-test-ctx)
+  (let [[ctx session-id] (make-test-ctx)
         ctx          (with-ready-memory-ctx ctx)
-        session-id   seed-id
         before-count (count (:records (memory/get-state-in (:memory-ctx ctx))))
         result       (commands/dispatch-in ctx session-id "/remember verify runtime" cmd-opts)
         after-state  (memory/get-state-in (:memory-ctx ctx))
@@ -375,18 +353,16 @@
     (is (= (:timestamp rec) (:psi.memory.remember/last-capture-at telemetry)))))
 
 (deftest dispatch-remember-blocked-when-memory-not-ready-test
-  (let [[ctx seed-id] (make-test-ctx)
+  (let [[ctx session-id] (make-test-ctx)
         ctx        (with-unready-memory-ctx ctx)
-        session-id seed-id
         result     (commands/dispatch-in ctx session-id "/remember check live readiness" cmd-opts)]
     (is (= :text (:type result)))
     (is (str/includes? (:message result) "Remember blocked"))
     (is (str/includes? (:message result) "memory_capture_prerequisites_not_ready"))))
 
 (deftest dispatch-remember-store-write-failure-surfaces-fallback-test
-  (let [[ctx seed-id] (make-test-ctx)
+  (let [[ctx session-id] (make-test-ctx)
         ctx         (with-ready-memory-ctx ctx)
-        session-id  seed-id
         status-atom (atom :ready)
         provider    (reify store/StoreProvider
                       (provider-id [_] "failing-store")
@@ -417,34 +393,28 @@
 
 (deftest dispatch-not-a-command-test
   (testing "plain text returns nil"
-    (let [[ctx seed-id] (make-test-ctx)
-          session-id seed-id]
+    (let [[ctx session-id] (make-test-ctx)]
       (is (nil? (commands/dispatch-in ctx session-id "hello world" cmd-opts)))))
   (testing "skill invocation returns nil (handled by agent)"
-    (let [[ctx seed-id] (make-test-ctx)
-          session-id seed-id]
+    (let [[ctx session-id] (make-test-ctx)]
       (is (nil? (commands/dispatch-in ctx session-id "/skill:foo" cmd-opts)))))
   (testing "prompt template returns nil (handled by agent)"
-    (let [[ctx seed-id] (make-test-ctx)
-          session-id seed-id]
+    (let [[ctx session-id] (make-test-ctx)]
       (is (nil? (commands/dispatch-in ctx session-id "/my-template" cmd-opts))))))
 
 (deftest dispatch-login-no-oauth-test
-  (let [[ctx seed-id] (make-test-ctx)
-        session-id seed-id
+  (let [[ctx session-id] (make-test-ctx)
         result     (commands/dispatch-in ctx session-id "/login" {:oauth-ctx nil :ai-model test-ai-model})]
     (is (= :login-error (:type result)))))
 
 (deftest dispatch-logout-no-oauth-test
-  (let [[ctx seed-id] (make-test-ctx)
-        session-id seed-id
+  (let [[ctx session-id] (make-test-ctx)
         result     (commands/dispatch-in ctx session-id "/logout" {:oauth-ctx nil :ai-model test-ai-model})]
     (is (= :text (:type result)))
     (is (str/includes? (:message result) "not available"))))
 
 (deftest dispatch-extension-cmd-test
-  (let [[ctx seed-id] (make-test-ctx)
-        session-id seed-id
+  (let [[ctx session-id] (make-test-ctx)
         reg        (:extension-registry ctx)
         called     (atom nil)
         handler    (fn [args] (reset! called args))
@@ -463,8 +433,7 @@
 ;; ── format-* tests ──────────────────────────────────────────
 
 (deftest format-status-test
-  (let [[ctx seed-id] (make-test-ctx)
-        session-id seed-id
+  (let [[ctx session-id] (make-test-ctx)
         s          (commands/format-status ctx session-id)]
     (is (str/includes? s "Phase"))
     (is (str/includes? s "idle"))
@@ -472,31 +441,27 @@
     (is (str/includes? s "agent-session-ctx"))))
 
 (deftest format-status-includes-effective-reasoning-effort-test
-  (let [[ctx seed-id] (make-test-ctx {:model {:provider "openai"
-                                           :id "gpt-5.3-codex"
-                                           :reasoning true}
-                                   :thinking-level :high})
-        session-id seed-id
+  (let [[ctx session-id] (make-test-ctx {:model {:provider "openai"
+                                                 :id "gpt-5.3-codex"
+                                                 :reasoning true}
+                                         :thinking-level :high})
         s          (commands/format-status ctx session-id)]
     (is (str/includes? s "thinking high"))))
 
 (deftest format-worktree-test
-  (let [[ctx seed-id] (make-test-ctx)
-        session-id seed-id
+  (let [[ctx session-id] (make-test-ctx)
         s          (commands/format-worktree ctx session-id)]
     (is (str/includes? s "Git worktrees"))
     (is (str/includes? s "cwd"))
     (is (str/includes? s "worktrees:"))))
 
 (deftest format-history-empty-test
-  (let [[ctx seed-id] (make-test-ctx)
-        session-id seed-id
+  (let [[ctx session-id] (make-test-ctx)
         s          (commands/format-history ctx session-id)]
     (is (str/includes? s "(empty)"))))
 
 (deftest format-history-with-messages-test
-  (let [[ctx seed-id] (make-test-ctx)
-        session-id seed-id]
+  (let [[ctx session-id] (make-test-ctx)]
     (agent/append-message-in! (ss/agent-ctx-in ctx session-id)
                               {:role "user" :content [{:type :text :text "hello"}]})
     (let [s (commands/format-history ctx session-id)]
@@ -504,8 +469,7 @@
       (is (str/includes? s "hello")))))
 
 (deftest format-help-includes-all-commands-test
-  (let [[ctx seed-id] (make-test-ctx)
-        session-id seed-id
+  (let [[ctx session-id] (make-test-ctx)
         s          (commands/format-help ctx session-id)]
     (doseq [cmd ["/quit" "/status" "/history" "/new" "/resume" "/tree"
                  "/login" "/logout" "/remember" "/worktree"
@@ -514,14 +478,12 @@
       (is (str/includes? s cmd) (str "help should mention " cmd)))))
 
 (deftest format-prompts-none-test
-  (let [[ctx seed-id] (make-test-ctx)
-        session-id seed-id
+  (let [[ctx session-id] (make-test-ctx)
         s          (commands/format-prompts ctx session-id)]
     (is (str/includes? s "(none discovered)"))))
 
 (deftest format-skills-none-test
-  (let [[ctx seed-id] (make-test-ctx)
-        session-id seed-id
+  (let [[ctx session-id] (make-test-ctx)
         s          (commands/format-skills ctx session-id)]
     (is (str/includes? s "(none discovered)"))))
 
