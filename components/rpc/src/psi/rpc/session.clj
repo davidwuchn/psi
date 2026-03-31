@@ -10,13 +10,13 @@
    [psi.agent-session.core :as session]
    [psi.agent-session.executor :as executor]
    [psi.agent-session.extension-runtime :as ext-rt]
-   [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.runtime :as runtime]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.state-accessors :as sa]
    [psi.ai.models :as ai-models]
    [psi.rpc.events :as events]
    [psi.rpc.session.emit :as emit]
+   [psi.rpc.session.login :as login]
    [psi.rpc.session.streams :as streams]
    [psi.rpc.state :as rpc.state]
    [psi.rpc.transport :refer [*request-session-id* default-session-id-in error-frame protocol-version response-frame supported-rpc-ops targetable-rpc-ops]]))
@@ -223,80 +223,6 @@
     (not (some? run-agent-loop-fn))
     (boolean sync-on-git-head-change?)))
 
-(defn- normalize-provider-param
-  [v]
-  (cond
-    (nil? v) nil
-    (keyword? v) (name v)
-    (string? v)  (let [trimmed (str/trim v)]
-                   (when-not (str/blank? trimmed)
-                     trimmed))
-    :else        ::invalid))
-
-(defn- pending-login-state
-  [ctx]
-  (:pending-login (or (sa/oauth-projection-in ctx) {})))
-
-(defn- handle-login-begin!
-  [ctx request params state session-deps]
-  (let [oauth-ctx (:oauth-ctx ctx)]
-    (when-not oauth-ctx
-      (throw (ex-info "OAuth not available."
-                      {:error-code "request/invalid-params"})))
-    (when (pending-login-state ctx)
-      (throw (ex-info "login already in progress"
-                      {:error-code "request/invalid-params"})))
-    (let [provider-param (normalize-provider-param (get params :provider))
-          _              (when (= ::invalid provider-param)
-                           (throw (ex-info "invalid request parameter :provider: string or keyword"
-                                           {:error-code "request/invalid-params"})))
-          ai-model       (current-ai-model ctx session-deps state)
-          _              (when (and (nil? provider-param) (nil? ai-model))
-                           (throw (ex-info "provider is required when session model is not configured"
-                                           {:error-code "request/invalid-params"})))
-          providers      (oauth/available-providers oauth-ctx)
-          {:keys [provider error]}
-          (commands/select-login-provider providers
-                                          (or (:provider ai-model) provider-param)
-                                          provider-param)]
-      (when error
-        (throw (ex-info error
-                        {:error-code "request/invalid-params"})))
-      (let [{:keys [url login-state]} (oauth/begin-login! oauth-ctx (:id provider))
-            callback? (boolean (:uses-callback-server provider))]
-        (sa/set-oauth-pending-login-in! ctx
-                                        {:provider-id   (:id provider)
-                                         :provider-name (:name provider)
-                                         :login-state   login-state})
-        (response-frame (:id request) "login_begin" true
-                        {:provider {:id (name (:id provider))
-                                    :name (:name provider)}
-                         :url url
-                         :uses-callback-server callback?
-                         :pending-login true})))))
-
-(defn- handle-login-complete!
-  [ctx request params _state]
-  (let [oauth-ctx (:oauth-ctx ctx)]
-    (when-not oauth-ctx
-      (throw (ex-info "OAuth not available."
-                      {:error-code "request/invalid-params"})))
-    (when-not (or (nil? (:input params)) (string? (:input params)))
-      (throw (ex-info "invalid request parameter :input: string or nil"
-                      {:error-code "request/invalid-params"})))
-    (let [{:keys [provider-id provider-name login-state]} (pending-login-state ctx)]
-      (when-not provider-id
-        (throw (ex-info "no pending login"
-                        {:error-code "request/no-pending-login"})))
-      (let [trimmed (some-> (:input params) str/trim)
-            input   (when-not (str/blank? trimmed) trimmed)]
-        (oauth/complete-login! oauth-ctx provider-id input login-state)
-        (sa/complete-oauth-login-in! ctx provider-id)
-        (response-frame (:id request) "login_complete" true
-                        {:provider {:id (name provider-id)
-                                    :name provider-name}
-                         :logged-in true})))))
-
 (defn- exception->error-frame
   [request e]
   (let [code    (or (:error-code (ex-data e))
@@ -415,61 +341,6 @@
       (events/emit-event! emit-frame! state
                           {:event "footer/updated"
                            :data  (events/footer-updated-payload ctx session-id)}))))
-
-(defn- complete-pending-login!
-  [ctx _state message emit!]
-  (when-let [{:keys [provider-id provider-name login-state]} (pending-login-state ctx)]
-    (if-let [oauth-ctx (:oauth-ctx ctx)]
-      (try
-        (let [trimmed (some-> message str/trim)
-              input   (when-not (str/blank? trimmed) trimmed)]
-          (oauth/complete-login! oauth-ctx provider-id input login-state)
-          (sa/complete-oauth-login-in! ctx provider-id)
-          (emit/emit-assistant-text! emit! (str "✓ Logged in to " (or provider-name
-                                                                      (some-> provider-id name)
-                                                                      "provider"))))
-        (catch Throwable e
-          (sa/complete-oauth-login-in! ctx provider-id)
-          (emit/emit-assistant-text! emit! (str "✗ Login failed: " (ex-message e)))))
-      (emit/emit-assistant-text! emit! "OAuth not available."))))
-
-(defn- handle-login-start-command!
-  [ctx state emit-frame! request-id cmd-result emit!]
-  (let [session-id    (events/focused-session-id ctx state)
-        provider-id   (get-in cmd-result [:provider :id])
-        provider-name (or (get-in cmd-result [:provider :name])
-                          (some-> provider-id name)
-                          "provider")
-        login-state   (:login-state cmd-result)
-        callback?     (boolean (:uses-callback-server cmd-result))]
-    (emit/emit-assistant-text! emit!
-                               (str "Login: " provider-name
-                                    " — open URL: " (:url cmd-result)))
-    (if callback?
-      (do
-        (emit/emit-assistant-text! emit! "Waiting for browser callback…")
-        (if-let [oauth-ctx (:oauth-ctx ctx)]
-          (let [worker (start-daemon-thread!
-                        (fn []
-                          (binding [*out* (rpc.state/err-writer state)
-                                    *err* (rpc.state/err-writer state)]
-                            (let [emit-login! (emit/make-request-emitter emit-frame! state request-id)]
-                              (try
-                                (oauth/complete-login! oauth-ctx provider-id nil login-state)
-                                (emit/emit-assistant-text! emit-login! (str "✓ Logged in to " provider-name))
-                                (catch Throwable e
-                                  (emit/emit-assistant-text! emit-login! (str "✗ Login failed: " (ex-message e))))
-                                (finally
-                                  (emit/emit-session-snapshots! emit-login! ctx state session-id))))))
-                        "rpc-oauth-worker")]
-            (rpc.state/add-inflight-future! state worker))
-          (emit/emit-assistant-text! emit! "OAuth not available.")))
-      (do
-        (sa/set-oauth-pending-login-in! ctx
-                                        {:provider-id provider-id
-                                         :provider-name provider-name
-                                         :login-state login-state})
-        (emit/emit-assistant-text! emit! "Paste authorization code as your next prompt message.")))))
 
 (defn- handle-prompt-command-result!
   "Legacy prompt-path slash command event mapping.
@@ -747,7 +618,7 @@
 
       cmd-result
       (if (= :login-start (:type cmd-result))
-        (handle-login-start-command! ctx state emit-frame! request-id cmd-result emit!)
+        (login/handle-login-start-command! {:ctx ctx :state state :emit-frame! emit-frame! :request-id request-id :cmd-result cmd-result :emit! emit! :start-daemon-thread! start-daemon-thread!})
         (do
           (when (= :new-session (:type cmd-result))
             (let [rehydrate (:rehydrate cmd-result)
@@ -895,7 +766,7 @@
                                                     (throw (ex-info "session model is not configured"
                                                                     {:error-code "request/invalid-params"})))
                                     oauth-ctx     (:oauth-ctx ctx)
-                                    pending-login (pending-login-state ctx)
+                                    pending-login (login/pending-login-state ctx)
                                     cmd-result    (when-not pending-login
                                                     (commands/dispatch-in ctx session-id message {:oauth-ctx oauth-ctx
                                                                                                   :ai-model  ai-model
@@ -906,7 +777,7 @@
                                  ;; Pending two-step OAuth login: next prompt input is the auth code/URL.
                                   (do
                                     (runtime/journal-user-message-in! ctx session-id message images)
-                                    (complete-pending-login! ctx state message emit!)
+                                    (login/complete-pending-login! {:ctx ctx :state state :message message :emit! emit!})
                                     (emit/emit-session-snapshots! emit! ctx state session-id))
 
                                   (some? cmd-result)
@@ -914,7 +785,7 @@
                                   (do
                                     (runtime/journal-user-message-in! ctx session-id message images)
                                     (if (= :login-start (:type cmd-result))
-                                      (handle-login-start-command! ctx state emit-frame! request-id cmd-result emit!)
+                                      (login/handle-login-start-command! {:ctx ctx :state state :emit-frame! emit-frame! :request-id request-id :cmd-result cmd-result :emit! emit! :start-daemon-thread! start-daemon-thread!})
                                       (do
                                         (when (= :new-session (:type cmd-result))
                                           (let [rehydrate (:rehydrate cmd-result)
@@ -1086,10 +957,10 @@
                              (handle-cancel-background-job! ctx request params)
 
                              "login_begin"
-                             (handle-login-begin! ctx request params state session-deps)
+                             (login/handle-login-begin! {:ctx ctx :request request :params params :state state :session-deps session-deps :current-ai-model current-ai-model})
 
                              "login_complete"
-                             (handle-login-complete! ctx request params state)
+                             (login/handle-login-complete! {:ctx ctx :request request :params params :state state})
 
                              "new_session"
                              (let [new-session-fn    on-new-session!
