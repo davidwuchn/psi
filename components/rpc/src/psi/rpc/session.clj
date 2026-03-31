@@ -15,6 +15,7 @@
    [psi.agent-session.state-accessors :as sa]
    [psi.ai.models :as ai-models]
    [psi.rpc.events :as events]
+   [psi.rpc.session.commands :as rpc.commands]
    [psi.rpc.session.emit :as emit]
    [psi.rpc.session.login :as login]
    [psi.rpc.session.streams :as streams]
@@ -342,123 +343,6 @@
                           {:event "footer/updated"
                            :data  (events/footer-updated-payload ctx session-id)}))))
 
-(defn- handle-prompt-command-result!
-  "Legacy prompt-path slash command event mapping.
-   Keeps existing prompt RPC behavior stable while the new `command` op
-   uses `command-result` and `ui/frontend-action-requested`."
-  [cmd-result emit!]
-  (let [result-type (:type cmd-result)]
-    (case result-type
-      (:text :logout :login-error :new-session)
-      (emit! "assistant/message"
-             {:role    "assistant"
-              :content [{:type :text :text (str (:message cmd-result))}]})
-
-      :login-start
-      (emit! "assistant/message"
-             {:role    "assistant"
-              :content [{:type :text
-                         :text (str "Login: " (get-in cmd-result [:provider :name])
-                                    " — open URL: " (:url cmd-result))}]})
-
-      :quit
-      (emit! "assistant/message"
-             {:role    "assistant"
-              :content [{:type :text
-                         :text "[/quit is not supported over RPC prompt — use the abort op or close the connection]"}]})
-
-      :resume
-      (emit! "assistant/message"
-             {:role    "assistant"
-              :content [{:type :text
-                         :text "[/resume is not supported over RPC prompt — use switch_session op]"}]})
-
-      :tree-open
-      (emit! "assistant/message"
-             {:role "assistant"
-              :content [{:type :text
-                         :text "[/tree is only available in TUI mode (--tui)]"}]})
-
-      :tree-switch
-      (emit! "assistant/message"
-             {:role "assistant"
-              :content [{:type :text
-                         :text (str "[session switch requested: " (:session-id cmd-result) "]")}]})
-
-      :extension-cmd
-      (let [output (try
-                     (let [out (with-out-str
-                                 ((:handler cmd-result) (:args cmd-result)))]
-                       (if (str/blank? out)
-                         "[extension command returned no output]"
-                         out))
-                     (catch Throwable e
-                       (str "[extension command error: " (ex-message e) "]")))]
-        (emit! "assistant/message"
-               {:role    "assistant"
-                :content [{:type :text :text output}]}))
-
-      (emit! "assistant/message"
-             {:role    "assistant"
-              :content [{:type :text :text (str "[command result: " result-type "]")}]}))))
-
-(defn- handle-command-result!
-  "Map a commands/dispatch result to canonical RPC event emissions.
-   Emits command-result or ui/frontend-action-requested without invoking the agent loop."
-  [request-id cmd-result emit!]
-  (let [result-type (:type cmd-result)]
-    (case result-type
-      (:text :logout :login-error :new-session)
-      (emit/emit-command-result! emit! {:type (if (= :new-session result-type)
-                                                "new_session"
-                                                (name result-type))
-                                        :message (str (:message cmd-result))})
-
-      :login-start
-      (emit/emit-command-result! emit! {:type "login_start"
-                                        :message (str "Login: " (get-in cmd-result [:provider :name])
-                                                      " — open URL: " (:url cmd-result))
-                                        :provider-name (get-in cmd-result [:provider :name])
-                                        :login-url (:url cmd-result)
-                                        :uses-callback-server (boolean (:uses-callback-server cmd-result))})
-
-      :quit
-      (emit/emit-command-result! emit! {:type "quit"})
-
-      :resume
-      (emit/emit-command-result! emit! {:type "text"
-                                        :message "[/resume requires frontend action handling]"})
-
-      :tree-open
-      (emit/emit-command-result! emit! {:type "text"
-                                        :message "[/tree requires frontend action handling]"})
-
-      :tree-switch
-      (emit/emit-command-result! emit! {:type "session_switch"
-                                        :session-id (:session-id cmd-result)})
-
-      :session-switch
-      (emit/emit-command-result! emit! {:type "session_switch"
-                                   :session-id (:session-id cmd-result)})
-
-      :frontend-action
-      (emit/emit-frontend-action-request! emit! request-id cmd-result)
-
-      :extension-cmd
-      (let [output (try
-                     (let [out (with-out-str
-                                 ((:handler cmd-result) (:args cmd-result)))]
-                       (if (str/blank? out)
-                         "[extension command returned no output]"
-                         out))
-                     (catch Throwable e
-                       (str "[extension command error: " (ex-message e) "]")))]
-        (emit/emit-command-result! emit! {:type "text" :message output}))
-
-      ;; Unknown result type — emit a fallback
-      (emit/emit-command-result! emit! {:type "text"
-                                        :message (str "[command result: " result-type "]")}))))
-
 (defn- valid-session-id-param!
   [session-id]
   (when session-id
@@ -488,163 +372,6 @@
                         (default-session-id-in ctx))]
      (binding [*request-session-id* session-id]
        (f ctx)))))
-
-(defn- run-command!
-  [ctx request emit-frame! state session-deps]
-  (let [text       (req-arg! request (params-map request) :text #(and (string? %) (not (str/blank? %))) "non-empty string")
-        request-id (:id request)
-        emit!      (emit/make-request-emitter emit-frame! state request-id)
-        ai-model   (current-ai-model ctx session-deps state)
-        oauth-ctx  (:oauth-ctx ctx)
-        trimmed    (str/trim text)
-        session-id (events/focused-session-id ctx state)
-        cmd-result (commands/dispatch-in ctx session-id text {:oauth-ctx oauth-ctx
-                                                              :ai-model ai-model
-                                                              :supports-session-tree? false
-                                                              :on-new-session! (:on-new-session! session-deps)})]
-    (runtime/journal-user-message-in! ctx session-id text nil)
-    (cond
-      (= trimmed "/resume")
-      (emit! "ui/frontend-action-requested"
-             {:request-id request-id
-              :action-name "resume-selector"
-              :prompt "Select a session to resume"
-              :payload {:query (session/query-in ctx
-                                                 [{:psi.session/list
-                                                   [:psi.session-info/path
-                                                    :psi.session-info/name
-                                                    :psi.session-info/worktree-path
-                                                    :psi.session-info/first-message
-                                                    :psi.session-info/modified]}])}})
-
-      (str/starts-with? trimmed "/resume ")
-      (let [session-path (-> (str/replace trimmed #"^/resume\s+" "") str/trim)]
-        (if-not (.exists (io/file session-path))
-          (emit/emit-command-result! emit! {:type "text"
-                                            :message (str "Session file not found: " session-path)})
-          (let [current-sid session-id
-                sd          (session/resume-session-in! ctx current-sid session-path)
-                sid         (:session-id sd)
-                _           (events/set-focus-session-id! state sid)
-                msgs        (:messages (agent/get-data-in (ss/agent-ctx-in ctx sid)))]
-            (emit/emit-session-rehydration!
-             emit!
-             {:session-id sid
-              :session-file (:session-file sd)
-              :message-count (count msgs)
-              :messages msgs
-              :tool-calls {}
-              :tool-order []}))))
-
-      (= trimmed "/tree")
-      (let [active-id  (events/focus-session-id state)
-            sessions0  (vec (or (ss/list-context-sessions-in ctx) []))
-            sessions   (if (seq sessions0)
-                         sessions0
-                         [(select-keys (ss/get-session-data-in ctx session-id)
-                                       [:session-id :session-name :worktree-path])])]
-        (emit! "ui/frontend-action-requested"
-               {:request-id request-id
-                :action-name "context-session-selector"
-                :prompt "Select a live session"
-                :payload {:active-session-id active-id
-                          :sessions sessions}}))
-
-      (str/starts-with? trimmed "/tree ")
-      (let [arg        (-> (str/replace trimmed #"^/tree\s+" "") str/trim)
-            active-id  (events/focus-session-id state)
-            sessions0  (vec (or (ss/list-context-sessions-in ctx) []))
-            sessions   (if (seq sessions0)
-                         sessions0
-                         [(select-keys (ss/get-session-data-in ctx session-id)
-                                       [:session-id :session-name :worktree-path])])
-            match-by-id
-            (some (fn [m]
-                    (when (= arg (:session-id m))
-                      m))
-                  sessions)
-            match-by-prefix
-            (when-not match-by-id
-              (let [matches (filterv (fn [m]
-                                       (str/starts-with? (or (:session-id m) "") arg))
-                                     sessions)]
-                (when (= 1 (count matches))
-                  (first matches))))
-            chosen (or match-by-id match-by-prefix)
-            sid    (:session-id chosen)]
-        (cond
-          (nil? chosen)
-          (emit/emit-command-result! emit! {:type "text"
-                                            :message (str "Session not found in context: " arg)})
-
-          (= sid active-id)
-          (emit/emit-command-result! emit! {:type "text"
-                                            :message (str "Already active session: " sid)})
-
-          :else
-          (do
-            (session/ensure-session-loaded-in! ctx active-id sid)
-            (events/set-focus-session-id! state sid)
-            (let [sd   (ss/get-session-data-in ctx sid)
-                  msgs (:messages (agent/get-data-in (ss/agent-ctx-in ctx sid)))]
-              (emit/emit-session-rehydration!
-               emit!
-               {:session-id (:session-id sd)
-                :session-file (:session-file sd)
-                :message-count (count msgs)
-                :messages msgs
-                :tool-calls {}
-                :tool-order []})))))
-
-      (= trimmed "/model")
-      (emit! "ui/frontend-action-requested"
-             {:request-id request-id
-              :action-name "model-picker"
-              :prompt "Select a model"
-              :payload {:models (->> ai-models/all-models
-                                     vals
-                                     (sort-by (juxt :provider :id))
-                                     (mapv (fn [m]
-                                             {:provider (name (:provider m))
-                                              :id (:id m)
-                                              :reasoning (boolean (:supports-reasoning m))})))}})
-
-      (= trimmed "/thinking")
-      (emit! "ui/frontend-action-requested"
-             {:request-id request-id
-              :action-name "thinking-picker"
-              :prompt "Select a thinking level"
-              :payload {:levels ["off" "minimal" "low" "medium" "high" "xhigh"]}})
-
-      cmd-result
-      (if (= :login-start (:type cmd-result))
-        (login/handle-login-start-command! {:ctx ctx :state state :emit-frame! emit-frame! :request-id request-id :cmd-result cmd-result :emit! emit! :start-daemon-thread! start-daemon-thread!})
-        (do
-          (when (= :new-session (:type cmd-result))
-            (let [rehydrate (:rehydrate cmd-result)
-                  ;; Get new session-id from rehydrate (lifecycle or callback)
-                  new-sid   (:session-id rehydrate)
-                  _         (when new-sid (events/set-focus-session-id! state new-sid))
-                  sd        (when new-sid (ss/get-session-data-in ctx new-sid))
-                  msgs      (or (:agent-messages rehydrate)
-                                (when new-sid
-                                  (:messages (agent/get-data-in (ss/agent-ctx-in ctx new-sid)))))]
-              (emit/emit-session-rehydration!
-               emit!
-               {:session-id (:session-id sd)
-                :session-file (:session-file sd)
-                :message-count (count msgs)
-                :messages msgs
-                :tool-calls (or (:tool-calls rehydrate) {})
-                :tool-order (or (:tool-order rehydrate) [])})))
-          (handle-command-result! request-id cmd-result emit!)))
-
-      :else
-      (emit/emit-command-result! emit! {:type "text"
-                                   :message (str "[not a command] " text)}))
-    (emit/emit-session-snapshots! emit! ctx state session-id {:context? true})
-    (response-frame (:id request) "command" true {:accepted true
-                                                  :handled true})))
 
 (defn- handle-frontend-action-result!
   [ctx request emit-frame! state]
@@ -804,7 +531,7 @@
                                               :messages msgs
                                               :tool-calls (or (:tool-calls rehydrate) {})
                                               :tool-order (or (:tool-order rehydrate) [])})))
-                                        (handle-prompt-command-result! cmd-result emit!)))
+                                        (rpc.commands/handle-prompt-command-result! cmd-result emit!)))
                                     (emit/emit-session-snapshots! emit! ctx state session-id))
 
                                   :else
@@ -889,7 +616,14 @@
                                (response-frame (:id request) op true {:result result}))
 
                              "command"
-                             (run-command! ctx request emit-frame! state session-deps)
+                             (rpc.commands/run-command! {:ctx ctx
+                                                         :request request
+                                                         :emit-frame! emit-frame!
+                                                         :state state
+                                                         :session-deps session-deps
+                                                         :current-ai-model current-ai-model
+                                                         :start-daemon-thread! start-daemon-thread!
+                                                         :login-handler login/handle-login-start-command!})
 
                              "frontend_action_result"
                              (handle-frontend-action-result! ctx request emit-frame! state)
