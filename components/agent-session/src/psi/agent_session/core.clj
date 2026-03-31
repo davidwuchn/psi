@@ -180,7 +180,6 @@
          ctx0              {:sc-env                sc-env
                             :started-at            (java.time.Instant/now)
                             :state*                state*
-                            :target-session-id     initial-sid
                             :initial-session       initial-session*
                             :agent-initial         agent-initial
                             :nrepl-runtime-atom    nrepl-runtime-atom

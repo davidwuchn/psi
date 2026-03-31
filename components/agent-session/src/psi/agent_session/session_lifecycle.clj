@@ -87,8 +87,7 @@
             (session/get-session-data-in ctx source-session-id))
           (let [{:keys [header entries]} loaded
                 session-id             (:id header)
-                source-sd              (or (session/get-session-data-in ctx source-session-id)
-                                            (session/get-session-data-in ctx (:target-session-id ctx)))
+                source-sd              (session/get-session-data-in ctx source-session-id)
                 source-model           (:model source-sd)
                 source-thinking-level  (:thinking-level source-sd)
                 model-entry            (last (filter #(= :model (:kind %)) entries))
