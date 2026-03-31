@@ -234,7 +234,7 @@
 
 (deftest openai-thinking-delta-resets-after-toolcall-start-with-different-index-test
   (let [agent-ctx    (setup-agent-ctx!)
-        session-ctx  (setup-session-ctx! agent-ctx)
+        [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
         user-msg     {:role "user" :content [{:type :text :text "hi"}]}
         q            (LinkedBlockingQueue.)
         openai-model {:provider "openai" :id "gpt-5.3-codex"}
@@ -248,7 +248,7 @@
                        (consume-fn {:type :thinking-delta :content-index 0 :delta "plan-2"})
                        (consume-fn {:type :done :reason :stop}))]
     (with-redefs [psi.agent-session.executor/do-stream! stream-fn]
-      (executor/run-agent-loop! nil session-ctx agent-ctx openai-model [user-msg]
+      (executor/run-agent-loop! nil session-ctx session-ctx-id agent-ctx openai-model [user-msg]
                                 {:progress-queue q})
       (let [events          (loop [acc []]
                               (if-let [e (.poll q 5 TimeUnit/MILLISECONDS)]

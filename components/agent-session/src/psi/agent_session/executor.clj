@@ -816,8 +816,8 @@ Also tolerates cumulative snapshots that differ near previous tail
                         (end-content-block! (:turn-data turn-ctx) (or (:content-index event) 0)))
 
                       :toolcall-start
-                      (do
-                        (swap! thinking-buffers dissoc (or (:content-index event) 0))
+                      (let [content-index (or (:content-index event) 0)]
+                        (reset-thinking-buffers-on-toolcall-start! thinking-buffers ai-model content-index)
                         (append-tool-call-attempt!
                          ctx session-id
                          {:turn-id       turn-id
