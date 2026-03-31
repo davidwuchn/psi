@@ -20,6 +20,7 @@
    [psi.rpc.session.frontend-actions :as frontend-actions]
    [psi.rpc.session.login :as login]
    [psi.rpc.session.navigation :as navigation]
+   [psi.rpc.session.ops :as ops]
    [psi.rpc.session.streams :as streams]
    [psi.rpc.state :as rpc.state]
    [psi.rpc.transport :refer [*request-session-id* default-session-id-in error-frame protocol-version response-frame supported-rpc-ops targetable-rpc-ops]]))
@@ -510,25 +511,10 @@
              dispatch-op (fn [ctx]
                            (case op
                              "ping"
-                             (response-frame (:id request) "ping" true {:pong true :protocol-version protocol-version})
+                             (ops/handle-ping request)
 
                              "query_eql"
-                             (let [query-str  (req-arg! request params :query #(and (string? %) (not (str/blank? %))) "non-empty EDN string")
-                                   entity-str (:entity params)
-                                   q          (parse-query-edn! query-str)
-                                   extra      (when (and (string? entity-str) (not (str/blank? entity-str)))
-                                                (try
-                                                  (binding [*read-eval* false]
-                                                    (let [m (edn/read-string entity-str)]
-                                                      (when (map? m) m)))
-                                                  (catch Throwable _ nil)))
-                                   result     (try
-                                                (session/query-in ctx q (or extra {}))
-                                                (catch Throwable e
-                                                  (throw (ex-info (or (ex-message e) "query execution failed")
-                                                                  {:error-code "runtime/query-failed"}
-                                                                  e))))]
-                               (response-frame (:id request) op true {:result result}))
+                             (ops/handle-query-eql {:ctx ctx :request request :params params :parse-query-edn! parse-query-edn!})
 
                              "command"
                              (rpc.commands/run-command! {:ctx ctx
@@ -548,53 +534,19 @@
                                (run-prompt-async! ctx request emit-frame! state session-deps))
 
                              "prompt_while_streaming"
-                             (let [message   (req-arg! request params :message #(and (string? %) (not (str/blank? %))) "non-empty string")
-                                   behavior* (let [behavior (:behavior params)]
-                                               (cond
-                                                 (nil? behavior)      "steer"
-                                                 (keyword? behavior)  (name behavior)
-                                                 (string? behavior)   behavior
-                                                 :else                nil))
-                                   sid       (events/focused-session-id ctx state)]
-                               (case behavior*
-                                 "steer"
-                                 (let [{:keys [accepted? behavior]} (session/queue-while-streaming-in! ctx sid message :steer)]
-                                   (response-frame (:id request) op true {:accepted accepted?
-                                                                          :behavior (name behavior)}))
-
-                                 "queue"
-                                 (let [{:keys [accepted? behavior]} (session/queue-while-streaming-in! ctx sid message :queue)]
-                                   (response-frame (:id request) op true {:accepted accepted?
-                                                                          :behavior (name behavior)}))
-
-                                 (throw (ex-info "prompt_while_streaming :behavior must be \"steer\" or \"queue\""
-                                                 {:error-code "request/invalid-params"}))))
+                             (ops/handle-prompt-while-streaming {:ctx ctx :request request :params params :state state})
 
                              "steer"
-                             (let [message (req-arg! request params :message #(and (string? %) (not (str/blank? %))) "non-empty string")
-                                   sid     (events/focused-session-id ctx state)]
-                               (session/steer-in! ctx sid message)
-                               (response-frame (:id request) op true {:accepted true}))
+                             (ops/handle-steer {:ctx ctx :request request :params params :state state})
 
                              "follow_up"
-                             (let [message (req-arg! request params :message #(and (string? %) (not (str/blank? %))) "non-empty string")
-                                   sid     (events/focused-session-id ctx state)]
-                               (session/follow-up-in! ctx sid message)
-                               (response-frame (:id request) op true {:accepted true}))
+                             (ops/handle-follow-up {:ctx ctx :request request :params params :state state})
 
                              "abort"
-                             (let [sid (events/focused-session-id ctx state)]
-                               (session/abort-in! ctx sid)
-                               (response-frame (:id request) op true {:accepted true}))
+                             (ops/handle-abort {:ctx ctx :request request :state state})
 
                              "interrupt"
-                             (let [sid (events/focused-session-id ctx state)
-                                   {:keys [accepted? pending? dropped-steering-text]}
-                                   (session/request-interrupt-in! ctx sid)]
-                               (response-frame (:id request) op true
-                                               {:accepted accepted?
-                                                :pending  pending?
-                                                :dropped-steering-text (or dropped-steering-text "")}))
+                             (ops/handle-interrupt {:ctx ctx :request request :state state})
 
                              "list_background_jobs"
                              (handle-list-background-jobs! ctx request params)
@@ -624,8 +576,7 @@
                                                                  :state state})
 
                              "list_sessions"
-                             (response-frame (:id request) op true {:active-session-id (events/focused-session-id ctx state)
-                                                                    :sessions (ss/list-context-sessions-in ctx)})
+                             (ops/handle-list-sessions {:ctx ctx :request request :state state})
 
                              "fork"
                              (navigation/handle-fork! {:ctx ctx
@@ -634,127 +585,43 @@
                                                        :state state})
 
                              "set_session_name"
-                             (let [name   (req-arg! request params :name #(and (string? %) (not (str/blank? %))) "non-empty string")
-                                   sid    (events/focused-session-id ctx state)
-                                   result (session/set-session-name-in! ctx sid name)]
-                               (response-frame (:id request) op true {:session-name (:session-name result)}))
+                             (ops/handle-set-session-name {:ctx ctx :request request :params params :state state})
 
                              "set_model"
-                             (let [provider (req-arg! request params :provider #(or (keyword? %) (string? %)) "string or keyword")
-                                   model-id (req-arg! request params :model-id #(and (string? %) (not (str/blank? %))) "non-empty string")
-                                   resolved (resolve-model provider model-id)]
-                               (when-not resolved
-                                 (throw (ex-info "unknown model"
-                                                 {:error-code "request/unknown-model"})))
-                               (let [provider-str (name (:provider resolved))
-                                     sid         (events/focused-session-id ctx state)
-                                     model       {:provider provider-str
-                                                  :id (:id resolved)
-                                                  :reasoning (:supports-reasoning resolved)}
-                                     result      (session/set-model-in! ctx sid model)]
-                                 (response-frame (:id request) op true {:model {:provider (:provider (:model result))
-                                                                                :id (:id (:model result))}})))
+                             (ops/handle-set-model {:ctx ctx :request request :params params :state state :resolve-model resolve-model})
 
                              "cycle_model"
-                             (let [direction (case (:direction params)
-                                               "prev" :backward
-                                               "next" :forward
-                                               :backward :backward
-                                               :forward :forward
-                                               :forward)
-                                   sid       (events/focused-session-id ctx state)
-                                   sd        (session/cycle-model-in! ctx sid direction)]
-                               (response-frame (:id request) op true {:model (some-> (:model sd)
-                                                                                     (select-keys [:provider :id]))}))
+                             (ops/handle-cycle-model {:ctx ctx :request request :params params :state state})
 
                              "set_thinking_level"
-                             (let [level (req-arg! request params :level some? "keyword, string, or integer")
-                                   sid   (events/focused-session-id ctx state)
-                                   level* (cond
-                                            (keyword? level) level
-                                            (string? level)  (keyword level)
-                                            :else            level)
-                                   result (session/set-thinking-level-in! ctx sid level*)]
-                               (response-frame (:id request) op true {:thinking-level (:thinking-level result)}))
+                             (ops/handle-set-thinking-level {:ctx ctx :request request :params params :state state})
 
                              "cycle_thinking_level"
-                             (let [sid (events/focused-session-id ctx state)
-                                   sd  (session/cycle-thinking-level-in! ctx sid)]
-                               (response-frame (:id request) op true {:thinking-level (:thinking-level sd)}))
+                             (ops/handle-cycle-thinking-level {:ctx ctx :request request :state state})
 
                              "compact"
-                             (let [sid    (events/focused-session-id ctx state)
-                                   result (session/manual-compact-in! ctx sid (:custom-instructions params))]
-                               (response-frame (:id request) op true {:compacted (boolean result)
-                                                                      :summary   result}))
+                             (ops/handle-compact {:ctx ctx :request request :params params :state state})
 
                              "set_auto_compaction"
-                             (let [enabled (req-arg! request params :enabled boolean? "boolean")
-                                   sid     (events/focused-session-id ctx state)
-                                   result  (session/set-auto-compaction-in! ctx sid enabled)]
-                               (response-frame (:id request) op true {:enabled (:auto-compaction-enabled result)}))
+                             (ops/handle-set-auto-compaction {:ctx ctx :request request :params params :state state})
 
                              "set_auto_retry"
-                             (let [enabled (req-arg! request params :enabled boolean? "boolean")
-                                   sid     (events/focused-session-id ctx state)
-                                   result  (session/set-auto-retry-in! ctx sid enabled)]
-                               (response-frame (:id request) op true {:enabled (:auto-retry-enabled result)}))
+                             (ops/handle-set-auto-retry {:ctx ctx :request request :params params :state state})
 
                              "get_state"
-                             (let [sid (events/focused-session-id ctx state)]
-                               (response-frame (:id request) op true {:state (ss/get-session-data-in ctx sid)}))
+                             (ops/handle-get-state {:ctx ctx :request request :state state})
 
                              "get_messages"
-                             (let [sid (events/focused-session-id ctx state)]
-                               (response-frame (:id request) op true {:messages (:messages (agent/get-data-in (ss/agent-ctx-in ctx sid)))}))
+                             (ops/handle-get-messages {:ctx ctx :request request :state state})
 
                              "get_session_stats"
-                             (let [sid (events/focused-session-id ctx state)]
-                               (response-frame (:id request) op true {:stats (session/diagnostics-in ctx sid)}))
+                             (ops/handle-get-session-stats {:ctx ctx :request request :state state})
 
                              "subscribe"
-                             (let [topics             (or (:topics params) [])
-                                   _                  (when-not (sequential? topics)
-                                                        (throw (ex-info "subscribe :topics must be sequential"
-                                                                        {:error-code "request/invalid-params"})))
-                                   topics*            (->> topics (filter #(contains? events/event-topics %)) set)
-                                   ui-topic-request?  (some events/extension-ui-topic? topics*)]
-                               (rpc.state/subscribe-topics! state topics*)
-                               (when (or (empty? (rpc.state/subscribed-topics state))
-                                         (contains? (rpc.state/subscribed-topics state) "assistant/message"))
-                                 (maybe-start-external-event-loop! ctx emit-frame! state))
-             ;; Re-register extension run-fn with emit-frame! so extension-initiated
-             ;; agent runs (e.g. PSL) stream deltas + final message to the RPC client.
-                               (register-rpc-extension-run-fn! ctx emit-frame! state session-deps)
-                               (when ui-topic-request?
-                                 (maybe-start-ui-watch-loop! ctx emit-frame! state)
-                                 (events/emit-ui-snapshot-events! emit-frame!
-                                                                   state
-                                                                   {}
-                                                                   (or (events/ui-snapshot ctx) {})))
-             ;; Emit current session/footer/context snapshots immediately on subscription
-             ;; so frontends render baseline status without waiting for prompt activity.
-                               (events/emit-event! emit-frame! state {:event "session/updated"
-                                                                       :id (:id request)
-                                                                       :data (events/session-updated-payload ctx (events/focused-session-id ctx state))})
-                               (events/emit-event! emit-frame! state {:event "footer/updated"
-                                                                       :id (:id request)
-                                                                       :data (events/footer-updated-payload ctx (events/focused-session-id ctx state))})
-                               (events/emit-event! emit-frame! state {:event "context/updated"
-                                                                       :id (:id request)
-                                                                       :data (events/context-updated-payload ctx state)})
-                               (response-frame (:id request) op true {:subscribed (->> (rpc.state/subscribed-topics state) sort vec)}))
+                             (ops/handle-subscribe {:ctx ctx :request (assoc request :emit-frame! emit-frame!) :params params :state state :session-deps session-deps :maybe-start-external-event-loop! maybe-start-external-event-loop! :register-rpc-extension-run-fn! register-rpc-extension-run-fn! :maybe-start-ui-watch-loop! maybe-start-ui-watch-loop!})
 
                              "unsubscribe"
-                             (let [topics  (or (:topics params) [])
-                                   _       (when-not (sequential? topics)
-                                             (throw (ex-info "unsubscribe :topics must be sequential"
-                                                             {:error-code "request/invalid-params"})))
-                                   topics* (->> topics (filter string?) set)]
-                               (if (seq topics*)
-                                 (rpc.state/unsubscribe-topics! state topics*)
-                                 (rpc.state/clear-subscriptions! state))
-                               (response-frame (:id request) op true {:subscribed (->> (rpc.state/subscribed-topics state) sort vec)}))
+                             (ops/handle-unsubscribe {:request request :params params :state state})
 
                              "resolve_dialog"
                              (handle-resolve-dialog! ctx request params)
@@ -762,11 +629,7 @@
                              "cancel_dialog"
                              (handle-cancel-dialog! ctx request params)
 
-                             (error-frame {:id            (:id request)
-                                           :op            op
-                                           :error-code    "request/op-not-supported"
-                                           :error-message (str "unsupported op: " op)
-                                           :data          {:supported-ops supported-rpc-ops}})))]
+                             (ops/handle-op-not-supported request)))]
          (cond
            (contains? targetable-rpc-ops op)
            (with-request-session! ctx request state dispatch-op)
