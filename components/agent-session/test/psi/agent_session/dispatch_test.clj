@@ -451,8 +451,8 @@
 ;; ── Origin in log entries ───────────────────────────────────
 
 (deftest startup-bootstrap-dispatch-test
-  (let [[ctx seed-id]      (session/create-context {:persist? false})
-        sd                 (session/new-session-in! ctx seed-id {})
+  (let [[ctx _]            (session/create-context {:persist? false})
+        sd                 (session/new-session-in! ctx nil {})
         session-id         (:session-id sd)
         started-at         (java.time.Instant/now)
         completed-at       (java.time.Instant/now)
