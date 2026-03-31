@@ -15,6 +15,7 @@
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.persistence :as persist]
    [psi.rpc :as rpc]
+   [psi.rpc.events :as rpc.events]
    [psi.agent-session.runtime :as runtime]
    [psi.agent-session.test-support :as test-support]
    [psi.agent-session.tools :as tools]
@@ -73,7 +74,7 @@
           [ctx _] (session/create-context {:cwd cwd})
           payload (with-redefs [session/query-in
                                 (fn [_ctx q]
-                                  (is (= @#'rpc/footer-query q))
+                                  (is (= @#'rpc.events/footer-query q))
                                   {:psi.agent-session/cwd cwd
                                    :psi.agent-session/git-branch "master"
                                    :psi.agent-session/session-name "xhig"
@@ -92,7 +93,7 @@
                                    :psi.agent-session/effective-reasoning-effort "high"
                                    :psi.ui/statuses [{:extension-id "b" :text "TS+ESL,Prett"}
                                                      {:extension-id "a" :text "Clojure-LSP\nclojure-lsp"}]})]
-                    (#'rpc/footer-updated-payload ctx))]
+                    (rpc.events/footer-updated-payload ctx))]
       (is (= "~/projects/hugoduncan/psi/psi-main (master) • xhig"
              (:path-line payload)))
       (is (str/includes? (:stats-line payload) "↑172k"))
@@ -117,7 +118,7 @@
                                                          :retry-attempt 2
                                                          :steering-messages [{:content "a"}]
                                                          :follow-up-messages [{:content "b"}]}})
-          payload (#'rpc/session-updated-payload ctx)]
+          payload (rpc.events/session-updated-payload ctx)]
       (is (= "sess-123" (:session-id payload)))
       (is (= "openai" (:model-provider payload)))
       (is (= "gpt-5.3-codex" (:model-id payload)))
@@ -385,7 +386,7 @@
 
 (deftest progress-event-thinking-delta-maps-to-rpc-thinking-topic-test
   (let [{:keys [event data]}
-        (#'rpc/progress-event->rpc-event {:event-kind :thinking-delta :text "plan"})]
+        (rpc.events/progress-event->rpc-event {:event-kind :thinking-delta :text "plan"})]
     (is (= "assistant/thinking-delta" event))
     (is (= "plan" (:text data)))))
 
@@ -1561,7 +1562,7 @@
                                                  :data {:message {:role "assistant"
                                                                   :usage {:input-tokens 111
                                                                           :output-tokens 22}}}})
-          payload (#'rpc/footer-updated-payload ctx)
+          payload (rpc.events/footer-updated-payload ctx)
           stats-line (:stats-line payload)]
       (is (string? stats-line))
       (is (str/includes? stats-line "↑111"))

@@ -16,7 +16,6 @@
    [psi.rpc.transport :as rpc.transport]))
 
 (def protocol-version rpc.transport/protocol-version)
-(def footer-query rpc.events/footer-query)
 
 (defn response-frame
   ([id op ok]
