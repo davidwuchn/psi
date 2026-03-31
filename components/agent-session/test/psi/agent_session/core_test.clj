@@ -50,8 +50,8 @@
 
   (testing "session lifecycle events can be routed through dispatch statechart boundary"
     (dispatch/clear-event-log!)
-    (let [[ctx seed-id]       (session/create-context {:persist? false})
-          sd                 (session/new-session-in! ctx seed-id {})
+    (let [[ctx session-id]       (session/create-context {:persist? false})
+          sd                 (session/new-session-in! ctx nil {})
           session-id         (:session-id sd)
           ctx                (retarget ctx sd)]
       (is (= :idle (ss/sc-phase-in ctx session-id)))
@@ -71,8 +71,8 @@
 
   (testing "statechart action handlers use pure session-update results"
     (dispatch/clear-event-log!)
-    (let [[ctx seed-id]       (session/create-context {:persist? false})
-          sd                 (session/new-session-in! ctx seed-id {})
+    (let [[ctx session-id]       (session/create-context {:persist? false})
+          sd                 (session/new-session-in! ctx nil {})
           session-id         (:session-id sd)
           ctx                (retarget ctx sd)]
       (is (false? (:is-streaming (ss/get-session-data-in ctx session-id))))
@@ -86,24 +86,24 @@
 
 (deftest context-index-registry-test
   (testing "create-context starts with an empty context session index"
-    (let [[ctx seed-id] (session/create-context)]
-      (is (some? (:session-id (ss/get-session-data-in ctx seed-id))))
+    (let [[ctx session-id] (session/create-context)]
+      (is (some? (:session-id (ss/get-session-data-in ctx session-id))))
       (is (seq (ss/get-sessions-map-in ctx)))))
 
   (testing "new-session-in! registers first real session and sets it active"
-    (let [[ctx seed-id]       (session/create-context)
-          sd-after           (session/new-session-in! ctx seed-id {})
+    (let [[ctx session-id]       (session/create-context)
+          sd-after           (session/new-session-in! ctx nil {})
           ctx                (retarget ctx sd-after)
           sid-after          (:session-id sd-after)]
-      (is (not= seed-id sid-after))
+      (is (not= session-id sid-after))
       (is (= sid-after (:session-id (ss/get-session-data-in ctx sid-after))))
       (is (= #{sid-after} (set (keys (ss/get-sessions-map-in ctx)))))))
 
   (testing "ensure-session-loaded-in! resumes by context session id"
     (let [cwd                (str (System/getProperty "java.io.tmpdir") "/psi-context-load-" (java.util.UUID/randomUUID))
           _                  (.mkdirs (java.io.File. cwd))
-          [ctx seed-id]      (session/create-context {:cwd cwd})
-          sd1                (session/new-session-in! ctx seed-id {})
+          [ctx session-id]      (session/create-context {:cwd cwd})
+          sd1                (session/new-session-in! ctx nil {})
           sid1               (:session-id sd1)
           path1              (:session-file sd1)
           _                  (persist/flush-journal! (java.io.File. path1)
@@ -121,25 +121,25 @@
       (is (= sid1 (:session-id (ss/get-session-data-in ctx sid1))))))
 
   (testing "explicit session-id selects the parent when creating another session"
-    (let [[ctx seed-id] (session/create-context)
-          sd1           (session/new-session-in! ctx seed-id {})
+    (let [[ctx session-id] (session/create-context)
+          sd1           (session/new-session-in! ctx nil {})
           first-id      (:session-id sd1)
           sd2           (session/new-session-in! ctx first-id {})
           second-id     (:session-id sd2)]
-      (is (not= seed-id first-id))
+      (is (not= session-id first-id))
       (is (not= first-id second-id))))
 
   (testing "new-session-in! accepts explicit worktree-path and session-name and keeps prior context peer"
-    (let [[ctx seed-id]       (session/create-context {:cwd "/repo/main"
-                                                      :initial-session {:worktree-path "/repo/main"}})
-          sd-1               (session/new-session-in! ctx seed-id {:session-name "main"
-                                                                              :worktree-path "/repo/main"})
+    (let [[ctx session-id]       (session/create-context {:cwd "/repo/main"
+                                                          :initial-session {:worktree-path "/repo/main"}})
+          sd-1               (session/new-session-in! ctx nil {:session-name "main"
+                                                               :worktree-path "/repo/main"})
           ctx-1              (retarget ctx sd-1)
           sid-1              (:session-id sd-1)
           created-1          (:created-at (ss/get-session-data-in ctx-1 sid-1))]
       (Thread/sleep 5)
       (let [sd-2      (session/new-session-in! ctx-1 sid-1 {:session-name "feature work"
-                                                             :worktree-path "/repo/feature-work"})
+                                                            :worktree-path "/repo/feature-work"})
             ctx-2     (retarget ctx sd-2)
             sid-2     (:session-id sd-2)
             sd        (ss/get-session-data-in ctx-2 sid-2)
@@ -157,35 +157,35 @@
 
 (deftest new-session-test
   (testing "new-session-in! resets session-id"
-    (let [[ctx seed-id]       (session/create-context)
-          old-id             seed-id
-          sd                 (session/new-session-in! ctx seed-id {})
+    (let [[ctx session-id]       (session/create-context)
+          old-id             session-id
+          sd                 (session/new-session-in! ctx nil {})
           new-id             (:session-id sd)
           ctx                (retarget ctx sd)]
       (is (not= old-id new-id))))
 
   (testing "new-session-in! clears queues"
-    (let [[ctx seed-id]       (session/create-context)]
-      (session/steer-in! ctx seed-id "steer me")
-      (let [sd         (session/new-session-in! ctx seed-id {})
+    (let [[ctx session-id]       (session/create-context)]
+      (session/steer-in! ctx session-id "steer me")
+      (let [sd         (session/new-session-in! ctx nil {})
             session-id (:session-id sd)
             ctx        (retarget ctx sd)
             sd         (ss/get-session-data-in ctx session-id)]
         (is (= [] (:steering-messages sd))))))
 
   (testing "new-session-in! is cancelled when extension returns cancel"
-    (let [[ctx seed-id] (session/create-context)
+    (let [[ctx session-id] (session/create-context)
           reg (:extension-registry ctx)]
       (ext/register-extension-in! reg "/ext/cancel")
       (ext/register-handler-in! reg "/ext/cancel" "session_before_switch"
                                 (fn [_] {:cancel true}))
-      (session/new-session-in! ctx seed-id {})
-      (is (= seed-id (:session-id (ss/get-session-data-in ctx seed-id))))))
+      (session/new-session-in! ctx nil {})
+      (is (= session-id (:session-id (ss/get-session-data-in ctx session-id))))))
 
   (testing "new-session-in! appends active model entry when model exists"
     (let [model              {:provider "anthropic" :id "claude-3-5-sonnet" :reasoning false}
-          [ctx seed-id]      (session/create-context {:initial-session {:model model}})
-          sd                 (session/new-session-in! ctx seed-id {})
+          [ctx session-id]      (session/create-context {:initial-session {:model model}})
+          sd                 (session/new-session-in! ctx nil {})
           session-id         (:session-id sd)
           ctx                (retarget ctx sd)]
       (is (some #(and (= :model (:kind %))
@@ -194,13 +194,13 @@
                 (persist/all-entries-in ctx session-id)))))
 
   (testing "new-session-in! resets startup telemetry"
-    (let [[ctx seed-id] (test-support/make-session-ctx
-                         {:session-data {:startup-prompts [{:id "engage-nucleus"}]
-                                         :startup-bootstrap-completed? true
-                                         :startup-bootstrap-started-at (java.time.Instant/now)
-                                         :startup-bootstrap-completed-at (java.time.Instant/now)
-                                         :startup-message-ids ["m1"]}})
-          sd                 (session/new-session-in! ctx seed-id {})
+    (let [[ctx session-id] (test-support/make-session-ctx
+                            {:session-data {:startup-prompts [{:id "engage-nucleus"}]
+                                            :startup-bootstrap-completed? true
+                                            :startup-bootstrap-started-at (java.time.Instant/now)
+                                            :startup-bootstrap-completed-at (java.time.Instant/now)
+                                            :startup-message-ids ["m1"]}})
+          sd                 (session/new-session-in! ctx nil {})
           session-id         (:session-id sd)
           ctx                (retarget ctx sd)]
       (let [sd (ss/get-session-data-in ctx session-id)]
@@ -211,13 +211,13 @@
         (is (= [] (:startup-message-ids sd)))))))
 
 (deftest fork-session-resets-startup-telemetry-test
-  (let [[ctx seed-id]      (test-support/make-session-ctx {})
-        parent-sd          (session/new-session-in! ctx seed-id {})
+  (let [[ctx session-id]      (test-support/make-session-ctx {})
+        parent-sd          (session/new-session-in! ctx nil {})
         parent-id          (:session-id parent-sd)
         ctx                (retarget ctx parent-sd)]
     (let [entry-id (:id (ss/journal-append-in! ctx parent-id (persist/message-entry {:role "user"
-                                                                                      :content [{:type :text :text "hello"}]
-                                                                                      :timestamp (java.time.Instant/now)})))]
+                                                                                     :content [{:type :text :text "hello"}]
+                                                                                     :timestamp (java.time.Instant/now)})))]
       (test-support/update-state! ctx :session-data merge {:startup-prompts [{:id "engage-nucleus"}]
                                                            :startup-bootstrap-completed? true
                                                            :startup-bootstrap-started-at (java.time.Instant/now)
@@ -236,14 +236,14 @@
 (deftest fork-session-persists-child-file-with-parent-lineage-test
   (let [cwd                (str (System/getProperty "java.io.tmpdir") "/psi-fork-" (java.util.UUID/randomUUID))
         _                  (.mkdirs (java.io.File. cwd))
-        [ctx seed-id]      (session/create-context {:cwd cwd})
-        parent-sd          (session/new-session-in! ctx seed-id {})
+        [ctx session-id]      (session/create-context {:cwd cwd})
+        parent-sd          (session/new-session-in! ctx nil {})
         parent-id          (:session-id parent-sd)
         ctx                (retarget ctx parent-sd)
         parent-file        (:session-file parent-sd)
         entry-id           (:id (ss/journal-append-in! ctx parent-id (persist/message-entry {:role "user"
-                                                                                              :content [{:type :text :text "branch-here"}]
-                                                                                              :timestamp (java.time.Instant/now)})))
+                                                                                             :content [{:type :text :text "branch-here"}]
+                                                                                             :timestamp (java.time.Instant/now)})))
         child-sd           (session/fork-session-in! ctx parent-id entry-id)
         child-id           (:session-id child-sd)
         ctx                (retarget ctx child-sd)]
@@ -260,8 +260,8 @@
 (deftest resume-session-model-fallback-test
   (testing "resume-session-in! keeps current model when resumed journal has no model entry"
     (let [initial-model {:provider "openai" :id "gpt-5.3-codex" :reasoning true}
-          [ctx seed-id] (session/create-context {:initial-session {:model initial-model
-                                                                   :thinking-level :high}})
+          [ctx session-id] (session/create-context {:initial-session {:model initial-model
+                                                                      :thinking-level :high}})
           f             (File/createTempFile "psi-resume-no-model" ".ndedn")
           entries       [(persist/thinking-level-entry :minimal)
                          (persist/message-entry {:role "user"
@@ -269,7 +269,7 @@
                                                  :timestamp (java.time.Instant/now)})]]
       (.deleteOnExit f)
       (persist/flush-journal! f "sess-no-model" "/tmp/project" nil entries)
-      (let [sd                 (session/resume-session-in! ctx seed-id (.getAbsolutePath f))
+      (let [sd                 (session/resume-session-in! ctx session-id (.getAbsolutePath f))
             session-id         (:session-id sd)
             ctx                (retarget ctx sd)
             sd                 (ss/get-session-data-in ctx session-id)
@@ -283,18 +283,18 @@
         (is (= :minimal (:psi.agent-session/thinking-level r))))))
 
   (testing "resume-session-in! restores persisted worktree-path and runtime prompt metadata from header"
-    (let [[ctx seed-id] (session/create-context {:cwd "/repo/main"
-                                       :initial-session {:system-prompt "base prompt"
-                                                         :model {:provider "openai"
-                                                                 :id "gpt-5.3-codex"
-                                                                 :reasoning true}}})
+    (let [[ctx session-id] (session/create-context {:cwd "/repo/main"
+                                                    :initial-session {:system-prompt "base prompt"
+                                                                      :model {:provider "openai"
+                                                                              :id "gpt-5.3-codex"
+                                                                              :reasoning true}}})
           f   (File/createTempFile "psi-resume-worktree" ".ndedn")]
       (.deleteOnExit f)
       (spit f (str "{:type :session :version 4 :id \"sess-worktree\" :timestamp #inst \"2024-01-01T00:00:00Z\" :cwd \"/legacy/cwd\" :worktree-path \"/repo/feature-x\"}\n"
                    "{:id \"e1\" :parent-id nil :timestamp #inst \"2024-01-01T00:00:01Z\" :kind :thinking-level :data {:thinking-level :medium}}\n"
                    "{:id \"e2\" :parent-id \"e1\" :timestamp #inst \"2024-01-01T00:00:02Z\" :kind :session-info :data {:name \"Feature X\"}}\n"
                    "{:id \"e3\" :parent-id \"e2\" :timestamp #inst \"2024-01-01T00:00:03Z\" :kind :message :data {:message {:role \"assistant\" :content [{:type :text :text \"hello\"}]}}}\n"))
-      (let [sd                 (session/resume-session-in! ctx seed-id (.getAbsolutePath f))
+      (let [sd                 (session/resume-session-in! ctx session-id (.getAbsolutePath f))
             session-id         (:session-id sd)
             ctx                (retarget ctx sd)
             sd                 (ss/get-session-data-in ctx session-id)
@@ -311,8 +311,8 @@
   (testing "resume-session-in! missing-file fallback is logged through dispatch"
     (dispatch/clear-event-log!)
     (let [f                  (str (System/getProperty "java.io.tmpdir") "/psi-missing-" (java.util.UUID/randomUUID) ".ndedn")
-          [ctx seed-id]      (session/create-context {:persist? false})
-          sd                 (session/resume-session-in! ctx seed-id f)
+          [ctx session-id]      (session/create-context {:persist? false})
+          sd                 (session/resume-session-in! ctx session-id f)
           session-id         (:session-id sd)
           ctx                (retarget ctx sd)]
       (let [sd    (ss/get-session-data-in ctx session-id)
@@ -327,33 +327,33 @@
 
 (deftest model-management-test
   (testing "set-model-in! updates model and persists entry"
-    (let [[ctx seed-id] (session/create-context)
+    (let [[ctx session-id] (session/create-context)
           model      {:provider "anthropic" :id "claude-3-5-sonnet" :reasoning false}]
-      (dispatch/dispatch! ctx :session/set-model {:session-id seed-id :model model} {:origin :core})
-      (let [sd (ss/get-session-data-in ctx seed-id)]
+      (dispatch/dispatch! ctx :session/set-model {:session-id session-id :model model} {:origin :core})
+      (let [sd (ss/get-session-data-in ctx session-id)]
         (is (= model (:model sd))))
-      (is (pos? (count (persist/all-entries-in ctx seed-id))))))
+      (is (pos? (count (persist/all-entries-in ctx session-id))))))
 
   (testing "set-model-in! clamps thinking level for non-reasoning model"
-    (let [[ctx seed-id] (session/create-context {:initial-session {:thinking-level :high}})]
-      (dispatch/dispatch! ctx :session/set-model {:session-id seed-id :model {:provider "x" :id "y" :reasoning false}} {:origin :core})
-      (is (= :off (:thinking-level (ss/get-session-data-in ctx seed-id))))))
+    (let [[ctx session-id] (session/create-context {:initial-session {:thinking-level :high}})]
+      (dispatch/dispatch! ctx :session/set-model {:session-id session-id :model {:provider "x" :id "y" :reasoning false}} {:origin :core})
+      (is (= :off (:thinking-level (ss/get-session-data-in ctx session-id))))))
 
   (testing "set-model-in! preserves thinking level for reasoning model"
-    (let [[ctx seed-id] (session/create-context {:initial-session {:thinking-level :high}})]
-      (dispatch/dispatch! ctx :session/set-model {:session-id seed-id :model {:provider "x" :id "y" :reasoning true}} {:origin :core})
-      (is (= :high (:thinking-level (ss/get-session-data-in ctx seed-id)))))))
+    (let [[ctx session-id] (session/create-context {:initial-session {:thinking-level :high}})]
+      (dispatch/dispatch! ctx :session/set-model {:session-id session-id :model {:provider "x" :id "y" :reasoning true}} {:origin :core})
+      (is (= :high (:thinking-level (ss/get-session-data-in ctx session-id)))))))
 
 ;; ── Thinking level ──────────────────────────────────────────────────────────
 
 (deftest model-thinking-dispatch-test
   (testing "set-model-in! routes through dispatch log"
     (dispatch/clear-event-log!)
-    (let [[ctx seed-id] (session/create-context)
+    (let [[ctx session-id] (session/create-context)
           model      {:provider "anthropic" :id "claude-3-5-sonnet" :reasoning false}]
-      (dispatch/dispatch! ctx :session/set-model {:session-id seed-id :model model} {:origin :core})
+      (dispatch/dispatch! ctx :session/set-model {:session-id session-id :model model} {:origin :core})
       (let [entry (last (dispatch/event-log-entries))
-            sd    (ss/get-session-data-in ctx seed-id)]
+            sd    (ss/get-session-data-in ctx session-id)]
         (is (= model (:model sd)))
         (is (= :session/set-model (:event-type entry)))
         (is (= :core (:origin entry)))
@@ -361,12 +361,12 @@
 
   (testing "set-thinking-level-in! routes through dispatch log"
     (dispatch/clear-event-log!)
-    (let [[ctx seed-id] (session/create-context)]
-      (dispatch/dispatch! ctx :session/set-model {:session-id seed-id :model {:provider "x" :id "y" :reasoning true}} {:origin :core})
+    (let [[ctx session-id] (session/create-context)]
+      (dispatch/dispatch! ctx :session/set-model {:session-id session-id :model {:provider "x" :id "y" :reasoning true}} {:origin :core})
       (dispatch/clear-event-log!)
-      (dispatch/dispatch! ctx :session/set-thinking-level {:session-id seed-id :level :medium} {:origin :core})
+      (dispatch/dispatch! ctx :session/set-thinking-level {:session-id session-id :level :medium} {:origin :core})
       (let [entry (last (dispatch/event-log-entries))
-            sd    (ss/get-session-data-in ctx seed-id)]
+            sd    (ss/get-session-data-in ctx session-id)]
         (is (= :medium (:thinking-level sd)))
         (is (= :session/set-thinking-level (:event-type entry)))
         (is (= :core (:origin entry)))
@@ -374,10 +374,10 @@
 
   (testing "set-system-prompt-in! routes through dispatch log"
     (dispatch/clear-event-log!)
-    (let [[ctx seed-id] (session/create-context)]
-      (dispatch/dispatch! ctx :session/set-system-prompt {:session-id seed-id :prompt "graph-aware system prompt"} {:origin :core})
+    (let [[ctx session-id] (session/create-context)]
+      (dispatch/dispatch! ctx :session/set-system-prompt {:session-id session-id :prompt "graph-aware system prompt"} {:origin :core})
       (let [entry (last (dispatch/event-log-entries))
-            sd    (ss/get-session-data-in ctx seed-id)]
+            sd    (ss/get-session-data-in ctx session-id)]
         (is (= "graph-aware system prompt" (:system-prompt sd)))
         (is (= :session/set-system-prompt (:event-type entry)))
         (is (= :core (:origin entry)))
@@ -385,10 +385,10 @@
 
   (testing "refresh-system-prompt-in! routes through dispatch log"
     (dispatch/clear-event-log!)
-    (let [[ctx seed-id] (session/create-context)]
-      (dispatch/dispatch! ctx :session/refresh-system-prompt {:session-id seed-id} {:origin :core})
+    (let [[ctx session-id] (session/create-context)]
+      (dispatch/dispatch! ctx :session/refresh-system-prompt {:session-id session-id} {:origin :core})
       (let [entry (last (dispatch/event-log-entries))
-            sd    (ss/get-session-data-in ctx seed-id)]
+            sd    (ss/get-session-data-in ctx session-id)]
         (is (string? (:system-prompt sd)))
         (is (= :session/refresh-system-prompt (:event-type entry)))
         (is (= :core (:origin entry)))))))
@@ -396,20 +396,20 @@
 (deftest prompt-contribution-dispatch-test
   (testing "register/update/unregister prompt contributions route through dispatch and preserve return payloads"
     (dispatch/clear-event-log!)
-    (let [[ctx seed-id] (session/create-context)
+    (let [[ctx session-id] (session/create-context)
           r1  (dispatch/dispatch! ctx :session/register-prompt-contribution
-                                  {:session-id seed-id :ext-path "/ext/a" :id "c1"
+                                  {:session-id session-id :ext-path "/ext/a" :id "c1"
                                    :contribution {:section "Extension Capabilities"
                                                   :content "tool: x"
                                                   :priority 10}}
                                   {:origin :core})
           e1  (last (dispatch/event-log-entries))
           r2  (dispatch/dispatch! ctx :session/update-prompt-contribution
-                                  {:session-id seed-id :ext-path "/ext/a" :id "c1" :patch {:content "tool: y"}}
+                                  {:session-id session-id :ext-path "/ext/a" :id "c1" :patch {:content "tool: y"}}
                                   {:origin :core})
           e2  (last (dispatch/event-log-entries))
           r3  (dispatch/dispatch! ctx :session/unregister-prompt-contribution
-                                  {:session-id seed-id :ext-path "/ext/a" :id "c1"}
+                                  {:session-id session-id :ext-path "/ext/a" :id "c1"}
                                   {:origin :core})
           e3  (last (dispatch/event-log-entries))]
       (is (true? (:registered? r1)))
@@ -427,7 +427,7 @@
 
 (deftest dispatch-registry-and-event-log-eql-test
   (testing "query-in resolves registered dispatch handler metadata attrs"
-    (let [[ctx seed-id] (session/create-context)
+    (let [[ctx session-id] (session/create-context)
           result (session/query-in ctx
                                    [:psi.agent-session/registered-dispatch-event-count
                                     {:psi.agent-session/registered-dispatch-events
@@ -440,8 +440,8 @@
 
   (testing "query-in resolves dispatch event log attrs"
     (dispatch/clear-event-log!)
-    (let [[ctx seed-id] (session/create-context)]
-      (dispatch/dispatch! ctx :session/set-session-name {:session-id seed-id :name "dispatch-visible"} {:origin :core})
+    (let [[ctx session-id] (session/create-context)]
+      (dispatch/dispatch! ctx :session/set-session-name {:session-id session-id :name "dispatch-visible"} {:origin :core})
       (let [result (session/query-in ctx
                                      [:psi.agent-session/dispatch-event-log-count
                                       {:psi.agent-session/dispatch-event-log
@@ -474,20 +474,20 @@
 
   (testing "replay-dispatch-event-log-in! replays retained entries against session state"
     (dispatch/clear-event-log!)
-    (let [[ctx seed-id] (session/create-context)]
-      (dispatch/dispatch! ctx :session/set-session-name {:session-id seed-id :name "replay me"} {:origin :core})
-      (dispatch/dispatch! ctx :session/set-worktree-path {:session-id seed-id :worktree-path "/repo/replay"} {:origin :core})
-      (is (= "replay me" (:session-name (ss/get-session-data-in ctx seed-id))))
-      (is (= "/repo/replay" (:worktree-path (ss/get-session-data-in ctx seed-id))))
-      (ss/apply-root-state-update-in! ctx (ss/session-update seed-id #(assoc % :session-name "before" :worktree-path "/repo/main")))
+    (let [[ctx session-id] (session/create-context)]
+      (dispatch/dispatch! ctx :session/set-session-name {:session-id session-id :name "replay me"} {:origin :core})
+      (dispatch/dispatch! ctx :session/set-worktree-path {:session-id session-id :worktree-path "/repo/replay"} {:origin :core})
+      (is (= "replay me" (:session-name (ss/get-session-data-in ctx session-id))))
+      (is (= "/repo/replay" (:worktree-path (ss/get-session-data-in ctx session-id))))
+      (ss/apply-root-state-update-in! ctx (ss/session-update session-id #(assoc % :session-name "before" :worktree-path "/repo/main")))
       (let [state (session/replay-dispatch-event-log-in! ctx)
-            sd    (get-in state [:agent-session :sessions seed-id :data])]
+            sd    (get-in state [:agent-session :sessions session-id :data])]
         (is (= "replay me" (:session-name sd)))
         (is (= "/repo/replay" (:worktree-path sd))))))
 
   (testing "session ids are explicit when reading sibling sessions"
-    (let [[ctx seed-id]      (session/create-context)
-          sd1                (session/new-session-in! ctx seed-id {})
+    (let [[ctx session-id]      (session/create-context)
+          sd1                (session/new-session-in! ctx nil {})
           first-id           (:session-id sd1)
           sd2                (session/new-session-in! ctx first-id {})
           second-id          (:session-id sd2)]
@@ -496,10 +496,10 @@
 
   (testing "new-session-in! initialization is logged through dispatch"
     (dispatch/clear-event-log!)
-    (let [[ctx seed-id]       (session/create-context {:persist? false})
-          old-id             seed-id
-          sd                 (session/new-session-in! ctx seed-id {:session-name "dispatch-new"
-                                                                   :worktree-path "/repo/dispatch-new"})
+    (let [[ctx session-id]       (session/create-context {:persist? false})
+          old-id             session-id
+          sd                 (session/new-session-in! ctx nil {:session-name "dispatch-new"
+                                                               :worktree-path "/repo/dispatch-new"})
           session-id         (:session-id sd)
           ctx                (retarget ctx sd)]
       (let [entry (first (filter #(= :session/new-initialize (:event-type %))
@@ -512,20 +512,20 @@
 
   (testing "resume-session-in! loaded state is logged through dispatch"
     (dispatch/clear-event-log!)
-    (let [[ctx seed-id] (session/create-context {:initial-session {:model {:provider "openai"
-                                                                           :id "gpt-5.3-codex"
-                                                                           :reasoning true}}
-                                               :persist? false})
+    (let [[ctx session-id] (session/create-context {:initial-session {:model {:provider "openai"
+                                                                              :id "gpt-5.3-codex"
+                                                                              :reasoning true}}
+                                                    :persist? false})
           f   (File/createTempFile "psi-resume-dispatch" ".ndedn")]
       (.deleteOnExit f)
       (spit f (str "{:type :session :version 4 :id \"sess-dispatch\" :timestamp #inst \"2024-01-01T00:00:00Z\" :cwd \"/legacy/cwd\" :worktree-path \"/repo/resume-dispatch\"}\n"
                    "{:id \"e1\" :parent-id nil :timestamp #inst \"2024-01-01T00:00:01Z\" :kind :thinking-level :data {:thinking-level :medium}}\n"
                    "{:id \"e2\" :parent-id \"e1\" :timestamp #inst \"2024-01-01T00:00:02Z\" :kind :session-info :data {:name \"Resume Dispatch\"}}\n"))
-      (let [sd                 (session/resume-session-in! ctx seed-id (.getAbsolutePath f))
+      (let [sd                 (session/resume-session-in! ctx session-id (.getAbsolutePath f))
             session-id         (:session-id sd)
             ctx                (retarget ctx sd)
             entry              (first (filter #(= :session/resume-loaded (:event-type %))
-                                             (dispatch/event-log-entries)))]
+                                              (dispatch/event-log-entries)))]
         (is (= "Resume Dispatch" (:session-name (ss/get-session-data-in ctx session-id))))
         (is (= :core (:origin entry)))
         (is (= "sess-dispatch" (get-in entry [:event-data :session-id])))
@@ -534,38 +534,38 @@
 
   (testing "fork-session-in! initialization is logged through dispatch"
     (dispatch/clear-event-log!)
-    (let [[ctx seed-id]       (session/create-context {:persist? false})
-          parent-sd          (session/new-session-in! ctx seed-id {})
+    (let [[ctx session-id]       (session/create-context {:persist? false})
+          parent-sd          (session/new-session-in! ctx nil {})
           parent-id          (:session-id parent-sd)
           entry-id  (:id (ss/journal-append-in! ctx parent-id (persist/message-entry {:role "user"
-                                                                                       :content [{:type :text :text "fork-dispatch"}]
-                                                                                       :timestamp (java.time.Instant/now)})))]
-        (session/fork-session-in! ctx parent-id entry-id)
-        (let [entry (first (filter #(= :session/fork-initialize (:event-type %))
-                                   (dispatch/event-log-entries)))]
-          (is (= :core (:origin entry)))
-          (is (= parent-id (get-in entry [:event-data :parent-session-id])))
-          (is (= entry-id (get-in entry [:event-data :entry-id])))
-          (is (pos? (get-in entry [:event-data :entry-count])))))))
+                                                                                      :content [{:type :text :text "fork-dispatch"}]
+                                                                                      :timestamp (java.time.Instant/now)})))]
+      (session/fork-session-in! ctx parent-id entry-id)
+      (let [entry (first (filter #(= :session/fork-initialize (:event-type %))
+                                 (dispatch/event-log-entries)))]
+        (is (= :core (:origin entry)))
+        (is (= parent-id (get-in entry [:event-data :parent-session-id])))
+        (is (= entry-id (get-in entry [:event-data :entry-id])))
+        (is (pos? (get-in entry [:event-data :entry-count])))))))
 
 (deftest session-update-helper-consolidation-test
   (testing "session-update wrapper composes with apply-root-state-update-in! to update session data and context index"
-    (let [[ctx seed-id] (session/create-context)]
-      (ss/apply-root-state-update-in! ctx (ss/session-update seed-id #(assoc % :session-name "helper-name")))
-      (let [sd  (ss/get-session-data-in ctx seed-id)
+    (let [[ctx session-id] (session/create-context)]
+      (ss/apply-root-state-update-in! ctx (ss/session-update session-id #(assoc % :session-name "helper-name")))
+      (let [sd  (ss/get-session-data-in ctx session-id)
             sid (:session-id sd)]
         (is (= "helper-name" (:session-name sd)))
         (is (= "helper-name" (:session-name (ss/get-session-data-in ctx sid))))
-        (is (= sid (:session-id (ss/get-session-data-in ctx seed-id))))))))
+        (is (= sid (:session-id (ss/get-session-data-in ctx session-id))))))))
 
 (deftest projection-and-transition-helper-dispatch-test
   (testing "projection setters still route through dispatch after transition-helper extraction"
     (dispatch/clear-event-log!)
-    (let [[ctx seed-id] (session/create-context)]
+    (let [[ctx session-id] (session/create-context)]
       (dispatch/dispatch! ctx :session/set-rpc-trace {:enabled? true :file "/tmp/rpc-trace.ndedn"} {:origin :core})
-      (sa/set-nrepl-runtime-in! ctx seed-id {:host "localhost" :port 5555 :endpoint "localhost:5555"})
+      (sa/set-nrepl-runtime-in! ctx session-id {:host "localhost" :port 5555 :endpoint "localhost:5555"})
       (sa/set-oauth-projection-in! ctx {:authenticated-providers ["anthropic"]})
-      (sa/set-recursion-state-in! ctx seed-id {:status :idle})
+      (sa/set-recursion-state-in! ctx session-id {:status :idle})
       (let [state  @(:state* ctx)
             events (mapv :event-type (dispatch/event-log-entries))]
         (is (= {:enabled? true :file "/tmp/rpc-trace.ndedn"}
@@ -584,16 +584,16 @@
 
   (testing "telemetry setters now route through dispatch too"
     (dispatch/clear-event-log!)
-    (let [[ctx seed-id] (session/create-context)
+    (let [[ctx session-id] (session/create-context)
           stat       {:tool-name "bash" :context-bytes-added 12}
-          _          (sa/set-turn-context-in! ctx seed-id {:turn-id "t-1"})
-          _          (sa/append-tool-call-attempt-in! ctx seed-id {:id "tc-1" :name "read"})
-          _          (sa/append-provider-request-capture-in! ctx seed-id {:provider "anthropic" :turn-id "t-1"})
-          _          (sa/append-provider-reply-capture-in! ctx seed-id {:provider "anthropic" :turn-id "t-1" :event {:type :done}})
-          _          (sa/record-tool-output-stat-in! ctx seed-id stat 12 false)
+          _          (sa/set-turn-context-in! ctx session-id {:turn-id "t-1"})
+          _          (sa/append-tool-call-attempt-in! ctx session-id {:id "tc-1" :name "read"})
+          _          (sa/append-provider-request-capture-in! ctx session-id {:provider "anthropic" :turn-id "t-1"})
+          _          (sa/append-provider-reply-capture-in! ctx session-id {:provider "anthropic" :turn-id "t-1" :event {:type :done}})
+          _          (sa/record-tool-output-stat-in! ctx session-id stat 12 false)
           state      @(:state* ctx)
           events     (mapv :event-type (dispatch/event-log-entries))]
-      (let [sid seed-id]
+      (let [sid session-id]
         (is (= {:turn-id "t-1"} (get-in state [:agent-session :sessions sid :turn :ctx])))
         (is (= "tc-1" (get-in state [:agent-session :sessions sid :telemetry :tool-call-attempts 0 :id])))
         (is (= "anthropic" (get-in state [:agent-session :sessions sid :telemetry :provider-requests 0 :provider])))
@@ -609,13 +609,13 @@
 (deftest interrupt-and-bootstrap-prompt-dispatch-test
   (testing "request-interrupt-in! routes session-data changes through dispatch"
     (dispatch/clear-event-log!)
-    (let [[ctx seed-id] (session/create-context)]
+    (let [[ctx session-id] (session/create-context)]
       (test-support/update-state! ctx :session-data assoc
                                   :interrupt-pending false
                                   :steering-messages ["queued steer"])
-      (session/prompt-in! ctx seed-id "interrupt me")
-      (session/request-interrupt-in! ctx seed-id)
-      (let [sd    (ss/get-session-data-in ctx seed-id)
+      (session/prompt-in! ctx session-id "interrupt me")
+      (session/request-interrupt-in! ctx session-id)
+      (let [sd    (ss/get-session-data-in ctx session-id)
             entry (last (dispatch/event-log-entries))]
         (is (true? (:interrupt-pending sd)))
         (is (= [] (:steering-messages sd)))
@@ -625,14 +625,14 @@
 
   (testing "bootstrap-in! prompt metadata initialization is logged through dispatch"
     (dispatch/clear-event-log!)
-    (let [[ctx seed-id] (session/create-context)]
+    (let [[ctx session-id] (session/create-context)]
       (bootstrap/bootstrap-in!
-       ctx seed-id
+       ctx session-id
        {:register-global-query? false
         :system-prompt          "sys"
         :developer-prompt       "dev"
         :developer-prompt-source :explicit})
-      (let [sd    (ss/get-session-data-in ctx seed-id)
+      (let [sd    (ss/get-session-data-in ctx session-id)
             entry (first (filter #(= :session/bootstrap-prompt-state (:event-type %))
                                  (dispatch/event-log-entries)))]
         (is (= "sys" (:base-system-prompt sd)))
@@ -647,17 +647,17 @@
 
 (deftest thinking-level-test
   (testing "set-thinking-level-in! updates level"
-    (let [[ctx seed-id] (session/create-context)]
-      (dispatch/dispatch! ctx :session/set-model {:session-id seed-id :model {:provider "x" :id "y" :reasoning true}} {:origin :core})
-      (dispatch/dispatch! ctx :session/set-thinking-level {:session-id seed-id :level :medium} {:origin :core})
-      (is (= :medium (:thinking-level (ss/get-session-data-in ctx seed-id))))))
+    (let [[ctx session-id] (session/create-context)]
+      (dispatch/dispatch! ctx :session/set-model {:session-id session-id :model {:provider "x" :id "y" :reasoning true}} {:origin :core})
+      (dispatch/dispatch! ctx :session/set-thinking-level {:session-id session-id :level :medium} {:origin :core})
+      (is (= :medium (:thinking-level (ss/get-session-data-in ctx session-id))))))
 
   (testing "set-model-in! persists project preferences"
     (let [cwd   (str (System/getProperty "java.io.tmpdir") "/psi-project-prefs-" (java.util.UUID/randomUUID))
           _     (.mkdirs (java.io.File. cwd))
-          [ctx seed-id] (session/create-context {:cwd cwd})
+          [ctx session-id] (session/create-context {:cwd cwd})
           model {:provider "anthropic" :id "claude-sonnet-4-6" :reasoning true}]
-      (dispatch/dispatch! ctx :session/set-model {:session-id seed-id :model model} {:origin :core})
+      (dispatch/dispatch! ctx :session/set-model {:session-id session-id :model model} {:origin :core})
       (let [prefs (project-prefs/read-preferences cwd)]
         (is (= "anthropic" (get-in prefs [:agent-session :model-provider])))
         (is (= "claude-sonnet-4-6" (get-in prefs [:agent-session :model-id])))
@@ -666,40 +666,40 @@
   (testing "set-thinking-level-in! persists project preferences"
     (let [cwd (str (System/getProperty "java.io.tmpdir") "/psi-project-prefs-" (java.util.UUID/randomUUID))
           _   (.mkdirs (java.io.File. cwd))
-          [ctx seed-id] (session/create-context {:cwd cwd})]
-      (dispatch/dispatch! ctx :session/set-model {:session-id seed-id :model {:provider "x" :id "y" :reasoning true}} {:origin :core})
-      (dispatch/dispatch! ctx :session/set-thinking-level {:session-id seed-id :level :high} {:origin :core})
+          [ctx session-id] (session/create-context {:cwd cwd})]
+      (dispatch/dispatch! ctx :session/set-model {:session-id session-id :model {:provider "x" :id "y" :reasoning true}} {:origin :core})
+      (dispatch/dispatch! ctx :session/set-thinking-level {:session-id session-id :level :high} {:origin :core})
       (let [prefs (project-prefs/read-preferences cwd)]
         (is (= :high (get-in prefs [:agent-session :thinking-level]))))))
 
   (testing "cycle-thinking-level-in! advances level for reasoning model"
-    (let [[ctx seed-id] (session/create-context {:initial-session {:thinking-level :off}})]
-      (dispatch/dispatch! ctx :session/set-model {:session-id seed-id :model {:provider "x" :id "y" :reasoning true}} {:origin :core})
-      (session/cycle-thinking-level-in! ctx seed-id)
-      (is (= :minimal (:thinking-level (ss/get-session-data-in ctx seed-id))))))
+    (let [[ctx session-id] (session/create-context {:initial-session {:thinking-level :off}})]
+      (dispatch/dispatch! ctx :session/set-model {:session-id session-id :model {:provider "x" :id "y" :reasoning true}} {:origin :core})
+      (session/cycle-thinking-level-in! ctx session-id)
+      (is (= :minimal (:thinking-level (ss/get-session-data-in ctx session-id))))))
 
   (testing "cycle-thinking-level-in! is no-op for non-reasoning model"
-    (let [[ctx seed-id] (session/create-context {:initial-session {:thinking-level :off}})]
-      (dispatch/dispatch! ctx :session/set-model {:session-id seed-id :model {:provider "x" :id "y" :reasoning false}} {:origin :core})
-      (session/cycle-thinking-level-in! ctx seed-id)
-      (is (= :off (:thinking-level (ss/get-session-data-in ctx seed-id)))))))
+    (let [[ctx session-id] (session/create-context {:initial-session {:thinking-level :off}})]
+      (dispatch/dispatch! ctx :session/set-model {:session-id session-id :model {:provider "x" :id "y" :reasoning false}} {:origin :core})
+      (session/cycle-thinking-level-in! ctx session-id)
+      (is (= :off (:thinking-level (ss/get-session-data-in ctx session-id)))))))
 
 ;; ── Session naming ──────────────────────────────────────────────────────────
 
 (deftest session-naming-test
   (testing "set-session-name-in! updates name and appends entry"
-    (let [[ctx seed-id] (session/create-context)]
-      (dispatch/dispatch! ctx :session/set-session-name {:session-id seed-id :name "my session"} {:origin :core})
-      (is (= "my session" (:session-name (ss/get-session-data-in ctx seed-id))))
-      (is (some #(= :session-info (:kind %)) (persist/all-entries-in ctx seed-id))))))
+    (let [[ctx session-id] (session/create-context)]
+      (dispatch/dispatch! ctx :session/set-session-name {:session-id session-id :name "my session"} {:origin :core})
+      (is (= "my session" (:session-name (ss/get-session-data-in ctx session-id))))
+      (is (some #(= :session-info (:kind %)) (persist/all-entries-in ctx session-id))))))
 
 (deftest session-config-dispatch-test
   (testing "set-session-name-in! routes through dispatch log"
     (dispatch/clear-event-log!)
-    (let [[ctx seed-id] (session/create-context)]
-      (dispatch/dispatch! ctx :session/set-session-name {:session-id seed-id :name "my session"} {:origin :core})
+    (let [[ctx session-id] (session/create-context)]
+      (dispatch/dispatch! ctx :session/set-session-name {:session-id session-id :name "my session"} {:origin :core})
       (let [entry (last (dispatch/event-log-entries))
-            sd    (ss/get-session-data-in ctx seed-id)]
+            sd    (ss/get-session-data-in ctx session-id)]
         (is (= "my session" (:session-name sd)))
         (is (= :session/set-session-name (:event-type entry)))
         (is (= :core (:origin entry)))
@@ -707,9 +707,9 @@
 
   (testing "set-worktree-path-in! routes through dispatch log"
     (dispatch/clear-event-log!)
-    (let [[ctx seed-id] (session/create-context)]
-      (dispatch/dispatch! ctx :session/set-worktree-path {:session-id seed-id :worktree-path "/repo/feature-z"} {:origin :core})
-      (is (= "/repo/feature-z" (:worktree-path (ss/get-session-data-in ctx seed-id))))
+    (let [[ctx session-id] (session/create-context)]
+      (dispatch/dispatch! ctx :session/set-worktree-path {:session-id session-id :worktree-path "/repo/feature-z"} {:origin :core})
+      (is (= "/repo/feature-z" (:worktree-path (ss/get-session-data-in ctx session-id))))
       (let [entry (last (dispatch/event-log-entries))]
         (is (= :session/set-worktree-path (:event-type entry)))
         (is (= :core (:origin entry)))
@@ -717,9 +717,9 @@
 
   (testing "set-cache-breakpoints-in! routes through dispatch log"
     (dispatch/clear-event-log!)
-    (let [[ctx seed-id] (session/create-context)]
-      (dispatch/dispatch! ctx :session/set-cache-breakpoints {:session-id seed-id :breakpoints #{:system :tools}} {:origin :core})
-      (is (= #{:system :tools} (:cache-breakpoints (ss/get-session-data-in ctx seed-id))))
+    (let [[ctx session-id] (session/create-context)]
+      (dispatch/dispatch! ctx :session/set-cache-breakpoints {:session-id session-id :breakpoints #{:system :tools}} {:origin :core})
+      (is (= #{:system :tools} (:cache-breakpoints (ss/get-session-data-in ctx session-id))))
       (let [entry (last (dispatch/event-log-entries))]
         (is (= :session/set-cache-breakpoints (:event-type entry)))
         (is (= :core (:origin entry)))
@@ -727,10 +727,10 @@
 
   (testing "set-active-tools-in! routes through dispatch log"
     (dispatch/clear-event-log!)
-    (let [[ctx seed-id] (session/create-context)
+    (let [[ctx session-id] (session/create-context)
           tool-maps  [{:name "read"} {:name "bash"}]]
-      (dispatch/dispatch! ctx :session/set-active-tools {:session-id seed-id :tool-maps tool-maps} {:origin :core})
-      (is (= #{"read" "bash"} (:active-tools (ss/get-session-data-in ctx seed-id))))
+      (dispatch/dispatch! ctx :session/set-active-tools {:session-id session-id :tool-maps tool-maps} {:origin :core})
+      (is (= #{"read" "bash"} (:active-tools (ss/get-session-data-in ctx session-id))))
       (let [entry (last (dispatch/event-log-entries))]
         (is (= :session/set-active-tools (:event-type entry)))
         (is (= :core (:origin entry)))
@@ -740,39 +740,39 @@
 
 (deftest context-usage-test
   (testing "update-context-usage-in! stores tokens and window"
-    (let [[ctx seed-id] (session/create-context)]
-      (dispatch/dispatch! ctx :session/update-context-usage {:session-id seed-id :tokens 5000 :window 100000} {:origin :core})
-      (let [sd (ss/get-session-data-in ctx seed-id)]
+    (let [[ctx session-id] (session/create-context)]
+      (dispatch/dispatch! ctx :session/update-context-usage {:session-id session-id :tokens 5000 :window 100000} {:origin :core})
+      (let [sd (ss/get-session-data-in ctx session-id)]
         (is (= 5000 (:context-tokens sd)))
         (is (= 100000 (:context-window sd))))))
 
   (testing "update-context-usage-in! routes through dispatch log"
     (dispatch/clear-event-log!)
-    (let [[ctx seed-id] (session/create-context)]
-      (dispatch/dispatch! ctx :session/update-context-usage {:session-id seed-id :tokens 5000 :window 100000} {:origin :core})
+    (let [[ctx session-id] (session/create-context)]
+      (dispatch/dispatch! ctx :session/update-context-usage {:session-id session-id :tokens 5000 :window 100000} {:origin :core})
       (let [entry (last (dispatch/event-log-entries))]
         (is (= :session/update-context-usage (:event-type entry)))
         (is (= :core (:origin entry)))
         (is (= {:tokens 5000 :window 100000} (dissoc (:event-data entry) :session-id))))))
 
   (testing "context fraction reflects stored usage"
-    (let [[ctx seed-id] (session/create-context)]
-      (dispatch/dispatch! ctx :session/update-context-usage {:session-id seed-id :tokens 80000 :window 100000} {:origin :core})
-      (let [sd (ss/get-session-data-in ctx seed-id)]
+    (let [[ctx session-id] (session/create-context)]
+      (dispatch/dispatch! ctx :session/update-context-usage {:session-id session-id :tokens 80000 :window 100000} {:origin :core})
+      (let [sd (ss/get-session-data-in ctx session-id)]
         (is (= 0.8 (session-data/context-fraction-used sd))))))
 
   (testing "queued input helpers and bootstrap resource registration route through dispatch"
     (dispatch/clear-event-log!)
-    (let [[ctx seed-id] (session/create-context)
+    (let [[ctx session-id] (session/create-context)
           template   {:name "greet" :description "d" :content "c" :source :project :file-path "/tmp/greet.md"}
           skill      {:name "coding" :description "d" :file-path "/tmp/SKILL.md"
                       :base-dir "/tmp" :source :project :disable-model-invocation false}]
-      (session/steer-in! ctx seed-id "steer")
-      (session/follow-up-in! ctx seed-id "follow")
-      (dispatch/dispatch! ctx :session/register-prompt-template {:session-id seed-id :template template} {:origin :core})
-      (dispatch/dispatch! ctx :session/register-skill {:session-id seed-id :skill skill} {:origin :core})
-      (session/consume-queued-input-text-in! ctx seed-id)
-      (let [sd         (ss/get-session-data-in ctx seed-id)
+      (session/steer-in! ctx session-id "steer")
+      (session/follow-up-in! ctx session-id "follow")
+      (dispatch/dispatch! ctx :session/register-prompt-template {:session-id session-id :template template} {:origin :core})
+      (dispatch/dispatch! ctx :session/register-skill {:session-id session-id :skill skill} {:origin :core})
+      (session/consume-queued-input-text-in! ctx session-id)
+      (let [sd         (ss/get-session-data-in ctx session-id)
             entries    (dispatch/event-log-entries)
             event-types (mapv :event-type entries)]
         (is (= [] (:steering-messages sd)))
@@ -790,20 +790,20 @@
 
 (deftest config-flags-test
   (testing "set-auto-retry-in! enables/disables retry"
-    (let [[ctx seed-id] (session/create-context)]
-      (dispatch/dispatch! ctx :session/set-auto-retry {:session-id seed-id :enabled? false} {:origin :core})
-      (is (false? (:auto-retry-enabled (ss/get-session-data-in ctx seed-id))))))
+    (let [[ctx session-id] (session/create-context)]
+      (dispatch/dispatch! ctx :session/set-auto-retry {:session-id session-id :enabled? false} {:origin :core})
+      (is (false? (:auto-retry-enabled (ss/get-session-data-in ctx session-id))))))
 
   (testing "set-auto-compaction-in! enables/disables compaction"
-    (let [[ctx seed-id] (session/create-context)]
-      (dispatch/dispatch! ctx :session/set-auto-compaction {:session-id seed-id :enabled? true} {:origin :core})
-      (is (true? (:auto-compaction-enabled (ss/get-session-data-in ctx seed-id)))))))
+    (let [[ctx session-id] (session/create-context)]
+      (dispatch/dispatch! ctx :session/set-auto-compaction {:session-id session-id :enabled? true} {:origin :core})
+      (is (true? (:auto-compaction-enabled (ss/get-session-data-in ctx session-id)))))))
 
 (deftest config-flags-dispatch-test
   (testing "set-auto-retry-in! routes through dispatch log"
     (dispatch/clear-event-log!)
-    (let [[ctx seed-id] (session/create-context)]
-      (dispatch/dispatch! ctx :session/set-auto-retry {:session-id seed-id :enabled? false} {:origin :core})
+    (let [[ctx session-id] (session/create-context)]
+      (dispatch/dispatch! ctx :session/set-auto-retry {:session-id session-id :enabled? false} {:origin :core})
       (let [entry (last (dispatch/event-log-entries))]
         (is (= :session/set-auto-retry (:event-type entry)))
         (is (= :core (:origin entry)))
@@ -812,8 +812,8 @@
 
   (testing "set-auto-compaction-in! routes through dispatch log"
     (dispatch/clear-event-log!)
-    (let [[ctx seed-id] (session/create-context)]
-      (dispatch/dispatch! ctx :session/set-auto-compaction {:session-id seed-id :enabled? true} {:origin :core})
+    (let [[ctx session-id] (session/create-context)]
+      (dispatch/dispatch! ctx :session/set-auto-compaction {:session-id session-id :enabled? true} {:origin :core})
       (let [entry (last (dispatch/event-log-entries))]
         (is (= :session/set-auto-compaction (:event-type entry)))
         (is (= :core (:origin entry)))
@@ -821,9 +821,9 @@
 
   (testing "set-ui-type-in! routes through dispatch log"
     (dispatch/clear-event-log!)
-    (let [[ctx seed-id] (session/create-context)]
-      (dispatch/dispatch! ctx :session/set-ui-type {:session-id seed-id :ui-type :emacs} {:origin :core})
-      (is (= :emacs (:ui-type (ss/get-session-data-in ctx seed-id))))
+    (let [[ctx session-id] (session/create-context)]
+      (dispatch/dispatch! ctx :session/set-ui-type {:session-id session-id :ui-type :emacs} {:origin :core})
+      (is (= :emacs (:ui-type (ss/get-session-data-in ctx session-id))))
       (let [entry (last (dispatch/event-log-entries))]
         (is (= :session/set-ui-type (:event-type entry)))
         (is (= :core (:origin entry)))
@@ -834,10 +834,10 @@
 (deftest manual-compaction-test
   (testing "manual-compact-in! runs stub compaction and returns to idle"
     (dispatch/clear-event-log!)
-    (let [[ctx seed-id] (session/create-context)
-          result     (session/manual-compact-in! ctx seed-id nil)]
+    (let [[ctx session-id] (session/create-context)
+          result     (session/manual-compact-in! ctx session-id nil)]
       (is (string? (:summary result)))
-      (is (= :idle (ss/sc-phase-in ctx seed-id)))
+      (is (= :idle (ss/sc-phase-in ctx session-id)))
       (let [event-types (mapv :event-type (dispatch/event-log-entries))]
         (is (= [:session/compact-start
                 :session/compaction-finished
@@ -852,8 +852,8 @@
                         :first-kept-entry-id nil
                         :tokens-before nil
                         :details nil})
-          [ctx seed-id] (session/create-context {:compaction-fn custom-fn})
-          result     (session/manual-compact-in! ctx seed-id nil)]
+          [ctx session-id] (session/create-context {:compaction-fn custom-fn})
+          result     (session/manual-compact-in! ctx session-id nil)]
       (is (= "custom summary" (:summary result)))
       (let [entry (first (filter #(= :session/manual-compaction-execute (:event-type %))
                                  (dispatch/event-log-entries)))]
@@ -862,12 +862,12 @@
 
   (testing "manual-compact-in! can be cancelled by extension"
     (dispatch/clear-event-log!)
-    (let [[ctx seed-id] (session/create-context)
+    (let [[ctx session-id] (session/create-context)
           reg        (:extension-registry ctx)]
       (ext/register-extension-in! reg "/ext/c")
       (ext/register-handler-in! reg "/ext/c" "session_before_compact"
                                 (fn [_] {:cancel true}))
-      (let [result (session/manual-compact-in! ctx seed-id nil)]
+      (let [result (session/manual-compact-in! ctx session-id nil)]
         (is (nil? result))
         (let [event-types (mapv :event-type (dispatch/event-log-entries))]
           (is (= [:session/compact-start
@@ -881,12 +881,12 @@
                          :first-kept-entry-id nil
                          :tokens-before nil
                          :details nil}
-          [ctx seed-id] (session/create-context)
+          [ctx session-id] (session/create-context)
           reg           (:extension-registry ctx)]
       (ext/register-extension-in! reg "/ext/c")
       (ext/register-handler-in! reg "/ext/c" "session_before_compact"
                                 (fn [_] {:compaction custom-result}))
-      (let [result (session/manual-compact-in! ctx seed-id nil)]
+      (let [result (session/manual-compact-in! ctx session-id nil)]
         (is (= "ext summary" (:summary result)))
         (let [event-types (mapv :event-type (dispatch/event-log-entries))]
           (is (= [:session/compact-start
@@ -911,8 +911,8 @@
 
 (deftest diagnostics-test
   (testing "diagnostics-in returns all expected keys"
-    (let [[ctx seed-id] (session/create-context)
-          d          (session/diagnostics-in ctx seed-id)]
+    (let [[ctx session-id] (session/create-context)
+          d          (session/diagnostics-in ctx session-id)]
       (is (contains? d :phase))
       (is (contains? d :session-id))
       (is (contains? d :is-idle))
@@ -928,11 +928,11 @@
       (is (contains? d :agent-diagnostics))))
 
   (testing "diagnostics-in reflects session state"
-    (let [[ctx seed-id] (session/create-context)]
-      (dispatch/dispatch! ctx :session/set-model {:session-id seed-id :model {:provider "x" :id "y" :reasoning false}} {:origin :core})
-      (dispatch/dispatch! ctx :session/set-session-name {:session-id seed-id :name "test"} {:origin :core})
-      (let [d  (session/diagnostics-in ctx seed-id)
-            sd (ss/get-session-data-in ctx seed-id)]
+    (let [[ctx session-id] (session/create-context)]
+      (dispatch/dispatch! ctx :session/set-model {:session-id session-id :model {:provider "x" :id "y" :reasoning false}} {:origin :core})
+      (dispatch/dispatch! ctx :session/set-session-name {:session-id session-id :name "test"} {:origin :core})
+      (let [d  (session/diagnostics-in ctx session-id)
+            sd (ss/get-session-data-in ctx session-id)]
         (is (= :idle (:phase d)))
         (is (true? (:is-idle d)))
         (is (= {:provider "x" :id "y" :reasoning false} (:model d)))
@@ -943,34 +943,34 @@
 
 (deftest eql-introspection-test
   (testing "query-in resolves :psi.agent-session/session-id"
-    (let [[ctx seed-id] (session/create-context)
+    (let [[ctx session-id] (session/create-context)
           result (session/query-in ctx [:psi.agent-session/session-id])]
       (is (string? (:psi.agent-session/session-id result)))))
 
   (testing "query-in resolves phase"
-    (let [[ctx seed-id] (session/create-context)
+    (let [[ctx session-id] (session/create-context)
           result (session/query-in ctx [:psi.agent-session/phase
                                         :psi.agent-session/is-idle])]
       (is (= :idle (:psi.agent-session/phase result)))
       (is (true? (:psi.agent-session/is-idle result)))))
 
   (testing "query-in resolves model after set-model-in!"
-    (let [[ctx seed-id] (session/create-context)
+    (let [[ctx session-id] (session/create-context)
           model {:provider "x" :id "y" :reasoning false}]
-      (dispatch/dispatch! ctx :session/set-model {:session-id seed-id :model model} {:origin :core})
+      (dispatch/dispatch! ctx :session/set-model {:session-id session-id :model model} {:origin :core})
       (let [result (session/query-in ctx [:psi.agent-session/model])]
         (is (= model (:psi.agent-session/model result))))))
 
   (testing "set-system-prompt-in! updates session + agent-core prompt state"
-    (let [[ctx seed-id] (session/create-context)
+    (let [[ctx session-id] (session/create-context)
           prompt     "graph-aware system prompt"
-          _          (dispatch/dispatch! ctx :session/set-system-prompt {:session-id seed-id :prompt prompt} {:origin :core})
+          _          (dispatch/dispatch! ctx :session/set-system-prompt {:session-id session-id :prompt prompt} {:origin :core})
           result     (session/query-in ctx [:psi.agent-session/system-prompt])]
       (is (= prompt (:psi.agent-session/system-prompt result)))
-      (is (= prompt (:system-prompt (agent-core/get-data-in (ss/agent-ctx-in ctx seed-id)))))))
+      (is (= prompt (:system-prompt (agent-core/get-data-in (ss/agent-ctx-in ctx session-id)))))))
 
   (testing "new-session-in! preserves stable prompt (cwd frozen at context creation)"
-    (let [[ctx seed-id] (session/create-context {:cwd "/tmp/main"})
+    (let [[ctx session-id] (session/create-context {:cwd "/tmp/main"})
           base      (str "Prompt body"
                          "\nCurrent date and time: Friday, March 13, 2026 at 11:00:00 am GMT-04:00"
                          "\nCurrent working directory: /tmp/main"
@@ -978,7 +978,7 @@
       (test-support/update-state! ctx :session-data merge {:worktree-path "/tmp/main"
                                                            :base-system-prompt base
                                                            :system-prompt base})
-      (let [sd                 (session/new-session-in! ctx seed-id {:worktree-path "/tmp/worktree"})
+      (let [sd                 (session/new-session-in! ctx session-id {:worktree-path "/tmp/worktree"})
             session-id         (:session-id sd)
             ctx                (retarget ctx sd)
             sd                 (ss/get-session-data-in ctx session-id)]
@@ -987,7 +987,7 @@
         (is (= (:base-system-prompt sd) (:system-prompt sd))))))
 
   (testing "query-in resolves graph capabilities via agent-session bridge"
-    (let [[ctx seed-id] (session/create-context)
+    (let [[ctx session-id] (session/create-context)
           result (session/query-in ctx [:psi.graph/capabilities])]
       (is (vector? (:psi.graph/capabilities result)))
       (is (seq (:psi.graph/capabilities result)))
@@ -995,8 +995,8 @@
                 (:psi.graph/capabilities result)))))
 
   (testing "query-in resolves developer prompt"
-    (let [[ctx seed-id] (session/create-context {:initial-session {:developer-prompt "dev layer"
-                                                             :developer-prompt-source :explicit}})
+    (let [[ctx session-id] (session/create-context {:initial-session {:developer-prompt "dev layer"
+                                                                      :developer-prompt-source :explicit}})
           result (session/query-in ctx [:psi.agent-session/developer-prompt
                                         :psi.agent-session/developer-prompt-source
                                         :psi.agent-session/prompt-layers])]
@@ -1010,21 +1010,21 @@
              (:psi.agent-session/prompt-layers result)))))
 
   (testing "query-in resolves context fraction"
-    (let [[ctx seed-id] (session/create-context)]
-      (dispatch/dispatch! ctx :session/update-context-usage {:session-id seed-id :tokens 4000 :window 10000} {:origin :core})
+    (let [[ctx session-id] (session/create-context)]
+      (dispatch/dispatch! ctx :session/update-context-usage {:session-id session-id :tokens 4000 :window 10000} {:origin :core})
       (let [result (session/query-in ctx [:psi.agent-session/context-fraction])]
         (is (= 0.4 (:psi.agent-session/context-fraction result))))))
 
   (testing "query-in resolves extension-summary"
-    (let [[ctx seed-id] (session/create-context)]
+    (let [[ctx session-id] (session/create-context)]
       (ext/register-extension-in! (:extension-registry ctx) "/ext/a")
       (let [result (session/query-in ctx [:psi.agent-session/extension-summary])]
         (is (= 1 (get-in result [:psi.agent-session/extension-summary :extension-count]))))))
 
   (testing "query-in resolves prompt contribution attrs"
-    (let [[ctx seed-id] (session/create-context)]
+    (let [[ctx session-id] (session/create-context)]
       (dispatch/dispatch! ctx :session/register-prompt-contribution
-                          {:session-id seed-id :ext-path "/ext/a" :id "c1"
+                          {:session-id session-id :ext-path "/ext/a" :id "c1"
                            :contribution {:content "Hint" :priority 10 :enabled true}}
                           {:origin :core})
       (let [result (session/query-in ctx [:psi.agent-session/base-system-prompt
@@ -1035,13 +1035,13 @@
         (is (= 1 (:psi.extension/prompt-contribution-count result))))))
 
   (testing "query-in resolves stats"
-    (let [[ctx seed-id] (session/create-context)
+    (let [[ctx session-id] (session/create-context)
           result (session/query-in ctx [:psi.agent-session/stats])]
       (is (map? (:psi.agent-session/stats result)))
       (is (contains? (:psi.agent-session/stats result) :session-id))))
 
   (testing "query-in resolves canonical telemetry attrs directly"
-    (let [[ctx seed-id] (session/create-context)]
+    (let [[ctx session-id] (session/create-context)]
       (doseq [attr [:psi.agent-session/messages-count
                     :psi.agent-session/ai-call-count
                     :psi.agent-session/tool-call-count
@@ -1052,7 +1052,7 @@
           (is (contains? result attr))
           (is (not (contains? result :com.wsscode.pathom3.connect.runner/attribute-errors))))))
 
-    (let [[ctx seed-id] (session/create-context)
+    (let [[ctx session-id] (session/create-context)
           result (session/query-in ctx [:psi.agent-session/messages-count
                                         :psi.agent-session/ai-call-count
                                         :psi.agent-session/tool-call-count
@@ -1071,7 +1071,7 @@
       (is (<= 0 (:psi.agent-session/executed-tool-count result)))))
 
   (testing "query-in resolves usage aggregates from journal assistant usage"
-    (let [[ctx seed-id] (session/create-context)
+    (let [[ctx session-id] (session/create-context)
           assistant-1 {:role "assistant"
                        :content [{:type :text :text "a"}]
                        :usage {:input-tokens 1000
@@ -1105,9 +1105,9 @@
                1.0e-9)))))
 
   (testing "query-in resolves model provider/id/reasoning attrs"
-    (let [[ctx seed-id] (session/create-context)
+    (let [[ctx session-id] (session/create-context)
           model {:provider "openai" :id "gpt-5.3-codex" :reasoning true}]
-      (dispatch/dispatch! ctx :session/set-model {:session-id seed-id :model model} {:origin :core})
+      (dispatch/dispatch! ctx :session/set-model {:session-id session-id :model model} {:origin :core})
       (let [result (session/query-in ctx [:psi.agent-session/model-provider
                                           :psi.agent-session/model-id
                                           :psi.agent-session/model-reasoning
@@ -1122,26 +1122,26 @@
         (is (contains? result :psi.agent-session/git-branch)))))
 
   (testing "query-in resolves tool summary"
-    (let [[ctx seed-id] (session/create-context)
+    (let [[ctx session-id] (session/create-context)
           tool {:name "foo" :label "Foo" :description "Bar" :parameters "{}"}]
-      (agent-core/set-tools-in! (ss/agent-ctx-in ctx seed-id) [tool])
+      (agent-core/set-tools-in! (ss/agent-ctx-in ctx session-id) [tool])
       (let [summary (session/query-in ctx [:psi.tool/count :psi.tool/names :psi.tool/summary])]
         (is (= 1 (:psi.tool/count summary)))
         (is (= ["foo"] (:psi.tool/names summary)))
         (is (= "foo" (get-in summary [:psi.tool/summary :tools 0 :name]))))))
 
   (testing "effective-cwd-in prefers session worktree-path over context cwd"
-    (let [[ctx seed-id] (session/create-context {:cwd "/repo/main"
-                                       :initial-session {:worktree-path "/repo/feature-x"}})]
-      (is (= "/repo/feature-x" (ss/effective-cwd-in ctx seed-id)))
-      (dispatch/dispatch! ctx :session/set-worktree-path {:session-id seed-id :worktree-path "/repo/feature-y"} {:origin :core})
-      (is (= "/repo/feature-y" (ss/effective-cwd-in ctx seed-id)))))
+    (let [[ctx session-id] (session/create-context {:cwd "/repo/main"
+                                                    :initial-session {:worktree-path "/repo/feature-x"}})]
+      (is (= "/repo/feature-x" (ss/effective-cwd-in ctx session-id)))
+      (dispatch/dispatch! ctx :session/set-worktree-path {:session-id session-id :worktree-path "/repo/feature-y"} {:origin :core})
+      (is (= "/repo/feature-y" (ss/effective-cwd-in ctx session-id)))))
 
   (testing "query-in resolves effective reasoning effort for reasoning models"
-    (let [[ctx seed-id] (session/create-context {:initial-session {:model {:provider "openai"
-                                                                 :id "gpt-5.3-codex"
-                                                                 :reasoning true}
-                                                         :thinking-level :high}})
+    (let [[ctx session-id] (session/create-context {:initial-session {:model {:provider "openai"
+                                                                              :id "gpt-5.3-codex"
+                                                                              :reasoning true}
+                                                                      :thinking-level :high}})
           result (session/query-in ctx [:psi.agent-session/model-reasoning
                                         :psi.agent-session/effective-reasoning-effort])]
       (is (true? (:psi.agent-session/model-reasoning result)))
@@ -1149,9 +1149,9 @@
 
 (deftest tool-output-eql-introspection-test
   (testing "query-in resolves tool-output policy defaults and overrides"
-    (let [[ctx seed-id] (session/create-context {:initial-session
-                                       {:tool-output-overrides
-                                        {"bash" {:max-lines 77 :max-bytes 2048}}}})
+    (let [[ctx session-id] (session/create-context {:initial-session
+                                                    {:tool-output-overrides
+                                                     {"bash" {:max-lines 77 :max-bytes 2048}}}})
           result (session/query-in ctx [:psi.tool-output/default-max-lines
                                         :psi.tool-output/default-max-bytes
                                         :psi.tool-output/overrides])]
@@ -1161,7 +1161,7 @@
              (:psi.tool-output/overrides result)))))
 
   (testing "query-in resolves tool-output calls and aggregate stats"
-    (let [[ctx seed-id] (session/create-context)]
+    (let [[ctx session-id] (session/create-context)]
       (test-support/set-state! ctx :tool-output-stats
                                {:calls [{:tool-call-id "call-1"
                                          :tool-name "bash"
@@ -1238,7 +1238,7 @@
 
 (deftest tool-call-attempts-eql-introspection-test
   (testing "query-in resolves tool-call attempts and unmatched counts"
-    (let [[ctx seed-id] (session/create-context)
+    (let [[ctx session-id] (session/create-context)
           t0  (java.time.Instant/now)
           t1  (.plusMillis t0 10)
           t2  (.plusMillis t0 20)
@@ -1272,7 +1272,7 @@
                                     :content-index 0}])
 
       ;; Only call-1 has a committed toolResult; call-2 is unmatched.
-      (inject-messages! ctx seed-id [(make-tool-result-msg "call-1" "bash" "ok")])
+      (inject-messages! ctx session-id [(make-tool-result-msg "call-1" "bash" "ok")])
 
       (let [r        (session/query-in ctx
                                        [:psi.agent-session/tool-call-attempt-count
@@ -1301,11 +1301,11 @@
 
 (deftest tool-call-count-vs-lifecycle-summary-count-test
   (testing "tool-call-count is transcript-based while lifecycle-summary-count is canonical lifecycle-based"
-    (let [[ctx seed-id] (session/create-context)
+    (let [[ctx session-id] (session/create-context)
           t0  (java.time.Instant/now)
           t1  (.plusMillis t0 10)
           t2  (.plusMillis t0 20)]
-      (ss/journal-append-in! ctx seed-id
+      (ss/journal-append-in! ctx session-id
                              {:kind :message
                               :data {:message {:role "toolResult"
                                                :tool-call-id "call-journal-1"
@@ -1343,7 +1343,7 @@
 
 (deftest tool-lifecycle-events-eql-introspection-test
   (testing "query-in resolves canonical tool lifecycle events as a distinct surface"
-    (let [[ctx seed-id] (session/create-context)
+    (let [[ctx session-id] (session/create-context)
           t0  (java.time.Instant/now)
           t1  (.plusMillis t0 10)
           t2  (.plusMillis t0 20)]
@@ -1433,7 +1433,7 @@
 
 (deftest provider-capture-eql-introspection-test
   (testing "query-in resolves provider request/reply captures"
-    (let [[ctx seed-id] (session/create-context)
+    (let [[ctx session-id] (session/create-context)
           t0  (java.time.Instant/now)
           t1  (.plusMillis t0 25)
           t2  (.plusMillis t0 50)]
@@ -1548,7 +1548,7 @@
                           :psi.provider-reply/provider])))))
 
     (testing "provider capture lookup by turn-id resolves exact request and reply"
-      (let [[ctx seed-id] (session/create-context)
+      (let [[ctx session-id] (session/create-context)
             t0  (java.time.Instant/now)
             t1  (.plusMillis t0 25)]
         (test-support/update-state! ctx :provider-requests
@@ -1599,14 +1599,14 @@
 
 (deftest api-error-list-test
   (testing "no errors → count 0, empty list"
-    (let [[ctx seed-id] (session/create-context)]
-      (inject-messages! ctx seed-id [(make-user-msg "hi")
-                             (make-assistant-msg "hello")])
+    (let [[ctx session-id] (session/create-context)]
+      (inject-messages! ctx session-id [(make-user-msg "hi")
+                                        (make-assistant-msg "hello")])
       (let [r (session/query-in ctx [:psi.agent-session/api-error-count])]
         (is (zero? (:psi.agent-session/api-error-count r))))))
 
   (testing "provider reply error is exposed via api-errors"
-    (let [[ctx seed-id] (session/create-context)
+    (let [[ctx session-id] (session/create-context)
           t0  (java.time.Instant/now)]
       (test-support/update-state! ctx :provider-replies
                                   conj
@@ -1649,9 +1649,9 @@
         (is (string? (get-in err [:psi.api-error/provider-event :body-text]))))))
 
   (testing "single 400 error → count 1 with correct fields"
-    (let [[ctx seed-id] (session/create-context)]
-      (inject-messages! ctx seed-id [(make-user-msg "hi")
-                             (make-error-msg "clj-http: status 400 {}" 400)])
+    (let [[ctx session-id] (session/create-context)]
+      (inject-messages! ctx session-id [(make-user-msg "hi")
+                                        (make-error-msg "clj-http: status 400 {}" 400)])
       (let [r (session/query-in ctx
                                 [{:psi.agent-session/api-errors
                                   [:psi.api-error/message-index
@@ -1664,12 +1664,12 @@
         (is (string? (:psi.api-error/error-message-brief (first errors)))))))
 
   (testing "assistant error is enriched from matching provider reply by request-id"
-    (let [[ctx seed-id] (session/create-context)
+    (let [[ctx session-id] (session/create-context)
           t0  (java.time.Instant/now)]
-      (inject-messages! ctx seed-id [(make-user-msg "hi")
-                             (make-error-msg
-                              "Error (status 400) [request-id req_ant_live]"
-                              400)])
+      (inject-messages! ctx session-id [(make-user-msg "hi")
+                                        (make-error-msg
+                                         "Error (status 400) [request-id req_ant_live]"
+                                         400)])
       (test-support/update-state! ctx :provider-replies
                                   conj
                                   {:provider :anthropic
@@ -1704,21 +1704,21 @@
         (is (= :error (get-in err [:psi.api-error/provider-event :type]))))))
 
   (testing "multiple errors → all captured"
-    (let [[ctx seed-id] (session/create-context)]
-      (inject-messages! ctx seed-id [(make-user-msg "hi")
-                             (make-error-msg "error 1" 429)
-                             (make-user-msg "retry")
-                             (make-error-msg "error 2" 500)])
+    (let [[ctx session-id] (session/create-context)]
+      (inject-messages! ctx session-id [(make-user-msg "hi")
+                                        (make-error-msg "error 1" 429)
+                                        (make-user-msg "retry")
+                                        (make-error-msg "error 2" 500)])
       (let [r (session/query-in ctx [:psi.agent-session/api-error-count])]
         (is (= 2 (:psi.agent-session/api-error-count r)))))))
 
 (deftest api-error-detail-test
   (testing "request-id parsed from error text"
-    (let [[ctx seed-id] (session/create-context)]
-      (inject-messages! ctx seed-id [(make-user-msg "hi")
-                             (make-error-msg
-                              "clj-http: status 400 {\"request-id\" \"req_abc123\"}"
-                              400)])
+    (let [[ctx session-id] (session/create-context)]
+      (inject-messages! ctx session-id [(make-user-msg "hi")
+                                        (make-error-msg
+                                         "clj-http: status 400 {\"request-id\" \"req_abc123\"}"
+                                         400)])
       (let [r (session/query-in ctx
                                 [{:psi.agent-session/api-errors
                                   [:psi.api-error/request-id]}])
@@ -1726,11 +1726,11 @@
         (is (= "req_abc123" (:psi.api-error/request-id err))))))
 
   (testing "request-id parsed from normalized provider error suffix"
-    (let [[ctx seed-id] (session/create-context)]
-      (inject-messages! ctx seed-id [(make-user-msg "hi")
-                             (make-error-msg
-                              "Error (status 400) [request-id req_011CZ8hy9y3kRrVsNfhmugS1]"
-                              400)])
+    (let [[ctx session-id] (session/create-context)]
+      (inject-messages! ctx session-id [(make-user-msg "hi")
+                                        (make-error-msg
+                                         "Error (status 400) [request-id req_011CZ8hy9y3kRrVsNfhmugS1]"
+                                         400)])
       (let [r (session/query-in ctx
                                 [{:psi.agent-session/api-errors
                                   [:psi.api-error/request-id]}])
@@ -1738,11 +1738,11 @@
         (is (= "req_011CZ8hy9y3kRrVsNfhmugS1" (:psi.api-error/request-id err))))))
 
   (testing "surrounding messages include context window"
-    (let [[ctx seed-id] (session/create-context)]
-      (inject-messages! ctx seed-id [(make-user-msg "step 1")
-                             (make-assistant-msg "response 1")
-                             (make-user-msg "step 2")
-                             (make-error-msg "boom" 400)])
+    (let [[ctx session-id] (session/create-context)]
+      (inject-messages! ctx session-id [(make-user-msg "step 1")
+                                        (make-assistant-msg "response 1")
+                                        (make-user-msg "step 2")
+                                        (make-error-msg "boom" 400)])
       (let [r (session/query-in ctx
                                 [{:psi.agent-session/api-errors
                                   [{:psi.api-error/surrounding-messages
@@ -1755,11 +1755,11 @@
 
 (deftest api-error-request-shape-test
   (testing "request shape computed at point of error"
-    (let [[ctx seed-id] (session/create-context)]
-      (inject-messages! ctx seed-id [(make-user-msg "go")
-                             (make-tool-call-msg "running" "tc1" "bash")
-                             (make-tool-result-msg "tc1" "bash" "done")
-                             (make-error-msg "status 400" 400)])
+    (let [[ctx session-id] (session/create-context)]
+      (inject-messages! ctx session-id [(make-user-msg "go")
+                                        (make-tool-call-msg "running" "tc1" "bash")
+                                        (make-tool-result-msg "tc1" "bash" "done")
+                                        (make-error-msg "status 400" 400)])
       (let [r (session/query-in ctx
                                 [{:psi.agent-session/api-errors
                                   [{:psi.api-error/request-shape
@@ -1781,9 +1781,9 @@
 
 (deftest current-request-shape-test
   (testing "current shape reflects all messages"
-    (let [[ctx seed-id] (session/create-context)]
-      (inject-messages! ctx seed-id [(make-user-msg "hello")
-                             (make-assistant-msg "world")])
+    (let [[ctx session-id] (session/create-context)]
+      (inject-messages! ctx session-id [(make-user-msg "hello")
+                                        (make-assistant-msg "world")])
       (let [r (session/query-in ctx
                                 [{:psi.agent-session/request-shape
                                   [:psi.request-shape/message-count
@@ -1797,15 +1797,15 @@
         (is (true? (:psi.request-shape/alternation-valid? shape))))))
 
   (testing "headroom decreases as context grows"
-    (let [[ctx seed-id] (session/create-context)]
-      (inject-messages! ctx seed-id [(make-user-msg "a")])
+    (let [[ctx session-id] (session/create-context)]
+      (inject-messages! ctx session-id [(make-user-msg "a")])
       (let [r1 (session/query-in ctx
                                  [{:psi.agent-session/request-shape
                                    [:psi.request-shape/headroom-tokens]}])
             h1 (-> r1 :psi.agent-session/request-shape :psi.request-shape/headroom-tokens)]
         ;; Add more messages
-        (inject-messages! ctx seed-id [(make-assistant-msg (apply str (repeat 1000 "x")))
-                               (make-user-msg "b")])
+        (inject-messages! ctx session-id [(make-assistant-msg (apply str (repeat 1000 "x")))
+                                          (make-user-msg "b")])
         (let [r2 (session/query-in ctx
                                    [{:psi.agent-session/request-shape
                                      [:psi.request-shape/headroom-tokens]}])
@@ -1889,15 +1889,14 @@
         (is (= branch-name (:branch attach)) (pr-str attach))))))
 
 (deftest rpc-trace-mutation-and-resolver-test
-  (let [[ctx seed-id] (session/create-context {:persist? false})
-        session-id seed-id
+  (let [[ctx session-id] (session/create-context {:persist? false})
         qctx       (query/create-query-context)
         mutate     (fn [op params]
                      (get (query/query-in qctx
                                           {:psi/agent-session-ctx ctx}
                                           [(list op (cond-> (assoc params :psi/agent-session-ctx ctx)
-                                                         (not (contains? params :session-id))
-                                                         (assoc :session-id session-id)))])
+                                                      (not (contains? params :session-id))
+                                                      (assoc :session-id session-id)))])
                           op))]
     (session/register-resolvers-in! qctx false)
     (session/register-mutations-in! qctx mutations/all-mutations true)
@@ -1939,10 +1938,10 @@
           _    (recursion/register-hooks-in! rctx)
           [ctx _] (session/create-context {:recursion-ctx rctx})
           result  (session/query-in ctx
-                                   [:psi.recursion/status
-                                    :psi.recursion/paused?
-                                    :psi.recursion/current-cycle
-                                    :psi.recursion/hooks])]
+                                    [:psi.recursion/status
+                                     :psi.recursion/paused?
+                                     :psi.recursion/current-cycle
+                                     :psi.recursion/hooks])]
       (is (= :idle (:psi.recursion/status result)))
       (is (false? (:psi.recursion/paused? result)))
       (is (nil? (:psi.recursion/current-cycle result)))
@@ -1951,8 +1950,7 @@
 
 (deftest workflow-background-job-terminal-injection-test
   (testing "workflow completion emits background-job-terminal assistant message"
-    (let [[ctx seed-id] (session/create-context)
-          session-id seed-id
+    (let [[ctx session-id] (session/create-context)
           qctx       (query/create-query-context)
           chart  (chart/statechart {:id :wf-bg-test}
                                    (ele/state {:id :idle}
@@ -1967,8 +1965,8 @@
                    (get (query/query-in qctx
                                         {:psi/agent-session-ctx ctx}
                                         [(list op (cond-> (assoc params :psi/agent-session-ctx ctx)
-                       (not (contains? params :session-id))
-                       (assoc :session-id session-id)))])
+                                                    (not (contains? params :session-id))
+                                                    (assoc :session-id session-id)))])
                         op))]
       (session/register-resolvers-in! qctx false)
       (session/register-mutations-in! qctx mutations/all-mutations true)
@@ -2012,8 +2010,7 @@
 
 (deftest workflow-mutations-and-resolvers-test
   (testing "workflow mutation ops and resolver attrs are wired"
-    (let [[ctx seed-id] (session/create-context)
-          session-id seed-id
+    (let [[ctx session-id] (session/create-context)
           qctx       (query/create-query-context)
           chart  (chart/statechart {:id :wf-test}
                                    (ele/state {:id :idle}
@@ -2028,8 +2025,8 @@
                    (get (query/query-in qctx
                                         {:psi/agent-session-ctx ctx}
                                         [(list op (cond-> (assoc params :psi/agent-session-ctx ctx)
-                       (not (contains? params :session-id))
-                       (assoc :session-id session-id)))])
+                                                    (not (contains? params :session-id))
+                                                    (assoc :session-id session-id)))])
                         op))]
       (session/register-resolvers-in! qctx false)
       (session/register-mutations-in! qctx mutations/all-mutations true)
@@ -2074,8 +2071,7 @@
 
 (deftest send-workflow-event-track-background-job-gated-test
   (testing "send-event tracks background jobs only when track-background-job? is true"
-    (let [[ctx seed-id] (session/create-context)
-          session-id seed-id
+    (let [[ctx session-id] (session/create-context)
           qctx       (query/create-query-context)
           chart  (chart/statechart {:id :wf-track-gate}
                                    (ele/state {:id :idle}
@@ -2087,8 +2083,8 @@
                    (get (query/query-in qctx
                                         {:psi/agent-session-ctx ctx}
                                         [(list op (cond-> (assoc params :psi/agent-session-ctx ctx)
-                       (not (contains? params :session-id))
-                       (assoc :session-id session-id)))])
+                                                    (not (contains? params :session-id))
+                                                    (assoc :session-id session-id)))])
                         op))
           thread-id session-id]
       (session/register-resolvers-in! qctx false)
@@ -2130,8 +2126,7 @@
 
 (deftest workflow-query-and-background-job-vertical-slice-test
   (testing "workflow public data and background-job projection are queryable and coherent"
-    (let [[ctx seed-id] (session/create-context)
-          session-id seed-id
+    (let [[ctx session-id] (session/create-context)
           qctx       (query/create-query-context)
           chart  (chart/statechart {:id :wf-vertical-slice}
                                    (ele/state {:id :idle}
@@ -2141,8 +2136,8 @@
                    (get (query/query-in qctx
                                         {:psi/agent-session-ctx ctx}
                                         [(list op (cond-> (assoc params :psi/agent-session-ctx ctx)
-                       (not (contains? params :session-id))
-                       (assoc :session-id session-id)))])
+                                                    (not (contains? params :session-id))
+                                                    (assoc :session-id session-id)))])
                         op))]
       (session/register-resolvers-in! qctx false)
       (session/register-mutations-in! qctx mutations/all-mutations true)
@@ -2200,8 +2195,7 @@
 (deftest runtime-tool-executor-boundary-test
   (testing "execute-tool-runtime-in! uses the ctx-provided runtime tool executor when present"
     (let [calls      (atom [])
-          [ctx seed-id] (session/create-context {:persist? false})
-          session-id seed-id
+          [ctx session-id] (session/create-context {:persist? false})
           ctx        (assoc ctx :runtime-tool-executor-fn
                             (fn [_ctx tool-name args opts]
                               (swap! calls conj {:tool-name tool-name :args args :opts opts})
@@ -2214,8 +2208,7 @@
              @calls))))
 
   (testing "default-execute-runtime-tool-in! remains the fallback runtime implementation"
-    (let [[ctx seed-id] (session/create-context {:persist? false})
-          session-id seed-id]
+    (let [[ctx session-id] (session/create-context {:persist? false})]
       (agent-core/set-tools-in!
        (ss/agent-ctx-in ctx session-id)
        [{:name "prefix-a"
@@ -2230,21 +2223,20 @@
 (deftest tool-plan-runtime-tool-executor-boundary-test
   (testing "run-tool-plan uses the ctx-provided runtime tool executor boundary"
     (let [calls         (atom [])
-          [ctx* seed-id] (session/create-context {:persist? false})
+          [ctx* session-id] (session/create-context {:persist? false})
           ctx            (assoc ctx*
                                 :runtime-tool-executor-fn
                                 (fn [_ctx tool-name args opts]
                                   (swap! calls conj {:tool-name tool-name :args args :opts opts})
                                   {:content (str "custom:" (get args "text" ""))
                                    :is-error false}))
-          session-id    seed-id
           qctx       (query/create-query-context)
           mutate     (fn [op params]
                        (get (query/query-in qctx
                                             {:psi/agent-session-ctx ctx}
                                             [(list op (cond-> (assoc params :psi/agent-session-ctx ctx)
-                                                   (not (contains? params :session-id))
-                                                   (assoc :session-id session-id)))])
+                                                        (not (contains? params :session-id))
+                                                        (assoc :session-id session-id)))])
                             op))]
       (session/register-resolvers-in! qctx false)
       (session/register-mutations-in! qctx mutations/all-mutations true)
@@ -2260,15 +2252,14 @@
 
 (deftest tool-plan-mutation-test
   (testing "run-tool-plan chains step outputs into later step args"
-    (let [[ctx seed-id] (session/create-context)
-          session-id seed-id
+    (let [[ctx session-id] (session/create-context)
           qctx       (query/create-query-context)
           mutate (fn [op params]
                    (get (query/query-in qctx
                                         {:psi/agent-session-ctx ctx}
                                         [(list op (cond-> (assoc params :psi/agent-session-ctx ctx)
-                       (not (contains? params :session-id))
-                       (assoc :session-id session-id)))])
+                                                    (not (contains? params :session-id))
+                                                    (assoc :session-id session-id)))])
                         op))]
       (session/register-resolvers-in! qctx false)
       (session/register-mutations-in! qctx mutations/all-mutations true)
@@ -2297,16 +2288,15 @@
                (get-in result [:psi.extension.tool-plan/results 1 :args]))))))
 
   (testing "run-tool-plan stops on first failing step by default"
-    (let [[ctx seed-id] (session/create-context)
-          session-id seed-id
+    (let [[ctx session-id] (session/create-context)
           qctx       (query/create-query-context)
           ran-last (atom false)
           mutate   (fn [op params]
                      (get (query/query-in qctx
                                           {:psi/agent-session-ctx ctx}
                                           [(list op (cond-> (assoc params :psi/agent-session-ctx ctx)
-                       (not (contains? params :session-id))
-                       (assoc :session-id session-id)))])
+                                                      (not (contains? params :session-id))
+                                                      (assoc :session-id session-id)))])
                           op))]
       (session/register-resolvers-in! qctx false)
       (session/register-mutations-in! qctx mutations/all-mutations true)
@@ -2337,15 +2327,14 @@
 
 (deftest tool-mutations-test
   (testing "built-in tool mutations execute read/write/update/bash"
-    (let [[ctx seed-id] (session/create-context)
-          session-id seed-id
+    (let [[ctx session-id] (session/create-context)
           qctx       (query/create-query-context)
           mutate (fn [op params]
                    (get (query/query-in qctx
                                         {:psi/agent-session-ctx ctx}
                                         [(list op (cond-> (assoc params :psi/agent-session-ctx ctx)
-                       (not (contains? params :session-id))
-                       (assoc :session-id session-id)))])
+                                                    (not (contains? params :session-id))
+                                                    (assoc :session-id session-id)))])
                         op))
           f      (File/createTempFile "psi-tool-mutation" ".txt")
           path   (.getAbsolutePath f)]
@@ -2377,15 +2366,14 @@
         (is (false? (:psi.extension.tool/is-error b))))))
 
   (testing "chain mutation is an alias to run-tool-plan"
-    (let [[ctx seed-id] (session/create-context)
-          session-id seed-id
+    (let [[ctx session-id] (session/create-context)
           qctx       (query/create-query-context)
           mutate (fn [op params]
                    (get (query/query-in qctx
                                         {:psi/agent-session-ctx ctx}
                                         [(list op (cond-> (assoc params :psi/agent-session-ctx ctx)
-                       (not (contains? params :session-id))
-                       (assoc :session-id session-id)))])
+                                                    (not (contains? params :session-id))
+                                                    (assoc :session-id session-id)))])
                         op))]
       (session/register-resolvers-in! qctx false)
       (session/register-mutations-in! qctx mutations/all-mutations true)
@@ -2407,15 +2395,14 @@
                (get-in result [:psi.extension.tool-plan/result-by-id :s2 :content]))))))
 
   (testing "register/update/unregister prompt contribution mutations"
-    (let [[ctx seed-id] (session/create-context)
-          session-id seed-id
+    (let [[ctx session-id] (session/create-context)
           qctx       (query/create-query-context)
           mutate (fn [op params]
                    (get (query/query-in qctx
                                         {:psi/agent-session-ctx ctx}
                                         [(list op (cond-> (assoc params :psi/agent-session-ctx ctx)
-                       (not (contains? params :session-id))
-                       (assoc :session-id session-id)))])
+                                                    (not (contains? params :session-id))
+                                                    (assoc :session-id session-id)))])
                         op))]
       (session/register-resolvers-in! qctx false)
       (session/register-mutations-in! qctx mutations/all-mutations true)
@@ -2435,15 +2422,14 @@
         (is (true? (:psi.extension.prompt-contribution/removed? r3))))))
 
   (testing "send-prompt mutation stores extension prompt telemetry (no run-fn → follow-up)"
-    (let [[ctx seed-id] (session/create-context)
-          session-id seed-id
+    (let [[ctx session-id] (session/create-context)
           qctx       (query/create-query-context)
           mutate (fn [op params]
                    (get (query/query-in qctx
                                         {:psi/agent-session-ctx ctx}
                                         [(list op (cond-> (assoc params :psi/agent-session-ctx ctx)
-                       (not (contains? params :session-id))
-                       (assoc :session-id session-id)))])
+                                                    (not (contains? params :session-id))
+                                                    (assoc :session-id session-id)))])
                         op))]
       (session/register-resolvers-in! qctx false)
       (session/register-mutations-in! qctx mutations/all-mutations true)
@@ -2467,22 +2453,21 @@
           (is (= :follow-up (:delivery (:event-data entry))))))))
 
   (testing "send-prompt mutation with run-fn registered delivers as :prompt"
-    (let [[ctx seed-id] (session/create-context)
-          session-id seed-id
+    (let [[ctx session-id] (session/create-context)
           qctx       (query/create-query-context)
           mutate (fn [op params]
                    (get (query/query-in qctx
                                         {:psi/agent-session-ctx ctx}
                                         [(list op (cond-> (assoc params :psi/agent-session-ctx ctx)
-                       (not (contains? params :session-id))
-                       (assoc :session-id session-id)))])
+                                                    (not (contains? params :session-id))
+                                                    (assoc :session-id session-id)))])
                         op))
           run-calls (atom [])]
       (session/register-resolvers-in! qctx false)
       (session/register-mutations-in! qctx mutations/all-mutations true)
       ;; Register a stub run-fn that captures calls
       (ext-rt/set-extension-run-fn-in! ctx session-id (fn [text source]
-                                             (swap! run-calls conj {:text text :source source})))
+                                                        (swap! run-calls conj {:text text :source source})))
       (let [result (mutate 'psi.extension/send-prompt
                            {:content "hello from extension"
                             :source "plan-state-learning"})
@@ -2506,24 +2491,23 @@
           (is (= :prompt (:delivery (:event-data entry))))))))
 
   (testing "send-prompt mutation while streaming with run-fn registered reports :deferred"
-    (let [[ctx seed-id] (session/create-context)
-          session-id seed-id
+    (let [[ctx session-id] (session/create-context)
           qctx       (query/create-query-context)
           mutate (fn [op params]
                    (get (query/query-in qctx
                                         {:psi/agent-session-ctx ctx}
                                         [(list op (cond-> (assoc params :psi/agent-session-ctx ctx)
-                       (not (contains? params :session-id))
-                       (assoc :session-id session-id)))])
+                                                    (not (contains? params :session-id))
+                                                    (assoc :session-id session-id)))])
                         op))
           run-calls (atom [])]
       (session/register-resolvers-in! qctx false)
       (session/register-mutations-in! qctx mutations/all-mutations true)
       ;; Force non-idle session phase so send-extension-prompt-in! takes deferred path.
-      (let [session-id seed-id]
+      (let [session-id session-id]
         (session/prompt-in! ctx session-id "seed busy turn"))
       (ext-rt/set-extension-run-fn-in! ctx session-id (fn [text source]
-                                             (swap! run-calls conj {:text text :source source})))
+                                                        (swap! run-calls conj {:text text :source source})))
       (let [result (mutate 'psi.extension/send-prompt
                            {:content "hello while busy"
                             :source "plan-state-learning"})
@@ -2548,8 +2532,7 @@
 
 (deftest startup-resources-via-mutations-test
   (testing "load-startup-resources-via-mutations-in! adds prompts/skills/tools"
-    (let [[ctx seed-id] (session/create-context)
-          session-id seed-id
+    (let [[ctx session-id] (session/create-context)
           template   {:name "greet" :description "d" :content "c" :source :project :file-path "/tmp/greet.md"}
           skill      {:name "coding" :description "d" :file-path "/tmp/SKILL.md"
                       :base-dir "/tmp" :source :project :disable-model-invocation false}
@@ -2565,8 +2548,7 @@
 
 (deftest bootstrap-session-test
   (testing "bootstrap-in! stores startup summary and applies resources"
-    (let [[ctx seed-id] (session/create-context)
-          session-id seed-id
+    (let [[ctx session-id] (session/create-context)
           template   {:name "greet" :description "d" :content "c" :source :project :file-path "/tmp/greet.md"}
           skill      {:name "coding" :description "d" :file-path "/tmp/SKILL.md"
                       :base-dir "/tmp" :source :project :disable-model-invocation false}
@@ -2597,8 +2579,7 @@
 
 (deftest bootstrap-session-developer-prompt-override-test
   (testing "bootstrap-in! accepts explicit developer prompt"
-    (let [[ctx seed-id] (session/create-context)
-          session-id seed-id]
+    (let [[ctx session-id] (session/create-context)]
       (bootstrap/bootstrap-in!
        ctx session-id
        {:register-global-query? false
@@ -2613,8 +2594,8 @@
 (deftest create-child-session-dispatch-test
   ;; :session/create-child inserts a child session entry in state without
   ;; changing the parent's active-session-id.
-  (let [[ctx seed-id] (test-support/make-session-ctx {})
-        parent-id     seed-id
+  (let [[ctx session-id] (test-support/make-session-ctx {})
+        parent-id     session-id
         child-id    (str (java.util.UUID/randomUUID))
         sys-prompt  "child system"
         tool-schemas [{:name "tool1"}]]
