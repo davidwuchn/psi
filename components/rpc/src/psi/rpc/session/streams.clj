@@ -5,7 +5,7 @@
    [psi.rpc.session.emit :as emit]))
 
 (defn start-progress-loop!
-  [{:keys [start-daemon-thread! ctx state session-id emit! progress-q thread-name]
+  [{:keys [start-daemon-thread! ctx session-id emit! progress-q thread-name]
     :or   {thread-name "rpc-progress-loop"}}]
   (let [stop? (atom false)
         thread (start-daemon-thread!

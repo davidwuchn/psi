@@ -1262,7 +1262,7 @@
   (testing "list_sessions returns context snapshot with active-session-id"
     (let [cwd                (str (System/getProperty "java.io.tmpdir") "/psi-rpc-context-" (java.util.UUID/randomUUID))
           _                  (.mkdirs (java.io.File. cwd))
-          [ctx seed-id] (session/create-context {:cwd cwd})
+          [ctx _] (session/create-context {:cwd cwd})
           state              (atom {:ready? true :pending {}})
           handler (make-handler ctx state)
           input   (str "{:id \"n1\" :kind :request :op \"new_session\"}\n"
@@ -1298,8 +1298,7 @@
                                                      [(persist/thinking-level-entry :off)])
           sd2                (session/new-session-in! ctx sid1 {})
           sid2               (:session-id sd2)
-          sd3                (session/new-session-in! ctx sid2 {})
-          current-before     (:session-id sd3)
+          _                  (session/new-session-in! ctx sid2 {})
           state              (atom {:ready? true
                                     :pending {}
                                     :subscribed-topics #{"session/resumed"}})
@@ -1333,8 +1332,7 @@
                                                      [(persist/thinking-level-entry :off)])
           sd2                (session/new-session-in! ctx sid1 {})
           sid2               (:session-id sd2)
-          sd3                (session/new-session-in! ctx sid2 {})
-          current-before     (:session-id sd3)
+          _                  (session/new-session-in! ctx sid2 {})
           state              (atom {:ready? true :pending {}})
           handler (make-handler ctx state)
           input          (str "{:id \"m1\" :kind :request :op \"set_session_name\" :params {:session-id \"" sid1 "\" :name \"alpha\"}}\n")
