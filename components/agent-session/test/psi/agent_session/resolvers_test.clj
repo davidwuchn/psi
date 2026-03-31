@@ -22,6 +22,7 @@
    [psi.agent-session.mutations :as mutations]
    [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.persistence :as persist]
+   [psi.agent-session.test-support :as test-support]
    [psi.query.core :as query]))
 
 ;; ── helpers ─────────────────────────────────────────────
@@ -29,7 +30,7 @@
 (defn- q
   "Run EQL query against a fresh session context."
   [eql]
-  (let [[ctx _] (session/create-context {:persist? false})]
+  (let [[ctx _] (test-support/create-test-session)]
     (session/query-in ctx eql)))
 
 (defn- q-in
@@ -82,7 +83,7 @@
           "fresh session has no executed tools")))
 
   (testing "executed-tool-count follows canonical lifecycle summaries rather than transcript tool results"
-    (let [[ctx session-id] (session/create-context {:persist? false})]
+    (let [[ctx session-id] (test-support/create-test-session)]
       (ss/update-state-value-in! ctx (ss/state-path :journal session-id) into
                                  [{:kind :message
                                    :data {:message {:role "assistant"
@@ -364,7 +365,7 @@
 
 (deftest background-jobs-resolver-test
   (testing "background job attrs resolve from session root and include nested job entities"
-    (let [[ctx session-id] (session/create-context {:persist? false})
+    (let [[ctx session-id] (test-support/create-test-session)
           thread-id     session-id
           _         (dispatch/dispatch! ctx :session/update-background-jobs-state
                                         {:update-fn (fn [store]

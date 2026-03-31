@@ -14,10 +14,11 @@
    discovery-contract regressions obvious."
   (:require
    [clojure.test :refer [deftest is testing]]
-   [psi.agent-session.core :as session]))
+   [psi.agent-session.core :as session]
+   [psi.agent-session.test-support :as test-support]))
 
 (def ^:private shared-ctx
-  (delay (first (session/create-context {:persist? false}))))
+  (delay (first (test-support/create-test-session))))
 
 (defn- q
   "Run EQL query against a shared session context."
