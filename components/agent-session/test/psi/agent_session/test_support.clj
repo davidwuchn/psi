@@ -89,6 +89,7 @@
         ctx           {:state*                       state*
                        :sc-env                       sc-env
                        :config                       {}
+                       :session-defaults             (or session-data {})
                        :extension-registry           ext-reg
                        :workflow-registry            wf-reg
                        :extension-run-fn-atom        (atom nil)
