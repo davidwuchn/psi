@@ -7,7 +7,6 @@
    [psi.agent-session.core :as session]
    [psi.agent-session.session-state :as ss]
    [psi.rpc.events :as events]
-   [psi.rpc.session.emit :as emit]
    [psi.rpc.state :as rpc.state]
    [psi.rpc.transport :refer [error-frame protocol-version response-frame supported-rpc-ops]]))
 
@@ -40,7 +39,7 @@
     (response-frame (:id request) (:op request) true {:result result})))
 
 (defn handle-prompt-while-streaming
-  [{:keys [ctx request params state session-id]}]
+  [{:keys [ctx request params session-id]}]
   (let [message   (get params :message)
         _         (when-not (and (string? message) (not (str/blank? message)))
                     (throw (ex-info "invalid request parameter :message: non-empty string"
@@ -50,16 +49,15 @@
                       (nil? behavior)      "steer"
                       (keyword? behavior)  (name behavior)
                       (string? behavior)   behavior
-                      :else                nil))
-        sid       session-id]
+                      :else                nil))]
     (case behavior*
       "steer"
-      (let [{:keys [accepted? behavior]} (session/queue-while-streaming-in! ctx sid message :steer)]
+      (let [{:keys [accepted? behavior]} (session/queue-while-streaming-in! ctx session-id message :steer)]
         (response-frame (:id request) (:op request) true {:accepted accepted?
                                                           :behavior (name behavior)}))
 
       "queue"
-      (let [{:keys [accepted? behavior]} (session/queue-while-streaming-in! ctx sid message :queue)]
+      (let [{:keys [accepted? behavior]} (session/queue-while-streaming-in! ctx session-id message :queue)]
         (response-frame (:id request) (:op request) true {:accepted accepted?
                                                           :behavior (name behavior)}))
 
@@ -67,36 +65,32 @@
                       {:error-code "request/invalid-params"})))))
 
 (defn handle-steer
-  [{:keys [ctx request params state session-id]}]
+  [{:keys [ctx request params session-id]}]
   (let [message (get params :message)
         _       (when-not (and (string? message) (not (str/blank? message)))
                   (throw (ex-info "invalid request parameter :message: non-empty string"
-                                  {:error-code "request/invalid-params"})))
-        sid     session-id]
-    (session/steer-in! ctx sid message)
+                                  {:error-code "request/invalid-params"}))) ]
+    (session/steer-in! ctx session-id message)
     (response-frame (:id request) (:op request) true {:accepted true})))
 
 (defn handle-follow-up
-  [{:keys [ctx request params state session-id]}]
+  [{:keys [ctx request params session-id]}]
   (let [message (get params :message)
         _       (when-not (and (string? message) (not (str/blank? message)))
                   (throw (ex-info "invalid request parameter :message: non-empty string"
-                                  {:error-code "request/invalid-params"})))
-        sid     session-id]
-    (session/follow-up-in! ctx sid message)
+                                  {:error-code "request/invalid-params"})))]
+    (session/follow-up-in! ctx session-id message)
     (response-frame (:id request) (:op request) true {:accepted true})))
 
 (defn handle-abort
-  [{:keys [ctx request state session-id]}]
-  (let [sid session-id]
-    (session/abort-in! ctx sid)
-    (response-frame (:id request) (:op request) true {:accepted true})))
+  [{:keys [ctx request session-id]}]
+  (session/abort-in! ctx session-id)
+  (response-frame (:id request) (:op request) true {:accepted true}))
 
 (defn handle-interrupt
-  [{:keys [ctx request state session-id]}]
-  (let [sid session-id
-        {:keys [accepted? pending? dropped-steering-text]}
-        (session/request-interrupt-in! ctx sid)]
+  [{:keys [ctx request session-id]}]
+  (let [{:keys [accepted? pending? dropped-steering-text]}
+        (session/request-interrupt-in! ctx session-id)]
     (response-frame (:id request) (:op request) true
                     {:accepted accepted?
                      :pending pending?
@@ -109,17 +103,16 @@
                                                     :sessions (ss/list-context-sessions-in ctx)}))
 
 (defn handle-set-session-name
-  [{:keys [ctx request params state session-id]}]
+  [{:keys [ctx request params session-id]}]
   (let [name   (get params :name)
         _      (when-not (and (string? name) (not (str/blank? name)))
                  (throw (ex-info "invalid request parameter :name: non-empty string"
                                  {:error-code "request/invalid-params"})))
-        sid    session-id
-        result (session/set-session-name-in! ctx sid name)]
+        result (session/set-session-name-in! ctx session-id name)]
     (response-frame (:id request) (:op request) true {:session-name (:session-name result)})))
 
 (defn handle-set-model
-  [{:keys [ctx request params state session-id resolve-model]}]
+  [{:keys [ctx request params session-id resolve-model]}]
   (let [provider (get params :provider)
         _        (when-not (or (keyword? provider) (string? provider))
                    (throw (ex-info "invalid request parameter :provider: string or keyword"
@@ -133,88 +126,78 @@
       (throw (ex-info "unknown model"
                       {:error-code "request/unknown-model"})))
     (let [provider-str (name (:provider resolved))
-          sid          session-id
           model        {:provider provider-str
                         :id (:id resolved)
                         :reasoning (:supports-reasoning resolved)}
-          result       (session/set-model-in! ctx sid model)]
+          result       (session/set-model-in! ctx session-id model)]
       (response-frame (:id request) (:op request) true {:model {:provider (:provider (:model result))
                                                                 :id (:id (:model result))}}))))
 
 (defn handle-cycle-model
-  [{:keys [ctx request params state session-id]}]
+  [{:keys [ctx request params session-id]}]
   (let [direction (case (:direction params)
                     "prev" :backward
                     "next" :forward
                     :backward :backward
                     :forward :forward
                     :forward)
-        sid       session-id
-        sd        (session/cycle-model-in! ctx sid direction)]
+        sd        (session/cycle-model-in! ctx session-id direction)]
     (response-frame (:id request) (:op request) true {:model (some-> (:model sd)
                                                                      (select-keys [:provider :id]))})))
 
 (defn handle-set-thinking-level
-  [{:keys [ctx request params state session-id]}]
+  [{:keys [ctx request params session-id]}]
   (let [level   (:level params)
         _       (when-not (some? level)
                   (throw (ex-info "invalid request parameter :level: keyword, string, or integer"
                                   {:error-code "request/invalid-params"})))
-        sid     session-id
         level*  (cond
                   (keyword? level) level
                   (string? level)  (keyword level)
                   :else            level)
-        result  (session/set-thinking-level-in! ctx sid level*)]
+        result  (session/set-thinking-level-in! ctx session-id level*)]
     (response-frame (:id request) (:op request) true {:thinking-level (:thinking-level result)})))
 
 (defn handle-cycle-thinking-level
-  [{:keys [ctx request state session-id]}]
-  (let [sid session-id
-        sd  (session/cycle-thinking-level-in! ctx sid)]
+  [{:keys [ctx request session-id]}]
+  (let [sd  (session/cycle-thinking-level-in! ctx session-id)]
     (response-frame (:id request) (:op request) true {:thinking-level (:thinking-level sd)})))
 
 (defn handle-compact
-  [{:keys [ctx request params state session-id]}]
-  (let [sid    session-id
-        result (session/manual-compact-in! ctx sid (:custom-instructions params))]
+  [{:keys [ctx request params session-id]}]
+  (let [result (session/manual-compact-in! ctx session-id (:custom-instructions params))]
     (response-frame (:id request) (:op request) true {:compacted (boolean result)
                                                       :summary result})))
 
 (defn handle-set-auto-compaction
-  [{:keys [ctx request params state session-id]}]
+  [{:keys [ctx request params session-id]}]
   (let [enabled (:enabled params)
         _       (when-not (boolean? enabled)
                   (throw (ex-info "invalid request parameter :enabled: boolean"
                                   {:error-code "request/invalid-params"})))
-        sid     session-id
-        result  (session/set-auto-compaction-in! ctx sid enabled)]
+        result  (session/set-auto-compaction-in! ctx session-id enabled)]
     (response-frame (:id request) (:op request) true {:enabled (:auto-compaction-enabled result)})))
 
 (defn handle-set-auto-retry
-  [{:keys [ctx request params state session-id]}]
+  [{:keys [ctx request params session-id]}]
   (let [enabled (:enabled params)
         _       (when-not (boolean? enabled)
                   (throw (ex-info "invalid request parameter :enabled: boolean"
                                   {:error-code "request/invalid-params"})))
-        sid     session-id
-        result  (session/set-auto-retry-in! ctx sid enabled)]
+        result  (session/set-auto-retry-in! ctx session-id enabled)]
     (response-frame (:id request) (:op request) true {:enabled (:auto-retry-enabled result)})))
 
 (defn handle-get-state
-  [{:keys [ctx request state session-id]}]
-  (let [sid session-id]
-    (response-frame (:id request) (:op request) true {:state (ss/get-session-data-in ctx sid)})))
+  [{:keys [ctx request session-id]}]
+  (response-frame (:id request) (:op request) true {:state (ss/get-session-data-in ctx session-id)}))
 
 (defn handle-get-messages
-  [{:keys [ctx request state session-id]}]
-  (let [sid session-id]
-    (response-frame (:id request) (:op request) true {:messages (:messages (agent/get-data-in (ss/agent-ctx-in ctx sid)))})))
+  [{:keys [ctx request session-id]}]
+  (response-frame (:id request) (:op request) true {:messages (:messages (agent/get-data-in (ss/agent-ctx-in ctx session-id)))}))
 
 (defn handle-get-session-stats
-  [{:keys [ctx request state session-id]}]
-  (let [sid session-id]
-    (response-frame (:id request) (:op request) true {:stats (session/diagnostics-in ctx sid)})))
+  [{:keys [ctx request session-id]}]
+  (response-frame (:id request) (:op request) true {:stats (session/diagnostics-in ctx session-id)}))
 
 (defn handle-subscribe
   [{:keys [ctx request params state session-id session-deps maybe-start-external-event-loop! register-rpc-extension-run-fn! maybe-start-ui-watch-loop!]}]
