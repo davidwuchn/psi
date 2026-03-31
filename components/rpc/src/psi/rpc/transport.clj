@@ -3,32 +3,17 @@
   (:require
    [clojure.edn :as edn]
    [clojure.string :as str]
-   [psi.agent-session.session-state :as ss]))
+   [psi.agent-session.session-state :as ss]
+   [psi.rpc.state :as rpc.state]))
 
 (def protocol-version "1.0")
-
-(defn- stop-managed-thread!
-  [state k]
-  (when-let [x (get @state k)]
-    (cond
-      (instance? java.util.concurrent.Future x)
-      (try (future-cancel x) (catch Throwable _ nil))
-
-      (instance? Thread x)
-      (try (.interrupt ^Thread x) (catch Throwable _ nil))
-
-      :else nil)
-    (swap! state dissoc k)
-    true))
 
 (defn- stop-all-managed-threads!
   [state]
   ;; Stop long-lived transport-owned loops. Do not interrupt in-flight prompt
   ;; workers here: existing RPC contract/tests expect accepted prompt work to
   ;; continue emitting events briefly after input EOF in harness scenarios.
-  (doseq [k [:ui-watch-loop :external-event-loop]]
-    (stop-managed-thread! state k)))
-(def ^:private default-max-pending-requests 64)
+  (rpc.state/stop-managed-workers! state))
 
 (def ^:private request-required-keys #{:id :kind :op})
 (def ^:private request-allowed-keys  #{:id :kind :op :params})
@@ -273,7 +258,7 @@
 (defn- clear-pending-if-terminal! [state frame]
   (when-let [id (:id frame)]
     (when (and (string? id) (terminal-frame? frame))
-      (swap! state update :pending dissoc id))))
+      (rpc.state/clear-pending! state id))))
 
 (defn- make-tracked-emitter [emit-frame! state]
   (fn emit-tracked! [frame]
@@ -293,7 +278,9 @@
              second
              Integer/parseInt)))
 
-(defn- handle-handshake! [request emit-frame! state]
+(defn- handle-handshake!
+  [request emit-frame! state {:keys [handshake-server-info-fn
+                                     handshake-context-updated-payload-fn]}]
   (let [version (or (get-in request [:params :client-info :protocol-version])
                     (get-in request [:params :protocol-version]))
         major   (protocol-major version)]
@@ -309,20 +296,19 @@
                      (str "unsupported protocol major: " (or major "unknown")))
 
       :else
-      (let [server-info-fn (or (:handshake-server-info-fn @state)
-                               (fn [] {:protocol-version protocol-version}))
-            context-payload-fn (:handshake-context-updated-payload-fn @state)
-            server-info       (merge {:protocol-version protocol-version}
-                                     (or (server-info-fn) {}))]
-        (swap! state assoc
-               :ready? true
-               :negotiated-protocol-version protocol-version)
+      (let [server-info-fn (or handshake-server-info-fn
+                               (fn [_state] {:protocol-version protocol-version}))
+            context-payload-fn handshake-context-updated-payload-fn
+            server-info (merge {:protocol-version protocol-version}
+                               (or (server-info-fn state)
+                                   {}))]
+        (rpc.state/mark-ready! state protocol-version)
         ;; Optional bootstrap context snapshot event for frontends that need
         ;; immediate session-tree state before subscribe lifecycle completes.
-        (when (fn? context-payload-fn)
+        (when context-payload-fn
           (emit-frame! (event-frame {:event "context/updated"
                                      :id (:id request)
-                                     :data (or (context-payload-fn)
+                                     :data (or (context-payload-fn state)
                                                {:active-session-id nil
                                                 :sessions []})})))
         (response-frame (:id request)
@@ -336,9 +322,8 @@
   [request state]
   (let [id      (:id request)
         op      (:op request)
-        pending (:pending @state)
-        max-p   (long (or (:max-pending-requests @state)
-                          default-max-pending-requests))]
+        pending (rpc.state/pending state)
+        max-p   (long (rpc.state/max-pending-requests state))]
     (cond
       (not (valid-request-id? id))
       {:error (request-error request "request/invalid-id" "request :id must be a non-empty string")}
@@ -354,13 +339,13 @@
 
       :else
       (do
-        (swap! state update :pending assoc id op)
+        (rpc.state/add-pending! state id op)
         {:ok true}))))
 
 (defn- process-request!
-  [request {:keys [state request-handler emit-tracked!]}]
+  [request {:keys [state request-handler emit-tracked! handshake-server-info-fn handshake-context-updated-payload-fn]}]
   (let [op (:op request)
-        ready? (:ready? @state)]
+        ready? (rpc.state/ready? state)]
     (cond
       (and (not ready?) (not= "handshake" op))
       (emit-tracked! (request-error request
@@ -370,13 +355,14 @@
       (= "handshake" op)
       (if-let [error (:error (accept-request! request state))]
         (emit-tracked! error)
-        (emit-tracked! (handle-handshake! request emit-tracked! state)))
+        (emit-tracked! (handle-handshake! request emit-tracked! state {:handshake-server-info-fn handshake-server-info-fn
+                                                                       :handshake-context-updated-payload-fn handshake-context-updated-payload-fn})))
 
       :else
       (if-let [error (:error (accept-request! request state))]
         (emit-tracked! error)
         (try
-          (let [result (binding [*out* (:err @state)]
+          (let [result (binding [*out* (rpc.state/err-writer state)]
                          (request-handler request emit-tracked! state))]
             (cond
               (nil? result)
@@ -412,12 +398,9 @@
    - :request-handler  (fn [request emit-frame! state] -> frame | [frame*] | nil)
    - :state            mutable transport state passed to request-handler
    - :trace-fn         optional (fn [{:dir :in|:out :raw string :frame map :parse-error string?}])
-
-   State keys:
-   - :ready?                   handshake readiness gate (default false)
-   - :pending                  map of request-id -> op for in-flight requests
-   - :max-pending-requests     guard limit (default 64)"
-  [{:keys [in out err request-handler state trace-fn]
+   - :handshake-server-info-fn optional fn of state -> server-info map
+   - :handshake-context-updated-payload-fn optional fn of state -> context payload map"
+  [{:keys [in out err request-handler state trace-fn handshake-server-info-fn handshake-context-updated-payload-fn]
     :or   {in *in*
            out *out*
            err *err*
@@ -426,14 +409,7 @@
            state (atom {})}}]
   (let [reader      (java.io.BufferedReader. in)
         emit-frame! (make-frame-writer out trace-fn)]
-    (swap! state #(merge {:ready? false
-                          :pending {}
-                          :max-pending-requests default-max-pending-requests
-                          :subscribed-topics #{}
-                          :event-seq 0
-                          :inflight-futures []}
-                         %
-                         {:err err}))
+    (rpc.state/initialize-transport-state! state err)
     (let [emit-tracked! (make-tracked-emitter emit-frame! state)
           emit-error!   (fn [error-code error-message]
                           (emit-frame! (error-frame {:error-code error-code
@@ -458,9 +434,11 @@
                   (safe-trace! trace-fn {:dir :in
                                          :raw line
                                          :frame ok})
-                  (process-request! ok {:state           state
+                  (process-request! ok {:state state
                                         :request-handler request-handler
-                                        :emit-tracked!   emit-tracked!}))))))
+                                        :emit-tracked! emit-tracked!
+                                        :handshake-server-info-fn handshake-server-info-fn
+                                        :handshake-context-updated-payload-fn handshake-context-updated-payload-fn}))))))
         (finally
           (stop-all-managed-threads! state))))))
 

@@ -50,6 +50,15 @@
   [ctx]
   (ss/atom-view-in ctx (ss/state-path :ui-state)))
 
+(defn- make-handler
+  [ctx state]
+  (rpc/make-session-request-handler
+   ctx
+   (select-keys @state [:rpc-ai-model
+                        :on-new-session!
+                        :run-agent-loop-fn
+                        :sync-on-git-head-change?])))
+
 (defn- stream-body
   [s]
   (java.io.ByteArrayInputStream. (.getBytes s "UTF-8")))
@@ -267,7 +276,7 @@
   (testing "query_eql routes to session/query-in and returns canonical result envelope"
     (let [[ctx _] (session/create-context)
           state   (atom {:ready? true :pending {}})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           {:keys [out-lines]}
           (run-loop "{:id \"q1\" :kind :request :op \"query_eql\" :params {:query \"[:psi.graph/domain-coverage :psi.memory/status]\"}}\n"
                     handler
@@ -283,7 +292,7 @@
   (testing "query_eql invalid query EDN returns request/invalid-query"
     (let [[ctx _] (session/create-context)
           state   (atom {:ready? true :pending {}})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           {:keys [out-lines]}
           (run-loop "{:id \"q2\" :kind :request :op \"query_eql\" :params {:query \"not-edn\"}}\n"
                     handler
@@ -296,7 +305,7 @@
   (testing "query_eql non-vector query returns request/invalid-query"
     (let [[ctx _] (session/create-context)
           state   (atom {:ready? true :pending {}})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           {:keys [out-lines]}
           (run-loop "{:id \"q3\" :kind :request :op \"query_eql\" :params {:query \"{:a 1}\"}}\n"
                     handler
@@ -308,7 +317,7 @@
   (testing "unknown op returns request/op-not-supported with supported ops"
     (let [[ctx _] (session/create-context)
           state   (atom {:ready? true :pending {}})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           {:keys [out-lines]}
           (run-loop "{:id \"u1\" :kind :request :op \"nope\"}\n"
                     handler
@@ -328,7 +337,7 @@
   (testing "subscribe/unsubscribe update shared state and return subscribed topics"
     (let [[ctx _] (session/create-context)
           state   (atom {:ready? true :pending {} :subscribed-topics #{}})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           {:keys [out-lines state]}
           (run-loop (str "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/delta\" \"tool/start\"]}}\n"
                          "{:id \"s2\" :kind :request :op \"unsubscribe\" :params {:topics [\"tool/start\"]}}\n")
@@ -353,7 +362,7 @@
                                                                 :job-id "job-rpc-1"})))}
                                         {:origin :core})
           state     (atom {:ready? true :pending {}})
-          handler   (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           {:keys [out-lines]}
           (run-loop (str "{:id \"jb1\" :kind :request :op \"list_background_jobs\"}\n"
                          "{:id \"jb2\" :kind :request :op \"inspect_background_job\" :params {:job-id \"job-rpc-1\"}}\n"
@@ -386,7 +395,7 @@
           ui      (ui-view ctx)
           _       (ui-state/set-widget! ui "ext.demo" "w-1" :above-editor ["hello widget"])
           state   (atom {:ready? true :pending {} :subscribed-topics #{}})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           {:keys [out-lines state]}
           (run-loop (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                          "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"ui/widgets-updated\"]}}\n")
@@ -405,7 +414,7 @@
   (testing "after subscribe, ui widget updates stream without a prompt request"
     (let [[ctx _]     (session/create-context)
           state       (atom {:ready? true :pending {} :subscribed-topics #{}})
-          handler     (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           in-reader   (java.io.PipedReader.)
           in-writer   (java.io.PipedWriter. in-reader)
           out-writer  (java.io.StringWriter.)
@@ -451,7 +460,7 @@
     (let [event-queue (java.util.concurrent.LinkedBlockingQueue.)
           [ctx _]     (session/create-context {:event-queue event-queue})
           state       (atom {:ready? true :pending {} :subscribed-topics #{}})
-          handler     (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           in-reader   (java.io.PipedReader.)
           in-writer   (java.io.PipedWriter. in-reader)
           out-writer  (java.io.StringWriter.)
@@ -510,7 +519,7 @@
   (testing "behavior steer routes to session/steer-in!"
     (let [[ctx _]  (session/create-context)
           state    (atom {:ready? true :pending {}})
-          handler  (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           steers   (atom [])
           follows  (atom [])]
       (with-redefs [session/steer-in! (fn
@@ -534,7 +543,7 @@
   (testing "behavior queue routes to session/follow-up-in!"
     (let [[ctx _]  (session/create-context)
           state    (atom {:ready? true :pending {}})
-          handler  (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           steers   (atom [])
           follows  (atom [])]
       (with-redefs [session/steer-in! (fn
@@ -558,7 +567,7 @@
   (testing "missing behavior defaults to steer"
     (let [[ctx _]  (session/create-context)
           state    (atom {:ready? true :pending {}})
-          handler  (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           steers   (atom [])
           follows  (atom [])]
       (with-redefs [session/steer-in! (fn
@@ -581,7 +590,7 @@
   (testing "invalid behavior returns request/invalid-params"
     (let [[ctx _] (session/create-context)
           state   (atom {:ready? true :pending {}})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           {:keys [out-lines]}
           (run-loop "{:id \"ps4\" :kind :request :op \"prompt_while_streaming\" :params {:message \"x\" :behavior \"bad\"}}\n"
                     handler
@@ -598,7 +607,7 @@
           state    (atom {:ready? true
                           :pending {}
                           :rpc-ai-model {:provider :anthropic :id "stub" :supports-reasoning true}})
-          handler  (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           {:keys [out-lines]}
           (run-loop (str "{:id \"b1\" :kind :request :op \"login_begin\"}\n"
                          "{:id \"c1\" :kind :request :op \"login_complete\" :params {:input \"auth-code-123\"}}\n")
@@ -628,7 +637,7 @@
           state   (atom {:ready? true
                          :pending {}
                          :rpc-ai-model {:provider :anthropic :id "stub" :supports-reasoning true}})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           {:keys [out-lines]}
           (run-loop "{:id \"b2\" :kind :request :op \"login_begin\" :params {:provider \"openai\"}}\n"
                     handler
@@ -642,7 +651,7 @@
   (testing "login_complete without pending login returns deterministic error"
     (let [[ctx _] (session/create-context {:oauth-ctx (oauth/create-null-context)})
           state   (atom {:ready? true :pending {}})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           {:keys [out-lines]}
           (run-loop "{:id \"c2\" :kind :request :op \"login_complete\" :params {:input \"x\"}}\n"
                     handler
@@ -657,7 +666,7 @@
           state   (atom {:ready? true
                          :pending {}
                          :rpc-ai-model {:provider :anthropic :id "stub" :supports-reasoning true}})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           {:keys [out-lines]}
           (run-loop "{:id \"b3\" :kind :request :op \"login_begin\" :params {:provider 42}}\n"
                     handler
@@ -670,7 +679,7 @@
   (testing "login_begin requires provider when no session/rpc model is configured"
     (let [[ctx _] (session/create-context {:oauth-ctx (oauth/create-null-context)})
           state   (atom {:ready? true :pending {}})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           {:keys [out-lines]}
           (run-loop "{:id \"b4\" :kind :request :op \"login_begin\"}\n"
                     handler
@@ -683,17 +692,22 @@
 (deftest rpc-handshake-server-info-test
   (testing "handshake emits server-info with protocol/session metadata"
     (let [[ctx sid] (session/create-context)
-          state   (atom {:handshake-server-info-fn (fn [] (rpc/session->handshake-server-info ctx))
-                         :handshake-context-updated-payload-fn (fn [] {:active-session-id sid
-                                                                       :sessions []})
-                         :focus-session-id* (atom sid)
+          out     (java.io.StringWriter.)
+          err     (java.io.StringWriter.)
+          state   (atom {:focus-session-id sid
                          :subscribed-topics #{"context/updated"}})
-          handler (rpc/make-session-request-handler ctx)
-          {:keys [out-lines]}
-          (run-loop "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
-                    handler
-                    state)
-          [context-event frame] (parse-frames out-lines)
+          handler (make-handler ctx state)
+          _       (rpc/run-stdio-loop! {:in (java.io.StringReader. "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n")
+                                        :out out
+                                        :err err
+                                        :state state
+                                        :request-handler handler
+                                        :handshake-server-info-fn (fn [_state] (rpc/session->handshake-server-info ctx sid))
+                                        :handshake-context-updated-payload-fn (fn [_state] {:active-session-id sid
+                                                                                             :sessions []})})
+          [context-event frame] (parse-frames (->> (str/split-lines (str out))
+                                                   (remove str/blank?)
+                                                   vec))
           info    (get-in frame [:data :server-info])]
       (is (= :event (:kind context-event)))
       (is (= "context/updated" (:event context-event)))
@@ -707,18 +721,24 @@
 
   (testing "handshake includes runtime ui-type when provided by bootstrap/runtime state"
     (let [[ctx sid] (session/create-context)
-          state   (atom {:handshake-server-info-fn (fn [] (assoc (rpc/session->handshake-server-info ctx)
-                                                                 :ui-type :emacs))
-                         :handshake-context-updated-payload-fn (fn [] {:active-session-id sid
-                                                                       :sessions []})
-                         :focus-session-id* (atom sid)
+          out     (java.io.StringWriter.)
+          err     (java.io.StringWriter.)
+          state   (atom {:focus-session-id sid
                          :subscribed-topics #{"context/updated"}})
-          handler (rpc/make-session-request-handler ctx)
-          {:keys [out-lines]}
-          (run-loop "{:id \"h2\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
-                    handler
-                    state)
-          frame   (-> out-lines parse-frames second)
+          handler (make-handler ctx state)
+          _       (rpc/run-stdio-loop! {:in (java.io.StringReader. "{:id \"h2\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n")
+                                        :out out
+                                        :err err
+                                        :state state
+                                        :request-handler handler
+                                        :handshake-server-info-fn (fn [_state] (assoc (rpc/session->handshake-server-info ctx sid)
+                                                                                      :ui-type :emacs))
+                                        :handshake-context-updated-payload-fn (fn [_state] {:active-session-id sid
+                                                                                             :sessions []})})
+          frame   (->> (str/split-lines (str out))
+                       (remove str/blank?)
+                       parse-frames
+                       second)
           info    (get-in frame [:data :server-info])]
       (is (= :response (:kind frame)))
       (is (= "handshake" (:op frame)))
@@ -730,7 +750,7 @@
           ui      (ui-view ctx)
           _       (ui-state/enqueue-dialog! ui {:id "d1" :kind :confirm :title "Confirm" :promise (promise)})
           state   (atom {:ready? true :pending {}})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           {:keys [out-lines]}
           (run-loop "{:id \"r1\" :kind :request :op \"resolve_dialog\" :params {:dialog-id \"d1\" :result true}}\n"
                     handler
@@ -747,7 +767,7 @@
           ui      (ui-view ctx)
           _       (ui-state/enqueue-dialog! ui {:id "d2" :kind :input :title "Input" :promise (promise)})
           state   (atom {:ready? true :pending {}})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           {:keys [out-lines]}
           (run-loop "{:id \"c1\" :kind :request :op \"cancel_dialog\" :params {:dialog-id \"d2\"}}\n"
                     handler
@@ -762,7 +782,7 @@
   (testing "resolve_dialog invalid params are deterministic"
     (let [[ctx _] (session/create-context)
           state   (atom {:ready? true :pending {}})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           {:keys [out-lines]}
           (run-loop "{:id \"r2\" :kind :request :op \"resolve_dialog\" :params {:dialog-id \"d1\" :result 42}}\n"
                     handler
@@ -775,7 +795,7 @@
   (testing "resolve_dialog no active dialog returns deterministic error"
     (let [[ctx _] (session/create-context)
           state   (atom {:ready? true :pending {}})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           {:keys [out-lines]}
           (run-loop "{:id \"r3\" :kind :request :op \"resolve_dialog\" :params {:dialog-id \"d1\" :result true}}\n"
                     handler
@@ -788,7 +808,7 @@
   (testing "cancel_dialog no active dialog returns deterministic error"
     (let [[ctx _] (session/create-context)
           state   (atom {:ready? true :pending {}})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           {:keys [out-lines]}
           (run-loop "{:id \"c2\" :kind :request :op \"cancel_dialog\" :params {:dialog-id \"d1\"}}\n"
                     handler
@@ -803,7 +823,7 @@
           ui      (ui-view ctx)
           _       (ui-state/enqueue-dialog! ui {:id "d-real" :kind :confirm :title "Confirm" :promise (promise)})
           state   (atom {:ready? true :pending {}})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           {:keys [out-lines]}
           (run-loop "{:id \"r4\" :kind :request :op \"resolve_dialog\" :params {:dialog-id \"d-wrong\" :result true}}\n"
                     handler
@@ -840,7 +860,7 @@
                                              :content [{:type :text :text "Hello final"}]
                                              :stop-reason :stop
                                              :usage {:total-tokens 3}})})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"p1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/delta\" \"assistant/thinking-delta\" \"assistant/message\" \"tool/start\" \"tool/result\" \"session/updated\" \"footer/updated\"]}}\n"
                        "{:id \"r1\" :kind :request :op \"prompt\" :params {:message \"hi\"}}\n")
@@ -886,7 +906,7 @@
                                              :content [{:type :text :text "done"}]
                                              :stop-reason :stop
                                              :usage {:total-tokens 3}})})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"p1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/thinking-delta\" \"tool/start\" \"assistant/message\"]}}\n"
                        "{:id \"r1\" :kind :request :op \"prompt\" :params {:message \"hi\"}}\n")
@@ -919,7 +939,7 @@
                            :pending {}
                            :sync-on-git-head-change? false
                            :rpc-ai-model (ai-models/get-model :gpt-5.3-codex)})
-          handler   (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           requests  (atom [])
           call-n    (atom 0)
           first-sse (str
@@ -1008,7 +1028,7 @@
                            :pending {}
                            :sync-on-git-head-change? false
                            :rpc-ai-model (ai-models/get-model :gpt-5)})
-          handler   (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           requests  (atom [])
           call-n    (atom 0)
           first-sse (str
@@ -1084,7 +1104,7 @@
                            :pending {}
                            :sync-on-git-head-change? false
                            :rpc-ai-model (ai-models/get-model :gpt-5)})
-          handler   (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           call-n    (atom 0)
           first-sse (str
                      "data: " (json/generate-string
@@ -1140,7 +1160,7 @@
           state (atom {:ready? true
                        :pending {}
                        :subscribed-topics #{"session/resumed" "session/rehydrated"}})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           input (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                      "{:id \"n1\" :kind :request :op \"new_session\"}\n")
           {:keys [out-lines]} (run-loop input handler state)
@@ -1157,7 +1177,7 @@
           state (atom {:ready? true
                        :pending {}
                        :subscribed-topics #{"session/resumed" "session/rehydrated" "command-result"}})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           input (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                      "{:id \"c1\" :kind :request :op \"command\" :params {:text \"/new\"}}\n")
           {:keys [out-lines]} (run-loop input handler state)
@@ -1187,7 +1207,7 @@
           state              (atom {:ready? true
                                     :pending {}
                                     :subscribed-topics #{"session/resumed" "session/rehydrated" "command-result"}})
-          handler            (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"c1\" :kind :request :op \"command\" :params {:text \"/resume " path1 "\"}}\n")
           {:keys [out-lines]} (run-loop input handler state)
@@ -1220,7 +1240,7 @@
           state              (atom {:ready? true
                                     :pending {}
                                     :subscribed-topics #{"session/resumed" "session/rehydrated" "command-result"}})
-          handler            (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"c1\" :kind :request :op \"command\" :params {:text \"/tree " sid1 "\"}}\n")
           {:keys [out-lines]} (run-loop input handler state)
@@ -1242,7 +1262,7 @@
           _                  (.mkdirs (java.io.File. cwd))
           [ctx seed-id] (session/create-context {:cwd cwd})
           state              (atom {:ready? true :pending {}})
-          handler            (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           input   (str "{:id \"n1\" :kind :request :op \"new_session\"}\n"
                        "{:id \"l1\" :kind :request :op \"list_sessions\"}\n")
           {:keys [out-lines]} (run-loop input handler state)
@@ -1281,7 +1301,7 @@
           state              (atom {:ready? true
                                     :pending {}
                                     :subscribed-topics #{"session/resumed"}})
-          handler            (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           input   (str "{:id \"s1\" :kind :request :op \"switch_session\" :params {:session-id \"" sid1 "\"}}\n")
           {:keys [out-lines]} (run-loop input handler state)
           frames    (parse-frames out-lines)
@@ -1314,7 +1334,7 @@
           sd3                (session/new-session-in! ctx sid2 {})
           current-before     (:session-id sd3)
           state              (atom {:ready? true :pending {}})
-          handler            (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           input          (str "{:id \"m1\" :kind :request :op \"set_session_name\" :params {:session-id \"" sid1 "\" :name \"alpha\"}}\n")
           {:keys [out-lines]} (run-loop input handler state)
           frame          (-> out-lines first edn/read-string)
@@ -1330,7 +1350,7 @@
   (testing "targetable op rejects invalid :session-id param"
     (let [[ctx _] (session/create-context)
           state   (atom {:ready? true :pending {}})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           {:keys [out-lines]}
           (run-loop "{:id \"g1\" :kind :request :op \"get_state\" :params {:session-id \"\"}}\n"
                     handler
@@ -1367,7 +1387,7 @@
                                                 (deliver gate true)
                                                 @release
                                                 {:role "assistant" :content [{:type :text :text "ok"}]})})
-            handler (rpc/make-session-request-handler ctx)
+            handler (make-handler ctx state)
             in-reader   (java.io.PipedReader.)
             in-writer   (java.io.PipedWriter. in-reader)
             out-writer  (java.io.StringWriter.)
@@ -1434,7 +1454,7 @@
                                                 (deliver gate true)
                                                 @release
                                                 {:role "assistant" :content [{:type :text :text "ok"}]})})
-            handler (rpc/make-session-request-handler ctx)
+            handler (make-handler ctx state)
             in-reader   (java.io.PipedReader.)
             in-writer   (java.io.PipedWriter. in-reader)
             out-writer  (java.io.StringWriter.)
@@ -1484,15 +1504,14 @@
           called? (atom 0)
           state (atom {:ready? true
                        :pending {}
-                       :subscribed-topics #{"session/rehydrated"}
-                       :on-new-session! (fn []
-                                          (swap! called? inc)
-                                          {:agent-messages [{:role "assistant"
-                                                             :content [{:type :text :text "startup reply"}]}]
-                                           :messages [{:role :assistant :text "startup reply"}]
-                                           :tool-calls {"call-1" {:name "read"}}
-                                           :tool-order ["call-1"]})})
-          handler (rpc/make-session-request-handler ctx)
+                       :subscribed-topics #{"session/rehydrated"}})
+          handler (rpc/make-session-request-handler ctx {:on-new-session! (fn [_source-session-id]
+                                                                           (swap! called? inc)
+                                                                           {:agent-messages [{:role "assistant"
+                                                                                              :content [{:type :text :text "startup reply"}]}]
+                                                                            :messages [{:role :assistant :text "startup reply"}]
+                                                                            :tool-calls {"call-1" {:name "read"}}
+                                                                            :tool-order ["call-1"]})})
           input (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                      "{:id \"n1\" :kind :request :op \"new_session\"}\n")
           {:keys [out-lines]} (run-loop input handler state)
@@ -1512,7 +1531,7 @@
           state      (atom {:ready? true
                             :pending {}
                             :subscribed-topics #{"footer/updated"}})
-          handler    (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           _          (ss/journal-append-in! ctx session-id {:kind :message
                                                  :session-id session-id
                                                  :data {:message {:role "assistant"
@@ -1556,7 +1575,7 @@
           state   (atom {:ready? true
                          :pending {}
                          :subscribed-topics #{"context/updated"}})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"context/updated\"]}}\n")
           {:keys [out-lines]} (run-loop input handler state)
@@ -1581,7 +1600,7 @@
           state   (atom {:ready? true
                          :pending {}
                          :subscribed-topics #{"context/updated"}})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"f1\" :kind :request :op \"fork\" :params {:entry-id \"" entry-id "\"}}\n")
           {:keys [out-lines]} (run-loop input handler state)
@@ -1605,7 +1624,7 @@
           state   (atom {:ready? true
                          :pending {}
                          :subscribed-topics #{"context/updated"}})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"n1\" :kind :request :op \"new_session\"}\n")
           {:keys [out-lines]} (run-loop input handler state)
@@ -1632,7 +1651,7 @@
                                              :content [{:type :text :text "Hello final"}]
                                              :stop-reason :stop
                                              :usage {:total-tokens 2}})})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           input (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                      "{:id \"q1\" :kind :request :op \"query_eql\" :params {:query \"[:psi.graph/domain-coverage :psi.memory/status]\"}}\n"
                      "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/delta\" \"assistant/message\" \"session/updated\" \"footer/updated\"]}}\n"
@@ -1676,7 +1695,7 @@
                                                (reset! captured sid)
                                                {:role "assistant"
                                                 :content [{:type :text :text "ok"}]})})
-          handler  (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           input    (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                         "{:id \"p1\" :kind :request :op \"prompt\" :params {:session-id \"z\" :message \"hi\"}}\n")]
       (run-loop input handler state 300)
@@ -1695,7 +1714,7 @@
                               :run-agent-loop-fn (fn [& _]
                                                    (reset! loop-called? true)
                                                    {:role "assistant" :content []})})
-          handler      (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           input        (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                             "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\" \"session/updated\" \"footer/updated\"]}}\n"
                             "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/history\"}}\n")]
@@ -1729,7 +1748,7 @@
                               :run-agent-loop-fn (fn [& _]
                                                    (reset! loop-called? true)
                                                    {:role "assistant" :content [{:type :text :text "ok"}]})})
-          handler      (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           input        (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                             "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"plain text\"}}\n")]
       (with-redefs [commands/dispatch-in (fn [_ctx _session-id _text _opts] nil)]
@@ -1757,7 +1776,7 @@
                                                   (reset! captured (-> new-messages first :content first :text))
                                                   {:role "assistant"
                                                    :content [{:type :text :text "ok"}]})})
-          handler     (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           input       (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                            "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/skill:demo apply this\"}}\n")]
       (run-loop input handler state 250)
@@ -1778,7 +1797,7 @@
                                                  (reset! captured opts)
                                                  {:role "assistant"
                                                   :content [{:type :text :text "ok"}]})})
-          handler    (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           input      (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                           "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"plain text\"}}\n")]
       (with-redefs [runtime/resolve-api-key-in (fn [_ctx _session-id _model] "test-api-key")
@@ -1793,7 +1812,7 @@
                         :pending {}
                         :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
                         :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\" \"session/updated\" \"footer/updated\"]}}\n"
                        "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/history\"}}\n")]
@@ -1823,7 +1842,7 @@
                         :run-agent-loop-fn (fn [& _]
                                              (reset! loop-called? true)
                                              {:role "assistant" :content []})})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
                        "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/ext-cmd\"}}\n")]
@@ -1857,7 +1876,7 @@
                         :run-agent-loop-fn (fn [& _]
                                              (reset! loop-called? true)
                                              {:role "assistant" :content []})})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
                        "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/ext-err\"}}\n")]
@@ -1884,7 +1903,7 @@
                         :pending {}
                         :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
                         :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
                        "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/login\"}}\n")]
@@ -1914,7 +1933,7 @@
                               :run-agent-loop-fn (fn [& _]
                                                    (reset! loop-called? true)
                                                    {:role "assistant" :content []})})
-          handler      (rpc/make-session-request-handler ctx)]
+          handler (make-handler ctx state)]
       (with-redefs [commands/dispatch-in
                     (fn [_ctx _session-id text _opts]
                       (swap! dispatches conj text)
@@ -1960,7 +1979,7 @@
                               :run-agent-loop-fn (fn [& _]
                                                    (reset! loop-called? true)
                                                    {:role "assistant" :content []})})
-          handler      (rpc/make-session-request-handler ctx)]
+          handler (make-handler ctx state)]
       (with-redefs [commands/dispatch-in
                     (fn [_ctx _session-id text _opts]
                       (when (= text "/login")
@@ -2000,7 +2019,7 @@
                         :pending {}
                         :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
                         :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
                        "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/quit\"}}\n")]
@@ -2023,7 +2042,7 @@
                         :pending {}
                         :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
                         :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
                        "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/resume\"}}\n")]
@@ -2049,7 +2068,7 @@
                          :pending {}
                          :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
                          :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           before-count (count (:records (memory/get-state-in (:memory-ctx ctx))))
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
@@ -2090,7 +2109,7 @@
                          :pending {}
                          :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
                          :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
                        "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/remember blocked-path\"}}\n")
@@ -2135,7 +2154,7 @@
                          :pending {}
                          :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
                          :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
-          handler (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                        "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"assistant/message\"]}}\n"
                        "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/remember provider-outage\"}}\n")
@@ -2157,7 +2176,7 @@
                             :pending {}
                             :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
                             :run-agent-loop-fn (fn [& _] {:role "assistant" :content []})})
-          handler    (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           input      (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                           "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"/history\"}}\n")]
       (with-redefs [commands/dispatch-in (fn [_ctx _session-id _text _opts]
@@ -2181,7 +2200,7 @@
                             :pending {}
                             :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
                             :run-agent-loop-fn (fn [& _] {:role "assistant" :content [{:type :text :text "ok"}]})})
-          handler    (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           input      (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                           "{:id \"p1\" :kind :request :op \"prompt\" :params {:message \"tell me a joke\"}}\n")]
       (with-redefs [commands/dispatch-in (fn [_ctx _session-id _text _opts] nil)]

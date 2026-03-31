@@ -5,17 +5,14 @@
    [psi.agent-session.core :as session]
    [psi.agent-session.message-text :as message-text]
    [psi.agent-session.session-state :as ss]
-   [psi.rpc.transport :refer [*request-session-id* default-session-id-in error-frame event-frame protocol-version]]))
+   [psi.rpc.state :as rpc.state]
+   [psi.rpc.transport :refer [*request-session-id* default-session-id-in event-frame protocol-version]]))
 
 (def ^:private ui-state-path (ss/state-path :ui-state))
 
 (defn- ui-state-map
   [ctx]
   (ss/get-state-value-in ctx ui-state-path))
-
-(defn- active-ui-dialog
-  [ctx]
-  (get-in (ui-state-map ctx) [:dialog-queue :active]))
 
 (defn- visible-notifications
   ([ui-state] (visible-notifications ui-state 3))
@@ -99,14 +96,13 @@
 
 (defn- topic-subscribed?
   [state topic]
-  (let [subs (:subscribed-topics @state)]
+  (let [subs (rpc.state/subscribed-topics state)]
     (or (empty? subs)
         (contains? subs topic))))
 
 (defn- next-event-seq!
   [state]
-  (-> (swap! state update :event-seq (fnil inc 0))
-      :event-seq))
+  (rpc.state/next-event-seq! state))
 
 (defn emit-event!
   [emit-frame! state {:keys [event data id]}]
@@ -175,13 +171,11 @@
 
 (defn focus-session-id
   [state]
-  (some-> @state :focus-session-id* deref))
+  (rpc.state/focus-session-id state))
 
 (defn set-focus-session-id!
   [state session-id]
-  (if-let [a (:focus-session-id* @state)]
-    (reset! a session-id)
-    (swap! state assoc :focus-session-id* (atom session-id))))
+  (rpc.state/set-focus-session-id! state session-id))
 
 (defn focused-session-id
   [ctx state]

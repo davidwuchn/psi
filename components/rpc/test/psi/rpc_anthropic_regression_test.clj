@@ -4,7 +4,6 @@
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.core :as session]
-   [psi.agent-session.session-state :as ss]
    [psi.agent-session.persistence :as persist]
    [psi.rpc :as rpc]))
 
@@ -32,22 +31,30 @@
 (defn- parse-frames [lines]
   (mapv edn/read-string lines))
 
+(defn- make-handler
+  [ctx state]
+  (rpc/make-session-request-handler
+   ctx
+   (select-keys @state [:rpc-ai-model
+                        :on-new-session!
+                        :run-agent-loop-fn
+                        :sync-on-git-head-change?])))
+
 (deftest rpc-new-session-rehydrates-agent-messages-not-tui-projection-test
   (testing "new_session emits canonical agent messages so the next Anthropic request preserves role/content shape"
     (let [[ctx _] (session/create-context)
           state   (atom {:ready? true
                          :pending {}
-                         :subscribed-topics #{"session/rehydrated"}
-                         :on-new-session! (fn []
-                                            {:agent-messages [{:role "assistant"
-                                                               :content [{:type :text :text "[New session started]"}]}
-                                                              {:role "user"
-                                                               :content [{:type :text :text "who are you?"}]}]
-                                             :messages [{:role :assistant :text "[New session started]"}
-                                                        {:role :user :text "who are you?"}]
-                                             :tool-calls {}
-                                             :tool-order []})})
-          handler (rpc/make-session-request-handler ctx)
+                         :subscribed-topics #{"session/rehydrated"}})
+          handler (rpc/make-session-request-handler ctx {:on-new-session! (fn [_source-session-id]
+                                                                           {:agent-messages [{:role "assistant"
+                                                                                              :content [{:type :text :text "[New session started]"}]}
+                                                                                             {:role "user"
+                                                                                              :content [{:type :text :text "who are you?"}]}]
+                                                                            :messages [{:role :assistant :text "[New session started]"}
+                                                                                       {:role :user :text "who are you?"}]
+                                                                            :tool-calls {}
+                                                                            :tool-order []})})
           input (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                      "{:id \"n1\" :kind :request :op \"new_session\"}\n")
           {:keys [out-lines]} (run-loop input handler state)
@@ -80,7 +87,7 @@
           state              (atom {:ready? true
                                     :pending {}
                                     :subscribed-topics #{"session/rehydrated"}})
-          handler            (rpc/make-session-request-handler ctx)
+          handler (make-handler ctx state)
           input              (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                                   "{:id \"c1\" :kind :request :op \"command\" :params {:text \"/resume " path1 "\"}}\n")
           {:keys [out-lines]} (run-loop input handler state)

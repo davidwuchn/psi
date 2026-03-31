@@ -10,13 +10,14 @@
    [psi.agent-session.core :as session]
    [psi.agent-session.executor :as executor]
    [psi.agent-session.extension-runtime :as ext-rt]
-      [psi.agent-session.oauth.core :as oauth]
+   [psi.agent-session.oauth.core :as oauth]
    [psi.agent-session.runtime :as runtime]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.state-accessors :as sa]
    [psi.ai.models :as ai-models]
    [psi.rpc.events :as events]
-   [psi.rpc.transport :refer [*request-session-id* default-session-id-in error-frame event-frame protocol-version response-frame supported-rpc-ops targetable-rpc-ops]]))
+   [psi.rpc.state :as rpc.state]
+   [psi.rpc.transport :refer [*request-session-id* default-session-id-in error-frame protocol-version response-frame supported-rpc-ops targetable-rpc-ops]]))
 
 (defn- start-daemon-thread!
   "Start a daemon thread running f with an optional name. Returns the Thread."
@@ -201,18 +202,24 @@
           ai-models/all-models)))
 
 (defn- current-ai-model
-  ([ctx state]
-   (current-ai-model ctx state nil))
-  ([ctx state session-id]
+  ([ctx session-deps state]
+   (current-ai-model ctx session-deps state nil))
+  ([ctx {:keys [rpc-ai-model]} state session-id]
    (let [session-id* (or session-id
                          *request-session-id*
-                         (default-session-id-in ctx))
+                         (events/focused-session-id ctx state))
          sd          (when session-id*
                        (ss/get-session-data-in ctx session-id*))]
      (or (when-let [provider (get-in sd [:model :provider])]
            (when-let [model-id (get-in sd [:model :id])]
              (resolve-model provider model-id)))
-         (:rpc-ai-model @state)))))
+         rpc-ai-model))))
+
+(defn- effective-sync-on-git-head-change?
+  [{:keys [run-agent-loop-fn sync-on-git-head-change?]}]
+  (if (= ::default sync-on-git-head-change?)
+    (not (some? run-agent-loop-fn))
+    (boolean sync-on-git-head-change?)))
 
 (defn- normalize-provider-param
   [v]
@@ -229,7 +236,7 @@
   (:pending-login (or (sa/oauth-projection-in ctx) {})))
 
 (defn- handle-login-begin!
-  [ctx request params state]
+  [ctx request params state session-deps]
   (let [oauth-ctx (:oauth-ctx ctx)]
     (when-not oauth-ctx
       (throw (ex-info "OAuth not available."
@@ -241,7 +248,7 @@
           _              (when (= ::invalid provider-param)
                            (throw (ex-info "invalid request parameter :provider: string or keyword"
                                            {:error-code "request/invalid-params"})))
-          ai-model       (current-ai-model ctx state)
+          ai-model       (current-ai-model ctx session-deps state)
           _              (when (and (nil? provider-param) (nil? ai-model))
                            (throw (ex-info "provider is required when session model is not configured"
                                            {:error-code "request/invalid-params"})))
@@ -313,13 +320,13 @@
    it in a background loop, and routes events to emit-frame! — giving the
    PSL response the same streaming visibility as a normal user prompt.
 
-   Called once from the subscribe handler. Guard via :rpc-run-fn-registered
-   in state so it is only set up once per session connection."
-  [ctx emit-frame! state]
-  (when-not (:rpc-run-fn-registered @state)
-    (swap! state assoc :rpc-run-fn-registered true)
+   Called once from the subscribe handler. Guard via RPC-local state so it is
+   only set up once per session connection."
+  [ctx emit-frame! state session-deps]
+  (when-not (rpc.state/rpc-run-fn-registered? state)
+    (rpc.state/mark-rpc-run-fn-registered! state)
     (let [session-id  (events/focused-session-id ctx state)
-          ai-model-fn (fn [sid] (current-ai-model ctx state sid))
+          ai-model-fn (fn [sid] (current-ai-model ctx session-deps state sid))
           run-fn      (fn [text _source]
                         (try
                           (loop [attempt 0]
@@ -382,51 +389,51 @@
 
 (defn- maybe-start-ui-watch-loop!
   [ctx emit-frame! state]
-  (when (and (some events/extension-ui-topic? (:subscribed-topics @state))
-             (nil? (:ui-watch-loop @state)))
+  (when (and (some events/extension-ui-topic? (rpc.state/subscribed-topics state))
+             (nil? (rpc.state/ui-watch-loop state)))
     (let [watch-loop (future
-                       (binding [*out* (:err @state)
-                                 *err* (:err @state)]
+                       (binding [*out* (rpc.state/err-writer state)
+                                 *err* (rpc.state/err-writer state)]
                          (loop [last-snap (or (events/ui-snapshot ctx) {})]
                            (let [current (or (events/ui-snapshot ctx) {})]
                              (events/emit-ui-snapshot-events! emit-frame! state last-snap current)
                              (Thread/sleep 50)
                              (recur current)))))]
-      (swap! state assoc :ui-watch-loop watch-loop))))
+      (rpc.state/set-ui-watch-loop! state watch-loop))))
 
 (defn- maybe-start-external-event-loop!
   [ctx emit-frame! state]
   (when (and (:event-queue ctx)
-             (nil? (:external-event-loop @state)))
+             (nil? (rpc.state/external-event-loop state)))
     (let [session-id  (events/focused-session-id ctx state)
           event-queue (:event-queue ctx)
           loop-fut    (future
-                        (binding [*out* (:err @state)
-                                  *err* (:err @state)]
+                        (binding [*out* (rpc.state/err-writer state)
+                                  *err* (rpc.state/err-writer state)]
                           (loop []
                             (when-let [evt (.poll ^java.util.concurrent.LinkedBlockingQueue
-                                            event-queue
+                                                  event-queue
                                                   20
                                                   java.util.concurrent.TimeUnit/MILLISECONDS)]
                               (when (= :external-message (:type evt))
                                 (let [message (:message evt)]
                                   (events/emit-event! emit-frame! state
-                                               {:event "assistant/message"
-                                                :data  (events/external-message->assistant-payload message)})
+                                                      {:event "assistant/message"
+                                                       :data  (events/external-message->assistant-payload message)})
                                   (events/emit-event! emit-frame! state
-                                               {:event "session/updated"
-                                                :data  (events/session-updated-payload ctx session-id)})
+                                                      {:event "session/updated"
+                                                       :data  (events/session-updated-payload ctx session-id)})
                                   (events/emit-event! emit-frame! state
-                                               {:event "footer/updated"
-                                                :data  (events/footer-updated-payload ctx session-id)}))))
+                                                      {:event "footer/updated"
+                                                       :data  (events/footer-updated-payload ctx session-id)}))))
                             (recur))))]
-      (swap! state assoc :external-event-loop loop-fut)
+      (rpc.state/set-external-event-loop! state loop-fut)
       ;; Emit an immediate footer snapshot after starting the loop so subscribers
       ;; always observe footer state even if the loop is stopped immediately after
       ;; a single external assistant message is processed.
       (events/emit-event! emit-frame! state
-                   {:event "footer/updated"
-                    :data  (events/footer-updated-payload ctx session-id)}))))
+                          {:event "footer/updated"
+                           :data  (events/footer-updated-payload ctx session-id)}))))
 
 (defn- emit-assistant-text!
   [emit! text]
@@ -471,12 +478,12 @@
         (if-let [oauth-ctx (:oauth-ctx ctx)]
           (let [worker (start-daemon-thread!
                         (fn []
-                          (binding [*out* (:err @state)
-                                    *err* (:err @state)]
+                          (binding [*out* (rpc.state/err-writer state)
+                                    *err* (rpc.state/err-writer state)]
                             (let [emit-login! (fn [event payload]
                                                 (events/emit-event! emit-frame! state {:event event
-                                                                                :data payload
-                                                                                :id request-id}))]
+                                                                                        :data payload
+                                                                                        :id request-id}))]
                               (try
                                 (oauth/complete-login! oauth-ctx provider-id nil login-state)
                                 (emit-assistant-text! emit-login! (str "✓ Logged in to " provider-name))
@@ -486,7 +493,7 @@
                                   (emit-login! "session/updated" (events/session-updated-payload ctx session-id))
                                   (emit-login! "footer/updated" (events/footer-updated-payload ctx session-id)))))))
                         "rpc-oauth-worker")]
-            (swap! state update :inflight-futures (fnil conj []) worker))
+            (rpc.state/add-inflight-future! state worker))
           (emit-assistant-text! emit! "OAuth not available.")))
       (do
         (sa/set-oauth-pending-login-in! ctx
@@ -655,19 +662,19 @@
        (f ctx)))))
 
 (defn- run-command!
-  [ctx request emit-frame! state]
+  [ctx request emit-frame! state session-deps]
   (let [text       (req-arg! request (params-map request) :text #(and (string? %) (not (str/blank? %))) "non-empty string")
         request-id (:id request)
         emit!      (fn [event payload]
                      (events/emit-event! emit-frame! state {:event event :data payload :id request-id}))
-        ai-model   (current-ai-model ctx state)
+        ai-model   (current-ai-model ctx session-deps state)
         oauth-ctx  (:oauth-ctx ctx)
         trimmed    (str/trim text)
         session-id (events/focused-session-id ctx state)
         cmd-result (commands/dispatch-in ctx session-id text {:oauth-ctx oauth-ctx
                                                               :ai-model ai-model
                                                               :supports-session-tree? false
-                                                              :on-new-session! (:on-new-session! @state)})]
+                                                              :on-new-session! (:on-new-session! session-deps)})]
     (runtime/journal-user-message-in! ctx session-id text nil)
     (cond
       (= trimmed "/resume")
@@ -907,7 +914,7 @@
                          :request-id request-id})))))
 
 (defn- run-prompt-async!
-  [ctx request emit-frame! state]
+  [ctx request emit-frame! state session-deps]
   (let [message      (get-in request [:params :message])
         images       (get-in request [:params :images])
         request-id   (:id request)
@@ -915,18 +922,14 @@
         _            (when-not session-id
                        (throw (ex-info "no target session available for prompt"
                                        {:error-code "request/not-found"})))
-        custom-run-loop? (contains? @state :run-agent-loop-fn)
-        run-loop-fn  (or (:run-agent-loop-fn @state) executor/run-agent-loop!)
-        sync-on-git-head-change?
-        (if (contains? @state :sync-on-git-head-change?)
-          (boolean (:sync-on-git-head-change? @state))
-          (not custom-run-loop?))
-        on-new-session! (:on-new-session! @state)
+        run-loop-fn  (or (:run-agent-loop-fn session-deps) executor/run-agent-loop!)
+        sync-on-git-head-change? (effective-sync-on-git-head-change? session-deps)
+        on-new-session! (:on-new-session! session-deps)
         progress-q   (java.util.concurrent.LinkedBlockingQueue.)
         worker       (start-daemon-thread!
                       (fn []
-                        (binding [*out* (:err @state)
-                                  *err* (:err @state)]
+                        (binding [*out* (rpc.state/err-writer state)
+                                  *err* (rpc.state/err-writer state)]
                           (let [emit! (fn [event payload]
                                         (events/emit-event! emit-frame! state {:event event :data payload :id request-id}))
                                 progress-stop? (atom false)
@@ -956,7 +959,7 @@
                                                      (recur))))
                                                "rpc-progress-loop")]
                             (try
-                              (let [ai-model      (current-ai-model ctx state session-id)
+                              (let [ai-model      (current-ai-model ctx session-deps state session-id)
                                     _             (when-not ai-model
                                                     (throw (ex-info "session model is not configured"
                                                                     {:error-code "request/invalid-params"})))
@@ -1043,7 +1046,7 @@
                               (finally
                                 (reset! progress-stop? true)
                                 (.join ^Thread progress-loop 200)))))))]
-    (swap! state update :inflight-futures (fnil conj []) worker)
+    (rpc.state/add-inflight-future! state worker)
     (response-frame (:id request) "prompt" true {:accepted true})))
 
 (defn make-session-request-handler
@@ -1053,17 +1056,23 @@
    (fn [request emit-frame! state] -> frame | [frame*] | nil)
 
    Runtime state mutations used by this handler:
-   - :subscribed-topics (set of topic strings)
+   - subscribed topics / focus session / worker handles in RPC-local state
 
    OAuth pending-login for login_begin/login_complete and /login prompt flow
    is stored in the canonical session oauth projection, not in transport state.
 
    opts:
-   - :on-new-session! optional callback used by /new command and new_session op.
-     Expected to return {:messages [...], :tool-calls {...}, :tool-order [...]}"
+   - :rpc-ai-model fallback model when session model is absent
+   - :on-new-session! optional callback used by /new command and new_session op
+   - :run-agent-loop-fn optional executor override for prompt tests/runtime
+   - :sync-on-git-head-change? optional policy flag; ::default => infer from custom run loop presence"
   ([ctx] (make-session-request-handler ctx {}))
-  ([ctx {:keys [on-new-session!]}]
-   (fn [request emit-frame! state]
+  ([ctx session-deps]
+   (let [session-deps (if (contains? session-deps :sync-on-git-head-change?)
+                        session-deps
+                        (assoc session-deps :sync-on-git-head-change? ::default))
+         on-new-session! (:on-new-session! session-deps)]
+     (fn [request emit-frame! state]
      (try
        (let [op     (:op request)
              params (params-map request)
@@ -1091,14 +1100,14 @@
                                (response-frame (:id request) op true {:result result}))
 
                              "command"
-                             (run-command! ctx request emit-frame! state)
+                             (run-command! ctx request emit-frame! state session-deps)
 
                              "frontend_action_result"
                              (handle-frontend-action-result! ctx request emit-frame! state)
 
                              "prompt"
                              (let [_message (req-arg! request params :message #(and (string? %) (not (str/blank? %))) "non-empty string")]
-                               (run-prompt-async! ctx request emit-frame! state))
+                               (run-prompt-async! ctx request emit-frame! state session-deps))
 
                              "prompt_while_streaming"
                              (let [message   (req-arg! request params :message #(and (string? %) (not (str/blank? %))) "non-empty string")
@@ -1159,17 +1168,17 @@
                              (handle-cancel-background-job! ctx request params)
 
                              "login_begin"
-                             (handle-login-begin! ctx request params state)
+                             (handle-login-begin! ctx request params state session-deps)
 
                              "login_complete"
                              (handle-login-complete! ctx request params state)
 
                              "new_session"
-                             (let [new-session-fn    (or on-new-session! (:on-new-session! @state))
+                             (let [new-session-fn    on-new-session!
                                    source-session-id (events/focused-session-id ctx state)
                                    [rehydrate new-sd]
                                    (if new-session-fn
-                                     [(new-session-fn) nil]
+                                     [(new-session-fn source-session-id) nil]
                                      (let [sd (session/new-session-in! ctx source-session-id {})]
                                        [{:agent-messages [] :messages [] :tool-calls {} :tool-order []} sd]))
                                    ;; Get new session-id from lifecycle return or rehydrate callback
@@ -1367,31 +1376,31 @@
                                                                         {:error-code "request/invalid-params"})))
                                    topics*            (->> topics (filter #(contains? events/event-topics %)) set)
                                    ui-topic-request?  (some events/extension-ui-topic? topics*)]
-                               (swap! state update :subscribed-topics (fnil into #{}) topics*)
-                               (when (or (empty? (:subscribed-topics @state))
-                                         (contains? (:subscribed-topics @state) "assistant/message"))
+                               (rpc.state/subscribe-topics! state topics*)
+                               (when (or (empty? (rpc.state/subscribed-topics state))
+                                         (contains? (rpc.state/subscribed-topics state) "assistant/message"))
                                  (maybe-start-external-event-loop! ctx emit-frame! state))
              ;; Re-register extension run-fn with emit-frame! so extension-initiated
              ;; agent runs (e.g. PSL) stream deltas + final message to the RPC client.
-                               (register-rpc-extension-run-fn! ctx emit-frame! state)
+                               (register-rpc-extension-run-fn! ctx emit-frame! state session-deps)
                                (when ui-topic-request?
                                  (maybe-start-ui-watch-loop! ctx emit-frame! state)
                                  (events/emit-ui-snapshot-events! emit-frame!
-                                                           state
-                                                           {}
-                                                           (or (events/ui-snapshot ctx) {})))
+                                                                   state
+                                                                   {}
+                                                                   (or (events/ui-snapshot ctx) {})))
              ;; Emit current session/footer/context snapshots immediately on subscription
              ;; so frontends render baseline status without waiting for prompt activity.
                                (events/emit-event! emit-frame! state {:event "session/updated"
-                                                               :id (:id request)
-                                                               :data (events/session-updated-payload ctx (events/focused-session-id ctx state))})
+                                                                       :id (:id request)
+                                                                       :data (events/session-updated-payload ctx (events/focused-session-id ctx state))})
                                (events/emit-event! emit-frame! state {:event "footer/updated"
-                                                               :id (:id request)
-                                                               :data (events/footer-updated-payload ctx (events/focused-session-id ctx state))})
+                                                                       :id (:id request)
+                                                                       :data (events/footer-updated-payload ctx (events/focused-session-id ctx state))})
                                (events/emit-event! emit-frame! state {:event "context/updated"
-                                                               :id (:id request)
-                                                               :data (events/context-updated-payload ctx state)})
-                               (response-frame (:id request) op true {:subscribed (->> (:subscribed-topics @state) sort vec)}))
+                                                                       :id (:id request)
+                                                                       :data (events/context-updated-payload ctx state)})
+                               (response-frame (:id request) op true {:subscribed (->> (rpc.state/subscribed-topics state) sort vec)}))
 
                              "unsubscribe"
                              (let [topics  (or (:topics params) [])
@@ -1400,9 +1409,9 @@
                                                              {:error-code "request/invalid-params"})))
                                    topics* (->> topics (filter string?) set)]
                                (if (seq topics*)
-                                 (swap! state update :subscribed-topics (fn [s] (apply disj (or s #{}) topics*)))
-                                 (swap! state assoc :subscribed-topics #{}))
-                               (response-frame (:id request) op true {:subscribed (->> (:subscribed-topics @state) sort vec)}))
+                                 (rpc.state/unsubscribe-topics! state topics*)
+                                 (rpc.state/clear-subscriptions! state))
+                               (response-frame (:id request) op true {:subscribed (->> (rpc.state/subscribed-topics state) sort vec)}))
 
                              "resolve_dialog"
                              (handle-resolve-dialog! ctx request params)
@@ -1422,4 +1431,4 @@
            :else
            (dispatch-op ctx)))
        (catch Throwable e
-         (exception->error-frame request e))))))
+         (exception->error-frame request e)))))))
