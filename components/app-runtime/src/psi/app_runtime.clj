@@ -440,7 +440,7 @@ Available: " (str/join ", " (map name (keys models/all-models))))
                                   {:reasoning (:supports-reasoning effective-model)})
         effective-prompt-mode    (config-res/resolved-prompt-mode cfg)
         nucleus-prelude-override (config-res/resolved-nucleus-prelude-override cfg)
-        [ctx _seed-id]          (session/create-context
+        [ctx seed-id]          (session/create-context
                                   {:initial-session {:model {:provider  (name (:provider effective-model))
                                                              :id        (:id effective-model)
                                                              :reasoning (:supports-reasoning effective-model)}
@@ -457,7 +457,7 @@ Available: " (str/join ", " (map name (keys models/all-models))))
         recursion-ctx            (recursion/create-hosted-context ctx (ss/state-path :recursion))
         ctx                      (assoc ctx :recursion-ctx recursion-ctx)
         _                        (when-not (sa/recursion-state-in ctx)
-                                   (sa/set-recursion-state-in! ctx nil (recursion/initial-state)))
+                                   (sa/set-recursion-state-in! ctx seed-id (recursion/initial-state)))
         sd                       (session/new-session-in! ctx nil {})
         session-id               (:session-id sd)]
     {:ctx        ctx

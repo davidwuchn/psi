@@ -134,9 +134,8 @@
 (defn create-context
   "Create an isolated session context.
 
-  Returns [ctx seed-id] where seed-id is the initial session-id. Each session
-  now gets its own runtime handles; the seed is retained for API compatibility
-  and immediate usability in tests/adapters.
+  Returns [ctx session-id] where session-id is the initial session-id.
+  Each session gets its own runtime handles.
 
   Options (all optional):
     :initial-session   — overrides merged into the initial AgentSession data map
