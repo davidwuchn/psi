@@ -19,6 +19,7 @@
    [psi.rpc.session.emit :as emit]
    [psi.rpc.session.frontend-actions :as frontend-actions]
    [psi.rpc.session.login :as login]
+   [psi.rpc.session.navigation :as navigation]
    [psi.rpc.session.streams :as streams]
    [psi.rpc.state :as rpc.state]
    [psi.rpc.transport :refer [*request-session-id* default-session-id-in error-frame protocol-version response-frame supported-rpc-ops targetable-rpc-ops]]))
@@ -611,94 +612,26 @@
                              (login/handle-login-complete! {:ctx ctx :request request :params params :state state})
 
                              "new_session"
-                             (let [new-session-fn    on-new-session!
-                                   source-session-id (events/focused-session-id ctx state)
-                                   [rehydrate new-sd]
-                                   (if new-session-fn
-                                     [(new-session-fn source-session-id) nil]
-                                     (let [sd (session/new-session-in! ctx source-session-id {})]
-                                       [{:agent-messages [] :messages [] :tool-calls {} :tool-order []} sd]))
-                                   ;; Get new session-id from lifecycle return or rehydrate callback
-                                   new-sid   (or (:session-id new-sd) (:session-id rehydrate))
-                                   _         (events/set-focus-session-id! state new-sid)
-                                   sd        (ss/get-session-data-in ctx new-sid)
-                                   msgs      (or (:agent-messages rehydrate)
-                                                 (:messages (agent/get-data-in (ss/agent-ctx-in ctx new-sid))))]
-                               (let [emit! (emit/make-request-emitter emit-frame! state (:id request))]
-                                 (emit/emit-session-rehydration!
-                                  emit!
-                                  {:session-id (:session-id sd)
-                                   :session-file (:session-file sd)
-                                   :message-count (count msgs)
-                                   :messages msgs
-                                   :tool-calls (or (:tool-calls rehydrate) {})
-                                   :tool-order (or (:tool-order rehydrate) [])})
-                                 (emit/emit-session-snapshots! emit! ctx state new-sid {:context? true}))
-                               (response-frame (:id request) op true {:session-id (:session-id sd)
-                                                                      :session-file (:session-file sd)}))
+                             (navigation/handle-new-session! {:ctx ctx
+                                                              :request (assoc request :emit-frame! emit-frame!)
+                                                              :state state
+                                                              :on-new-session! on-new-session!})
 
                              "switch_session"
-                             (if-let [sid (:session-id params)]
-                               (do
-                                 (when-not (and (string? sid) (not (str/blank? sid)))
-                                   (throw (ex-info "invalid request parameter :session-id: non-empty string"
-                                                   {:error-code "request/invalid-params"})))
-                                 ;; ensure-session-loaded-in! updates shared ctx; re-scope to requested sid
-                                 (let [source-session-id (events/focused-session-id ctx state)
-                                       _    (session/ensure-session-loaded-in! ctx source-session-id sid)
-                                       _    (events/set-focus-session-id! state sid)
-                                       sd   (ss/get-session-data-in ctx sid)
-                                       msgs (:messages (agent/get-data-in (ss/agent-ctx-in ctx sid)))]
-                                   (let [emit! (emit/make-request-emitter emit-frame! state (:id request))]
-                                     (emit/emit-session-rehydration!
-                                      emit!
-                                      {:session-id (:session-id sd)
-                                       :session-file (:session-file sd)
-                                       :message-count (count msgs)
-                                       :messages msgs
-                                       :tool-calls {}
-                                       :tool-order []})
-                                     (emit/emit-session-snapshots! emit! ctx state sid {:context? true}))
-                                   (response-frame (:id request) op true {:session-id (:session-id sd)
-                                                                          :session-file (:session-file sd)})))
-                               (let [session-path (req-arg! request params :session-path #(and (string? %) (not (str/blank? %))) "non-empty path string")]
-                                 (when-not (.exists (io/file session-path))
-                                   (throw (ex-info "session file not found"
-                                                   {:error-code "request/not-found"})))
-                                 ;; resume-session-in! returns new session data; update focus explicitly
-                                 (let [current-sid (events/focused-session-id ctx state)
-                                       sd          (session/resume-session-in! ctx current-sid session-path)
-                                       sid         (:session-id sd)
-                                       _           (events/set-focus-session-id! state sid)
-                                       msgs        (:messages (agent/get-data-in (ss/agent-ctx-in ctx sid)))]
-                                   (let [emit! (emit/make-request-emitter emit-frame! state (:id request))]
-                                     (emit/emit-session-rehydration!
-                                      emit!
-                                      {:session-id (:session-id sd)
-                                       :session-file (:session-file sd)
-                                       :message-count (count msgs)
-                                       :messages msgs
-                                       :tool-calls {}
-                                       :tool-order []})
-                                     (emit/emit-session-snapshots! emit! ctx state sid {:context? true}))
-                                   (response-frame (:id request) op true {:session-id (:session-id sd)
-                                                                          :session-file (:session-file sd)}))))
+                             (navigation/handle-switch-session! {:ctx ctx
+                                                                 :request (assoc request :emit-frame! emit-frame!)
+                                                                 :params params
+                                                                 :state state})
 
                              "list_sessions"
                              (response-frame (:id request) op true {:active-session-id (events/focused-session-id ctx state)
                                                                     :sessions (ss/list-context-sessions-in ctx)})
 
                              "fork"
-                             (let [entry-id          (req-arg! request params :entry-id #(and (string? %) (not (str/blank? %))) "non-empty entry id")
-                                   parent-session-id (events/focused-session-id ctx state)
-                                   sd               (session/fork-session-in! ctx parent-session-id entry-id)
-                                   sid              (:session-id sd)
-                                   _                (events/set-focus-session-id! state sid)]
-                               (events/emit-event! emit-frame! state {:event "context/updated"
-                                                               :id (:id request)
-                                                               :data (events/context-updated-payload ctx state sid)})
-                               (response-frame (:id request) op true {:session-id (:session-id sd)
-                                                                      :session-file (:session-file sd)}))
+                             (navigation/handle-fork! {:ctx ctx
+                                                       :request (assoc request :emit-frame! emit-frame!)
+                                                       :params params
+                                                       :state state})
 
                              "set_session_name"
                              (let [name   (req-arg! request params :name #(and (string? %) (not (str/blank? %))) "non-empty string")
