@@ -16,6 +16,7 @@
    [psi.agent-session.persistence :as persist]
    [psi.rpc :as rpc]
    [psi.rpc.events :as rpc.events]
+   [psi.rpc.transport :as rpc.transport]
    [psi.agent-session.runtime :as runtime]
    [psi.agent-session.test-support :as test-support]
    [psi.agent-session.tools :as tools]
@@ -153,7 +154,7 @@
           (run-loop (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                          "{:id \"42\" :kind :request :op \"ping\"}\n")
                     (fn [request _emit _state]
-                      (assoc (rpc/response-frame (:id request) (:op request) true {:pong true})
+                      (assoc (rpc.transport/response-frame (:id request) (:op request) true {:pong true})
                              :extra "drop-me")))
           frame (-> out-lines parse-frames second)]
       (is (= {:id "42"
@@ -171,7 +172,7 @@
                          "{:id \"10\" :kind :request :op \"ping\"}\n")
                     (fn [request _ _]
                       (println "diagnostic line")
-                      (rpc/response-frame (:id request) (:op request) true {:pong true})))
+                      (rpc.transport/response-frame (:id request) (:op request) true {:pong true})))
           frame (-> out-lines parse-frames second)]
       (is (= :response (:kind frame)))
       (is (str/includes? err-text "diagnostic line"))
@@ -184,7 +185,7 @@
         out     (java.io.StringWriter.)
         err     (java.io.StringWriter.)
         handler (fn [request _emit _state]
-                  (rpc/response-frame (:id request) (:op request) true {:pong true}))]
+                  (rpc.transport/response-frame (:id request) (:op request) true {:pong true}))]
     (rpc/run-stdio-loop! {:in (java.io.StringReader. input)
                           :out out
                           :err err
@@ -208,7 +209,7 @@
     (let [{:keys [out-lines]}
           (run-loop "{:id \"1\" :kind :request :op \"ping\"}\n"
                     (fn [_ _ _]
-                      (rpc/response-frame "1" "ping" true {:pong true})))
+                      (rpc.transport/response-frame "1" "ping" true {:pong true})))
           frame (-> out-lines parse-frames first)]
       (is (= :error (:kind frame)))
       (is (= "transport/not-ready" (:error-code frame)))
@@ -221,7 +222,7 @@
           (run-loop (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"2.0\"}}}\n"
                          "{:id \"p1\" :kind :request :op \"ping\"}\n")
                     (fn [_ _ _]
-                      (rpc/response-frame "p1" "ping" true {:pong true})))
+                      (rpc.transport/response-frame "p1" "ping" true {:pong true})))
           [h p] (parse-frames out-lines)]
       (is (= :error (:kind h)))
       (is (= "protocol/unsupported-version" (:error-code h)))
@@ -233,7 +234,7 @@
           (run-loop (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
                          "{:id \"p1\" :kind :request :op \"ping\"}\n")
                     (fn [request _ _]
-                      (rpc/response-frame (:id request) (:op request) true {:pong true})))
+                      (rpc.transport/response-frame (:id request) (:op request) true {:pong true})))
           [h p] (parse-frames out-lines)]
       (is (= :response (:kind h)))
       (is (= "handshake" (:op h)))
@@ -247,8 +248,8 @@
                      "{:id \"r1\" :kind :request :op \"echo\"}\n")
                 (fn [request _emit _state]
                   (if (= "echo" (:op request))
-                    (rpc/response-frame (:id request) "echo" true {:ok true})
-                    (rpc/response-frame (:id request) (:op request) true {})))
+                    (rpc.transport/response-frame (:id request) "echo" true {:ok true})
+                    (rpc.transport/response-frame (:id request) (:op request) true {})))
                 state)
       (is (= {} (:pending @state)))
       (is (= true (:ready? @state)))))

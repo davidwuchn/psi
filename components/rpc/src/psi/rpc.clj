@@ -4,31 +4,14 @@
    Keeps the stable `psi.rpc` API while implementation lives in smaller
    transport/session namespaces.
 
-   Exported names here are curated compatibility aliases. Public qualified vars
-   still need to exist in `psi.rpc`, so function exports use tiny forwarding
-   wrappers rather than copying implementation fn values with `def`. This keeps
-   the stable facade while allowing REPL reloads of implementation namespaces to
-   be observed through the facade on the next call."
+   This namespace intentionally exposes only the high-level entrypoints for
+   running the RPC runtime, transport loop, and session request routing. Lower-
+   level frame constructors and event/payload helpers stay in their owning
+   namespaces."
   (:require
    [psi.rpc.runtime :as rpc.runtime]
    [psi.rpc.session :as rpc.session]
    [psi.rpc.transport :as rpc.transport]))
-
-(def protocol-version rpc.transport/protocol-version)
-
-(defn response-frame
-  ([id op ok]
-   (rpc.transport/response-frame id op ok))
-  ([id op ok data]
-   (rpc.transport/response-frame id op ok data)))
-
-(defn error-frame
-  [frame]
-  (rpc.transport/error-frame frame))
-
-(defn event-frame
-  [frame]
-  (rpc.transport/event-frame frame))
 
 (defn run-stdio-loop!
   [opts]
