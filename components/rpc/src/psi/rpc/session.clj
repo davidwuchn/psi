@@ -16,6 +16,8 @@
    [psi.agent-session.state-accessors :as sa]
    [psi.ai.models :as ai-models]
    [psi.rpc.events :as events]
+   [psi.rpc.session.emit :as emit]
+   [psi.rpc.session.streams :as streams]
    [psi.rpc.state :as rpc.state]
    [psi.rpc.transport :refer [*request-session-id* default-session-id-in error-frame protocol-version response-frame supported-rpc-ops targetable-rpc-ops]]))
 
@@ -334,49 +336,28 @@
                               (let [{:keys [user-message]} (runtime/prepare-user-message-in! ctx session-id text nil)
                                     ai-model  (ai-model-fn session-id)
                                     api-key   (runtime/resolve-api-key-in ctx session-id ai-model)
-                                    emit!     (fn [event payload]
-                                                (events/emit-event! emit-frame! state {:event event :data payload}))
+                                    emit!     (emit/make-request-emitter emit-frame! state nil)
                                     progress-q (java.util.concurrent.LinkedBlockingQueue.)
-                                    stop?      (atom false)
-                                    poll-loop  (start-daemon-thread!
-                                                (fn []
-                                                  (loop []
-                                                    (when-not @stop?
-                                                      (when-let [evt (.poll progress-q 10
-                                                                            java.util.concurrent.TimeUnit/MILLISECONDS)]
-                                                        (when-let [{:keys [event data]} (events/progress-event->rpc-event evt)]
-                                                          (emit! event data)
-                                                          (when (= :tool-result (:event-kind evt))
-                                                            (emit! "footer/updated" (events/footer-updated-payload ctx session-id))))
-                                                        (loop []
-                                                          (when-let [more (.poll progress-q)]
-                                                            (when-let [{:keys [event data]} (events/progress-event->rpc-event more)]
-                                                              (emit! event data)
-                                                              (when (= :tool-result (:event-kind more))
-                                                                (emit! "footer/updated" (events/footer-updated-payload ctx session-id))))
-                                                            (recur))))
-                                                      (recur))))
-                                                "rpc-poll-loop")
+                                    {:keys [stop? thread] :as progress-loop}
+                                    (streams/start-progress-loop!
+                                     {:start-daemon-thread! start-daemon-thread!
+                                      :ctx ctx
+                                      :state state
+                                      :session-id session-id
+                                      :emit! emit!
+                                      :progress-q progress-q
+                                      :thread-name "rpc-poll-loop"})
                                     result    (runtime/run-agent-loop-in!
                                                ctx session-id nil ai-model [user-message]
                                                {:api-key        api-key
                                                 :progress-queue progress-q
                                                 :sync-on-git-head-change? true})]
-                                (reset! stop? true)
-                                (.join ^Thread poll-loop 200)
-                                (events/emit-progress-queue! progress-q emit!)
-                                (let [content (or (:content result) [])
-                                      text    (events/assistant-content-text content)]
-                                  (emit! "assistant/message"
-                                         (cond-> {:role    (:role result)
-                                                  :content content}
-                                           (and (string? text) (not (str/blank? text)))
-                                           (assoc :text text)
-                                           (contains? result :stop-reason)   (assoc :stop-reason (:stop-reason result))
-                                           (contains? result :error-message) (assoc :error-message (:error-message result))
-                                           (contains? result :usage)         (assoc :usage (:usage result)))))
-                                (emit! "session/updated" (events/session-updated-payload ctx session-id))
-                                (emit! "footer/updated"  (events/footer-updated-payload ctx session-id)))
+                                (streams/stop-progress-loop! {:stop? stop?
+                                                              :thread thread
+                                                              :progress-q progress-q
+                                                              :emit! emit!})
+                                (emit/emit-assistant-message! emit! result)
+                                (emit/emit-session-snapshots! emit! ctx state session-id))
                               (when (< attempt 1200)
                                 (Thread/sleep 250)
                                 (recur (inc attempt)))))
@@ -435,14 +416,6 @@
                           {:event "footer/updated"
                            :data  (events/footer-updated-payload ctx session-id)}))))
 
-(defn- emit-assistant-text!
-  [emit! text]
-  (let [text* (str text)]
-    (emit! "assistant/message"
-           {:role    "assistant"
-            :text    text*
-            :content [{:type :text :text text*}]})))
-
 (defn- complete-pending-login!
   [ctx _state message emit!]
   (when-let [{:keys [provider-id provider-name login-state]} (pending-login-state ctx)]
@@ -452,13 +425,13 @@
               input   (when-not (str/blank? trimmed) trimmed)]
           (oauth/complete-login! oauth-ctx provider-id input login-state)
           (sa/complete-oauth-login-in! ctx provider-id)
-          (emit-assistant-text! emit! (str "✓ Logged in to " (or provider-name
-                                                                 (some-> provider-id name)
-                                                                 "provider"))))
+          (emit/emit-assistant-text! emit! (str "✓ Logged in to " (or provider-name
+                                                                      (some-> provider-id name)
+                                                                      "provider"))))
         (catch Throwable e
           (sa/complete-oauth-login-in! ctx provider-id)
-          (emit-assistant-text! emit! (str "✗ Login failed: " (ex-message e)))))
-      (emit-assistant-text! emit! "OAuth not available."))))
+          (emit/emit-assistant-text! emit! (str "✗ Login failed: " (ex-message e)))))
+      (emit/emit-assistant-text! emit! "OAuth not available."))))
 
 (defn- handle-login-start-command!
   [ctx state emit-frame! request-id cmd-result emit!]
@@ -469,50 +442,34 @@
                           "provider")
         login-state   (:login-state cmd-result)
         callback?     (boolean (:uses-callback-server cmd-result))]
-    (emit-assistant-text! emit!
-                          (str "Login: " provider-name
-                               " — open URL: " (:url cmd-result)))
+    (emit/emit-assistant-text! emit!
+                               (str "Login: " provider-name
+                                    " — open URL: " (:url cmd-result)))
     (if callback?
       (do
-        (emit-assistant-text! emit! "Waiting for browser callback…")
+        (emit/emit-assistant-text! emit! "Waiting for browser callback…")
         (if-let [oauth-ctx (:oauth-ctx ctx)]
           (let [worker (start-daemon-thread!
                         (fn []
                           (binding [*out* (rpc.state/err-writer state)
                                     *err* (rpc.state/err-writer state)]
-                            (let [emit-login! (fn [event payload]
-                                                (events/emit-event! emit-frame! state {:event event
-                                                                                        :data payload
-                                                                                        :id request-id}))]
+                            (let [emit-login! (emit/make-request-emitter emit-frame! state request-id)]
                               (try
                                 (oauth/complete-login! oauth-ctx provider-id nil login-state)
-                                (emit-assistant-text! emit-login! (str "✓ Logged in to " provider-name))
+                                (emit/emit-assistant-text! emit-login! (str "✓ Logged in to " provider-name))
                                 (catch Throwable e
-                                  (emit-assistant-text! emit-login! (str "✗ Login failed: " (ex-message e))))
+                                  (emit/emit-assistant-text! emit-login! (str "✗ Login failed: " (ex-message e))))
                                 (finally
-                                  (emit-login! "session/updated" (events/session-updated-payload ctx session-id))
-                                  (emit-login! "footer/updated" (events/footer-updated-payload ctx session-id)))))))
+                                  (emit/emit-session-snapshots! emit-login! ctx state session-id))))))
                         "rpc-oauth-worker")]
             (rpc.state/add-inflight-future! state worker))
-          (emit-assistant-text! emit! "OAuth not available.")))
+          (emit/emit-assistant-text! emit! "OAuth not available.")))
       (do
         (sa/set-oauth-pending-login-in! ctx
                                         {:provider-id provider-id
                                          :provider-name provider-name
                                          :login-state login-state})
-        (emit-assistant-text! emit! "Paste authorization code as your next prompt message.")))))
-
-(defn- emit-command-result!
-  [emit! payload]
-  (emit! "command-result" payload))
-
-(defn- emit-frontend-action-request!
-  [emit! request-id cmd-result]
-  (emit! "ui/frontend-action-requested"
-         {:request-id request-id
-          :action-name (some-> (:action-name cmd-result) name)
-          :prompt (:prompt cmd-result)
-          :payload (:payload cmd-result)}))
+        (emit/emit-assistant-text! emit! "Paste authorization code as your next prompt message.")))))
 
 (defn- handle-prompt-command-result!
   "Legacy prompt-path slash command event mapping.
@@ -581,40 +538,40 @@
   (let [result-type (:type cmd-result)]
     (case result-type
       (:text :logout :login-error :new-session)
-      (emit-command-result! emit! {:type (if (= :new-session result-type)
-                                           "new_session"
-                                           (name result-type))
-                                   :message (str (:message cmd-result))})
+      (emit/emit-command-result! emit! {:type (if (= :new-session result-type)
+                                                "new_session"
+                                                (name result-type))
+                                        :message (str (:message cmd-result))})
 
       :login-start
-      (emit-command-result! emit! {:type "login_start"
-                                   :message (str "Login: " (get-in cmd-result [:provider :name])
-                                                 " — open URL: " (:url cmd-result))
-                                   :provider-name (get-in cmd-result [:provider :name])
-                                   :login-url (:url cmd-result)
-                                   :uses-callback-server (boolean (:uses-callback-server cmd-result))})
+      (emit/emit-command-result! emit! {:type "login_start"
+                                        :message (str "Login: " (get-in cmd-result [:provider :name])
+                                                      " — open URL: " (:url cmd-result))
+                                        :provider-name (get-in cmd-result [:provider :name])
+                                        :login-url (:url cmd-result)
+                                        :uses-callback-server (boolean (:uses-callback-server cmd-result))})
 
       :quit
-      (emit-command-result! emit! {:type "quit"})
+      (emit/emit-command-result! emit! {:type "quit"})
 
       :resume
-      (emit-command-result! emit! {:type "text"
-                                   :message "[/resume requires frontend action handling]"})
+      (emit/emit-command-result! emit! {:type "text"
+                                        :message "[/resume requires frontend action handling]"})
 
       :tree-open
-      (emit-command-result! emit! {:type "text"
-                                   :message "[/tree requires frontend action handling]"})
+      (emit/emit-command-result! emit! {:type "text"
+                                        :message "[/tree requires frontend action handling]"})
 
       :tree-switch
-      (emit-command-result! emit! {:type "session_switch"
-                                   :session-id (:session-id cmd-result)})
+      (emit/emit-command-result! emit! {:type "session_switch"
+                                        :session-id (:session-id cmd-result)})
 
       :session-switch
-      (emit-command-result! emit! {:type "session_switch"
+      (emit/emit-command-result! emit! {:type "session_switch"
                                    :session-id (:session-id cmd-result)})
 
       :frontend-action
-      (emit-frontend-action-request! emit! request-id cmd-result)
+      (emit/emit-frontend-action-request! emit! request-id cmd-result)
 
       :extension-cmd
       (let [output (try
@@ -625,11 +582,11 @@
                          out))
                      (catch Throwable e
                        (str "[extension command error: " (ex-message e) "]")))]
-        (emit-command-result! emit! {:type "text" :message output}))
+        (emit/emit-command-result! emit! {:type "text" :message output}))
 
       ;; Unknown result type — emit a fallback
-      (emit-command-result! emit! {:type "text"
-                                   :message (str "[command result: " result-type "]")}))))
+      (emit/emit-command-result! emit! {:type "text"
+                                        :message (str "[command result: " result-type "]")}))))
 
 (defn- valid-session-id-param!
   [session-id]
@@ -665,8 +622,7 @@
   [ctx request emit-frame! state session-deps]
   (let [text       (req-arg! request (params-map request) :text #(and (string? %) (not (str/blank? %))) "non-empty string")
         request-id (:id request)
-        emit!      (fn [event payload]
-                     (events/emit-event! emit-frame! state {:event event :data payload :id request-id}))
+        emit!      (emit/make-request-emitter emit-frame! state request-id)
         ai-model   (current-ai-model ctx session-deps state)
         oauth-ctx  (:oauth-ctx ctx)
         trimmed    (str/trim text)
@@ -693,21 +649,21 @@
       (str/starts-with? trimmed "/resume ")
       (let [session-path (-> (str/replace trimmed #"^/resume\s+" "") str/trim)]
         (if-not (.exists (io/file session-path))
-          (emit-command-result! emit! {:type "text"
-                                       :message (str "Session file not found: " session-path)})
+          (emit/emit-command-result! emit! {:type "text"
+                                            :message (str "Session file not found: " session-path)})
           (let [current-sid session-id
                 sd          (session/resume-session-in! ctx current-sid session-path)
                 sid         (:session-id sd)
                 _           (events/set-focus-session-id! state sid)
                 msgs        (:messages (agent/get-data-in (ss/agent-ctx-in ctx sid)))]
-            (emit! "session/resumed"
-                   {:session-id   sid
-                    :session-file (:session-file sd)
-                    :message-count (count msgs)})
-            (emit! "session/rehydrated"
-                   {:messages msgs
-                    :tool-calls {}
-                    :tool-order []}))))
+            (emit/emit-session-rehydration!
+             emit!
+             {:session-id sid
+              :session-file (:session-file sd)
+              :message-count (count msgs)
+              :messages msgs
+              :tool-calls {}
+              :tool-order []}))))
 
       (= trimmed "/tree")
       (let [active-id  (events/focus-session-id state)
@@ -747,12 +703,12 @@
             sid    (:session-id chosen)]
         (cond
           (nil? chosen)
-          (emit-command-result! emit! {:type "text"
-                                       :message (str "Session not found in context: " arg)})
+          (emit/emit-command-result! emit! {:type "text"
+                                            :message (str "Session not found in context: " arg)})
 
           (= sid active-id)
-          (emit-command-result! emit! {:type "text"
-                                       :message (str "Already active session: " sid)})
+          (emit/emit-command-result! emit! {:type "text"
+                                            :message (str "Already active session: " sid)})
 
           :else
           (do
@@ -760,14 +716,14 @@
             (events/set-focus-session-id! state sid)
             (let [sd   (ss/get-session-data-in ctx sid)
                   msgs (:messages (agent/get-data-in (ss/agent-ctx-in ctx sid)))]
-              (emit! "session/resumed"
-                     {:session-id   (:session-id sd)
-                      :session-file (:session-file sd)
-                      :message-count (count msgs)})
-              (emit! "session/rehydrated"
-                     {:messages msgs
-                      :tool-calls {}
-                      :tool-order []})))))
+              (emit/emit-session-rehydration!
+               emit!
+               {:session-id (:session-id sd)
+                :session-file (:session-file sd)
+                :message-count (count msgs)
+                :messages msgs
+                :tool-calls {}
+                :tool-order []})))))
 
       (= trimmed "/model")
       (emit! "ui/frontend-action-requested"
@@ -802,22 +758,20 @@
                   msgs      (or (:agent-messages rehydrate)
                                 (when new-sid
                                   (:messages (agent/get-data-in (ss/agent-ctx-in ctx new-sid)))))]
-              (emit! "session/resumed"
-                     {:session-id   (:session-id sd)
-                      :session-file (:session-file sd)
-                      :message-count (count msgs)})
-              (emit! "session/rehydrated"
-                     {:messages   msgs
-                      :tool-calls (or (:tool-calls rehydrate) {})
-                      :tool-order (or (:tool-order rehydrate) [])})))
+              (emit/emit-session-rehydration!
+               emit!
+               {:session-id (:session-id sd)
+                :session-file (:session-file sd)
+                :message-count (count msgs)
+                :messages msgs
+                :tool-calls (or (:tool-calls rehydrate) {})
+                :tool-order (or (:tool-order rehydrate) [])})))
           (handle-command-result! request-id cmd-result emit!)))
 
       :else
-      (emit-command-result! emit! {:type "text"
+      (emit/emit-command-result! emit! {:type "text"
                                    :message (str "[not a command] " text)}))
-    (emit! "session/updated" (events/session-updated-payload ctx session-id))
-    (emit! "footer/updated" (events/footer-updated-payload ctx session-id))
-    (emit! "context/updated" (events/context-updated-payload ctx state))
+    (emit/emit-session-snapshots! emit! ctx state session-id {:context? true})
     (response-frame (:id request) "command" true {:accepted true
                                                   :handled true})))
 
@@ -828,23 +782,23 @@
         action-name (req-arg! request params :action-name #(and (string? %) (not (str/blank? %))) "non-empty string")
         status      (req-arg! request params :status #(and (string? %) (not (str/blank? %))) "non-empty string")
         value       (:value params)
-        emit!       (fn [event payload]
-                      (events/emit-event! emit-frame! state {:event event :data payload :id (:id request)}))
+        emit!       (emit/make-request-emitter emit-frame! state (:id request))
         session-id  (events/focused-session-id ctx state)]
-    (case status
-      "cancelled"
+    (cond
+      (= status "cancelled")
       (do
-        (emit-command-result! emit! {:type "text"
-                                     :message (str "Cancelled " action-name ".")})
+        (emit/emit-command-result! emit! {:type "text"
+                                          :message (str "Cancelled " action-name ".")})
         (response-frame (:id request) "frontend_action_result" true {:accepted true}))
 
-      "failed"
+      (= status "failed")
       (do
-        (emit-command-result! emit! {:type "error"
-                                     :message (or (:error-message params)
-                                                  (str "Frontend action failed: " action-name))})
+        (emit/emit-command-result! emit! {:type "error"
+                                          :message (or (:error-message params)
+                                                       (str "Frontend action failed: " action-name))})
         (response-frame (:id request) "frontend_action_result" true {:accepted true}))
 
+      :else
       (do
         (case action-name
           "resume-selector"
@@ -855,17 +809,15 @@
                     sid         (:session-id sd)
                     _           (events/set-focus-session-id! state sid)
                     msgs        (:messages (agent/get-data-in (ss/agent-ctx-in ctx sid)))]
-                (events/emit-event! emit-frame! state {:event "session/resumed"
-                                                :id (:id request)
-                                                :data {:session-id sid
-                                                       :session-file (:session-file sd)
-                                                       :message-count (count msgs)}})
-                (events/emit-event! emit-frame! state {:event "session/rehydrated"
-                                                :id (:id request)
-                                                :data {:messages msgs
-                                                       :tool-calls {}
-                                                       :tool-order []}})
-                (emit! "context/updated" (events/context-updated-payload ctx state)))))
+                (emit/emit-session-rehydration!
+                 emit!
+                 {:session-id sid
+                  :session-file (:session-file sd)
+                  :message-count (count msgs)
+                  :messages msgs
+                  :tool-calls {}
+                  :tool-order []})
+                (emit/emit-context-updated! emit! ctx state))))
 
           "context-session-selector"
           (when (string? value)
@@ -873,17 +825,15 @@
             (let [_    (events/set-focus-session-id! state value)
                   sd   (ss/get-session-data-in ctx value)
                   msgs (:messages (agent/get-data-in (ss/agent-ctx-in ctx value)))]
-              (events/emit-event! emit-frame! state {:event "session/resumed"
-                                              :id (:id request)
-                                              :data {:session-id (:session-id sd)
-                                                     :session-file (:session-file sd)
-                                                     :message-count (count msgs)}})
-              (events/emit-event! emit-frame! state {:event "session/rehydrated"
-                                              :id (:id request)
-                                              :data {:messages msgs
-                                                     :tool-calls {}
-                                                     :tool-order []}})
-              (emit! "context/updated" (events/context-updated-payload ctx state))))
+              (emit/emit-session-rehydration!
+               emit!
+               {:session-id (:session-id sd)
+                :session-file (:session-file sd)
+                :message-count (count msgs)
+                :messages msgs
+                :tool-calls {}
+                :tool-order []})
+              (emit/emit-context-updated! emit! ctx state)))
 
           "model-picker"
           (when (map? value)
@@ -894,19 +844,18 @@
                 (let [provider-str (name (:provider resolved))
                       model {:provider provider-str :id (:id resolved) :reasoning (:supports-reasoning resolved)}]
                   (session/set-model-in! ctx session-id model)
-                  (emit-command-result! emit! {:type "text"
-                                               :message (str "✓ Model set to " provider-str " " (:id resolved))})))))
+                  (emit/emit-command-result! emit! {:type "text"
+                                                    :message (str "✓ Model set to " provider-str " " (:id resolved))})))))
 
           "thinking-picker"
           (when (string? value)
             (let [level  (keyword value)
                   result (session/set-thinking-level-in! ctx session-id level)]
-              (emit-command-result! emit! {:type "text"
-                                           :message (str "✓ Thinking level set to " (name (:thinking-level result)))})))
+              (emit/emit-command-result! emit! {:type "text"
+                                                :message (str "✓ Thinking level set to " (name (:thinking-level result)))})))
 
           nil)
-        (emit! "session/updated" (events/session-updated-payload ctx session-id))
-        (emit! "footer/updated" (events/footer-updated-payload ctx session-id))
+        (emit/emit-session-snapshots! emit! ctx state session-id)
         (response-frame (:id request)
                         "frontend_action_result"
                         true
@@ -930,34 +879,16 @@
                       (fn []
                         (binding [*out* (rpc.state/err-writer state)
                                   *err* (rpc.state/err-writer state)]
-                          (let [emit! (fn [event payload]
-                                        (events/emit-event! emit-frame! state {:event event :data payload :id request-id}))
-                                progress-stop? (atom false)
-                                progress-loop (start-daemon-thread!
-                                               (fn []
-                                                 (loop []
-                                                   (when-not @progress-stop?
-                                                     ;; Block up to 10ms waiting for the next event, then drain
-                                                     ;; all immediately-available events without sleeping between
-                                                     ;; them. This prevents batching: events from a new LLM turn
-                                                     ;; that arrive while the loop was idle are emitted one-by-one
-                                                     ;; in arrival order rather than as a burst after a 50ms gap.
-                                                     (when-let [evt (.poll progress-q 10 java.util.concurrent.TimeUnit/MILLISECONDS)]
-                                                       (when-let [{:keys [event data]} (events/progress-event->rpc-event evt)]
-                                                         (emit! event data)
-                                                         (when (= :tool-result (:event-kind evt))
-                                                           (emit! "footer/updated" (events/footer-updated-payload ctx session-id))))
-                                                       ;; Drain any additional events already in the queue
-                                                       ;; without blocking, preserving arrival order.
-                                                       (loop []
-                                                         (when-let [more (.poll progress-q)]
-                                                           (when-let [{:keys [event data]} (events/progress-event->rpc-event more)]
-                                                             (emit! event data)
-                                                             (when (= :tool-result (:event-kind more))
-                                                               (emit! "footer/updated" (events/footer-updated-payload ctx session-id))))
-                                                           (recur))))
-                                                     (recur))))
-                                               "rpc-progress-loop")]
+                          (let [emit! (emit/make-request-emitter emit-frame! state request-id)
+                                {:keys [stop? thread] :as progress-loop}
+                                (streams/start-progress-loop!
+                                 {:start-daemon-thread! start-daemon-thread!
+                                  :ctx ctx
+                                  :state state
+                                  :session-id session-id
+                                  :emit! emit!
+                                  :progress-q progress-q
+                                  :thread-name "rpc-progress-loop"})]
                             (try
                               (let [ai-model      (current-ai-model ctx session-deps state session-id)
                                     _             (when-not ai-model
@@ -976,8 +907,7 @@
                                   (do
                                     (runtime/journal-user-message-in! ctx session-id message images)
                                     (complete-pending-login! ctx state message emit!)
-                                    (emit! "session/updated" (events/session-updated-payload ctx session-id))
-                                    (emit! "footer/updated" (events/footer-updated-payload ctx session-id)))
+                                    (emit/emit-session-snapshots! emit! ctx state session-id))
 
                                   (some? cmd-result)
                                  ;; Slash command matched — journal raw input and skip agent loop.
@@ -995,22 +925,20 @@
                                                 msgs    (or (:agent-messages rehydrate)
                                                             (when new-sid
                                                               (:messages (agent/get-data-in (ss/agent-ctx-in ctx new-sid)))))]
-                                            (emit! "session/resumed"
-                                                   {:session-id (:session-id sd)
-                                                    :session-file (:session-file sd)
-                                                    :message-count (count msgs)})
-                                            (emit! "session/rehydrated"
-                                                   {:messages msgs
-                                                    :tool-calls (or (:tool-calls rehydrate) {})
-                                                    :tool-order (or (:tool-order rehydrate) [])})))
+                                            (emit/emit-session-rehydration!
+                                             emit!
+                                             {:session-id (:session-id sd)
+                                              :session-file (:session-file sd)
+                                              :message-count (count msgs)
+                                              :messages msgs
+                                              :tool-calls (or (:tool-calls rehydrate) {})
+                                              :tool-order (or (:tool-order rehydrate) [])})))
                                         (handle-prompt-command-result! cmd-result emit!)))
-                                    (emit! "session/updated" (events/session-updated-payload ctx session-id))
-                                    (emit! "footer/updated" (events/footer-updated-payload ctx session-id)))
+                                    (emit/emit-session-snapshots! emit! ctx state session-id))
 
                                   :else
                                  ;; Not a command — run normal agent loop via shared runtime path.
-                                  (let [_        (emit! "session/updated" (events/session-updated-payload ctx session-id))
-                                        _        (emit! "footer/updated" (events/footer-updated-payload ctx session-id))
+                                  (let [_        (emit/emit-session-snapshots! emit! ctx state session-id)
                                         {:keys [user-message]} (runtime/prepare-user-message-in! ctx session-id message images)
                                         api-key  (runtime/resolve-api-key-in ctx session-id ai-model)
                                         result   (runtime/run-agent-loop-in!
@@ -1021,31 +949,21 @@
                                                    :sync-on-git-head-change? sync-on-git-head-change?})]
                                    ;; Stop background progress polling, flush any
                                    ;; remaining events, then emit final message.
-                                    (reset! progress-stop? true)
-                                    (.join ^Thread progress-loop 200)
-                                    (events/emit-progress-queue! progress-q emit!)
-                                    (let [content (or (:content result) [])
-                                          text    (events/assistant-content-text content)]
-                                      (emit! "assistant/message"
-                                             (cond-> {:role    (:role result)
-                                                      :content content}
-                                               (and (string? text) (not (str/blank? text)))
-                                               (assoc :text text)
-                                               (contains? result :stop-reason)   (assoc :stop-reason (:stop-reason result))
-                                               (contains? result :error-message) (assoc :error-message (:error-message result))
-                                               (contains? result :usage)         (assoc :usage (:usage result)))))
-                                    (emit! "session/updated" (events/session-updated-payload ctx session-id))
-                                    (emit! "footer/updated" (events/footer-updated-payload ctx session-id)))))
+                                    (streams/stop-progress-loop! {:stop? stop?
+                                                                  :thread thread
+                                                                  :progress-q progress-q
+                                                                  :emit! emit!})
+                                    (emit/emit-assistant-message! emit! result)
+                                    (emit/emit-session-snapshots! emit! ctx state session-id))))
                               (catch Throwable t
                                 (emit! "error" {:error-code "runtime/failed"
                                                 :error-message (or (ex-message t) "prompt execution failed")
                                                 :id request-id
                                                 :op "prompt"})
-                                (emit! "session/updated" (events/session-updated-payload ctx session-id))
-                                (emit! "footer/updated" (events/footer-updated-payload ctx session-id)))
+                                (emit/emit-session-snapshots! emit! ctx state session-id))
                               (finally
-                                (reset! progress-stop? true)
-                                (.join ^Thread progress-loop 200)))))))]
+                                (reset! stop? true)
+                                (.join ^Thread thread 200)))))))]
     (rpc.state/add-inflight-future! state worker)
     (response-frame (:id request) "prompt" true {:accepted true})))
 
@@ -1187,25 +1105,16 @@
                                    sd        (ss/get-session-data-in ctx new-sid)
                                    msgs      (or (:agent-messages rehydrate)
                                                  (:messages (agent/get-data-in (ss/agent-ctx-in ctx new-sid))))]
-                               (events/emit-event! emit-frame! state {:event "session/resumed"
-                                                               :id (:id request)
-                                                               :data {:session-id   (:session-id sd)
-                                                                      :session-file (:session-file sd)
-                                                                      :message-count (count msgs)}})
-                               (events/emit-event! emit-frame! state {:event "session/rehydrated"
-                                                               :id (:id request)
-                                                               :data {:messages msgs
-                                                                      :tool-calls (or (:tool-calls rehydrate) {})
-                                                                      :tool-order (or (:tool-order rehydrate) [])}})
-                               (events/emit-event! emit-frame! state {:event "session/updated"
-                                                               :id (:id request)
-                                                               :data (events/session-updated-payload ctx new-sid)})
-                               (events/emit-event! emit-frame! state {:event "footer/updated"
-                                                               :id (:id request)
-                                                               :data (events/footer-updated-payload ctx new-sid)})
-                               (events/emit-event! emit-frame! state {:event "context/updated"
-                                                               :id (:id request)
-                                                               :data (events/context-updated-payload ctx state)})
+                               (let [emit! (emit/make-request-emitter emit-frame! state (:id request))]
+                                 (emit/emit-session-rehydration!
+                                  emit!
+                                  {:session-id (:session-id sd)
+                                   :session-file (:session-file sd)
+                                   :message-count (count msgs)
+                                   :messages msgs
+                                   :tool-calls (or (:tool-calls rehydrate) {})
+                                   :tool-order (or (:tool-order rehydrate) [])})
+                                 (emit/emit-session-snapshots! emit! ctx state new-sid {:context? true}))
                                (response-frame (:id request) op true {:session-id (:session-id sd)
                                                                       :session-file (:session-file sd)}))
 
@@ -1221,25 +1130,16 @@
                                        _    (events/set-focus-session-id! state sid)
                                        sd   (ss/get-session-data-in ctx sid)
                                        msgs (:messages (agent/get-data-in (ss/agent-ctx-in ctx sid)))]
-                                   (events/emit-event! emit-frame! state {:event "session/resumed"
-                                                                   :id (:id request)
-                                                                   :data {:session-id   (:session-id sd)
-                                                                          :session-file (:session-file sd)
-                                                                          :message-count (count msgs)}})
-                                   (events/emit-event! emit-frame! state {:event "session/rehydrated"
-                                                                   :id (:id request)
-                                                                   :data {:messages msgs
-                                                                          :tool-calls {}
-                                                                          :tool-order []}})
-                                   (events/emit-event! emit-frame! state {:event "session/updated"
-                                                                   :id (:id request)
-                                                                   :data (events/session-updated-payload ctx sid)})
-                                   (events/emit-event! emit-frame! state {:event "footer/updated"
-                                                                   :id (:id request)
-                                                                   :data (events/footer-updated-payload ctx sid)})
-                                   (events/emit-event! emit-frame! state {:event "context/updated"
-                                                                   :id (:id request)
-                                                                   :data (events/context-updated-payload ctx state)})
+                                   (let [emit! (emit/make-request-emitter emit-frame! state (:id request))]
+                                     (emit/emit-session-rehydration!
+                                      emit!
+                                      {:session-id (:session-id sd)
+                                       :session-file (:session-file sd)
+                                       :message-count (count msgs)
+                                       :messages msgs
+                                       :tool-calls {}
+                                       :tool-order []})
+                                     (emit/emit-session-snapshots! emit! ctx state sid {:context? true}))
                                    (response-frame (:id request) op true {:session-id (:session-id sd)
                                                                           :session-file (:session-file sd)})))
                                (let [session-path (req-arg! request params :session-path #(and (string? %) (not (str/blank? %))) "non-empty path string")]
@@ -1252,25 +1152,16 @@
                                        sid         (:session-id sd)
                                        _           (events/set-focus-session-id! state sid)
                                        msgs        (:messages (agent/get-data-in (ss/agent-ctx-in ctx sid)))]
-                                   (events/emit-event! emit-frame! state {:event "session/resumed"
-                                                                   :id (:id request)
-                                                                   :data {:session-id   (:session-id sd)
-                                                                          :session-file (:session-file sd)
-                                                                          :message-count (count msgs)}})
-                                   (events/emit-event! emit-frame! state {:event "session/rehydrated"
-                                                                   :id (:id request)
-                                                                   :data {:messages msgs
-                                                                          :tool-calls {}
-                                                                          :tool-order []}})
-                                   (events/emit-event! emit-frame! state {:event "session/updated"
-                                                                   :id (:id request)
-                                                                   :data (events/session-updated-payload ctx sid)})
-                                   (events/emit-event! emit-frame! state {:event "footer/updated"
-                                                                   :id (:id request)
-                                                                   :data (events/footer-updated-payload ctx sid)})
-                                   (events/emit-event! emit-frame! state {:event "context/updated"
-                                                                   :id (:id request)
-                                                                   :data (events/context-updated-payload ctx state)})
+                                   (let [emit! (emit/make-request-emitter emit-frame! state (:id request))]
+                                     (emit/emit-session-rehydration!
+                                      emit!
+                                      {:session-id (:session-id sd)
+                                       :session-file (:session-file sd)
+                                       :message-count (count msgs)
+                                       :messages msgs
+                                       :tool-calls {}
+                                       :tool-order []})
+                                     (emit/emit-session-snapshots! emit! ctx state sid {:context? true}))
                                    (response-frame (:id request) op true {:session-id (:session-id sd)
                                                                           :session-file (:session-file sd)}))))
 
