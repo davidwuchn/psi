@@ -36,8 +36,7 @@
           "resume-selector"
           (when (string? value)
             (when (.exists (io/file value))
-              (let [current-sid session-id
-                    sd          (session/resume-session-in! ctx current-sid value)
+              (let [sd          (session/resume-session-in! ctx session-id value)
                     sid         (:session-id sd)
                     _           (events/set-focus-session-id! state sid)
                     msgs        (:messages (agent/get-data-in (ss/agent-ctx-in ctx sid)))]

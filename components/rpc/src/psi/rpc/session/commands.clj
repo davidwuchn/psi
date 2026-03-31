@@ -163,8 +163,7 @@
         (if-not (.exists (io/file session-path))
           (emit/emit-command-result! emit! {:type "text"
                                             :message (str "Session file not found: " session-path)})
-          (let [current-sid session-id
-                sd          (session/resume-session-in! ctx current-sid session-path)
+          (let [sd          (session/resume-session-in! ctx session-id session-path)
                 sid         (:session-id sd)
                 _           (events/set-focus-session-id! state sid)
                 msgs        (:messages (agent/get-data-in (ss/agent-ctx-in ctx sid)))]

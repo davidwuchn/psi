@@ -43,8 +43,7 @@
       (when-not (and (string? sid) (not (str/blank? sid)))
         (throw (ex-info "invalid request parameter :session-id: non-empty string"
                         {:error-code "request/invalid-params"})))
-      (let [source-session-id session-id
-            _    (session/ensure-session-loaded-in! ctx source-session-id sid)
+      (let [_    (session/ensure-session-loaded-in! ctx session-id sid)
             _    (events/set-focus-session-id! state sid)
             sd   (ss/get-session-data-in ctx sid)
             msgs (:messages (agent/get-data-in (ss/agent-ctx-in ctx sid)))
@@ -67,8 +66,7 @@
       (when-not (.exists (io/file session-path))
         (throw (ex-info "session file not found"
                         {:error-code "request/not-found"})))
-      (let [current-sid session-id
-            sd          (session/resume-session-in! ctx current-sid session-path)
+      (let [sd          (session/resume-session-in! ctx session-id session-path)
             sid         (:session-id sd)
             _           (events/set-focus-session-id! state sid)
             msgs        (:messages (agent/get-data-in (ss/agent-ctx-in ctx sid)))
@@ -91,8 +89,7 @@
         _                 (when-not (and (string? entry-id) (not (str/blank? entry-id)))
                             (throw (ex-info "invalid request parameter :entry-id: non-empty entry id"
                                             {:error-code "request/invalid-params"})))
-        parent-session-id session-id
-        sd                (session/fork-session-in! ctx parent-session-id entry-id)
+        sd                (session/fork-session-in! ctx session-id entry-id)
         sid               (:session-id sd)
         _                 (events/set-focus-session-id! state sid)
         emit!             (emit/make-request-emitter (:emit-frame! request) state (:id request))]
