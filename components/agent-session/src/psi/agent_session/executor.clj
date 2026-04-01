@@ -259,13 +259,12 @@
     (update-content-block!
      turn-data idx
      (fn [current]
-       (-> current
-           (assoc :content-index idx
-                  :status :open
-                  :ended-at nil)
-           ((fn [block]
-              (cond-> block
-                (nil? (:started-at block)) (assoc :started-at ts)))))))))
+       (let [block (assoc current
+                          :content-index idx
+                          :status :open
+                          :ended-at nil)]
+         (cond-> block
+           (nil? (:started-at block)) (assoc :started-at ts)))))))
 
 (defn- note-content-delta!
   [turn-data idx kind]
@@ -273,15 +272,14 @@
     (update-content-block!
      turn-data idx
      (fn [current]
-       (-> current
-           (assoc :content-index idx
-                  :kind kind
-                  :status :open
-                  :last-delta-at ts)
-           (update :delta-count (fnil inc 0))
-           ((fn [block]
-              (cond-> block
-                (nil? (:started-at block)) (assoc :started-at ts)))))))))
+       (let [block (-> current
+                       (assoc :content-index idx
+                              :kind kind
+                              :status :open
+                              :last-delta-at ts)
+                       (update :delta-count (fnil inc 0)))]
+         (cond-> block
+           (nil? (:started-at block)) (assoc :started-at ts)))))))
 
 (defn- end-content-block!
   [turn-data idx]
