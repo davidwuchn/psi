@@ -59,8 +59,7 @@
   (let [agent-ctx*    (or agent-ctx (agent/create-context))
         sc-session-id (java.util.UUID/randomUUID)
         initial-sd    (merge (assoc (session-data/initial-session {})
-                                    :provider-error-replies []
-                                    :ephemeral-seed? true)
+                                    :provider-error-replies [])
                              (or session-data {}))
         sid           (:session-id initial-sd)
         base-state    {:agent-session {:sessions {sid {:data          initial-sd

@@ -163,17 +163,6 @@
                    :provider-replies []})
         (assoc-in [:agent-session :sessions sid :turn] {:ctx nil}))))
 
-(defn- prune-ephemeral-sessions
-  "Remove ephemeral seed sessions from the sessions map.
-   The initial seed created by create-context is transient and should not
-   persist in the multi-session registry once real sessions are registered."
-  [state]
-  (update-in state [:agent-session :sessions]
-             (fn [sessions]
-               (into {} (remove (fn [[_sid entry]]
-                                  (get-in entry [:data :ephemeral-seed?]))
-                                sessions)))))
-
 (defn- carry-runtime-handles
   "Copy :agent-ctx and :sc-session-id from source-session-id to new-session-id."
   [state source-session-id new-session-id]
@@ -204,10 +193,8 @@
                        :startup-bootstrap-started-at nil
                        :startup-bootstrap-completed-at nil
                        :startup-message-ids []
-                       :ephemeral-seed? false
                        :created-at (java.time.Instant/now))]
     (cond-> (-> state
-                prune-ephemeral-sessions
                 (assoc-in (session-data-path new-session-id) next-sd)
                 (assoc-in (session-journal-path new-session-id) [])
                 (assoc-in [:agent-session :sessions new-session-id :telemetry]
@@ -276,8 +263,6 @@
                             :model model
                             :thinking-level thinking-level)]
     (-> state
-        ;; keep already-loaded peer sessions; only drop ephemeral seeds
-        prune-ephemeral-sessions
         (assoc-in (session-journal-path session-id) (vec entries))
         (assoc-in (session-flush-state-path session-id) {:flushed? true
                                                          :session-file (io/file session-path)})
@@ -1027,8 +1012,7 @@
    (fn [ctx {:keys [session-id new-session-id worktree-path session-name spawn-mode session-file]}]
      (let [current-sd (or (session/get-session-data-in ctx session-id)
                           (assoc (session-data/initial-session (:session-defaults ctx))
-                                 :provider-error-replies []
-                                 :ephemeral-seed? false))
+                                 :provider-error-replies []))
            payload    {:new-session-id new-session-id
                        :worktree-path worktree-path
                        :session-name session-name
