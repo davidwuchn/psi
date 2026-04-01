@@ -995,9 +995,9 @@ Also tolerates cumulative snapshots that differ near previous tail
        :tool-executing call-id name
        :arguments (:arguments tool-call)
        :parsed-args args)))
-    (let [opts {:cwd          (or (:worktree-path (session/get-session-data-in ctx session-id))
-                                  (:cwd ctx))
-                :overrides    (:tool-output-overrides (session/get-session-data-in ctx session-id))
+    (let [sd   (session/get-session-data-in ctx session-id)
+          opts {:cwd          (or (:worktree-path sd) (:cwd ctx))
+                :overrides    (:tool-output-overrides sd)
                 :tool-call-id call-id
                 :on-update    (fn [{:keys [content details is-error]}]
                                 (let [content-blocks (normalize-tool-content content)
