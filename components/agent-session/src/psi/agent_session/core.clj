@@ -136,12 +136,12 @@
 (defn- create-context*
   "Internal: create a session context without an initial session.
    Returns ctx (not a vector). Used by create-context and tests."
-  [{:keys [initial-session compaction-fn branch-summary-fn agent-initial config cwd persist? event-queue oauth-ctx recursion-ctx nrepl-runtime-atom ui-type mutations]
+  [{:keys [session-defaults compaction-fn branch-summary-fn agent-initial config cwd persist? event-queue oauth-ctx recursion-ctx nrepl-runtime-atom ui-type mutations]
     :or   {persist? true mutations []}}]
   (let [sc-env            (sc/create-sc-env)
         resolved-cwd      (or cwd (System/getProperty "user.dir"))
-        initial-session*  (cond-> (or initial-session {})
-                            (not (contains? (or initial-session {}) :worktree-path))
+        resolved-defaults (cond-> (or session-defaults {})
+                            (not (contains? (or session-defaults {}) :worktree-path))
                             (assoc :worktree-path resolved-cwd)
                             (some? ui-type) (assoc :ui-type ui-type))
         ext-reg           (ext/create-registry)
@@ -160,7 +160,7 @@
         ctx0              {:sc-env                sc-env
                            :started-at            (java.time.Instant/now)
                            :state*                state*
-                           :session-defaults      initial-session*
+                           :session-defaults      resolved-defaults
                            :agent-initial         agent-initial
                            :nrepl-runtime-atom    nrepl-runtime-atom
                            :extension-registry    ext-reg
@@ -223,7 +223,7 @@
   through the normal new-session-in! lifecycle.
 
   Options (all optional):
-    :initial-session   — overrides merged into session defaults (model,
+    :session-defaults  — overrides merged into session defaults (model,
                           thinking-level, worktree-path, ui-type, etc.)
                           Stored as :session-defaults on ctx.
     :compaction-fn     — (fn [session-data preparation instructions]) → CompactionResult

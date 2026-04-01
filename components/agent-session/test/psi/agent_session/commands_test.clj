@@ -32,7 +32,7 @@
   ([] (make-test-ctx {}))
   ([opts]
    (session/create-context
-    {:initial-session (merge {:model {:provider "anthropic"
+    {:session-defaults (merge {:model {:provider "anthropic"
                                       :id       "test-model"
                                       :reasoning false}
                               :system-prompt "test prompt"}

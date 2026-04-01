@@ -459,7 +459,7 @@
                     :source :project
                     :file-path "/review.md"}]
         [ctx _] (session-core/create-context
-             {:initial-session {:prompt-templates templates}})]
+             {:session-defaults {:prompt-templates templates}})]
 
     (testing "query template count via EQL"
       (let [result (session-core/query-in ctx [:psi.prompt-template/count])]
@@ -490,7 +490,7 @@
                     :source :user
                     :file-path "/greet.md"}]
         [ctx _] (session-core/create-context
-             {:initial-session {:prompt-templates templates}})
+             {:session-defaults {:prompt-templates templates}})
         env (pci/register resolvers/all-resolvers)
         result (p.eql/process env
                               {:psi/agent-session-ctx ctx

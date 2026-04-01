@@ -146,7 +146,7 @@
    Returns [ctx session-id] — same shape as create-context but the session-id
    is a real session created via new-session-in!, not an ephemeral seed.
 
-   Accepts the same options as session/create-context. The :initial-session
+   Accepts the same options as session/create-context. The :session-defaults
    overrides flow through :session-defaults into the first real session."
   ([] (create-test-session {:persist? false}))
   ([opts]

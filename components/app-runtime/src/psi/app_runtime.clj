@@ -441,7 +441,7 @@ Available: " (str/join ", " (map name (keys models/all-models))))
         effective-prompt-mode    (config-res/resolved-prompt-mode cfg)
         nucleus-prelude-override (config-res/resolved-nucleus-prelude-override cfg)
         [ctx _]                (session/create-context
-                                  {:initial-session {:model {:provider  (name (:provider effective-model))
+                                  {:session-defaults {:model {:provider  (name (:provider effective-model))
                                                              :id        (:id effective-model)
                                                              :reasoning (:supports-reasoning effective-model)}
                                                      :thinking-level effective-thinking-level

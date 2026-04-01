@@ -109,7 +109,7 @@
 
 (deftest session-updated-payload-includes-model-metadata-test
   (testing "session payload includes model metadata for frontend header projection"
-    (let [[ctx _] (session/create-context {:initial-session {:session-id "sess-123"
+    (let [[ctx _] (session/create-context {:session-defaults {:session-id "sess-123"
                                                          :model {:provider "openai"
                                                                  :id "gpt-5.3-codex"
                                                                  :reasoning true}
@@ -1767,7 +1767,7 @@
                        :base-dir (.getParent skill-file)
                        :source :path
                        :disable-model-invocation false}
-          [ctx _]     (session/create-context {:initial-session {:skills [skill]}})
+          [ctx _]     (session/create-context {:session-defaults {:skills [skill]}})
           captured    (atom nil)
           state       (atom {:ready? true
                              :pending {}

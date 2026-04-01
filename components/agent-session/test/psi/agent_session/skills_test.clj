@@ -504,7 +504,7 @@
                      :source :project
                      :disable-model-invocation true}]
         [ctx _] (session-core/create-context
-                 {:initial-session {:skills all-skills}})]
+                 {:session-defaults {:skills all-skills}})]
 
     (testing "query skill count via EQL"
       (let [result (session-core/query-in ctx [:psi.skill/count])]
@@ -541,7 +541,7 @@
                      :source :user
                      :disable-model-invocation false}]
         [ctx _] (session-core/create-context
-                 {:initial-session {:skills all-skills}})
+                 {:session-defaults {:skills all-skills}})
         env     (pci/register resolvers/all-resolvers)
         result  (p.eql/process env
                                {:psi/agent-session-ctx ctx
@@ -568,7 +568,7 @@
 (deftest system-prompt-introspectable-test
   (testing "system prompt stored in session data is queryable"
     (let [[ctx _] (session-core/create-context
-                   {:initial-session {:system-prompt "Test system prompt with skills"}})
+                   {:session-defaults {:system-prompt "Test system prompt with skills"}})
           result  (session-core/query-in ctx [:psi.agent-session/system-prompt])]
       (is (= "Test system prompt with skills"
              (:psi.agent-session/system-prompt result))))))

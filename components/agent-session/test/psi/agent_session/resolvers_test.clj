@@ -356,7 +356,7 @@
 
   (testing ":psi.agent-session/cwd prefers session worktree-path"
     (let [[ctx _] (session/create-context {:cwd "/repo/main"
-                                           :initial-session {:worktree-path "/repo/feature-x"}
+                                           :session-defaults {:worktree-path "/repo/feature-x"}
                                            :persist? false})
           result (q-in ctx [:psi.agent-session/cwd])]
       (is (= "/repo/feature-x" (:psi.agent-session/cwd result))))))

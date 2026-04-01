@@ -133,7 +133,7 @@
 
   (testing "new-session-in! accepts explicit worktree-path and session-name and keeps prior context peer"
     (let [[ctx session-id]       (session/create-context {:cwd "/repo/main"
-                                                          :initial-session {:worktree-path "/repo/main"}})
+                                                          :session-defaults {:worktree-path "/repo/main"}})
           sd-1               (session/new-session-in! ctx nil {:session-name "main"
                                                                :worktree-path "/repo/main"})
           ctx-1              (retarget ctx sd-1)
@@ -187,7 +187,7 @@
 
   (testing "new-session-in! appends active model entry when model exists"
     (let [model              {:provider "anthropic" :id "claude-3-5-sonnet" :reasoning false}
-          [ctx session-id]      (session/create-context {:initial-session {:model model}})
+          [ctx session-id]      (session/create-context {:session-defaults {:model model}})
           sd                 (session/new-session-in! ctx nil {})
           session-id         (:session-id sd)
           ctx                (retarget ctx sd)]
@@ -263,7 +263,7 @@
 (deftest resume-session-model-fallback-test
   (testing "resume-session-in! keeps current model when resumed journal has no model entry"
     (let [initial-model {:provider "openai" :id "gpt-5.3-codex" :reasoning true}
-          [ctx session-id] (session/create-context {:initial-session {:model initial-model
+          [ctx session-id] (session/create-context {:session-defaults {:model initial-model
                                                                       :thinking-level :high}})
           f             (File/createTempFile "psi-resume-no-model" ".ndedn")
           entries       [(persist/thinking-level-entry :minimal)
@@ -287,7 +287,7 @@
 
   (testing "resume-session-in! restores persisted worktree-path and runtime prompt metadata from header"
     (let [[ctx session-id] (session/create-context {:cwd "/repo/main"
-                                                    :initial-session {:system-prompt "base prompt"
+                                                    :session-defaults {:system-prompt "base prompt"
                                                                       :model {:provider "openai"
                                                                               :id "gpt-5.3-codex"
                                                                               :reasoning true}}})
@@ -338,12 +338,12 @@
       (is (pos? (count (persist/all-entries-in ctx session-id))))))
 
   (testing "set-model-in! clamps thinking level for non-reasoning model"
-    (let [[ctx session-id] (session/create-context {:initial-session {:thinking-level :high}})]
+    (let [[ctx session-id] (session/create-context {:session-defaults {:thinking-level :high}})]
       (dispatch/dispatch! ctx :session/set-model {:session-id session-id :model {:provider "x" :id "y" :reasoning false}} {:origin :core})
       (is (= :off (:thinking-level (ss/get-session-data-in ctx session-id))))))
 
   (testing "set-model-in! preserves thinking level for reasoning model"
-    (let [[ctx session-id] (session/create-context {:initial-session {:thinking-level :high}})]
+    (let [[ctx session-id] (session/create-context {:session-defaults {:thinking-level :high}})]
       (dispatch/dispatch! ctx :session/set-model {:session-id session-id :model {:provider "x" :id "y" :reasoning true}} {:origin :core})
       (is (= :high (:thinking-level (ss/get-session-data-in ctx session-id)))))))
 
@@ -514,7 +514,7 @@
         (is (= "/repo/dispatch-new" (get-in entry [:event-data :worktree-path]))))))
 
   (testing "resume-session-in! loaded state is logged through dispatch"
-    (let [[ctx session-id] (session/create-context {:initial-session {:model {:provider "openai"
+    (let [[ctx session-id] (session/create-context {:session-defaults {:model {:provider "openai"
                                                                               :id "gpt-5.3-codex"
                                                                               :reasoning true}}
                                                     :persist? false})
@@ -676,13 +676,13 @@
         (is (= :high (get-in prefs [:agent-session :thinking-level]))))))
 
   (testing "cycle-thinking-level-in! advances level for reasoning model"
-    (let [[ctx session-id] (session/create-context {:initial-session {:thinking-level :off}})]
+    (let [[ctx session-id] (session/create-context {:session-defaults {:thinking-level :off}})]
       (dispatch/dispatch! ctx :session/set-model {:session-id session-id :model {:provider "x" :id "y" :reasoning true}} {:origin :core})
       (session/cycle-thinking-level-in! ctx session-id)
       (is (= :minimal (:thinking-level (ss/get-session-data-in ctx session-id))))))
 
   (testing "cycle-thinking-level-in! is no-op for non-reasoning model"
-    (let [[ctx session-id] (session/create-context {:initial-session {:thinking-level :off}})]
+    (let [[ctx session-id] (session/create-context {:session-defaults {:thinking-level :off}})]
       (dispatch/dispatch! ctx :session/set-model {:session-id session-id :model {:provider "x" :id "y" :reasoning false}} {:origin :core})
       (session/cycle-thinking-level-in! ctx session-id)
       (is (= :off (:thinking-level (ss/get-session-data-in ctx session-id)))))))
@@ -998,7 +998,7 @@
                 (:psi.graph/capabilities result)))))
 
   (testing "query-in resolves developer prompt"
-    (let [[ctx session-id] (session/create-context {:initial-session {:developer-prompt "dev layer"
+    (let [[ctx session-id] (session/create-context {:session-defaults {:developer-prompt "dev layer"
                                                                       :developer-prompt-source :explicit}})
           result (session/query-in ctx [:psi.agent-session/developer-prompt
                                         :psi.agent-session/developer-prompt-source
@@ -1135,13 +1135,13 @@
 
   (testing "effective-cwd-in prefers session worktree-path over context cwd"
     (let [[ctx session-id] (session/create-context {:cwd "/repo/main"
-                                                    :initial-session {:worktree-path "/repo/feature-x"}})]
+                                                    :session-defaults {:worktree-path "/repo/feature-x"}})]
       (is (= "/repo/feature-x" (ss/effective-cwd-in ctx session-id)))
       (dispatch/dispatch! ctx :session/set-worktree-path {:session-id session-id :worktree-path "/repo/feature-y"} {:origin :core})
       (is (= "/repo/feature-y" (ss/effective-cwd-in ctx session-id)))))
 
   (testing "query-in resolves effective reasoning effort for reasoning models"
-    (let [[ctx session-id] (session/create-context {:initial-session {:model {:provider "openai"
+    (let [[ctx session-id] (session/create-context {:session-defaults {:model {:provider "openai"
                                                                               :id "gpt-5.3-codex"
                                                                               :reasoning true}
                                                                       :thinking-level :high}})
@@ -1152,7 +1152,7 @@
 
 (deftest tool-output-eql-introspection-test
   (testing "query-in resolves tool-output policy defaults and overrides"
-    (let [[ctx session-id] (session/create-context {:initial-session
+    (let [[ctx session-id] (session/create-context {:session-defaults
                                                     {:tool-output-overrides
                                                      {"bash" {:max-lines 77 :max-bytes 2048}}}})
           result (session/query-in ctx [:psi.tool-output/default-max-lines
