@@ -135,7 +135,7 @@
           syms   (:psi.graph/resolver-syms result)]
       (is (set? syms))
       (is (every? symbol? syms))
-      (is (contains? syms 'psi.agent-session.resolvers/agent-session-identity)))))
+      (is (contains? syms 'psi.agent-session.resolvers.session/agent-session-identity)))))
 
 (deftest graph-bridge-mutation-syms-test
   (testing "mutation-syms is a set of symbols"

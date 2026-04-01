@@ -458,8 +458,9 @@
                     :content "Review the following: $@"
                     :source :project
                     :file-path "/review.md"}]
-        [ctx _] (session-core/create-context
-             {:session-defaults {:prompt-templates templates}})]
+        ctx     (session-core/create-context
+             {:session-defaults {:prompt-templates templates}})
+        _       (session-core/new-session-in! ctx nil {})]
 
     (testing "query template count via EQL"
       (let [result (session-core/query-in ctx [:psi.prompt-template/count])]
@@ -489,8 +490,9 @@
                     :content "Hello $1 and $2!"
                     :source :user
                     :file-path "/greet.md"}]
-        [ctx _] (session-core/create-context
+        ctx (session-core/create-context
              {:session-defaults {:prompt-templates templates}})
+        _   (session-core/new-session-in! ctx nil {})
         env (pci/register resolvers/all-resolvers)
         result (p.eql/process env
                               {:psi/agent-session-ctx ctx

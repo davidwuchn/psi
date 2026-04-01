@@ -75,9 +75,9 @@
             "AI resolver should appear in graph summary")
         (is (contains? r-syms 'psi.history.resolvers/git-repo-status)
             "History resolver should appear in graph summary")
-        (is (contains? r-syms 'psi.agent-session.resolvers/agent-session-identity)
+        (is (contains? r-syms 'psi.agent-session.resolvers.session/agent-session-identity)
             "identity resolver should appear in graph summary")
-        (is (contains? r-syms 'psi.agent-session.resolvers/agent-session-phase)
+        (is (contains? r-syms 'psi.agent-session.resolvers.session/agent-session-phase)
             "phase resolver should appear in graph summary")
         (is (contains? r-syms 'psi.history.resolvers/git-worktree-list)
             "history worktree resolver should appear in graph summary")
@@ -101,7 +101,7 @@
       (introspection/register-resolvers-in! ctx)
       (let [result (introspection/query-graph-summary-in ctx)
             syms   (:psi.graph/resolver-syms result)]
-        (is (not (contains? syms 'psi.agent-session.resolvers/agent-session-identity))
+        (is (not (contains? syms 'psi.agent-session.resolvers.session/agent-session-identity))
             "identity resolver should NOT appear when no session ctx provided")))))
 
 ;; ─────────────────────────────────────────────────────────────────────────────

@@ -226,7 +226,9 @@
         ;; Create a file with a very long first line
         (let [long-line (apply str (repeat 30000 "x"))
               _ (create-text-file dir "longline.txt" long-line)
-              result (tools/execute-read {"path" "longline.txt"} {:cwd dir})]
+              result (tools/execute-read {"path" "longline.txt"}
+                                         {:cwd dir
+                                          :overrides {"read" {:max-bytes 1024}}})]
           (is (false? (:is-error result)))
           (is (true? (get-in result [:details :truncation :first-line-exceeds-limit])))
           (is (str/includes? (:content result) "Use bash for a bounded slice")))))))

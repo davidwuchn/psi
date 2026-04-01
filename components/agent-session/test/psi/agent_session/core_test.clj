@@ -1583,10 +1583,10 @@
                                              :error-message "Error (status 400) [request-id req_lookup]"
                                              :http-status 400}})
 
-        (let [req ((resolve 'psi.agent-session.resolvers/provider-request-by-turn-id)
+        (let [req ((resolve 'psi.agent-session.resolvers.telemetry/provider-request-by-turn-id)
                    {:psi.agent-session/lookup-turn-id "turn-ant-lookup"
                     :psi/agent-session-ctx ctx})
-              reply ((resolve 'psi.agent-session.resolvers/provider-reply-by-turn-id)
+              reply ((resolve 'psi.agent-session.resolvers.telemetry/provider-reply-by-turn-id)
                      {:psi.agent-session/lookup-turn-id "turn-ant-lookup"
                       :psi/agent-session-ctx ctx})]
           (is (= :anthropic
@@ -1831,9 +1831,9 @@
       (session/register-resolvers-in! qctx)
       ;; Agent-session resolvers should now be in the isolated graph
       (let [syms (query/resolver-syms-in qctx)]
-        (is (contains? syms 'psi.agent-session.resolvers/agent-session-identity)
+        (is (contains? syms 'psi.agent-session.resolvers.session/agent-session-identity)
             "identity resolver should be registered")
-        (is (contains? syms 'psi.agent-session.resolvers/agent-session-phase)
+        (is (contains? syms 'psi.agent-session.resolvers.session/agent-session-phase)
             "phase resolver should be registered"))))
 
   (testing "register-resolvers-in! enables EQL queries via the isolated ctx"
