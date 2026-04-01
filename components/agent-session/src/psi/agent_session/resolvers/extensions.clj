@@ -11,16 +11,7 @@
 
 ;; ── Projection helpers ──────────────────────────────────
 
-(defn- contribution->attrs
-  [c]
-  {:psi.extension.prompt-contribution/id         (:id c)
-   :psi.extension.prompt-contribution/ext-path   (:ext-path c)
-   :psi.extension.prompt-contribution/section    (:section c)
-   :psi.extension.prompt-contribution/content    (:content c)
-   :psi.extension.prompt-contribution/priority   (:priority c)
-   :psi.extension.prompt-contribution/enabled    (:enabled c)
-   :psi.extension.prompt-contribution/created-at (:created-at c)
-   :psi.extension.prompt-contribution/updated-at (:updated-at c)})
+
 
 (def ^:private workflow-event-output
   [:psi.extension.workflow.event/name
@@ -189,7 +180,7 @@
                                  [(or priority 1000)
                                   (or ext-path "")
                                   (or id "")]))
-                      (mapv contribution->attrs))]
+                      (mapv support/contribution->attrs))]
     {:psi.extension/prompt-contributions contribs
      :psi.extension/prompt-contribution-count (count contribs)}))
 

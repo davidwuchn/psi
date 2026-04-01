@@ -90,17 +90,6 @@
      :psi.agent-session/prompt-mode    (:prompt-mode sd)
      :psi.agent-session/ui-type        (:ui-type sd)}))
 
-(defn- contribution->attrs
-  [c]
-  {:psi.extension.prompt-contribution/id         (:id c)
-   :psi.extension.prompt-contribution/ext-path   (:ext-path c)
-   :psi.extension.prompt-contribution/section    (:section c)
-   :psi.extension.prompt-contribution/content    (:content c)
-   :psi.extension.prompt-contribution/priority   (:priority c)
-   :psi.extension.prompt-contribution/enabled    (:enabled c)
-   :psi.extension.prompt-contribution/created-at (:created-at c)
-   :psi.extension.prompt-contribution/updated-at (:updated-at c)})
-
 ;; ── Queues and message counts ───────────────────────────
 
 (pco/defresolver agent-session-queues
@@ -131,8 +120,8 @@
                                                  :system-prompt sys
                                                  :developer-prompt dev
                                                  :developer-prompt-source dev-source
-                                                 :prompt-contributions (mapv contribution->attrs contribs)}
-     :psi.agent-session/prompt-contributions    (mapv contribution->attrs contribs)
+                                                 :prompt-contributions (mapv support/contribution->attrs contribs)}
+     :psi.agent-session/prompt-contributions    (mapv support/contribution->attrs contribs)
      :psi.agent-session/pending-message-count   (session/pending-message-count sd)
      :psi.agent-session/has-pending-messages    (session/has-pending-messages? sd)
      :psi.agent-session/steering-messages       (:steering-messages sd)
