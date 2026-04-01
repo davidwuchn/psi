@@ -434,9 +434,10 @@ Also tolerates cumulative snapshots that differ near previous tail
         (note-last-provider-event! td :start data)
 
         :on-text-start
-        (do
+        (let [idx (or (:content-index data) 0)]
           (note-last-provider-event! td :text-start data)
-          (begin-content-block! td (or (:content-index data) 0)))
+          (begin-content-block! td idx)
+          (update-content-block! td idx #(assoc % :kind :text)))
 
         :on-text-delta
         (let [idx    (or (:content-index data) 0)
