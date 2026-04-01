@@ -452,6 +452,7 @@
 
 (deftest startup-bootstrap-dispatch-test
   (let [[ctx _]            (session/create-context {:persist? false})
+        _                  (dispatch/clear-event-log!)
         sd                 (session/new-session-in! ctx nil {})
         session-id         (:session-id sd)
         started-at         (java.time.Instant/now)

@@ -35,7 +35,7 @@
           result (#'psi.agent-session.executor/run-tool-call! ctx session-id tc nil)
           truncation (get-in result [:details :truncation])
           full-path  (get-in result [:details :full-output-path])
-          eql-result (session/query-in ctx
+          eql-result (session/query-in ctx session-id
                                        [{:psi.tool-output/calls
                                          [:psi.tool-output.call/tool-name
                                           :psi.tool-output.call/limit-hit?
@@ -69,7 +69,7 @@
                :arguments (json/generate-string
                            {"filePath" (.getAbsolutePath f)})}
           _   (#'psi.agent-session.executor/run-tool-call! ctx session-id tc nil)
-          eql-result (session/query-in ctx
+          eql-result (session/query-in ctx session-id
                                        [{:psi.tool-output/calls
                                          [:psi.tool-output.call/tool-name
                                           :psi.tool-output.call/limit-hit?
@@ -92,7 +92,7 @@
       (#'psi.agent-session.executor/run-tool-call! ctx session-id {:id "b1" :name "bash" :arguments bash-args} nil)
       (#'psi.agent-session.executor/run-tool-call! ctx session-id {:id "r1" :name "read" :arguments read-args} nil)
       (#'psi.agent-session.executor/run-tool-call! ctx session-id {:id "b2" :name "bash" :arguments bash-args} nil)
-      (let [eql-result (session/query-in ctx
+      (let [eql-result (session/query-in ctx session-id
                                          [{:psi.tool-output/calls
                                            [:psi.tool-output.call/tool-name
                                             :psi.tool-output.call/context-bytes-added
