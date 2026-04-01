@@ -11,11 +11,14 @@
    [psi.ai.providers.anthropic :as anthropic]
    [psi.agent-core.core :as agent]
    [psi.agent-session.dispatch :as dispatch]
+   [psi.agent-session.conversation :as conv-translate]
    [psi.agent-session.executor :as executor]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.test-support :as test-support]
+   [psi.agent-session.tool-execution :as tool-exec]
    [psi.agent-session.tool-plan :as tool-plan]
+   [psi.agent-session.turn-accumulator :as accum]
    [psi.agent-session.turn-statechart :as turn-sc])
   (:import
    [java.util.concurrent LinkedBlockingQueue TimeUnit]))
@@ -335,7 +338,7 @@
       (let [messages        (journal-messages session-ctx session-ctx-id)
             assistant       (last messages)
             anthropic-model (models/get-model :sonnet-4.6)
-            conv            (#'executor/agent-messages->ai-conversation
+            conv            (#'conv-translate/agent-messages->ai-conversation
                              "sys" messages [] {:cache-breakpoints #{:system}})
             body            (json/parse-string
                              (:body (#'anthropic/build-request conv anthropic-model {:api-key "test-key"
@@ -374,7 +377,7 @@
         (ss/journal-append-in! session-ctx session-ctx-id (persist/message-entry user-msg))
         (let [result (#'executor/stream-turn! nil session-ctx session-ctx-id agent-ctx anthropic-model nil nil)
               msgs   (journal-messages session-ctx session-ctx-id)
-              conv   (#'executor/agent-messages->ai-conversation
+              conv   (#'conv-translate/agent-messages->ai-conversation
                       "sys" msgs [] {:cache-breakpoints #{:system}})
               body   (json/parse-string
                       (:body (#'anthropic/build-request conv (models/get-model :sonnet-4.6)
@@ -530,7 +533,7 @@
            {:role "assistant" :content [{:type :text :text "PSL sync start."}]
             :custom-type "plan-state-learning"}
            {:role "user"    :content [{:type :text :text "PSL follow-up"}]}]
-          conv (#'psi.agent-session.executor/agent-messages->ai-conversation
+          conv (#'psi.agent-session.conversation/agent-messages->ai-conversation
                 "sys" messages [] {})
           roles (mapv :role (:messages conv))]
       (is (= [:user :assistant :user] roles)
@@ -543,7 +546,7 @@
           [{:role "user"      :content [{:type :text :text "q"}]}
            {:role "assistant" :content [{:type :text :text ""}]}
            {:role "user"      :content [{:type :text :text "q2"}]}]
-          conv (#'psi.agent-session.executor/agent-messages->ai-conversation
+          conv (#'psi.agent-session.conversation/agent-messages->ai-conversation
                 "sys" messages [] {})
           roles (mapv :role (:messages conv))]
       (is (= [:user :user] roles)
@@ -554,7 +557,7 @@
           [{:role "user"      :content [{:type :text :text "q"}]}
            {:role "assistant" :content [{:type :text :text "a"}]}
            {:role "user"      :content [{:type :text :text "q2"}]}]
-          conv (#'psi.agent-session.executor/agent-messages->ai-conversation
+          conv (#'psi.agent-session.conversation/agent-messages->ai-conversation
                 "sys" messages [] {})
           roles (mapv :role (:messages conv))]
       (is (= [:user :assistant :user] roles))))
@@ -564,7 +567,7 @@
           [{:role "user" :content [{:type :text :text "u1"}]}
            {:role "user" :content [{:type :text :text "u2"}]}
            {:role "assistant" :content [{:type :text :text "a"}]}]
-          conv (#'psi.agent-session.executor/agent-messages->ai-conversation
+          conv (#'psi.agent-session.conversation/agent-messages->ai-conversation
                 "sys" messages [] {})]
       (is (= [:user :user :assistant]
              (mapv :role (:messages conv))))
@@ -580,7 +583,7 @@
   (testing "cache-breakpoints-are-projected-into-ai-conversation"
     (testing "marks system prompt as single cached block and tools"
       (let [prompt "stable prompt with frozen time"
-            conv   (#'executor/agent-messages->ai-conversation
+            conv   (#'conv-translate/agent-messages->ai-conversation
                     prompt [] [{:name "read" :description "Read" :parameters "{:type \"object\"}"}]
                     {:cache-breakpoints #{:system :tools}})]
         (is (= [{:kind :text :text prompt :cache-control {:type :ephemeral}}]
@@ -596,7 +599,7 @@
                       {:role "user" :content [{:type :text :text "u3"}]}
                       {:role "assistant" :content [{:type :text :text "a3"}]}
                       {:role "user" :content [{:type :text :text "u4"}]}]
-            conv     (#'executor/agent-messages->ai-conversation
+            conv     (#'conv-translate/agent-messages->ai-conversation
                       "prompt" messages [] {:cache-breakpoints #{:system}})]
         (is (nil? (:cache-control (:content (nth (:messages conv) 0))))
             "u1 should not have breakpoint")
@@ -616,7 +619,7 @@
                       {:role "user" :content [{:type :text :text "u2"}]}
                       {:role "assistant" :content [{:type :text :text "a2"}]}
                       {:role "user" :content [{:type :text :text "u3"}]}]
-            conv     (#'executor/agent-messages->ai-conversation
+            conv     (#'conv-translate/agent-messages->ai-conversation
                       "prompt" messages [] {:cache-breakpoints #{:system :tools}})]
         (is (nil? (:cache-control (:content (nth (:messages conv) 0))))
             "u1 should not have breakpoint")
@@ -629,7 +632,7 @@
 
     (testing "marks all user messages when fewer than available slots"
       (let [messages [{:role "user" :content [{:type :text :text "u1"}]}]
-            conv     (#'executor/agent-messages->ai-conversation
+            conv     (#'conv-translate/agent-messages->ai-conversation
                       "prompt" messages [] {:cache-breakpoints #{:system}})]
         (is (= {:type :ephemeral}
                (:cache-control (:content (first (:messages conv))))))))
@@ -639,7 +642,7 @@
                                     [{:role "user" :content [{:type :text :text (str "u" i)}]}
                                      {:role "assistant" :content [{:type :text :text (str "a" i)}]}])
                                   (range 1 6)))
-            conv     (#'executor/agent-messages->ai-conversation
+            conv     (#'conv-translate/agent-messages->ai-conversation
                       "prompt" messages [] {:cache-breakpoints #{}})
             user-msgs (filterv #(= :user (:role %)) (:messages conv))
             cached    (filterv #(some? (:cache-control (:content %))) user-msgs)]
@@ -811,7 +814,7 @@
                   :result-text "ok"
                   :details {:phase :done}
                   :is-error false}]
-      (#'executor/emit-progress! q event)
+      (#'accum/emit-progress! q event)
       (let [projected (.poll q 5 TimeUnit/MILLISECONDS)]
         (is (= :agent-event (:type projected)))
         (is (= event (dissoc projected :type)))))))
@@ -878,7 +881,7 @@
                       {:content [{:type :text :text "hello"}]
                        :is-error false
                        :details {:truncation {:truncated false}}})]
-        (let [result (#'executor/execute-tool-call! session-ctx session-ctx-id tc q)]
+        (let [result (#'tool-exec/execute-tool-call! session-ctx session-ctx-id tc q)]
           (is (= tc (:tool-call result)))
           (is (= "call-x" (get-in result [:result-message :tool-call-id])))
           (is (= [{:type :text :text "hello"}] (get-in result [:result-message :content])))
@@ -927,7 +930,7 @@
                        :effective-policy {:max-lines 10 :max-bytes 20}}]
       (with-redefs [agent/emit-tool-end-in! (fn [_ _ _ _] nil)
                     agent/record-tool-result-in! (fn [_ msg] (reset! recorded msg) nil)]
-        (let [result (#'executor/record-tool-call-result! session-ctx session-ctx-id shaped q)
+        (let [result (#'tool-exec/record-tool-call-result! session-ctx session-ctx-id shaped q)
               stats  (ss/get-state-value-in session-ctx (ss/state-path :tool-output-stats session-ctx-id))]
           (is (= "call-y" (:tool-call-id result)))
           (is (= "call-y" (:tool-call-id @recorded)))
