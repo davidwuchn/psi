@@ -405,9 +405,10 @@
             cwd (System/getProperty "user.dir")]
         (try
           (is (pos-int? (:port srv)))
-          (let [[ctx _] (session/create-context-with-session {:persist? false
-                                                 :cwd cwd
-                                                 :nrepl-runtime-atom app-runtime/nrepl-runtime})
+          (let [ctx    (session/create-context {:persist? false
+                                                :cwd cwd
+                                                :nrepl-runtime-atom app-runtime/nrepl-runtime})
+                _      (session/new-session-in! ctx nil {})
                 result (session/query-in ctx [:psi.runtime/nrepl-host
                                               :psi.runtime/nrepl-port
                                               :psi.runtime/nrepl-endpoint])
@@ -420,9 +421,10 @@
             (is (= expected-endpoint (:psi.runtime/nrepl-endpoint result))))
           (finally
             (#'app-runtime/stop-nrepl! srv))))
-      (let [[ctx-after-stop _] (session/create-context-with-session {:persist? false
-                                                        :cwd (System/getProperty "user.dir")
-                                                        :nrepl-runtime-atom app-runtime/nrepl-runtime})
+      (let [ctx-after-stop    (session/create-context {:persist? false
+                                                       :cwd (System/getProperty "user.dir")
+                                                       :nrepl-runtime-atom app-runtime/nrepl-runtime})
+            _                 (session/new-session-in! ctx-after-stop nil {})
             result-after-stop (session/query-in ctx-after-stop
                                                 [:psi.runtime/nrepl-host
                                                  :psi.runtime/nrepl-port
