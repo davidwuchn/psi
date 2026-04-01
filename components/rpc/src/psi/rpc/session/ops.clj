@@ -207,7 +207,9 @@
                                             {:error-code "request/invalid-params"})))
         topics*           (->> topics (filter #(contains? events/event-topics %)) set)
         ui-topic-request? (some events/extension-ui-topic? topics*)
-        sid               session-id]
+        sid               (or session-id
+                              (rpc.state/focus-session-id state)
+                              (some-> (ss/list-context-sessions-in ctx) first :session-id))]
     (rpc.state/subscribe-topics! state topics*)
     (when (or (empty? (rpc.state/subscribed-topics state))
               (contains? (rpc.state/subscribed-topics state) "assistant/message"))
