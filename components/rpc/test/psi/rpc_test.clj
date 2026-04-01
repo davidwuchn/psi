@@ -52,6 +52,14 @@
   [ctx]
   (ss/atom-view-in ctx (ss/state-path :ui-state)))
 
+(defn- create-session-context
+  ([]
+   (create-session-context {}))
+  ([opts]
+   (let [ctx (session/create-context opts)
+         sd  (session/new-session-in! ctx nil {})]
+     [ctx (:session-id sd)])))
+
 (defn- make-handler
   [ctx state]
   (rpc/make-session-request-handler
@@ -72,7 +80,7 @@
   (testing "footer payload mirrors default footer path/stats/status composition"
     (let [home    (System/getProperty "user.home")
           cwd     (str home "/projects/hugoduncan/psi/psi-main")
-          [ctx _] (session/create-context-with-session {:cwd cwd})
+          [ctx _] (create-session-context {:cwd cwd})
           payload (with-redefs [session/query-in
                                 (fn [_ctx q]
                                   (is (= @#'rpc.events/footer-query q))
@@ -109,7 +117,7 @@
 
 (deftest session-updated-payload-includes-model-metadata-test
   (testing "session payload includes model metadata for frontend header projection"
-    (let [[ctx _] (session/create-context-with-session {:session-defaults {:session-id "sess-123"
+    (let [[ctx _] (create-session-context {:session-defaults {:session-id "sess-123"
                                                          :model {:provider "openai"
                                                                  :id "gpt-5.3-codex"
                                                                  :reasoning true}
@@ -276,7 +284,7 @@
 
 (deftest session-request-handler-query-eql-and-op-mapping-test
   (testing "query_eql routes to session/query-in and returns canonical result envelope"
-    (let [[ctx _] (session/create-context-with-session)
+    (let [[ctx _] (create-session-context)
           state   (atom {:ready? true :pending {}})
           handler (make-handler ctx state)
           {:keys [out-lines]}
@@ -292,7 +300,7 @@
       (is (contains? (get-in frame [:data :result]) :psi.memory/status))))
 
   (testing "query_eql invalid query EDN returns request/invalid-query"
-    (let [[ctx _] (session/create-context-with-session)
+    (let [[ctx _] (create-session-context)
           state   (atom {:ready? true :pending {}})
           handler (make-handler ctx state)
           {:keys [out-lines]}
@@ -305,7 +313,7 @@
       (is (= "request/invalid-query" (:error-code frame)))))
 
   (testing "query_eql non-vector query returns request/invalid-query"
-    (let [[ctx _] (session/create-context-with-session)
+    (let [[ctx _] (create-session-context)
           state   (atom {:ready? true :pending {}})
           handler (make-handler ctx state)
           {:keys [out-lines]}
@@ -317,7 +325,7 @@
       (is (= "request/invalid-query" (:error-code frame)))))
 
   (testing "unknown op returns request/op-not-supported with supported ops"
-    (let [[ctx _] (session/create-context-with-session)
+    (let [[ctx _] (create-session-context)
           state   (atom {:ready? true :pending {}})
           handler (make-handler ctx state)
           {:keys [out-lines]}
@@ -337,7 +345,7 @@
       (is (some #(= "cancel_background_job" %) supported))))
 
   (testing "subscribe/unsubscribe update shared state and return subscribed topics"
-    (let [[ctx _] (session/create-context-with-session)
+    (let [[ctx _] (create-session-context)
           state   (atom {:ready? true :pending {} :subscribed-topics #{}})
           handler (make-handler ctx state)
           {:keys [out-lines state]}
@@ -353,7 +361,7 @@
       (is (= #{"assistant/delta"} (:subscribed-topics state)))))
 
   (testing "background job list/inspect/cancel ops route through session job store"
-    (let [[ctx thread-id] (session/create-context-with-session)
+    (let [[ctx thread-id] (create-session-context)
           _         (dispatch/dispatch! ctx :session/update-background-jobs-state
                                         {:update-fn (fn [store]
                                                       (:state (bg-jobs/start-background-job
@@ -393,7 +401,7 @@
 
 (deftest rpc-subscribe-ui-topics-emits-initial-widget-snapshot-test
   (testing "subscribe ui/widgets-updated emits current widget projection immediately"
-    (let [[ctx _] (session/create-context-with-session)
+    (let [[ctx _] (create-session-context)
           ui      (ui-view ctx)
           _       (ui-state/set-widget! ui "ext.demo" "w-1" :above-editor ["hello widget"])
           state   (atom {:ready? true :pending {} :subscribed-topics #{}})
@@ -414,7 +422,7 @@
 
 (deftest rpc-ui-watch-loop-streams-widget-updates-without-prompt-test
   (testing "after subscribe, ui widget updates stream without a prompt request"
-    (let [[ctx _]     (session/create-context-with-session)
+    (let [[ctx _]     (create-session-context)
           state       (atom {:ready? true :pending {} :subscribed-topics #{}})
           handler (make-handler ctx state)
           in-reader   (java.io.PipedReader.)
@@ -460,7 +468,7 @@
 (deftest rpc-external-message-event-streams-without-prompt-test
   (testing "after subscribe, external-message queue events emit assistant/message"
     (let [event-queue (java.util.concurrent.LinkedBlockingQueue.)
-          [ctx _]     (session/create-context-with-session {:event-queue event-queue})
+          [ctx _]     (create-session-context {:event-queue event-queue})
           state       (atom {:ready? true :pending {} :subscribed-topics #{}})
           handler (make-handler ctx state)
           in-reader   (java.io.PipedReader.)
@@ -519,7 +527,7 @@
 
 (deftest session-request-handler-prompt-while-streaming-op-test
   (testing "behavior steer routes to session/steer-in!"
-    (let [[ctx _]  (session/create-context-with-session)
+    (let [[ctx _]  (create-session-context)
           state    (atom {:ready? true :pending {}})
           handler (make-handler ctx state)
           steers   (atom [])
@@ -543,7 +551,7 @@
           (is (empty? @follows))))))
 
   (testing "behavior queue routes to session/follow-up-in!"
-    (let [[ctx _]  (session/create-context-with-session)
+    (let [[ctx _]  (create-session-context)
           state    (atom {:ready? true :pending {}})
           handler (make-handler ctx state)
           steers   (atom [])
@@ -567,7 +575,7 @@
           (is (= ["next"] @follows))))))
 
   (testing "missing behavior defaults to steer"
-    (let [[ctx _]  (session/create-context-with-session)
+    (let [[ctx _]  (create-session-context)
           state    (atom {:ready? true :pending {}})
           handler (make-handler ctx state)
           steers   (atom [])
@@ -590,7 +598,7 @@
           (is (empty? @follows))))))
 
   (testing "invalid behavior returns request/invalid-params"
-    (let [[ctx _] (session/create-context-with-session)
+    (let [[ctx _] (create-session-context)
           state   (atom {:ready? true :pending {}})
           handler (make-handler ctx state)
           {:keys [out-lines]}
@@ -605,7 +613,7 @@
 (deftest rpc-login-ops-test
   (testing "login_begin/login_complete use shared oauth context and persist credentials"
     (let [oauth-ctx (oauth/create-null-context)
-          [ctx _]  (session/create-context-with-session {:oauth-ctx oauth-ctx})
+          [ctx _]  (create-session-context {:oauth-ctx oauth-ctx})
           state    (atom {:ready? true
                           :pending {}
                           :rpc-ai-model {:provider :anthropic :id "stub" :supports-reasoning true}})
@@ -635,7 +643,7 @@
         (is (instance? java.time.Instant (:last-login-at oauth-state))))))
 
   (testing "login_begin supports explicit provider override"
-    (let [[ctx _] (session/create-context-with-session {:oauth-ctx (oauth/create-null-context)})
+    (let [[ctx _] (create-session-context {:oauth-ctx (oauth/create-null-context)})
           state   (atom {:ready? true
                          :pending {}
                          :rpc-ai-model {:provider :anthropic :id "stub" :supports-reasoning true}})
@@ -651,7 +659,7 @@
       (is (= :openai (get-in (sa/oauth-projection-in ctx) [:pending-login :provider-id])))))
 
   (testing "login_complete without pending login returns deterministic error"
-    (let [[ctx _] (session/create-context-with-session {:oauth-ctx (oauth/create-null-context)})
+    (let [[ctx _] (create-session-context {:oauth-ctx (oauth/create-null-context)})
           state   (atom {:ready? true :pending {}})
           handler (make-handler ctx state)
           {:keys [out-lines]}
@@ -664,7 +672,7 @@
       (is (= "request/no-pending-login" (:error-code frame)))))
 
   (testing "login_begin validates provider param type"
-    (let [[ctx _] (session/create-context-with-session {:oauth-ctx (oauth/create-null-context)})
+    (let [[ctx _] (create-session-context {:oauth-ctx (oauth/create-null-context)})
           state   (atom {:ready? true
                          :pending {}
                          :rpc-ai-model {:provider :anthropic :id "stub" :supports-reasoning true}})
@@ -679,7 +687,7 @@
       (is (= "request/invalid-params" (:error-code frame)))))
 
   (testing "login_begin requires provider when no session/rpc model is configured"
-    (let [[ctx _] (session/create-context-with-session {:oauth-ctx (oauth/create-null-context)})
+    (let [[ctx _] (create-session-context {:oauth-ctx (oauth/create-null-context)})
           state   (atom {:ready? true :pending {}})
           handler (make-handler ctx state)
           {:keys [out-lines]}
@@ -693,7 +701,7 @@
 
 (deftest rpc-handshake-server-info-test
   (testing "handshake emits server-info with protocol/session metadata"
-    (let [[ctx sid] (session/create-context-with-session)
+    (let [[ctx sid] (create-session-context)
           out     (java.io.StringWriter.)
           err     (java.io.StringWriter.)
           state   (atom {:focus-session-id sid
@@ -722,7 +730,7 @@
       (is (= ["eql-graph" "eql-memory"] (:features info)))))
 
   (testing "handshake includes runtime ui-type when provided by bootstrap/runtime state"
-    (let [[ctx sid] (session/create-context-with-session)
+    (let [[ctx sid] (create-session-context)
           out     (java.io.StringWriter.)
           err     (java.io.StringWriter.)
           state   (atom {:focus-session-id sid
@@ -748,7 +756,7 @@
 
 (deftest rpc-dialog-response-ops-test
   (testing "resolve_dialog succeeds with active dialog and matching id"
-    (let [[ctx _] (session/create-context-with-session)
+    (let [[ctx _] (create-session-context)
           ui      (ui-view ctx)
           _       (ui-state/enqueue-dialog! ui {:id "d1" :kind :confirm :title "Confirm" :promise (promise)})
           state   (atom {:ready? true :pending {}})
@@ -765,7 +773,7 @@
       (is (nil? (ui-state/active-dialog ui)))))
 
   (testing "cancel_dialog succeeds with active dialog and matching id"
-    (let [[ctx _] (session/create-context-with-session)
+    (let [[ctx _] (create-session-context)
           ui      (ui-view ctx)
           _       (ui-state/enqueue-dialog! ui {:id "d2" :kind :input :title "Input" :promise (promise)})
           state   (atom {:ready? true :pending {}})
@@ -782,7 +790,7 @@
       (is (nil? (ui-state/active-dialog ui)))))
 
   (testing "resolve_dialog invalid params are deterministic"
-    (let [[ctx _] (session/create-context-with-session)
+    (let [[ctx _] (create-session-context)
           state   (atom {:ready? true :pending {}})
           handler (make-handler ctx state)
           {:keys [out-lines]}
@@ -795,7 +803,7 @@
       (is (= "request/invalid-params" (:error-code frame)))))
 
   (testing "resolve_dialog no active dialog returns deterministic error"
-    (let [[ctx _] (session/create-context-with-session)
+    (let [[ctx _] (create-session-context)
           state   (atom {:ready? true :pending {}})
           handler (make-handler ctx state)
           {:keys [out-lines]}
@@ -808,7 +816,7 @@
       (is (= "request/no-active-dialog" (:error-code frame)))))
 
   (testing "cancel_dialog no active dialog returns deterministic error"
-    (let [[ctx _] (session/create-context-with-session)
+    (let [[ctx _] (create-session-context)
           state   (atom {:ready? true :pending {}})
           handler (make-handler ctx state)
           {:keys [out-lines]}
@@ -821,7 +829,7 @@
       (is (= "request/no-active-dialog" (:error-code frame)))))
 
   (testing "dialog-id mismatch returns deterministic error"
-    (let [[ctx _] (session/create-context-with-session)
+    (let [[ctx _] (create-session-context)
           ui      (ui-view ctx)
           _       (ui-state/enqueue-dialog! ui {:id "d-real" :kind :confirm :title "Confirm" :promise (promise)})
           state   (atom {:ready? true :pending {}})
@@ -837,7 +845,7 @@
 
 (deftest rpc-prompt-streams-events-and-interleaves-test
   (testing "prompt emits canonical events that interleave with accepted response"
-    (let [[ctx _] (session/create-context-with-session)
+    (let [[ctx _] (create-session-context)
           _   (ui-state/set-status! (ui-view ctx) "ext.demo" "ready")
           state (atom {:ready? true
                        :pending {}
@@ -893,7 +901,7 @@
 
 (deftest rpc-thinking-delta-after-tool-start-begins-fresh-segment-test
   (testing "post-tool thinking delta can start a fresh cumulative segment"
-    (let [[ctx _] (session/create-context-with-session)
+    (let [[ctx _] (create-session-context)
           state (atom {:ready? true
                        :pending {}
                        :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
@@ -935,7 +943,7 @@
 
 (deftest rpc-openai-codex-prompt-emits-tool-events-with-final-args-test
   (testing "openai codex tool args from response.output_item.done flow through RPC tool events"
-    (let [[ctx session-id]   (session/create-context-with-session)
+    (let [[ctx session-id]   (create-session-context)
           _         (dispatch/dispatch! ctx :session/set-active-tools {:session-id session-id :tool-maps [tools/bash-tool]} {:origin :core})
           state     (atom {:ready? true
                            :pending {}
@@ -1024,7 +1032,7 @@
 
 (deftest rpc-openai-chat-completions-tool-id-late-still-executes-test
   (testing "openai chat completions executes tool calls when streamed id arrives late"
-    (let [[ctx session-id]   (session/create-context-with-session)
+    (let [[ctx session-id]   (create-session-context)
           _         (dispatch/dispatch! ctx :session/set-active-tools {:session-id session-id :tool-maps [tools/bash-tool]} {:origin :core})
           state     (atom {:ready? true
                            :pending {}
@@ -1100,7 +1108,7 @@
 
 (deftest rpc-openai-chat-completions-cumulative-args-executes-once-test
   (testing "openai chat completions cumulative tool args execute with full parsed payload"
-    (let [[ctx session-id]   (session/create-context-with-session)
+    (let [[ctx session-id]   (create-session-context)
           _         (dispatch/dispatch! ctx :session/set-active-tools {:session-id session-id :tool-maps [tools/bash-tool]} {:origin :core})
           state     (atom {:ready? true
                            :pending {}
@@ -1158,7 +1166,7 @@
 
 (deftest rpc-session-resume-and-rehydrate-events-test
   (testing "new_session emits session/resumed and session/rehydrated canonical events"
-    (let [[ctx _] (session/create-context-with-session)
+    (let [[ctx _] (create-session-context)
           state (atom {:ready? true
                        :pending {}
                        :subscribed-topics #{"session/resumed" "session/rehydrated"}})
@@ -1175,7 +1183,7 @@
       (is (some #(contains? (:data %) :messages) events))))
 
   (testing "command /new emits session/resumed and session/rehydrated canonical events"
-    (let [[ctx _] (session/create-context-with-session)
+    (let [[ctx _] (create-session-context)
           state (atom {:ready? true
                        :pending {}
                        :subscribed-topics #{"session/resumed" "session/rehydrated" "command-result"}})
@@ -1195,7 +1203,7 @@
   (testing "command /resume <path> emits session/resumed and session/rehydrated canonical events"
     (let [cwd                (str (System/getProperty "java.io.tmpdir") "/psi-rpc-resume-" (java.util.UUID/randomUUID))
           _                  (.mkdirs (java.io.File. cwd))
-          [ctx session-id] (session/create-context-with-session {:cwd cwd})
+          [ctx session-id] (create-session-context {:cwd cwd})
           sd1                (session/new-session-in! ctx nil {})
           session-id         (:session-id sd1)
           path1              (:session-file sd1)
@@ -1228,7 +1236,7 @@
   (testing "command /tree <session-id> emits session/resumed and session/rehydrated canonical events"
     (let [cwd                (str (System/getProperty "java.io.tmpdir") "/psi-rpc-tree-" (java.util.UUID/randomUUID))
           _                  (.mkdirs (java.io.File. cwd))
-          [ctx session-id] (session/create-context-with-session {:cwd cwd})
+          [ctx session-id] (create-session-context {:cwd cwd})
           sd1                (session/new-session-in! ctx nil {})
           sid1               (:session-id sd1)
           path1              (:session-file sd1)
@@ -1262,7 +1270,7 @@
   (testing "list_sessions returns context snapshot with active-session-id"
     (let [cwd                (str (System/getProperty "java.io.tmpdir") "/psi-rpc-context-" (java.util.UUID/randomUUID))
           _                  (.mkdirs (java.io.File. cwd))
-          [ctx _] (session/create-context-with-session {:cwd cwd})
+          [ctx _] (create-session-context {:cwd cwd})
           state              (atom {:ready? true :pending {}})
           handler (make-handler ctx state)
           input   (str "{:id \"n1\" :kind :request :op \"new_session\"}\n"
@@ -1286,7 +1294,7 @@
   (testing "switch_session accepts :session-id and restores that runtime session"
     (let [cwd                (str (System/getProperty "java.io.tmpdir") "/psi-rpc-switch-" (java.util.UUID/randomUUID))
           _                  (.mkdirs (java.io.File. cwd))
-          [ctx session-id] (session/create-context-with-session {:cwd cwd})
+          [ctx session-id] (create-session-context {:cwd cwd})
           sd1                (session/new-session-in! ctx nil {})
           sid1               (:session-id sd1)
           path1              (:session-file sd1)
@@ -1320,7 +1328,7 @@
   (testing "targetable ops accept :session-id and route to that session"
     (let [cwd                (str (System/getProperty "java.io.tmpdir") "/psi-rpc-target-" (java.util.UUID/randomUUID))
           _                  (.mkdirs (java.io.File. cwd))
-          [ctx session-id] (session/create-context-with-session {:cwd cwd})
+          [ctx session-id] (create-session-context {:cwd cwd})
           sd1                (session/new-session-in! ctx nil {})
           sid1               (:session-id sd1)
           path1              (:session-file sd1)
@@ -1348,7 +1356,7 @@
       (is (= "alpha" (:session-name sd1)))))
 
   (testing "targetable op rejects invalid :session-id param"
-    (let [[ctx _] (session/create-context-with-session)
+    (let [[ctx _] (create-session-context)
           state   (atom {:ready? true :pending {}})
           handler (make-handler ctx state)
           {:keys [out-lines]}
@@ -1365,7 +1373,7 @@
   #_(testing "targetable op rejects cross-session routing while prompt is in-flight when lock enforcement is enabled"
       (let [cwd     (str (System/getProperty "java.io.tmpdir") "/psi-rpc-routing-lock-" (java.util.UUID/randomUUID))
             _       (.mkdirs (java.io.File. cwd))
-            [ctx session-id] (session/create-context-with-session {:cwd cwd})
+            [ctx session-id] (create-session-context {:cwd cwd})
             _                  (session/new-session-in! ctx nil {})
             sid1               (-> ctx ss/list-context-sessions-in last :session-id)
             path1   (:session-file (ss/get-session-data-in ctx sid1))
@@ -1434,7 +1442,7 @@
   #_(testing "exclusive ops are rejected while prompt is in-flight when lock enforcement is enabled"
       (let [cwd     (str (System/getProperty "java.io.tmpdir") "/psi-rpc-routing-lock-exclusive-" (java.util.UUID/randomUUID))
             _       (.mkdirs (java.io.File. cwd))
-            [ctx session-id] (session/create-context-with-session {:cwd cwd})
+            [ctx session-id] (create-session-context {:cwd cwd})
             _                  (session/new-session-in! ctx nil {})
             sid1               (-> ctx ss/list-context-sessions-in last :session-id)
             path1   (:session-file (ss/get-session-data-in ctx sid1))
@@ -1500,7 +1508,7 @@
 
 (deftest rpc-new-session-uses-callback-rehydrate-payload-test
   (testing "new_session uses on-new-session! callback when provided"
-    (let [[ctx _] (session/create-context-with-session)
+    (let [[ctx _] (create-session-context)
           called? (atom 0)
           state (atom {:ready? true
                        :pending {}
@@ -1527,7 +1535,7 @@
 
 (deftest rpc-new-session-footer-usage-is-session-scoped-test
   (testing "new_session footer/updated does not carry usage totals from previous session"
-    (let [[ctx session-id] (session/create-context-with-session)
+    (let [[ctx session-id] (create-session-context)
           state      (atom {:ready? true
                             :pending {}
                             :subscribed-topics #{"footer/updated"}})
@@ -1550,7 +1558,7 @@
 
 (deftest footer-updated-payload-includes-model-and-thinking-when-session-reasoning-enabled-test
   (testing "footer payload includes model/thinking details from active session query"
-    (let [[ctx session-id] (session/create-context-with-session)
+    (let [[ctx session-id] (create-session-context)
           _          (dispatch/dispatch! ctx :session/set-model
                                          {:session-id session-id :model {:provider "openai" :id "gpt-5.3-codex" :reasoning true}}
                                          {:origin :core})
@@ -1571,7 +1579,7 @@
 
 (deftest rpc-subscribe-emits-context-updated-test
   (testing "subscribe emits context/updated with active-session-id and sessions list"
-    (let [[ctx _] (session/create-context-with-session)
+    (let [[ctx _] (create-session-context)
           state   (atom {:ready? true
                          :pending {}
                          :subscribed-topics #{"context/updated"}})
@@ -1591,7 +1599,7 @@
   (testing "fork emits context/updated with new session in sessions list"
     (let [cwd     (str (System/getProperty "java.io.tmpdir") "/psi-rpc-fork-" (java.util.UUID/randomUUID))
           _       (.mkdirs (java.io.File. cwd))
-          [ctx session-id] (session/create-context-with-session {:cwd cwd})
+          [ctx session-id] (create-session-context {:cwd cwd})
           _       (dispatch/dispatch! ctx :session/set-model {:session-id session-id :model {:provider "anthropic" :id "claude-sonnet"}} {:origin :core})
           ;; Append a message entry so fork has an entry-id to branch from
           entry   (persist/message-entry {:role "user" :content "hi"})
@@ -1620,7 +1628,7 @@
 
 (deftest rpc-new-session-emits-context-updated-test
   (testing "new_session emits context/updated event"
-    (let [[ctx _] (session/create-context-with-session)
+    (let [[ctx _] (create-session-context)
           state   (atom {:ready? true
                          :pending {}
                          :subscribed-topics #{"context/updated"}})
@@ -1640,7 +1648,7 @@
 
 (deftest rpc-e2e-handshake-query-and-streaming-test
   (testing "handshake -> query_eql -> prompt with interleaved events"
-    (let [[ctx _] (session/create-context-with-session)
+    (let [[ctx _] (create-session-context)
           state (atom {:ready? true
                        :pending {}
                        :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
@@ -1706,7 +1714,7 @@
 
 (deftest rpc-prompt-slash-dispatch-gate-test
   (testing "when commands/dispatch-in returns non-nil, run-agent-loop-fn is NOT called"
-    (let [[ctx _]      (session/create-context-with-session)
+    (let [[ctx _]      (create-session-context)
           loop-called? (atom false)
           state        (atom {:ready? true
                               :pending {}
@@ -1740,7 +1748,7 @@
               "assistant/message content must include command output text")))))
 
   (testing "when commands/dispatch-in returns nil, run-agent-loop-fn IS called"
-    (let [[ctx _]      (session/create-context-with-session)
+    (let [[ctx _]      (create-session-context)
           loop-called? (atom false)
           state        (atom {:ready? true
                               :pending {}
@@ -1767,7 +1775,7 @@
                        :base-dir (.getParent skill-file)
                        :source :path
                        :disable-model-invocation false}
-          [ctx _]     (session/create-context-with-session {:session-defaults {:skills [skill]}})
+          [ctx _]     (create-session-context {:session-defaults {:skills [skill]}})
           captured    (atom nil)
           state       (atom {:ready? true
                              :pending {}
@@ -1788,7 +1796,7 @@
 
 (deftest rpc-prompt-passes-resolved-api-key-to-agent-loop-test
   (testing "non-command prompt forwards runtime-resolved api-key to run-loop opts"
-    (let [[ctx _]    (session/create-context-with-session)
+    (let [[ctx _]    (create-session-context)
           captured   (atom nil)
           state      (atom {:ready? true
                             :pending {}
@@ -1807,7 +1815,7 @@
 
 (deftest rpc-prompt-handle-command-result-types-test
   (testing "text-command-emits-assistant-message with session/updated and footer/updated"
-    (let [[ctx _]    (session/create-context-with-session)
+    (let [[ctx _]    (create-session-context)
           state  (atom {:ready? true
                         :pending {}
                         :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
@@ -1833,7 +1841,7 @@
           (is (contains? topics "footer/updated") "footer/updated must be emitted")))))
 
   (testing "extension-cmd-executes-handler and captures stdout"
-    (let [[ctx _]    (session/create-context-with-session)
+    (let [[ctx _]    (create-session-context)
           loop-called? (atom false)
           received-args (atom nil)
           state  (atom {:ready? true
@@ -1868,7 +1876,7 @@
               "stdout from extension handler must appear in assistant/message")))))
 
   (testing "extension-cmd-handler-error-surfaced deterministically"
-    (let [[ctx _]    (session/create-context-with-session)
+    (let [[ctx _]    (create-session-context)
           loop-called? (atom false)
           state  (atom {:ready? true
                         :pending {}
@@ -1898,7 +1906,7 @@
               "error message must be surfaced in assistant/message")))))
 
   (testing "login-start-emits-url-text"
-    (let [[ctx _]    (session/create-context-with-session)
+    (let [[ctx _]    (create-session-context)
           state  (atom {:ready? true
                         :pending {}
                         :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
@@ -1923,7 +1931,7 @@
               "URL must appear in assistant/message content")))))
 
   (testing "login-start manual flow uses pending-code path and shared oauth completion"
-    (let [[ctx _]      (session/create-context-with-session {:oauth-ctx {:mode :test}})
+    (let [[ctx _]      (create-session-context {:oauth-ctx {:mode :test}})
           loop-called? (atom false)
           dispatches   (atom [])
           completions  (atom [])
@@ -1970,7 +1978,7 @@
             "agent loop must not run during manual login completion"))))
 
   (testing "login-start callback flow auto-completes with nil input"
-    (let [[ctx _]      (session/create-context-with-session {:oauth-ctx {:mode :test}})
+    (let [[ctx _]      (create-session-context {:oauth-ctx {:mode :test}})
           loop-called? (atom false)
           completions  (atom [])
           state        (atom {:ready? true
@@ -2014,7 +2022,7 @@
               "callback flow should emit completion text")))))
 
   (testing "quit-emits-fallback-text"
-    (let [[ctx _]    (session/create-context-with-session)
+    (let [[ctx _]    (create-session-context)
           state  (atom {:ready? true
                         :pending {}
                         :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
@@ -2037,7 +2045,7 @@
               "fallback text must appear in assistant/message content")))))
 
   (testing "resume-emits-fallback-text"
-    (let [[ctx _]    (session/create-context-with-session)
+    (let [[ctx _]    (create-session-context)
           state  (atom {:ready? true
                         :pending {}
                         :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
@@ -2060,7 +2068,7 @@
               "fallback text must appear in assistant/message content")))))
 
   (testing "remember accepted path emits confirmation and writes exactly one record"
-    (let [[ctx* _] (session/create-context-with-session)
+    (let [[ctx* _] (create-session-context)
           ctx     (assoc ctx*
                          :memory-ctx
                          (memory/create-context {:state-overrides {:status :ready}}))
@@ -2100,7 +2108,7 @@
       (is (= (:timestamp rec) (:psi.memory.remember/last-capture-at telemetry)))))
 
   (testing "remember emits canonical blocked error when memory is not ready"
-    (let [[ctx* _] (session/create-context-with-session)
+    (let [[ctx* _] (create-session-context)
           ctx     (assoc ctx*
                          :memory-ctx
                          (memory/create-context
@@ -2124,7 +2132,7 @@
       (is (some #(str/includes? % "memory_capture_prerequisites_not_ready") texts))))
 
   (testing "remember emits fallback warning when active store write fails"
-    (let [[ctx* _]    (session/create-context-with-session)
+    (let [[ctx* _]    (create-session-context)
           ctx         (assoc ctx*
                              :memory-ctx
                              (memory/create-context {:state-overrides {:status :ready}}))
@@ -2171,7 +2179,7 @@
 
 (deftest rpc-prompt-slash-command-journaled-test
   (testing "slash command user message is journaled even when dispatch matches (not only on agent-loop path)"
-    (let [[ctx session-id] (session/create-context-with-session)
+    (let [[ctx session-id] (create-session-context)
           state      (atom {:ready? true
                             :pending {}
                             :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}
@@ -2195,7 +2203,7 @@
 
 (deftest rpc-prompt-plain-text-journaled-test
   (testing "plain text prompt user message is journaled on agent-loop path"
-    (let [[ctx session-id] (session/create-context-with-session)
+    (let [[ctx session-id] (create-session-context)
           state      (atom {:ready? true
                             :pending {}
                             :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}

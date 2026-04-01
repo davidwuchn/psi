@@ -34,6 +34,14 @@
 (defn- parse-frames [lines]
   (mapv edn/read-string lines))
 
+(defn- create-session-context
+  ([]
+   (create-session-context {}))
+  ([opts]
+   (let [ctx (session/create-context opts)
+         sd  (session/new-session-in! ctx nil {})]
+     [ctx (:session-id sd)])))
+
 (deftest rpc-state-shape-and-helpers-invariant-test
   (testing "rpc.state owns connection-local transport/connection/worker state through helpers"
     (let [err   (java.io.StringWriter.)
@@ -92,7 +100,7 @@
 
 (deftest rpc-handshake-uses-explicit-transport-deps-invariant-test
   (testing "handshake server-info/context come from explicit transport deps, not mutable state magic"
-    (let [[ctx sid] (session/create-context-with-session)
+    (let [[ctx sid] (create-session-context)
           wrong-called?   (atom false)
           right-called?   (atom false)
           state           (atom {:handshake-server-info-fn (fn [_] (reset! wrong-called? true)
@@ -126,7 +134,7 @@
 
 (deftest rpc-new-session-uses-explicit-session-deps-invariant-test
   (testing "new_session uses explicit session deps callback, not mutable state callback"
-    (let [[ctx _]       (session/create-context-with-session)
+    (let [[ctx _]       (create-session-context)
           wrong-called? (atom false)
           right-called? (atom 0)
           state         (atom {:ready? true
@@ -164,7 +172,7 @@
 
 (deftest rpc-prompt-uses-explicit-run-loop-invariant-test
   (testing "prompt agent-loop behavior comes from explicit session deps, not mutable state"
-    (let [[ctx _]       (session/create-context-with-session)
+    (let [[ctx _]       (create-session-context)
           wrong-called? (atom false)
           right-called? (atom false)
           state         (atom {:ready? true

@@ -40,9 +40,17 @@
                         :run-agent-loop-fn
                         :sync-on-git-head-change?])))
 
+(defn- create-session-context
+  ([]
+   (create-session-context {}))
+  ([opts]
+   (let [ctx (session/create-context opts)
+         sd  (session/new-session-in! ctx nil {})]
+     [ctx (:session-id sd)])))
+
 (deftest rpc-new-session-rehydrates-agent-messages-not-tui-projection-test
   (testing "new_session emits canonical agent messages so the next Anthropic request preserves role/content shape"
-    (let [[ctx _] (session/create-context-with-session)
+    (let [[ctx _] (create-session-context)
           state   (atom {:ready? true
                          :pending {}
                          :subscribed-topics #{"session/rehydrated"}})
@@ -71,7 +79,7 @@
   (testing "resume emits canonical agent messages from the journal"
     (let [cwd                (str (System/getProperty "java.io.tmpdir") "/psi-rpc-anthropic-resume-" (java.util.UUID/randomUUID))
           _                  (.mkdirs (java.io.File. cwd))
-          [ctx _]      (session/create-context-with-session {:cwd cwd})
+          [ctx _]      (create-session-context {:cwd cwd})
           sd1                (session/new-session-in! ctx nil {})
           session-id         (:session-id sd1)
           path1              (:session-file sd1)
