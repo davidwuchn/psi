@@ -2204,40 +2204,22 @@
     {:git/context (git/create-context cwd)}
     {}))
 
-(pco/defresolver agent-session-usage-input
-  "Resolve cumulative input tokens across assistant messages in the session journal."
+(pco/defresolver agent-session-usage
+  "Resolve cumulative token usage and cost across assistant messages in the session journal.
+   Single journal scan produces all five usage attrs."
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
-   ::pco/output [:psi.agent-session/usage-input]}
-  {:psi.agent-session/usage-input (:input (session-usage-totals agent-session-ctx))})
-
-(pco/defresolver agent-session-usage-output
-  "Resolve cumulative output tokens across assistant messages in the session journal."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
-   ::pco/output [:psi.agent-session/usage-output]}
-  {:psi.agent-session/usage-output (:output (session-usage-totals agent-session-ctx))})
-
-(pco/defresolver agent-session-usage-cache-read
-  "Resolve cumulative cache-read tokens across assistant messages in the session journal."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
-   ::pco/output [:psi.agent-session/usage-cache-read]}
-  {:psi.agent-session/usage-cache-read (:cache-read (session-usage-totals agent-session-ctx))})
-
-(pco/defresolver agent-session-usage-cache-write
-  "Resolve cumulative cache-write tokens across assistant messages in the session journal."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
-   ::pco/output [:psi.agent-session/usage-cache-write]}
-  {:psi.agent-session/usage-cache-write (:cache-write (session-usage-totals agent-session-ctx))})
-
-(pco/defresolver agent-session-usage-cost-total
-  "Resolve cumulative total cost across assistant messages in the session journal."
-  [{:keys [psi/agent-session-ctx]}]
-  {::pco/input  [:psi/agent-session-ctx]
-   ::pco/output [:psi.agent-session/usage-cost-total]}
-  {:psi.agent-session/usage-cost-total (:cost (session-usage-totals agent-session-ctx))})
+   ::pco/output [:psi.agent-session/usage-input
+                 :psi.agent-session/usage-output
+                 :psi.agent-session/usage-cache-read
+                 :psi.agent-session/usage-cache-write
+                 :psi.agent-session/usage-cost-total]}
+  (let [totals (session-usage-totals agent-session-ctx)]
+    {:psi.agent-session/usage-input       (:input totals)
+     :psi.agent-session/usage-output      (:output totals)
+     :psi.agent-session/usage-cache-read  (:cache-read totals)
+     :psi.agent-session/usage-cache-write (:cache-write totals)
+     :psi.agent-session/usage-cost-total  (:cost totals)}))
 
 (pco/defresolver agent-session-model-provider
   "Resolve active model provider string from session state."
@@ -2482,11 +2464,7 @@
    agent-session-git-branch
    runtime-nrepl-info
    agent-session-git-context
-   agent-session-usage-input
-   agent-session-usage-output
-   agent-session-usage-cache-read
-   agent-session-usage-cache-write
-   agent-session-usage-cost-total
+   agent-session-usage
    agent-session-model-provider
    agent-session-model-id
    agent-session-model-reasoning
