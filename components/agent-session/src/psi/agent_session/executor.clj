@@ -416,6 +416,34 @@ Also tolerates cumulative snapshots that differ near previous tail
                      :detail     (:reason invalid)
                      :error-code "tool-call/assembly-failed"})))
 
+(defn- append-tool-call-attempt!
+  [ctx session-id attempt]
+  (sa/append-tool-call-attempt-in! ctx session-id attempt))
+
+(defn- provider-id
+  [provider]
+  (cond
+    (keyword? provider) (name provider)
+    (symbol? provider)  (name provider)
+    (string? provider)  provider
+    :else               (str (or provider ""))))
+
+(defn- anthropic-provider?
+  [ai-model]
+  (= "anthropic" (provider-id (:provider ai-model))))
+
+(defn- reset-thinking-buffers-on-toolcall-start!
+  "Tool-call boundaries split thinking segments.
+
+   Anthropic has explicit thinking block lifecycle + per-content-index semantics,
+   so we only clear the matching index.
+   OpenAI-style reasoning deltas are unframed; any toolcall marks a boundary, so
+   clear all thinking buffers to avoid cross-boundary prefix accumulation."
+  [thinking-buffers ai-model content-index]
+  (if (anthropic-provider? ai-model)
+    (swap! thinking-buffers dissoc content-index)
+    (reset! thinking-buffers {})))
+
 (defn- make-turn-actions
   "Create the actions-fn for the per-turn statechart.
    Handles data accumulation (in turn-data atom) and session-data writes.
@@ -425,8 +453,11 @@ Also tolerates cumulative snapshots that differ near previous tail
    - provider stream assembly is visible live to the UI
    - content-index is the provisional per-turn identity during assembly
    - every tool call is upgraded to a canonical tool-call-id by execution time
-   - lifecycle/result events must target rows by canonical tool-call-id"
-  [ctx session-id _agent-ctx done-p progress-queue]
+   - lifecycle/result events must target rows by canonical tool-call-id
+
+   `ai-model` — used to dispatch provider-specific thinking accumulation (Anthropic vs OpenAI)
+   `thinking-buffers` — atom({content-index → merged-text}) for per-block accumulation"
+  [ctx session-id _agent-ctx done-p progress-queue ai-model thinking-buffers]
   (fn [action-key data]
     (let [td (:turn-data data)]
       (case action-key
@@ -455,16 +486,48 @@ Also tolerates cumulative snapshots that differ near previous tail
           (end-content-block! td (or (:content-index data) 0)))
 
         :on-thinking-start
-        (do
+        (let [idx (or (:content-index data) 0)]
           (note-last-provider-event! td :thinking-start data)
-          (begin-content-block! td (or (:content-index data) 0))
-          (update-content-block! td (or (:content-index data) 0)
-                                 #(assoc % :kind :thinking)))
+          (begin-content-block! td idx)
+          (update-content-block! td idx #(assoc % :kind :thinking))
+          (when (anthropic-provider? ai-model)
+            (swap! td update :thinking-blocks
+                   (fnil assoc (sorted-map))
+                   idx
+                   {:content-index idx
+                    :provider      :anthropic
+                    :text          (or (:thinking data) "")
+                    :signature     (:signature data)})))
 
         :on-thinking-delta
-        (do
+        (let [idx    (or (:content-index data) 0)
+              raw    (let [d (:delta data)] (if (string? d) d (str (or d ""))))
+              merged (get (swap! thinking-buffers update idx merge-stream-text raw) idx)]
           (note-last-provider-event! td :thinking-delta data)
-          (note-content-delta! td (or (:content-index data) 0) :thinking))
+          (note-content-delta! td idx :thinking)
+          (when (anthropic-provider? ai-model)
+            (swap! td update :thinking-blocks
+                   (fn [blocks]
+                     (let [blocks*  (or blocks (sorted-map))
+                           current  (get blocks* idx {:content-index idx
+                                                      :provider      :anthropic
+                                                      :signature     nil})]
+                       (assoc blocks* idx (assoc current :text merged))))))
+          (emit-progress! progress-queue
+                          {:event-kind    :thinking-delta
+                           :content-index idx
+                           :text          merged}))
+
+        :on-thinking-signature-delta
+        (let [idx (or (:content-index data) 0)]
+          (when (anthropic-provider? ai-model)
+            (swap! td update :thinking-blocks
+                   (fn [blocks]
+                     (let [blocks*  (or blocks (sorted-map))
+                           current  (get blocks* idx {:content-index idx
+                                                      :provider      :anthropic
+                                                      :text          ""})]
+                       (assoc blocks* idx (assoc current :signature (:signature data))))))))
 
         :on-thinking-end
         (do
@@ -484,9 +547,16 @@ Also tolerates cumulative snapshots that differ near previous tail
                                                             :content-index idx})]
                                          (assoc merged :id (canonical-tool-call-id (:turn-id @td) idx (:id merged))))))
                               [:tool-calls idx])]
+          (reset-thinking-buffers-on-toolcall-start! thinking-buffers ai-model idx)
           (note-last-provider-event! td :toolcall-start data)
           (begin-content-block! td idx)
           (update-content-block! td idx #(assoc % :kind :tool-call))
+          (append-tool-call-attempt! ctx session-id
+                                     {:turn-id       (:turn-id @td)
+                                      :event-kind    :toolcall-start
+                                      :content-index idx
+                                      :id            tc-id
+                                      :name          tc-name})
           (emit-progress! progress-queue
                           {:event-kind            :tool-call-assembly
                            :phase                 :start
@@ -511,6 +581,11 @@ Also tolerates cumulative snapshots that differ near previous tail
                               [:tool-calls idx])]
           (note-last-provider-event! td :toolcall-delta data)
           (note-content-delta! td idx :tool-call)
+          (append-tool-call-attempt! ctx session-id
+                                     {:turn-id       (:turn-id @td)
+                                      :event-kind    :toolcall-delta
+                                      :content-index idx
+                                      :delta         delta})
           (emit-progress! progress-queue
                           {:event-kind            :tool-call-assembly
                            :phase                 :delta
@@ -527,6 +602,10 @@ Also tolerates cumulative snapshots that differ near previous tail
               updated (get-in @td [:tool-calls idx])]
           (note-last-provider-event! td :toolcall-end data)
           (end-content-block! td idx)
+          (append-tool-call-attempt! ctx session-id
+                                     {:turn-id       (:turn-id @td)
+                                      :event-kind    :toolcall-end
+                                      :content-index idx})
           (emit-progress! progress-queue
                           {:event-kind            :tool-call-assembly
                            :phase                 :end
@@ -614,10 +693,6 @@ Also tolerates cumulative snapshots that differ near previous tail
 (defn- now-ms []
   (System/currentTimeMillis))
 
-(defn- append-tool-call-attempt!
-  [ctx session-id attempt]
-  (sa/append-tool-call-attempt-in! ctx session-id attempt))
-
 (defn- append-provider-request-capture!
   [ctx session-id capture]
   (sa/append-provider-request-capture-in! ctx session-id capture))
@@ -661,30 +736,6 @@ Also tolerates cumulative snapshots that differ near previous tail
           :else
           (recur))))))
 
-(defn- provider-id
-  [provider]
-  (cond
-    (keyword? provider) (name provider)
-    (symbol? provider)  (name provider)
-    (string? provider)  provider
-    :else               (str (or provider ""))))
-
-(defn- anthropic-provider?
-  [ai-model]
-  (= "anthropic" (provider-id (:provider ai-model))))
-
-(defn- reset-thinking-buffers-on-toolcall-start!
-  "Tool-call boundaries split thinking segments.
-
-   Anthropic has explicit thinking block lifecycle + per-content-index semantics,
-   so we only clear the matching index.
-   OpenAI-style reasoning deltas are unframed; any toolcall marks a boundary, so
-   clear all thinking buffers to avoid cross-boundary prefix accumulation."
-  [thinking-buffers ai-model content-index]
-  (if (anthropic-provider? ai-model)
-    (swap! thinking-buffers dissoc content-index)
-    (reset! thinking-buffers {})))
-
 (defn- stream-turn!
   "Stream one LLM response into agent-core via the per-turn statechart.
 
@@ -722,146 +773,71 @@ Also tolerates cumulative snapshots that differ near previous tail
                                         ctx session-id
                                         (assoc capture :turn-id turn-id))))))
         done-p           (promise)
-        actions-fn        (make-turn-actions ctx session-id agent-ctx done-p progress-queue)
-        turn-ctx          (turn-sc/create-turn-context actions-fn)
-        _                 (swap! (:turn-data turn-ctx) assoc :turn-id turn-id)
-        last-progress-ms  (atom (now-ms))
-        timed-out?        (atom false)
         ;; Per-content-index thinking buffers — Anthropic interleaved thinking can
         ;; emit multiple thinking blocks (each with a distinct content-index).
         ;; merge-stream-text normalises both cumulative-snapshot and incremental
         ;; provider styles. The emitted :text is the full accumulated thinking text
         ;; for the block so far (consumers should replace, not append).
-        thinking-buffers  (atom {})]
+        thinking-buffers (atom {})
+        actions-fn       (make-turn-actions ctx session-id agent-ctx done-p progress-queue
+                                            ai-model thinking-buffers)
+        turn-ctx         (turn-sc/create-turn-context actions-fn)
+        _                (swap! (:turn-data turn-ctx) assoc :turn-id turn-id)
+        last-progress-ms (atom (now-ms))
+        timed-out?       (atom false)]
     ;; Expose turn context for nREPL introspection
     (sa/set-turn-context-in! ctx session-id turn-ctx)
-    ;; Transition: :idle → :text-accumulating (calls begin-stream-in!)
+    ;; Transition: :idle → :text-accumulating
     (turn-sc/send-event! turn-ctx :turn/start)
-    ;; Start provider stream — callback translates events to statechart events
-    (do-stream! ai-ctx ai-conv ai-model ai-options
-                (fn [event]
-                  (when-not @timed-out?
-                    (reset! last-progress-ms (now-ms))
-                    (case (:type event)
-                      :start nil ;; already transitioned via :turn/start
-
-                      :text-start
-                      (do
-                        (note-last-provider-event! (:turn-data turn-ctx) :text-start event)
-                        (begin-content-block! (:turn-data turn-ctx) (or (:content-index event) 0))
-                        (update-content-block! (:turn-data turn-ctx) (or (:content-index event) 0)
-                                               #(assoc % :kind :text)))
-
-                      :text-delta
-                      (turn-sc/send-event! turn-ctx :turn/text-delta
-                                           {:content-index (:content-index event)
-                                            :delta         (:delta event)})
-
-                      :text-end
-                      (do
-                        (note-last-provider-event! (:turn-data turn-ctx) :text-end event)
-                        (end-content-block! (:turn-data turn-ctx) (or (:content-index event) 0)))
-
-                      :thinking-start
-                      (let [idx (or (:content-index event) 0)]
-                        (note-last-provider-event! (:turn-data turn-ctx) :thinking-start event)
-                        (begin-content-block! (:turn-data turn-ctx) idx)
-                        (update-content-block! (:turn-data turn-ctx) idx
-                                               #(assoc % :kind :thinking))
-                        (when (= (:provider ai-model) "anthropic")
-                          (swap! (:turn-data turn-ctx) update :thinking-blocks
-                                 (fnil assoc (sorted-map))
-                                 idx
-                                 {:content-index idx
-                                  :provider :anthropic
-                                  :text (or (:thinking event) "")
-                                  :signature (:signature event)})))
-
-                      :thinking-delta
-                      (let [idx    (or (:content-index event) 0)
-                            raw    (let [d (:delta event)]
-                                     (if (string? d) d (str (or d ""))))
-                            merged (get (swap! thinking-buffers update idx merge-stream-text raw) idx)]
-                        (note-last-provider-event! (:turn-data turn-ctx) :thinking-delta event)
-                        (note-content-delta! (:turn-data turn-ctx) idx :thinking)
-                        (when (= (:provider ai-model) "anthropic")
-                          (swap! (:turn-data turn-ctx) update :thinking-blocks
-                                 (fn [blocks]
-                                   (let [blocks* (or blocks (sorted-map))
-                                         current (get blocks* idx {:content-index idx
-                                                                   :provider :anthropic
-                                                                   :signature nil})]
-                                     (assoc blocks* idx (assoc current :text merged))))))
-                        (emit-progress! progress-queue
-                                        {:event-kind    :thinking-delta
-                                         :content-index idx
-                                         :text          merged}))
-
-                      :thinking-signature-delta
-                      (let [idx (or (:content-index event) 0)]
-                        (when (= (:provider ai-model) "anthropic")
-                          (swap! (:turn-data turn-ctx) update :thinking-blocks
-                                 (fn [blocks]
-                                   (let [blocks* (or blocks (sorted-map))
-                                         current (get blocks* idx {:content-index idx
-                                                                   :provider :anthropic
-                                                                   :text ""})]
-                                     (assoc blocks* idx (assoc current :signature (:signature event))))))))
-
-                      :thinking-end
-                      (do
-                        (note-last-provider-event! (:turn-data turn-ctx) :thinking-end event)
-                        (end-content-block! (:turn-data turn-ctx) (or (:content-index event) 0)))
-
-                      :toolcall-start
-                      (let [content-index (or (:content-index event) 0)]
-                        (reset-thinking-buffers-on-toolcall-start! thinking-buffers ai-model content-index)
-                        (append-tool-call-attempt!
-                         ctx session-id
-                         {:turn-id       turn-id
-                          :event-kind    :toolcall-start
-                          :content-index (:content-index event)
-                          :id            (:id event)
-                          :name          (:name event)})
-                        (turn-sc/send-event! turn-ctx :turn/toolcall-start
-                                             {:content-index (:content-index event)
-                                              :tool-id       (:id event)
-                                              :tool-name     (:name event)}))
-
-                      :toolcall-delta
-                      (do
-                        (append-tool-call-attempt!
-                         ctx session-id
-                         {:turn-id       turn-id
-                          :event-kind    :toolcall-delta
-                          :content-index (:content-index event)
-                          :delta         (:delta event)})
-                        (turn-sc/send-event! turn-ctx :turn/toolcall-delta
-                                             {:content-index (:content-index event)
-                                              :delta         (:delta event)}))
-
-                      :toolcall-end
-                      (do
-                        (append-tool-call-attempt!
-                         ctx session-id
-                         {:turn-id       turn-id
-                          :event-kind    :toolcall-end
-                          :content-index (:content-index event)})
-                        (turn-sc/send-event! turn-ctx :turn/toolcall-end
-                                             {:content-index (:content-index event)}))
-
-                      :done
-                      (turn-sc/send-event! turn-ctx :turn/done
-                                           {:reason (:reason event)
-                                            :usage  (:usage event)})
-
-                      :error
-                      (turn-sc/send-event! turn-ctx :turn/error
-                                           (cond-> {:error-message (:error-message event)}
-                                             (:http-status event) (assoc :http-status (:http-status event))))
-
-                    ;; :text-start :text-end :thinking-* — ignore
-                      nil))))
+    ;; Start provider stream.
+    ;; State-transition events go through turn-sc/send-event! (updates statechart config).
+    ;; Accumulation-only events (text-start/end, thinking-*) call actions-fn directly —
+    ;; the statechart has no transitions for them, but make-turn-actions handles them.
+    ;; actions-fn expects (action-key data) where data contains :turn-data atom.
+    (let [call-action! (fn [action-key extra]
+                         (actions-fn action-key
+                                     (merge {:turn-data (:turn-data turn-ctx)} extra)))]
+      (do-stream! ai-ctx ai-conv ai-model ai-options
+                  (fn [event]
+                    (when-not @timed-out?
+                      (reset! last-progress-ms (now-ms))
+                      (case (:type event)
+                        :start                    nil ;; already transitioned via :turn/start
+                        :text-start               (call-action! :on-text-start
+                                                                {:content-index (:content-index event)})
+                        :text-delta               (turn-sc/send-event! turn-ctx :turn/text-delta
+                                                                       {:content-index (:content-index event)
+                                                                        :delta         (:delta event)})
+                        :text-end                 (call-action! :on-text-end
+                                                                {:content-index (:content-index event)})
+                        :thinking-start           (call-action! :on-thinking-start
+                                                                {:content-index (:content-index event)
+                                                                 :thinking      (:thinking event)
+                                                                 :signature     (:signature event)})
+                        :thinking-delta           (call-action! :on-thinking-delta
+                                                                {:content-index (:content-index event)
+                                                                 :delta         (:delta event)})
+                        :thinking-signature-delta (call-action! :on-thinking-signature-delta
+                                                                {:content-index (:content-index event)
+                                                                 :signature     (:signature event)})
+                        :thinking-end             (call-action! :on-thinking-end
+                                                                {:content-index (:content-index event)})
+                        :toolcall-start           (turn-sc/send-event! turn-ctx :turn/toolcall-start
+                                                                       {:content-index (:content-index event)
+                                                                        :tool-id       (:id event)
+                                                                        :tool-name     (:name event)})
+                        :toolcall-delta           (turn-sc/send-event! turn-ctx :turn/toolcall-delta
+                                                                       {:content-index (:content-index event)
+                                                                        :delta         (:delta event)})
+                        :toolcall-end             (turn-sc/send-event! turn-ctx :turn/toolcall-end
+                                                                       {:content-index (:content-index event)})
+                        :done                     (turn-sc/send-event! turn-ctx :turn/done
+                                                                       {:reason (:reason event)
+                                                                        :usage  (:usage event)})
+                        :error                    (turn-sc/send-event! turn-ctx :turn/error
+                                                                       (cond-> {:error-message (:error-message event)}
+                                                                         (:http-status event) (assoc :http-status (:http-status event))))
+                        nil)))))
     ;; Block until streaming completes (idle timeout resets on stream progress)
     (let [result (wait-for-turn-result
                   done-p
@@ -875,9 +851,7 @@ Also tolerates cumulative snapshots that differ near previous tail
                            :stop-reason   :error
                            :error-message "Timeout waiting for LLM response"
                            :timestamp     (java.time.Instant/now)}]
-          ;; Ignore any later provider events after the timeout boundary.
           (reset! timed-out? true)
-          ;; Drive statechart to :error so it's observable
           (turn-sc/send-event! turn-ctx :turn/error
                                {:error-message "Timeout waiting for LLM response"})
           timeout-msg)

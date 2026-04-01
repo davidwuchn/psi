@@ -767,12 +767,10 @@
                                      :assistant-message {:role "assistant"
                                                          :content [{:type :text :text "done"}]
                                                          :stop-reason :stop}}})))
-                    psi.agent-session.executor/continue-after-tool-use!
+                    psi.agent-session.executor/execute-tool-calls!
                     (fn [_ _ outcome _]
                       (swap! calls conj (:turn/outcome outcome))
-                      {:turn/continuation :turn.continue/next-turn
-                       :assistant-message (:assistant-message outcome)
-                       :tool-results [{:tool-call-id "call-1"}]})]
+                      [{:tool-call-id "call-1"}])]
         (let [result (#'executor/run-turn-loop! nil session-ctx session-ctx-id agent-ctx stub-model nil nil)]
           (is (= [":turn.outcome/tool-use"] (mapv str @calls)))
           (is (= :stop (:stop-reason result)))
@@ -780,8 +778,8 @@
                  (some #(when (= :text (:type %)) (:text %))
                        (:content result)))))))))
 
-(deftest continue-after-tool-use-test
-  (testing "tool-use continuation executes all tool calls and returns next-turn continuation"
+(deftest execute-tool-calls-test
+  (testing "execute-tool-calls! runs all tool calls from an outcome and returns results"
     (let [agent-ctx   (setup-agent-ctx!)
           [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
           outcome     {:turn/outcome :turn.outcome/tool-use
@@ -799,11 +797,9 @@
                        :tool-call-id (:id tc)
                        :tool-name (:name tc)
                        :content [{:type :text :text (str "ok-" (:id tc))}]})]
-        (let [result (#'executor/continue-after-tool-use! session-ctx session-ctx-id outcome nil)]
-          (is (= :turn.continue/next-turn (:turn/continuation result)))
+        (let [results (#'executor/execute-tool-calls! session-ctx session-ctx-id outcome nil)]
           (is (= ["call-1" "call-2"] @calls))
-          (is (= ["call-1" "call-2"] (mapv :tool-call-id (:tool-results result))))
-          (is (= (:assistant-message outcome) (:assistant-message result))))))))
+          (is (= ["call-1" "call-2"] (mapv :tool-call-id results))))))))
 
 (deftest tool-lifecycle-progress-derived-from-canonical-event-test
   (testing "progress projection uses the same canonical lifecycle event shape"
