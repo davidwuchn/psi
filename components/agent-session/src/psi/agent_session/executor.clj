@@ -608,7 +608,7 @@ Also tolerates cumulative snapshots that differ near previous tail
     (ai/stream-response-in ai-ctx ai-conv ai-model ai-options consume-fn)
     (ai/stream-response ai-conv ai-model ai-options consume-fn)))
 
-(def ^:private llm-stream-idle-timeout-ms 120000)
+(def ^:private llm-stream-idle-timeout-ms 600000)
 (def ^:private llm-stream-wait-poll-ms 250)
 
 (defn- now-ms []
@@ -1316,7 +1316,7 @@ Also tolerates cumulative snapshots that differ near previous tail
      :progress-queue — LinkedBlockingQueue for TUI progress events
 
    Timeout behavior:
-     Idle timeout defaults to 120s and resets on any stream progress event.
+     Idle timeout defaults to 600s and resets on any stream progress event.
      Session config key `:llm-stream-idle-timeout-ms` overrides that default.
 
    Returns the final assistant message."

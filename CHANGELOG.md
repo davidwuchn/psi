@@ -2,6 +2,12 @@
 
 ## 2026-03-31
 
+- λ Δ Increased default streaming stall timeouts from 120s to 600s (10 minutes):
+  - backend LLM idle timeout default is now `600000` ms
+  - session default config now carries `:llm-stream-idle-timeout-ms 600000`
+  - Emacs watchdog default `psi-emacs-stream-timeout-seconds` is now `600`
+  - docs updated for CLI, configuration, and Emacs UI timeout defaults
+
 - λ Δ Removed RPC dynamic request session routing:
   - deleted `psi.rpc.transport/*request-session-id*`
   - request handler now resolves target `session-id` once and passes it explicitly through RPC handlers

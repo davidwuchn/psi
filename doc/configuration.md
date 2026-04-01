@@ -66,6 +66,7 @@ Personal defaults that apply across all projects. Overridden by project config.
 | `:thinking-level` | keyword | `:off` | Extended thinking budget — see below |
 | `:prompt-mode` | keyword | `:lambda` | System prompt style — `:lambda` or `:prose` |
 | `:nucleus-prelude-override` | string | — | Replace the nucleus prelude block in the system prompt |
+| `:llm-stream-idle-timeout-ms` | positive integer | `600000` | Milliseconds without provider stream progress before the backend aborts the run |
 
 Both `:model-provider` and `:model-id` must be set together; a partial entry is
 ignored and the next lower source is used instead.

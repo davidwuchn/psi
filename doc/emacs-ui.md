@@ -69,6 +69,9 @@ Example with explicit model:
 
 Requirement: command must launch psi in rpc-edn mode (include `--rpc-edn`).
 
+Streaming stall detection defaults to 600 seconds (10 minutes) in Emacs.
+Customize `psi-emacs-stream-timeout-seconds` to change the frontend watchdog.
+
 ## Developer checks
 
 From repo root:

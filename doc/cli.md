@@ -45,6 +45,7 @@ clojure -M:psi [flags]
 
 - `--llm-idle-timeout-ms <n>`
   - LLM idle timeout in milliseconds (`<n>` positive integer).
+  - Default: `600000` (10 minutes).
 
 ## Environment variables
 
