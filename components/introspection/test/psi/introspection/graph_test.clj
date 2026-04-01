@@ -9,9 +9,10 @@
 
 (defn- operation-metadata
   []
-  (let [[session-ctx _] (agent-session/create-context)
-        ctx              (introspection/create-context {:agent-session-ctx session-ctx})
-        qctx        (:query-ctx ctx)]
+  (let [session-ctx       (agent-session/create-context)
+        _                 (agent-session/new-session-in! session-ctx nil {})
+        ctx               (introspection/create-context {:agent-session-ctx session-ctx})
+        qctx              (:query-ctx ctx)]
     (engine/bootstrap-system-in! (:engine-ctx ctx))
     (introspection/register-resolvers-in! ctx)
     {:resolver-ops (mapv #(graph/operation->metadata :resolver %)

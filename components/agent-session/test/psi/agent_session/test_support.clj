@@ -142,14 +142,13 @@
     [ctx sid]))
 
 (defn create-test-session
-  "Create a full session context with a real (non-ephemeral) first session.
-   Returns [ctx session-id] — same shape as create-context but the session-id
-   is a real session created via new-session-in!, not an ephemeral seed.
+  "Create a full session context with a real first session.
+   Returns [ctx session-id].
 
-   Accepts the same options as session/create-context. The :session-defaults
-   overrides flow through :session-defaults into the first real session."
+   Accepts the same options as `session/create-context`. The :session-defaults
+   overrides flow through into the first real session."
   ([] (create-test-session {:persist? false}))
   ([opts]
-   (let [[ctx _] (session-core/create-context opts)
-         sd      (session-core/new-session-in! ctx nil {})]
+   (let [ctx (session-core/create-context opts)
+         sd  (session-core/new-session-in! ctx nil {})]
      [ctx (:session-id sd)])))
