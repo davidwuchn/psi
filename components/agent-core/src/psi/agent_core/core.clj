@@ -194,9 +194,10 @@
   [ctx]
   @(:data-atom ctx))
 
-(defn- swap-data! [ctx f & args]
-  (apply swap! (:data-atom ctx) f args)
-  (get-data-in ctx))
+(defn- swap-data!
+  "Apply `f` to the data atom in `ctx`, return the new value."
+  [ctx f & args]
+  (apply swap! (:data-atom ctx) f args))
 
 ;; ============================================================
 ;; Event emission
@@ -300,7 +301,7 @@
   (swap-data! ctx assoc :follow-up-queue []))
 
 ;; ============================================================
-;; Derived predicates (pure — operate on data map)
+;; Derived predicates
 ;; ============================================================
 
 (defn idle-in?
@@ -358,11 +359,12 @@
   Corresponds to AgentLoopStarted rule."
   [ctx new-messages]
   (sc-send-event! ctx :start)
-  (swap-data! ctx assoc
-              :stream-message     nil
-              :error              nil)
+  (swap-data! ctx (fn [d]
+                    (-> d
+                        (assoc :stream-message nil
+                               :error          nil)
+                        (update :messages into new-messages))))
   (doseq [msg new-messages]
-    (swap-data! ctx update :messages conj msg)
     (emit-in! ctx {:type :message-start :message msg})
     (emit-in! ctx {:type :message-end   :message msg}))
   (emit-in! ctx {:type :agent-start})
@@ -372,34 +374,34 @@
 (defn begin-stream-in!
   "Record partial assistant message at stream start. Emits message_start."
   [ctx partial-message]
-  (swap-data! ctx assoc :stream-message partial-message)
-  (emit-in! ctx {:type :message-start :message partial-message})
-  (get-data-in ctx))
+  (let [data (swap-data! ctx assoc :stream-message partial-message)]
+    (emit-in! ctx {:type :message-start :message partial-message})
+    data))
 
 (defn update-stream-in!
   "Update partial message with delta content. Emits message_update."
   [ctx updated-message]
-  (swap-data! ctx assoc :stream-message updated-message)
-  (emit-in! ctx {:type :message-update :message updated-message})
-  (get-data-in ctx))
+  (let [data (swap-data! ctx assoc :stream-message updated-message)]
+    (emit-in! ctx {:type :message-update :message updated-message})
+    data))
 
 (defn end-stream-in!
   "Commit final message to history, clear stream-message. Emits message_end."
   [ctx final-message]
-  (swap-data! ctx (fn [d]
-                    (-> d
-                        (update :messages conj final-message)
-                        (assoc  :stream-message nil))))
-  (emit-in! ctx {:type :message-end :message final-message})
-  (get-data-in ctx))
+  (let [data (swap-data! ctx (fn [d]
+                               (-> d
+                                   (update :messages conj final-message)
+                                   (assoc  :stream-message nil))))]
+    (emit-in! ctx {:type :message-end :message final-message})
+    data))
 
 (defn record-tool-result-in!
   "Append a tool result message and emit message_start / message_end."
   [ctx tool-result-msg]
-  (swap-data! ctx update :messages conj tool-result-msg)
-  (emit-in! ctx {:type :message-start :message tool-result-msg})
-  (emit-in! ctx {:type :message-end   :message tool-result-msg})
-  (get-data-in ctx))
+  (let [data (swap-data! ctx update :messages conj tool-result-msg)]
+    (emit-in! ctx {:type :message-start :message tool-result-msg})
+    (emit-in! ctx {:type :message-end   :message tool-result-msg})
+    data))
 
 (defn emit-turn-end-in!
   "Emit turn_end with assistant message and collected tool results."
@@ -433,35 +435,35 @@
   Corresponds to AgentLoopEnded rule."
   [ctx]
   (sc-send-event! ctx :done)
-  (swap-data! ctx assoc
-              :stream-message     nil
-              :pending-tool-calls #{})
-  (emit-in! ctx {:type     :agent-end
-                 :messages (:messages (get-data-in ctx))})
-  (get-data-in ctx))
+  (let [data (swap-data! ctx assoc
+                         :stream-message     nil
+                         :pending-tool-calls #{})]
+    (emit-in! ctx {:type     :agent-end
+                   :messages (:messages data)})
+    data))
 
 (defn end-loop-on-error-in!
   "Drive statechart :error, record error message, emit agent_end."
   [ctx error-msg]
   (sc-send-event! ctx :error)
-  (swap-data! ctx assoc
-              :stream-message     nil
-              :pending-tool-calls #{}
-              :error              error-msg)
-  (emit-in! ctx {:type     :agent-end
-                 :messages (:messages (get-data-in ctx))})
-  (get-data-in ctx))
+  (let [data (swap-data! ctx assoc
+                         :stream-message     nil
+                         :pending-tool-calls #{}
+                         :error              error-msg)]
+    (emit-in! ctx {:type     :agent-end
+                   :messages (:messages data)})
+    data))
 
 (defn abort-in!
   "Drive statechart :abort. Partial assistant message (if any) must
   already have been committed by end-stream-in! with stopReason=aborted."
   [ctx]
-  (when (running-in? ctx)
-    (sc-send-event! ctx :abort)
-    (swap-data! ctx assoc
-                :stream-message     nil
-                :pending-tool-calls #{}))
-  (get-data-in ctx))
+  (if (running-in? ctx)
+    (do (sc-send-event! ctx :abort)
+        (swap-data! ctx assoc
+                    :stream-message     nil
+                    :pending-tool-calls #{}))
+    (get-data-in ctx)))
 
 ;; ============================================================
 ;; Introspection — diagnostic snapshot
@@ -553,7 +555,7 @@
   [{:keys [psi/agent-ctx]}]
   {::pco/input  [:psi/agent-ctx]
    ::pco/output [:psi.agent/tools]}
-  {:psi.agent/tools (get-in (get-data-in agent-ctx) [:tools])})
+  {:psi.agent/tools (:tools (get-data-in agent-ctx))})
 
 (pco/defresolver agent-diagnostics
   "Resolve full diagnostics snapshot."
