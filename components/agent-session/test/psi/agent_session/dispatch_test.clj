@@ -19,6 +19,14 @@
 
 (use-fixtures :each clean-state)
 
+(defn- create-session-context
+  ([]
+   (create-session-context {}))
+  ([opts]
+   (let [ctx (session/create-context opts)
+         sd  (session/new-session-in! ctx nil {})]
+     [ctx (:session-id sd)])))
+
 ;; ── Handler registration ────────────────────────────────────
 
 (deftest register-handler-test
@@ -451,7 +459,7 @@
 ;; ── Origin in log entries ───────────────────────────────────
 
 (deftest startup-bootstrap-dispatch-test
-  (let [[ctx _]            (session/create-context-with-session {:persist? false})
+  (let [[ctx _]            (create-session-context {:persist? false})
         _                  (dispatch/clear-event-log!)
         sd                 (session/new-session-in! ctx nil {})
         session-id         (:session-id sd)

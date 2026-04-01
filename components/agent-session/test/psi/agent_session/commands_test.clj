@@ -26,12 +26,20 @@
     (.mkdirs (java.io.File. p))
     p))
 
+(defn- create-session-context
+  ([]
+   (create-session-context {}))
+  ([opts]
+   (let [ctx (session/create-context opts)
+         sd  (session/new-session-in! ctx nil {})]
+     [ctx (:session-id sd)])))
+
 (defn- make-test-ctx
   "Create a minimal session context for testing commands.
    Returns [ctx session-id]."
   ([] (make-test-ctx {}))
   ([opts]
-   (session/create-context-with-session
+   (create-session-context
     {:session-defaults (merge {:model {:provider "anthropic"
                                       :id       "test-model"
                                       :reasoning false}

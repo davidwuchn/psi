@@ -7,6 +7,14 @@
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.tools :as tools]))
 
+(defn- create-session-context
+  ([]
+   (create-session-context {}))
+  ([opts]
+   (let [ctx (session/create-context opts)
+         sd  (session/new-session-in! ctx nil {})]
+     [ctx (:session-id sd)])))
+
 (deftest app-query-tool-schema-test
   (testing "app-query-tool schema is well-formed"
     (is (= "app-query-tool" (:name tools/app-query-tool)))
@@ -134,7 +142,7 @@
 
 (deftest app-query-tool-integration-test
   (testing "app-query-tool works with a real session context"
-    (let [[ctx _]            (session/create-context-with-session {:persist? false})
+    (let [[ctx _]            (create-session-context {:persist? false})
           sd                 (session/new-session-in! ctx nil {})
           session-id         (:session-id sd)
           tool               (tools/make-app-query-tool (fn [q] (session/query-in ctx session-id q)))
@@ -145,7 +153,7 @@
       (is (= :idle (:psi.agent-session/phase parsed)))))
 
   (testing "app-query-tool returns session-id from live context"
-    (let [[ctx _]            (session/create-context-with-session {:persist? false})
+    (let [[ctx _]            (create-session-context {:persist? false})
           sd                 (session/new-session-in! ctx nil {})
           session-id         (:session-id sd)
           tool               (tools/make-app-query-tool (fn [q] (session/query-in ctx session-id q)))

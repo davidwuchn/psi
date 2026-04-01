@@ -4,6 +4,14 @@
    [psi.agent-session.core :as session]
    [psi.agent-session.test-support :as test-support]))
 
+(defn- create-session-context
+  ([]
+   (create-session-context {}))
+  ([opts]
+   (let [ctx (session/create-context opts)
+         sd  (session/new-session-in! ctx nil {})]
+     [ctx (:session-id sd)])))
+
 (deftest startup-prompt-attrs-queryable-test
   (let [[ctx _] (test-support/make-session-ctx
                  {:session-data {:startup-prompts [{:id "engage-nucleus"
@@ -28,7 +36,7 @@
 
 (deftest startup-prompt-attrs-discoverable-in-graph-bridge-test
   (testing "startup attrs appear in graph edge metadata and resolver symbols"
-    (let [[ctx _] (session/create-context-with-session {:persist? false})
+    (let [[ctx _] (create-session-context {:persist? false})
           r   (session/query-in ctx [:psi.graph/resolver-syms :psi.graph/edges :psi.graph/domain-coverage])
           attrs (set (map :attribute (:psi.graph/edges r)))
           syms  (:psi.graph/resolver-syms r)
