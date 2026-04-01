@@ -964,7 +964,7 @@ Also tolerates cumulative snapshots that differ near previous tail
          extra))
 
 (defn- emit-tool-lifecycle!
-  [ctx session-id _progress-queue lifecycle-event]
+  [ctx session-id lifecycle-event]
   (dispatch/dispatch! ctx
                       :session/tool-lifecycle-event
                       {:session-id session-id
@@ -990,7 +990,7 @@ Also tolerates cumulative snapshots that differ near previous tail
     (emit-progress!
      progress-queue
      (emit-tool-lifecycle!
-      ctx session-id progress-queue
+      ctx session-id
       (tool-lifecycle-event
        :tool-executing call-id name
        :arguments (:arguments tool-call)
@@ -1005,7 +1005,7 @@ Also tolerates cumulative snapshots that differ near previous tail
                                   (emit-progress!
                                    progress-queue
                                    (emit-tool-lifecycle!
-                                    ctx session-id progress-queue
+                                    ctx session-id
                                     (tool-lifecycle-event
                                      :tool-execution-update call-id name
                                      :content content-blocks
@@ -1049,7 +1049,7 @@ Also tolerates cumulative snapshots that differ near previous tail
     (emit-progress!
      progress-queue
      (emit-tool-lifecycle!
-      ctx session-id progress-queue
+      ctx session-id
       (tool-lifecycle-event
        :tool-result call-id name
        :content (:content result-message)
@@ -1089,7 +1089,7 @@ Also tolerates cumulative snapshots that differ near previous tail
   (emit-progress!
    progress-queue
    (emit-tool-lifecycle!
-    ctx session-id progress-queue
+    ctx session-id
     (tool-lifecycle-event :tool-start (:id tool-call) (:name tool-call))))
   (dispatch/dispatch! ctx
                       :session/tool-agent-start
