@@ -139,6 +139,14 @@
       (is (not= session-id first-id))
       (is (not= first-id second-id))))
 
+  (testing "list-context-sessions-in ignores malformed placeholder slots"
+    (let [[ctx session-id] (create-session-context)]
+      (swap! (:state* ctx) assoc-in [:agent-session :sessions nil :turn] {:ctx nil})
+      (swap! (:state* ctx) assoc-in [:agent-session :sessions "placeholder-only" :telemetry] {})
+      (let [listed (ss/list-context-sessions-in ctx)]
+        (is (= 1 (count listed)))
+        (is (= session-id (:session-id (first listed)))))))
+
   (testing "new-session-in! accepts explicit worktree-path and session-name and keeps prior context peer"
     (let [[ctx session-id]       (create-session-context {:cwd "/repo/main"
                                                           :session-defaults {:worktree-path "/repo/main"}})

@@ -23,6 +23,7 @@
    Session targeting is explicit at call sites and on dispatch/query payloads.
    Adapters no longer bake session-id into persistent ctx closures."
   (:require
+   [clojure.string :as str]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.statechart :as sc]))
 
@@ -206,14 +207,19 @@
   (get-state-in* ctx [:agent-session :sessions]))
 
 (defn list-context-sessions-in
-  "Return session metadata entries sorted by updated-at."
+  "Return valid session metadata entries sorted by updated-at.
+
+   Defensive filter: ignore malformed runtime slots that do not carry a
+   non-blank :session-id in :data. Adapters should only render real sessions."
   [ctx]
   (let [sessions (get-sessions-map-in ctx)]
     (->> (vals sessions)
-         (map (fn [{:keys [data]}]
-                (select-keys data [:session-id :session-file :session-name
-                                   :worktree-path :parent-session-id
-                                   :parent-session-path])))
+         (keep (fn [{:keys [data]}]
+                 (when-let [sid (:session-id data)]
+                   (when-not (str/blank? sid)
+                     (select-keys data [:session-id :session-file :session-name
+                                        :worktree-path :parent-session-id
+                                        :parent-session-path])))))
          (sort-by :session-id)
          vec)))
 
