@@ -16,7 +16,8 @@
    With agent-session:
 
      (let [session-ctx (session/create-context)
-           ctx         (introspection/create-context {:agent-session-ctx session-ctx})]
+           _          (session/new-session-in! session-ctx nil {})
+           ctx        (introspection/create-context {:agent-session-ctx session-ctx})]
        (introspection/register-resolvers-in! ctx)
        (introspection/query-agent-session-in ctx [:psi.agent-session/phase]))
 
