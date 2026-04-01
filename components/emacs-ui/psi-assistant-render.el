@@ -433,16 +433,54 @@ appending to any prior local state."
       (setf (psi-emacs-state-thinking-in-progress psi-emacs--state) next)
       (psi-emacs--set-thinking-line next))))
 
+(defun psi-emacs--freeze-assistant-line ()
+  "Freeze a live in-progress assistant line at the tool boundary.
+
+When streaming text exists before a tool call, the text belongs to
+the current turn and must remain visible in the transcript.  Freezing
+it decouples the buffer range from the in-progress streaming state:
+the text stays but `assistant-in-progress' is cleared so the next
+`text-delta' creates a fresh `ψ:' line rather than concatenating with
+stale pre-tool text.
+
+Applies markdown finalization to the frozen range and unregisters
+the active assistant region identity (a fresh id will be assigned on
+the next streaming delta)."
+  (when psi-emacs--state
+    (let* ((range (psi-emacs--assistant-range-current))
+           (range-live (psi-emacs--assistant-range-live-p range))
+           (in-progress (psi-emacs-state-assistant-in-progress psi-emacs--state))
+           (has-text (and (stringp in-progress)
+                          (not (string-empty-p in-progress)))))
+      (when (and has-text range-live)
+        ;; Finalize markdown rendering on the frozen range.
+        (psi-emacs--process-finalized-assistant-range range)
+        ;; Unregister region identity so the next streaming delta allocates
+        ;; a fresh id and range — preventing the next text-delta from updating
+        ;; the stale frozen line.
+        (when-let ((id (psi-emacs-state-active-assistant-id psi-emacs--state)))
+          (psi-emacs--region-unregister 'assistant id))
+        (setf (psi-emacs-state-active-assistant-id psi-emacs--state) nil)
+        (psi-emacs--set-assistant-range-cache nil)
+        (setf (psi-emacs-state-assistant-in-progress psi-emacs--state) nil)))))
+
 (defun psi-emacs--assistant-before-tool-event ()
   "Prepare transcript before rendering a tool lifecycle event.
 
 When thinking text is in progress, split before tool output so subsequent
 thinking deltas render as a fresh block after the tool output.
 
+When assistant streaming text is in progress (model wrote text before
+calling a tool), freeze it as a permanent transcript line so the next
+turn's text-delta creates a fresh `ψ:' line rather than concatenating
+with the stale pre-tool text.
+
 Normally this archives the live thinking line. If marker state drifted and
 only `thinking-in-progress' text remains, clear that stale in-progress text
 so the next thinking delta still starts a fresh block."
   (when psi-emacs--state
+    ;; Freeze any live assistant text before the tool boundary.
+    (psi-emacs--freeze-assistant-line)
     (let* ((thinking-text (or (psi-emacs-state-thinking-in-progress psi-emacs--state) ""))
            (has-thinking-text (not (string-empty-p thinking-text)))
            (range-live (psi-emacs--assistant-range-live-p

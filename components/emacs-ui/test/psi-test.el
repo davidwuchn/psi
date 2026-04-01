@@ -2361,7 +2361,11 @@ thinking prefix.
 
 Regression: the assistant-range end marker was advancing (insertion-type t),
 causing delete-region on the next delta to swallow any tool row inserted
-immediately after the assistant line."
+immediately after the assistant line.
+
+The pre-tool assistant text is frozen as its own ψ: line at the tool
+boundary.  Post-tool text-deltas create a fresh ψ: line so that the
+next turn's reply is not concatenated with stale pre-tool content."
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
@@ -2370,31 +2374,32 @@ immediately after the assistant line."
           ;; 1. Assistant starts streaming
           (psi-emacs--handle-rpc-event
            '((:event . "assistant/delta") (:data . ((:text . "Hello")))))
-          ;; 2. Tool starts (inserted immediately after assistant line)
+          ;; 2. Tool starts — pre-tool text "Hello" is frozen; tool row appended after it
           (psi-emacs--handle-rpc-event
            '((:event . "tool/start") (:data . ((:tool-id . "t-1") (:tool-name . "bash")))))
           ;; 3. Tool completes
           (psi-emacs--handle-rpc-event
            '((:event . "tool/result") (:data . ((:tool-id . "t-1") (:tool-name . "bash")
                                                 (:result-text . "ok") (:is-error . nil)))))
-          ;; 4. More assistant streaming — must NOT delete the tool row
+          ;; 4. Post-tool streaming — creates a fresh ψ: line (NOT concatenated with "Hello")
           (psi-emacs--handle-rpc-event
            '((:event . "assistant/delta") (:data . ((:text . " world")))))
           (let ((content (buffer-substring-no-properties
                           (point-min) (psi-emacs--transcript-append-position))))
-            (should (string-match-p "ψ: Hello world" content))
+            ;; Pre-tool frozen line is visible
+            (should (string-match-p "ψ: Hello" content))
+            ;; Post-tool fresh line is present
+            (should (string-match-p "ψ:  world" content))
             ;; Tool row must still be present — tool rows hash must have t-1
             (should (= 1 (hash-table-count (psi-emacs-state-tool-rows psi-emacs--state)))))
-          ;; 5. Final message — tool row must still be present
+          ;; 5. Final message — finalizes the post-tool ψ: line; tool row must still be present
           (psi-emacs--handle-rpc-event
            '((:event . "assistant/message") (:data . ((:text . "Hello world")))))
           (let ((content (buffer-substring-no-properties
                           (point-min) (psi-emacs--transcript-append-position))))
             (should (string-match-p "ψ: Hello world" content))
             ;; Tool row still tracked and rendered
-            (should (= 1 (hash-table-count (psi-emacs-state-tool-rows psi-emacs--state))))
-            ;; Buffer contains assistant line, tool row, and trailing blank (3 newlines)
-            (should (= 3 (cl-count ?\n content)))))
+            (should (= 1 (hash-table-count (psi-emacs-state-tool-rows psi-emacs--state))))))
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
@@ -2425,14 +2430,17 @@ then deleted the tool row along with the assistant line."
           (psi-emacs--handle-rpc-event
            '((:event . "tool/result") (:data . ((:tool-id . "t-2") (:tool-name . "read")
                                                 (:result-text . "ok2") (:is-error . nil)))))
-          ;; More assistant text — must not delete tool rows
+          ;; Post-tool text — creates a fresh ψ: line (pre-tool "working" is frozen)
           (psi-emacs--handle-rpc-event
            '((:event . "assistant/delta") (:data . ((:text . " done")))))
           (let ((content (buffer-substring-no-properties
                           (point-min) (psi-emacs--transcript-append-position))))
-            (should (string-match-p "ψ: working done" content))
+            ;; Pre-tool frozen line still present
+            (should (string-match-p "ψ: working" content))
+            ;; Post-tool fresh line present
+            (should (string-match-p "ψ:  done" content))
             (should (= 2 (hash-table-count (psi-emacs-state-tool-rows psi-emacs--state)))))
-          ;; Final message — both tool rows must survive
+          ;; Final message — finalizes the post-tool ψ: line; both tool rows must survive
           (psi-emacs--handle-rpc-event
            '((:event . "assistant/message") (:data . ((:text . "working done")))))
           (let ((content (buffer-substring-no-properties
@@ -2524,7 +2532,10 @@ start marker (inverted range).  Subsequent assistant/delta calls then called
 delete-region on the inverted range (which swaps bounds and deletes tool row
 content), leaving the stale assistant text in the buffer.  Each new delta
 appended to the stale text instead of replacing it, producing repeated/doubled
-assistant content."
+assistant content.
+
+The tool boundary now freezes the pre-tool assistant line and starts a fresh
+ψ: for post-tool deltas.  Content must NOT be doubled (\"TheThe last commit\")."
   (with-temp-buffer
     (psi-emacs-mode)
     (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
@@ -2534,12 +2545,13 @@ assistant content."
           ;; Short assistant delta — assistant content is shorter than a typical tool row
           (psi-emacs--handle-rpc-event
            '((:event . "assistant/delta") (:data . ((:text . "The")))))
-          ;; Tool start — inserts a tool row (longer than "ψ: The\n" = 8 chars)
-          ;; before the assistant line.  This is the trigger for the inversion bug.
+          ;; Tool start — pre-tool text "The" is frozen; a fresh ψ: will be created for
+          ;; post-tool deltas.  This also tests that the inverted-range bug does not
+          ;; recur: inserting a tool row longer than the frozen line must not corrupt state.
           (psi-emacs--handle-rpc-event
            '((:event . "tool/start") (:data . ((:tool-id . "t-1") (:tool-name . "bash")
                                                (:arguments . "{\"command\":\"ls -la\"}")))))
-          ;; Second assistant delta with cumulative snapshot — must REPLACE, not append
+          ;; Post-tool delta — must create a fresh ψ: line, not concatenate with "The"
           (psi-emacs--handle-rpc-event
            '((:event . "assistant/delta") (:data . ((:text . "The last commit")))))
           (let* ((content (buffer-substring-no-properties
@@ -2547,11 +2559,91 @@ assistant content."
                  (assistant-lines (cl-remove-if-not
                                    (lambda (line) (string-prefix-p "ψ: " line))
                                    (split-string content "\n" t))))
-            ;; Exactly one assistant line — no duplication
-            (should (= 1 (length assistant-lines)))
-            ;; Must show the latest cumulative snapshot, not "TheThe last commit"
-            (should (equal "ψ: The last commit" (car assistant-lines)))))
+            ;; Two ψ: lines: frozen pre-tool "The" + fresh post-tool "The last commit"
+            (should (= 2 (length assistant-lines)))
+            (should (equal "ψ: The" (car assistant-lines)))
+            ;; Post-tool line shows the delta text, NOT doubled "TheThe last commit"
+            (should (equal "ψ: The last commit" (cadr assistant-lines)))))
       nil)))
+
+(ert-deftest psi-tool-boundary-freezes-pre-tool-text-as-separate-psi-line ()
+  "Pre-tool streaming text must be frozen at the tool boundary as its own ψ: line.
+
+Regression: in a multi-turn agent loop, text-delta events from turn N were
+accumulated in `assistant-in-progress'.  When turn N+1's text-delta arrived
+after tool execution, `merge-stream-text' concatenated the old and new text,
+causing turn N's pre-tool planning/preamble text to appear in the ψ: prefix
+alongside (or instead of) the actual reply."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (psi-emacs--ensure-input-area)
+    ;; Pre-tool text (model streams planning text before calling a tool)
+    (psi-emacs--handle-rpc-event
+     '((:event . "assistant/delta") (:data . ((:text . "I'll run bash to check")))))
+    ;; Tool boundary — pre-tool text must be frozen here
+    (psi-emacs--handle-rpc-event
+     '((:event . "tool/start") (:data . ((:tool-id . "t1") (:tool-name . "bash")))))
+    (psi-emacs--handle-rpc-event
+     '((:event . "tool/result") (:data . ((:tool-id . "t1") (:tool-name . "bash")
+                                          (:result-text . "ok") (:content . []) (:is-error . nil)))))
+    ;; Post-tool text (next turn's reply — must NOT concatenate with pre-tool text)
+    (psi-emacs--handle-rpc-event
+     '((:event . "assistant/delta") (:data . ((:text . "The result is ok")))))
+    (psi-emacs--handle-rpc-event
+     '((:event . "assistant/message") (:data . ((:text . "The result is ok")))))
+    (let* ((content (buffer-substring-no-properties
+                     (point-min) (psi-emacs--input-separator-position)))
+           (lines (split-string content "\n" t))
+           (psi-lines (cl-remove-if-not (lambda (l) (string-prefix-p "ψ: " l)) lines)))
+      ;; Two ψ: lines: frozen pre-tool + finalized post-tool
+      (should (= 2 (length psi-lines)))
+      (should (equal "ψ: I'll run bash to check" (car psi-lines)))
+      (should (equal "ψ: The result is ok" (cadr psi-lines)))
+      ;; Pre-tool text must NOT appear in the final ψ: line
+      (should-not (string-match-p "bash to check" (cadr psi-lines))))))
+
+(ert-deftest psi-tool-boundary-freeze-does-not-affect-thinking-line-ordering ()
+  "Freeze at tool boundary must not disturb thinking-line ordering.
+
+When a turn has thinking → text → tool: thinking must appear before the
+frozen pre-tool text, and post-tool thinking must appear before the final
+ψ: reply line."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (psi-emacs--ensure-input-area)
+    (psi-emacs--handle-rpc-event
+     '((:event . "assistant/thinking-delta") (:data . ((:text . "plan-1")))))
+    (psi-emacs--handle-rpc-event
+     '((:event . "assistant/delta") (:data . ((:text . "pre-tool")))))
+    (psi-emacs--handle-rpc-event
+     '((:event . "tool/start") (:data . ((:tool-id . "t1") (:tool-name . "bash")))))
+    (psi-emacs--handle-rpc-event
+     '((:event . "tool/result") (:data . ((:tool-id . "t1") (:tool-name . "bash")
+                                          (:result-text . "ok") (:content . []) (:is-error . nil)))))
+    (psi-emacs--handle-rpc-event
+     '((:event . "assistant/thinking-delta") (:data . ((:text . "plan-2")))))
+    (psi-emacs--handle-rpc-event
+     '((:event . "assistant/delta") (:data . ((:text . "final reply")))))
+    (psi-emacs--handle-rpc-event
+     '((:event . "assistant/message") (:data . ((:text . "final reply")))))
+    (let* ((content (buffer-substring-no-properties
+                     (point-min) (psi-emacs--input-separator-position)))
+           (lines (split-string content "\n" t)))
+      ;; Thinking lines use · prefix
+      (should (cl-some (lambda (l) (equal "· plan-1" l)) lines))
+      (should (cl-some (lambda (l) (equal "· plan-2" l)) lines))
+      ;; No thinking content in ψ: lines
+      (dolist (line lines)
+        (when (string-prefix-p "ψ: " line)
+          (should-not (string-match-p "plan-" line))))
+      ;; plan-2 must appear before the final ψ: reply
+      (let* ((plan2-idx (cl-position "· plan-2" lines :test #'equal))
+             (final-idx (cl-position "ψ: final reply" lines :test #'equal)))
+        (should plan2-idx)
+        (should final-idx)
+        (should (< plan2-idx final-idx))))))
 
 (ert-deftest psi-empty-assistant-message-archives-thinking-not-clears ()
   "Empty assistant/message (tool-only turn) must archive thinking, not delete it.
