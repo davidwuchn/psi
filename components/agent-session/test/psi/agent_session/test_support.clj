@@ -149,8 +149,8 @@
 
    Accepts the same options as session/create-context. The :initial-session
    overrides flow through :session-defaults into the first real session."
-  ([] (create-test-session {}))
+  ([] (create-test-session {:persist? false}))
   ([opts]
-   (let [[ctx _seed-id] (session-core/create-context (merge {:persist? false} opts))
-         sd             (session-core/new-session-in! ctx nil {})]
+   (let [[ctx _] (session-core/create-context opts)
+         sd      (session-core/new-session-in! ctx nil {})]
      [ctx (:session-id sd)])))
