@@ -158,7 +158,9 @@ When marker state drifted, attempt property-backed recovery first."
           (psi-emacs--region-register 'input-separator
                                       'main
                                       bol
-                                      (max (1+ bol) (line-end-position))))))))
+                                      (max (1+ bol) (line-end-position)))
+          (when (> bol (point-min))
+            (psi-emacs--mark-region-read-only (1- bol) bol)))))))
 
 (defun psi-emacs--draft-anchor-valid-p ()
   "Return non-nil when the current draft anchor marker is valid."
@@ -179,8 +181,13 @@ When marker state drifted, attempt property-backed recovery first."
 (defun psi-emacs--ensure-input-area ()
   "Ensure a dedicated input area exists before projection/footer content."
   (when psi-emacs--state
+    (psi-emacs--install-input-read-only-guard)
     (cond
      ((psi-emacs--input-separator-marker-valid-p)
+      (let ((separator-pos (psi-emacs--input-separator-position)))
+        (when (and (integerp separator-pos)
+                   (> separator-pos (point-min)))
+          (psi-emacs--mark-region-read-only (1- separator-pos) separator-pos)))
       (when (psi-emacs--input-separator-needs-refresh-p)
         (psi-emacs--refresh-input-separator-line)))
      (t
@@ -196,7 +203,9 @@ When marker state drifted, attempt property-backed recovery first."
             (delete-region input-start input-end)
             (unless (or (bobp)
                         (eq (char-before) ?\n))
-              (insert "\n"))
+              (let ((newline-start (point)))
+                (insert "\n")
+                (psi-emacs--mark-region-read-only newline-start (point))))
             (let ((separator-start (point)))
               (insert (psi-emacs--input-separator-line))
               (let ((separator-marker (copy-marker separator-start t)))
@@ -205,7 +214,9 @@ When marker state drifted, attempt property-backed recovery first."
                 (psi-emacs--region-register 'input-separator
                                             'main
                                             separator-start
-                                            (max (1+ separator-start) (1- (point)))))
+                                            (max (1+ separator-start) (1- (point))))
+                (when (> separator-start (point-min))
+                  (psi-emacs--mark-region-read-only (1- separator-start) separator-start)))
               (setf (psi-emacs-state-draft-anchor psi-emacs--state)
                     (copy-marker (point) nil))
               (insert existing-input))))

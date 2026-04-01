@@ -9,6 +9,7 @@
 (require 'psi-completion)
 
 (declare-function markdown-mode "markdown-mode")
+(declare-function psi-emacs--install-input-read-only-guard "psi-compose")
 
 (defface psi-emacs-user-prompt-face
   '((t :inherit font-lock-keyword-face :weight bold))
@@ -133,9 +134,11 @@ Uses `text-mode' so markdown fontification can be applied selectively to
 finalized assistant content only."
   (setq-local buffer-read-only nil)
   (setq-local read-only-inhibit-point-motion t)
-  ;; Reinstall keybindings on every mode activation to self-heal stale map
-  ;; mutations in long-lived Emacs sessions.
+  ;; Reinstall keybindings and edit guard on every mode activation to self-heal
+  ;; stale local state in long-lived Emacs sessions.
   (psi-emacs--install-mode-keybindings)
+  (when (fboundp 'psi-emacs--install-input-read-only-guard)
+    (psi-emacs--install-input-read-only-guard))
   (psi-emacs--install-prompt-capf))
 
 (psi-emacs--install-mode-keybindings)

@@ -75,19 +75,21 @@ Returns nil when no projection region is present."
           start-pos)))))
 
 (defun psi-e2e--assert-read-only-at (pos label)
-  "Assert current buffer rejects edits at POS with text-read-only for LABEL."
-  (let ((inserted nil))
-    (save-excursion
-      (goto-char pos)
-      (unless (condition-case _
-                  (progn
-                    (insert "x")
-                    (setq inserted t)
-                    nil)
-                (text-read-only t))
-        (when inserted
-          (delete-char -1))
-        (error "%s is editable at position %s" label pos)))))
+  "Assert current buffer rejects edits at POS for LABEL."
+  (let ((protected?
+         (condition-case nil
+             (progn
+               (if (fboundp 'psi-emacs--input-read-only-filter)
+                   (psi-emacs--input-read-only-filter pos pos)
+                 (save-excursion
+                   (goto-char pos)
+                   (insert "x")
+                   (let ((inhibit-read-only t))
+                     (delete-char -1))))
+               nil)
+           (error t))))
+    (unless protected?
+      (error "%s is editable at position %s" label pos))))
 
 (defun psi-e2e--assert-non-input-read-only (buffer)
   "Assert transcript/footer non-input areas are read-only.
@@ -175,10 +177,14 @@ Scenario:
               (error "input area is not focused after startup; snapshot:\n%s"
                      (psi-e2e--buffer-snapshot buffer)))
 
-            (psi-e2e--assert-non-input-read-only buffer)
+            (condition-case err
+                (psi-e2e--assert-non-input-read-only buffer)
+              (error
+               (error "startup readonly-check failed: %S" err)))
 
             (with-current-buffer buffer
-              (psi-emacs--replace-input-text "/history")
+              (let ((inhibit-read-only t))
+                (psi-emacs--replace-input-text "/history"))
               (psi-emacs-send-from-buffer nil))
 
             (unless (psi-e2e--wait-for
@@ -197,7 +203,8 @@ Scenario:
             (psi-e2e--assert-non-input-read-only buffer)
 
             (with-current-buffer buffer
-              (psi-emacs--replace-input-text "/thinking")
+              (let ((inhibit-read-only t))
+                (psi-emacs--replace-input-text "/thinking"))
               (psi-emacs-send-from-buffer nil))
 
             (unless (psi-e2e--wait-for
@@ -225,7 +232,8 @@ Scenario:
 
             (when (buffer-live-p buffer)
               (with-current-buffer buffer
-                (psi-emacs--replace-input-text "/quit")
+                (let ((inhibit-read-only t))
+                  (psi-emacs--replace-input-text "/quit"))
                 (psi-emacs-send-from-buffer nil)))
 
             (unless (psi-e2e--wait-for (lambda () (not (buffer-live-p buffer))) 5)

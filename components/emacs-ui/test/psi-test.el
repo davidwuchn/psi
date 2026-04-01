@@ -3500,9 +3500,10 @@ the thinking block from the buffer.  Thinking is transcript and must survive."
     ;; separator character. `psi-emacs--ensure-input-area` should repair it.
     (let ((sep (psi-emacs--input-separator-marker-cache)))
       (save-excursion
-        (goto-char (marker-position sep))
-        (delete-char 1)
-        (insert "X")))
+        (let ((inhibit-read-only t))
+          (goto-char (marker-position sep))
+          (delete-char 1)
+          (insert "X"))))
     (cl-letf (((symbol-function 'psi-emacs--projection-window-width)
                (lambda () 33)))
       (psi-emacs--handle-window-configuration-change)
