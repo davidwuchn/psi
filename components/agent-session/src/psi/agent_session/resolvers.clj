@@ -372,21 +372,23 @@
    [psi.query.registry :as registry]
    [psi.recursion.core :as recursion]
    [psi.recursion.resolvers :as recursion-resolvers]
-   [psi.agent-session.persistence :as persist]
-   [psi.agent-session.session :as session]
+   [psi.agent-session.background-job-runtime :as bg-runtime]
    [psi.agent-session.background-jobs :as bg-jobs]
-   [psi.agent-session.tool-output :as tool-output]
-   [psi.agent-session.prompt-templates :as pt]
-   [psi.agent-session.skills :as skills]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extensions :as ext]
-   [psi.agent-session.workflows :as wf]
-   [psi.ui.state :as ui-state]
+   [psi.agent-session.persistence :as persist]
+   [psi.agent-session.prompt-templates :as pt]
+   [psi.agent-session.session :as session]
    [psi.agent-session.session-state :as ss]
+   [psi.agent-session.skills :as skills]
+   [psi.agent-session.state-accessors :as accessors]
    [psi.agent-session.statechart :as sc]
+   [psi.agent-session.tool-output :as tool-output]
    [psi.agent-session.turn-statechart :as turn-sc]
+   [psi.agent-session.workflows :as wf]
+   [psi.agent-core.core :as agent]
    [psi.ai.models :as ai-models]
-   [psi.agent-core.core :as agent]))
+   [psi.ui.state :as ui-state]))
 
 (declare tool-lifecycle-summaries)
 
@@ -877,7 +879,7 @@
 
 (defn- reconcile-workflow-background-jobs!
   [agent-session-ctx]
-  ((resolve 'psi.agent-session.background-job-runtime/reconcile-workflow-background-jobs-in!) agent-session-ctx))
+  (bg-runtime/reconcile-workflow-background-jobs-in! agent-session-ctx))
 
 (pco/defresolver agent-session-background-jobs
   "Resolve background jobs for the active session thread.
@@ -1045,8 +1047,8 @@
                    :psi.session-entry/kind
                    :psi.session-entry/data]}]}
   (let [session-id (:session-id (session-data agent-session-ctx))
-        entries  ((resolve 'psi.agent-session.state-accessors/journal-state-in) agent-session-ctx session-id)
-        flushed? (:flushed? ((resolve 'psi.agent-session.state-accessors/flush-state-in) agent-session-ctx session-id))]
+        entries  (accessors/journal-state-in agent-session-ctx session-id)
+        flushed? (:flushed? (accessors/flush-state-in agent-session-ctx session-id))]
     {:psi.agent-session/session-entry-count (count entries)
      :psi.agent-session/journal-flushed?    flushed?
      :psi.agent-session/session-entries
@@ -1069,7 +1071,7 @@
      canonical lifecycle telemetry in `:tool-lifecycle-events`"
   [agent-session-ctx]
   (let [sd      (session-data agent-session-ctx)
-        journal ((resolve 'psi.agent-session.state-accessors/journal-state-in) agent-session-ctx (:session-id sd))
+        journal (accessors/journal-state-in agent-session-ctx (:session-id sd))
         msgs    (keep #(when (= :message (:kind %)) (get-in % [:data :message])) journal)]
     {:session-id         (:session-id sd)
      :session-file       (:session-file sd)
@@ -1088,7 +1090,7 @@
   [agent-session-ctx]
   (let [sd      (session-data agent-session-ctx)
         startup (:startup-bootstrap sd)
-        journal ((resolve 'psi.agent-session.state-accessors/journal-state-in) agent-session-ctx (:session-id sd))
+        journal (accessors/journal-state-in agent-session-ctx (:session-id sd))
         first-ts (:timestamp (first journal))]
     (or (:timestamp startup)
         first-ts
@@ -1897,7 +1899,7 @@
                  :psi.turn/is-done
                  :psi.turn/is-error]}
   (let [session-id (:session-id (session-data agent-session-ctx))]
-    (if-let [turn-ctx ((resolve 'psi.agent-session.state-accessors/turn-context-in) agent-session-ctx session-id)]
+    (if-let [turn-ctx (accessors/turn-context-in agent-session-ctx session-id)]
       (let [phase (turn-sc/turn-phase turn-ctx)
             td    (turn-sc/get-turn-data turn-ctx)]
         {:psi.turn/phase                phase
@@ -2209,7 +2211,7 @@
    ::pco/output [:psi.runtime/nrepl-host
                  :psi.runtime/nrepl-port
                  :psi.runtime/nrepl-endpoint]}
-  (let [runtime* ((resolve 'psi.agent-session.state-accessors/nrepl-runtime-in) agent-session-ctx)
+  (let [runtime* (accessors/nrepl-runtime-in agent-session-ctx)
         host     (:host runtime*)
         port     (:port runtime*)
         endpoint (or (:endpoint runtime*)
@@ -2304,7 +2306,7 @@
   "Return provider ids with configured auth for this session context.
    Delegates oauth projection refresh to the session core API."
   [agent-session-ctx]
-  ((resolve 'psi.agent-session.state-accessors/refresh-oauth-authenticated-providers-in!) agent-session-ctx))
+  (accessors/refresh-oauth-authenticated-providers-in! agent-session-ctx))
 
 (pco/defresolver agent-session-model-catalog
   "Resolve runtime model catalog for frontend model selectors."
@@ -2324,7 +2326,7 @@
                  :psi.oauth/last-login-at
                  :psi.oauth/pending-login]}
   (let [ids   (authenticated-provider-ids agent-session-ctx)
-        oauth-state (or ((resolve 'psi.agent-session.state-accessors/oauth-projection-in) agent-session-ctx) {})]
+        oauth-state (or (accessors/oauth-projection-in agent-session-ctx) {})]
     {:psi.agent-session/authenticated-providers ids
      :psi.oauth/authenticated-providers ids
      :psi.oauth/last-login-provider (:last-login-provider oauth-state)
@@ -2337,7 +2339,7 @@
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.agent-session/rpc-trace-enabled
                  :psi.agent-session/rpc-trace-file]}
-  (let [trace-state (or ((resolve 'psi.agent-session.state-accessors/rpc-trace-state-in) agent-session-ctx) {})]
+  (let [trace-state (or (accessors/rpc-trace-state-in agent-session-ctx) {})]
     {:psi.agent-session/rpc-trace-enabled (boolean (:enabled? trace-state))
      :psi.agent-session/rpc-trace-file (:file trace-state)}))
 
