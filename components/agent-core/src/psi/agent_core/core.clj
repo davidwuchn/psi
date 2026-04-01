@@ -17,8 +17,7 @@
   ────────────────
   `create-context` returns an isolated map with its own statechart env
   and event atoms.  All public *-in functions take a context, keeping
-  tests free of global state.  Global singleton wrappers delegate to the
-  global context."
+  callers free of global state."
   (:require
    [com.fulcrologic.statecharts :as sc]
    [com.fulcrologic.statecharts.chart :as chart]
@@ -133,16 +132,6 @@
      :session-id session-id
      :data-atom  (atom nil)
      :events-atom (atom [])}))
-
-(defonce ^:private global-ctx (atom nil))
-
-(defn- ensure-global-ctx! []
-  (or @global-ctx
-      (let [ctx (create-context)]
-        (reset! global-ctx ctx)
-        ctx)))
-
-(defn- global-context [] (ensure-global-ctx!))
 
 ;; ============================================================
 ;; Statechart helpers
@@ -280,12 +269,6 @@
 
 (defn set-tools-in! [ctx tools]
   (swap-data! ctx assoc :tools tools))
-
-(defn set-steering-mode-in! [ctx mode]
-  (swap-data! ctx assoc :steering-mode mode))
-
-(defn set-follow-up-mode-in! [ctx mode]
-  (swap-data! ctx assoc :follow-up-mode mode))
 
 ;; ============================================================
 ;; Message management
@@ -621,41 +604,3 @@
   (p.eql/process (ensure-query-env!)
                  {:psi/agent-ctx ctx}
                  q))
-
-;; ============================================================
-;; Global (singleton) wrappers
-;; ============================================================
-
-(defn create-agent!
-  "Start the global agent with optional `initial` data overrides."
-  ([]   (create-agent-in! (global-context)))
-  ([i]  (create-agent-in! (global-context) i)))
-
-(defn get-data    [] (get-data-in   (global-context)))
-(defn sc-phase    [] (sc-phase-in   (global-context)))
-(defn sc-state    [] (sc-state-in   (global-context)))
-(defn idle?       [] (idle-in?      (global-context)))
-(defn running?    [] (running-in?   (global-context)))
-(defn diagnostics [] (diagnostics-in (global-context)))
-
-(defn reset-agent!       []     (reset-agent-in!       (global-context)))
-(defn set-system-prompt! [p]    (set-system-prompt-in! (global-context) p))
-(defn set-model!         [m]    (set-model-in!         (global-context) m))
-(defn set-thinking-level! [l]    (set-thinking-level-in! (global-context) l))
-(defn set-tools!         [t]    (set-tools-in!         (global-context) t))
-(defn set-steering-mode! [m]    (set-steering-mode-in! (global-context) m))
-(defn set-follow-up-mode! [m]    (set-follow-up-mode-in! (global-context) m))
-(defn replace-messages!  [ms]   (replace-messages-in!  (global-context) ms))
-(defn append-message!    [msg]  (append-message-in!    (global-context) msg))
-(defn clear-messages!    []     (clear-messages-in!    (global-context)))
-(defn queue-steering!    [msg]  (queue-steering-in!    (global-context) msg))
-(defn queue-follow-up!   [msg]  (queue-follow-up-in!   (global-context) msg))
-(defn clear-steering!    []     (clear-steering-queue-in! (global-context)))
-(defn clear-follow-up!   []     (clear-follow-up-queue-in! (global-context)))
-(defn drain-events!      []     (drain-events-in! (global-context)))
-(defn abort!             []     (abort-in!             (global-context)))
-
-(defn query
-  "Run EQL `q` against the global agent context."
-  [q]
-  (query-in (global-context) q))
