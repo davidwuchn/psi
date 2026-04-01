@@ -80,9 +80,14 @@
                  (markerp (cdr range))
                  (marker-buffer (car range))
                  (marker-buffer (cdr range)))
-        (save-excursion
-          (let ((inhibit-read-only t))
-            (delete-region (car range) (cdr range)))))
+        (let ((start (marker-position (car range)))
+              (end   (marker-position (cdr range))))
+          (when (and start end
+                     (<= start end)
+                     (<= end (point-max)))
+            (save-excursion
+              (let ((inhibit-read-only t))
+                (delete-region start end))))))
       (when (and (consp range) (markerp (car range)))
         (set-marker (car range) nil))
       (when (and (consp range) (markerp (cdr range)))
