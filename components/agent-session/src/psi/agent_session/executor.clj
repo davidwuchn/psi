@@ -123,6 +123,84 @@
                          messages)))))
       conv)))
 
+(defn- append-user-msg
+  "Append one user message to an ai/conversation."
+  [conv msg]
+  (let [text-blocks (->> (:content msg)
+                         (keep (fn [block]
+                                 (when (= :text (:type block))
+                                   (cond-> {:type :text
+                                            :text (or (:text block) "")}
+                                     (:cache-control block)
+                                     (assoc :cache-control (:cache-control block))))))
+                         vec)
+        user-content (if (seq text-blocks)
+                       text-blocks
+                       (or (some #(when (= :text (:type %)) (:text %)) (:content msg))
+                           (str (:content msg))))]
+    (conv/add-user-message conv user-content)))
+
+(defn- append-assistant-msg
+  "Append one assistant message to an ai/conversation."
+  [conv msg]
+  (let [thinking-blocks (->> (:content msg)
+                              (keep (fn [block]
+                                      (when (= :thinking (:type block))
+                                        (cond-> {:kind :thinking
+                                                 :text (or (:text block) "")}
+                                          (:provider block)  (assoc :provider (:provider block))
+                                          (:signature block) (assoc :signature (:signature block)))))))
+        text-parts      (keep #(when (= :text (:type %)) (:text %)) (:content msg))
+        tool-calls      (filter #(= :tool-call (:type %)) (:content msg))
+        text            (str/join "\n" text-parts)
+        structured-blocks (vec
+                           (concat
+                            thinking-blocks
+                            (when (seq text) [{:kind :text :text text}])
+                            (map (fn [tc]
+                                   {:kind  :tool-call
+                                    :id    (:id tc)
+                                    :name  (:name tc)
+                                    :input (parse-args (:arguments tc))})
+                                 tool-calls)))]
+    (if (seq structured-blocks)
+      (conv/add-assistant-message conv {:content {:kind :structured :blocks structured-blocks}})
+      conv)))
+
+(defn- append-tool-result-msg
+  "Append one toolResult message to an ai/conversation."
+  [conv msg]
+  (let [text (or (some #(when (= :text (:type %)) (:text %)) (:content msg)) "")]
+    (conv/add-tool-result conv
+                          (:tool-call-id msg)
+                          (:tool-name msg)
+                          {:kind :text :text text}
+                          (boolean (:is-error msg)))))
+
+(defn- append-msg
+  "Append one agent-core message to an ai/conversation, skipping unknown/extension roles."
+  [conv msg]
+  (if (:custom-type msg)
+    conv ;; skip extension transcript markers
+    (case (:role msg)
+      "user"       (append-user-msg conv msg)
+      "assistant"  (append-assistant-msg conv msg)
+      "toolResult" (append-tool-result-msg conv msg)
+      conv)))
+
+(defn- add-tools-to-conv
+  "Add agent tool definitions to an ai/conversation."
+  [conv agent-tools tools-cache?]
+  (reduce (fn [c tool]
+            (conv/add-tool c
+                           (cond-> {:name        (:name tool)
+                                    :description (:description tool)
+                                    :parameters  (parse-tool-parameters (:parameters tool))}
+                             tools-cache?
+                             (assoc :cache-control (maybe-cache-control tools-cache?)))))
+          conv
+          agent-tools))
+
 (defn- agent-messages->ai-conversation
   "Rebuild an ai/conversation from agent-core message history.
   Used to reconstruct the conversation context before each LLM call.
@@ -132,92 +210,17 @@
   messages) and are excluded — they must not be sent to the LLM because they
   can produce consecutive same-role messages that cause provider 400 errors."
   [system-prompt messages agent-tools {:keys [cache-breakpoints]}]
-  (let [system-cache? (contains? (set (or cache-breakpoints #{})) :system)
-        tools-cache?  (contains? (set (or cache-breakpoints #{})) :tools)
-        append-user-message
-        (fn [conv msg]
-          (let [text-blocks (->> (:content msg)
-                                 (keep (fn [block]
-                                         (when (= :text (:type block))
-                                           (cond-> {:type :text
-                                                    :text (or (:text block) "")}
-                                             (:cache-control block)
-                                             (assoc :cache-control (:cache-control block))))))
-                                 vec)
-                user-content (if (seq text-blocks)
-                               text-blocks
-                               (or (some #(when (= :text (:type %)) (:text %))
-                                         (:content msg))
-                                   (str (:content msg))))]
-            (conv/add-user-message conv user-content)))
-        conv (reduce
-              (fn [conv msg]
-                (if (:custom-type msg)
-                  conv ;; skip extension transcript markers
-                  (case (:role msg)
-                    "user"
-                    (append-user-message conv msg)
-
-                    "assistant"
-                    (let [thinking-blocks (->> (:content msg)
-                                               (keep (fn [block]
-                                                       (when (= :thinking (:type block))
-                                                         (cond-> {:kind :thinking
-                                                                  :text (or (:text block) "")}
-                                                           (:provider block) (assoc :provider (:provider block))
-                                                           (:signature block) (assoc :signature (:signature block)))))))
-                          text-parts       (keep #(when (= :text (:type %)) (:text %))
-                                                 (:content msg))
-                          tool-calls       (filter #(= :tool-call (:type %))
-                                                   (:content msg))
-                          text             (str/join "\n" text-parts)
-                          structured-blocks (vec
-                                             (concat
-                                              thinking-blocks
-                                              (when (seq text)
-                                                [{:kind :text :text text}])
-                                              (map (fn [tc]
-                                                     {:kind  :tool-call
-                                                      :id    (:id tc)
-                                                      :name  (:name tc)
-                                                      :input (parse-args (:arguments tc))})
-                                                   tool-calls)))]
-                      (if (seq structured-blocks)
-                        (conv/add-assistant-message
-                         conv
-                         {:content
-                          {:kind   :structured
-                           :blocks structured-blocks}})
-                        conv))
-
-                    "toolResult"
-                    (let [text (or (some #(when (= :text (:type %)) (:text %))
-                                         (:content msg))
-                                   "")]
-                      (conv/add-tool-result conv
-                                            (:tool-call-id msg)
-                                            (:tool-name msg)
-                                            {:kind :text :text text}
-                                            (boolean (:is-error msg))))
-
-                  ;; unknown roles — skip
-                    conv)))
-              (conv/create {:system-prompt system-prompt
-                            :system-prompt-blocks (system-prompt/system-prompt-blocks
-                                                   system-prompt
-                                                   system-cache?)})
-              messages)
-        conv (apply-message-cache-breakpoints conv system-cache? tools-cache?)]
-    ;; Add agent tools to conversation so the provider includes them in the request
-    (reduce (fn [c tool]
-              (conv/add-tool c
-                             (cond-> {:name        (:name tool)
-                                      :description (:description tool)
-                                      :parameters  (parse-tool-parameters (:parameters tool))}
-                               tools-cache?
-                               (assoc :cache-control (maybe-cache-control tools-cache?)))))
-            conv
-            agent-tools)))
+  (let [cache-set     (set (or cache-breakpoints #{}))
+        system-cache? (contains? cache-set :system)
+        tools-cache?  (contains? cache-set :tools)
+        conv          (reduce append-msg
+                              (conv/create {:system-prompt        system-prompt
+                                            :system-prompt-blocks (system-prompt/system-prompt-blocks
+                                                                   system-prompt system-cache?)})
+                              messages)]
+    (-> conv
+        (apply-message-cache-breakpoints system-cache? tools-cache?)
+        (add-tools-to-conv agent-tools tools-cache?))))
 
 ;; ============================================================
 ;; Turn actions — agent-core integration on top of accumulation
