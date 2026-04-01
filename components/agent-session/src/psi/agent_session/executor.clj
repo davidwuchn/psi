@@ -143,13 +143,13 @@
 (defn- append-assistant-msg
   "Append one assistant message to an ai/conversation."
   [conv msg]
-  (let [thinking-blocks (->> (:content msg)
-                              (keep (fn [block]
-                                      (when (= :thinking (:type block))
-                                        (cond-> {:kind :thinking
-                                                 :text (or (:text block) "")}
-                                          (:provider block)  (assoc :provider (:provider block))
-                                          (:signature block) (assoc :signature (:signature block)))))))
+  (let [thinking-blocks (->> (:content msg
+                                       (keep (fn [block]
+                                               (when (= :thinking (:type block))
+                                                 (cond-> {:kind :thinking
+                                                          :text (or (:text block) "")}
+                                                   (:provider block)  (assoc :provider (:provider block))
+                                                   (:signature block) (assoc :signature (:signature block))))))))
         text-parts      (keep #(when (= :text (:type %)) (:text %)) (:content msg))
         tool-calls      (filter #(= :tool-call (:type %)) (:content msg))
         text            (str/join "\n" text-parts)
@@ -1104,28 +1104,22 @@ Also tolerates cumulative snapshots that differ near previous tail
                          progress-queue)
      progress-queue)
     (catch Exception e
-      (let [result-msg {:role         "toolResult"
+      (let [err-text   (str "Error: " (ex-message e))
+            result-msg {:role         "toolResult"
                         :tool-call-id (:id tool-call)
                         :tool-name    (:name tool-call)
-                        :content      [{:type :text :text (str "Error: " (ex-message e))}]
+                        :content      [{:type :text :text err-text}]
                         :is-error     true
                         :details      {:exception true}
-                        :result-text  (str "Error: " (ex-message e))
+                        :result-text  err-text
                         :timestamp    (java.time.Instant/now)}]
-        (dispatch/dispatch! ctx
-                            :session/tool-agent-end
-                            {:session-id session-id
-                             :tool-call  tool-call
-                             :result     {:content (str "Error: " (ex-message e))
-                                          :is-error true}
-                             :is-error?  true}
-                            {:origin :core})
-        (dispatch/dispatch! ctx
-                            :session/tool-agent-record-result
-                            {:session-id      session-id
-                             :tool-result-msg result-msg}
-                            {:origin :core})
-        result-msg))))
+        (record-tool-call-result!
+         ctx session-id
+         {:tool-call        tool-call
+          :tool-result      {:content err-text :is-error true}
+          :result-message   result-msg
+          :effective-policy nil}
+         progress-queue)))))
 
 (defn- run-tool-call!
   "Execute one tool call through one dispatch-owned runtime boundary."
