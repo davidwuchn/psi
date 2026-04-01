@@ -645,10 +645,8 @@ Also tolerates cumulative snapshots that differ near previous tail
    - :idle-timeout-ms
    - :wait-poll-ms"
   [done-p last-progress-ms {:keys [idle-timeout-ms wait-poll-ms]}]
-  (let [default-poll-ms    (var-get #'llm-stream-wait-poll-ms)
-        default-timeout-ms (var-get #'llm-stream-idle-timeout-ms)
-        poll-ms    (max 1 (long (or wait-poll-ms default-poll-ms 250)))
-        timeout-ms (max 1 (long (or idle-timeout-ms default-timeout-ms 120000)))]
+  (let [poll-ms    (max 1 (long (or wait-poll-ms llm-stream-wait-poll-ms)))
+        timeout-ms (max 1 (long (or idle-timeout-ms llm-stream-idle-timeout-ms)))]
     (loop []
       (let [result (deref done-p poll-ms ::pending)]
         (cond
