@@ -13,7 +13,7 @@
    :content [{:type :text :text "ok"}]})
 
 (deftest run-startup-prompts-in-persists-telemetry-test
-  (let [[ctx _]            (session/create-context {:persist? false})
+  (let [[ctx _]            (session/create-context-with-session {:persist? false})
         sd                 (session/new-session-in! ctx nil {})
         session-id         (:session-id sd)
         calls              (atom [])]
@@ -57,7 +57,7 @@
             (is (= ["one" "two"] user-texts))))))))
 
 (deftest run-startup-prompts-in-continues-after-prompt-failure-by-default-test
-  (let [[ctx _]            (session/create-context {:persist? false})
+  (let [[ctx _]            (session/create-context-with-session {:persist? false})
         sd                 (session/new-session-in! ctx nil {})
         session-id         (:session-id sd)
         calls              (atom [])]
@@ -90,7 +90,7 @@
         (is (true? (:startup-bootstrap-completed? sd)))))))
 
 (deftest run-startup-prompts-in-fail-fast-stops-after-first-failure-test
-  (let [[ctx _]            (session/create-context {:persist? false})
+  (let [[ctx _]            (session/create-context-with-session {:persist? false})
         sd                 (session/new-session-in! ctx nil {})
         session-id         (:session-id sd)
         calls              (atom [])]
@@ -123,7 +123,7 @@
         (is (nil? (get by-id "s2")))))))
 
 (deftest run-startup-prompts-in-skips-fork-by-default-test
-  (let [[ctx _]            (session/create-context {:persist? false})
+  (let [[ctx _]            (session/create-context-with-session {:persist? false})
         sd                 (session/new-session-in! ctx nil {})
         session-id         (:session-id sd)
         calls              (atom [])]

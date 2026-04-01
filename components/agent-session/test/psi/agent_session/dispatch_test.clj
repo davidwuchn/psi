@@ -451,7 +451,7 @@
 ;; ── Origin in log entries ───────────────────────────────────
 
 (deftest startup-bootstrap-dispatch-test
-  (let [[ctx _]            (session/create-context {:persist? false})
+  (let [[ctx _]            (session/create-context-with-session {:persist? false})
         _                  (dispatch/clear-event-log!)
         sd                 (session/new-session-in! ctx nil {})
         session-id         (:session-id sd)

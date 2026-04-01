@@ -28,7 +28,7 @@
 
 (deftest startup-prompt-attrs-discoverable-in-graph-bridge-test
   (testing "startup attrs appear in graph edge metadata and resolver symbols"
-    (let [[ctx _] (session/create-context {:persist? false})
+    (let [[ctx _] (session/create-context-with-session {:persist? false})
           r   (session/query-in ctx [:psi.graph/resolver-syms :psi.graph/edges :psi.graph/domain-coverage])
           attrs (set (map :attribute (:psi.graph/edges r)))
           syms  (:psi.graph/resolver-syms r)

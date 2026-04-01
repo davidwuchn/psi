@@ -31,7 +31,7 @@
    Returns [ctx session-id]."
   ([] (make-test-ctx {}))
   ([opts]
-   (session/create-context
+   (session/create-context-with-session
     {:session-defaults (merge {:model {:provider "anthropic"
                                       :id       "test-model"
                                       :reasoning false}

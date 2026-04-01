@@ -231,10 +231,10 @@
     ctx))
 
 (defn create-context
-  "Create an isolated session context with an initial session.
+  "Create an isolated session context.
 
-  Returns [ctx session-id] where session-id is a real session created
-  through the normal new-session-in! lifecycle.
+  Does not create a session. Call `new-session-in!` explicitly when a live
+  session is required.
 
   Options (all optional):
     :session-defaults  — overrides merged into session defaults (model,
@@ -254,7 +254,17 @@
     :mutations         — mutation var list for extension query contexts (default: [])"
   ([] (create-context {}))
   ([opts]
-   (let [ctx (create-context* opts)
+   (create-context* opts)))
+
+(defn create-context-with-session
+  "Create an isolated session context with an initial session.
+
+  Transitional helper preserving the old `create-context` behavior.
+  Returns [ctx session-id] where session-id is created through the normal
+  `new-session-in!` lifecycle."
+  ([] (create-context-with-session {}))
+  ([opts]
+   (let [ctx (create-context opts)
          sd  (lifecycle/new-session-in! ctx nil {})]
      [ctx (:session-id sd)])))
 

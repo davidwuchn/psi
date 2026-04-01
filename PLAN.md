@@ -1,3 +1,195 @@
+# Plan: Remove implicit initial session creation from `create-context`
+
+## Problem
+
+`psi.agent-session.core/create-context` currently creates a live session as a side effect:
+
+- builds context via `create-context*`
+- immediately calls `lifecycle/new-session-in!`
+- returns `[ctx session-id]`
+
+That makes context construction and session lifecycle inseparable, and it allows boot paths to accidentally create multiple startup sessions.
+
+Concrete consequence already observed:
+
+- `app_runtime/create-runtime-session-context` calls `session/create-context`
+- then calls `session/new-session-in!` again
+- Emacs RPC startup therefore begins with more than one live session in the backend context
+
+## Goal
+
+Make session creation explicit.
+
+Target shape:
+
+- `create-context` → returns context only
+- `new-session-in!` → explicit lifecycle operation owned by callers
+- startup paths create exactly one session, intentionally
+
+## Design
+
+### API split
+
+Change:
+
+- `psi.agent-session.core/create-context`
+  - from: returns `[ctx session-id]`
+  - to: returns `ctx`
+
+Optional migration helper during rollout:
+
+- `psi.agent-session.core/create-context-with-session`
+  - returns `[ctx session-id]`
+  - implements old behavior for transitional callers/tests
+
+### Ownership rule
+
+Only runtime/test code that needs a session should create one.
+
+Examples:
+
+- app runtime boot creates one initial session explicitly
+- RPC/TUI/CLI startup use that explicit session
+- tests that only need a context stop paying for a hidden session
+- tests that need a session create one deliberately
+
+## Steps
+
+### Step 1 — Change `create-context` semantics
+
+File:
+- `components/agent-session/src/psi/agent_session/core.clj`
+
+Changes:
+- update `create-context` so it returns only `(create-context* opts)`
+- remove implicit `(lifecycle/new-session-in! ctx nil {})`
+- update docstring to say context-only
+- optionally add `create-context-with-session` with the old `[ctx session-id]` behavior as a migration bridge
+
+Target result:
+- context construction no longer mutates session registry
+
+### Step 2 — Update runtime boot to create one explicit initial session
+
+Primary file:
+- `components/app-runtime/src/psi/app_runtime.clj`
+
+Changes:
+- in `create-runtime-session-context`, change destructuring from `[ctx _]` to `ctx`
+- keep the explicit `session/new-session-in!` there
+- verify this becomes the single source of initial session creation for runtime boot
+
+Expected result:
+- CLI/TUI/RPC boot creates exactly one live session
+
+### Step 3 — Migrate all call sites of `create-context`
+
+Search targets:
+- `session/create-context`
+- `core/create-context`
+
+Changes:
+- callers expecting `[ctx session-id]` must be rewritten
+- if a caller needs only context, use returned `ctx`
+- if a caller needs a live session, explicitly call `new-session-in!`
+- if using the migration bridge, temporarily swap to `create-context-with-session`
+
+Likely affected areas:
+- runtime code
+- RPC tests
+- agent-session tests
+- app-runtime tests
+- helper/test-support namespaces
+
+### Step 4 — Normalize tests around explicit lifecycle
+
+Goal:
+- make tests reflect the intended model: context first, session second
+
+Patterns:
+- context-only tests:
+  - `(let [ctx (session/create-context ...)] ...)`
+- session behavior tests:
+  - `(let [ctx (session/create-context ...)
+           sd (session/new-session-in! ctx nil {})
+           sid (:session-id sd)] ...)`
+
+If needed during migration:
+- use `create-context-with-session` to reduce churn, then remove later
+
+### Step 5 — Add regression coverage for startup session count
+
+Add focused tests that prove startup creates one session.
+
+Suggested coverage:
+- app-runtime boot path:
+  - create runtime session context
+  - assert `(count (ss/list-context-sessions-in ctx)) == 1`
+- RPC startup path:
+  - after bootstrap/handshake context snapshot, assert only one live session is exposed
+- optionally assert `/new` increases count from 1 to 2
+
+This protects the exact startup bug reported in Emacs.
+
+### Step 6 — Verify adapter behavior
+
+Manual/automated verification:
+
+- Emacs RPC startup
+  - session tree shows one session on first connect
+- TUI startup
+  - one session initially
+  - `/new` adds a second
+- CLI startup
+  - works unchanged from user perspective
+- resume/fork flows
+  - unaffected except for explicit initial session ownership
+
+### Step 7 — Remove migration bridge (if introduced)
+
+After callers are migrated and tests are green:
+- remove `create-context-with-session`
+- keep only explicit context creation + explicit session lifecycle
+
+## Risks / watchpoints
+
+### Hidden assumption: every context already has a session
+
+Some code may call helpers like:
+- `default-session-id-in`
+- `list-context-sessions-in` then take first
+- session query/prompt helpers without first creating a session
+
+This is acceptable only if those paths always run after explicit session creation.
+Tests that instantiate a bare context may need updates.
+
+### Resolver/support code
+
+Some resolver/test helpers may rely on `create-context` having pre-populated state.
+Those must either:
+- create a session explicitly, or
+- be rewritten to operate on pure context
+
+## Done criteria
+
+- [ ] `create-context` no longer creates a session implicitly
+- [ ] runtime startup creates exactly one live session
+- [ ] all callers updated to explicit session creation semantics
+- [ ] regression test protects startup session count
+- [ ] Emacs UI shows one session on fresh startup
+
+## Commit strategy
+
+1. change `create-context` semantics (+ optional bridge)
+2. update app runtime boot path
+3. migrate failing callers/tests
+4. add regression coverage for startup session count
+5. verify Emacs/TUI/RPC startup behavior
+
+### Candidate commit message
+
+`⚒ Δ Remove implicit initial session from create-context`
+
 # Plan: Explicit session-id on dispatch events
 
 ## Problem

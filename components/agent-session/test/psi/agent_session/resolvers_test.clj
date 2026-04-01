@@ -180,7 +180,7 @@
   (testing "context session attrs expose process sessions and persisted session list remains queryable"
     (let [cwd                (str (System/getProperty "java.io.tmpdir") "/psi-resolvers-context-" (java.util.UUID/randomUUID))
           _                  (.mkdirs (java.io.File. cwd))
-          [ctx _]            (session/create-context {:cwd cwd})
+          [ctx _]            (session/create-context-with-session {:cwd cwd})
           sd-1               (session/new-session-in! ctx nil {})
           sid-1              (:session-id sd-1)
           path-1             (:session-file sd-1)
@@ -265,7 +265,7 @@
     (let [runtime-atom (atom {:host "localhost"
                               :port 7888
                               :endpoint "localhost:7888"})
-          [ctx _]      (session/create-context {:persist? false
+          [ctx _]      (session/create-context-with-session {:persist? false
                                                 :nrepl-runtime-atom runtime-atom})
           result       (q-in ctx [:psi.runtime/nrepl-host
                                   :psi.runtime/nrepl-port
@@ -296,7 +296,7 @@
                                                 :access "test-access"
                                                 :refresh "test-refresh"
                                                 :expires (+ (System/currentTimeMillis) 3600000)}}})
-          [ctx _]  (session/create-context {:persist? false :oauth-ctx oauth-ctx})
+          [ctx _]  (session/create-context-with-session {:persist? false :oauth-ctx oauth-ctx})
           result   (q-in ctx [:psi.agent-session/authenticated-providers])
           providers (:psi.agent-session/authenticated-providers result)]
       (is (vector? providers))
@@ -355,7 +355,7 @@
         (is (map? (:git.worktree/current result))))))
 
   (testing ":psi.agent-session/cwd prefers session worktree-path"
-    (let [[ctx _] (session/create-context {:cwd "/repo/main"
+    (let [[ctx _] (session/create-context-with-session {:cwd "/repo/main"
                                            :session-defaults {:worktree-path "/repo/feature-x"}
                                            :persist? false})
           result (q-in ctx [:psi.agent-session/cwd])]
@@ -451,7 +451,7 @@
 (deftest register-resolvers-in-includes-history-resolvers-test
   (testing "register-resolvers-in! includes history resolvers so worktree attrs are resolvable
             (regression: extension query-fn uses isolated qctx via register-resolvers-in!)"
-    (let [[ctx _] (session/create-context {:persist? false})
+    (let [[ctx _] (session/create-context-with-session {:persist? false})
           qctx    (query/create-query-context)
           _      (session/register-resolvers-in! qctx false)
           _      (session/register-mutations-in! qctx mutations/all-mutations true)

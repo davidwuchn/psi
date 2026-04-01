@@ -92,7 +92,7 @@
 
 (deftest rpc-handshake-uses-explicit-transport-deps-invariant-test
   (testing "handshake server-info/context come from explicit transport deps, not mutable state magic"
-    (let [[ctx sid] (session/create-context)
+    (let [[ctx sid] (session/create-context-with-session)
           wrong-called?   (atom false)
           right-called?   (atom false)
           state           (atom {:handshake-server-info-fn (fn [_] (reset! wrong-called? true)
@@ -126,7 +126,7 @@
 
 (deftest rpc-new-session-uses-explicit-session-deps-invariant-test
   (testing "new_session uses explicit session deps callback, not mutable state callback"
-    (let [[ctx _]       (session/create-context)
+    (let [[ctx _]       (session/create-context-with-session)
           wrong-called? (atom false)
           right-called? (atom 0)
           state         (atom {:ready? true
@@ -164,7 +164,7 @@
 
 (deftest rpc-prompt-uses-explicit-run-loop-invariant-test
   (testing "prompt agent-loop behavior comes from explicit session deps, not mutable state"
-    (let [[ctx _]       (session/create-context)
+    (let [[ctx _]       (session/create-context-with-session)
           wrong-called? (atom false)
           right-called? (atom false)
           state         (atom {:ready? true
