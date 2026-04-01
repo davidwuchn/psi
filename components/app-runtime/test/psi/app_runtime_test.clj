@@ -81,6 +81,20 @@
                   {:extension-errors [] :extension-loaded-count 0})]
     (f)))
 
+(deftest create-runtime-session-context-creates-single-initial-session-test
+  (with-main-bootstrap-stubs
+    (fn []
+      (let [{:keys [ctx session-id]} (app-runtime/create-runtime-session-context
+                                      {:provider           :anthropic
+                                       :id                 "test-model"
+                                       :name               "Test Model"
+                                       :supports-reasoning false
+                                       :context-window     200000}
+                                      {:ui-type :emacs})
+            sessions (ss/list-context-sessions-in ctx)]
+        (is (= 1 (count sessions)))
+        (is (= session-id (:session-id (first sessions)))))))
+
 (deftest run-session-initializes-session-file-test
   (let [orig-state @app-runtime/session-state]
     (try
