@@ -2,7 +2,7 @@
   "Shared output-policy resolution, truncation helpers, and process temp store.
 
    Output Policy:
-   - default-max-lines (1000) and default-max-bytes (25600)
+   - default-max-lines (1000) and default-max-bytes (51200)
    - Per-tool overrides via {:tool-name {:max-lines N :max-bytes N}}
    - effective-policy merges overrides over defaults
 
@@ -30,7 +30,7 @@
 
 (def default-max-bytes
   "Default maximum bytes for tool output."
-  25600)
+  51200)
 
 (defn effective-policy
   "Resolve effective output policy for a tool.

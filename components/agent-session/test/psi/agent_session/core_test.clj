@@ -1159,7 +1159,7 @@
                                         :psi.tool-output/default-max-bytes
                                         :psi.tool-output/overrides])]
       (is (= 1000 (:psi.tool-output/default-max-lines result)))
-      (is (= 25600 (:psi.tool-output/default-max-bytes result)))
+      (is (= 51200 (:psi.tool-output/default-max-bytes result)))
       (is (= {"bash" {:max-lines 77 :max-bytes 2048}}
              (:psi.tool-output/overrides result)))))
 
@@ -1172,7 +1172,7 @@
                                          :limit-hit true
                                          :truncated-by :bytes
                                          :effective-max-lines 1000
-                                         :effective-max-bytes 25600
+                                         :effective-max-bytes 51200
                                          :output-bytes 120
                                          :context-bytes-added 64}]
                                 :aggregates {:total-context-bytes 64
@@ -1197,7 +1197,7 @@
         (is (true? (:psi.tool-output.call/limit-hit? first-call)))
         (is (= :bytes (:psi.tool-output.call/truncated-by first-call)))
         (is (= 1000 (:psi.tool-output.call/effective-max-lines first-call)))
-        (is (= 25600 (:psi.tool-output.call/effective-max-bytes first-call)))
+        (is (= 51200 (:psi.tool-output.call/effective-max-bytes first-call)))
         (is (= 120 (:psi.tool-output.call/output-bytes first-call)))
         (is (= 64 (:psi.tool-output.call/context-bytes-added first-call)))
         (is (= {:total-context-bytes 64

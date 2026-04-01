@@ -888,7 +888,7 @@
           (is (= [{:type :text :text "hello"}] (get-in result [:result-message :content])))
           (is (= false (get-in result [:tool-result :is-error])))
           (is (= 1000 (get-in result [:effective-policy :max-lines])))
-          (is (= 25600 (get-in result [:effective-policy :max-bytes]))))))))
+          (is (= 51200 (get-in result [:effective-policy :max-bytes]))))))))
 
 (deftest tool-run-dispatch-boundary-test
   (testing "tool execution now enters through one explicit session/tool-run dispatch boundary"

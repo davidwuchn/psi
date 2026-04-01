@@ -14,7 +14,7 @@
     (.delete ^java.io.File child)))
 
 (defn- large-bash-command []
-  ;; Guaranteed to exceed default 1000-line/25600-byte policy.
+  ;; Guaranteed to exceed default 1000-line/51200-byte policy.
   "yes line | head -n 50000")
 
 (use-fixtures

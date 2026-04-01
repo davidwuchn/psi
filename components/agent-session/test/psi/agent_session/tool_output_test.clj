@@ -10,11 +10,11 @@
 (deftest effective-policy-defaults-test
   ;; Verifies that defaults are returned when no overrides are provided
   (testing "returns defaults when no overrides exist"
-    (is (= {:max-lines 1000 :max-bytes 25600}
+    (is (= {:max-lines 1000 :max-bytes 51200}
            (tool-output/effective-policy {} "read"))))
 
   (testing "returns defaults when tool has no override entry"
-    (is (= {:max-lines 1000 :max-bytes 25600}
+    (is (= {:max-lines 1000 :max-bytes 51200}
            (tool-output/effective-policy {"bash" {:max-lines 500}} "read")))))
 
 (deftest effective-policy-overrides-test
@@ -24,7 +24,7 @@
            (tool-output/effective-policy {"read" {:max-lines 100 :max-bytes 5000}} "read"))))
 
   (testing "overrides only max-lines, max-bytes falls through to default"
-    (is (= {:max-lines 100 :max-bytes 25600}
+    (is (= {:max-lines 100 :max-bytes 51200}
            (tool-output/effective-policy {"read" {:max-lines 100}} "read"))))
 
   (testing "overrides only max-bytes, max-lines falls through to default"
@@ -32,7 +32,7 @@
            (tool-output/effective-policy {"read" {:max-bytes 5000}} "read"))))
 
   (testing "nil override values fall through to defaults"
-    (is (= {:max-lines 1000 :max-bytes 25600}
+    (is (= {:max-lines 1000 :max-bytes 51200}
            (tool-output/effective-policy {"read" {:max-lines nil :max-bytes nil}} "read")))))
 
 ;;; head-truncate tests
