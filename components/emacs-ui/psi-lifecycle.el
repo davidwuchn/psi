@@ -196,6 +196,10 @@ Returns non-nil when request dispatch was accepted by transport."
 
 (defun psi-emacs--teardown-buffer ()
   "Stop owned subprocess and clear local/global frontend state for current buffer."
+  ;; Remove window-configuration hook first so upsert-projection-block cannot
+  ;; fire against a partially-torn-down buffer (markers already cleared).
+  (remove-hook 'window-configuration-change-hook
+               #'psi-emacs--handle-window-configuration-change t)
   (when (and psi-emacs--state
              (psi-rpc-client-p (psi-emacs-state-rpc-client psi-emacs--state)))
     (psi-rpc-stop! (psi-emacs-state-rpc-client psi-emacs--state)))
