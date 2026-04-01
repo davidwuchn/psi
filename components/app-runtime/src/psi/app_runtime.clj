@@ -573,7 +573,7 @@ Available: " (str/join ", " (map name (keys models/all-models))))
      (let [cmd-opts {:oauth-ctx oauth-ctx
                      :ai-model ai-model
                      :supports-session-tree? false
-                     :on-new-session! (fn []
+                     :on-new-session! (fn [_source-session-id]
                                         (let [source-session-id @cli-focus*
                                               result             (start-new-session-with-startup! ctx source-session-id ai-ctx ai-model)]
                                           (reset! cli-focus* (:session-id result))
@@ -737,7 +737,7 @@ Available: " (str/join ", " (map name (keys models/all-models))))
          cmd-opts  {:oauth-ctx oauth-ctx
                     :ai-model ai-model
                     :supports-session-tree? true
-                    :on-new-session! (fn []
+                    :on-new-session! (fn [_source-session-id]
                                        (let [source-session-id @tui-focus*
                                              result             (start-new-session-with-startup! ctx source-session-id ai-ctx ai-model)]
                                          (reset! tui-focus* (:session-id result))

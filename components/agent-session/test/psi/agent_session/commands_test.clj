@@ -84,7 +84,7 @@
                                          "/new"
                                          (assoc cmd-opts
                                                 :on-new-session!
-                                                (fn []
+                                                (fn [_source-session-id]
                                                   (swap! called? inc)
                                                   {:messages [{:role :assistant :text "startup"}]
                                                    :tool-calls {"call-1" {:name "read"}}

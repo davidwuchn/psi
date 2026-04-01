@@ -364,7 +364,7 @@
       ;; New session
       (= trimmed "/new")
       (let [rehydrate (if on-new-session!
-                        (on-new-session!)
+                        (on-new-session! session-id)
                         (let [sd (session/new-session-in! ctx session-id {})]
                           {:session-id (:session-id sd) :messages [] :tool-calls {} :tool-order []}))]
         {:type :new-session
