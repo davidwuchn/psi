@@ -256,18 +256,6 @@
   ([opts]
    (create-context* opts)))
 
-(defn create-context-with-session
-  "Create an isolated session context with an initial session.
-
-  Transitional helper preserving the old `create-context` behavior.
-  Returns [ctx session-id] where session-id is created through the normal
-  `new-session-in!` lifecycle."
-  ([] (create-context-with-session {}))
-  ([opts]
-   (let [ctx (create-context opts)
-         sd  (lifecycle/new-session-in! ctx nil {})]
-     [ctx (:session-id sd)])))
-
 ;;; Session lifecycle — delegates directly to session-lifecycle.clj
 
 (defn new-session-in!
