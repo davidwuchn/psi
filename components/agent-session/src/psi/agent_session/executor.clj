@@ -1165,23 +1165,11 @@ Also tolerates cumulative snapshots that differ near previous tail
       {:turn/outcome     :turn.outcome/stop
        :assistant-message assistant-msg})))
 
-(defn- continue-after-tool-use!
-  "Execute one explicit tool-use outcome and return the next continuation shape.
-
-   Input:
-   - outcome from `classify-turn-outcome` with `:turn/outcome :turn.outcome/tool-use`
-
-   Output:
-   - {:turn/continuation :turn.continue/next-turn
-      :assistant-message msg
-      :tool-results [...]}"
+(defn- execute-tool-calls!
+  "Execute all tool calls from a tool-use outcome. Returns tool results."
   [ctx session-id outcome progress-queue]
-  (let [tool-results (mapv (fn [tc]
-                             (run-tool-call! ctx session-id tc progress-queue))
-                           (:tool-calls outcome))]
-    {:turn/continuation :turn.continue/next-turn
-     :assistant-message (:assistant-message outcome)
-     :tool-results tool-results}))
+  (mapv (fn [tc] (run-tool-call! ctx session-id tc progress-queue))
+        (:tool-calls outcome)))
 
 (defn- execute-one-turn!
   "Execute exactly one streamed assistant turn and return its explicit outcome.
@@ -1209,13 +1197,10 @@ Also tolerates cumulative snapshots that differ near previous tail
                            extra-ai-options progress-queue)]
     (case (:turn/outcome outcome)
       :turn.outcome/tool-use
-      (let [continuation (continue-after-tool-use! ctx session-id outcome progress-queue)]
-        (case (:turn/continuation continuation)
-          :turn.continue/next-turn
-          (run-turn-loop! ai-ctx ctx session-id agent-ctx ai-model
-                          extra-ai-options progress-queue)
-
-          assistant-message))
+      (do
+        (execute-tool-calls! ctx session-id outcome progress-queue)
+        (run-turn-loop! ai-ctx ctx session-id agent-ctx ai-model
+                        extra-ai-options progress-queue))
 
       :turn.outcome/stop
       assistant-message
