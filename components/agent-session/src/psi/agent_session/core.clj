@@ -445,7 +445,15 @@
 
 ;;; Model and thinking level
 
-(declare set-model-in! set-thinking-level-in!)
+(defn set-model-in!
+  "Set the session model for `session-id`."
+  [ctx session-id model]
+  (dispatch/dispatch! ctx :session/set-model {:session-id session-id :model model} {:origin :core}))
+
+(defn set-thinking-level-in!
+  "Set the thinking level for `session-id`."
+  [ctx session-id level]
+  (dispatch/dispatch! ctx :session/set-thinking-level {:session-id session-id :level level} {:origin :core}))
 
 (defn cycle-model-in!
   "Cycle to the next available scoped model for `session-id`."
@@ -458,11 +466,6 @@
       (set-model-in! ctx session-id next-m))
     (ss/get-session-data-in ctx session-id)))
 
-(defn set-model-in!
-  "Set the session model for `session-id`."
-  [ctx session-id model]
-  (dispatch/dispatch! ctx :session/set-model {:session-id session-id :model model} {:origin :core}))
-
 (defn cycle-thinking-level-in!
   "Cycle to the next thinking level for `session-id`."
   [ctx session-id]
@@ -473,15 +476,10 @@
         (set-thinking-level-in! ctx session-id next-l)))
     (ss/get-session-data-in ctx session-id)))
 
-(defn set-thinking-level-in!
-  "Set the thinking level for `session-id`."
-  [ctx session-id level]
-  (dispatch/dispatch! ctx :session/set-thinking-level {:session-id session-id :level level} {:origin :core}))
-
 (defn set-session-name-in!
   "Set the session name for `session-id`."
-  [ctx session-id name]
-  (dispatch/dispatch! ctx :session/set-session-name {:session-id session-id :name name} {:origin :core}))
+  [ctx session-id session-name]
+  (dispatch/dispatch! ctx :session/set-session-name {:session-id session-id :name session-name} {:origin :core}))
 
 (defn set-auto-compaction-in!
   "Enable or disable auto-compaction for `session-id`."
@@ -523,6 +521,7 @@
                              {:compaction-entry entry
                               :from-extension  from-extension?})
             result))))))
+
 (defn manual-compact-in!
   "User-triggered compaction. Aborts agent if running, then compacts through
    a dispatch-shaped vertical slice:
