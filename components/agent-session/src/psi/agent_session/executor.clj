@@ -48,15 +48,26 @@
 ;; ai conversation ↔ agent-core message translation
 ;; ============================================================
 
+(defn- parse-args-strict
+  "Parse tool args strictly, preserving parse validity.
+   Returns {:ok? true :value <map>} when JSON parses to a map,
+   otherwise {:ok? false :value nil}."
+  [arguments]
+  (try
+    (let [parsed (json/parse-string arguments)]
+      (if (map? parsed)
+        {:ok? true :value parsed}
+        {:ok? false :value nil}))
+    (catch Exception _
+      {:ok? false :value nil})))
+
 (defn- parse-args
   "Parse JSON tool arguments string into a map.
    Always returns a map — if the parsed value is not a map (e.g. string, array,
    nil) or parsing fails, returns {} so tool_use.input is always a valid dict."
   [arguments]
-  (try
-    (let [parsed (json/parse-string arguments)]
-      (if (map? parsed) parsed {}))
-    (catch Exception _ {})))
+  (let [{:keys [ok? value]} (parse-args-strict arguments)]
+    (if ok? value {})))
 
 (defn- parse-tool-parameters
   "Parse tool parameters from pr-str'd string to a map, or return as-is if already a map."
@@ -338,19 +349,6 @@ Also tolerates cumulative snapshots that differ near previous tail
                  (-> tc
                      (assoc :content-index content-index)
                      (update :id #(canonical-tool-call-id turn-id content-index %))))))))
-
-(defn- parse-args-strict
-  "Parse tool args strictly, preserving parse validity.
-   Returns {:ok? true :value <map>} when JSON parses to a map,
-   otherwise {:ok? false :value nil}."
-  [arguments]
-  (try
-    (let [parsed (json/parse-string arguments)]
-      (if (map? parsed)
-        {:ok? true :value parsed}
-        {:ok? false :value nil}))
-    (catch Exception _
-      {:ok? false :value nil})))
 
 (defn- invalid-tool-call
   [tc]
