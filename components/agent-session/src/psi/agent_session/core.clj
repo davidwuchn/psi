@@ -133,81 +133,95 @@
 
 ;;; Context creation (Nullable pattern)
 
+(defn- resolve-session-defaults
+  "Merge caller-supplied session-defaults with resolved cwd and ui-type."
+  [session-defaults resolved-cwd ui-type]
+  (cond-> (or session-defaults {})
+    (not (contains? (or session-defaults {}) :worktree-path))
+    (assoc :worktree-path resolved-cwd)
+    (some? ui-type) (assoc :ui-type ui-type)))
+
+(defn- initial-root-state
+  "Build the initial value for the canonical root state atom."
+  [nrepl-runtime-atom recursion-ctx]
+  {:agent-session {:sessions {}}
+   :runtime {:nrepl (or (some-> nrepl-runtime-atom deref) nil)
+             :rpc-trace {:enabled? false
+                         :file nil}}
+   :background-jobs {:store (bg-jobs/empty-state)}
+   :ui {:extension-ui @(ui-state/create-ui-state)}
+   :recursion (or (some-> recursion-ctx :state-atom deref) nil)
+   :oauth {:authenticated-providers []
+           :last-login-provider nil
+           :last-login-at nil}})
+
+(defn- callback-fns
+  "Build the indirection table of callback/strategy fns for ctx.
+   These allow dispatch handlers and extensions to call back into the
+   session layer without circular requires."
+  [mutations]
+  {:apply-root-state-update-fn                    ss/apply-root-state-update-in!
+   :read-session-state-fn                         ss/get-state-value-in
+   :execute-dispatch-effect-fn                    (fn [ctx effect] (dispatch-effects/execute-effect! ctx effect))
+   :dispatch-statechart-event-fn                  dispatch-handlers/dispatch-statechart-event-in!
+   :runtime-tool-executor-fn                      tool-plan/default-execute-runtime-tool-in!
+   :execute-tool-runtime-fn                       #'tool-plan/execute-tool-runtime-in!
+   :refresh-system-prompt-fn                      (fn
+                                                    ([_ctx]
+                                                     (throw (ex-info "refresh-system-prompt-fn requires explicit session-id"
+                                                                     {:callback :refresh-system-prompt-fn})))
+                                                    ([ctx session-id]
+                                                     (dispatch/dispatch! ctx :session/refresh-system-prompt {:session-id session-id} {:origin :core})))
+   :execute-compaction-fn                         (fn [ctx session-id custom-instructions]
+                                                    (execute-compaction-in! ctx session-id custom-instructions))
+   :send-extension-message-fn                     #'ext-rt/send-extension-message-in!
+   :register-resolvers-fn                         (fn [qctx rebuild?] (register-resolvers-in! qctx rebuild?))
+   :register-mutations-fn                         (fn [qctx mutations rebuild?] (register-mutations-in! qctx mutations rebuild?))
+   :mark-workflow-jobs-terminal-fn                bg-rt/maybe-mark-workflow-jobs-terminal!
+   :emit-background-job-terminal-messages-fn      bg-rt/maybe-emit-background-job-terminal-messages!
+   :reconcile-and-emit-background-job-terminals-fn bg-rt/reconcile-and-emit-background-job-terminals-in!
+   :journal-append-fn                             ss/journal-append-in!
+   :effective-cwd-fn                              (fn
+                                                    ([_ctx]
+                                                     (throw (ex-info "effective-cwd-fn requires explicit session-id"
+                                                                     {:callback :effective-cwd-fn})))
+                                                    ([ctx session-id]
+                                                     (ss/effective-cwd-in ctx session-id)))
+   :daemon-thread-fn                              dispatch-handlers/daemon-thread
+   :drop-trailing-overflow-error-fn               dispatch-handlers/drop-trailing-overflow-error!
+   :validate-dispatch-result-fn                   dispatch/validate-dispatch-schemas
+   :all-mutations                                 mutations})
+
 (defn- create-context*
-  "Internal: create a session context without an initial session.
+  "Internal: create a session context without creating a session.
    Returns ctx (not a vector). Used by create-context and tests."
   [{:keys [session-defaults compaction-fn branch-summary-fn agent-initial config cwd persist? event-queue oauth-ctx recursion-ctx nrepl-runtime-atom ui-type mutations]
     :or   {persist? true mutations []}}]
-  (let [sc-env            (sc/create-sc-env)
-        resolved-cwd      (or cwd (System/getProperty "user.dir"))
-        resolved-defaults (cond-> (or session-defaults {})
-                            (not (contains? (or session-defaults {}) :worktree-path))
-                            (assoc :worktree-path resolved-cwd)
-                            (some? ui-type) (assoc :ui-type ui-type))
-        ext-reg           (ext/create-registry)
-        wf-reg            (wf/create-registry)
-        merged-config     (merge session/default-config (or config {}))
-        state*            (atom {:agent-session {:sessions {}}
-                                 :runtime {:nrepl (or (some-> nrepl-runtime-atom deref) nil)
-                                           :rpc-trace {:enabled? false
-                                                       :file nil}}
-                                 :background-jobs {:store (bg-jobs/empty-state)}
-                                 :ui {:extension-ui @(ui-state/create-ui-state)}
-                                 :recursion (or (some-> recursion-ctx :state-atom deref) nil)
-                                 :oauth {:authenticated-providers []
-                                         :last-login-provider nil
-                                         :last-login-at nil}})
-        ctx0              {:sc-env                sc-env
-                           :started-at            (java.time.Instant/now)
-                           :state*                state*
-                           :session-defaults      resolved-defaults
-                           :agent-initial         agent-initial
-                           :nrepl-runtime-atom    nrepl-runtime-atom
-                           :extension-registry    ext-reg
-                           :workflow-registry     wf-reg
-                           :event-queue           event-queue
-                           :cwd                   resolved-cwd
-                           :persist?              persist?
-                           :oauth-ctx             oauth-ctx
-                           :recursion-ctx         recursion-ctx
-                           :compaction-fn         (or compaction-fn compaction/stub-compaction-fn)
-                           :branch-summary-fn     (or branch-summary-fn compaction/stub-branch-summary-fn)
-                           :config                merged-config
-                           ;; Atom holding (fn [text source]) that actually runs the agent loop.
-                           ;; Set by the runtime layer (main/RPC) after bootstrap.
-                           ;; Extensions use this to submit prompts that trigger real LLM calls.
-                           :extension-run-fn-atom (atom nil)
-                           :apply-root-state-update-fn ss/apply-root-state-update-in!
-                           :read-session-state-fn ss/get-state-value-in
-                           :execute-dispatch-effect-fn (fn [ctx effect] (dispatch-effects/execute-effect! ctx effect))
-                           :dispatch-statechart-event-fn dispatch-handlers/dispatch-statechart-event-in!
-                           :runtime-tool-executor-fn tool-plan/default-execute-runtime-tool-in!
-                           :execute-tool-runtime-fn #'tool-plan/execute-tool-runtime-in!
-                           :refresh-system-prompt-fn (fn
-                                                        ([_ctx]
-                                                         (throw (ex-info "refresh-system-prompt-fn requires explicit session-id"
-                                                                         {:callback :refresh-system-prompt-fn})))
-                                                        ([ctx session-id]
-                                                         (dispatch/dispatch! ctx :session/refresh-system-prompt {:session-id session-id} {:origin :core})))
-                           :execute-compaction-fn (fn [ctx session-id custom-instructions]
-                                                    (execute-compaction-in! ctx session-id custom-instructions))
-                           :send-extension-message-fn #'ext-rt/send-extension-message-in!
-                           :register-resolvers-fn (fn [qctx rebuild?] (register-resolvers-in! qctx rebuild?))
-                           :register-mutations-fn (fn [qctx mutations rebuild?] (register-mutations-in! qctx mutations rebuild?))
-                           :mark-workflow-jobs-terminal-fn bg-rt/maybe-mark-workflow-jobs-terminal!
-                           :emit-background-job-terminal-messages-fn bg-rt/maybe-emit-background-job-terminal-messages!
-                           :reconcile-and-emit-background-job-terminals-fn bg-rt/reconcile-and-emit-background-job-terminals-in!
-                           :journal-append-fn ss/journal-append-in!
-                           :effective-cwd-fn (fn
-                                                ([_ctx]
-                                                 (throw (ex-info "effective-cwd-fn requires explicit session-id"
-                                                                 {:callback :effective-cwd-fn})))
-                                                ([ctx session-id]
-                                                 (ss/effective-cwd-in ctx session-id)))
-                           :daemon-thread-fn dispatch-handlers/daemon-thread
-                           :drop-trailing-overflow-error-fn dispatch-handlers/drop-trailing-overflow-error!
-                           :validate-dispatch-result-fn dispatch/validate-dispatch-schemas
-                           :all-mutations mutations}
+  (let [resolved-cwd      (or cwd (System/getProperty "user.dir"))
+        resolved-defaults (resolve-session-defaults session-defaults resolved-cwd ui-type)
+        state*            (atom (initial-root-state nrepl-runtime-atom recursion-ctx))
+        ctx0              (merge
+                           {:sc-env                (sc/create-sc-env)
+                            :started-at            (java.time.Instant/now)
+                            :state*                state*
+                            :session-defaults      resolved-defaults
+                            :agent-initial         agent-initial
+                            :nrepl-runtime-atom    nrepl-runtime-atom
+                            :extension-registry    (ext/create-registry)
+                            :workflow-registry     (wf/create-registry)
+                            :event-queue           event-queue
+                            :cwd                   resolved-cwd
+                            :persist?              persist?
+                            :oauth-ctx             oauth-ctx
+                            :recursion-ctx         recursion-ctx
+                            :compaction-fn         (or compaction-fn compaction/stub-compaction-fn)
+                            :branch-summary-fn     (or branch-summary-fn compaction/stub-branch-summary-fn)
+                            :config                (merge session/default-config (or config {}))
+                            ;; Atom holding (fn [text source]) that actually runs the agent loop.
+                            ;; Set by the runtime layer (main/RPC) after bootstrap.
+                            ;; Extensions use this to submit prompts that trigger real LLM calls.
+                            :extension-run-fn-atom (atom nil)}
+                           (callback-fns mutations))
         run-tool-call-fn  (fn [ctx {:keys [session-id tool-call parsed-args progress-queue]}]
                             (executor/run-tool-call-through-runtime-effect! ctx session-id tool-call parsed-args progress-queue))
         ctx*              (assoc ctx0 :run-tool-call-fn run-tool-call-fn)
@@ -288,6 +302,27 @@
                         {:error-code "request/not-found"
                          :session-id session-id}))))))
 
+;;; Queue text extraction (shared by interrupt + consume)
+
+(defn- extract-text-from-content-blocks
+  "Extract :text values from agent-core message content blocks."
+  [messages]
+  (keep (fn [msg]
+          (some (fn [block]
+                  (when (= :text (:type block))
+                    (:text block)))
+                (:content msg)))
+        messages))
+
+(defn- merge-text-sources
+  "Deduplicate, trim, and join text fragments from multiple sources."
+  [& text-colls]
+  (->> (apply concat text-colls)
+       (keep #(when (string? %) (str/trim %)))
+       (remove str/blank?)
+       distinct
+       (str/join "\n")))
+
 ;;; Prompting
 
 (defn prompt-in!
@@ -365,21 +400,11 @@
   (let [phase (ss/sc-phase-in ctx session-id)
         sd    (ss/get-session-data-in ctx session-id)]
     (if (= :streaming phase)
-      (let [already-pending?      (boolean (:interrupt-pending sd))
-            agent-data            (agent/get-data-in (ss/agent-ctx-in ctx session-id))
-            queued-steering-msgs  (:steering-queue agent-data)
-            queued-steering-texts (keep (fn [msg]
-                                          (some (fn [block]
-                                                  (when (= :text (:type block))
-                                                    (:text block)))
-                                                (:content msg)))
-                                        queued-steering-msgs)
-            session-steering-texts (:steering-messages sd)
-            dropped-texts          (->> (concat queued-steering-texts session-steering-texts)
-                                        (keep #(when (string? %) (str/trim %)))
-                                        (remove str/blank?)
-                                        distinct)
-            dropped-text           (str/join "\n" dropped-texts)]
+      (let [already-pending? (boolean (:interrupt-pending sd))
+            agent-data       (agent/get-data-in (ss/agent-ctx-in ctx session-id))
+            dropped-text     (merge-text-sources
+                              (extract-text-from-content-blocks (:steering-queue agent-data))
+                              (:steering-messages sd))]
         (dispatch/dispatch! ctx
                             :session/request-interrupt
                             {:session-id       session-id
@@ -407,23 +432,14 @@
    For deferred interrupt semantics, prefer `request-interrupt-in!` which only
    drops steering and preserves follow-ups."
   [ctx session-id]
-  (let [agent-data           (agent/get-data-in (ss/agent-ctx-in ctx session-id))
-        queued-agent-msgs    (concat (:steering-queue agent-data)
-                                     (:follow-up-queue agent-data))
-        queued-agent-texts   (keep (fn [msg]
-                                     (some (fn [block]
-                                             (when (= :text (:type block))
-                                               (:text block)))
-                                           (:content msg)))
-                                   queued-agent-msgs)
-        sd                   (ss/get-session-data-in ctx session-id)
-        queued-session-texts (concat (:steering-messages sd)
-                                     (:follow-up-messages sd))
-        all-texts            (->> (concat queued-agent-texts queued-session-texts)
-                                  (keep #(when (string? %) (str/trim %)))
-                                  (remove str/blank?)
-                                  distinct)
-        merged               (str/join "\n" all-texts)]
+  (let [agent-data (agent/get-data-in (ss/agent-ctx-in ctx session-id))
+        sd         (ss/get-session-data-in ctx session-id)
+        merged     (merge-text-sources
+                    (extract-text-from-content-blocks
+                     (concat (:steering-queue agent-data)
+                             (:follow-up-queue agent-data)))
+                    (:steering-messages sd)
+                    (:follow-up-messages sd))]
     (dispatch/dispatch! ctx :session/clear-queued-messages {:session-id session-id} {:origin :core})
     merged))
 
