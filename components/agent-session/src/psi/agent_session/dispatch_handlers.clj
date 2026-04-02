@@ -392,19 +392,17 @@
   "Register dispatch handlers for public session mutation events.
    This broadens dispatch coverage beyond statechart actions."
   [_ctx]
+  ;; ⚠ Impure handler exception: returns the compaction result directly rather
+  ;; than a {:root-state-update ... :effects [...]} pure-result map.
+  ;; Intentional narrow synchronous boundary — callers require a direct return
+  ;; value and the surrounding statechart transitions already own the state
+  ;; transition. execute-compaction-fn is injected by core.clj to avoid a
+  ;; circular dependency. Do not generalise this pattern.
   (dispatch/register-handler!
    :session/manual-compaction-execute
    {}
    (fn [ctx {:keys [session-id custom-instructions]}]
-     ;; Intentional narrow synchronous boundary for the manual compaction
-     ;; vertical slice. The surrounding statechart transitions route through
-     ;; dispatch; the compaction execution itself remains synchronous here so
-     ;; callers can receive the compaction result directly.
-     ;; execute-compaction-fn is set on ctx by core.clj to avoid a circular dep.
-     ((:execute-compaction-fn ctx)
-      ctx
-      session-id
-      custom-instructions)))
+     ((:execute-compaction-fn ctx) ctx session-id custom-instructions)))
 
   (dispatch/register-handler!
    :session/prompt-submit
