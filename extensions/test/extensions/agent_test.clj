@@ -587,7 +587,50 @@
           (let [agents-dir (str (System/getProperty "user.dir") "/.psi/agents")
                 config     (sut/resolve-agent-config "builder" agents-dir "base")]
             (is (= #{"read" "bash" "edit" "write"}
-                   (set (map :name (:tools config)))))))))))
+                   (set (map :name (:tools config)))))))))
+
+    (testing "later directories override earlier ones"
+      (let [tmp-dir    (java.nio.file.Files/createTempDirectory "agent-global-project-test"
+                                                                (make-array java.nio.file.attribute.FileAttribute 0))
+            root       (.toFile tmp-dir)
+            global-dir (io/file root ".psi" "agent" "agents")
+            legacy-dir (io/file root ".psi" "agents")
+            project-dir (io/file root "project" ".psi" "agents")]
+        (try
+          (.mkdirs global-dir)
+          (.mkdirs legacy-dir)
+          (.mkdirs project-dir)
+          (spit (io/file legacy-dir "planner.md")
+                "---\nname: Planner\ndescription: legacy\n---\nLegacy planner.")
+          (spit (io/file global-dir "planner.md")
+                "---\nname: Planner\ndescription: preferred\n---\nPreferred planner.")
+          (spit (io/file project-dir "planner.md")
+                "---\nname: Planner\ndescription: project\n---\nProject planner.")
+          (let [orig-home (System/getProperty "user.home")]
+            (try
+              (System/setProperty "user.home" (.getAbsolutePath root))
+              (let [dirs   (concat (sut/global-agents-dirs)
+                                   [(.getAbsolutePath project-dir)])
+                    config (sut/resolve-agent-config "planner" dirs "base")]
+                (is (str/includes? (:system-prompt config) "Project planner."))
+                (is (not (str/includes? (:system-prompt config) "Preferred planner.")))
+                (is (not (str/includes? (:system-prompt config) "Legacy planner."))))
+              (finally
+                (System/setProperty "user.home" orig-home))))
+          (finally
+            (doseq [f* (reverse (file-seq root))]
+              (.delete f*))))))))
+
+(deftest global-agents-dirs-test
+  (testing "global-agents-dirs includes preferred and legacy paths in precedence order"
+    (let [orig-home (System/getProperty "user.home")]
+      (try
+        (System/setProperty "user.home" "/tmp/psi-home")
+        (is (= ["/tmp/psi-home/.psi/agent/agents"
+                "/tmp/psi-home/.psi/agents"]
+               (sut/global-agents-dirs)))
+        (finally
+          (System/setProperty "user.home" orig-home))))))
 
 (deftest run-agent-test
   ;; Tests the public run-agent boundary via mutation mocking.

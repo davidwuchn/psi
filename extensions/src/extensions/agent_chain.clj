@@ -70,11 +70,13 @@
 (def ^:private prompt-contribution-id "agent-chain-chains")
 
 (defn- load-all-agent-defs
-  "Discover agent definitions from standard directories.
-  Delegates to agent-ext/load-agent-defs for each directory."
+  "Discover agent definitions from supported global dirs and project directories.
+  Delegates to agent-ext/load-agent-defs for each directory.
+  Precedence: legacy global < preferred global < project .psi/agents < legacy project /agents."
   [cwd]
-  (let [dirs [(str cwd "/.psi/agents")
-              (str cwd "/agents")]]
+  (let [dirs (concat (agent-ext/global-agents-dirs)
+                     [(str cwd "/.psi/agents")
+                      (str cwd "/agents")])]
     (reduce (fn [agents dir]
               (merge agents (agent-ext/load-agent-defs dir)))
             {}
@@ -357,6 +359,9 @@
       (do
         (when-let [clear-widget (:clear-widget ui)]
           (clear-widget widget-id))
+        ;; Keep nullable/test widget state populated in emacs mode too.
+        (when-let [set-widget (:set-widget ui)]
+          (set-widget widget-id (widget-placement) (widget-lines)))
         (when-let [set-spec (:set-widget-spec ui)]
           (set-spec (build-widget-spec))))
       (do
@@ -771,8 +776,8 @@
                                           :chain/all-agents          (:agents input)
                                           :chain/agent-sessions      agent-sessions
                                           :chain/on-finished         on-finished
-                                          :chain/agents-dir          [(str (System/getProperty "user.home") "/.psi/agents")
-                                                                      (str (System/getProperty "user.dir") "/.psi/agents")]
+                                          :chain/agents-dir          (concat (agent-ext/global-agents-dirs)
+                                                                             [(str (System/getProperty "user.dir") "/.psi/agents")])
                                           :chain/base-system-prompt  (when qf
                                                                        (:psi.agent-session/system-prompt
                                                                         (qf [:psi.agent-session/system-prompt])))}))

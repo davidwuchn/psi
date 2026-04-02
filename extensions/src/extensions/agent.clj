@@ -201,8 +201,13 @@
     (:psi.agent-session/cwd
      (query-fn [:psi.agent-session/cwd]))))
 
-(defn- global-agents-dir []
-  (str (System/getProperty "user.home") "/.psi/agents"))
+(defn global-agents-dirs
+  "Return supported global agent definition directories in precedence order.
+   Later merges win, so callers should load these in listed order.
+   Preferred path is ~/.psi/agent/agents, with ~/.psi/agents kept as legacy fallback."
+  []
+  [(str (System/getProperty "user.home") "/.psi/agent/agents")
+   (str (System/getProperty "user.home") "/.psi/agents")])
 
 (defn- project-agents-dir [query-fn]
   (when-let [cwd (current-session-cwd query-fn)]
@@ -233,11 +238,14 @@
       {})))
 
 (defn- load-all-agent-defs
-  "Load agent defs from global (~/.psi/agents) and project dirs, merged.
-  Project defs take precedence over global."
+  "Load agent defs from supported global dirs and the project dir, merged.
+  Precedence: legacy global < preferred global < project."
   [query-fn]
-  (merge (load-agent-defs (global-agents-dir))
-         (load-agent-defs (project-agents-dir query-fn))))
+  (reduce (fn [acc dir]
+            (merge acc (load-agent-defs dir)))
+          {}
+          (concat (global-agents-dirs)
+                  [(project-agents-dir query-fn)])))
 
 (defn- selected-agent-def [query-fn agent-name]
   (when-let [name (normalize-agent-name agent-name)]
@@ -846,7 +854,8 @@
                                                        include?      (true? (get input :include-result-in-context))
                                                        config        (resolve-agent-config
                                                                       agent-name
-                                                                      [(global-agents-dir) (project-agents-dir qf)]
+                                                                      (concat (global-agents-dirs)
+                                                                              [(project-agents-dir qf)])
                                                                       (current-system-prompt qf))
                                                        session-id    (when-let [mf (some-> @state :api :mutate)]
                                                                        (:psi.agent-session/session-id
