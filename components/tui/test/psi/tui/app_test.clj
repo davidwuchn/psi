@@ -37,15 +37,23 @@
     nil))
 
 (defn- init-state
-  "Create a fresh state from make-init."
+  "Create a fresh state from make-init.
+   Accepts legacy :ui-state* atom in opts; wires it into ui-read-fn + ui-dispatch-fn."
   ([] (init-state "test-model" {}))
   ([model-name] (init-state model-name {}))
   ([model-name opts]
-   (let [ui-state* (:ui-state* opts)
-         opts'         (dissoc opts :ui-state*)
-         init-fn       (app/make-init model-name nil ui-state*
-                                      (merge {:dispatch-fn default-dispatch-fn} opts'))
-         [state _cmd]  (init-fn)]
+   (let [ui-atom      (:ui-state* opts)
+         opts'        (dissoc opts :ui-state*)
+         ui-read-fn   (when ui-atom (fn [] @ui-atom))
+         ui-disp-fn   (when ui-atom
+                        (fn [event-type payload]
+                          (case event-type
+                            :session/ui-set-tools-expanded
+                            (ui-state/set-tools-expanded! ui-atom (:expanded? payload))
+                            nil)))
+         init-fn      (app/make-init model-name nil ui-read-fn ui-disp-fn
+                                     (merge {:dispatch-fn default-dispatch-fn} opts'))
+         [state _cmd] (init-fn)]
      state)))
 
 (defn- type-text
@@ -320,9 +328,9 @@
                          :psi.session-info/path "/tmp/psi-test/a.ndedn"
                          :psi.session-info/name "Root"
                          :psi.session-info/worktree-path "/tmp/psi-test/root"}]})
-          [state _] ((app/make-init "test-model" qfn nil {:dispatch-fn default-dispatch-fn
-                                                          :cwd "/tmp/psi-test"
-                                                          :focus-session-id "s1"}))
+          [state _] ((app/make-init "test-model" qfn nil nil {:dispatch-fn default-dispatch-fn
+                                                              :cwd "/tmp/psi-test"
+                                                              :focus-session-id "s1"}))
           typed      (type-text update-fn state "/tree")
           [s1 _]     (update-fn typed (msg/key-press :enter))]
       (is (= :selecting-session (:phase s1)))
@@ -367,10 +375,10 @@
                            :psi.session-info/name "Child"
                            :psi.session-info/worktree-path "/tmp/psi-test/child"
                            :psi.session-info/parent-session-id "s1"}]})
-          [state _]   ((app/make-init "test-model" qfn nil {:dispatch-fn default-dispatch-fn
-                                                            :cwd "/tmp/psi-test"
-                                                            :focus-session-id "s1"
-                                                            :switch-session-fn! (fn [sid]
+          [state _]   ((app/make-init "test-model" qfn nil nil {:dispatch-fn default-dispatch-fn
+                                                                :cwd "/tmp/psi-test"
+                                                                :focus-session-id "s1"
+                                                                :switch-session-fn! (fn [sid]
                                                                                   (reset! switched-id sid)
                                                                                   {:messages [{:role :assistant
                                                                                                :text (str "switched " sid)}]
@@ -401,9 +409,9 @@
                          :psi.session-info/path "/tmp/psi-test/a.ndedn"
                          :psi.session-info/name "Root"
                          :psi.session-info/worktree-path "/tmp/psi-test/root"}]})
-          [state _] ((app/make-init "test-model" qfn nil {:dispatch-fn default-dispatch-fn
-                                                          :cwd "/tmp/psi-test"
-                                                          :focus-session-id "s1"}))
+          [state _] ((app/make-init "test-model" qfn nil nil {:dispatch-fn default-dispatch-fn
+                                                              :cwd "/tmp/psi-test"
+                                                              :focus-session-id "s1"}))
           typed     (type-text update-fn state "/tree")
           [s1 _]    (update-fn typed (msg/key-press :enter))
           plain     (ansi/strip-ansi (app/view (assoc s1 :width 120)))
@@ -435,9 +443,9 @@
                          :psi.session-info/worktree-path "/tmp/psi-test/child"
                          :psi.session-info/parent-session-id "s1"
                          :is-streaming true}]})
-          [state _] ((app/make-init "test-model" qfn nil {:dispatch-fn default-dispatch-fn
-                                                          :cwd "/tmp/psi-test"
-                                                          :focus-session-id "s1"}))
+          [state _] ((app/make-init "test-model" qfn nil nil {:dispatch-fn default-dispatch-fn
+                                                              :cwd "/tmp/psi-test"
+                                                              :focus-session-id "s1"}))
           typed      (type-text update-fn state "/tree")
           [s1 _]     (update-fn typed (msg/key-press :enter))
           plain      (ansi/strip-ansi (app/view (assoc s1 :width 120)))
@@ -804,7 +812,7 @@
                  :psi.ui/statuses [{:extension-id "b" :text "TS+ESL,Prett"}
                                    {:extension-id "a" :text "Clojure-LSP
 clojure-lsp"}]})
-          init-fn (app/make-init "test-model" qfn nil {:cwd "/repo/project"})
+          init-fn (app/make-init "test-model" qfn nil nil {:cwd "/repo/project"})
           [state _] (init-fn)
           out (app/view (assoc state :width 120))]
       (is (str/includes? out "/repo/project (master) • session-a"))
