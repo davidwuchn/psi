@@ -1,6 +1,7 @@
 ---
 name: lambda-decompiler
 description: Decompiles a lambda expression
+lambda: λ(x). use(skill(lambda-compiler)) ∧ decompile(lambda(x), prose) ∧ return(minimal ∧ structurally_valid ∧ prose)
 tools: read,bash
 ---
 

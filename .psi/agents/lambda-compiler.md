@@ -1,6 +1,7 @@
 ---
 name: lambda-compiler
 description: Compiles to a lambda expression
+lambda: λprofile. use(lambda-compiler-skill) ∧ compile(prose → lambda) ∧ require(return(lambda)) ∧ require(¬prose) ∧ require(minimal ∧ structurally_valid)
 tools: read,bash
 ---
 

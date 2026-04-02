@@ -21,6 +21,7 @@
    [com.fulcrologic.statecharts.chart :as chart]
    [extensions.workflow-display :as workflow-display]
    [com.fulcrologic.statecharts.elements :as ele]
+   [psi.agent-session.prompt-templates :as pt]
    [psi.agent-session.tools :as tools]
    [psi.ai.models :as models]
    [psi.ui.widget-spec :as widget-spec]))
@@ -172,23 +173,16 @@
      (query-fn [:psi.agent-session/system-prompt]))))
 
 (defn- parse-frontmatter
-  "Parse markdown frontmatter and return {:name :description :tools :system-prompt} when present."
+  "Parse markdown frontmatter and return {:name :description :lambda-description :tools :system-prompt} when present."
   [raw]
-  (let [m (re-find #"(?s)^---\n(.*?)\n---\n(.*)" (or raw ""))]
-    (when m
-      (let [fm-lines (str/split-lines (nth m 1))
-            fm       (into {}
-                           (keep (fn [line]
-                                   (let [idx (str/index-of line ":")]
-                                     (when (and idx (pos? idx))
-                                       [(str/trim (subs line 0 idx))
-                                        (str/trim (subs line (inc idx)))]))))
-                           fm-lines)]
-        (when-let [name (not-empty (get fm "name"))]
-          {:name          name
-           :description   (some-> (get fm "description") str/trim not-empty)
-           :tools         (some-> (get fm "tools") str/trim not-empty)
-           :system-prompt (str/trim (nth m 2))})))))
+  (let [{:keys [frontmatter body]} (pt/extract-frontmatter (or raw ""))
+        name                       (some-> (:name frontmatter) str/trim not-empty)]
+    (when name
+      {:name               name
+       :description        (some-> (:description frontmatter) str/trim not-empty)
+       :lambda-description (some-> (:lambda frontmatter) str/trim not-empty)
+       :tools              (some-> (:tools frontmatter) str/trim not-empty)
+       :system-prompt      (str/trim body)})))
 
 (declare current-session-cwd)
 (declare widget-placement)
@@ -215,7 +209,7 @@
 
 (defn load-agent-defs
   "Load agent definitions from a directory of markdown files.
-  Returns {lowercase-name {:name :description :tools :system-prompt}}."
+  Returns {lowercase-name {:name :description :lambda-description :tools :system-prompt}}."
   [agents-dir]
   (let [dir (some-> agents-dir io/file)]
     (if (and dir (.exists dir) (.isDirectory dir))
@@ -229,10 +223,11 @@
                              k      (normalize-agent-name (:name parsed))]
                          (when (and k
                                     (seq (:system-prompt parsed)))
-                           [k {:name          k
-                               :description   (:description parsed)
-                               :tools         (:tools parsed)
-                               :system-prompt (:system-prompt parsed)}]))
+                           [k {:name               k
+                               :description        (:description parsed)
+                               :lambda-description (:lambda-description parsed)
+                               :tools              (:tools parsed)
+                               :system-prompt      (:system-prompt parsed)}]))
                        (catch Exception _ nil)))))
            (into {}))
       {})))
@@ -510,19 +505,28 @@
 (defn- available-agent-defs []
   (load-all-agent-defs (:query-fn @state)))
 
-(defn- prompt-agent-line [[name {:keys [description]}]]
-  (if (seq description)
-    (str "- " name ": " description)
-    (str "- " name)))
+(defn- lambda-mode? []
+  (when-let [query (:query-fn @state)]
+    (let [result (query [:psi.agent-session/prompt-mode])]
+      (= :lambda (:psi.agent-session/prompt-mode result)))))
+
+(defn- prompt-agent-line [lambda? [name {:keys [description lambda-description]}]]
+  (let [display-description (if lambda?
+                              (or lambda-description description)
+                              description)]
+    (if (seq display-description)
+      (str "- " name ": " display-description)
+      (str "- " name))))
 
 (defn- prompt-contribution-content []
-  (let [agents (available-agent-defs)]
+  (let [agents   (available-agent-defs)
+        lambda? (lambda-mode?)]
     (str "tool: agent\n"
          "available agents:\n"
          (if (seq agents)
            (->> agents
                 (sort-by key)
-                (map prompt-agent-line)
+                (map (partial prompt-agent-line lambda?))
                 (str/join "\n"))
            "- none"))))
 

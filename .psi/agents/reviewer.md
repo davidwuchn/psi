@@ -1,6 +1,7 @@
 ---
 name: reviewer
 description: Reviews code changes for correctness, style, and completeness
+lambda: λ reviewer. review(changes) → {correctness ∧ style ∧ completeness ∧ verify}
 tools: read,bash
 ---
 

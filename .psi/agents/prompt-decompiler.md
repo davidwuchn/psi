@@ -1,6 +1,7 @@
 ---
 name: prompt-decompiler
 description: Decompiles a prompt from EDN
+lambda: λ(prompt). use(skill(prompt-compiler)) ∧ decompile(prompt(edn) → prose) ∧ return(concise_prose_only) ∧ preserve(semantics(states ∧ transitions ∧ guards ∧ actions)) ∧ keep(brief)
 tools: read,bash
 ---
 

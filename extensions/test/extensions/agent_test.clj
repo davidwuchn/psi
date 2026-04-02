@@ -195,6 +195,9 @@
                                                   (= q [:psi.agent-session/system-prompt])
                                                   {:psi.agent-session/system-prompt "base"}
 
+                                                  (= q [:psi.agent-session/prompt-mode])
+                                                  {:psi.agent-session/prompt-mode :prose}
+
                                                   :else
                                                   {}))})]
           (sut/init api)
@@ -204,6 +207,32 @@
             (is (str/includes? contrib "tool: agent"))
             (is (str/includes? contrib "available agents:"))
             (is (str/includes? contrib "- planner: plan"))
+            (is (str/includes? contrib "- builder: build"))))))))
+
+(deftest prompt-contribution-uses-lambda-frontmatter-in-lambda-mode-test
+  (testing "lambda mode uses lambda frontmatter and falls back to description"
+    (with-test-agents-dir
+      {"planner.md" "---\nname: planner\ndescription: plan\nlambda: λtopic. analyze(topic)\n---\nYou are planner."
+       "builder.md" "---\nname: builder\ndescription: build\n---\nYou are builder."}
+      (fn []
+        (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                                   {:path "/test/agent.clj"
+                                    :query-fn (fn [q]
+                                                (cond
+                                                  (= q [:psi.agent-session/cwd])
+                                                  {:psi.agent-session/cwd (System/getProperty "user.dir")}
+
+                                                  (= q [:psi.agent-session/prompt-mode])
+                                                  {:psi.agent-session/prompt-mode :lambda}
+
+                                                  :else
+                                                  {}))})]
+          (sut/init api)
+          (let [contrib (get-in @state [:prompt-contributions
+                                        ["/test/agent.clj" "agent-capabilities"]
+                                        :content])]
+            (is (str/includes? contrib "- planner: λtopic. analyze(topic)"))
+            (is (not (str/includes? contrib "- planner: plan")))
             (is (str/includes? contrib "- builder: build"))))))))
 
 (deftest create-mode-behavior-test

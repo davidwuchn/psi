@@ -136,6 +136,7 @@ rule FollowUp {
 value AgentDef {
     name: String
     description: String?
+    lambda_description: String?
     system_prompt: String
     tools: Set<String>?
 }
@@ -149,6 +150,7 @@ rule LoadAgentDefs {
             AgentDef{
                 name: lowercase(parsed.name),
                 description: parsed.description,
+                lambda_description: parsed.lambda,
                 system_prompt: parsed.body,
                 tools: ParseToolList(parsed.tools)
             }
@@ -156,7 +158,9 @@ rule LoadAgentDefs {
 
     @guidance
         -- Agent definitions live in .psi/agents/*.md
-        -- Frontmatter fields: name, description, tools (comma-separated)
+        -- Frontmatter fields: name, description, lambda, tools (comma-separated)
+        -- In lambda prompt mode, agent listings use lambda when present,
+        -- otherwise they fall back to description.
         -- Body after frontmatter delimiter is the system prompt
 }
 

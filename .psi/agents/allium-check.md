@@ -1,6 +1,7 @@
 ---
 name: allium-check
 description: Check the implementation of an allium spec
+lambda: λ(spec). use(allium-compiler) ∧ check(implementation(spec))
 tools: read,bash
 ---
 

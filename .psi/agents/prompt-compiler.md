@@ -1,6 +1,7 @@
 ---
 name: prompt-compiler
 description: Compiles a prompt to EDN
+lambda: λprompt. use(skill(prompt-compiler)) → compile(prompt, EDN) ∧ return(EDN) ∧ no(prose ∨ code_fences) ∧ minimal(output) ∧ structurally_valid(output)
 tools: read,bash
 ---
 
