@@ -19,8 +19,7 @@
    [psi.agent-session.resolvers.support :as resolver-support]
    [psi.agent-session.session-state :as ss]
    [psi.history.git :as history-git]
-   [psi.query.core :as query]
-   [psi.ui.state :as ui-state]))
+   [psi.query.core :as query]))
 
 ;;; Extension query/mutation capability
 
@@ -117,101 +116,134 @@
 
      :ui-context-fn
      (fn [ext-path]
-       (let [ext-id     (str ext-path)
-             ui-path    (ss/state-path :ui-state)
-             base-ui    (ui-state/create-ui-context (ss/atom-view-in ctx ui-path) ext-path)]
-         (when base-ui
-           (assoc base-ui
-                  :set-widget
-                  (fn [widget-id placement content]
-                    (dispatch/dispatch! ctx :session/ui-set-widget
-                                        {:session-id   session-id
-                                         :extension-id ext-id
-                                         :widget-id    widget-id
-                                         :placement    placement
-                                         :content      content}
-                                        {:origin :extension}))
+       (let [ext-id (str ext-path)]
+         {:confirm
+          (fn [title message]
+            (if (= :headless (:ui-type (current-session-data)))
+              false
+              (let [p (dispatch/dispatch! ctx :session/ui-request-dialog
+                                          {:kind    :confirm
+                                           :ext-id  ext-id
+                                           :title   title
+                                           :message message}
+                                          {:origin :extension})]
+                (if (nil? p) false (deref p)))))
 
-                  :clear-widget
-                  (fn [widget-id]
-                    (dispatch/dispatch! ctx :session/ui-clear-widget
-                                        {:session-id   session-id
-                                         :extension-id ext-id
-                                         :widget-id    widget-id}
-                                        {:origin :extension}))
+          :select
+          (fn [title options]
+            (if (= :headless (:ui-type (current-session-data)))
+              nil
+              (let [p (dispatch/dispatch! ctx :session/ui-request-dialog
+                                          {:kind    :select
+                                           :ext-id  ext-id
+                                           :title   title
+                                           :options options}
+                                          {:origin :extension})]
+                (if (nil? p) nil (deref p)))))
 
-                  :set-widget-spec
-                  (fn [spec]
-                    (let [{:keys [accepted? errors]}
-                          (dispatch/dispatch! ctx :session/ui-set-widget-spec
-                                              {:session-id   session-id
-                                               :extension-id ext-id
-                                               :spec         spec}
-                                              {:origin :extension})]
-                      (when-not accepted?
-                        {:errors errors})))
+          :input
+          (fn [title & [placeholder]]
+            (if (= :headless (:ui-type (current-session-data)))
+              nil
+              (let [p (dispatch/dispatch! ctx :session/ui-request-dialog
+                                          {:kind        :input
+                                           :ext-id      ext-id
+                                           :title       title
+                                           :placeholder placeholder}
+                                          {:origin :extension})]
+                (if (nil? p) nil (deref p)))))
 
-                  :clear-widget-spec
-                  (fn [widget-id]
-                    (dispatch/dispatch! ctx :session/ui-clear-widget-spec
-                                        {:session-id   session-id
-                                         :extension-id ext-id
-                                         :widget-id    widget-id}
-                                        {:origin :extension}))
+          :set-widget
+          (fn [widget-id placement content]
+            (dispatch/dispatch! ctx :session/ui-set-widget
+                                {:session-id   session-id
+                                 :extension-id ext-id
+                                 :widget-id    widget-id
+                                 :placement    placement
+                                 :content      content}
+                                {:origin :extension}))
 
-                  :set-status
-                  (fn [text]
-                    (dispatch/dispatch! ctx :session/ui-set-status
-                                        {:session-id   session-id
-                                         :extension-id ext-id
-                                         :text         text}
-                                        {:origin :extension}))
+          :clear-widget
+          (fn [widget-id]
+            (dispatch/dispatch! ctx :session/ui-clear-widget
+                                {:session-id   session-id
+                                 :extension-id ext-id
+                                 :widget-id    widget-id}
+                                {:origin :extension}))
 
-                  :clear-status
-                  (fn []
-                    (dispatch/dispatch! ctx :session/ui-clear-status
-                                        {:session-id   session-id
-                                         :extension-id ext-id}
-                                        {:origin :extension}))
+          :set-widget-spec
+          (fn [spec]
+            (let [{:keys [accepted? errors]}
+                  (dispatch/dispatch! ctx :session/ui-set-widget-spec
+                                      {:session-id   session-id
+                                       :extension-id ext-id
+                                       :spec         spec}
+                                      {:origin :extension})]
+              (when-not accepted?
+                {:errors errors})))
 
-                  :notify
-                  (fn [message level]
-                    (dispatch/dispatch! ctx :session/ui-notify
-                                        {:session-id   session-id
-                                         :extension-id ext-id
-                                         :message      message
-                                         :level        level}
-                                        {:origin :extension}))
+          :clear-widget-spec
+          (fn [widget-id]
+            (dispatch/dispatch! ctx :session/ui-clear-widget-spec
+                                {:session-id   session-id
+                                 :extension-id ext-id
+                                 :widget-id    widget-id}
+                                {:origin :extension}))
 
-                  :register-tool-renderer
-                  (fn [tool-name render-call-fn render-result-fn]
-                    (dispatch/dispatch! ctx :session/ui-register-tool-renderer
-                                        {:session-id       session-id
-                                         :tool-name        tool-name
-                                         :extension-id     ext-id
-                                         :render-call-fn   render-call-fn
-                                         :render-result-fn render-result-fn}
-                                        {:origin :extension}))
+          :set-status
+          (fn [text]
+            (dispatch/dispatch! ctx :session/ui-set-status
+                                {:session-id   session-id
+                                 :extension-id ext-id
+                                 :text         text}
+                                {:origin :extension}))
 
-                  :register-message-renderer
-                  (fn [custom-type render-fn]
-                    (dispatch/dispatch! ctx :session/ui-register-message-renderer
-                                        {:session-id   session-id
-                                         :custom-type  custom-type
-                                         :extension-id ext-id
-                                         :render-fn    render-fn}
-                                        {:origin :extension}))
+          :clear-status
+          (fn []
+            (dispatch/dispatch! ctx :session/ui-clear-status
+                                {:session-id   session-id
+                                 :extension-id ext-id}
+                                {:origin :extension}))
 
-                  :get-tools-expanded
-                  (fn []
-                    (boolean (get (ss/get-state-value-in ctx ui-path) :tools-expanded? false)))
+          :notify
+          (fn [message level]
+            (dispatch/dispatch! ctx :session/ui-notify
+                                {:session-id   session-id
+                                 :extension-id ext-id
+                                 :message      message
+                                 :level        level}
+                                {:origin :extension}))
 
-                  :set-tools-expanded
-                  (fn [expanded?]
-                    (dispatch/dispatch! ctx :session/ui-set-tools-expanded
-                                        {:session-id session-id
-                                         :expanded?  expanded?}
-                                        {:origin :extension}))))))
+          :register-tool-renderer
+          (fn [tool-name render-call-fn render-result-fn]
+            (dispatch/dispatch! ctx :session/ui-register-tool-renderer
+                                {:session-id       session-id
+                                 :tool-name        tool-name
+                                 :extension-id     ext-id
+                                 :render-call-fn   render-call-fn
+                                 :render-result-fn render-result-fn}
+                                {:origin :extension}))
+
+          :register-message-renderer
+          (fn [custom-type render-fn]
+            (dispatch/dispatch! ctx :session/ui-register-message-renderer
+                                {:session-id   session-id
+                                 :custom-type  custom-type
+                                 :extension-id ext-id
+                                 :render-fn    render-fn}
+                                {:origin :extension}))
+
+          :get-tools-expanded
+          (fn []
+            (boolean (get (ss/get-state-value-in ctx (ss/state-path :ui-state))
+                          :tools-expanded? false)))
+
+          :set-tools-expanded
+          (fn [expanded?]
+            (dispatch/dispatch! ctx :session/ui-set-tools-expanded
+                                {:session-id session-id
+                                 :expanded?  expanded?}
+                                {:origin :extension}))}))
 
      :log-fn
      (fn [text]

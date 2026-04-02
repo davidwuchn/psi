@@ -113,4 +113,46 @@
    {}
    (fn [ctx {:keys [extension-id message level]}]
      (let [{:keys [state]} (ui-state/notify (get-ui-state ctx) extension-id message level)]
+       {:root-state-update (ui-root-update state)})))
+
+  (dispatch/register-handler!
+   :session/ui-request-dialog
+   {}
+   (fn [_ctx {:keys [kind ext-id title message options placeholder]}]
+     (let [p      (promise)
+           dialog (merge {:id           (str (java.util.UUID/randomUUID))
+                          :kind         kind
+                          :extension-id ext-id
+                          :promise      p
+                          :resolved?    false}
+                         (when title       {:title title})
+                         (when message     {:message message})
+                         (when options     {:options options})
+                         (when placeholder {:placeholder placeholder}))]
+       {:root-state-update
+        (fn [root]
+          (let [pending-path [:ui :extension-ui :dialog-queue :pending]
+                active-path  [:ui :extension-ui :dialog-queue :active]
+                root'        (update-in root pending-path conj dialog)
+                active       (get-in root' active-path)
+                pending'     (get-in root' pending-path)]
+            (if (and (nil? active) (seq pending'))
+              (-> root'
+                  (assoc-in active-path (first pending'))
+                  (assoc-in pending-path (vec (rest pending'))))
+              root')))
+        :return p})))
+
+  (dispatch/register-handler!
+   :session/ui-dismiss-expired
+   {}
+   (fn [ctx _]
+     (let [{:keys [state]} (ui-state/dismiss-expired (get-ui-state ctx))]
+       {:root-state-update (ui-root-update state)})))
+
+  (dispatch/register-handler!
+   :session/ui-dismiss-overflow
+   {}
+   (fn [ctx _]
+     (let [{:keys [state]} (ui-state/dismiss-overflow (get-ui-state ctx))]
        {:root-state-update (ui-root-update state)}))))

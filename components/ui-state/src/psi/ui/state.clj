@@ -540,6 +540,22 @@
   [ui-state expanded?]
   (reduce-ui ui-state set-tools-expanded! expanded?))
 
+(defn dismiss-expired
+  "Pure wrapper: dismiss expired notifications in a ui-state map.
+   Delegates to `dismiss-expired!` via `reduce-ui`."
+  ([ui-state]
+   (reduce-ui ui-state dismiss-expired!))
+  ([ui-state max-age-ms]
+   (reduce-ui ui-state dismiss-expired! max-age-ms)))
+
+(defn dismiss-overflow
+  "Pure wrapper: dismiss overflow notifications in a ui-state map.
+   Delegates to `dismiss-overflow!` via `reduce-ui`."
+  ([ui-state]
+   (reduce-ui ui-state dismiss-overflow!))
+  ([ui-state max-visible]
+   (reduce-ui ui-state dismiss-overflow! max-visible)))
+
 ;; ============================================================
 ;; Clear all (for extension reload)
 ;; ============================================================
