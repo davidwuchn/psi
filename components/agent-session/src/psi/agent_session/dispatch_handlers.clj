@@ -132,6 +132,13 @@
 (defn- session-turn-ctx-path [sid] [:agent-session :sessions sid :turn :ctx])
 (def ^:private ui-state-path [:ui :extension-ui])
 
+(defn- bounded-append
+  "Append item to coll (coercing to vector), trimming to at most limit entries."
+  [limit coll item]
+  (let [v (conj (vec (or coll [])) item)
+        n (count v)]
+    (if (> n limit) (subvec v (- n limit)) v)))
+
 (defn- get-ui-state
   "Return current UI state map from ctx, defaulting to {}."
   [ctx]
@@ -884,12 +891,7 @@
        {:root-state-update
         (fn [state]
           (update-in state (session-telemetry-path session-id :provider-requests)
-                     (fn [entries]
-                       (let [entries* (conj (vec (or entries [])) entry)
-                             n        (count entries*)]
-                         (if (> n 100)
-                           (subvec entries* (- n 100))
-                           entries*)))))})))
+                     #(bounded-append 100 % entry)))})))
 
   (dispatch/register-handler!
    :session/append-provider-reply-capture
@@ -899,12 +901,7 @@
        {:root-state-update
         (fn [state]
           (update-in state (session-telemetry-path session-id :provider-replies)
-                     (fn [entries]
-                       (let [entries* (conj (vec (or entries [])) entry)
-                             n        (count entries*)]
-                         (if (> n 1000)
-                           (subvec entries* (- n 1000))
-                           entries*)))))})))
+                     #(bounded-append 1000 % entry)))})))
 
   (dispatch/register-handler!
    :session/record-tool-output-stat
