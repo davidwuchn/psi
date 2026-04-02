@@ -65,16 +65,18 @@
         start-fn (fn [])]
     (with-redefs [app-runtime/start-nrepl! (fn [port] {:server port})
                   app-runtime/stop-nrepl! (fn [server] (swap! captured assoc :stopped server))
-                  app-runtime/start-tui-runtime! (fn [resolved-start-fn model-key memory-runtime-opts session-config]
-                                                  (reset! captured {:start-fn resolved-start-fn
-                                                                    :model-key model-key
-                                                                    :memory-runtime-opts memory-runtime-opts
-                                                                    :session-config session-config}))
+                  app-runtime/start-tui-runtime! (fn [resolved-start-fn model-key memory-runtime-opts session-config startup-opts]
+                                                   (reset! captured {:start-fn    resolved-start-fn
+                                                                     :model-key   model-key
+                                                                     :memory-runtime-opts memory-runtime-opts
+                                                                     :session-config session-config
+                                                                     :startup-opts startup-opts}))
                   requiring-resolve (fn [sym]
                                       (is (= 'psi.tui.app/start! sym))
                                       (atom start-fn))]
       (main/run-tui-session! ["--tui"
                               "--model" "sonnet-4.6"
+                              "--thinking-level" "medium"
                               "--memory-store-fallback" "off"
                               "--llm-idle-timeout-ms" "42000"
                               "--nrepl" "7777"])
@@ -82,23 +84,27 @@
       (is (= :sonnet-4.6 (:model-key @captured)))
       (is (= {:auto-store-fallback? false} (:memory-runtime-opts @captured)))
       (is (= {:llm-stream-idle-timeout-ms 42000} (:session-config @captured)))
+      (is (= {:thinking-level-override :medium} (:startup-opts @captured)))
       (is (= {:server 7777} (:stopped @captured))))))
 
 (deftest run-console-session-delegates-to-app-runtime-component-test
   (let [captured (atom nil)]
     (with-redefs [app-runtime/start-nrepl! (fn [port] {:server port})
                   app-runtime/stop-nrepl! (fn [server] (swap! captured assoc :stopped server))
-                  app-runtime/run-session (fn [model-key memory-runtime-opts session-config]
-                                            (reset! captured {:model-key model-key
+                  app-runtime/run-session (fn [model-key memory-runtime-opts session-config startup-opts]
+                                            (reset! captured {:model-key           model-key
                                                               :memory-runtime-opts memory-runtime-opts
-                                                              :session-config session-config}))]
+                                                              :session-config      session-config
+                                                              :startup-opts        startup-opts}))]
       (main/run-console-session! ["--model" "sonnet-4.6"
+                                  "--thinking-level" "high"
                                   "--memory-retention-snapshots" "12"
                                   "--llm-idle-timeout-ms" "30000"
                                   "--nrepl" "7001"])
       (is (= :sonnet-4.6 (:model-key @captured)))
       (is (= {:retention-snapshots 12} (:memory-runtime-opts @captured)))
       (is (= {:llm-stream-idle-timeout-ms 30000} (:session-config @captured)))
+      (is (= {:thinking-level-override :high} (:startup-opts @captured)))
       (is (= {:server 7001} (:stopped @captured))))))
 
 (deftest detect-model-key-from-env-test
@@ -130,6 +136,21 @@
   (testing "falls through to key detection when no explicit flag/env"
     (with-redefs [main/get-env (fn [k] ({"OPENAI_API_KEY" "sk-oai-123"} k))]
       (is (= :gpt-5 (#'main/model-key-from-args []))))))
+
+(deftest thinking-level-from-args-test
+  (testing "--thinking-level flag"
+    (is (= :medium (#'main/thinking-level-from-args ["--thinking-level" "medium"]))))
+  (testing "PSI_THINKING_LEVEL env var"
+    (with-redefs [main/get-env (fn [k] ({"PSI_THINKING_LEVEL" "high"} k))]
+      (is (= :high (#'main/thinking-level-from-args [])))))
+  (testing "--thinking-level flag wins over PSI_THINKING_LEVEL"
+    (with-redefs [main/get-env (fn [k] ({"PSI_THINKING_LEVEL" "high"} k))]
+      (is (= :low (#'main/thinking-level-from-args ["--thinking-level" "low"])))))
+  (testing "returns nil when neither flag nor env is set"
+    (with-redefs [main/get-env (fn [_] nil)]
+      (is (nil? (#'main/thinking-level-from-args [])))))
+  (testing "case-insensitive flag value"
+    (is (= :xhigh (#'main/thinking-level-from-args ["--thinking-level" "XHIGH"])))))
 
 (deftest arg-parsing-helpers-test
   (testing "rpc trace file parsing"

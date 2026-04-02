@@ -83,6 +83,17 @@
        (some-> (get-env "PSI_MODEL") str/trim not-empty)
        (name (detect-model-key-from-env)))))
 
+(defn- thinking-level-from-args
+  "Resolve thinking level in priority order:
+   1. --thinking-level CLI flag
+   2. PSI_THINKING_LEVEL env var
+   3. nil (config resolution handles project/user config → :off system default)"
+  [args]
+  (some-> (or (arg-value args "--thinking-level")
+              (some-> (get-env "PSI_THINKING_LEVEL") str/trim not-empty))
+          str/lower-case
+          keyword))
+
 (defn- nrepl-port-from-args
   [args]
   (when (has-flag? args "--nrepl")
@@ -128,13 +139,15 @@
 (defn run-console-session!
   [args]
   (let [model-key            (model-key-from-args args)
+        thinking-level       (thinking-level-from-args args)
         memory-runtime-opts  (memory-runtime-opts-from-args args)
         session-runtime-opts (session-runtime-config-from-args args)
         nrepl-port           (nrepl-port-from-args args)
         nrepl-srv            (when nrepl-port
                                (app-runtime/start-nrepl! nrepl-port))]
     (try
-      (app-runtime/run-session model-key memory-runtime-opts session-runtime-opts)
+      (app-runtime/run-session model-key memory-runtime-opts session-runtime-opts
+                               {:thinking-level-override thinking-level})
       (finally
         (app-runtime/stop-nrepl! nrepl-srv)))))
 
@@ -142,6 +155,7 @@
   [args]
   (let [start-runtime!       @(requiring-resolve 'psi.rpc/start-runtime!)
         model-key            (model-key-from-args args)
+        thinking-level       (thinking-level-from-args args)
         memory-runtime-opts  (memory-runtime-opts-from-args args)
         session-runtime-opts (session-runtime-config-from-args args)
         rpc-trace-file       (rpc-trace-file-from-args args)
@@ -159,9 +173,10 @@
         :nrepl-runtime       app-runtime/nrepl-runtime
         :resolve-model       app-runtime/resolve-model
         :session-ctx-factory (fn [ai-model session-config]
-                               (app-runtime/create-runtime-session-context ai-model {:event-queue (java.util.concurrent.LinkedBlockingQueue.)
-                                                                                     :session-config session-config
-                                                                                     :ui-type :emacs}))
+                               (app-runtime/create-runtime-session-context ai-model {:event-queue             (java.util.concurrent.LinkedBlockingQueue.)
+                                                                                     :session-config          session-config
+                                                                                     :ui-type                 :emacs
+                                                                                     :thinking-level-override thinking-level}))
         :bootstrap-fn!       (fn [ctx session-id ai-model memory-runtime-opts]
                                (app-runtime/bootstrap-runtime-session! ctx session-id ai-model {:memory-runtime-opts memory-runtime-opts
                                                                                                 :cwd (:cwd ctx)}))
@@ -177,13 +192,15 @@
   [args]
   (let [start!               @(requiring-resolve 'psi.tui.app/start!)
         model-key            (model-key-from-args args)
+        thinking-level       (thinking-level-from-args args)
         memory-runtime-opts  (memory-runtime-opts-from-args args)
         session-runtime-opts (session-runtime-config-from-args args)
         nrepl-port           (nrepl-port-from-args args)
         nrepl-srv            (when nrepl-port
                                (app-runtime/start-nrepl! nrepl-port))]
     (try
-      (app-runtime/start-tui-runtime! start! model-key memory-runtime-opts session-runtime-opts)
+      (app-runtime/start-tui-runtime! start! model-key memory-runtime-opts session-runtime-opts
+                                      {:thinking-level-override thinking-level})
       (finally
         (app-runtime/stop-nrepl! nrepl-srv)))))
 

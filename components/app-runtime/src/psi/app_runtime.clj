@@ -427,8 +427,9 @@ Available: " (str/join ", " (map name (keys models/all-models))))
    - :event-queue optional TUI/RPC event queue
    - :session-config optional session config overrides (merged with defaults)
    - :cwd optional cwd override (primarily for tests)
-   - :ui-type runtime UI type hint (:console | :tui | :emacs)"
-  [ai-model {:keys [event-queue session-config cwd ui-type]}]
+   - :ui-type runtime UI type hint (:console | :tui | :emacs)
+   - :thinking-level-override explicit thinking level (CLI/env); overrides config when set"
+  [ai-model {:keys [event-queue session-config cwd ui-type thinking-level-override]}]
   (let [oauth-ctx                (oauth/create-context)
         cwd                      (or cwd (System/getProperty "user.dir"))
         cfg                      (config-res/resolve-config cwd)
@@ -436,7 +437,8 @@ Available: " (str/join ", " (map name (keys models/all-models))))
                                    (or (resolve-model-by-provider+id provider id) ai-model)
                                    ai-model)
         effective-thinking-level (session-data/clamp-thinking-level
-                                  (config-res/resolved-thinking-level cfg)
+                                  (or thinking-level-override
+                                      (config-res/resolved-thinking-level cfg))
                                   {:reasoning (:supports-reasoning effective-model)})
         effective-prompt-mode    (config-res/resolved-prompt-mode cfg)
         nucleus-prelude-override (config-res/resolved-nucleus-prelude-override cfg)
@@ -551,17 +553,23 @@ Available: " (str/join ", " (map name (keys models/all-models))))
 
 (defn run-session
   "Create a session and enter the interactive prompt loop.
-  Returns when the user exits."
+  Returns when the user exits.
+
+  startup-opts:
+  - :thinking-level-override explicit thinking level keyword (overrides config)"
   ([model-key]
-   (run-session model-key {} {}))
+   (run-session model-key {} {} {}))
   ([model-key memory-runtime-opts]
-   (run-session model-key memory-runtime-opts {}))
+   (run-session model-key memory-runtime-opts {} {}))
   ([model-key memory-runtime-opts session-config]
+   (run-session model-key memory-runtime-opts session-config {}))
+  ([model-key memory-runtime-opts session-config startup-opts]
    (let [ai-model   (resolve-model model-key)
          ai-ctx     nil
          {:keys [ctx oauth-ctx session-id]}
-         (create-runtime-session-context ai-model {:session-config session-config
-                                                   :ui-type :console})
+         (create-runtime-session-context ai-model {:session-config          session-config
+                                                   :ui-type                 :console
+                                                   :thinking-level-override (:thinking-level-override startup-opts)})
          {:keys [templates skills startup-rehydrate]}
          (bootstrap-runtime-session! ctx session-id ai-model {:memory-runtime-opts memory-runtime-opts})
          cli-focus* (atom session-id)]
@@ -670,19 +678,25 @@ Available: " (str/join ", " (map name (keys models/all-models))))
 
 (defn start-tui-runtime!
   "Create a session and run it with a provided TUI interface function.
-   The caller supplies resolved runtime config; this namespace stays CLI-free."
+   The caller supplies resolved runtime config; this namespace stays CLI-free.
+
+   startup-opts:
+   - :thinking-level-override explicit thinking level keyword (overrides config)"
   ([tui-start-fn! model-key]
-   (start-tui-runtime! tui-start-fn! model-key {} {}))
+   (start-tui-runtime! tui-start-fn! model-key {} {} {}))
   ([tui-start-fn! model-key memory-runtime-opts]
-   (start-tui-runtime! tui-start-fn! model-key memory-runtime-opts {}))
+   (start-tui-runtime! tui-start-fn! model-key memory-runtime-opts {} {}))
   ([tui-start-fn! model-key memory-runtime-opts session-config]
+   (start-tui-runtime! tui-start-fn! model-key memory-runtime-opts session-config {}))
+  ([tui-start-fn! model-key memory-runtime-opts session-config startup-opts]
    (let [ai-model    (resolve-model model-key)
          ai-ctx      nil
          event-queue (java.util.concurrent.LinkedBlockingQueue.)
          {:keys [ctx oauth-ctx cwd session-id]}
-         (create-runtime-session-context ai-model {:event-queue event-queue
-                                                   :session-config session-config
-                                                   :ui-type :tui})
+         (create-runtime-session-context ai-model {:event-queue             event-queue
+                                                   :session-config          session-config
+                                                   :ui-type                 :tui
+                                                   :thinking-level-override (:thinking-level-override startup-opts)})
          {:keys [startup-rehydrate]}
          (bootstrap-runtime-session! ctx session-id ai-model {:memory-runtime-opts memory-runtime-opts
                                                               :cwd cwd})
