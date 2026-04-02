@@ -132,6 +132,16 @@
 (defn- session-turn-ctx-path [sid] [:agent-session :sessions sid :turn :ctx])
 (def ^:private ui-state-path [:ui :extension-ui])
 
+(defn- get-ui-state
+  "Return current UI state map from ctx, defaulting to {}."
+  [ctx]
+  (get-ui-state ctx))
+
+(defn- ui-root-update
+  "Return a root-state update fn that replaces the UI state subtree."
+  [new-ui-state]
+  (fn [root] (assoc-in root ui-state-path new-ui-state)))
+
 (defn- initialize-session-slots
   "Set journal, telemetry, and turn slots for sid.
    journal-entries is the initial journal vector ([] for new, (vec entries) for resume)."
@@ -433,8 +443,8 @@
    {}
    (fn [ctx {:keys [extension-id spec]}]
      (let [ext-id (or extension-id (:extension-id spec) "unknown")
-           {:keys [state result]} (ui-state/set-widget-spec (or (session/get-state-value-in ctx ui-state-path) {}) ext-id spec)]
-       {:root-state-update (fn [root] (assoc-in root ui-state-path state))
+           {:keys [state result]} (ui-state/set-widget-spec (get-ui-state ctx) ext-id spec)]
+       {:root-state-update (ui-root-update state)
         :return (if result
                   {:accepted? false :errors (:errors result)}
                   {:accepted? true :errors nil})})))
@@ -443,85 +453,85 @@
    :session/ui-set-widget
    {}
    (fn [ctx {:keys [extension-id widget-id placement content]}]
-     (let [{:keys [state]} (ui-state/set-widget (or (session/get-state-value-in ctx ui-state-path) {}) extension-id widget-id placement content)]
-       {:root-state-update (fn [root] (assoc-in root ui-state-path state))
+     (let [{:keys [state]} (ui-state/set-widget (get-ui-state ctx) extension-id widget-id placement content)]
+       {:root-state-update (ui-root-update state)
         :return {:accepted? true}})))
 
   (dispatch/register-handler!
    :session/ui-clear-widget
    {}
    (fn [ctx {:keys [extension-id widget-id]}]
-     (let [{:keys [state]} (ui-state/clear-widget (or (session/get-state-value-in ctx ui-state-path) {}) extension-id widget-id)]
-       {:root-state-update (fn [root] (assoc-in root ui-state-path state))
+     (let [{:keys [state]} (ui-state/clear-widget (get-ui-state ctx) extension-id widget-id)]
+       {:root-state-update (ui-root-update state)
         :return {:cleared? true}})))
 
   (dispatch/register-handler!
    :session/ui-clear-widget-spec
    {}
    (fn [ctx {:keys [extension-id widget-id]}]
-     (let [{:keys [state]} (ui-state/clear-widget-spec (or (session/get-state-value-in ctx ui-state-path) {}) extension-id widget-id)]
-       {:root-state-update (fn [root] (assoc-in root ui-state-path state))
+     (let [{:keys [state]} (ui-state/clear-widget-spec (get-ui-state ctx) extension-id widget-id)]
+       {:root-state-update (ui-root-update state)
         :return {:cleared? true}})))
 
   (dispatch/register-handler!
    :session/ui-resolve-dialog
    {}
    (fn [ctx {:keys [dialog-id result]}]
-     (let [{:keys [state result]} (ui-state/resolve-dialog (or (session/get-state-value-in ctx ui-state-path) {}) dialog-id result)
+     (let [{:keys [state result]} (ui-state/resolve-dialog (get-ui-state ctx) dialog-id result)
            accepted? result]
-       {:root-state-update (fn [root] (assoc-in root ui-state-path state))
+       {:root-state-update (ui-root-update state)
         :return {:accepted? (boolean accepted?)}})))
 
   (dispatch/register-handler!
    :session/ui-cancel-dialog
    {}
    (fn [ctx _]
-     (let [{:keys [state result]} (ui-state/cancel-dialog (or (session/get-state-value-in ctx ui-state-path) {}))]
-       {:root-state-update (fn [root] (assoc-in root ui-state-path state))
+     (let [{:keys [state result]} (ui-state/cancel-dialog (get-ui-state ctx))]
+       {:root-state-update (ui-root-update state)
         :return {:accepted? (boolean result)}})))
 
   (dispatch/register-handler!
    :session/ui-set-status
    {}
    (fn [ctx {:keys [extension-id text]}]
-     (let [{:keys [state]} (ui-state/set-status (or (session/get-state-value-in ctx ui-state-path) {}) extension-id text)]
-       {:root-state-update (fn [root] (assoc-in root ui-state-path state))})))
+     (let [{:keys [state]} (ui-state/set-status (get-ui-state ctx) extension-id text)]
+       {:root-state-update (ui-root-update state)})))
 
   (dispatch/register-handler!
    :session/ui-clear-status
    {}
    (fn [ctx {:keys [extension-id]}]
-     (let [{:keys [state]} (ui-state/clear-status (or (session/get-state-value-in ctx ui-state-path) {}) extension-id)]
-       {:root-state-update (fn [root] (assoc-in root ui-state-path state))})))
+     (let [{:keys [state]} (ui-state/clear-status (get-ui-state ctx) extension-id)]
+       {:root-state-update (ui-root-update state)})))
 
   (dispatch/register-handler!
    :session/ui-register-tool-renderer
    {}
    (fn [ctx {:keys [tool-name extension-id render-call-fn render-result-fn]}]
-     (let [{:keys [state]} (ui-state/register-tool-renderer (or (session/get-state-value-in ctx ui-state-path) {}) tool-name extension-id render-call-fn render-result-fn)]
-       {:root-state-update (fn [root] (assoc-in root ui-state-path state))})))
+     (let [{:keys [state]} (ui-state/register-tool-renderer (get-ui-state ctx) tool-name extension-id render-call-fn render-result-fn)]
+       {:root-state-update (ui-root-update state)})))
 
   (dispatch/register-handler!
    :session/ui-register-message-renderer
    {}
    (fn [ctx {:keys [custom-type extension-id render-fn]}]
-     (let [{:keys [state]} (ui-state/register-message-renderer (or (session/get-state-value-in ctx ui-state-path) {}) custom-type extension-id render-fn)]
-       {:root-state-update (fn [root] (assoc-in root ui-state-path state))})))
+     (let [{:keys [state]} (ui-state/register-message-renderer (get-ui-state ctx) custom-type extension-id render-fn)]
+       {:root-state-update (ui-root-update state)})))
 
   (dispatch/register-handler!
    :session/ui-set-tools-expanded
    {}
    (fn [ctx {:keys [expanded?]}]
-     (let [{:keys [state]} (ui-state/set-tools-expanded (or (session/get-state-value-in ctx ui-state-path) {}) expanded?)]
-       {:root-state-update (fn [root] (assoc-in root ui-state-path state))
+     (let [{:keys [state]} (ui-state/set-tools-expanded (get-ui-state ctx) expanded?)]
+       {:root-state-update (ui-root-update state)
         :return {:tools-expanded? (boolean expanded?)}})))
 
   (dispatch/register-handler!
    :session/ui-notify
    {}
    (fn [ctx {:keys [extension-id message level]}]
-     (let [{:keys [state]} (ui-state/notify (or (session/get-state-value-in ctx ui-state-path) {}) extension-id message level)]
-       {:root-state-update (fn [root] (assoc-in root ui-state-path state))})))
+     (let [{:keys [state]} (ui-state/notify (get-ui-state ctx) extension-id message level)]
+       {:root-state-update (ui-root-update state)})))
 
   (dispatch/register-handler!
    :session/set-model
