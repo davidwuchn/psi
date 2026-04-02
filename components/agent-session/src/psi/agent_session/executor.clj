@@ -217,7 +217,26 @@
 (defn- make-tool-call-task [ctx session-id tool-call progress-queue]
   ^Callable
   (fn []
-    (run-tool-call! ctx session-id tool-call progress-queue)))
+    (let [parsed-tool-call (assoc tool-call :parsed-args
+                                  (or (:parsed-args tool-call)
+                                      (conv-translate/parse-args (:arguments tool-call))))]
+      (tool-exec/start-tool-call! ctx session-id parsed-tool-call progress-queue)
+      (try
+        (tool-exec/execute-tool-call! ctx session-id parsed-tool-call progress-queue)
+        (catch Exception e
+          (let [err-text   (str "Error: " (ex-message e))
+                result-msg {:role         "toolResult"
+                            :tool-call-id (:id parsed-tool-call)
+                            :tool-name    (:name parsed-tool-call)
+                            :content      [{:type :text :text err-text}]
+                            :is-error     true
+                            :details      {:exception true}
+                            :result-text  err-text
+                            :timestamp    (java.time.Instant/now)}]
+            {:tool-call        parsed-tool-call
+             :tool-result      {:content err-text :is-error true}
+             :result-message   result-msg
+             :effective-policy nil}))))))
 
 (defn- run-tool-calls!
   "Execute a batch of tool calls and return tool results in tool-call order."
@@ -237,8 +256,10 @@
             tasks           (mapv #(make-tool-call-task ctx session-id % progress-queue) tool-calls*)]
         (try
           (let [futures (.invokeAll executor ^java.util.Collection tasks)]
-            (mapv (fn [^Future future]
-                    (.get future))
+            (mapv (fn [idx ^Future future]
+                    (let [shaped-result (.get future)]
+                      (tool-exec/record-tool-call-result! ctx session-id shaped-result progress-queue)))
+                  (range)
                   futures))
           (finally
             (.shutdown executor)

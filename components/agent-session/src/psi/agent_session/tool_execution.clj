@@ -3,6 +3,9 @@
    execute/record pipeline, and the public runtime-effect boundary.
 
    Public entry points:
+   - start-tool-call!                     — emit tool start lifecycle/agent events
+   - execute-tool-call!                   — perform execution and shape the result
+   - record-tool-call-result!             — record one shaped execution result
    - run-tool-call-through-runtime-effect! — full start→execute→record transaction"
   (:require
    [clojure.string :as str]
@@ -96,7 +99,19 @@
 ;; Execute one tool call
 ;; ============================================================
 
-(defn- execute-tool-call!
+(defn start-tool-call!
+  "Emit the canonical tool-start lifecycle + agent-start side effects."
+  [ctx session-id tool-call progress-queue]
+  (accum/emit-progress!
+   progress-queue
+   (emit-tool-lifecycle!
+    ctx session-id
+    (tool-lifecycle-event :tool-start (:id tool-call) (:name tool-call))))
+  (dispatch/dispatch! ctx :session/tool-agent-start
+                      {:session-id session-id :tool-call tool-call}
+                      {:origin :core}))
+
+(defn execute-tool-call!
   "Execute one tool call and return a shaped result map before recording.
 
    Output: {:tool-call tc :tool-result raw :result-message msg :effective-policy policy}"
@@ -153,7 +168,7 @@
 ;; Record result
 ;; ============================================================
 
-(defn- record-tool-call-result!
+(defn record-tool-call-result!
   "Record one shaped execution result into progress, telemetry, and agent-core."
   [ctx session-id {:keys [tool-call tool-result result-message effective-policy]} progress-queue]
   (let [call-id     (:id tool-call)
@@ -198,14 +213,7 @@
    Exposed so core can delegate :runtime/tool-run here without
    re-implementing executor-local shaping logic."
   [ctx session-id tool-call parsed-args progress-queue]
-  (accum/emit-progress!
-   progress-queue
-   (emit-tool-lifecycle!
-    ctx session-id
-    (tool-lifecycle-event :tool-start (:id tool-call) (:name tool-call))))
-  (dispatch/dispatch! ctx :session/tool-agent-start
-                      {:session-id session-id :tool-call tool-call}
-                      {:origin :core})
+  (start-tool-call! ctx session-id tool-call progress-queue)
   (try
     (record-tool-call-result!
      ctx session-id

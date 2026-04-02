@@ -32,14 +32,6 @@ semantics:
 
 ## Steps
 
-### Step 3 — Preserve stable recording order
-
-- Allow execution to complete out of order internally
-- Record canonical `toolResult` messages in deterministic batch order
-  (assistant-emitted order by content-index / tool-call order)
-- Keep lifecycle/progress events attributable to the real tool-id even when
-  completion order differs
-
 ### Step 4 — Verify runtime effect/tool parity
 
 Review dispatch/runtime boundaries touched by parallel tool execution:

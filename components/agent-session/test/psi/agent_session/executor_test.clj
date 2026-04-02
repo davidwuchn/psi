@@ -2,13 +2,14 @@
   "Integration tests for the executor — lifecycle, session management, child sessions."
   (:require
    [clojure.test :refer [deftest testing is]]
+   [clojure.string :as str]
    [psi.agent-core.core :as agent]
    [psi.agent-session.executor :as executor]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.test-support :as test-support]
-   [psi.agent-session.turn-statechart :as turn-sc])
-)
+   [psi.agent-session.tool-execution :as tool-exec]
+   [psi.agent-session.turn-statechart :as turn-sc]))
 
 (def ^:private stub-model
   {:provider "stub" :id "stub-model"})
@@ -244,16 +245,30 @@
           [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
           tool-calls   [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}
                         {:type :tool-call :id "call-2" :name "bash" :arguments "{}"}]
-          calls        (atom [])]
-      (with-redefs [psi.agent-session.executor/run-tool-call!
+          starts       (atom [])
+          executes     (atom [])
+          records      (atom [])]
+      (with-redefs [psi.agent-session.tool-execution/start-tool-call!
                     (fn [_ _ tc _]
-                      (swap! calls conj (:id tc))
-                      {:role "toolResult"
-                       :tool-call-id (:id tc)
-                       :tool-name (:name tc)
-                       :content [{:type :text :text (str "ok-" (:id tc))}]})]
+                      (swap! starts conj (:id tc)))
+                    psi.agent-session.tool-execution/execute-tool-call!
+                    (fn [_ _ tc _]
+                      (swap! executes conj (:id tc))
+                      {:tool-call tc
+                       :tool-result {:content (str "ok-" (:id tc)) :is-error false}
+                       :result-message {:role "toolResult"
+                                        :tool-call-id (:id tc)
+                                        :tool-name (:name tc)
+                                        :content [{:type :text :text (str "ok-" (:id tc))}]}
+                       :effective-policy nil})
+                    psi.agent-session.tool-execution/record-tool-call-result!
+                    (fn [_ _ shaped _]
+                      (swap! records conj (get-in shaped [:result-message :tool-call-id]))
+                      (:result-message shaped))]
         (let [results (#'executor/run-tool-calls! session-ctx session-ctx-id tool-calls nil)]
-          (is (= ["call-1" "call-2"] (sort @calls)))
+          (is (= #{"call-1" "call-2"} (set @starts)))
+          (is (= #{"call-1" "call-2"} (set @executes)))
+          (is (= ["call-1" "call-2"] @records))
           (is (= ["call-1" "call-2"] (mapv :tool-call-id results))))))))
 
 (deftest run-tool-calls-bounded-parallelism-test
@@ -268,7 +283,8 @@
           max-active   (atom 0)
           started      (promise)
           release      (promise)]
-      (with-redefs [psi.agent-session.executor/run-tool-call!
+      (with-redefs [psi.agent-session.tool-execution/start-tool-call! (fn [_ _ _ _] nil)
+                    psi.agent-session.tool-execution/execute-tool-call!
                     (fn [_ _ tc _]
                       (let [n (swap! active inc)]
                         (swap! max-active max n)
@@ -278,16 +294,84 @@
                           @release)
                         (Thread/sleep 20)
                         (swap! active dec)
-                        {:role "toolResult"
-                         :tool-call-id (:id tc)
-                         :tool-name (:name tc)
-                         :content [{:type :text :text (str "ok-" (:id tc))}]}))]
+                        {:tool-call tc
+                         :tool-result {:content (str "ok-" (:id tc)) :is-error false}
+                         :result-message {:role "toolResult"
+                                          :tool-call-id (:id tc)
+                                          :tool-name (:name tc)
+                                          :content [{:type :text :text (str "ok-" (:id tc))}]}
+                         :effective-policy nil}))
+                    psi.agent-session.tool-execution/record-tool-call-result!
+                    (fn [_ _ shaped _]
+                      (:result-message shaped))]
         (let [runner (future (#'executor/run-tool-calls! session-ctx session-ctx-id tool-calls nil))]
           @started
           (deliver release true)
           (let [results @runner]
             (is (= 2 @max-active))
             (is (= ["call-1" "call-2" "call-3"] (mapv :tool-call-id results)))))))))
+
+(deftest run-tool-calls-records-results-in-stable-order-test
+  (testing "out-of-order execution still records canonical tool results in assistant order"
+    (let [agent-ctx   (setup-agent-ctx!)
+          [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
+          session-ctx  (assoc-in session-ctx [:config :tool-batch-max-parallelism] 2)
+          tool-calls   [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}
+                        {:type :tool-call :id "call-2" :name "bash" :arguments "{}"}]
+          record-order (atom [])]
+      (with-redefs [psi.agent-session.tool-execution/start-tool-call! (fn [_ _ _ _] nil)
+                    psi.agent-session.tool-execution/execute-tool-call!
+                    (fn [_ _ tc _]
+                      (when (= "call-1" (:id tc))
+                        (Thread/sleep 40))
+                      (when (= "call-2" (:id tc))
+                        (Thread/sleep 5))
+                      {:tool-call tc
+                       :tool-result {:content (str "ok-" (:id tc)) :is-error false}
+                       :result-message {:role "toolResult"
+                                        :tool-call-id (:id tc)
+                                        :tool-name (:name tc)
+                                        :content [{:type :text :text (str "ok-" (:id tc))}]}
+                       :effective-policy nil})
+                    psi.agent-session.tool-execution/record-tool-call-result!
+                    (fn [_ _ shaped _]
+                      (swap! record-order conj (get-in shaped [:result-message :tool-call-id]))
+                      (:result-message shaped))]
+        (let [results (#'executor/run-tool-calls! session-ctx session-ctx-id tool-calls nil)]
+          (is (= ["call-1" "call-2"] @record-order))
+          (is (= ["call-1" "call-2"] (mapv :tool-call-id results))))))))
+
+(deftest run-tool-calls-preserves-per-tool-error-isolation-test
+  (testing "one failing tool still yields a recorded tool result without aborting the batch"
+    (let [agent-ctx   (setup-agent-ctx!)
+          [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
+          session-ctx  (assoc-in session-ctx [:config :tool-batch-max-parallelism] 2)
+          tool-calls   [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}
+                        {:type :tool-call :id "call-2" :name "bash" :arguments "{}"}]]
+      (with-redefs [psi.agent-session.tool-execution/start-tool-call! (fn [_ _ _ _] nil)
+                    psi.agent-session.tool-execution/execute-tool-call!
+                    (fn [_ _ tc _]
+                      (if (= "call-1" (:id tc))
+                        (throw (ex-info "boom" {}))
+                        {:tool-call tc
+                         :tool-result {:content "ok-call-2" :is-error false}
+                         :result-message {:role "toolResult"
+                                          :tool-call-id "call-2"
+                                          :tool-name "bash"
+                                          :content [{:type :text :text "ok-call-2"}]
+                                          :is-error false
+                                          :result-text "ok-call-2"}
+                         :effective-policy nil}))
+                    psi.agent-session.tool-execution/record-tool-call-result!
+                    (fn [_ _ shaped _]
+                      (:result-message shaped))]
+        (let [results (#'executor/run-tool-calls! session-ctx session-ctx-id tool-calls nil)
+              first-result (first results)
+              second-result (second results)]
+          (is (= ["call-1" "call-2"] (mapv :tool-call-id results)))
+          (is (true? (:is-error first-result)))
+          (is (false? (:is-error second-result)))
+          (is (str/includes? (:result-text first-result) "boom")))))))
 
 (deftest execute-tool-calls-test
   (testing "execute-tool-calls! delegates batch execution while preserving outcome semantics"
