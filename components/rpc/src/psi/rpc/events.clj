@@ -31,6 +31,7 @@
                                (dissoc d :promise))
      :pending-dialog-count   (count (get-in s [:dialog-queue :pending]))
      :widgets                (vec (vals (:widgets s)))
+     :widget-specs           (vec (vals (:widget-specs s)))
      :statuses               (vec (vals (:statuses s)))
      :visible-notifications  (visible-notifications s)
      :tool-renderers         (mapv #(dissoc % :render-call-fn :render-result-fn)
