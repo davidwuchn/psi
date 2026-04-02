@@ -32,16 +32,6 @@ semantics:
 
 ## Steps
 
-### Step 4 — Verify runtime effect/tool parity
-
-Review dispatch/runtime boundaries touched by parallel tool execution:
-- `:session/tool-run`
-- tool lifecycle event recording
-- tool output stats
-- background workflow/tool job tracking
-
-Ensure no hidden shared mutable state assumes sequential tool execution.
-
 ### Step 5 — Add tests
 
 Add/extend tests for:

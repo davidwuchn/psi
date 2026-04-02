@@ -9,6 +9,7 @@
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.test-support :as test-support]
    [psi.agent-session.tool-execution :as tool-exec]
+   [psi.agent-session.tool-plan :as tool-plan]
    [psi.agent-session.turn-statechart :as turn-sc]))
 
 (def ^:private stub-model
@@ -372,6 +373,39 @@
           (is (true? (:is-error first-result)))
           (is (false? (:is-error second-result)))
           (is (str/includes? (:result-text first-result) "boom")))))))
+
+(deftest parallel-tool-batch-telemetry-and-journal-test
+  (testing "parallel batches preserve telemetry attribution and deterministic journal ordering"
+    (let [agent-ctx   (setup-agent-ctx!)
+          [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
+          session-ctx  (assoc-in session-ctx [:config :tool-batch-max-parallelism] 2)
+          outcome      {:turn/outcome :turn.outcome/tool-use
+                        :assistant-message {:role "assistant"
+                                            :content [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}
+                                                      {:type :tool-call :id "call-2" :name "bash" :arguments "{}"}]
+                                            :stop-reason :tool_use}
+                        :tool-calls [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}
+                                     {:type :tool-call :id "call-2" :name "bash" :arguments "{}"}]}
+          starts       (atom [])]
+      (with-redefs [tool-plan/execute-tool-runtime-in!
+                    (fn [_ _ tool-name _ opts]
+                      (swap! starts conj [tool-name (:tool-call-id opts)])
+                      (when (= "read" tool-name)
+                        (Thread/sleep 40))
+                      (when (= "bash" tool-name)
+                        (Thread/sleep 5))
+                      {:content (str "ok-" (:tool-call-id opts))
+                       :is-error false
+                       :details {:truncation {:truncated false}}})]
+        (let [results (#'executor/execute-tool-calls! session-ctx session-ctx-id outcome nil)
+              lifecycle (ss/get-state-value-in session-ctx (ss/state-path :tool-lifecycle-events session-ctx-id))
+              result-events (filterv #(= :tool-result (:event-kind %)) lifecycle)
+              output-stats (ss/get-state-value-in session-ctx (ss/state-path :tool-output-stats session-ctx-id))
+              output-tool-ids (set (mapv :tool-call-id (:calls output-stats)))]
+          (is (= #{["read" "call-1"] ["bash" "call-2"]} (set @starts)))
+          (is (= ["call-1" "call-2"] (mapv :tool-call-id results)))
+          (is (= #{"call-1" "call-2"} output-tool-ids))
+          (is (= #{"call-1" "call-2"} (set (mapv :tool-id result-events)))))))))
 
 (deftest execute-tool-calls-test
   (testing "execute-tool-calls! delegates batch execution while preserving outcome semantics"
