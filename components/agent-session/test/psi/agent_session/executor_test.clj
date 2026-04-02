@@ -238,8 +238,26 @@
                  (some #(when (= :text (:type %)) (:text %))
                        (:content result)))))))))
 
+(deftest run-tool-calls-test
+  (testing "run-tool-calls! executes a batch and returns results in tool-call order"
+    (let [agent-ctx   (setup-agent-ctx!)
+          [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
+          tool-calls   [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}
+                        {:type :tool-call :id "call-2" :name "bash" :arguments "{}"}]
+          calls        (atom [])]
+      (with-redefs [psi.agent-session.executor/run-tool-call!
+                    (fn [_ _ tc _]
+                      (swap! calls conj (:id tc))
+                      {:role "toolResult"
+                       :tool-call-id (:id tc)
+                       :tool-name (:name tc)
+                       :content [{:type :text :text (str "ok-" (:id tc))}]})]
+        (let [results (#'executor/run-tool-calls! session-ctx session-ctx-id tool-calls nil)]
+          (is (= ["call-1" "call-2"] @calls))
+          (is (= ["call-1" "call-2"] (mapv :tool-call-id results))))))))
+
 (deftest execute-tool-calls-test
-  (testing "execute-tool-calls! runs all tool calls from an outcome and returns results"
+  (testing "execute-tool-calls! delegates batch execution while preserving outcome semantics"
     (let [agent-ctx   (setup-agent-ctx!)
           [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
           outcome     {:turn/outcome :turn.outcome/tool-use
@@ -250,13 +268,11 @@
                        :tool-calls [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}
                                     {:type :tool-call :id "call-2" :name "bash" :arguments "{}"}]}
           calls       (atom [])]
-      (with-redefs [psi.agent-session.executor/run-tool-call!
-                    (fn [_ _ tc _]
-                      (swap! calls conj (:id tc))
-                      {:role "toolResult"
-                       :tool-call-id (:id tc)
-                       :tool-name (:name tc)
-                       :content [{:type :text :text (str "ok-" (:id tc))}]})]
+      (with-redefs [psi.agent-session.executor/run-tool-calls!
+                    (fn [_ _ tool-calls _]
+                      (reset! calls (mapv :id tool-calls))
+                      [{:tool-call-id "call-1"}
+                       {:tool-call-id "call-2"}])]
         (let [results (#'executor/execute-tool-calls! session-ctx session-ctx-id outcome nil)]
           (is (= ["call-1" "call-2"] @calls))
           (is (= ["call-1" "call-2"] (mapv :tool-call-id results))))))))

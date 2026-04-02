@@ -204,11 +204,16 @@
                        :progress-queue progress-queue}
                       {:origin :core}))
 
+(defn- run-tool-calls!
+  "Execute a batch of tool calls and return tool results in tool-call order."
+  [ctx session-id tool-calls progress-queue]
+  (mapv (fn [tc] (run-tool-call! ctx session-id tc progress-queue))
+        tool-calls))
+
 (defn- execute-tool-calls!
   "Execute all tool calls from a tool-use outcome. Returns tool results."
   [ctx session-id outcome progress-queue]
-  (mapv (fn [tc] (run-tool-call! ctx session-id tc progress-queue))
-        (:tool-calls outcome)))
+  (run-tool-calls! ctx session-id (:tool-calls outcome) progress-queue))
 
 (defn- execute-one-turn!
   [ai-ctx ctx session-id agent-ctx ai-model extra-ai-options progress-queue]

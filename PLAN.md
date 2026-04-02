@@ -32,13 +32,6 @@ semantics:
 
 ## Steps
 
-### Step 1 — Separate execution policy from continuation semantics
-
-In `executor.clj`:
-- keep `continue-after-tool-use!` owning batch semantics
-- extract `run-tool-calls!` helper returning `tool-results` for a vector of tool calls
-- preserve current output shape: `{:turn/continuation :turn.continue/next-turn ...}`
-
 ### Step 2 — Add bounded parallel execution for tool batches
 
 In `executor.clj`:
@@ -82,3 +75,15 @@ Decide whether parallel tool execution should be:
 - disabled for tools that are not concurrency-safe
 
 Likely follow-up: add per-tool or per-session concurrency policy metadata.
+
+# Ideas
+
+- Add a `:skill` argument to the `agent` tool.
+- When used without fork, the specified skill should be read and injected as a synthetic sequence in the spawned session context:
+  - a synthetic "use the skill" user message
+  - the skill content
+  - the effective prompt
+  - the corresponding assistant reply
+- Insert a cache breakpoint so the reusable skill prelude is separated from the variable tail of the conversation.
+- Goal: reduce end-of-conversation breakpoints from 3 to 2 for this flow.
+- Expected benefit: better caching for repeated prompts that reuse the same skill.
