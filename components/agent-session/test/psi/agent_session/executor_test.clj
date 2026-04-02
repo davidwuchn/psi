@@ -238,7 +238,44 @@
           (is (= :stop (:stop-reason result)))
           (is (= "done"
                  (some #(when (= :text (:type %)) (:text %))
-                       (:content result)))))))))
+                       (:content result))))))))
+
+  (testing "one tool batch still yields exactly one follow-up assistant turn"
+    (let [agent-ctx   (setup-agent-ctx!)
+          [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
+          turn-count   (atom 0)
+          tool-batches (atom [])]
+      (with-redefs [psi.agent-session.executor/execute-one-turn!
+                    (fn [_ _ _ _ _ _ _]
+                      (swap! turn-count inc)
+                      (if (= 1 @turn-count)
+                        {:assistant-message {:role "assistant"
+                                             :content [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}
+                                                       {:type :tool-call :id "call-2" :name "bash" :arguments "{}"}]
+                                             :stop-reason :tool_use}
+                         :outcome {:turn/outcome :turn.outcome/tool-use
+                                   :assistant-message {:role "assistant"
+                                                       :content [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}
+                                                                 {:type :tool-call :id "call-2" :name "bash" :arguments "{}"}]
+                                                       :stop-reason :tool_use}
+                                   :tool-calls [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}
+                                                {:type :tool-call :id "call-2" :name "bash" :arguments "{}"}]}}
+                        {:assistant-message {:role "assistant"
+                                             :content [{:type :text :text "done"}]
+                                             :stop-reason :stop}
+                         :outcome {:turn/outcome :turn.outcome/stop
+                                   :assistant-message {:role "assistant"
+                                                       :content [{:type :text :text "done"}]
+                                                       :stop-reason :stop}}}))
+                    psi.agent-session.executor/execute-tool-calls!
+                    (fn [_ _ outcome _]
+                      (swap! tool-batches conj (mapv :id (:tool-calls outcome)))
+                      [{:tool-call-id "call-1"}
+                       {:tool-call-id "call-2"}])]
+        (let [result (#'executor/run-turn-loop! nil session-ctx session-ctx-id agent-ctx stub-model nil nil)]
+          (is (= 2 @turn-count))
+          (is (= [["call-1" "call-2"]] @tool-batches))
+          (is (= :stop (:stop-reason result))))))))
 
 (deftest run-tool-calls-test
   (testing "run-tool-calls! executes a batch and returns results in tool-call order"

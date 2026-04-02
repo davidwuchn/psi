@@ -32,15 +32,6 @@ semantics:
 
 ## Steps
 
-### Step 5 — Add tests
-
-Add/extend tests for:
-- multiple tool calls execute concurrently but yield one follow-up assistant turn
-- deterministic journal ordering despite out-of-order completion
-- per-tool error isolation in a parallel batch
-- telemetry correctness (`tool-call-attempts`, lifecycle events, summaries)
-- bounded parallelism (no unbounded fan-out)
-
 ### Step 6 — Evaluate policy surface
 
 Decide whether parallel tool execution should be:
