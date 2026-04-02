@@ -132,6 +132,15 @@
 (defn- session-turn-ctx-path [sid] [:agent-session :sessions sid :turn :ctx])
 (def ^:private ui-state-path [:ui :extension-ui])
 
+(defn- initialize-session-slots
+  "Set journal, telemetry, and turn slots for sid.
+   journal-entries is the initial journal vector ([] for new, (vec entries) for resume)."
+  [state sid journal-entries]
+  (-> state
+      (assoc-in (session-journal-path sid) journal-entries)
+      (assoc-in [:agent-session :sessions sid :telemetry] initial-telemetry)
+      (assoc-in [:agent-session :sessions sid :turn] {:ctx nil})))
+
 (defn- update-runtime-rpc-trace-state
   [state enabled? file]
   (assoc-in state [:runtime :rpc-trace] {:enabled? enabled?
@@ -161,11 +170,9 @@
         sid     (:session-id next-sd)]
     (-> state
         (assoc-in (session-data-path sid) next-sd)
-        (assoc-in (session-journal-path sid) [])
         (assoc-in (session-flush-state-path sid) {:flushed? false
                                                   :session-file (io/file session-path)})
-        (assoc-in [:agent-session :sessions sid :telemetry] initial-telemetry)
-        (assoc-in [:agent-session :sessions sid :turn] {:ctx nil}))))
+        (initialize-session-slots sid []))))
 
 (defn- carry-runtime-handles
   "Copy :agent-ctx and :sc-session-id from source-session-id to new-session-id."
@@ -200,9 +207,7 @@
                        :created-at (java.time.Instant/now))]
     (cond-> (-> state
                 (assoc-in (session-data-path new-session-id) next-sd)
-                (assoc-in (session-journal-path new-session-id) [])
-                (assoc-in [:agent-session :sessions new-session-id :telemetry] initial-telemetry)
-                (assoc-in [:agent-session :sessions new-session-id :turn] {:ctx nil}))
+                (initialize-session-slots new-session-id []))
       session-file
       (assoc-in (session-flush-state-path new-session-id) {:flushed? false
                                                            :session-file (io/file session-file)}))))
@@ -225,12 +230,10 @@
                          :created-at         (java.time.Instant/now)})]
     (-> state
         (assoc-in (session-data-path child-session-id) child-sd)
-        (assoc-in (session-journal-path child-session-id) [])
-        (assoc-in [:agent-session :sessions child-session-id :telemetry] initial-telemetry)
         (assoc-in [:agent-session :sessions child-session-id :persistence]
                   {:journal []
                    :flush-state {:flushed? false :session-file nil}})
-        (assoc-in [:agent-session :sessions child-session-id :turn] {:ctx nil})
+        (initialize-session-slots child-session-id [])
         (assoc-in [:agent-session :sessions child-session-id :sc-session-id]
                   (java.util.UUID/randomUUID)))))
 
@@ -251,12 +254,10 @@
                             :model model
                             :thinking-level thinking-level)]
     (-> state
-        (assoc-in (session-journal-path session-id) (vec entries))
         (assoc-in (session-flush-state-path session-id) {:flushed? true
                                                          :session-file (io/file session-path)})
         (assoc-in (session-data-path session-id) next-sd)
-        (assoc-in [:agent-session :sessions session-id :telemetry] initial-telemetry)
-        (assoc-in [:agent-session :sessions session-id :turn] {:ctx nil}))))
+        (initialize-session-slots session-id (vec entries)))))
 
 (defn- initialize-forked-session-state
   [state parent-sd {:keys [new-session-id branch-entries session-file]}]
@@ -275,10 +276,8 @@
     ;; carry-runtime-handles must run before any pruning as active session may be ephemeral
     (cond-> (-> state
                 (carry-runtime-handles parent-session-id new-session-id)
-                (assoc-in (session-journal-path new-session-id) branch-entries)
                 (assoc-in (session-data-path new-session-id) next-sd)
-                (assoc-in [:agent-session :sessions new-session-id :telemetry] initial-telemetry)
-                (assoc-in [:agent-session :sessions new-session-id :turn] {:ctx nil}))
+                (initialize-session-slots new-session-id branch-entries))
       session-file
       (assoc-in (session-flush-state-path new-session-id) {:flushed? true
                                                            :session-file (io/file session-file)}))))
