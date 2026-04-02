@@ -426,6 +426,56 @@
    :command-names   (command-names-in reg)
    :flag-names      (flag-names-in reg)})
 
+(defn- runtime-not-initialized
+  [action]
+  (throw (ex-info "Extension runtime not initialized" {:action action})))
+
+(defn- extension-op?
+  [op-sym]
+  (and (symbol? op-sym)
+       (let [ns* (namespace op-sym)]
+         (or (= "psi.extension" ns*)
+             (and (string? ns*)
+                  (str/starts-with? ns* "psi.extension."))))))
+
+(defn- with-ext-path
+  [ext-path params]
+  (if (and (map? params)
+           (not (contains? params :ext-path)))
+    (assoc params :ext-path ext-path)
+    params))
+
+(defn- normalize-prompt-contribution
+  [c]
+  {:id         (or (:id c)
+                   (:psi.extension.prompt-contribution/id c))
+   :ext-path   (or (:ext-path c)
+                   (:psi.extension.prompt-contribution/ext-path c))
+   :section    (or (:section c)
+                   (:psi.extension.prompt-contribution/section c))
+   :content    (or (:content c)
+                   (:psi.extension.prompt-contribution/content c))
+   :priority   (or (:priority c)
+                   (:psi.extension.prompt-contribution/priority c))
+   :enabled    (if (contains? c :enabled)
+                 (:enabled c)
+                 (:psi.extension.prompt-contribution/enabled c))
+   :created-at (or (:created-at c)
+                   (:psi.extension.prompt-contribution/created-at c))
+   :updated-at (or (:updated-at c)
+                   (:psi.extension.prompt-contribution/updated-at c))})
+
+(defn- list-extension-prompt-contributions
+  [runtime-fns ext-path]
+  (let [all (if-let [query-fn (:query-fn runtime-fns)]
+              (:psi.extension/prompt-contributions
+               (query-fn [:psi.extension/prompt-contributions]))
+              [])]
+    (->> all
+         (map normalize-prompt-contribution)
+         (filter #(= ext-path (:ext-path %)))
+         vec)))
+
 ;; ============================================================
 ;; Extension API (passed to extension init functions)
 ;; ============================================================
@@ -444,56 +494,61 @@
 
    Any missing runtime key throws."
   [reg ext-path runtime-fns]
-  (let [not-init #(throw (ex-info "Extension runtime not initialized" {:action %}))]
+  (let [mutate-fn      (:mutate-fn runtime-fns)
+        query-fn       (:query-fn runtime-fns)
+        get-api-key-fn (:get-api-key-fn runtime-fns)
+        ui-type-fn     (:ui-type-fn runtime-fns)
+        ui-context-fn  (:ui-context-fn runtime-fns)
+        log-fn         (:log-fn runtime-fns)]
     {:path ext-path
 
      ;; ── Event subscription (via mutation) ─────────────
      :on
      (fn [event-name handler-fn]
-       (if-let [f (:mutate-fn runtime-fns)]
-         (f 'psi.extension/register-handler
-            {:ext-path   ext-path
-             :event-name event-name
-             :handler-fn handler-fn})
+       (if mutate-fn
+         (mutate-fn 'psi.extension/register-handler
+                    {:ext-path   ext-path
+                     :event-name event-name
+                     :handler-fn handler-fn})
          (register-handler-in! reg ext-path event-name handler-fn)))
 
      ;; ── Tool registration (via mutation) ──────────────
      :register-tool
      (fn [tool]
-       (if-let [f (:mutate-fn runtime-fns)]
-         (f 'psi.extension/register-tool
-            {:ext-path ext-path
-             :tool     tool})
+       (if mutate-fn
+         (mutate-fn 'psi.extension/register-tool
+                    {:ext-path ext-path
+                     :tool     tool})
          (register-tool-in! reg ext-path tool)))
 
      ;; ── Command registration (via mutation) ───────────
      :register-command
      (fn [name opts]
-       (if-let [f (:mutate-fn runtime-fns)]
-         (f 'psi.extension/register-command
-            {:ext-path ext-path
-             :name     name
-             :opts     opts})
+       (if mutate-fn
+         (mutate-fn 'psi.extension/register-command
+                    {:ext-path ext-path
+                     :name     name
+                     :opts     opts})
          (register-command-in! reg ext-path (assoc opts :name name))))
 
      ;; ── Shortcut registration (via mutation) ──────────
      :register-shortcut
      (fn [key opts]
-       (if-let [f (:mutate-fn runtime-fns)]
-         (f 'psi.extension/register-shortcut
-            {:ext-path ext-path
-             :key      key
-             :opts     opts})
+       (if mutate-fn
+         (mutate-fn 'psi.extension/register-shortcut
+                    {:ext-path ext-path
+                     :key      key
+                     :opts     opts})
          (register-shortcut-in! reg ext-path (assoc opts :key key))))
 
      ;; ── Flag registration (via mutation) ──────────────
      :register-flag
      (fn [name opts]
-       (if-let [f (:mutate-fn runtime-fns)]
-         (f 'psi.extension/register-flag
-            {:ext-path ext-path
-             :name     name
-             :opts     opts})
+       (if mutate-fn
+         (mutate-fn 'psi.extension/register-flag
+                    {:ext-path ext-path
+                     :name     name
+                     :opts     opts})
          (register-flag-in! reg ext-path (assoc opts :name name))))
 
      ;; ── Flag access ────────────────────────────────────
@@ -504,105 +559,73 @@
      ;; ── Prompt contribution helpers (extension-scoped) ─
      :register-prompt-contribution
      (fn [id contribution]
-       (if-let [f (:mutate-fn runtime-fns)]
-         (f 'psi.extension/register-prompt-contribution
-            {:ext-path ext-path
-             :id id
-             :contribution contribution})
-         (throw (ex-info "Extension runtime not initialized" {:action :register-prompt-contribution}))))
+       (if mutate-fn
+         (mutate-fn 'psi.extension/register-prompt-contribution
+                    {:ext-path     ext-path
+                     :id           id
+                     :contribution contribution})
+         (runtime-not-initialized :register-prompt-contribution)))
 
      :update-prompt-contribution
      (fn [id patch]
-       (if-let [f (:mutate-fn runtime-fns)]
-         (f 'psi.extension/update-prompt-contribution
-            {:ext-path ext-path
-             :id id
-             :patch patch})
-         (throw (ex-info "Extension runtime not initialized" {:action :update-prompt-contribution}))))
+       (if mutate-fn
+         (mutate-fn 'psi.extension/update-prompt-contribution
+                    {:ext-path ext-path
+                     :id       id
+                     :patch    patch})
+         (runtime-not-initialized :update-prompt-contribution)))
 
      :unregister-prompt-contribution
      (fn [id]
-       (if-let [f (:mutate-fn runtime-fns)]
-         (f 'psi.extension/unregister-prompt-contribution
-            {:ext-path ext-path
-             :id id})
-         (throw (ex-info "Extension runtime not initialized" {:action :unregister-prompt-contribution}))))
+       (if mutate-fn
+         (mutate-fn 'psi.extension/unregister-prompt-contribution
+                    {:ext-path ext-path
+                     :id       id})
+         (runtime-not-initialized :unregister-prompt-contribution)))
 
      :list-prompt-contributions
      (fn []
-       (let [all (if-let [qf (:query-fn runtime-fns)]
-                   (:psi.extension/prompt-contributions
-                    (qf [:psi.extension/prompt-contributions]))
-                   [])]
-         (->> all
-              (keep (fn [c]
-                      (let [path (or (:ext-path c)
-                                     (:psi.extension.prompt-contribution/ext-path c))]
-                        (when (= ext-path path)
-                          {:id         (or (:id c)
-                                           (:psi.extension.prompt-contribution/id c))
-                           :ext-path   path
-                           :section    (or (:section c)
-                                           (:psi.extension.prompt-contribution/section c))
-                           :content    (or (:content c)
-                                           (:psi.extension.prompt-contribution/content c))
-                           :priority   (or (:priority c)
-                                           (:psi.extension.prompt-contribution/priority c))
-                           :enabled    (if (contains? c :enabled)
-                                         (:enabled c)
-                                         (:psi.extension.prompt-contribution/enabled c))
-                           :created-at (or (:created-at c)
-                                           (:psi.extension.prompt-contribution/created-at c))
-                           :updated-at (or (:updated-at c)
-                                           (:psi.extension.prompt-contribution/updated-at c))}))))
-              vec)))
+       (list-extension-prompt-contributions runtime-fns ext-path))
 
      ;; ── EQL runtime surface ────────────────────────────
      :query
      (fn [eql-query]
-       (if-let [f (:query-fn runtime-fns)]
-         (f eql-query)
-         (not-init :query)))
+       (if query-fn
+         (query-fn eql-query)
+         (runtime-not-initialized :query)))
 
      :mutate
      (fn [op-sym params]
-       (if-let [f (:mutate-fn runtime-fns)]
-         (let [ext-op? (and (symbol? op-sym)
-                            (let [ns* (namespace op-sym)]
-                              (or (= "psi.extension" ns*)
-                                  (and (string? ns*)
-                                       (str/starts-with? ns* "psi.extension.")))))
-               params' (if (and ext-op?
-                                (map? params)
-                                (not (contains? params :ext-path)))
-                         (assoc params :ext-path ext-path)
-                         params)]
-           (f op-sym params'))
-         (not-init :mutate)))
+       (if mutate-fn
+         (mutate-fn op-sym
+                    (if (extension-op? op-sym)
+                      (with-ext-path ext-path params)
+                      params))
+         (runtime-not-initialized :mutate)))
 
      ;; ── Session lifecycle helpers ──────────────────────
      :create-session
      (fn [{:keys [session-name worktree-path system-prompt thinking-level] :as opts}]
-       (if-let [f (:mutate-fn runtime-fns)]
-         (f 'psi.extension/create-session
-            (cond-> {:session-name session-name
-                     :worktree-path worktree-path}
-              (contains? opts :system-prompt) (assoc :system-prompt system-prompt)
-              (contains? opts :thinking-level) (assoc :thinking-level thinking-level)))
-         (not-init :create-session)))
+       (if mutate-fn
+         (mutate-fn 'psi.extension/create-session
+                    (cond-> {:session-name session-name
+                             :worktree-path worktree-path}
+                      (contains? opts :system-prompt) (assoc :system-prompt system-prompt)
+                      (contains? opts :thinking-level) (assoc :thinking-level thinking-level)))
+         (runtime-not-initialized :create-session)))
 
      :switch-session
      (fn [session-id]
-       (if-let [f (:mutate-fn runtime-fns)]
-         (f 'psi.extension/switch-session {:session-id session-id})
-         (not-init :switch-session)))
+       (if mutate-fn
+         (mutate-fn 'psi.extension/switch-session {:session-id session-id})
+         (runtime-not-initialized :switch-session)))
 
      ;; ── Narrow auth helper (not queryable) ─────────────
      :get-api-key
      (fn [provider]
-       (if-let [f (:get-api-key-fn runtime-fns)]
-         (f provider)
-         (not-init :get-api-key)))
+       (if get-api-key-fn
+         (get-api-key-fn provider)
+         (runtime-not-initialized :get-api-key)))
 
      ;; ── Event bus ──────────────────────────────────────
      :events
@@ -612,23 +635,21 @@
      ;; ── UI type hint ───────────────────────────────────
      ;; Runtime UI surface marker for extension branching.
      :ui-type
-     (if-let [f (:ui-type-fn runtime-fns)]
-       (f)
-       nil)
+     (when ui-type-fn
+       (ui-type-fn))
 
      ;; ── UI context ─────────────────────────────────────
      ;; nil when headless (no TUI); present when TUI is active.
      :ui
-     (if-let [f (:ui-context-fn runtime-fns)]
-       (f ext-path)
-       nil)
+     (when ui-context-fn
+       (ui-context-fn ext-path))
 
      ;; ── Diagnostic logging ─────────────────────────────
      ;; Always routes to stderr — never to the RPC stdout pipe.
      :log
      (fn [text]
-       (if-let [f (:log-fn runtime-fns)]
-         (f text)
+       (if log-fn
+         (log-fn text)
          (binding [*out* *err*]
            (println text))))}))
 
@@ -661,6 +682,12 @@
                           :else nil)]
               path)))))
 
+(defn- conj-unique!
+  [seen result path]
+  (when-not (@seen path)
+    (swap! seen conj path)
+    (swap! result conj path)))
+
 (defn discover-extension-paths
   "Discover extension paths from standard locations and explicit paths.
    Returns deduplicated vector of absolute paths.
@@ -672,37 +699,28 @@
   ([] (discover-extension-paths [] nil))
   ([configured-paths] (discover-extension-paths configured-paths nil))
   ([configured-paths cwd]
-   (let [cwd  (or cwd (System/getProperty "user.dir"))
-         home (System/getProperty "user.home")
-         seen (atom #{})
+   (let [cwd    (or cwd (System/getProperty "user.dir"))
+         home   (System/getProperty "user.home")
+         seen   (atom #{})
          result (atom [])]
      ;; 1. Project-local
-     (doseq [p (discover-in-dir (str cwd "/.psi/extensions"))]
-       (when-not (@seen p)
-         (swap! seen conj p)
-         (swap! result conj p)))
+     (doseq [path (discover-in-dir (str cwd "/.psi/extensions"))]
+       (conj-unique! seen result path))
      ;; 2. User-global
-     (doseq [p (discover-in-dir (str home "/.psi/agent/extensions"))]
-       (when-not (@seen p)
-         (swap! seen conj p)
-         (swap! result conj p)))
+     (doseq [path (discover-in-dir (str home "/.psi/agent/extensions"))]
+       (conj-unique! seen result path))
      ;; 3. Explicit paths
-     (doseq [cp configured-paths]
-       (let [f (io/file cp)]
+     (doseq [configured-path configured-paths]
+       (let [f (io/file configured-path)]
          (cond
            ;; Direct file
            (and (.exists f) (.isFile f))
-           (let [abs (.getAbsolutePath f)]
-             (when-not (@seen abs)
-               (swap! seen conj abs)
-               (swap! result conj abs)))
+           (conj-unique! seen result (.getAbsolutePath f))
 
            ;; Directory — discover within it
            (and (.exists f) (.isDirectory f))
-           (doseq [p (discover-in-dir cp)]
-             (when-not (@seen p)
-               (swap! seen conj p)
-               (swap! result conj p))))))
+           (doseq [path (discover-in-dir configured-path)]
+             (conj-unique! seen result path)))))
      @result)))
 
 (defn load-extension-in!
