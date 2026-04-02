@@ -31,6 +31,7 @@
     '("ui/dialog-requested"
       "ui/frontend-action-requested"
       "ui/widgets-updated"
+      "ui/widget-specs-updated"
       "ui/status-updated"
       "ui/notification")
     psi-rpc-extension-topics))

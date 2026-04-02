@@ -43,6 +43,7 @@ Includes only terminal-boundary tool lifecycle topics (no tool/delta).")
   '("ui/dialog-requested"
     "ui/frontend-action-requested"
     "ui/widgets-updated"
+    "ui/widget-specs-updated"
     "ui/status-updated"
     "ui/notification")
   "Extension UI and footer topics for Emacs frontend.")
