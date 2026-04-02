@@ -11,23 +11,25 @@
 (defn create-state
   "Create mutable in-memory state used by the nullable API."
   []
-  (atom {:queries        []
-         :mutations      []
-         :commands       {}
-         :tools          {}
-         :handlers       {}
-         :flags          {}
-         :flag-values    {}
-         :shortcuts      {}
-         :notifications  []
-         :log-lines      []
-         :widgets        {}
-         :cleared-widgets []
-         :status-lines   []
-         :entries        []
-         :messages       []
-         :workflow-types {}
-         :workflows      {}
+  (atom {:queries              []
+         :mutations            []
+         :commands             {}
+         :tools                {}
+         :handlers             {}
+         :flags                {}
+         :flag-values          {}
+         :shortcuts            {}
+         :notifications        []
+         :log-lines            []
+         :widgets              {}
+         :widget-specs         {}
+         :cleared-widgets      []
+         :cleared-widget-specs []
+         :status-lines         []
+         :entries              []
+         :messages             []
+         :workflow-types       {}
+         :workflows            {}
          :prompt-contributions {}}))
 
 (defn- workflow-seq
@@ -318,16 +320,21 @@
                       (fn [text]
                         (swap! state update :log-lines conj text))
 
-                      :ui {:notify       (fn [text level]
-                                           (swap! state update :notifications conj {:text text :level level}))
-                           :set-widget   (fn [id position lines]
-                                           (swap! state assoc-in [:widgets id]
-                                                  {:id id :position position :lines lines}))
-                           :clear-widget (fn [id]
-                                           (swap! state update :widgets dissoc id)
-                                           (swap! state update :cleared-widgets conj id))
-                           :set-status   (fn [text]
-                                           (swap! state update :status-lines conj (str/trim (or text ""))))}}]
+                      :ui {:notify            (fn [text level]
+                                                (swap! state update :notifications conj {:text text :level level}))
+                           :set-widget        (fn [id position lines]
+                                                (swap! state assoc-in [:widgets id]
+                                                       {:id id :position position :lines lines}))
+                           :clear-widget      (fn [id]
+                                                (swap! state update :widgets dissoc id)
+                                                (swap! state update :cleared-widgets conj id))
+                           :set-widget-spec   (fn [spec]
+                                                (swap! state assoc-in [:widget-specs (:id spec)] spec))
+                           :clear-widget-spec (fn [id]
+                                                (swap! state update :widget-specs dissoc id)
+                                                (swap! state update :cleared-widget-specs conj id))
+                           :set-status        (fn [text]
+                                                (swap! state update :status-lines conj (str/trim (or text ""))))}}]
      {:api api
       :state state})))
 

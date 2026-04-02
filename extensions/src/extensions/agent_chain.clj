@@ -359,9 +359,6 @@
       (do
         (when-let [clear-widget (:clear-widget ui)]
           (clear-widget widget-id))
-        ;; Keep nullable/test widget state populated in emacs mode too.
-        (when-let [set-widget (:set-widget ui)]
-          (set-widget widget-id (widget-placement) (widget-lines)))
         (when-let [set-spec (:set-widget-spec ui)]
           (set-spec (build-widget-spec))))
       (do

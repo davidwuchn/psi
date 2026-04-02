@@ -366,7 +366,7 @@
                                       :ui-type :emacs})]
             (sut/init api)
             (is (= :below-editor
-                   (get-in @state [:widgets "agent-chain" :position])))))
+                   (get-in @state [:widget-specs "agent-chain" :placement])))))
         (finally
           (.delete tmp))))))
 
