@@ -32,14 +32,18 @@ semantics:
 
 ## Steps
 
-### Step 6 — Evaluate policy surface
+## Policy decision
 
-Decide whether parallel tool execution should be:
-- always on
-- provider/model/session configurable
-- disabled for tools that are not concurrency-safe
+Parallel tool execution is now enabled with a conservative default bounded pool.
+Current policy surface:
+- session/config driven via `:config {:tool-batch-max-parallelism N}`
+- default max parallelism: `4`
+- no per-tool concurrency safety metadata yet
 
-Likely follow-up: add per-tool or per-session concurrency policy metadata.
+Follow-up candidates:
+- per-tool opt-out / concurrency class metadata
+- model/provider/session policy selection
+- dispatch-owned shared executor instead of per-batch pool creation
 
 # Ideas
 
