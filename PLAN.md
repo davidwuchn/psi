@@ -32,14 +32,6 @@ semantics:
 
 ## Steps
 
-### Step 2 — Add bounded parallel execution for tool batches
-
-In `executor.clj`:
-- run tool calls concurrently via a bounded executor / futures
-- preserve result association by original tool-call id and input order
-- make max parallelism explicit and configurable
-- default to a conservative limit (e.g. small fixed pool), not unbounded parallelism
-
 ### Step 3 — Preserve stable recording order
 
 - Allow execution to complete out of order internally

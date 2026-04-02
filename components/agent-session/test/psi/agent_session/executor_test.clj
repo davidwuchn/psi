@@ -253,8 +253,41 @@
                        :tool-name (:name tc)
                        :content [{:type :text :text (str "ok-" (:id tc))}]})]
         (let [results (#'executor/run-tool-calls! session-ctx session-ctx-id tool-calls nil)]
-          (is (= ["call-1" "call-2"] @calls))
+          (is (= ["call-1" "call-2"] (sort @calls)))
           (is (= ["call-1" "call-2"] (mapv :tool-call-id results))))))))
+
+(deftest run-tool-calls-bounded-parallelism-test
+  (testing "run-tool-calls! executes concurrently with explicit bounded parallelism"
+    (let [agent-ctx   (setup-agent-ctx!)
+          [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
+          session-ctx  (assoc-in session-ctx [:config :tool-batch-max-parallelism] 2)
+          tool-calls   [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}
+                        {:type :tool-call :id "call-2" :name "bash" :arguments "{}"}
+                        {:type :tool-call :id "call-3" :name "write" :arguments "{}"}]
+          active       (atom 0)
+          max-active   (atom 0)
+          started      (promise)
+          release      (promise)]
+      (with-redefs [psi.agent-session.executor/run-tool-call!
+                    (fn [_ _ tc _]
+                      (let [n (swap! active inc)]
+                        (swap! max-active max n)
+                        (when (= 2 n) (deliver started true))
+                        (when (= "call-1" (:id tc))
+                          @started
+                          @release)
+                        (Thread/sleep 20)
+                        (swap! active dec)
+                        {:role "toolResult"
+                         :tool-call-id (:id tc)
+                         :tool-name (:name tc)
+                         :content [{:type :text :text (str "ok-" (:id tc))}]}))]
+        (let [runner (future (#'executor/run-tool-calls! session-ctx session-ctx-id tool-calls nil))]
+          @started
+          (deliver release true)
+          (let [results @runner]
+            (is (= 2 @max-active))
+            (is (= ["call-1" "call-2" "call-3"] (mapv :tool-call-id results)))))))))
 
 (deftest execute-tool-calls-test
   (testing "execute-tool-calls! delegates batch execution while preserving outcome semantics"

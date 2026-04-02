@@ -19,7 +19,9 @@
    [psi.agent-session.statechart :as sc]
    [psi.agent-session.tool-execution :as tool-exec]
    [psi.agent-session.turn-accumulator :as accum]
-   [psi.agent-session.turn-statechart :as turn-sc]))
+   [psi.agent-session.turn-statechart :as turn-sc])
+  (:import
+   (java.util.concurrent Callable Executors Future TimeUnit)))
 
 ;; Re-export public tool-execution entry point so callers keep a single require.
 (def run-tool-call-through-runtime-effect!
@@ -204,11 +206,43 @@
                        :progress-queue progress-queue}
                       {:origin :core}))
 
+(def ^:private default-tool-batch-max-parallelism 4)
+
+(defn- session-tool-batch-max-parallelism [ctx]
+  (let [v (get-in ctx [:config :tool-batch-max-parallelism])]
+    (if (and (integer? v) (pos? v))
+      v
+      default-tool-batch-max-parallelism)))
+
+(defn- make-tool-call-task [ctx session-id tool-call progress-queue]
+  ^Callable
+  (fn []
+    (run-tool-call! ctx session-id tool-call progress-queue)))
+
 (defn- run-tool-calls!
   "Execute a batch of tool calls and return tool results in tool-call order."
   [ctx session-id tool-calls progress-queue]
-  (mapv (fn [tc] (run-tool-call! ctx session-id tc progress-queue))
-        tool-calls))
+  (let [tool-calls*      (vec tool-calls)
+        task-count       (count tool-calls*)]
+    (cond
+      (zero? task-count)
+      []
+
+      (= 1 task-count)
+      [(run-tool-call! ctx session-id (first tool-calls*) progress-queue)]
+
+      :else
+      (let [max-parallelism (min task-count (session-tool-batch-max-parallelism ctx))
+            executor        (Executors/newFixedThreadPool max-parallelism)
+            tasks           (mapv #(make-tool-call-task ctx session-id % progress-queue) tool-calls*)]
+        (try
+          (let [futures (.invokeAll executor ^java.util.Collection tasks)]
+            (mapv (fn [^Future future]
+                    (.get future))
+                  futures))
+          (finally
+            (.shutdown executor)
+            (.awaitTermination executor 5 TimeUnit/SECONDS)))))))
 
 (defn- execute-tool-calls!
   "Execute all tool calls from a tool-use outcome. Returns tool results."
