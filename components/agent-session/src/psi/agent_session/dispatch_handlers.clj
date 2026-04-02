@@ -677,33 +677,24 @@
    (fn [ctx {:keys [session-id ext-path id contribution]}]
      (let [ext-path* (str ext-path)
            id*       (str id)
-           norm      (normalize-prompt-contribution ext-path* id* contribution)]
+           norm      (normalize-prompt-contribution ext-path* id* contribution)
+           sd        (session/get-session-data-in ctx session-id)
+           xs        (or (:prompt-contributions sd) [])
+           xs*       (vec (remove #(and (= ext-path* (:ext-path %))
+                                        (= id* (:id %)))
+                                  xs))
+           next*     (conj xs* norm)
+           base      (or (:base-system-prompt sd) (:system-prompt sd) "")
+           prompt*   (sys-prompt/apply-prompt-contributions
+                      base
+                      (session/sorted-prompt-contributions next*))]
        {:root-state-update
         (session/session-update session-id
-         (fn [sd]
-           (let [xs    (or (:prompt-contributions sd) [])
-                 xs*   (vec (remove #(and (= ext-path* (:ext-path %))
-                                          (= id* (:id %)))
-                                    xs))
-                 next* (conj xs* norm)
-                 base  (or (:base-system-prompt sd) (:system-prompt sd) "")
-                 prompt (sys-prompt/apply-prompt-contributions
-                         base
-                         (session/sorted-prompt-contributions next*))]
-             (assoc sd
-                    :prompt-contributions next*
-                    :system-prompt prompt))))
+         #(assoc %
+                 :prompt-contributions next*
+                 :system-prompt prompt*))
         :effects [{:effect/type :runtime/agent-set-system-prompt
-                   :prompt (let [sd   (session/get-session-data-in ctx session-id)
-                                 base (or (:base-system-prompt sd) (:system-prompt sd) "")
-                                 xs   (or (:prompt-contributions sd) [])
-                                 xs*  (vec (remove #(and (= ext-path* (:ext-path %))
-                                                         (= id* (:id %)))
-                                                   xs))
-                                 next* (conj xs* norm)]
-                             (sys-prompt/apply-prompt-contributions
-                              base
-                              (session/sorted-prompt-contributions next*)))}]
+                   :prompt prompt*}]
         :return {:registered? true
                  :contribution norm
                  :count (count (session/list-prompt-contributions-in ctx session-id))}})))
