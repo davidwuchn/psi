@@ -13,6 +13,27 @@
 
 (def ^:private default-model-key :sonnet-4.6)
 
+(defn get-env
+  "Read an environment variable. Public to allow redefinition in tests."
+  [k]
+  (System/getenv k))
+
+(def ^:private provider-preferred-models
+  "Ordered pairs of [env-var model-key] consulted when no explicit model is configured.
+   First provider with a non-blank key wins."
+  [["ANTHROPIC_API_KEY" :sonnet-4.6]
+   ["OPENAI_API_KEY"    :gpt-5]])
+
+(defn- detect-model-key-from-env
+  "Return the preferred model key for the first provider whose API key is set,
+  or `default-model-key` when no known key is present."
+  []
+  (or (some (fn [[env-var model-key]]
+              (when-not (str/blank? (get-env env-var))
+                model-key))
+            provider-preferred-models)
+      default-model-key))
+
 (defn- has-flag?
   [args flag]
   (some #(= flag %) args))
@@ -51,12 +72,16 @@
       "INFO"))
 
 (defn- model-key-from-args
+  "Resolve model key in priority order:
+   1. --model CLI flag
+   2. PSI_MODEL env var (explicit override)
+   3. Detected from available provider API keys (ANTHROPIC_API_KEY, OPENAI_API_KEY)
+   4. Compiled-in default-model-key"
   [args]
-  (let [env-model (System/getenv "PSI_MODEL")]
-    (keyword
-     (or (arg-value args "--model")
-         env-model
-         (name default-model-key)))))
+  (keyword
+   (or (arg-value args "--model")
+       (some-> (get-env "PSI_MODEL") str/trim not-empty)
+       (name (detect-model-key-from-env)))))
 
 (defn- nrepl-port-from-args
   [args]

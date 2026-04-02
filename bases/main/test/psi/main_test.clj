@@ -43,11 +43,11 @@
                   app-runtime/stop-nrepl! (fn [server] (swap! captured assoc :stopped server))
                   requiring-resolve (fn [sym]
                                       (is (= 'psi.rpc/start-runtime! sym))
-                                      (fn [{:keys [model-key memory-runtime-opts session-config rpc-trace-file]}]
-                                        (reset! captured {:model-key model-key
-                                                          :memory-runtime-opts memory-runtime-opts
-                                                          :session-config session-config
-                                                          :rpc-trace-file rpc-trace-file}))) ]
+                                      (atom (fn [{:keys [model-key memory-runtime-opts session-config rpc-trace-file]}]
+                                              (reset! captured {:model-key model-key
+                                                                :memory-runtime-opts memory-runtime-opts
+                                                                :session-config session-config
+                                                                :rpc-trace-file rpc-trace-file}))))]
       (main/run-rpc-session! ["--rpc-edn"
                               "--model" "sonnet-4.6"
                               "--memory-store" "in-memory"
@@ -72,7 +72,7 @@
                                                                     :session-config session-config}))
                   requiring-resolve (fn [sym]
                                       (is (= 'psi.tui.app/start! sym))
-                                      start-fn)]
+                                      (atom start-fn))]
       (main/run-tui-session! ["--tui"
                               "--model" "sonnet-4.6"
                               "--memory-store-fallback" "off"
@@ -100,6 +100,36 @@
       (is (= {:retention-snapshots 12} (:memory-runtime-opts @captured)))
       (is (= {:llm-stream-idle-timeout-ms 30000} (:session-config @captured)))
       (is (= {:server 7001} (:stopped @captured))))))
+
+(deftest detect-model-key-from-env-test
+  (testing "prefers anthropic when ANTHROPIC_API_KEY is set"
+    (with-redefs [main/get-env (fn [k] ({"ANTHROPIC_API_KEY" "sk-ant-123"} k))]
+      (is (= :sonnet-4.6 (#'main/detect-model-key-from-env)))))
+  (testing "falls back to openai when only OPENAI_API_KEY is set"
+    (with-redefs [main/get-env (fn [k] ({"OPENAI_API_KEY" "sk-oai-123"} k))]
+      (is (= :gpt-5 (#'main/detect-model-key-from-env)))))
+  (testing "returns default when no known key is present"
+    (with-redefs [main/get-env (fn [_] nil)]
+      (is (= :sonnet-4.6 (#'main/detect-model-key-from-env)))))
+  (testing "anthropic wins when both keys present"
+    (with-redefs [main/get-env (fn [k] ({"ANTHROPIC_API_KEY" "sk-ant-123"
+                                         "OPENAI_API_KEY"    "sk-oai-123"} k))]
+      (is (= :sonnet-4.6 (#'main/detect-model-key-from-env)))))
+  (testing "blank key treated as absent"
+    (with-redefs [main/get-env (fn [k] ({"ANTHROPIC_API_KEY" "   "
+                                         "OPENAI_API_KEY"    "sk-oai-123"} k))]
+      (is (= :gpt-5 (#'main/detect-model-key-from-env))))))
+
+(deftest model-key-from-args-test
+  (testing "--model flag wins over env detection"
+    (with-redefs [main/get-env (fn [k] ({"ANTHROPIC_API_KEY" "sk-ant-123"} k))]
+      (is (= :opus-4 (#'main/model-key-from-args ["--model" "opus-4"])))))
+  (testing "PSI_MODEL env var wins over key detection"
+    (with-redefs [main/get-env (fn [k] ({"PSI_MODEL" "opus-4"} k))]
+      (is (= :opus-4 (#'main/model-key-from-args [])))))
+  (testing "falls through to key detection when no explicit flag/env"
+    (with-redefs [main/get-env (fn [k] ({"OPENAI_API_KEY" "sk-oai-123"} k))]
+      (is (= :gpt-5 (#'main/model-key-from-args []))))))
 
 (deftest arg-parsing-helpers-test
   (testing "rpc trace file parsing"
