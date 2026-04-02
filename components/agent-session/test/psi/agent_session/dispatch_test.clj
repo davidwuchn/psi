@@ -1,5 +1,6 @@
 (ns psi.agent-session.dispatch-test
   (:require
+   [psi.agent-session.test-support :as test-support]
    [clojure.test :refer [deftest testing is use-fixtures]]
    [psi.agent-session.core :as session]
    [psi.agent-session.session-state :as ss]
@@ -18,12 +19,11 @@
          (dispatch/set-interceptors! nil))))
 
 (use-fixtures :each clean-state)
-
 (defn- create-session-context
   ([]
    (create-session-context {}))
   ([opts]
-   (let [ctx (session/create-context opts)
+   (let [ctx (session/create-context (test-support/safe-context-opts opts))
          sd  (session/new-session-in! ctx nil {})]
      [ctx (:session-id sd)])))
 

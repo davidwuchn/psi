@@ -1,5 +1,6 @@
 (ns psi.agent-session.runtime-startup-prompts-test
   (:require
+   [psi.agent-session.test-support :as test-support]
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.core :as session]
    [psi.agent-session.session-state :as ss]
@@ -11,12 +12,11 @@
   [_ai-ctx _ctx _agent-ctx _ai-model _user-messages _opts]
   {:role "assistant"
    :content [{:type :text :text "ok"}]})
-
 (defn- create-session-context
   ([]
    (create-session-context {}))
   ([opts]
-   (let [ctx (session/create-context opts)
+   (let [ctx (session/create-context (test-support/safe-context-opts opts))
          sd  (session/new-session-in! ctx nil {})]
      [ctx (:session-id sd)])))
 

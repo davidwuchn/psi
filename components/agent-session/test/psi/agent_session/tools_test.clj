@@ -1,17 +1,17 @@
 (ns psi.agent-session.tools-test
   (:require
+   [psi.agent-session.test-support :as test-support]
    [clojure.java.io :as io]
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
    [psi.agent-session.core :as session]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.tools :as tools]))
-
 (defn- create-session-context
   ([]
    (create-session-context {}))
   ([opts]
-   (let [ctx (session/create-context opts)
+   (let [ctx (session/create-context (test-support/safe-context-opts opts))
          sd  (session/new-session-in! ctx nil {})]
      [ctx (:session-id sd)])))
 

@@ -17,12 +17,11 @@
 (defn- retarget
   [ctx _sid-or-sd]
   ctx)
-
 (defn- create-session-context
   ([]
    (create-session-context {}))
   ([opts]
-   (let [ctx (session/create-context opts)
+   (let [ctx (session/create-context (test-support/safe-context-opts opts))
          sd  (session/new-session-in! ctx nil {})]
      [ctx (:session-id sd)])))
 

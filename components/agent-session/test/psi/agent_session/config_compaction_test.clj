@@ -2,6 +2,7 @@
   "Tests for session naming, config flags, context token tracking,
   manual compaction, extension dispatch, and diagnostics."
   (:require
+   [psi.agent-session.test-support :as test-support]
    [clojure.test :refer [deftest testing is]]
    [psi.agent-session.core :as session]
    [psi.agent-session.dispatch :as dispatch]
@@ -9,12 +10,11 @@
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.session :as session-data]
    [psi.agent-session.session-state :as ss]))
-
 (defn- create-session-context
   ([]
    (create-session-context {}))
   ([opts]
-   (let [ctx (session/create-context opts)
+   (let [ctx (session/create-context (test-support/safe-context-opts opts))
          sd  (session/new-session-in! ctx nil {})]
      [ctx (:session-id sd)])))
 

@@ -1,5 +1,6 @@
 (ns psi.agent-session.commands-test
   (:require
+   [psi.agent-session.test-support :as test-support]
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
    [com.fulcrologic.statecharts.chart :as chart]
@@ -18,19 +19,11 @@
    [psi.query.core :as query]))
 
 ;; ── Test helper ─────────────────────────────────────────────
-
-(defn- temp-cwd []
-  (let [p (str (java.nio.file.Files/createTempDirectory
-                "psi-agent-session-commands-test-"
-                (make-array java.nio.file.attribute.FileAttribute 0)))]
-    (.mkdirs (java.io.File. p))
-    p))
-
 (defn- create-session-context
   ([]
    (create-session-context {}))
   ([opts]
-   (let [ctx (session/create-context opts)
+   (let [ctx (session/create-context (test-support/safe-context-opts opts))
          sd  (session/new-session-in! ctx nil {})]
      [ctx (:session-id sd)])))
 
@@ -45,7 +38,7 @@
                                       :reasoning false}
                               :system-prompt "test prompt"}
                              opts)
-     :cwd (temp-cwd)
+     :cwd (test-support/temp-cwd)
      :persist? false})))
 
 (def ^:private test-ai-model

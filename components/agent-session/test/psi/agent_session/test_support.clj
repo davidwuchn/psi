@@ -24,6 +24,28 @@
     :tool-output-stats :tool-call-attempts :tool-lifecycle-events
     :provider-requests :provider-replies})
 
+(defn temp-cwd []
+  (let [p (str (java.nio.file.Files/createTempDirectory
+                "psi-agent-session-test-"
+                (make-array java.nio.file.attribute.FileAttribute 0)))]
+    (.mkdirs (java.io.File. p))
+    p))
+
+(defn safe-context-opts
+  "Merge test-safe defaults into session/create-context opts and fail fast if
+   the resolved cwd targets the repo root/user.dir. Tests may override :cwd,
+   but never to the process cwd."
+  [opts]
+  (let [opts*         (merge {:cwd (temp-cwd)} opts)
+        cwd-path      (.getCanonicalPath (java.io.File. (str (:cwd opts*))))
+        user-dir-path (.getCanonicalPath (java.io.File. (System/getProperty "user.dir")))]
+    (when (= cwd-path user-dir-path)
+      (throw (ex-info "Unsafe test context cwd resolves to process user.dir"
+                      {:cwd cwd-path
+                       :user-dir user-dir-path
+                       :opts opts*})))
+    opts*))
+
 (defn- resolve-state-path
   "Resolve the state path for key k, using the first context session id for
    session-scoped keys."
@@ -145,9 +167,21 @@
    Returns [ctx session-id].
 
    Accepts the same options as `session/create-context`. The :session-defaults
-   overrides flow through into the first real session."
+   overrides flow through into the first real session.
+
+   Guard: when persistence is enabled, tests must not target process user.dir."
   ([] (create-test-session {:persist? false}))
   ([opts]
-   (let [ctx (session-core/create-context opts)
-         sd  (session-core/new-session-in! ctx nil {})]
+   (let [persist? (not= false (:persist? opts))
+         _        (when persist?
+                    (let [cwd-path      (.getCanonicalPath (java.io.File. (str (or (:cwd opts)
+                                                                                 (System/getProperty "user.dir")))))
+                          user-dir-path (.getCanonicalPath (java.io.File. (System/getProperty "user.dir")))]
+                      (when (= cwd-path user-dir-path)
+                        (throw (ex-info "Unsafe persisted test context cwd resolves to process user.dir"
+                                        {:cwd cwd-path
+                                         :user-dir user-dir-path
+                                         :opts opts})))))
+         ctx      (session-core/create-context opts)
+         sd       (session-core/new-session-in! ctx nil {})]
      [ctx (:session-id sd)])))
