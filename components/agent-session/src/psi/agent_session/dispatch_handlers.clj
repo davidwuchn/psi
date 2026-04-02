@@ -111,6 +111,18 @@
       (contains? p :priority) (assoc :priority (int (or (:priority p) 1000)))
       (contains? p :enabled)  (assoc :enabled (boolean (:enabled p))))))
 
+;;; Telemetry
+
+(def ^:private initial-telemetry
+  {:tool-output-stats {:calls      []
+                       :aggregates {:total-context-bytes  0
+                                    :by-tool              {}
+                                    :limit-hits-by-tool   {}}}
+   :tool-call-attempts    []
+   :tool-lifecycle-events []
+   :provider-requests     []
+   :provider-replies      []})
+
 ;;; State update pure helpers
 
 (defn- session-data-path [sid] [:agent-session :sessions sid :data])
@@ -152,15 +164,7 @@
         (assoc-in (session-journal-path sid) [])
         (assoc-in (session-flush-state-path sid) {:flushed? false
                                                   :session-file (io/file session-path)})
-        (assoc-in [:agent-session :sessions sid :telemetry]
-                  {:tool-output-stats {:calls []
-                                       :aggregates {:total-context-bytes 0
-                                                    :by-tool {}
-                                                    :limit-hits-by-tool {}}}
-                   :tool-call-attempts []
-                   :tool-lifecycle-events []
-                   :provider-requests []
-                   :provider-replies []})
+        (assoc-in [:agent-session :sessions sid :telemetry] initial-telemetry)
         (assoc-in [:agent-session :sessions sid :turn] {:ctx nil}))))
 
 (defn- carry-runtime-handles
@@ -197,15 +201,7 @@
     (cond-> (-> state
                 (assoc-in (session-data-path new-session-id) next-sd)
                 (assoc-in (session-journal-path new-session-id) [])
-                (assoc-in [:agent-session :sessions new-session-id :telemetry]
-                          {:tool-output-stats {:calls []
-                                               :aggregates {:total-context-bytes 0
-                                                            :by-tool {}
-                                                            :limit-hits-by-tool {}}}
-                           :tool-call-attempts []
-                           :tool-lifecycle-events []
-                           :provider-requests []
-                           :provider-replies []})
+                (assoc-in [:agent-session :sessions new-session-id :telemetry] initial-telemetry)
                 (assoc-in [:agent-session :sessions new-session-id :turn] {:ctx nil}))
       session-file
       (assoc-in (session-flush-state-path new-session-id) {:flushed? false
@@ -230,15 +226,7 @@
     (-> state
         (assoc-in (session-data-path child-session-id) child-sd)
         (assoc-in (session-journal-path child-session-id) [])
-        (assoc-in [:agent-session :sessions child-session-id :telemetry]
-                  {:tool-output-stats {:calls []
-                                       :aggregates {:total-context-bytes 0
-                                                    :by-tool {}
-                                                    :limit-hits-by-tool {}}}
-                   :tool-call-attempts []
-                   :tool-lifecycle-events []
-                   :provider-requests []
-                   :provider-replies []})
+        (assoc-in [:agent-session :sessions child-session-id :telemetry] initial-telemetry)
         (assoc-in [:agent-session :sessions child-session-id :persistence]
                   {:journal []
                    :flush-state {:flushed? false :session-file nil}})
@@ -267,15 +255,7 @@
         (assoc-in (session-flush-state-path session-id) {:flushed? true
                                                          :session-file (io/file session-path)})
         (assoc-in (session-data-path session-id) next-sd)
-        (assoc-in [:agent-session :sessions session-id :telemetry]
-                  {:tool-output-stats {:calls []
-                                       :aggregates {:total-context-bytes 0
-                                                    :by-tool {}
-                                                    :limit-hits-by-tool {}}}
-                   :tool-call-attempts []
-                   :tool-lifecycle-events []
-                   :provider-requests []
-                   :provider-replies []})
+        (assoc-in [:agent-session :sessions session-id :telemetry] initial-telemetry)
         (assoc-in [:agent-session :sessions session-id :turn] {:ctx nil}))))
 
 (defn- initialize-forked-session-state
@@ -297,15 +277,7 @@
                 (carry-runtime-handles parent-session-id new-session-id)
                 (assoc-in (session-journal-path new-session-id) branch-entries)
                 (assoc-in (session-data-path new-session-id) next-sd)
-                (assoc-in [:agent-session :sessions new-session-id :telemetry]
-                          {:tool-output-stats {:calls []
-                                               :aggregates {:total-context-bytes 0
-                                                            :by-tool {}
-                                                            :limit-hits-by-tool {}}}
-                           :tool-call-attempts []
-                           :tool-lifecycle-events []
-                           :provider-requests []
-                           :provider-replies []})
+                (assoc-in [:agent-session :sessions new-session-id :telemetry] initial-telemetry)
                 (assoc-in [:agent-session :sessions new-session-id :turn] {:ctx nil}))
       session-file
       (assoc-in (session-flush-state-path new-session-id) {:flushed? true
