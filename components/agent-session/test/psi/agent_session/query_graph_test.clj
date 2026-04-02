@@ -762,6 +762,21 @@
         (is (= 1 (count (:tools ad))))
         (is (= "foo" (:name (first (:tools ad)))))))))
 
+(deftest startup-extension-loads-with-session-id-test
+  (testing "load-startup-resources-via-mutations-in! passes session-id to add-extension"
+    (let [[ctx session-id] (create-session-context {:persist? false
+                                                    :mutations mutations/all-mutations})
+          ext-path         (.getAbsolutePath (File. ".psi/extensions/mementum.clj"))]
+      (bootstrap/load-startup-resources-via-mutations-in!
+       ctx session-id {:extension-paths [ext-path]})
+      (let [result (session/query-in ctx
+                                     [:psi.extension/prompt-contribution-count
+                                      :psi.extension/prompt-contributions])]
+        (is (= 1 (:psi.extension/prompt-contribution-count result)))
+        (is (= ["mementum-protocol"]
+               (mapv :psi.extension.prompt-contribution/id
+                     (:psi.extension/prompt-contributions result))))))))
+
 (deftest bootstrap-session-test
   (testing "bootstrap-in! stores startup summary and applies resources"
     (let [[ctx session-id] (create-session-context {:persist? false})

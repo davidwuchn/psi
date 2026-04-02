@@ -4,7 +4,10 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [clojure.test :refer [deftest testing is]]
-   [psi.agent-session.extensions :as ext]))
+   [psi.agent-session.dispatch :as dispatch]
+   [psi.agent-session.extension-runtime :as ext-rt]
+   [psi.agent-session.extensions :as ext]
+   [psi.agent-session.test-support :as test-support]))
 
 ;; ── Registry isolation ──────────────────────────────────────────────────────
 
@@ -519,6 +522,18 @@
       (is (= {:op 'psi.extension/switch-session
               :params {:session-id "s1"}}
              ((:switch-session api) "s1")))))
+
+  (testing "extension UI dispatch includes ext-id so extension-origin events are authorized"
+    (let [[ctx session-id] (test-support/make-session-ctx {})
+          ext-path         "/ext/test"
+          _                (ext/register-extension-in! (:extension-registry ctx) ext-path)
+          ui               (#'ext-rt/extension-ui-context ctx session-id (fn [] {:ui-type :emacs}) ext-path)]
+      ((:set-widget ui) "w1" :below-editor ["hello"])
+      (let [entry (last (dispatch/event-log-entries))]
+        (is (= :session/ui-set-widget (:event-type entry)))
+        (is (= :extension (:origin entry)))
+        (is (= ext-path (:ext-id entry)))
+        (is (not (:blocked? entry))))))
 
   (testing "API :get-api-key delegates to runtime get-api-key fn"
     (let [reg         (ext/create-registry)

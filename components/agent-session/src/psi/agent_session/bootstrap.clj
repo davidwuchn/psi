@@ -54,7 +54,8 @@
     (let [ext-results (mapv (fn [p]
                               (run-mutation-in! qctx 'psi.extension/add-extension
                                                 {:psi/agent-session-ctx ctx
-                                                 :path                  p}))
+                                                 :session-id           session-id
+                                                 :path                 p}))
                             extension-paths)]
       {:prompt-count      (count (:prompt-templates (ss/get-session-data-in ctx session-id)))
        :skill-count       (count (:skills (ss/get-session-data-in ctx session-id)))

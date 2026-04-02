@@ -95,7 +95,8 @@
 (defn- extension-ui-context
   [ctx session-id current-session-data ext-path]
   (let [ext-id         (str ext-path)
-        extension-meta {:origin :extension}
+        extension-meta {:origin :extension
+                        :ext-id  ext-id}
         ext-dispatch!  (fn [event data]
                          (dispatch/dispatch! ctx event data extension-meta))
         ui-headless?   (fn []
