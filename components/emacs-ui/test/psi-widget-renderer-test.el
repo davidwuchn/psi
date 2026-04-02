@@ -116,6 +116,14 @@
                                           (pwrt--node :type 'text :content "line2")))))
     (should (equal "line1\nline2" (pwrt--render node)))))
 
+(ert-deftest psi-widget-renderer-vstack-accepts-keyword-style-type ()
+  (let ((node '((:type . :vstack)
+                (:indent . 0)
+                (:spacing . 0)
+                (:children . [((:type . :text) (:content . "line1"))
+                              ((:type . :text) (:content . "line2"))]))))
+    (should (equal "line1\nline2" (pwrt--render node)))))
+
 (ert-deftest psi-widget-renderer-vstack-applies-indent ()
   (let ((node (pwrt--node :type 'vstack :indent 2 :spacing 0
                           :children (list (pwrt--node :type 'text :content "a")

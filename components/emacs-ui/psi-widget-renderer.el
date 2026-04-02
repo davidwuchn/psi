@@ -141,12 +141,22 @@ Called as (fn widget-id node-key).")
 (defconst psi-widget-renderer--valid-types
   '(text newline hstack vstack heading strong muted code
     success warning error button collapsible list)
-  "Valid :type values for widget nodes.")
+  "Valid normalized :type values for widget nodes.")
+
+(defun psi-widget-renderer--normalize-type (type)
+  "Normalize TYPE to a plain symbol for renderer dispatch.
+Accepts both EDN-style keyword symbols like :vstack and plain symbols like
+vstack, returning the plain symbol vstack in both cases."
+  (cond
+   ((keywordp type) (intern (substring (symbol-name type) 1)))
+   ((symbolp type) type)
+   (t type)))
 
 (defun psi-widget-renderer--valid-node-p (node)
   "Return non-nil when NODE has a recognised type and required fields."
   (and (listp node)
-       (let ((type (alist-get :type node nil nil #'equal)))
+       (let ((type (psi-widget-renderer--normalize-type
+                    (alist-get :type node nil nil #'equal))))
          (and (memq type psi-widget-renderer--valid-types)
               (pcase type
                 ('button      (and (stringp (alist-get :label node nil nil #'equal))
@@ -184,7 +194,8 @@ INDENT is the current left-indent level in spaces."
                    (format "unknown type %s" (alist-get :type node nil nil #'equal))
                  "node must be a map"))
        'face 'psi-widget-inline-error-face)
-    (let ((type (alist-get :type node nil nil #'equal)))
+    (let ((type (psi-widget-renderer--normalize-type
+                 (alist-get :type node nil nil #'equal))))
       (pcase type
         ('text     (psi-widget-renderer--render-text     node data))
         ('newline  "\n")
@@ -223,11 +234,20 @@ INDENT is the current left-indent level in spaces."
          (face    (intern (format "outline-%d" (min level 8)))))
     (propertize content 'face face)))
 
+(defun psi-widget-renderer--seq (x)
+  "Normalize X to a list sequence for widget tree traversal."
+  (cond
+   ((vectorp x) (append x nil))
+   ((listp x) x)
+   ((null x) nil)
+   (t nil)))
+
 (defun psi-widget-renderer--render-hstack (node data lstate widget-id indent)
   "Render an :hstack NODE — children joined horizontally."
   (let* ((spacing  (or (alist-get :spacing node nil nil #'equal) 1))
          (sep      (make-string spacing ?\s))
-         (children (alist-get :children node nil nil #'equal)))
+         (children (psi-widget-renderer--seq
+                    (alist-get :children node nil nil #'equal))))
     (mapconcat
      (lambda (child)
        (psi-widget-renderer--render-node child data lstate widget-id indent))
@@ -238,7 +258,8 @@ INDENT is the current left-indent level in spaces."
   "Render a :vstack NODE — children joined vertically."
   (let* ((node-indent (or (alist-get :indent node nil nil #'equal) 0))
          (spacing     (or (alist-get :spacing node nil nil #'equal) 0))
-         (children    (alist-get :children node nil nil #'equal))
+         (children    (psi-widget-renderer--seq
+                       (alist-get :children node nil nil #'equal)))
          (total-indent (+ indent node-indent))
          (blank-sep   (make-string spacing ?\n))
          (parts       (mapcar
@@ -308,7 +329,8 @@ INDENT is the current left-indent level in spaces."
                                  'keymap (when (and key widget-id)
                                            (psi-widget-renderer--collapsible-keymap
                                             widget-id key))))
-         (children   (alist-get :children node nil nil #'equal)))
+         (children   (psi-widget-renderer--seq
+                      (alist-get :children node nil nil #'equal))))
     (if (or collapsed (null children))
         header
       (let* ((child-parts
@@ -426,7 +448,8 @@ EVENT-STATE is an alist."
                  (not (psi-widget-renderer--edn-truthy-p
                        (alist-get :initially-expanded node nil nil #'equal))))
         (puthash key t ht))
-      (dolist (child (alist-get :children node nil nil #'equal))
+      (dolist (child (psi-widget-renderer--seq
+                      (alist-get :children node nil nil #'equal)))
         (psi-widget-renderer--collect-initial-collapsed child ht))
       (when-let ((item-spec (alist-get :item-spec node nil nil #'equal)))
         (psi-widget-renderer--collect-initial-collapsed item-spec ht)))))
