@@ -28,9 +28,4 @@
   :description "Build a lambda expression"
   :steps       [{:agent "lambda-compiler" :prompt "compile a lambda for: $INPUT"}
                 {:agent "lambda-decompiler" :prompt "decompile the lambda expression: $INPUT"}
-                {:agent "lambda-compiler" :prompt "compile a lambda for: $INPUT"}]}
-
- {:name        "greet"
-  :description "Riff on a theme and greet the user"
-  :steps       [{:agent  "greeter"
-                 :prompt "Theme: $INPUT"}]}]
+                {:agent "lambda-compiler" :prompt "compile a lambda for: $INPUT"}]}]
