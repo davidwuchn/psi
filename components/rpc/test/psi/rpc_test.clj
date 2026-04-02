@@ -21,8 +21,7 @@
    [psi.agent-session.test-support :as test-support]
    [psi.agent-session.tools :as tools]
    [psi.memory.core :as memory]
-   [psi.memory.store :as store]
-   [psi.ui.state :as ui-state]))
+   [psi.memory.store :as store]))
 
 (defn- run-loop
   ([input handler]
@@ -48,9 +47,18 @@
 (defn- parse-frames [lines]
   (mapv edn/read-string lines))
 
-(defn- ui-view
+(defn- enqueue-active-dialog!
+  "Directly place a dialog into the active slot of canonical ui-state.
+   Bypasses the dispatch layer so tests can control dialog-id precisely."
+  [ctx dialog]
+  (ss/update-state-value-in! ctx (ss/state-path :ui-state)
+                              #(assoc-in % [:dialog-queue :active] dialog)))
+
+(defn- active-dialog-in
+  "Read the active dialog from canonical ui-state."
   [ctx]
-  (ss/atom-view-in ctx (ss/state-path :ui-state)))
+  (get-in (ss/get-state-value-in ctx (ss/state-path :ui-state))
+          [:dialog-queue :active]))
 
 (defn- create-session-context
   ([]
@@ -402,8 +410,10 @@
 (deftest rpc-subscribe-ui-topics-emits-initial-widget-snapshot-test
   (testing "subscribe ui/widgets-updated emits current widget projection immediately"
     (let [[ctx _] (create-session-context)
-          ui      (ui-view ctx)
-          _       (ui-state/set-widget! ui "ext.demo" "w-1" :above-editor ["hello widget"])
+          _       (dispatch/dispatch! ctx :session/ui-set-widget
+                                      {:extension-id "ext.demo" :widget-id "w-1"
+                                       :placement :above-editor :content ["hello widget"]}
+                                      {:origin :test})
           state   (atom {:ready? true :pending {} :subscribed-topics #{}})
           handler (make-handler ctx state)
           {:keys [out-lines state]}
@@ -443,7 +453,10 @@
         (write-line! "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"ui/widgets-updated\"]}}")
         (Thread/sleep 100)
 
-        (ui-state/set-widget! (ui-view ctx) "ext.demo" "w-2" :above-editor ["live update"])
+        (dispatch/dispatch! ctx :session/ui-set-widget
+                           {:extension-id "ext.demo" :widget-id "w-2"
+                            :placement :above-editor :content ["live update"]}
+                           {:origin :test})
         (Thread/sleep 180)
 
         (.close in-writer)
@@ -757,8 +770,7 @@
 (deftest rpc-dialog-response-ops-test
   (testing "resolve_dialog succeeds with active dialog and matching id"
     (let [[ctx _] (create-session-context)
-          ui      (ui-view ctx)
-          _       (ui-state/enqueue-dialog! ui {:id "d1" :kind :confirm :title "Confirm" :promise (promise)})
+          _       (enqueue-active-dialog! ctx {:id "d1" :kind :confirm :title "Confirm" :promise (promise)})
           state   (atom {:ready? true :pending {}})
           handler (make-handler ctx state)
           {:keys [out-lines]}
@@ -770,12 +782,11 @@
       (is (= "resolve_dialog" (:op frame)))
       (is (= true (:ok frame)))
       (is (= {:accepted true} (:data frame)))
-      (is (nil? (ui-state/active-dialog ui)))))
+      (is (nil? (active-dialog-in ctx)))))
 
   (testing "cancel_dialog succeeds with active dialog and matching id"
     (let [[ctx _] (create-session-context)
-          ui      (ui-view ctx)
-          _       (ui-state/enqueue-dialog! ui {:id "d2" :kind :input :title "Input" :promise (promise)})
+          _       (enqueue-active-dialog! ctx {:id "d2" :kind :input :title "Input" :promise (promise)})
           state   (atom {:ready? true :pending {}})
           handler (make-handler ctx state)
           {:keys [out-lines]}
@@ -787,7 +798,7 @@
       (is (= "cancel_dialog" (:op frame)))
       (is (= true (:ok frame)))
       (is (= {:accepted true} (:data frame)))
-      (is (nil? (ui-state/active-dialog ui)))))
+      (is (nil? (active-dialog-in ctx)))))
 
   (testing "resolve_dialog invalid params are deterministic"
     (let [[ctx _] (create-session-context)
@@ -830,8 +841,7 @@
 
   (testing "dialog-id mismatch returns deterministic error"
     (let [[ctx _] (create-session-context)
-          ui      (ui-view ctx)
-          _       (ui-state/enqueue-dialog! ui {:id "d-real" :kind :confirm :title "Confirm" :promise (promise)})
+          _       (enqueue-active-dialog! ctx {:id "d-real" :kind :confirm :title "Confirm" :promise (promise)})
           state   (atom {:ready? true :pending {}})
           handler (make-handler ctx state)
           {:keys [out-lines]}
@@ -846,7 +856,7 @@
 (deftest rpc-prompt-streams-events-and-interleaves-test
   (testing "prompt emits canonical events that interleave with accepted response"
     (let [[ctx _] (create-session-context)
-          _   (ui-state/set-status! (ui-view ctx) "ext.demo" "ready")
+          _   (dispatch/dispatch! ctx :session/ui-set-status {:extension-id "ext.demo" :text "ready"} {:origin :test})
           state (atom {:ready? true
                        :pending {}
                        :rpc-ai-model {:provider "anthropic" :id "stub" :supports-reasoning true}

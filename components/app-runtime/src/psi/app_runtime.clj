@@ -807,7 +807,9 @@ Available: " (str/join ", " (map name (keys models/all-models))))
 
      (tui-start-fn! (:name ai-model) run-agent-fn!
                     {:query-fn             (fn [q] (session/query-in ctx @tui-focus* q))
-                     :ui-state*        (ss/atom-view-in ctx (ss/state-path :ui-state))
+                     :ui-read-fn       (fn [] (ss/get-state-value-in ctx (ss/state-path :ui-state)))
+                     :ui-dispatch-fn   (fn [event-type payload]
+                                         (dispatch/dispatch! ctx event-type payload {:origin :tui}))
                      :dispatch-fn          dispatch-fn
                      :on-interrupt-fn!     on-interrupt-fn!
                      :on-queue-input-fn!   (fn [text _state]
