@@ -16,6 +16,7 @@
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.oauth.core :as oauth]
+   [psi.agent-session.resolvers.support :as resolver-support]
    [psi.agent-session.session-state :as ss]
    [psi.history.git :as history-git]
    [psi.query.core :as query]
@@ -66,8 +67,8 @@
         seed                {:psi/agent-session-ctx ctx
                              :git/context git-ctx}
         full-params         (let [base-params (assoc params
-                                                :psi/agent-session-ctx ctx
-                                                :git/context git-ctx)]
+                                                     :psi/agent-session-ctx ctx
+                                                     :git/context git-ctx)]
                               (cond
                                 (contains? session-scoped-extension-mutation-ops op-sym)
                                 (assoc base-params :session-id session-id)
@@ -80,7 +81,6 @@
         payload             (get (query/query-in qctx seed [(list op-sym full-params)]) op-sym)]
     (bg-rt/maybe-track-background-workflow-job! ctx session-id op-sym full-params payload)
     payload))
-
 
 (defn- make-extension-runtime-fns
   "Build the runtime-fns map for extension API EQL access.
@@ -96,7 +96,11 @@
        (let [qctx (query/create-query-context)
              _    (register-resolvers! qctx false)
              _    (register-mutations! qctx (:all-mutations ctx) true)]
-         (query/query-in qctx {:psi/agent-session-ctx ctx} eql-query)))
+         (binding [resolver-support/*session-id* session-id]
+           (query/query-in qctx
+                           {:psi/agent-session-ctx        ctx
+                            :psi.agent-session/session-id session-id}
+                           eql-query))))
 
      :mutate-fn
      (fn [op-sym params]
