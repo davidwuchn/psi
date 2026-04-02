@@ -13,7 +13,6 @@
   (:require
    [psi.ai.core :as ai]
    [psi.agent-session.conversation :as conv-translate]
-   [psi.agent-session.persistence :as persist]
    [psi.agent-session.session-state :as session]
    [psi.agent-session.state-accessors :as sa]
    [psi.agent-session.dispatch :as dispatch]
@@ -299,8 +298,8 @@
 (defn run-agent-loop!
   "Run a complete agent loop from current session state.
 
-   Journals `new-messages` before the turn loop, drives turns until terminal,
-   then finalizes the session statechart.
+   Callers are responsible for journaling `new-messages` before calling this
+   function. Drives turns until terminal, then finalizes the session statechart.
 
    Options (optional map):
      :api-key        — OAuth API key passed through to the provider
@@ -309,9 +308,7 @@
    Returns the final assistant message."
   ([ai-ctx ctx session-id agent-ctx ai-model new-messages]
    (run-agent-loop! ai-ctx ctx session-id agent-ctx ai-model new-messages nil))
-  ([ai-ctx ctx session-id agent-ctx ai-model new-messages opts]
-   (doseq [msg new-messages]
-     (session/journal-append-in! ctx session-id (persist/message-entry msg)))
+  ([ai-ctx ctx session-id agent-ctx ai-model _new-messages opts]
    (let [extra-ai-options (agent-loop-options ctx session-id opts)
          result           (run-agent-loop-body! ai-ctx ctx session-id agent-ctx ai-model
                                                 extra-ai-options (:progress-queue opts))]

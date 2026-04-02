@@ -334,6 +334,7 @@
                         (consume-fn {:type :text-delta :content-index 1 :delta "Done"})
                         (consume-fn {:type :done :reason :stop}))]
       (with-redefs [psi.agent-session.executor/do-stream! openai-turn]
+        (ss/journal-append-in! session-ctx session-ctx-id (persist/message-entry user-msg))
         (let [result (executor/run-agent-loop! nil session-ctx session-ctx-id agent-ctx openai-model [user-msg])]
           (is (= :stop (:stop-reason result)))
           (is (= "Done"

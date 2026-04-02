@@ -693,6 +693,7 @@
                        :content   [{:type :text :text (or prompt "")}]
                        :timestamp (java.time.Instant/now)}]
     (try
+      (ss/journal-append-in! agent-session-ctx session-id (persist/message-entry user-msg))
       (let [result (executor/run-agent-loop!
                     nil agent-session-ctx session-id (ss/agent-ctx-in agent-session-ctx session-id)
                     resolved-model

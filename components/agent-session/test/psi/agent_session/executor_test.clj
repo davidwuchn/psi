@@ -47,6 +47,7 @@
         user-msg    {:role "user" :content [{:type :text :text "hi"}]}]
     (with-redefs [psi.agent-session.executor/do-stream!
                   (stub-text-stream "response")]
+      (ss/journal-append-in! session-ctx session-ctx-id (persist/message-entry user-msg))
       (executor/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg])
       (let [session-id session-ctx-id
             msgs       (journal-messages session-ctx session-id)]
@@ -163,8 +164,8 @@
       (is (= result (#'executor/finish-agent-loop! session-ctx session-ctx-id agent-ctx result))))))
 
 (deftest run-agent-loop-lifecycle-test
-  ;; run-agent-loop! journals user messages, runs body, then finishes.
-  (testing "run-agent-loop! journals messages, runs body, and finishes"
+  ;; Callers pre-journal user messages; run-agent-loop! runs body, then finishes.
+  (testing "run-agent-loop! runs body and finishes (caller pre-journals)"
     (let [agent-ctx   (setup-agent-ctx!)
           [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
           user-msg    {:role "user" :content [{:type :text :text "hi"}]}
@@ -177,12 +178,14 @@
                     (fn [_ _ _ result]
                       (swap! calls conj [:finish (:stop-reason result)])
                       result)]
+        ;; Caller is responsible for journaling before invoking the loop
+        (ss/journal-append-in! session-ctx session-ctx-id (persist/message-entry user-msg))
         (let [result (executor/run-agent-loop! nil session-ctx session-ctx-id agent-ctx stub-model [user-msg]
                                                {:api-key "k"})]
           (is (= :stop (:stop-reason result)))
           (is (= :body (ffirst @calls)))
           (is (= :finish (first (second @calls))))
-          ;; User message is journaled
+          ;; User message is in journal (added by caller)
           (is (= 1 (count (journal-messages session-ctx session-ctx-id)))))))))
 
 (deftest execute-one-turn-test
@@ -361,6 +364,7 @@
     (testing "executor child session end-to-end"
       (with-redefs [psi.agent-session.executor/do-stream!
                     (stub-text-stream "child response")]
+        (ss/journal-append-in! scoped child-id (persist/message-entry user-msg))
         (executor/run-agent-loop! nil scoped child-id agent-ctx stub-model [user-msg]))
       (testing "child journal contains both user and assistant messages"
         (let [child-journal  (journal-for-session session-ctx child-id)
