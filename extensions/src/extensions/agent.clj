@@ -833,71 +833,75 @@
                                (ele/transition {:event :agent/continue :target :running}
                                                (ele/script {:expr continue-script})))))
 
+(defn- make-on-finished-callback []
+  (fn [{:keys [id prompt turn-count ok? elapsed-ms result-text include-result-in-context?]}]
+    (refresh-widgets-later!)
+    (emit-result-message! {:id                         (or (parse-int id) id)
+                           :prompt                     prompt
+                           :turn-count                 turn-count
+                           :ok?                        ok?
+                           :elapsed-ms                 elapsed-ms
+                           :result-text                result-text
+                           :include-result-in-context? include-result-in-context?})))
+
+(defn- initial-agent-workflow-data [qf get-api-key on-start on-finished input]
+  (let [agent-name    (normalize-agent-name (get input :agent))
+        fork-session? (true? (get input :fork-session))
+        include?      (true? (get input :include-result-in-context))
+        config        (resolve-agent-config
+                       agent-name
+                       (concat (global-agents-dirs)
+                               [(project-agents-dir qf)])
+                       (current-system-prompt qf))
+        session-id    (when-let [mf (some-> @state :api :mutate)]
+                        (:psi.agent-session/session-id
+                         (mf 'psi.extension/create-child-session
+                             {:session-name   agent-name
+                              :system-prompt  (:system-prompt config)
+                              :tool-schemas   (:tools config)
+                              :thinking-level (:thinking-level config)})))]
+    {:agent/agent-name                 agent-name
+     :agent/fork-session?              fork-session?
+     :agent/include-result-in-context? include?
+     :agent/session-id                 session-id
+     :agent/query-fn                   qf
+     :agent/get-api-key-fn             get-api-key
+     :agent/on-start                   on-start
+     :agent/on-finished                on-finished
+     :agent/turn-count                 0
+     :agent/current-prompt             nil
+     :agent/last-text                  ""
+     :agent/last-line                  nil
+     :agent/error-line                 nil
+     :agent/elapsed-ms                 0}))
+
+(defn- public-workflow-data [data]
+  (let [base (select-keys data
+                          [:workflow/id
+                           :workflow/error-message
+                           :agent/agent-name
+                           :agent/fork-session?
+                           :agent/include-result-in-context?
+                           :agent/turn-count
+                           :agent/current-prompt
+                           :agent/last-text
+                           :agent/last-line
+                           :agent/error-line
+                           :agent/elapsed-ms])]
+    (assoc base :agent/display (workflow-public-display base))))
+
 (defn- register-agent-workflow-type! []
   (let [qf          (:query-fn @state)
         get-api-key (some-> @state :api :get-api-key)
-        on-start    (fn [_]
-                      (refresh-widgets-later!))
-        on-finished (fn [{:keys [id prompt turn-count ok? elapsed-ms result-text include-result-in-context?]}]
-                      (refresh-widgets-later!)
-                      (emit-result-message! {:id                          (or (parse-int id) id)
-                                             :prompt                      prompt
-                                             :turn-count                  turn-count
-                                             :ok?                         ok?
-                                             :elapsed-ms                  elapsed-ms
-                                             :result-text                 result-text
-                                             :include-result-in-context?  include-result-in-context?}))
+        on-start    (fn [_] (refresh-widgets-later!))
+        on-finished (make-on-finished-callback)
         r           (mutate! 'psi.extension.workflow/register-type
                              {:type            agent-type
                               :description     "Run a background agent workflow."
                               :chart           agent-chart
                               :start-event     :agent/start
-                              :initial-data-fn (fn [input]
-                                                 (let [agent-name    (normalize-agent-name (get input :agent))
-                                                       fork-session? (true? (get input :fork-session))
-                                                       include?      (true? (get input :include-result-in-context))
-                                                       config        (resolve-agent-config
-                                                                      agent-name
-                                                                      (concat (global-agents-dirs)
-                                                                              [(project-agents-dir qf)])
-                                                                      (current-system-prompt qf))
-                                                       session-id    (when-let [mf (some-> @state :api :mutate)]
-                                                                       (:psi.agent-session/session-id
-                                                                        (mf 'psi.extension/create-child-session
-                                                                            {:session-name   agent-name
-                                                                             :system-prompt  (:system-prompt config)
-                                                                             :tool-schemas   (:tools config)
-                                                                             :thinking-level (:thinking-level config)})))]
-                                                   {:agent/agent-name                  agent-name
-                                                    :agent/fork-session?               fork-session?
-                                                    :agent/include-result-in-context?  include?
-                                                    :agent/session-id                  session-id
-                                                    :agent/query-fn                    qf
-                                                    :agent/get-api-key-fn              get-api-key
-                                                    :agent/on-start                    on-start
-                                                    :agent/on-finished                 on-finished
-                                                    :agent/turn-count                  0
-                                                    :agent/current-prompt              nil
-                                                    :agent/last-text                   ""
-                                                    :agent/last-line                   nil
-                                                    :agent/error-line                  nil
-                                                    :agent/elapsed-ms                  0}))
-                              :public-data-fn  (fn [data]
-                                                 (let [base (select-keys data
-                                                                         [:workflow/id
-                                                                          :workflow/error-message
-                                                                          :agent/agent-name
-                                                                          :agent/fork-session?
-                                                                          :agent/include-result-in-context?
-                                                                          :agent/turn-count
-                                                                          :agent/current-prompt
-                                                                          :agent/last-text
-                                                                          :agent/last-line
-                                                                          :agent/error-line
-                                                                          :agent/elapsed-ms])]
-                                                   (assoc base
-                                                          :agent/display
-                                                          (workflow-public-display base))))})]
+                              :initial-data-fn (partial initial-agent-workflow-data qf get-api-key on-start on-finished)
+                              :public-data-fn  public-workflow-data})]
     (when-let [e (:psi.extension.workflow/error r)]
       (notify! (str "Failed to register agent workflow type: " e) :error))))
 
@@ -922,6 +926,41 @@
             (Thread/sleep 25)
             (recur)))))))
 
+(defn- create-agent-workflow-input
+  [task tool-call-id include-result-in-context? agent-name fork-session?]
+  (cond-> {:task task
+           :tool-call-id tool-call-id
+           :include-result-in-context include-result-in-context?}
+    agent-name (assoc :agent agent-name)
+    fork-session? (assoc :fork-session true)))
+
+(defn- sync-spawn-result [id timeout-ms]
+  (let [{:keys [timeout workflow error]} (await-terminal-workflow id timeout-ms)
+        wf    (or workflow (workflow-by-id id))
+        text  (or (get-in wf [:psi.extension.workflow/data :agent/last-text])
+                  (:psi.extension.workflow/result wf)
+                  (:psi.extension.workflow/error-message wf)
+                  "")
+        ok?   (and wf
+                   (not timeout)
+                   (not error)
+                   (not (true? (:psi.extension.workflow/error? wf))))
+        text* (cond
+                timeout (str "Error: Timed out waiting for Agent #" id " to finish.")
+                error   (str "Error: " error)
+                :else   text)]
+    (refresh-widgets!)
+    {:ok id
+     :mode :sync
+     :is-error (not ok?)
+     :content text*}))
+
+(defn- async-spawn-result [id r]
+  (refresh-widgets!)
+  {:ok id
+   :mode :async
+   :job-id (:psi.extension.background-job/id r)})
+
 (defn- spawn-agent!
   [task agent-name {:keys [mode tool-call-id timeout-ms fork-session? include-result-in-context?]
                     :or   {timeout-ms 300000}}]
@@ -944,51 +983,18 @@
       (let [id            (:next-id @state)
             tool-call-id* (or tool-call-id (str "agent-create-" id "-" (java.util.UUID/randomUUID)))
             r             (mutate! 'psi.extension.workflow/create
-                                   {:type                   agent-type
-                                    :id                     (str id)
-                                    :track-background-job?  (not= :sync mode*)
-                                    :input                  (cond-> {:task task
-                                                                     :tool-call-id tool-call-id*
-                                                                     :include-result-in-context include-result-in-context?}
-                                                              agent-name (assoc :agent agent-name)
-                                                              fork-session? (assoc :fork-session true))})]
+                                   {:type                  agent-type
+                                    :id                    (str id)
+                                    :track-background-job? (not= :sync mode*)
+                                    :input                 (create-agent-workflow-input task tool-call-id* include-result-in-context? agent-name fork-session?)})]
         (if-not (:psi.extension.workflow/created? r)
           {:error (or (:psi.extension.workflow/error r)
                       "Failed to create workflow")}
           (do
             (swap! state update :next-id inc)
             (if (= :sync mode*)
-              (let [{:keys [timeout workflow error]} (await-terminal-workflow id timeout-ms)
-                    wf       (or workflow (workflow-by-id id))
-                    text  (or (get-in wf [:psi.extension.workflow/data :agent/last-text])
-                               (:psi.extension.workflow/result wf)
-                               (:psi.extension.workflow/error-message wf)
-                               "")
-                    ok?   (and wf
-                               (not timeout)
-                               (not error)
-                               (not (true? (:psi.extension.workflow/error? wf))))
-                    text* (cond
-                               timeout
-                               (str "Error: Timed out waiting for Agent #" id " to finish.")
-
-                               error
-                               (str "Error: " error)
-
-                               :else
-                               text)]
-                (refresh-widgets!)
-                ;; on-finished callback handles emit-result-message! for all agents
-                ;; (including sync). Calling it here too would double-display results.
-                {:ok id
-                 :mode :sync
-                 :is-error (not ok?)
-                 :content text*})
-              (do
-                (refresh-widgets!)
-                {:ok id
-                 :mode :async
-                 :job-id (:psi.extension.background-job/id r)}))))))))
+              (sync-spawn-result id timeout-ms)
+              (async-spawn-result id r))))))))
 
 (defn- continue-agent!
   ([id prompt]
@@ -1099,6 +1105,37 @@
                 :enabled  true
                 :content  (prompt-contribution-content)})))
 
+(defn- tool-error [message]
+  {:content message :is-error true})
+
+(defn- create-agent-tool-result [agent-name fork? r]
+  (if-let [e (:error r)]
+    (tool-error (str "Error: " e))
+    (if (= :sync (:mode r))
+      {:content (str "Agent #" (:ok r)
+                     (when agent-name (str " (@" agent-name ")"))
+                     (when fork? " [fork]")
+                     " finished.\n\n"
+                     (:content r))
+       :is-error (boolean (:is-error r))}
+      {:content (str "Agent #" (:ok r)
+                     " spawned in background"
+                     (when agent-name (str " (@" agent-name ")"))
+                     (when fork? " [fork]")
+                     (when-let [jid (:job-id r)]
+                       (str " (job " jid ")"))
+                     ".")
+       :is-error false})))
+
+(defn- continue-agent-tool-result [id result]
+  (if-let [e (:error result)]
+    (tool-error e)
+    {:content (str "Agent #" id " continuing in background"
+                   (when-let [jid (:job-id result)]
+                     (str " (job " jid ")"))
+                   ".")
+     :is-error false}))
+
 (defn- execute-agent-tool
   ([args]
    (execute-agent-tool args nil))
@@ -1115,16 +1152,16 @@
              tool-call-id (tool-call-id-from-opts opts)]
          (cond
            (= timeout-ms ::invalid)
-           {:content "Error: timeout_ms must be a positive integer." :is-error true}
+           (tool-error "Error: timeout_ms must be a positive integer.")
 
            (= fork-session ::invalid)
-           {:content "Error: fork_session must be true or false." :is-error true}
+           (tool-error "Error: fork_session must be true or false.")
 
            (= include-result-in-context ::invalid)
-           {:content "Error: include_result_in_context must be true or false." :is-error true}
+           (tool-error "Error: include_result_in_context must be true or false.")
 
            (str/blank? task)
-           {:content "Error: task is required." :is-error true}
+           (tool-error "Error: task is required.")
 
            :else
            (let [fork?    (true? fork-session)
@@ -1134,23 +1171,7 @@
                                                          :timeout-ms timeout-ms
                                                          :fork-session? fork?
                                                          :include-result-in-context? include?})]
-             (if-let [e (:error r)]
-               {:content (str "Error: " e) :is-error true}
-               (if (= :sync (:mode r))
-                 {:content (str "Agent #" (:ok r)
-                                (when agent-name (str " (@" agent-name ")"))
-                                (when fork? " [fork]")
-                                " finished.\n\n"
-                                (:content r))
-                  :is-error (boolean (:is-error r))}
-                 {:content (str "Agent #" (:ok r)
-                                " spawned in background"
-                                (when agent-name (str " (@" agent-name ")"))
-                                (when fork? " [fork]")
-                                (when-let [jid (:job-id r)]
-                                  (str " (job " jid ")"))
-                                ".")
-                  :is-error false})))))
+             (create-agent-tool-result agent-name fork? r))))
 
        "continue"
        (let [id           (parse-int (get args "id"))
@@ -1158,38 +1179,32 @@
              tool-call-id (tool-call-id-from-opts opts)]
          (cond
            (not (nil? (get args "mode")))
-           {:content "Error: mode is only supported for action=create" :is-error true}
+           (tool-error "Error: mode is only supported for action=create")
 
            (not (nil? (get args "fork_session")))
-           {:content "Error: fork_session is only supported for action=create" :is-error true}
+           (tool-error "Error: fork_session is only supported for action=create")
 
            (= include-result-in-context ::invalid)
-           {:content "Error: include_result_in_context must be true or false." :is-error true}
+           (tool-error "Error: include_result_in_context must be true or false.")
 
            (nil? id)
-           {:content "Error: id is required." :is-error true}
+           (tool-error "Error: id is required.")
 
            (str/blank? prompt)
-           {:content "Error: prompt is required." :is-error true}
+           (tool-error "Error: prompt is required.")
 
            :else
-           (let [result (continue-agent! id prompt {:tool-call-id tool-call-id
-                                                    :include-result-in-context? include-result-in-context})]
-             (if-let [e (:error result)]
-               {:content e :is-error true}
-               {:content (str "Agent #" id " continuing in background"
-                              (when-let [jid (:job-id result)]
-                                (str " (job " jid ")"))
-                              ".")
-                :is-error false}))))
+           (continue-agent-tool-result id
+                                       (continue-agent! id prompt {:tool-call-id tool-call-id
+                                                                   :include-result-in-context? include-result-in-context}))))
 
        "remove"
        (let [id (parse-int (get args "id"))]
          (if (nil? id)
-           {:content "Error: id is required." :is-error true}
+           (tool-error "Error: id is required.")
            (let [result (remove-agent! id)]
              (if-let [e (:error result)]
-               {:content e :is-error true}
+               (tool-error e)
                {:content (str "Agent #" id " removed.")
                 :is-error false}))))
 
@@ -1197,10 +1212,9 @@
        {:content  (list-agents-text)
         :is-error false}
 
-       {:content (str "Error: action must be one of "
-                      (str/join ", " agent-actions)
-                      ".")
-        :is-error true}))))
+       (tool-error (str "Error: action must be one of "
+                        (str/join ", " agent-actions)
+                        "."))))))
 
 (defn init [api]
   (swap! state assoc
