@@ -455,6 +455,160 @@
   (swap! next-tool-index #(max % (inc idx)))
   idx)
 
+(defn- make-chat-stream-state
+  []
+  {:stream-started?  (atom false)
+   :done?            (atom false)
+   :next-tool-index  (atom 0)
+   :tool-index-by-id (atom {})
+   :tool-state       (atom {})})
+
+(defn- emit-stream-start!
+  [consume-fn stream-started?]
+  (when (compare-and-set! stream-started? false true)
+    (consume-fn {:type :start})))
+
+(defn- resolve-chat-tool-index
+  [{:keys [tool-index-by-id next-tool-index]} tool-call fallback-idx]
+  (let [idx     (:index tool-call)
+        call-id (:id tool-call)]
+    (cond
+      (number? idx)
+      (update-tool-index! tool-index-by-id next-tool-index call-id idx)
+
+      (and (seq call-id)
+           (contains? @tool-index-by-id call-id))
+      (get @tool-index-by-id call-id)
+
+      :else
+      (update-tool-index! tool-index-by-id next-tool-index call-id
+                          (or fallback-idx @next-tool-index)))))
+
+(defn- ensure-chat-tool-entry!
+  [{:keys [tool-state]} idx]
+  (swap! tool-state update idx
+         (fn [s]
+           (merge {:id nil
+                   :name nil
+                   :started? false
+                   :args-buffer ""}
+                  s))))
+
+(defn- start-chat-tool-if-ready!
+  [{:keys [tool-state stream-started?]} consume-fn idx force?]
+  (let [{:keys [id name started? args-buffer]} (get @tool-state idx)
+        id* (or id (when force? (new-call-id)))]
+    (when (and (not started?) (seq name) (seq id*))
+      (swap! tool-state assoc idx
+             {:id id*
+              :name name
+              :started? true
+              :args-buffer (or args-buffer "")})
+      (emit-stream-start! consume-fn stream-started?)
+      (consume-fn {:type :toolcall-start
+                   :content-index idx
+                   :id id*
+                   :name name})
+      (when (seq args-buffer)
+        (consume-fn {:type :toolcall-delta
+                     :content-index idx
+                     :delta args-buffer})))))
+
+(defn- process-chat-tool-call!
+  [stream-state consume-fn idx tool-call]
+  (let [{:keys [tool-state tool-index-by-id stream-started?]} stream-state
+        call-id   (:id tool-call)
+        call-name (get-in tool-call [:function :name])
+        args      (normalize-tool-arguments
+                   (get-in tool-call [:function :arguments]))]
+    (ensure-chat-tool-entry! stream-state idx)
+    (when (seq call-id)
+      (swap! tool-state assoc-in [idx :id] call-id)
+      (swap! tool-index-by-id assoc call-id idx))
+    (when (seq call-name)
+      (swap! tool-state assoc-in [idx :name] call-name))
+    (start-chat-tool-if-ready! stream-state consume-fn idx false)
+    (when (seq args)
+      (let [current-buffer (get-in @tool-state [idx :args-buffer] "")
+            {:keys [buffer delta]} (accumulate-tool-arguments current-buffer args)]
+        (swap! tool-state assoc-in [idx :args-buffer] buffer)
+        (when (and (get-in @tool-state [idx :started?])
+                   (seq delta))
+          (emit-stream-start! consume-fn stream-started?)
+          (consume-fn {:type :toolcall-delta
+                       :content-index idx
+                       :delta delta}))))
+    (start-chat-tool-if-ready! stream-state consume-fn idx false)))
+
+(defn- force-start-pending-chat-tools!
+  [stream-state consume-fn]
+  (doseq [idx (sort (keys @(-> stream-state :tool-state)))]
+    (start-chat-tool-if-ready! stream-state consume-fn idx true)))
+
+(defn- emit-chat-tool-ends!
+  [{:keys [tool-state]} consume-fn]
+  (doseq [[idx {:keys [started?]}] (sort-by key @tool-state)]
+    (when started?
+      (consume-fn {:type :toolcall-end
+                   :content-index idx})))
+  (reset! tool-state {}))
+
+(defn- emit-chat-chunk!
+  [stream-state consume-fn choice delta]
+  (let [{:keys [stream-started?]} stream-state
+        text-delta      (extract-text-delta delta)
+        reasoning-delta (extract-reasoning-delta delta)]
+    (when (and choice (= (:role delta) "assistant"))
+      (emit-stream-start! consume-fn stream-started?))
+    (when (seq text-delta)
+      (emit-stream-start! consume-fn stream-started?)
+      (consume-fn {:type :text-delta
+                   :content-index 0
+                   :delta text-delta}))
+    (when (seq reasoning-delta)
+      (emit-stream-start! consume-fn stream-started?)
+      (consume-fn {:type :thinking-delta
+                   :content-index 0
+                   :delta reasoning-delta}))
+    (doseq [[fallback-idx tool-call]
+            (map-indexed vector (extract-tool-call-fragments choice delta))]
+      (process-chat-tool-call! stream-state consume-fn
+                               (resolve-chat-tool-index stream-state tool-call fallback-idx)
+                               tool-call))))
+
+(defn- finish-chat-chunk!
+  [stream-state consume-fn model chunk choice]
+  (let [{:keys [stream-started? done?]} stream-state]
+    (cond
+      (:usage chunk)
+      (do
+        (force-start-pending-chat-tools! stream-state consume-fn)
+        (emit-chat-tool-ends! stream-state consume-fn)
+        (emit-chat-completion-finish! consume-fn
+                                      stream-started?
+                                      done?
+                                      (keyword (get-in choice [:finish_reason] "stop"))
+                                      (completions-usage-map model (:usage chunk))))
+
+      (:finish_reason choice)
+      (do
+        (force-start-pending-chat-tools! stream-state consume-fn)
+        (emit-chat-tool-ends! stream-state consume-fn)
+        (emit-chat-completion-finish! consume-fn
+                                      stream-started?
+                                      done?
+                                      (keyword (:finish_reason choice))
+                                      nil)))))
+
+(defn- process-chat-sse-line!
+  [stream-state consume-fn model options url line]
+  (when-let [chunk (parse-sse-line line)]
+    (capture-response! options :openai-completions url chunk)
+    (let [choice (first (:choices chunk))
+          delta  (:delta choice)]
+      (emit-chat-chunk! stream-state consume-fn choice delta)
+      (finish-chat-chunk! stream-state consume-fn model chunk choice))))
+
 (defn stream-openai
   "Stream response from OpenAI Chat Completions API.
 
@@ -472,146 +626,20 @@
      {:type :error            :error-message ...}
    "
   [conversation model options consume-fn]
-  (let [url              (str (:base-url model) "/chat/completions")
-        request          (build-request conversation model options)
-        stream-started?  (atom false)
-        done?            (atom false)
-        next-tool-index  (atom 0)
-        tool-index-by-id (atom {})
-        tool-state       (atom {})]
-    (letfn [(emit-start! []
-              (when (compare-and-set! stream-started? false true)
-                (consume-fn {:type :start})))
-
-            (resolve-tool-index [tool-call fallback-idx]
-              (let [idx     (:index tool-call)
-                    call-id (:id tool-call)]
-                (cond
-                  (number? idx)
-                  (update-tool-index! tool-index-by-id next-tool-index call-id idx)
-
-                  (and (seq call-id)
-                       (contains? @tool-index-by-id call-id))
-                  (get @tool-index-by-id call-id)
-
-                  :else
-                  (update-tool-index! tool-index-by-id next-tool-index call-id
-                                      (or fallback-idx @next-tool-index)))))
-
-            (ensure-tool-entry! [idx]
-              (swap! tool-state update idx
-                     (fn [s]
-                       (merge {:id nil
-                               :name nil
-                               :started? false
-                               :args-buffer ""}
-                              s))))
-
-            (start-tool-if-ready! [idx force?]
-              (let [{:keys [id name started? args-buffer]} (get @tool-state idx)
-                    id* (or id (when force? (new-call-id)))]
-                (when (and (not started?) (seq name) (seq id*))
-                  (swap! tool-state assoc idx
-                         {:id id*
-                          :name name
-                          :started? true
-                          :args-buffer (or args-buffer "")})
-                  (emit-start!)
-                  (consume-fn {:type :toolcall-start
-                               :content-index idx
-                               :id id*
-                               :name name})
-                  (when (seq args-buffer)
-                    (consume-fn {:type :toolcall-delta
-                                 :content-index idx
-                                 :delta args-buffer})))))
-
-            (process-tool-call! [idx tool-call]
-              (let [call-id   (:id tool-call)
-                    call-name (get-in tool-call [:function :name])
-                    args      (normalize-tool-arguments
-                               (get-in tool-call [:function :arguments]))]
-                (ensure-tool-entry! idx)
-                (when (seq call-id)
-                  (swap! tool-state assoc-in [idx :id] call-id)
-                  (swap! tool-index-by-id assoc call-id idx))
-                (when (seq call-name)
-                  (swap! tool-state assoc-in [idx :name] call-name))
-                (start-tool-if-ready! idx false)
-                (when (seq args)
-                  (let [current-buffer (get-in @tool-state [idx :args-buffer] "")
-                        {:keys [buffer delta]} (accumulate-tool-arguments current-buffer args)]
-                    (swap! tool-state assoc-in [idx :args-buffer] buffer)
-                    (when (and (get-in @tool-state [idx :started?])
-                               (seq delta))
-                      (emit-start!)
-                      (consume-fn {:type :toolcall-delta
-                                   :content-index idx
-                                   :delta delta}))))
-                (start-tool-if-ready! idx false)))
-
-            (force-start-pending-tools! []
-              (doseq [idx (sort (keys @tool-state))]
-                (start-tool-if-ready! idx true)))
-
-            (emit-tool-ends! []
-              (doseq [[idx {:keys [started?]}] (sort-by key @tool-state)]
-                (when started?
-                  (consume-fn {:type :toolcall-end
-                               :content-index idx})))
-              (reset! tool-state {}))]
-
-      (try
-        (capture-request! options :openai-completions url request)
-        (let [response (http/post url
-                                  (merge request {:as :stream :cookie-policy :none}))]
-          (with-open [reader (io/reader (:body response))]
-            (doseq [line (line-seq reader)]
-              (when-let [chunk (parse-sse-line line)]
-                (capture-response! options :openai-completions url chunk)
-                (let [choice          (first (:choices chunk))
-                      delta           (:delta choice)
-                      text-delta      (extract-text-delta delta)
-                      reasoning-delta (extract-reasoning-delta delta)]
-                  (when (and choice (= (:role delta) "assistant"))
-                    (emit-start!))
-                  (when (seq text-delta)
-                    (emit-start!)
-                    (consume-fn {:type :text-delta
-                                 :content-index 0
-                                 :delta text-delta}))
-                  (when (seq reasoning-delta)
-                    (emit-start!)
-                    (consume-fn {:type :thinking-delta
-                                 :content-index 0
-                                 :delta reasoning-delta}))
-                  (doseq [[fallback-idx tool-call]
-                          (map-indexed vector (extract-tool-call-fragments choice delta))]
-                    (process-tool-call! (resolve-tool-index tool-call fallback-idx) tool-call))
-                  (cond
-                    (:usage chunk)
-                    (do
-                      (force-start-pending-tools!)
-                      (emit-tool-ends!)
-                      (emit-chat-completion-finish! consume-fn
-                                                    stream-started?
-                                                    done?
-                                                    (keyword (get-in choice [:finish_reason] "stop"))
-                                                    (completions-usage-map model (:usage chunk))))
-
-                    (:finish_reason choice)
-                    (do
-                      (force-start-pending-tools!)
-                      (emit-tool-ends!)
-                      (emit-chat-completion-finish! consume-fn
-                                                    stream-started?
-                                                    done?
-                                                    (keyword (:finish_reason choice))
-                                                    nil))))))))
-        (catch Exception e
-          (let [err (exception->error e)]
-            (capture-response! options :openai-completions url err)
-            (consume-fn err)))))))
+  (let [url          (str (:base-url model) "/chat/completions")
+        request      (build-request conversation model options)
+        stream-state (make-chat-stream-state)]
+    (try
+      (capture-request! options :openai-completions url request)
+      (let [response (http/post url
+                                (merge request {:as :stream :cookie-policy :none}))]
+        (with-open [reader (io/reader (:body response))]
+          (doseq [line (line-seq reader)]
+            (process-chat-sse-line! stream-state consume-fn model options url line))))
+      (catch Exception e
+        (let [err (exception->error e)]
+          (capture-response! options :openai-completions url err)
+          (consume-fn err))))))
 
 ;; ───────────────────────────────────────────────────────────────────────────
 ;; OpenAI Codex Responses API (ChatGPT backend)
@@ -811,6 +839,231 @@
       {:headers headers
        :body    (json/generate-string body)})))
 
+(defn- make-codex-stream-state
+  []
+  {:started?             (atom false)
+   :done?                (atom false)
+   :next-tool-index      (atom 0)
+   :tool-by-item-id      (atom {})
+   :tool-by-output-index (atom {})
+   :tool-args-by-index   (atom {})
+   :open-tool-indexes    (atom #{})})
+
+(defn- emit-codex-start!
+  [consume-fn started?]
+  (when (compare-and-set! started? false true)
+    (consume-fn {:type :start})))
+
+(defn- register-codex-tool-index!
+  [{:keys [next-tool-index tool-by-item-id tool-by-output-index]} event item]
+  (let [output-idx (:output_index event)
+        item-id    (:id item)
+        idx        (cond
+                     (and (number? output-idx)
+                          (contains? @tool-by-output-index output-idx))
+                     (get @tool-by-output-index output-idx)
+
+                     (and (string? item-id)
+                          (contains? @tool-by-item-id item-id))
+                     (get @tool-by-item-id item-id)
+
+                     (number? output-idx)
+                     output-idx
+
+                     :else
+                     (let [i @next-tool-index]
+                       (swap! next-tool-index inc)
+                       i))]
+    (when (number? output-idx)
+      (swap! tool-by-output-index assoc output-idx idx))
+    (when (string? item-id)
+      (swap! tool-by-item-id assoc item-id idx))
+    idx))
+
+(defn- resolve-codex-tool-index
+  [{:keys [tool-by-output-index tool-by-item-id]} event]
+  (or
+   (let [output-idx (:output_index event)]
+     (when (number? output-idx)
+       (or (get @tool-by-output-index output-idx)
+           output-idx)))
+   (let [item-id (or (:item_id event)
+                     (get-in event [:item :id]))]
+     (when (string? item-id)
+       (get @tool-by-item-id item-id)))))
+
+(defn- emit-codex-tool-delta!
+  [{:keys [tool-args-by-index]} consume-fn idx args]
+  (when (and (number? idx) (seq args))
+    (swap! tool-args-by-index update idx (fnil str "") args)
+    (consume-fn {:type          :toolcall-delta
+                 :content-index idx
+                 :delta         args})))
+
+(defn- emit-codex-done!
+  [{:keys [done? open-tool-indexes tool-args-by-index]} consume-fn model event]
+  (when-not @done?
+    (reset! done? true)
+    (doseq [idx @open-tool-indexes]
+      (consume-fn {:type :toolcall-end :content-index idx}))
+    (reset! open-tool-indexes #{})
+    (reset! tool-args-by-index {})
+    (let [resp      (:response event)
+          status    (:status resp)
+          usage     (:usage resp)
+          usage-map (when usage
+                      (let [u (codex-usage->usage-map usage)]
+                        (assoc u :cost (models/calculate-cost model u))))]
+      (consume-fn (cond-> {:type :done
+                           :reason (codex-status->reason status)}
+                    usage-map (assoc :usage usage-map))))))
+
+(defn- emit-codex-error!
+  [{:keys [done?]} consume-fn options url msg http-status]
+  (when-not @done?
+    (reset! done? true)
+    (let [err (cond-> {:type :error :error-message msg}
+                http-status (assoc :http-status http-status))]
+      (capture-response! options :openai-codex-responses url err)
+      (consume-fn err))))
+
+(defn- emit-codex-thinking-boundary!
+  [stream-state consume-fn]
+  (emit-codex-start! consume-fn (:started? stream-state))
+  (consume-fn {:type :thinking-start :content-index 0})
+  (consume-fn {:type :thinking-end :content-index 0}))
+
+(defn- emit-codex-thinking-delta!
+  [stream-state consume-fn event]
+  (when-let [delta (string-fragment (:delta event))]
+    (emit-codex-start! consume-fn (:started? stream-state))
+    (consume-fn {:type :thinking-delta
+                 :content-index 0
+                 :delta delta})))
+
+(defn- finish-codex-tool-call!
+  [stream-state consume-fn event item]
+  (let [{:keys [tool-args-by-index open-tool-indexes]} stream-state
+        idx (or (resolve-codex-tool-index stream-state event)
+                (register-codex-tool-index! stream-state event item))]
+    (when (number? idx)
+      (let [final-args (:arguments item)
+            seen       (get @tool-args-by-index idx "")]
+        (when (seq final-args)
+          (cond
+            (and (seq seen)
+                 (str/starts-with? final-args seen))
+            (let [remaining (subs final-args (count seen))]
+              (when (seq remaining)
+                (emit-codex-tool-delta! stream-state consume-fn idx remaining)))
+
+            (not= final-args seen)
+            (emit-codex-tool-delta! stream-state consume-fn idx final-args)))
+        (swap! tool-args-by-index dissoc idx))
+      (when (contains? @open-tool-indexes idx)
+        (swap! open-tool-indexes disj idx)
+        (consume-fn {:type :toolcall-end
+                     :content-index idx})))))
+
+(defn- handle-codex-output-item-added!
+  [stream-state consume-fn event]
+  (let [{:keys [started? open-tool-indexes]} stream-state
+        item      (:item event)
+        item-type (:type item)]
+    (case item-type
+      "message"
+      (emit-codex-start! consume-fn started?)
+
+      "reasoning"
+      (emit-codex-start! consume-fn started?)
+
+      "function_call"
+      (let [idx       (register-codex-tool-index! stream-state event item)
+            call-id   (or (:call_id item) (new-call-id))
+            item-id   (:id item)
+            tool-id   (if (seq item-id) (str call-id "|" item-id) call-id)
+            tool-name (or (:name item) "tool")]
+        (emit-codex-start! consume-fn started?)
+        (swap! open-tool-indexes conj idx)
+        (consume-fn {:type          :toolcall-start
+                     :content-index idx
+                     :id            tool-id
+                     :name          tool-name})
+        (when-let [args (:arguments item)]
+          (emit-codex-tool-delta! stream-state consume-fn idx args)))
+
+      nil)))
+
+(defn- handle-codex-output-item-done!
+  [stream-state consume-fn event]
+  (let [item      (:item event)
+        item-type (:type item)]
+    (case item-type
+      "function_call" (finish-codex-tool-call! stream-state consume-fn event item)
+      "reasoning" (emit-codex-thinking-boundary! stream-state consume-fn)
+      nil)))
+
+(defn- handle-codex-event!
+  [stream-state consume-fn model options url event]
+  (capture-response! options :openai-codex-responses url event)
+  (case (:type event)
+    "response.output_item.added"
+    (handle-codex-output-item-added! stream-state consume-fn event)
+
+    "response.function_call_arguments.delta"
+    (let [idx   (resolve-codex-tool-index stream-state event)
+          delta (:delta event)]
+      (when (and (number? idx) (seq delta))
+        (emit-codex-start! consume-fn (:started? stream-state))
+        (emit-codex-tool-delta! stream-state consume-fn idx delta)))
+
+    "response.output_item.done"
+    (handle-codex-output-item-done! stream-state consume-fn event)
+
+    "response.output_text.delta"
+    (when-let [delta (string-fragment (:delta event))]
+      (emit-codex-start! consume-fn (:started? stream-state))
+      (consume-fn {:type :text-delta
+                   :content-index 0
+                   :delta delta}))
+
+    "response.reasoning_summary_text.delta"
+    (emit-codex-thinking-delta! stream-state consume-fn event)
+
+    "response.reasoning_text.delta"
+    (emit-codex-thinking-delta! stream-state consume-fn event)
+
+    "response.reasoning_summary.delta"
+    (emit-codex-thinking-delta! stream-state consume-fn event)
+
+    "response.reasoning.delta"
+    (emit-codex-thinking-delta! stream-state consume-fn event)
+
+    "response.completed"
+    (do
+      (emit-codex-start! consume-fn (:started? stream-state))
+      (emit-codex-done! stream-state consume-fn model event))
+
+    "response.done"
+    (do
+      (emit-codex-start! consume-fn (:started? stream-state))
+      (emit-codex-done! stream-state consume-fn model event))
+
+    "response.failed"
+    (emit-codex-error! stream-state consume-fn options url
+                       (or (get-in event [:response :error :message])
+                           "Codex response failed")
+                       nil)
+
+    "error"
+    (emit-codex-error! stream-state consume-fn options url
+                       (or (:message event)
+                           (:error event)
+                           "Codex stream error")
+                       nil)
+
+    nil))
+
 (defn stream-openai-codex
   "Stream response from OpenAI Codex Responses API (ChatGPT backend).
 
@@ -822,238 +1075,23 @@
      :toolcall-start, :toolcall-delta, :toolcall-end,
      :done, :error"
   [conversation model options consume-fn]
-  (let [url                  (resolve-codex-url (:base-url model))
-        started?             (atom false)
-        done?                (atom false)
-        next-tool-index      (atom 0)
-        tool-by-item-id      (atom {})
-        tool-by-output-index (atom {})
-        tool-args-by-index   (atom {})
-        open-tool-indexes    (atom #{})]
-
-    (letfn [(emit-start! []
-              (when (compare-and-set! started? false true)
-                (consume-fn {:type :start})))
-
-            (register-tool-index! [event item]
-              (let [output-idx (:output_index event)
-                    item-id    (:id item)
-                    idx        (cond
-                                 (and (number? output-idx)
-                                      (contains? @tool-by-output-index output-idx))
-                                 (get @tool-by-output-index output-idx)
-
-                                 (and (string? item-id)
-                                      (contains? @tool-by-item-id item-id))
-                                 (get @tool-by-item-id item-id)
-
-                                 (number? output-idx)
-                                 output-idx
-
-                                 :else
-                                 (let [i @next-tool-index]
-                                   (swap! next-tool-index inc)
-                                   i))]
-                (when (number? output-idx)
-                  (swap! tool-by-output-index assoc output-idx idx))
-                (when (string? item-id)
-                  (swap! tool-by-item-id assoc item-id idx))
-                idx))
-
-            (resolve-tool-index [event]
-              (or
-               (let [output-idx (:output_index event)]
-                 (when (number? output-idx)
-                   (or (get @tool-by-output-index output-idx)
-                       output-idx)))
-               (let [item-id (or (:item_id event)
-                                 (get-in event [:item :id]))]
-                 (when (string? item-id)
-                   (get @tool-by-item-id item-id)))))
-
-            (emit-tool-delta! [idx args]
-              (when (and (number? idx) (seq args))
-                (swap! tool-args-by-index update idx (fnil str "") args)
-                (consume-fn {:type          :toolcall-delta
-                             :content-index idx
-                             :delta         args})))
-
-            (emit-done! [event]
-              (when-not @done?
-                (reset! done? true)
-                ;; Close any still-open tool calls
-                (doseq [idx @open-tool-indexes]
-                  (consume-fn {:type :toolcall-end :content-index idx}))
-                (reset! open-tool-indexes #{})
-                (reset! tool-args-by-index {})
-                (let [resp      (:response event)
-                      status    (:status resp)
-                      usage     (:usage resp)
-                      usage-map (when usage
-                                  (let [u (codex-usage->usage-map usage)]
-                                    (assoc u :cost (models/calculate-cost model u))))]
-                  (consume-fn (cond-> {:type :done
-                                       :reason (codex-status->reason status)}
-                                usage-map (assoc :usage usage-map))))))
-
-            (emit-error!
-              ([msg]
-               (emit-error! msg nil))
-              ([msg http-status]
-               (when-not @done?
-                 (reset! done? true)
-                 (let [err (cond-> {:type :error :error-message msg}
-                             http-status (assoc :http-status http-status))]
-                   (capture-response! options :openai-codex-responses url err)
-                   (consume-fn err)))))]
-
-      (try
-        (let [request  (build-codex-request conversation model options)
-              _        (capture-request! options :openai-codex-responses url request)
-              response (http/post url
-                                  (merge request {:as :stream :cookie-policy :none}))]
-          (with-open [reader (io/reader (:body response))]
-            (doseq [line (line-seq reader)]
-              (when-let [event (parse-sse-line line)]
-                (capture-response! options :openai-codex-responses url event)
-                (let [etype (:type event)]
-                  (case etype
-                    "response.output_item.added"
-                    (let [item      (:item event)
-                          item-type (:type item)]
-                      (case item-type
-                        "message"
-                        (emit-start!)
-
-                        "reasoning"
-                        (emit-start!)
-
-                        "function_call"
-                        (let [idx        (register-tool-index! event item)
-                              call-id    (or (:call_id item)
-                                             (new-call-id))
-                              item-id    (:id item)
-                              tool-id    (if (seq item-id)
-                                           (str call-id "|" item-id)
-                                           call-id)
-                              tool-name  (or (:name item) "tool")]
-                          (emit-start!)
-                          (swap! open-tool-indexes conj idx)
-                          (consume-fn {:type          :toolcall-start
-                                       :content-index idx
-                                       :id            tool-id
-                                       :name          tool-name})
-                          (when-let [args (:arguments item)]
-                            (emit-tool-delta! idx args)))
-
-                        nil))
-
-                    "response.function_call_arguments.delta"
-                    (let [idx   (resolve-tool-index event)
-                          delta (:delta event)]
-                      (when (and (number? idx) (seq delta))
-                        (emit-start!)
-                        (emit-tool-delta! idx delta)))
-
-                    "response.output_item.done"
-                    (let [item      (:item event)
-                          item-type (:type item)]
-                      (case item-type
-                        "function_call"
-                        (let [idx (or (resolve-tool-index event)
-                                      (register-tool-index! event item))]
-                          (when (number? idx)
-                            (let [final-args (:arguments item)
-                                  seen       (get @tool-args-by-index idx "")]
-                              (when (seq final-args)
-                                (cond
-                                  (and (seq seen)
-                                       (str/starts-with? final-args seen))
-                                  (let [remaining (subs final-args (count seen))]
-                                    (when (seq remaining)
-                                      (emit-tool-delta! idx remaining)))
-
-                                  (not= final-args seen)
-                                  (emit-tool-delta! idx final-args)))
-                              (swap! tool-args-by-index dissoc idx))
-                            (when (contains? @open-tool-indexes idx)
-                              (swap! open-tool-indexes disj idx)
-                              (consume-fn {:type :toolcall-end
-                                           :content-index idx}))))
-
-                        "reasoning"
-                        ;; Some Codex streams emit no reasoning delta events and only
-                        ;; include the completed reasoning item here (often encrypted).
-                        ;; Surface a boundary so downstream turn assembly / UI can show
-                        ;; a thinking block even when textual reasoning is unavailable.
-                        (do
-                          (emit-start!)
-                          (consume-fn {:type :thinking-start :content-index 0})
-                          (consume-fn {:type :thinking-end :content-index 0}))
-
-                        nil))
-
-                    "response.output_text.delta"
-                    (when-let [delta (string-fragment (:delta event))]
-                      (emit-start!)
-                      (consume-fn {:type :text-delta
-                                   :content-index 0
-                                   :delta delta}))
-
-                    "response.reasoning_summary_text.delta"
-                    (when-let [delta (string-fragment (:delta event))]
-                      (emit-start!)
-                      (consume-fn {:type :thinking-delta
-                                   :content-index 0
-                                   :delta delta}))
-
-                    "response.reasoning_text.delta"
-                    (when-let [delta (string-fragment (:delta event))]
-                      (emit-start!)
-                      (consume-fn {:type :thinking-delta
-                                   :content-index 0
-                                   :delta delta}))
-
-                    "response.reasoning_summary.delta"
-                    (when-let [delta (string-fragment (:delta event))]
-                      (emit-start!)
-                      (consume-fn {:type :thinking-delta
-                                   :content-index 0
-                                   :delta delta}))
-
-                    "response.reasoning.delta"
-                    (when-let [delta (string-fragment (:delta event))]
-                      (emit-start!)
-                      (consume-fn {:type :thinking-delta
-                                   :content-index 0
-                                   :delta delta}))
-
-                    "response.completed"
-                    (do (emit-start!)
-                        (emit-done! event))
-
-                    "response.done"
-                    (do (emit-start!)
-                        (emit-done! event))
-
-                    "response.failed"
-                    (emit-error! (or (get-in event [:response :error :message])
-                                     "Codex response failed"))
-
-                    "error"
-                    (emit-error! (or (:message event)
-                                     (:error event)
-                                     "Codex stream error"))
-
-                    ;; ignore all other event types
-                    nil)))))
-          ;; If stream ended without terminal event, emit done once.
-          (when-not @done?
-            (emit-start!)
-            (emit-done! {:response {:status "completed"}})))
-        (catch Exception e
-          (let [{:keys [error-message http-status]} (exception->error e)]
-            (emit-error! error-message http-status)))))))
+  (let [url          (resolve-codex-url (:base-url model))
+        stream-state (make-codex-stream-state)]
+    (try
+      (let [request  (build-codex-request conversation model options)
+            _        (capture-request! options :openai-codex-responses url request)
+            response (http/post url
+                                (merge request {:as :stream :cookie-policy :none}))]
+        (with-open [reader (io/reader (:body response))]
+          (doseq [line (line-seq reader)]
+            (when-let [event (parse-sse-line line)]
+              (handle-codex-event! stream-state consume-fn model options url event))))
+        (when-not @(-> stream-state :done?)
+          (emit-codex-start! consume-fn (-> stream-state :started?))
+          (emit-codex-done! stream-state consume-fn model {:response {:status "completed"}})))
+      (catch Exception e
+        (let [{:keys [error-message http-status]} (exception->error e)]
+          (emit-codex-error! stream-state consume-fn options url error-message http-status))))))
 
 ;; ───────────────────────────────────────────────────────────────────────────
 ;; Provider implementation (dispatch by model :api)
