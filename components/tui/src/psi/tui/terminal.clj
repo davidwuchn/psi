@@ -116,36 +116,53 @@
         (.waitFor))
     (catch Exception _ nil)))
 
+(def ^:private key-translations
+  {"\r"         "enter"
+   "\n"         "enter"
+   "\u001b"     "escape"
+   "\u001b[A"   "up"
+   "\u001b[B"   "down"
+   "\u001b[C"   "right"
+   "\u001b[D"   "left"
+   "\u001b[H"   "home"
+   "\u001b[F"   "end"
+   "\u001b[1~"  "home"
+   "\u001b[4~"  "end"
+   "\u001b[5~"  "pageUp"
+   "\u001b[6~"  "pageDown"
+   "\u001b[3~"  "delete"
+   "\u007f"     "backspace"
+   "\u0008"     "backspace"
+   "\t"         "tab"
+   "\u001b[13;2u" "shift+enter"
+   "\u001b\r"     "alt+enter"})
+
 (defn- translate-key
   "Translate raw VT byte sequences to symbolic key names that components expect.
    Printable characters are returned as-is.
    Unknown sequences are returned as-is."
   [^String raw]
-  (case raw
-    "\r"       "enter"
-    "\n"       "enter"
-    "\u001b"   "escape"
-    "\u001b[A" "up"
-    "\u001b[B" "down"
-    "\u001b[C" "right"
-    "\u001b[D" "left"
-    "\u001b[H" "home"
-    "\u001b[F" "end"
-    "\u001b[1~" "home"
-    "\u001b[4~" "end"
-    "\u001b[5~" "pageUp"
-    "\u001b[6~" "pageDown"
-    "\u001b[3~" "delete"
-    "\u007f"   "backspace"
-    "\u0008"   "backspace"
-    "\t"       "tab"
-    ;; Ctrl+letter sequences already handled by components as raw chars:
-    ;;  \u0001=ctrl+a, \u0002=ctrl+b, \u0005=ctrl+e, \u0006=ctrl+f,
-    ;;  \u000b=ctrl+k, \u000f=ctrl+o, \u0015=ctrl+u
-    ;; Shift+enter variants sent by some terminals
-    "\u001b[13;2u" "shift+enter"
-    "\u001b\r"     "alt+enter"
-    raw))
+  (get key-translations raw raw))
+
+(defn- csi-sequence-length
+  [^String s]
+  (loop [i 2]
+    (cond
+      (>= i (count s)) (count s)
+      :else
+      (let [c (int (nth s i))]
+        (if (<= 0x40 c 0x7e)
+          (inc i)
+          (recur (inc i)))))))
+
+(defn- escape-sequence-length
+  [^String s]
+  (cond
+    (and (> (count s) 2) (= \[ (nth s 1)))
+    (csi-sequence-length s)
+
+    (= 1 (count s)) 1
+    :else 2))
 
 (defn- dispatch-input
   "Split a raw read into individual key events and call on-input for each.
@@ -154,28 +171,10 @@
   [^String raw on-input]
   (loop [s raw]
     (when (seq s)
-      (cond
-        ;; ESC sequence: consume until we have a full sequence
-        (= \u001b (first s))
-        (let [;; Try to match a known escape sequence prefix
-              known-len (cond
-                          ;; CSI sequences: ESC [ ... final-byte
-                          (and (> (count s) 2) (= \[ (nth s 1)))
-                          (let [end (loop [i 2]
-                                      (cond
-                                        (>= i (count s)) (count s)
-                                        (let [c (int (nth s i))]
-                                          (and (>= c 0x40) (<= c 0x7e))) (inc i)
-                                        :else (recur (inc i))))]
-                            end)
-                          ;; ESC alone or ESC + one char
-                          (= 1 (count s)) 1
-                          :else 2)]
+      (if (= \u001b (first s))
+        (let [known-len (escape-sequence-length s)]
           (on-input (translate-key (subs s 0 known-len)))
           (recur (subs s known-len)))
-
-        ;; Single printable/control character
-        :else
         (do
           (on-input (translate-key (str (first s))))
           (recur (subs s 1)))))))

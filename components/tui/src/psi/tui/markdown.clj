@@ -166,131 +166,124 @@
          (map #(str indent %))
          (str/join "\n"))))
 
+(defn- render-document [node ctx]
+  (->> (node-children node)
+       (map #(render-block % ctx))
+       (str/join "\n")
+       str/trimr))
+
+(defn- render-heading [node ctx]
+  (let [level (.getLevel ^Heading node)
+        hdr   (apply str (repeat level "#"))
+        style (if (= 1 level) c-h1 c-heading)
+        text  (render-inline-children node ctx)]
+    (str (:indent ctx) style hdr " " text sgr-reset "\n")))
+
+(defn- render-paragraph [node ctx]
+  (let [text     (render-inline-children node ctx)
+        indent   (:indent ctx)
+        indent-w (ansi/visible-width indent)
+        avail    (some-> (:width ctx) (- indent-w))]
+    (if (and avail (pos? avail))
+      (->> (str/split-lines text)
+           (mapcat #(ansi/word-wrap-ansi % avail))
+           (map #(str indent %))
+           (str/join "\n")
+           (str "\n"))
+      (str (indent-lines text indent) "\n"))))
+
+(defn- render-code-lines [lines indent]
+  (str/join "\n"
+            (map (fn [line]
+                   (str indent c-code-bg c-code-fg "  " line sgr-reset))
+                 lines)))
+
+(defn- render-fenced-code-block [node ctx]
+  (let [info    (.getInfo ^FencedCodeBlock node)
+        literal (str/trimr (.getLiteral ^FencedCodeBlock node))
+        lang    (not-empty (str/trim info))
+        indent  (:indent ctx)
+        lines   (str/split-lines literal)]
+    (str indent c-code-bg
+         (if lang
+           (str c-lang " " lang " " sgr-reset "\n")
+           "\n")
+         (render-code-lines lines indent)
+         "\n" indent sgr-reset "\n")))
+
+(defn- render-indented-code-block [node ctx]
+  (let [literal (str/trimr (.getLiteral ^IndentedCodeBlock node))
+        indent  (:indent ctx)
+        lines   (str/split-lines literal)]
+    (str (render-code-lines lines indent) "\n")))
+
+(defn- render-list [items marker-fn ctx]
+  (->> items
+       (map-indexed (fn [idx item]
+                      (render-block item (assoc ctx :list-marker (marker-fn idx)))))
+       str/join))
+
+(defn- render-list-item [node ctx]
+  (let [marker        (:list-marker ctx)
+        prefix        (if (= :bullet marker)
+                        (str c-bullet "  • " sgr-reset)
+                        (str c-bullet (format "%2d. " marker) sgr-reset))
+        sub-indent    "    "
+        child-ctx     (-> ctx
+                          (update :indent str sub-indent)
+                          (dissoc :list-marker))
+        children      (node-children node)
+        first-block   (render-block (first children) (assoc child-ctx :indent ""))
+        rest-blocks   (map #(render-block % child-ctx) (rest children))
+        first-lines   (str/split-lines first-block)
+        continuation  (when (next first-lines)
+                        (str "\n"
+                             (indent-lines (str/join "\n" (rest first-lines))
+                                           (str (:indent ctx) sub-indent))))
+        rendered-first (str (:indent ctx) prefix (first first-lines) continuation)]
+    (str rendered-first "\n" (apply str rest-blocks))))
+
+(defn- render-block-quote [node ctx]
+  (let [bar (str c-quote-bar "│ " sgr-reset)
+        child-ctx (-> ctx
+                      (update :indent str bar)
+                      (update :inline-styles conj c-quote))]
+    (str c-quote
+         (render-block-children node child-ctx)
+         sgr-reset)))
+
+(defn- render-thematic-break [ctx]
+  (str (:indent ctx) c-hr (apply str (repeat 40 "─")) sgr-reset "\n"))
+
+(defn- render-html-block [node ctx]
+  (-> (.getLiteral ^HtmlBlock node)
+      str/trimr
+      (indent-lines (:indent ctx))
+      (str "\n")))
+
+(defn- render-unknown-block [node ctx]
+  (if-let [children (seq (node-children node))]
+    (str/join (map #(render-block % ctx) children))
+    ""))
+
 (defn- render-block
   "Render a single block node to an ANSI string (with trailing newline)."
   [node ctx]
   (condp instance? node
-
-    Document
-    (let [children (node-children node)
-          blocks   (map #(render-block % ctx) children)]
-      ;; Join blocks with blank line between them, trim trailing whitespace
-      (str/trimr (str/join "\n" blocks)))
-
-    Heading
-    (let [level (.getLevel ^Heading node)
-          hdr   (apply str (repeat level "#"))
-          style (if (= 1 level) c-h1 c-heading)
-          text  (render-inline-children node ctx)]
-      (str (:indent ctx) style hdr " " text sgr-reset "\n"))
-
-    Paragraph
-    (let [text   (render-inline-children node ctx)
-          indent (:indent ctx)
-          indent-w (ansi/visible-width indent)
-          avail  (when-let [w (:width ctx)]
-                   (- w indent-w))]
-      ;; Word-wrap paragraph text if width is set,
-      ;; then apply indent to each line.
-      (if (and avail (pos? avail))
-        (let [;; Split on existing soft breaks first
-              segments (str/split-lines text)
-              wrapped  (mapcat
-                        #(ansi/word-wrap-ansi % avail)
-                        segments)]
-          (str (str/join "\n"
-                         (map #(str indent %) wrapped))
-               "\n"))
-        ;; No width: indent only
-        (str (indent-lines text indent) "\n")))
-
-    FencedCodeBlock
-    (let [info    (.getInfo ^FencedCodeBlock node)
-          literal (str/trimr (.getLiteral ^FencedCodeBlock node))
-          lang    (when-not (str/blank? info) info)
-          indent  (:indent ctx)
-          lines   (str/split-lines literal)]
-      (str indent c-code-bg
-           (if lang
-             (str c-lang " " lang " " sgr-reset "\n")
-             "\n")
-           (str/join "\n"
-                     (map (fn [line]
-                            (str indent c-code-bg c-code-fg "  " line sgr-reset))
-                          lines))
-           "\n" indent sgr-reset "\n"))
-
-    IndentedCodeBlock
-    (let [literal (str/trimr (.getLiteral ^IndentedCodeBlock node))
-          indent  (:indent ctx)
-          lines   (str/split-lines literal)]
-      (str (str/join "\n"
-                     (map (fn [line]
-                            (str indent c-code-bg c-code-fg "  " line sgr-reset))
-                          lines))
-           "\n"))
-
-    BulletList
-    (let [items (node-children node)]
-      (str/join
-       (map (fn [item]
-              (render-block item (assoc ctx :list-marker :bullet)))
-            items)))
-
-    OrderedList
-    (let [items  (node-children node)
-          start  (.getStartNumber ^OrderedList node)
-          idx    (atom (dec start))]
-      (str/join
-       (map (fn [item]
-              (let [n (swap! idx inc)]
-                (render-block item (assoc ctx :list-marker n))))
-            items)))
-
-    ListItem
-    (let [marker  (:list-marker ctx)
-          prefix  (if (= :bullet marker)
-                    (str c-bullet "  • " sgr-reset)
-                    (str c-bullet (format "%2d. " marker) sgr-reset))
-          pw      (if (= :bullet marker) 4 4)
-          sub-indent (apply str (repeat pw \space))
-          child-ctx  (-> ctx
-                         (update :indent str sub-indent)
-                         (dissoc :list-marker))
-          children   (node-children node)
-          ;; First child gets the bullet prefix, rest get indent
-          first-block (render-block (first children) (assoc child-ctx :indent ""))
-          rest-blocks (map #(render-block % child-ctx) (rest children))
-          ;; Prepend bullet to first line, indent continuation
-          first-lines (str/split-lines first-block)
-          rendered-first (str (:indent ctx) prefix (first first-lines)
-                              (when (next first-lines)
-                                (str "\n" (indent-lines
-                                           (str/join "\n" (rest first-lines))
-                                           (str (:indent ctx) sub-indent)))))]
-      (str rendered-first "\n"
-           (when (seq rest-blocks) (str/join rest-blocks))))
-
-    BlockQuote
-    (let [bar (str c-quote-bar "│ " sgr-reset)
-          child-ctx (-> ctx
-                        (update :indent str bar)
-                        (update :inline-styles conj c-quote))]
-      (str c-quote
-           (render-block-children node child-ctx)
-           sgr-reset))
-
-    ThematicBreak
-    (str (:indent ctx) c-hr (apply str (repeat 40 "─")) sgr-reset "\n")
-
-    HtmlBlock
-    (let [literal (str/trimr (.getLiteral ^HtmlBlock node))]
-      (str (indent-lines literal (:indent ctx)) "\n"))
-
-    ;; Fallback — render children if any, otherwise empty
-    (if-let [children (seq (node-children node))]
-      (str/join (map #(render-block % ctx) children))
-      "")))
+    Document          (render-document node ctx)
+    Heading           (render-heading node ctx)
+    Paragraph         (render-paragraph node ctx)
+    FencedCodeBlock   (render-fenced-code-block node ctx)
+    IndentedCodeBlock (render-indented-code-block node ctx)
+    BulletList        (render-list (node-children node) (constantly :bullet) ctx)
+    OrderedList       (render-list (node-children node)
+                                   #(+ % (.getStartNumber ^OrderedList node))
+                                   ctx)
+    ListItem          (render-list-item node ctx)
+    BlockQuote        (render-block-quote node ctx)
+    ThematicBreak     (render-thematic-break ctx)
+    HtmlBlock         (render-html-block node ctx)
+    (render-unknown-block node ctx)))
 
 ;; ── Public API ──────────────────────────────────────────────
 
