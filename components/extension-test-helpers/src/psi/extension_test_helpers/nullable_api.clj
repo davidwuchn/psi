@@ -76,141 +76,203 @@
     :else
     {}))
 
+(defn- ensure-flag-default! [state name flag]
+  (when (and (contains? flag :default)
+             (not (contains? (:flag-values @state) name)))
+    (swap! state assoc-in [:flag-values name] (:default flag))))
+
+(defn- workflow-created-response [id job-id]
+  (cond-> {:psi.extension.workflow/created? true
+           :psi.extension.workflow/id id}
+    job-id (assoc :psi.extension.background-job/id job-id)))
+
+(defn- prompt-contribution-count [state]
+  (count (:prompt-contributions @state)))
+
+(defn- prompt-contribution-key [params]
+  [(:ext-path params) (str (:id params))])
+
+(defn- register-command! [state params]
+  (let [name (:name params)
+        opts (:opts params)]
+    (swap! state assoc-in [:commands name] (assoc opts :name name))
+    {:psi.extension/registered-command? true}))
+
+(defn- register-handler! [state params]
+  (let [event-name (:event-name params)
+        handler-fn (:handler-fn params)]
+    (swap! state update-in [:handlers event-name] (fnil conj []) handler-fn)
+    {:psi.extension/registered-handler? true}))
+
+(defn- register-tool! [state params]
+  (let [tool (:tool params)]
+    (swap! state assoc-in [:tools (:name tool)] tool)
+    {:psi.extension/registered-tool? true}))
+
+(defn- register-flag! [state params]
+  (let [name (or (:name params) (get-in params [:opts :name]))
+        opts (:opts params)
+        flag (assoc opts :name name)]
+    (swap! state assoc-in [:flags name] flag)
+    (ensure-flag-default! state name flag)
+    {:psi.extension/registered-flag? true}))
+
+(defn- register-shortcut! [state params]
+  (let [key (:key params)
+        opts (:opts params)]
+    (swap! state assoc-in [:shortcuts key] (assoc opts :key key))
+    {:psi.extension/registered-shortcut? true}))
+
+(defn- register-workflow-type! [state params]
+  (let [type (:type params)]
+    (swap! state assoc-in [:workflow-types type] params)
+    {:psi.extension.workflow/registered? true}))
+
+(defn- create-workflow! [state params]
+  (let [id     (str (:id params))
+        wf     {:psi.extension/path                   (:ext-path params)
+                :psi.extension.workflow/id            id
+                :psi.extension.workflow/type          (:type params)
+                :psi.extension.workflow/phase         :idle
+                :psi.extension.workflow/running?      false
+                :psi.extension.workflow/done?         false
+                :psi.extension.workflow/error?        false
+                :psi.extension.workflow/error-message nil
+                :psi.extension.workflow/input         (:input params)
+                :psi.extension.workflow/meta          (:meta params)
+                :psi.extension.workflow/data          {}
+                :psi.extension.workflow/result        nil
+                :psi.extension.workflow/elapsed-ms    0
+                :psi.extension.workflow/started-at    nil}
+        job-id (when (true? (:track-background-job? params))
+                 (str "job-" id))]
+    (swap! state assoc-in [:workflows id] wf)
+    (workflow-created-response id job-id)))
+
+(defn- send-workflow-event! [_state params]
+  (let [job-id (when (true? (:track-background-job? params))
+                 (str "job-" (:id params) "-cont"))]
+    (cond-> {:psi.extension.workflow/event-accepted? true}
+      job-id (assoc :psi.extension.background-job/id job-id))))
+
+(defn- remove-workflow! [state params]
+  (let [id       (str (:id params))
+        removed? (contains? (:workflows @state) id)]
+    (swap! state update :workflows dissoc id)
+    {:psi.extension.workflow/removed? removed?}))
+
+(defn- register-prompt-contribution! [state params]
+  (let [id    (str (:id params))
+        key   [(:ext-path params) id]
+        value (merge {:id id
+                      :ext-path (:ext-path params)}
+                     (:contribution params))]
+    (swap! state assoc-in [:prompt-contributions key] value)
+    {:psi.extension.prompt-contribution/registered? true
+     :psi.extension.prompt-contribution/id id
+     :psi.extension.prompt-contribution/count (prompt-contribution-count state)}))
+
+(defn- update-prompt-contribution! [state params]
+  (let [id      (str (:id params))
+        key     (prompt-contribution-key params)
+        current (get-in @state [:prompt-contributions key])]
+    (if current
+      (do
+        (swap! state update-in [:prompt-contributions key] merge (:patch params))
+        {:psi.extension.prompt-contribution/updated? true
+         :psi.extension.prompt-contribution/id id
+         :psi.extension.prompt-contribution/count (prompt-contribution-count state)})
+      {:psi.extension.prompt-contribution/updated? false
+       :psi.extension.prompt-contribution/id id
+       :psi.extension.prompt-contribution/count (prompt-contribution-count state)})))
+
+(defn- unregister-prompt-contribution! [state params]
+  (let [id      (str (:id params))
+        key     (prompt-contribution-key params)
+        existed? (contains? (:prompt-contributions @state) key)]
+    (swap! state update :prompt-contributions dissoc key)
+    {:psi.extension.prompt-contribution/removed? existed?
+     :psi.extension.prompt-contribution/id id
+     :psi.extension.prompt-contribution/count (prompt-contribution-count state)}))
+
+(defn- append-entry! [state params]
+  (swap! state update :entries conj params)
+  {:psi.extension/entry-appended? true})
+
+(defn- send-message! [state params]
+  (swap! state update :messages conj params)
+  {:psi.extension/message-sent? true})
+
+(defn- send-prompt! [state params]
+  (swap! state update :messages conj (assoc params :role "user" :custom-type "extension-prompt"))
+  {:psi.extension/prompt-accepted? true
+   :psi.extension/prompt-delivery :prompt})
+
+(def ^:private mutation-handlers
+  {'psi.extension/register-command register-command!
+   'psi.extension/register-handler register-handler!
+   'psi.extension/register-tool register-tool!
+   'psi.extension/register-flag register-flag!
+   'psi.extension/register-shortcut register-shortcut!
+   'psi.extension.workflow/register-type register-workflow-type!
+   'psi.extension.workflow/create create-workflow!
+   'psi.extension.workflow/send-event send-workflow-event!
+   'psi.extension.workflow/remove remove-workflow!
+   'psi.extension.workflow/abort (fn [_state _params] {:psi.extension.workflow/aborted? true})
+   'psi.extension/register-prompt-contribution register-prompt-contribution!
+   'psi.extension/update-prompt-contribution update-prompt-contribution!
+   'psi.extension/unregister-prompt-contribution unregister-prompt-contribution!
+   'psi.extension/append-entry append-entry!
+   'psi.extension/send-message send-message!
+   'psi.extension/send-prompt send-prompt!})
+
 (defn- default-mutate-fn
   [state _opts op params]
   (swap! state update :mutations conj {:op op :params params})
-  (case op
-    ;; Generic extension registration via mutation path
-    psi.extension/register-command
-    (let [name (:name params)
-          opts (:opts params)]
-      (swap! state assoc-in [:commands name] (assoc opts :name name))
-      {:psi.extension/registered-command? true})
-
-    psi.extension/register-handler
-    (let [event-name (:event-name params)
-          handler-fn (:handler-fn params)]
-      (swap! state update-in [:handlers event-name] (fnil conj []) handler-fn)
-      {:psi.extension/registered-handler? true})
-
-    psi.extension/register-tool
-    (let [tool (:tool params)]
-      (swap! state assoc-in [:tools (:name tool)] tool)
-      {:psi.extension/registered-tool? true})
-
-    psi.extension/register-flag
-    (let [name (or (:name params) (get-in params [:opts :name]))
-          opts (:opts params)
-          flag (assoc opts :name name)]
-      (swap! state assoc-in [:flags name] flag)
-      (when (and (contains? flag :default)
-                 (not (contains? (:flag-values @state) name)))
-        (swap! state assoc-in [:flag-values name] (:default flag)))
-      {:psi.extension/registered-flag? true})
-
-    psi.extension/register-shortcut
-    (let [key (:key params)
-          opts (:opts params)]
-      (swap! state assoc-in [:shortcuts key] (assoc opts :key key))
-      {:psi.extension/registered-shortcut? true})
-
-    ;; Workflow runtime surface
-    psi.extension.workflow/register-type
-    (let [type (:type params)]
-      (swap! state assoc-in [:workflow-types type] params)
-      {:psi.extension.workflow/registered? true})
-
-    psi.extension.workflow/create
-    (let [id      (str (:id params))
-          wf      {:psi.extension/path                   (:ext-path params)
-                   :psi.extension.workflow/id            id
-                   :psi.extension.workflow/type          (:type params)
-                   :psi.extension.workflow/phase         :idle
-                   :psi.extension.workflow/running?      false
-                   :psi.extension.workflow/done?         false
-                   :psi.extension.workflow/error?        false
-                   :psi.extension.workflow/error-message nil
-                   :psi.extension.workflow/input         (:input params)
-                   :psi.extension.workflow/meta          (:meta params)
-                   :psi.extension.workflow/data          {}
-                   :psi.extension.workflow/result        nil
-                   :psi.extension.workflow/elapsed-ms    0
-                   :psi.extension.workflow/started-at    nil}
-          job-id  (when (true? (:track-background-job? params))
-                    (str "job-" id))]
-      (swap! state assoc-in [:workflows id] wf)
-      (cond-> {:psi.extension.workflow/created? true
-               :psi.extension.workflow/id id}
-        job-id (assoc :psi.extension.background-job/id job-id)))
-
-    psi.extension.workflow/send-event
-    (let [job-id (when (true? (:track-background-job? params))
-                   (str "job-" (:id params) "-cont"))]
-      (cond-> {:psi.extension.workflow/event-accepted? true}
-        job-id (assoc :psi.extension.background-job/id job-id)))
-
-    psi.extension.workflow/remove
-    (let [id      (str (:id params))
-          removed? (contains? (:workflows @state) id)]
-      (swap! state update :workflows dissoc id)
-      {:psi.extension.workflow/removed? removed?})
-
-    psi.extension.workflow/abort
-    {:psi.extension.workflow/aborted? true}
-
-    ;; Prompt contribution helpers
-    psi.extension/register-prompt-contribution
-    (let [id (str (:id params))
-          value (merge {:id id
-                        :ext-path (:ext-path params)}
-                       (:contribution params))]
-      (swap! state assoc-in [:prompt-contributions [(:ext-path params) id]] value)
-      {:psi.extension.prompt-contribution/registered? true
-       :psi.extension.prompt-contribution/id id
-       :psi.extension.prompt-contribution/count (count (:prompt-contributions @state))})
-
-    psi.extension/update-prompt-contribution
-    (let [id (str (:id params))
-          key [(:ext-path params) id]
-          current (get-in @state [:prompt-contributions key])]
-      (if current
-        (do
-          (swap! state update-in [:prompt-contributions key] merge (:patch params))
-          {:psi.extension.prompt-contribution/updated? true
-           :psi.extension.prompt-contribution/id id
-           :psi.extension.prompt-contribution/count (count (:prompt-contributions @state))})
-        {:psi.extension.prompt-contribution/updated? false
-         :psi.extension.prompt-contribution/id id
-         :psi.extension.prompt-contribution/count (count (:prompt-contributions @state))}))
-
-    psi.extension/unregister-prompt-contribution
-    (let [id (str (:id params))
-          key [(:ext-path params) id]
-          existed? (contains? (:prompt-contributions @state) key)]
-      (swap! state update :prompt-contributions dissoc key)
-      {:psi.extension.prompt-contribution/removed? existed?
-       :psi.extension.prompt-contribution/id id
-       :psi.extension.prompt-contribution/count (count (:prompt-contributions @state))})
-
-    ;; Transcript/message convenience used by extensions
-    psi.extension/append-entry
-    (do
-      (swap! state update :entries conj params)
-      {:psi.extension/entry-appended? true})
-
-    psi.extension/send-message
-    (do
-      (swap! state update :messages conj params)
-      {:psi.extension/message-sent? true})
-
-    psi.extension/send-prompt
-    (do
-      (swap! state update :messages conj (assoc params :role "user" :custom-type "extension-prompt"))
-      {:psi.extension/prompt-accepted? true
-       :psi.extension/prompt-delivery :prompt})
-
-    ;; Default
+  (if-let [handler (get mutation-handlers op)]
+    (handler state params)
     {}))
+
+(defn- add-tool! [state tool]
+  (swap! state assoc-in [:tools (:name tool)] tool)
+  tool)
+
+(defn- add-command! [state name opts]
+  (let [cmd (assoc opts :name name)]
+    (swap! state assoc-in [:commands name] cmd)
+    cmd))
+
+(defn- add-flag! [state name opts]
+  (let [flag (assoc opts :name name)]
+    (swap! state assoc-in [:flags name] flag)
+    (ensure-flag-default! state name flag)
+    flag))
+
+(defn- add-shortcut! [state key opts]
+  (let [shortcut (assoc opts :key key)]
+    (swap! state assoc-in [:shortcuts key] shortcut)
+    shortcut))
+
+(defn- add-handler! [state event-name handler-fn]
+  (swap! state update-in [:handlers event-name] (fnil conj []) handler-fn)
+  handler-fn)
+
+(defn- create-ui-api [state]
+  {:notify            (fn [text level]
+                        (swap! state update :notifications conj {:text text :level level}))
+   :set-widget        (fn [id position lines]
+                        (swap! state assoc-in [:widgets id]
+                               {:id id :position position :lines lines}))
+   :clear-widget      (fn [id]
+                        (swap! state update :widgets dissoc id)
+                        (swap! state update :cleared-widgets conj id))
+   :set-widget-spec   (fn [spec]
+                        (swap! state assoc-in [:widget-specs (:id spec)] spec))
+   :clear-widget-spec (fn [id]
+                        (swap! state update :widget-specs dissoc id)
+                        (swap! state update :cleared-widget-specs conj id))
+   :set-status        (fn [text]
+                        (swap! state update :status-lines conj (str/trim (or text ""))))})
 
 (defn ^{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
   create-nullable-extension-api
@@ -257,57 +319,24 @@
                                         (mutate* 'psi.extension/switch-session {:session-id session-id}))
                       :get-api-key get-key*
                       :ui-type (or (:ui-type opts*) :console)
-
-                      :register-tool
-                      (fn [tool]
-                        (swap! state assoc-in [:tools (:name tool)] tool)
-                        tool)
-
-                      :register-command
-                      (fn [name opts]
-                        (let [cmd (assoc opts :name name)]
-                          (swap! state assoc-in [:commands name] cmd)
-                          cmd))
-
-                      :register-flag
-                      (fn [name opts]
-                        (let [flag (assoc opts :name name)]
-                          (swap! state assoc-in [:flags name] flag)
-                          (when (and (contains? flag :default)
-                                     (not (contains? (:flag-values @state) name)))
-                            (swap! state assoc-in [:flag-values name] (:default flag)))
-                          flag))
-
-                      :register-shortcut
-                      (fn [key opts]
-                        (let [shortcut (assoc opts :key key)]
-                          (swap! state assoc-in [:shortcuts key] shortcut)
-                          shortcut))
-
-                      :on
-                      (fn [event-name handler-fn]
-                        (swap! state update-in [:handlers event-name] (fnil conj []) handler-fn)
-                        handler-fn)
-
-                      :get-flag
-                      (fn [name]
-                        (get-in @state [:flag-values name]))
-
+                      :register-tool (fn [tool] (add-tool! state tool))
+                      :register-command (fn [name opts] (add-command! state name opts))
+                      :register-flag (fn [name opts] (add-flag! state name opts))
+                      :register-shortcut (fn [key opts] (add-shortcut! state key opts))
+                      :on (fn [event-name handler-fn] (add-handler! state event-name handler-fn))
+                      :get-flag (fn [name] (get-in @state [:flag-values name]))
                       :register-prompt-contribution
                       (fn [id contribution]
                         (mutate* 'psi.extension/register-prompt-contribution
                                  {:id id :contribution contribution}))
-
                       :update-prompt-contribution
                       (fn [id patch]
                         (mutate* 'psi.extension/update-prompt-contribution
                                  {:id id :patch patch}))
-
                       :unregister-prompt-contribution
                       (fn [id]
                         (mutate* 'psi.extension/unregister-prompt-contribution
                                  {:id id}))
-
                       :list-prompt-contributions
                       (fn []
                         (let [all (:psi.extension/prompt-contributions
@@ -315,26 +344,8 @@
                           (->> all
                                (filter #(= path* (:ext-path %)))
                                vec)))
-
-                      :log
-                      (fn [text]
-                        (swap! state update :log-lines conj text))
-
-                      :ui {:notify            (fn [text level]
-                                                (swap! state update :notifications conj {:text text :level level}))
-                           :set-widget        (fn [id position lines]
-                                                (swap! state assoc-in [:widgets id]
-                                                       {:id id :position position :lines lines}))
-                           :clear-widget      (fn [id]
-                                                (swap! state update :widgets dissoc id)
-                                                (swap! state update :cleared-widgets conj id))
-                           :set-widget-spec   (fn [spec]
-                                                (swap! state assoc-in [:widget-specs (:id spec)] spec))
-                           :clear-widget-spec (fn [id]
-                                                (swap! state update :widget-specs dissoc id)
-                                                (swap! state update :cleared-widget-specs conj id))
-                           :set-status        (fn [text]
-                                                (swap! state update :status-lines conj (str/trim (or text ""))))}}]
+                      :log (fn [text] (swap! state update :log-lines conj text))
+                      :ui (create-ui-api state)}]
      {:api api
       :state state})))
 
