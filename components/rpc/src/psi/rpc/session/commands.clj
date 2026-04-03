@@ -74,6 +74,21 @@
               :content [{:type :text :text (str "[command result: " result-type "]")}]})
       nil)))
 
+(defn- extension-command-output
+  [cmd-result]
+  (try
+    (let [out (with-out-str
+                ((:handler cmd-result) (:args cmd-result)))]
+      (if (str/blank? out)
+        "[extension command returned no output]"
+        out))
+    (catch Throwable e
+      (str "[extension command error: " (ex-message e) "]"))))
+
+(defn- emit-text-command-result!
+  [emit! message]
+  (emit/emit-command-result! emit! {:type "text" :message message}))
+
 (defn handle-command-result!
   "Map a commands/dispatch result to canonical RPC event emissions.
    Emits command-result or ui/frontend-action-requested without invoking the agent loop."
@@ -98,18 +113,12 @@
       (emit/emit-command-result! emit! {:type "quit"})
 
       :resume
-      (emit/emit-command-result! emit! {:type "text"
-                                        :message "[/resume requires frontend action handling]"})
+      (emit-text-command-result! emit! "[/resume requires frontend action handling]")
 
       :tree-open
-      (emit/emit-command-result! emit! {:type "text"
-                                        :message "[/tree requires frontend action handling]"})
+      (emit-text-command-result! emit! "[/tree requires frontend action handling]")
 
-      :tree-switch
-      (emit/emit-command-result! emit! {:type "session_switch"
-                                        :session-id (:session-id cmd-result)})
-
-      :session-switch
+      (:tree-switch :session-switch)
       (emit/emit-command-result! emit! {:type "session_switch"
                                         :session-id (:session-id cmd-result)})
 
@@ -117,19 +126,138 @@
       (emit/emit-frontend-action-request! emit! request-id cmd-result)
 
       :extension-cmd
-      (let [output (try
-                     (let [out (with-out-str
-                                 ((:handler cmd-result) (:args cmd-result)))]
-                       (if (str/blank? out)
-                         "[extension command returned no output]"
-                         out))
-                     (catch Throwable e
-                       (str "[extension command error: " (ex-message e) "]")))]
-        (emit/emit-command-result! emit! {:type "text" :message output}))
+      (emit-text-command-result! emit! (extension-command-output cmd-result))
 
-      (emit/emit-command-result! emit! {:type "text"
-                                        :message (str "[command result: " result-type "]")})
+      (emit-text-command-result! emit! (str "[command result: " result-type "]"))
       nil)))
+
+(defn- session-selector-payload
+  [ctx session-id]
+  (let [sessions0 (vec (or (ss/list-context-sessions-in ctx) []))]
+    (if (seq sessions0)
+      sessions0
+      [(select-keys (ss/get-session-data-in ctx session-id)
+                    [:session-id :session-name :worktree-path])])))
+
+(defn- emit-session-rehydration-from-sid!
+  [ctx state emit! sid]
+  (let [sd   (ss/get-session-data-in ctx sid)
+        msgs (:messages (agent/get-data-in (ss/agent-ctx-in ctx sid)))]
+    (events/set-focus-session-id! state sid)
+    (emit/emit-session-rehydration!
+     emit!
+     {:session-id (:session-id sd)
+      :session-file (:session-file sd)
+      :message-count (count msgs)
+      :messages msgs
+      :tool-calls {}
+      :tool-order []})))
+
+(defn- maybe-match-session
+  [sessions arg]
+  (or (some #(when (= arg (:session-id %)) %) sessions)
+      (let [matches (filterv #(str/starts-with? (or (:session-id %) "") arg) sessions)]
+        (when (= 1 (count matches))
+          (first matches)))))
+
+(defn- handle-resume-command!
+  [ctx state request-id emit! trimmed session-id]
+  (if (= trimmed "/resume")
+    (emit! "ui/frontend-action-requested"
+           {:request-id request-id
+            :action-name "resume-selector"
+            :prompt "Select a session to resume"
+            :payload {:query (session/query-in ctx
+                                               [{:psi.session/list
+                                                 [:psi.session-info/path
+                                                  :psi.session-info/name
+                                                  :psi.session-info/worktree-path
+                                                  :psi.session-info/first-message
+                                                  :psi.session-info/modified]}])}})
+    (let [session-path (-> (str/replace trimmed #"^/resume\s+" "") str/trim)]
+      (if-not (.exists (io/file session-path))
+        (emit-text-command-result! emit! (str "Session file not found: " session-path))
+        (let [sd  (session/resume-session-in! ctx session-id session-path)
+              sid (:session-id sd)]
+          (emit-session-rehydration-from-sid! ctx state emit! sid))))))
+
+(defn- handle-tree-command!
+  [ctx state request-id emit! trimmed session-id]
+  (let [active-id (events/focus-session-id state)
+        sessions  (session-selector-payload ctx session-id)]
+    (if (= trimmed "/tree")
+      (emit! "ui/frontend-action-requested"
+             {:request-id request-id
+              :action-name "context-session-selector"
+              :prompt "Select a live session"
+              :payload {:active-session-id active-id
+                        :sessions sessions}})
+      (let [arg    (-> (str/replace trimmed #"^/tree\s+" "") str/trim)
+            chosen (maybe-match-session sessions arg)
+            sid    (:session-id chosen)]
+        (cond
+          (nil? chosen)
+          (emit-text-command-result! emit! (str "Session not found in context: " arg))
+
+          (= sid active-id)
+          (emit-text-command-result! emit! (str "Already active session: " sid))
+
+          :else
+          (do
+            (session/ensure-session-loaded-in! ctx active-id sid)
+            (emit-session-rehydration-from-sid! ctx state emit! sid)))))))
+
+(defn- handle-picker-command!
+  [request-id emit! trimmed]
+  (case trimmed
+    "/model"
+    (emit! "ui/frontend-action-requested"
+           {:request-id request-id
+            :action-name "model-picker"
+            :prompt "Select a model"
+            :payload {:models (->> ai-models/all-models
+                                   vals
+                                   (sort-by (juxt :provider :id))
+                                   (mapv (fn [m]
+                                           {:provider (name (:provider m))
+                                            :id (:id m)
+                                            :reasoning (boolean (:supports-reasoning m))})))}})
+
+    "/thinking"
+    (emit! "ui/frontend-action-requested"
+           {:request-id request-id
+            :action-name "thinking-picker"
+            :prompt "Select a thinking level"
+            :payload {:levels ["off" "minimal" "low" "medium" "high" "xhigh"]}})))
+
+(defn- handle-dispatched-command!
+  [ctx state emit-frame! request-id start-daemon-thread! login-handler cmd-result emit!]
+  (if (= :login-start (:type cmd-result))
+    (login-handler {:ctx ctx
+                    :state state
+                    :emit-frame! emit-frame!
+                    :request-id request-id
+                    :cmd-result cmd-result
+                    :emit! emit!
+                    :start-daemon-thread! start-daemon-thread!})
+    (do
+      (when (= :new-session (:type cmd-result))
+        (let [rehydrate (:rehydrate cmd-result)
+              new-sid   (:session-id rehydrate)
+              _         (when new-sid (events/set-focus-session-id! state new-sid))
+              sd        (when new-sid (ss/get-session-data-in ctx new-sid))
+              msgs      (or (:agent-messages rehydrate)
+                            (when new-sid
+                              (:messages (agent/get-data-in (ss/agent-ctx-in ctx new-sid)))))]
+          (emit/emit-session-rehydration!
+           emit!
+           {:session-id (:session-id sd)
+            :session-file (:session-file sd)
+            :message-count (count msgs)
+            :messages msgs
+            :tool-calls (or (:tool-calls rehydrate) {})
+            :tool-order (or (:tool-order rehydrate) [])})))
+      (handle-command-result! request-id cmd-result emit!))))
 
 (defn run-command!
   [{:keys [ctx request emit-frame! state session-id session-deps current-ai-model start-daemon-thread! login-handler]}]
@@ -145,146 +273,20 @@
                                                               :on-new-session! (:on-new-session! session-deps)})]
     (runtime/journal-user-message-in! ctx session-id text nil)
     (cond
-      (= trimmed "/resume")
-      (emit! "ui/frontend-action-requested"
-             {:request-id request-id
-              :action-name "resume-selector"
-              :prompt "Select a session to resume"
-              :payload {:query (session/query-in ctx
-                                                 [{:psi.session/list
-                                                   [:psi.session-info/path
-                                                    :psi.session-info/name
-                                                    :psi.session-info/worktree-path
-                                                    :psi.session-info/first-message
-                                                    :psi.session-info/modified]}])}})
+      (or (= trimmed "/resume") (str/starts-with? trimmed "/resume "))
+      (handle-resume-command! ctx state request-id emit! trimmed session-id)
 
-      (str/starts-with? trimmed "/resume ")
-      (let [session-path (-> (str/replace trimmed #"^/resume\s+" "") str/trim)]
-        (if-not (.exists (io/file session-path))
-          (emit/emit-command-result! emit! {:type "text"
-                                            :message (str "Session file not found: " session-path)})
-          (let [sd          (session/resume-session-in! ctx session-id session-path)
-                sid         (:session-id sd)
-                _           (events/set-focus-session-id! state sid)
-                msgs        (:messages (agent/get-data-in (ss/agent-ctx-in ctx sid)))]
-            (emit/emit-session-rehydration!
-             emit!
-             {:session-id sid
-              :session-file (:session-file sd)
-              :message-count (count msgs)
-              :messages msgs
-              :tool-calls {}
-              :tool-order []}))))
+      (or (= trimmed "/tree") (str/starts-with? trimmed "/tree "))
+      (handle-tree-command! ctx state request-id emit! trimmed session-id)
 
-      (= trimmed "/tree")
-      (let [active-id  (events/focus-session-id state)
-            sessions0  (vec (or (ss/list-context-sessions-in ctx) []))
-            sessions   (if (seq sessions0)
-                         sessions0
-                         [(select-keys (ss/get-session-data-in ctx session-id)
-                                       [:session-id :session-name :worktree-path])])]
-        (emit! "ui/frontend-action-requested"
-               {:request-id request-id
-                :action-name "context-session-selector"
-                :prompt "Select a live session"
-                :payload {:active-session-id active-id
-                          :sessions sessions}}))
-
-      (str/starts-with? trimmed "/tree ")
-      (let [arg        (-> (str/replace trimmed #"^/tree\s+" "") str/trim)
-            active-id  (events/focus-session-id state)
-            sessions0  (vec (or (ss/list-context-sessions-in ctx) []))
-            sessions   (if (seq sessions0)
-                         sessions0
-                         [(select-keys (ss/get-session-data-in ctx session-id)
-                                       [:session-id :session-name :worktree-path])])
-            match-by-id (some (fn [m]
-                                (when (= arg (:session-id m))
-                                  m))
-                              sessions)
-            match-by-prefix (when-not match-by-id
-                              (let [matches (filterv (fn [m]
-                                                       (str/starts-with? (or (:session-id m) "") arg))
-                                                     sessions)]
-                                (when (= 1 (count matches))
-                                  (first matches))))
-            chosen (or match-by-id match-by-prefix)
-            sid    (:session-id chosen)]
-        (cond
-          (nil? chosen)
-          (emit/emit-command-result! emit! {:type "text"
-                                            :message (str "Session not found in context: " arg)})
-
-          (= sid active-id)
-          (emit/emit-command-result! emit! {:type "text"
-                                            :message (str "Already active session: " sid)})
-
-          :else
-          (do
-            (session/ensure-session-loaded-in! ctx active-id sid)
-            (events/set-focus-session-id! state sid)
-            (let [sd   (ss/get-session-data-in ctx sid)
-                  msgs (:messages (agent/get-data-in (ss/agent-ctx-in ctx sid)))]
-              (emit/emit-session-rehydration!
-               emit!
-               {:session-id (:session-id sd)
-                :session-file (:session-file sd)
-                :message-count (count msgs)
-                :messages msgs
-                :tool-calls {}
-                :tool-order []})))))
-
-      (= trimmed "/model")
-      (emit! "ui/frontend-action-requested"
-             {:request-id request-id
-              :action-name "model-picker"
-              :prompt "Select a model"
-              :payload {:models (->> ai-models/all-models
-                                     vals
-                                     (sort-by (juxt :provider :id))
-                                     (mapv (fn [m]
-                                             {:provider (name (:provider m))
-                                              :id (:id m)
-                                              :reasoning (boolean (:supports-reasoning m))})))}})
-
-      (= trimmed "/thinking")
-      (emit! "ui/frontend-action-requested"
-             {:request-id request-id
-              :action-name "thinking-picker"
-              :prompt "Select a thinking level"
-              :payload {:levels ["off" "minimal" "low" "medium" "high" "xhigh"]}})
+      (or (= trimmed "/model") (= trimmed "/thinking"))
+      (handle-picker-command! request-id emit! trimmed)
 
       cmd-result
-      (if (= :login-start (:type cmd-result))
-        (login-handler {:ctx ctx
-                        :state state
-                        :emit-frame! emit-frame!
-                        :request-id request-id
-                        :cmd-result cmd-result
-                        :emit! emit!
-                        :start-daemon-thread! start-daemon-thread!})
-        (do
-          (when (= :new-session (:type cmd-result))
-            (let [rehydrate (:rehydrate cmd-result)
-                  new-sid   (:session-id rehydrate)
-                  _         (when new-sid (events/set-focus-session-id! state new-sid))
-                  sd        (when new-sid (ss/get-session-data-in ctx new-sid))
-                  msgs      (or (:agent-messages rehydrate)
-                                (when new-sid
-                                  (:messages (agent/get-data-in (ss/agent-ctx-in ctx new-sid)))))]
-              (emit/emit-session-rehydration!
-               emit!
-               {:session-id (:session-id sd)
-                :session-file (:session-file sd)
-                :message-count (count msgs)
-                :messages msgs
-                :tool-calls (or (:tool-calls rehydrate) {})
-                :tool-order (or (:tool-order rehydrate) [])})))
-          (handle-command-result! request-id cmd-result emit!)))
+      (handle-dispatched-command! ctx state emit-frame! request-id start-daemon-thread! login-handler cmd-result emit!)
 
       :else
-      (emit/emit-command-result! emit! {:type "text"
-                                        :message (str "[not a command] " text)}))
+      (emit-text-command-result! emit! (str "[not a command] " text)))
     (emit/emit-session-snapshots! emit! ctx state session-id {:context? true})
     (response-frame (:id request) "command" true {:accepted true
                                                    :handled true})))
