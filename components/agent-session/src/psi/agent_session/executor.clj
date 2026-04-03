@@ -12,6 +12,7 @@
   (:require
    [psi.ai.core :as ai]
    [psi.agent-session.conversation :as conv-translate]
+   [psi.agent-session.persistence :as persist]
    [psi.agent-session.session-state :as session]
    [psi.agent-session.state-accessors :as sa]
    [psi.agent-session.dispatch :as dispatch]
@@ -157,16 +158,18 @@
                         nil)))))
     (let [result (wait-for-turn-result done-p last-progress-ms
                                        {:idle-timeout-ms (:llm-stream-idle-timeout-ms ai-options)
-                                        :wait-poll-ms    (:llm-stream-wait-poll-ms ai-options)})]
-      (if (= result ::timeout)
-        (do (reset! timed-out? true)
-            (turn-sc/send-event! turn-ctx :turn/error {:error-message "Timeout waiting for LLM response"})
-            {:role          "assistant"
-             :content       [{:type :error :text "Timeout waiting for LLM response"}]
-             :stop-reason   :error
-             :error-message "Timeout waiting for LLM response"
-             :timestamp     (java.time.Instant/now)})
-        result))))
+                                        :wait-poll-ms    (:llm-stream-wait-poll-ms ai-options)})
+          assistant-msg (if (= result ::timeout)
+                          (do (reset! timed-out? true)
+                              (turn-sc/send-event! turn-ctx :turn/error {:error-message "Timeout waiting for LLM response"})
+                              {:role          "assistant"
+                               :content       [{:type :error :text "Timeout waiting for LLM response"}]
+                               :stop-reason   :error
+                               :error-message "Timeout waiting for LLM response"
+                               :timestamp     (java.time.Instant/now)})
+                          result)]
+      (session/journal-append-in! ctx session-id (persist/message-entry assistant-msg))
+      assistant-msg)))
 
 ;; ============================================================
 ;; Turn loop

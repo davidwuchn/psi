@@ -6,8 +6,6 @@
   (:require
    [clojure.string :as str]
    [psi.agent-session.conversation :as conv-translate]
-   [psi.agent-session.persistence :as persist]
-   [psi.agent-session.session-state :as session]
    [psi.agent-session.state-accessors :as sa]
    [psi.agent-session.turn-statechart :as turn-sc]))
 
@@ -368,7 +366,6 @@
           (note-last-provider-event! td :done data)
           (emit-tool-assembly-errors! progress-queue completed)
           (swap! td assoc :final-message final)
-          (session/journal-append-in! ctx session-id (persist/message-entry final))
           (deliver done-p final))
 
         :on-error
@@ -385,7 +382,6 @@
                         (:http-status data) (assoc :http-status (:http-status data)))]
           (note-last-provider-event! td :error data)
           (swap! td assoc :final-message final :error-message err-msg)
-          (session/journal-append-in! ctx session-id (persist/message-entry final))
           (deliver done-p final))
 
         :on-reset

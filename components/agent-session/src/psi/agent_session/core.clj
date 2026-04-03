@@ -71,6 +71,10 @@
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.executor :as executor]
    [psi.agent-session.persistence :as persist]
+   [psi.agent-session.prompt-chain :as prompt-chain]
+   [psi.agent-session.prompt-recording :as prompt-recording]
+   [psi.agent-session.prompt-request :as prompt-request]
+   [psi.agent-session.prompt-runtime :as prompt-runtime]
    [psi.agent-session.resolvers :as resolvers]
    [psi.agent-session.session :as session]
    [psi.agent-session.session-lifecycle :as lifecycle]
@@ -180,6 +184,10 @@
    :dispatch-statechart-event-fn                  dispatch-handlers/dispatch-statechart-event-in!
    :runtime-tool-executor-fn                      tool-plan/default-execute-runtime-tool-in!
    :execute-tool-runtime-fn                       #'tool-plan/execute-tool-runtime-in!
+   :build-prepared-request-fn                     #'prompt-request/build-prepared-request
+   :execute-prepared-request-fn                   #'prompt-runtime/execute-prepared-request!
+   :build-record-response-fn                      #'prompt-recording/build-record-response
+   :continue-prompt-chain-fn                      #'prompt-chain/run-prompt-tools!
    :refresh-system-prompt-fn                      (fn
                                                     ([_ctx]
                                                      (throw (ex-info "refresh-system-prompt-fn requires explicit session-id"
@@ -346,13 +354,14 @@
   "Submit `text` (and optional `images`) to the agent for `session-id`.
   Requires the session to be idle.
 
-   Current conforming-slice direction:
-   prompt entry now reads as a dispatch-shaped sequence:
-   session/prompt-submit -> session/prompt -> session/prompt-execute.
-   The initial user-message journal append is now dispatch-visible via the
-   `:session/prompt-submit` handler/effect path; agent start-loop and
-   background-job reconciliation are emitted as dispatch-owned effects rather
-   than local orchestration in this entrypoint."
+   Current convergence scaffold routes prompt entry through the existing
+   statechart transition plus a chained prepare/execute-and-record dispatch slice:
+   session/prompt-submit -> session/prompt -> session/prompt-prepare-request
+   -> runtime/prompt-execute-and-record -> session/prompt-record-response.
+
+   The slice is now shared by initial prompt submission and tool-result
+   continuation. The active path uses a runtime execute-and-record bridge
+   between prepared request projection and recorded turn outcome."
   ([ctx session-id text]
    (prompt-in! ctx session-id text nil))
   ([ctx session-id text images]
@@ -361,10 +370,17 @@
    (let [user-msg {:role      "user"
                    :content   (cond-> [{:type :text :text text}]
                                 images (into images))
-                   :timestamp (java.time.Instant/now)}]
-     (dispatch/dispatch! ctx :session/prompt-submit {:session-id session-id :user-msg user-msg} {:origin :core})
-     (dispatch/dispatch! ctx :session/prompt {:session-id session-id} {:origin :core})
-     (dispatch/dispatch! ctx :session/prompt-execute {:session-id session-id :user-msg user-msg} {:origin :core}))))
+                   :timestamp (java.time.Instant/now)}
+         submit-r (dispatch/dispatch! ctx :session/prompt-submit
+                                      {:session-id session-id :user-msg user-msg}
+                                      {:origin :core})
+         turn-id  (:turn-id submit-r)
+         _        (dispatch/dispatch! ctx :session/prompt {:session-id session-id} {:origin :core})]
+     (dispatch/dispatch! ctx :session/prompt-prepare-request
+                         {:session-id session-id
+                          :turn-id    turn-id
+                          :user-msg   user-msg}
+                         {:origin :core}))))
 
 (defn steer-in!
   "Inject a steering message while the agent is streaming for `session-id`.

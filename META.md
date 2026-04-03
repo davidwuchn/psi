@@ -35,6 +35,18 @@ A meta model for psi.
 - sessions support tools
 - assistant reply messages are streamed
 - a session has a start instant
+- a prompt lifecycle is a first-class session transaction
+- prompt lifecycle converges toward dispatch-owned phases:
+  - prompt submission
+  - request preparation
+  - request execution
+  - response recording
+  - continuation or finish
+- request preparation is a pure projection from canonical session state to a provider request artifact
+- request preparation assembles prompt layers, cache policy, projected conversation, and projected tools
+- request execution is an effectful runtime step that consumes a prepared request artifact
+- response recording deterministically appends assistant/tool outcomes back into canonical session state
+- continuation decisions are derived from recorded turn outcomes rather than hidden runtime-only control flow
 - a session has a unique id
 - a session may be named
 - a session may have a summary line

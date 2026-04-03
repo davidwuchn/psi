@@ -11,6 +11,9 @@
    [psi.agent-session.session-state :as session]
    [psi.agent-session.tool-execution :as tool-exec]))
 
+(defn- now-inst []
+  (java.time.Instant/now))
+
 (defn register!
   "Register all session mutation handlers. Called once during context creation."
   [_ctx]
@@ -32,7 +35,82 @@
    (fn [_ctx {:keys [user-msg]}]
      {:effects [{:effect/type :persist/journal-append-message-entry
                  :message user-msg}]
-      :return {:submitted? true}}))
+      :return {:submitted? true
+               :turn-id (str (java.util.UUID/randomUUID))
+               :user-msg user-msg}}))
+
+  (dispatch/register-handler!
+   :session/prompt-prepare-request
+   {}
+   (fn [ctx {:keys [session-id turn-id user-msg runtime-opts progress-queue]}]
+     (let [prepared-request ((:build-prepared-request-fn ctx)
+                             ctx session-id {:turn-id turn-id
+                                             :user-message user-msg
+                                             :runtime-opts runtime-opts})]
+       {:root-state-update
+        (session/session-update
+         session-id
+         #(assoc % :last-prepared-request-summary
+                 {:turn-id             turn-id
+                  :system-prompt-chars (count (or (:prepared-request/system-prompt prepared-request) ""))
+                  :message-count       (count (:prepared-request/messages prepared-request))
+                  :tool-count          (count (:prepared-request/tools prepared-request))
+                  :cache-breakpoints   (get-in prepared-request [:prepared-request/session-snapshot :cache-breakpoints])
+                  :prepared-at         (now-inst)}))
+        :effects [{:effect/type :runtime/prompt-execute-and-record
+                   :prepared-request prepared-request
+                   :progress-queue   progress-queue}]
+        :return-effect-result? true
+        :return {:prepared-request prepared-request}})))
+
+  (dispatch/register-handler!
+   :session/prompt-record-response
+   {}
+   (fn [ctx {:keys [session-id execution-result progress-queue]}]
+     (let [result ((:build-record-response-fn ctx) session-id execution-result progress-queue)
+           next-event (get-in result [:return :next-event])
+           next-payload (cond-> {:session-id session-id
+                                 :execution-result execution-result
+                                 :progress-queue progress-queue}
+                          (= next-event :session/prompt-finish)
+                          (assoc :turn-id (:execution-result/turn-id execution-result)
+                                 :terminal-result execution-result))]
+       (cond-> result
+         next-event
+         (update :effects (fnil conj []) {:effect/type :runtime/dispatch-event
+                                          :event-type next-event
+                                          :event-data next-payload
+                                          :origin :core})))))
+
+  (dispatch/register-handler!
+   :session/prompt-continue
+   {}
+   (fn [_ctx {:keys [session-id execution-result progress-queue]}]
+     (let [turn-id (str (java.util.UUID/randomUUID))]
+       {:effects [{:effect/type :runtime/prompt-continue-chain
+                   :execution-result execution-result
+                   :progress-queue progress-queue}
+                  {:effect/type :runtime/dispatch-event-with-effect-result
+                   :event-type :session/prompt-prepare-request
+                   :event-data {:session-id session-id
+                                :turn-id    turn-id
+                                :user-msg   nil
+                                :progress-queue progress-queue}
+                   :origin :core}
+                  {:effect/type :runtime/reconcile-and-emit-background-job-terminals}]
+        :return-effect-result? true
+        :return {:continued? true
+                 :next-turn-id turn-id
+                 :turn-outcome (:execution-result/turn-outcome execution-result)}})))
+
+  (dispatch/register-handler!
+   :session/prompt-finish
+   {}
+   (fn [_ctx {:keys [turn-id terminal-result]}]
+     {:effects [{:effect/type :runtime/reconcile-and-emit-background-job-terminals}]
+      :return {:finished? true
+               :turn-id turn-id
+               :turn-outcome (:execution-result/turn-outcome terminal-result)}}))
 
   (dispatch/register-handler!
    :session/prompt-execute

@@ -126,6 +126,24 @@
    [:runtime/tool-execute
     [:map [:effect/type [:= :runtime/tool-execute]]
      [:tool-name :string] [:args :map] [:opts {:optional true} [:maybe :map]]]]
+   [:runtime/prompt-execute-and-record
+    [:map [:effect/type [:= :runtime/prompt-execute-and-record]]
+     [:prepared-request :map]
+     [:progress-queue {:optional true} :any]]]
+   [:runtime/prompt-continue-chain
+    [:map [:effect/type [:= :runtime/prompt-continue-chain]]
+     [:execution-result :map]
+     [:progress-queue {:optional true} :any]]]
+   [:runtime/dispatch-event
+    [:map [:effect/type [:= :runtime/dispatch-event]]
+     [:event-type :keyword]
+     [:event-data [:maybe :map]]
+     [:origin {:optional true} :keyword]]]
+   [:runtime/dispatch-event-with-effect-result
+    [:map [:effect/type [:= :runtime/dispatch-event-with-effect-result]]
+     [:event-type :keyword]
+     [:event-data [:maybe :map]]
+     [:origin {:optional true} :keyword]]]
    [:runtime/event-queue-offer
     [:map [:effect/type [:= :runtime/event-queue-offer]] [:event :any]]]
    ;; Statechart

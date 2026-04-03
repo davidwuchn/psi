@@ -6,6 +6,7 @@
    keys. This avoids a circular ns dependency between dispatch-effects and core."
   (:require
    [psi.agent-core.core :as agent]
+   [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.project-preferences :as project-prefs]
@@ -111,6 +112,45 @@
     (catch Exception e
       {:content  (str "Error: " (ex-message e))
        :is-error true})))
+
+(defmethod execute-effect! :runtime/prompt-execute-and-record [ctx effect]
+  (let [session-id       (effect-session-id ctx effect)
+        prepared-request (:prepared-request effect)
+        progress-queue   (:progress-queue effect)
+        agent-ctx        (effect-agent-ctx ctx effect)
+        execution-result ((:execute-prepared-request-fn ctx)
+                          (:ai-ctx ctx)
+                          ctx
+                          session-id
+                          agent-ctx
+                          prepared-request
+                          progress-queue)]
+    (dispatch/dispatch! ctx
+                        :session/prompt-record-response
+                        {:session-id       session-id
+                         :execution-result execution-result
+                         :progress-queue   progress-queue}
+                        {:origin :core})
+    execution-result))
+
+(defmethod execute-effect! :runtime/prompt-continue-chain [ctx effect]
+  ((:continue-prompt-chain-fn ctx)
+   ctx
+   (effect-session-id ctx effect)
+   (:execution-result effect)
+   (:progress-queue effect)))
+
+(defmethod execute-effect! :runtime/dispatch-event [ctx effect]
+  (dispatch/dispatch! ctx
+                      (:event-type effect)
+                      (or (:event-data effect) {})
+                      {:origin (or (:origin effect) :core)}))
+
+(defmethod execute-effect! :runtime/dispatch-event-with-effect-result [ctx effect]
+  (dispatch/dispatch! ctx
+                      (:event-type effect)
+                      (or (:event-data effect) {})
+                      {:origin (or (:origin effect) :core)}))
 
 ;;; Background job effects — via ctx callbacks
 

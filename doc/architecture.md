@@ -178,19 +178,55 @@ ownership toward more reference-architecture-conforming vertical behavior.
 
 The next target slice after manual compaction is prompt / turn lifecycle.
 
-Current first convergence step:
+Current implemented outer shell:
 1. public API entry via `prompt-in!`
 2. dispatch-visible prompt submission via `:session/prompt-submit`
 3. dispatch-routed statechart transition via `:session/prompt`
-4. dispatch-owned execution step via `:session/prompt-execute`
-5. prompt-execute emits runtime effects for:
-   - agent start-loop with the submitted user message
-   - background-job reconciliation / terminal emission
+4. dispatch-owned request preparation via `:session/prompt-prepare-request`
+5. runtime execute-and-record boundary via `:runtime/prompt-execute-and-record`
+6. dispatch-owned response recording via `:session/prompt-record-response`
+
+Architectural convergence target:
+1. public API entry via `prompt-in!`
+2. dispatch-visible prompt submission via `:session/prompt-submit`
+3. dispatch-routed statechart transition via `:session/prompt`
+4. dispatch-owned request preparation via `:session/prompt-prepare-request`
+5. runtime execute-and-record boundary via `:runtime/prompt-execute-and-record`
+6. dispatch-owned response recording via `:session/prompt-record-response`
+7. dispatch-owned continuation / terminalization via `:session/prompt-continue` or `:session/prompt-finish`
+
+Current converged slice semantics:
+- `:session/prompt-submit`
+  - normalize the submitted user message
+  - append the user journal entry
+  - establish the requested turn as dispatch-visible state
+- `:session/prompt-prepare-request`
+  - project canonical session state into a prepared provider request artifact
+  - assemble prompt layers (base prompt, extension contributions, profiles/skills, runtime metadata)
+  - project cache policy into system/tool/message cache controls
+  - emit the runtime execute-and-record effect
+- `:runtime/prompt-execute-and-record`
+  - perform provider streaming against the prepared request artifact
+  - capture provider request/response telemetry
+  - dispatch `:session/prompt-record-response` with the shaped execution result
+- `:session/prompt-record-response`
+  - append assistant output deterministically
+  - record usage / telemetry / tool-call outcomes
+  - decide continuation from canonical recorded state
+- `:session/prompt-continue` / `:session/prompt-finish`
+  - route tool execution or follow-up turn continuation
+  - return the session lifecycle to its terminal state for the turn
 
 Current intentional boundary:
-- prompt journal append is now dispatch-visible, but deeper turn streaming behavior
-  still lives across executor/turn-statechart paths and is the next major
-  candidate for broader dispatch convergence
+- prompt journal append, request preparation, assistant result recording, and
+  continuation decisions are now dispatch-visible, while provider streaming and
+  turn accumulation remain concentrated in the runtime execute-and-record boundary
+- the active slice currently reads as prepare -> execute-and-record -> continue/finish;
+  this is an intentional convergence waypoint toward the stricter prepare -> execute -> record model
+- request preparation is the architectural center for prompt lifecycle convergence;
+  prompt layering, cache breakpoint policy, and provider request shaping should
+  become explicit there rather than remain distributed across string concatenation
+  and runtime orchestration paths
 - tool execution is now dispatch-owned end-to-end:
   - `:session/tool-run` composes two dispatch-owned phases:
     1. `:session/tool-execute-prepared` — may run concurrently, emits start/executing

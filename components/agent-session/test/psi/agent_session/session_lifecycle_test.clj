@@ -45,16 +45,29 @@
           session-id         (:session-id sd)
           ctx                (retarget ctx sd)]
       (is (= :idle (ss/sc-phase-in ctx session-id)))
-      (session/prompt-in! ctx session-id "hello")
+      (with-redefs [psi.agent-session.prompt-runtime/execute-prepared-request!
+                    (fn [_ai-ctx _ctx sid _agent-ctx prepared _progress-queue]
+                      {:execution-result/turn-id (:prepared-request/id prepared)
+                       :execution-result/session-id sid
+                       :execution-result/assistant-message {:role "assistant"
+                                                           :content [{:type :text :text "ok"}]
+                                                           :stop-reason :stop
+                                                           :timestamp (java.time.Instant/now)}
+                       :execution-result/turn-outcome :turn.outcome/stop
+                       :execution-result/tool-calls []
+                       :execution-result/stop-reason :stop})]
+        (session/prompt-in! ctx session-id "hello"))
       (is (= :streaming (ss/sc-phase-in ctx session-id)))
-      (let [entries     (dispatch/event-log-entries)
-            submit-e    (first (filter #(= :session/prompt-submit (:event-type %)) entries))
-            prompt-e    (first (filter #(= :session/prompt (:event-type %)) entries))
-            execute-e   (first (filter #(= :session/prompt-execute (:event-type %)) entries))
-            user-msg    (:user-msg (:event-data execute-e))]
+      (let [entries   (dispatch/event-log-entries)
+            submit-e  (first (filter #(= :session/prompt-submit (:event-type %)) entries))
+            prompt-e  (first (filter #(= :session/prompt (:event-type %)) entries))
+            prepare-e (first (filter #(= :session/prompt-prepare-request (:event-type %)) entries))
+            record-e  (first (filter #(= :session/prompt-record-response (:event-type %)) entries))
+            user-msg  (:user-msg (:event-data submit-e))]
         (is (= :core (:origin submit-e)))
         (is (= :core (:origin prompt-e)))
-        (is (= :core (:origin execute-e)))
+        (is (= :core (:origin prepare-e)))
+        (is (= :core (:origin record-e)))
         (is (= "user" (:role user-msg)))
         (is (= [{:type :text :text "hello"}] (:content user-msg)))
         (is (instance? java.time.Instant (:timestamp user-msg))))))
