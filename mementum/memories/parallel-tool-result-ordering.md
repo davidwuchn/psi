@@ -1,0 +1,1 @@
+🔁 For parallel tool batches, execute tool calls concurrently but record canonical `toolResult` messages in the original assistant-emitted order; concurrency belongs in execution, determinism belongs in recording.
