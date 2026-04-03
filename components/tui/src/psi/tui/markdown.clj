@@ -185,11 +185,11 @@
         indent-w (ansi/visible-width indent)
         avail    (some-> (:width ctx) (- indent-w))]
     (if (and avail (pos? avail))
-      (->> (str/split-lines text)
-           (mapcat #(ansi/word-wrap-ansi % avail))
-           (map #(str indent %))
-           (str/join "\n")
-           (str "\n"))
+      (str (->> (str/split-lines text)
+                (mapcat #(ansi/word-wrap-ansi % avail))
+                (map #(str indent %))
+                (str/join "\n"))
+           "\n")
       (str (indent-lines text indent) "\n"))))
 
 (defn- render-code-lines [lines indent]
