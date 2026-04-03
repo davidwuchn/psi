@@ -270,6 +270,76 @@
     (keyword (str/lower-case approval-decision))
     :else ::invalid))
 
+(defn- orchestration-result
+  [ok? phase cycle-id steps]
+  (merge {:ok? ok?
+          :phase phase
+          :cycle-id cycle-id}
+         steps))
+
+(defn- approval-step-result
+  [ctx cycle-id gate-result decision approver approval-notes]
+  (cond
+    (not (contains? #{:manual :auto-approved} (:gate gate-result)))
+    {:status :error
+     :result (orchestration-result false :approval-gate cycle-id {:gate-result gate-result})}
+
+    (and (= :manual (:gate gate-result)) (nil? decision))
+    {:status :awaiting
+     :result (orchestration-result true :awaiting-approval cycle-id
+                                   {:gate-result gate-result
+                                    :approval {:required? true
+                                               :pending? true
+                                               :decision nil}})}
+
+    (= :manual (:gate gate-result))
+    {:status :continue
+     :approval-result (case decision
+                        :approve (approve-proposal-in! ctx cycle-id approver approval-notes)
+                        :reject (reject-proposal-in! ctx cycle-id approver approval-notes)
+                        {:ok? false :error :approval-decision-required})}
+
+    :else
+    {:status :continue
+     :approval-result nil}))
+
+(defn- cycle-status-in
+  [ctx cycle-id]
+  (some-> (get-state-in ctx) :cycles (find-cycle cycle-id) :status))
+
+(defn- run-orchestration-steps
+  [ctx cycle-id {:keys [hook-executor check-runner memory-ctx]}]
+  (let [execute-result (when (= :executing (cycle-status-in ctx cycle-id))
+                         (if hook-executor
+                           (execute-in! ctx cycle-id hook-executor)
+                           (execute-in! ctx cycle-id)))
+        verify-result (when (= :verifying (cycle-status-in ctx cycle-id))
+                        (if check-runner
+                          (verify-in! ctx cycle-id check-runner)
+                          (verify-in! ctx cycle-id)))
+        learn-result (when (= :learning (cycle-status-in ctx cycle-id))
+                       (learn-in! ctx cycle-id (resolve-memory-ctx memory-ctx)))
+        future-state-result (when (:ok? learn-result)
+                              (update-future-state-from-outcome-in! ctx cycle-id))
+        finalize-result (when (:ok? future-state-result)
+                          (finalize-cycle-in! ctx cycle-id))]
+    {:execute-result execute-result
+     :verify-result verify-result
+     :learn-result learn-result
+     :future-state-result future-state-result
+     :finalize-result finalize-result}))
+
+(defn- failed-step
+  [steps]
+  (cond
+    (and (:approval-result steps) (not (:ok? (:approval-result steps)))) [:approval (:approval-result steps)]
+    (and (:execute-result steps) (not (:ok? (:execute-result steps)))) [:execute (:execute-result steps)]
+    (and (:verify-result steps) (not (:ok? (:verify-result steps)))) [:verify (:verify-result steps)]
+    (and (:learn-result steps) (not (:ok? (:learn-result steps)))) [:learn (:learn-result steps)]
+    (and (:future-state-result steps) (not (:ok? (:future-state-result steps)))) [:future-state (:future-state-result steps)]
+    (and (:finalize-result steps) (not (:ok? (:finalize-result steps)))) [:finalize (:finalize-result steps)]
+    :else nil))
+
 (defn orchestrate-manual-trigger-in!
   "Single production orchestration entrypoint for Step 11 manual cycles.
 
@@ -307,7 +377,7 @@
          approver "operator"
          approval-notes ""}}]
   (let [trigger-result (handle-trigger-in! ctx trigger-signal system-state)
-        decision (normalize-approval-decision approval-decision)]
+        decision       (normalize-approval-decision approval-decision)]
     (cond
       (not= :accepted (:result trigger-result))
       {:ok? true
@@ -322,169 +392,42 @@
        :trigger-result trigger-result}
 
       :else
-      (let [cycle-id (:cycle-id trigger-result)
-            observe-result (observe-in! ctx cycle-id system-state graph-state memory-state)
-            plan-result (when (:ok? observe-result)
-                          (plan-in! ctx cycle-id))
-            gate-result (when (:ok? plan-result)
-                          (apply-approval-gate-in! ctx cycle-id))]
+      (let [cycle-id        (:cycle-id trigger-result)
+            observe-result  (observe-in! ctx cycle-id system-state graph-state memory-state)
+            plan-result     (when (:ok? observe-result)
+                              (plan-in! ctx cycle-id))
+            gate-result     (when (:ok? plan-result)
+                              (apply-approval-gate-in! ctx cycle-id))
+            base-steps      {:trigger-result trigger-result
+                             :observe-result observe-result
+                             :plan-result plan-result
+                             :gate-result gate-result}]
         (cond
           (not (:ok? observe-result))
-          {:ok? false
-           :phase :observe
-           :cycle-id cycle-id
-           :trigger-result trigger-result
-           :observe-result observe-result}
+          (orchestration-result false :observe cycle-id base-steps)
 
           (not (:ok? plan-result))
-          {:ok? false
-           :phase :plan
-           :cycle-id cycle-id
-           :trigger-result trigger-result
-           :observe-result observe-result
-           :plan-result plan-result}
-
-          (not (contains? #{:manual :auto-approved} (:gate gate-result)))
-          ;; defensive guard in case gate fn changes contract in future
-          {:ok? false
-           :phase :approval-gate
-           :cycle-id cycle-id
-           :trigger-result trigger-result
-           :observe-result observe-result
-           :plan-result plan-result
-           :gate-result gate-result}
-
-          (and (= :manual (:gate gate-result))
-               (nil? decision))
-          {:ok? true
-           :phase :awaiting-approval
-           :cycle-id cycle-id
-           :trigger-result trigger-result
-           :observe-result observe-result
-           :plan-result plan-result
-           :gate-result gate-result
-           :approval {:required? true
-                      :pending? true
-                      :decision nil}}
+          (orchestration-result false :plan cycle-id base-steps)
 
           :else
-          (let [approval-result (when (= :manual (:gate gate-result))
-                                  (case decision
-                                    :approve (approve-proposal-in! ctx cycle-id approver approval-notes)
-                                    :reject (reject-proposal-in! ctx cycle-id approver approval-notes)
-                                    ;; nil cannot happen here due branch above; keep defensive fallback
-                                    {:ok? false :error :approval-decision-required}))
-                state-after-approval (get-state-in ctx)
-                cycle-after-approval (find-cycle (:cycles state-after-approval) cycle-id)
-                cycle-status (:status cycle-after-approval)
-                execute-result (when (= :executing cycle-status)
-                                 (if hook-executor
-                                   (execute-in! ctx cycle-id hook-executor)
-                                   (execute-in! ctx cycle-id)))
-                verify-result (let [post-exec-state (get-state-in ctx)
-                                    post-exec-cycle (find-cycle (:cycles post-exec-state) cycle-id)]
-                                (when (= :verifying (:status post-exec-cycle))
-                                  (if check-runner
-                                    (verify-in! ctx cycle-id check-runner)
-                                    (verify-in! ctx cycle-id))))
-                learn-result (let [post-verify-state (get-state-in ctx)
-                                   post-verify-cycle (find-cycle (:cycles post-verify-state) cycle-id)]
-                               (when (= :learning (:status post-verify-cycle))
-                                 (learn-in! ctx cycle-id (resolve-memory-ctx memory-ctx))))
-                future-state-result (when (:ok? learn-result)
-                                      (update-future-state-from-outcome-in! ctx cycle-id))
-                finalize-result (when (:ok? future-state-result)
-                                  (finalize-cycle-in! ctx cycle-id))]
-            (cond
-              (and approval-result (not (:ok? approval-result)))
-              {:ok? false
-               :phase :approval
-               :cycle-id cycle-id
-               :trigger-result trigger-result
-               :observe-result observe-result
-               :plan-result plan-result
-               :gate-result gate-result
-               :approval-result approval-result}
+          (let [{:keys [status result approval-result]}
+                (approval-step-result ctx cycle-id gate-result decision approver approval-notes)]
+            (case status
+              :error
+              (merge base-steps result)
 
-              (and execute-result (not (:ok? execute-result)))
-              {:ok? false
-               :phase :execute
-               :cycle-id cycle-id
-               :trigger-result trigger-result
-               :observe-result observe-result
-               :plan-result plan-result
-               :gate-result gate-result
-               :approval-result approval-result
-               :execute-result execute-result}
+              :awaiting
+              (merge base-steps result)
 
-              (and verify-result (not (:ok? verify-result)))
-              {:ok? false
-               :phase :verify
-               :cycle-id cycle-id
-               :trigger-result trigger-result
-               :observe-result observe-result
-               :plan-result plan-result
-               :gate-result gate-result
-               :approval-result approval-result
-               :execute-result execute-result
-               :verify-result verify-result}
-
-              (and learn-result (not (:ok? learn-result)))
-              {:ok? false
-               :phase :learn
-               :cycle-id cycle-id
-               :trigger-result trigger-result
-               :observe-result observe-result
-               :plan-result plan-result
-               :gate-result gate-result
-               :approval-result approval-result
-               :execute-result execute-result
-               :verify-result verify-result
-               :learn-result learn-result}
-
-              (and future-state-result (not (:ok? future-state-result)))
-              {:ok? false
-               :phase :future-state
-               :cycle-id cycle-id
-               :trigger-result trigger-result
-               :observe-result observe-result
-               :plan-result plan-result
-               :gate-result gate-result
-               :approval-result approval-result
-               :execute-result execute-result
-               :verify-result verify-result
-               :learn-result learn-result
-               :future-state-result future-state-result}
-
-              (and finalize-result (not (:ok? finalize-result)))
-              {:ok? false
-               :phase :finalize
-               :cycle-id cycle-id
-               :trigger-result trigger-result
-               :observe-result observe-result
-               :plan-result plan-result
-               :gate-result gate-result
-               :approval-result approval-result
-               :execute-result execute-result
-               :verify-result verify-result
-               :learn-result learn-result
-               :future-state-result future-state-result
-               :finalize-result finalize-result}
-
-              :else
-              {:ok? true
-               :phase :completed
-               :cycle-id cycle-id
-               :trigger-result trigger-result
-               :observe-result observe-result
-               :plan-result plan-result
-               :gate-result gate-result
-               :approval-result approval-result
-               :execute-result execute-result
-               :verify-result verify-result
-               :learn-result learn-result
-               :future-state-result future-state-result
-               :finalize-result finalize-result})))))))
+              :continue
+              (let [step-results (merge base-steps
+                                        {:approval-result approval-result}
+                                        (run-orchestration-steps ctx cycle-id {:hook-executor hook-executor
+                                                                              :check-runner check-runner
+                                                                              :memory-ctx memory-ctx}))]
+                (if-let [[phase _failed-result] (failed-step step-results)]
+                  (orchestration-result false phase cycle-id step-results)
+                  (orchestration-result true :completed cycle-id step-results))))))))))
 
 (defn orchestrate-manual-trigger!
   "Global wrapper for `orchestrate-manual-trigger-in!`."
