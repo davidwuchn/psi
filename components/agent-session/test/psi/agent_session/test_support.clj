@@ -15,7 +15,9 @@
    [psi.agent-session.statechart :as session-sc]
    [psi.agent-session.tool-plan :as tool-plan]
    [psi.agent-session.workflows :as wf]
-   [psi.ui.state :as ui-state]))
+   [psi.ui.state :as ui-state])
+  (:import
+   (java.util.concurrent Executors)))
 
 (def ^:private session-scoped-keys
   "Keys that are stored per-session and require a session id."
@@ -107,12 +109,14 @@
         run-tool-call-fn (fn [ctx {:keys [session-id tool-call parsed-args progress-queue]}]
                            (executor/run-tool-call-through-runtime-effect!
                             ctx session-id tool-call parsed-args progress-queue))
+        tool-batch-executor (Executors/newFixedThreadPool 4)
         ctx           {:state*                       state*
                        :sc-env                       sc-env
                        :config                       {}
                        :session-defaults             (or session-data {})
                        :extension-registry           ext-reg
                        :workflow-registry            wf-reg
+                       :tool-batch-executor          tool-batch-executor
                        :extension-run-fn-atom        (atom nil)
                        :apply-root-state-update-fn   ss/apply-root-state-update-in!
                        :read-session-state-fn        ss/get-state-value-in

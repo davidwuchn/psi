@@ -5,12 +5,15 @@
    [clojure.string :as str]
    [psi.agent-core.core :as agent]
    [psi.agent-session.executor :as executor]
+   [psi.agent-session.core :as session-core]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.test-support :as test-support]
    [psi.agent-session.tool-execution :as tool-exec]
    [psi.agent-session.tool-plan :as tool-plan]
-   [psi.agent-session.turn-statechart :as turn-sc]))
+   [psi.agent-session.turn-statechart :as turn-sc])
+  (:import
+   (java.util.concurrent ExecutorService Executors)))
 
 (def ^:private stub-model
   {:provider "stub" :id "stub-model"})
@@ -310,10 +313,10 @@
           (is (= ["call-1" "call-2"] (mapv :tool-call-id results))))))))
 
 (deftest run-tool-calls-bounded-parallelism-test
-  (testing "run-tool-calls! executes concurrently with explicit bounded parallelism"
+  (testing "run-tool-calls! executes concurrently with the ctx-owned shared executor"
     (let [agent-ctx   (setup-agent-ctx!)
-          [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
-          session-ctx  (assoc-in session-ctx [:config :tool-batch-max-parallelism] 2)
+          [session-ctx* session-ctx-id] (setup-session-ctx! agent-ctx)
+          session-ctx  (assoc session-ctx* :tool-batch-executor (Executors/newFixedThreadPool 2))
           tool-calls   [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}
                         {:type :tool-call :id "call-2" :name "bash" :arguments "{}"}
                         {:type :tool-call :id "call-3" :name "write" :arguments "{}"}]
@@ -347,13 +350,13 @@
           (deliver release true)
           (let [results @runner]
             (is (= 2 @max-active))
-            (is (= ["call-1" "call-2" "call-3"] (mapv :tool-call-id results)))))))))
+            (is (= ["call-1" "call-2" "call-3"] (mapv :tool-call-id results))))))
+      (.shutdown ^ExecutorService (:tool-batch-executor session-ctx)))))
 
 (deftest run-tool-calls-records-results-in-stable-order-test
   (testing "out-of-order execution still records canonical tool results in assistant order"
     (let [agent-ctx   (setup-agent-ctx!)
           [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
-          session-ctx  (assoc-in session-ctx [:config :tool-batch-max-parallelism] 2)
           tool-calls   [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}
                         {:type :tool-call :id "call-2" :name "bash" :arguments "{}"}]
           record-order (atom [])]
@@ -383,7 +386,6 @@
   (testing "one failing tool still yields a recorded tool result without aborting the batch"
     (let [agent-ctx   (setup-agent-ctx!)
           [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
-          session-ctx  (assoc-in session-ctx [:config :tool-batch-max-parallelism] 2)
           tool-calls   [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}
                         {:type :tool-call :id "call-2" :name "bash" :arguments "{}"}]]
       (with-redefs [psi.agent-session.tool-execution/start-tool-call! (fn [_ _ _ _] nil)
@@ -415,7 +417,6 @@
   (testing "parallel batches preserve telemetry attribution and deterministic journal ordering"
     (let [agent-ctx   (setup-agent-ctx!)
           [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
-          session-ctx  (assoc-in session-ctx [:config :tool-batch-max-parallelism] 2)
           outcome      {:turn/outcome :turn.outcome/tool-use
                         :assistant-message {:role "assistant"
                                             :content [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}
@@ -443,6 +444,60 @@
           (is (= ["call-1" "call-2"] (mapv :tool-call-id results)))
           (is (= #{"call-1" "call-2"} output-tool-ids))
           (is (= #{"call-1" "call-2"} (set (mapv :tool-id result-events)))))))))
+
+(deftest run-tool-calls-uses-ctx-owned-executor-test
+  (testing "run-tool-calls! submits parallel work to the ctx-owned executor"
+    (let [agent-ctx   (setup-agent-ctx!)
+          [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
+          tool-calls   [{:type :tool-call :id "call-1" :name "read" :arguments "{}"}
+                        {:type :tool-call :id "call-2" :name "bash" :arguments "{}"}]
+          submitted    (atom nil)
+          fake-futures (atom [])
+          fake-executor (proxy [java.util.concurrent.AbstractExecutorService] []
+                          (invokeAll [tasks]
+                            (reset! submitted (vec tasks))
+                            (let [futures (mapv (fn [task]
+                                                  (reify java.util.concurrent.Future
+                                                    (get [_] (.call ^java.util.concurrent.Callable task))
+                                                    (get [_ _ _] (.call ^java.util.concurrent.Callable task))
+                                                    (cancel [_ _] false)
+                                                    (isCancelled [_] false)
+                                                    (isDone [_] true)))
+                                                tasks)]
+                              (reset! fake-futures futures)
+                              futures))
+                          (shutdown [] nil)
+                          (shutdownNow [] [])
+                          (isShutdown [] false)
+                          (isTerminated [] false)
+                          (awaitTermination [_ _] true)
+                          (execute [_] nil))]
+      (with-redefs [psi.agent-session.tool-execution/start-tool-call! (fn [_ _ _ _] nil)
+                    psi.agent-session.tool-execution/execute-tool-call!
+                    (fn [_ _ tc _]
+                      {:tool-call tc
+                       :tool-result {:content (str "ok-" (:id tc)) :is-error false}
+                       :result-message {:role "toolResult"
+                                        :tool-call-id (:id tc)
+                                        :tool-name (:name tc)
+                                        :content [{:type :text :text (str "ok-" (:id tc))}]}
+                       :effective-policy nil})
+                    psi.agent-session.tool-execution/record-tool-call-result!
+                    (fn [_ _ shaped _]
+                      (:result-message shaped))]
+        (let [ctx*    (assoc session-ctx :tool-batch-executor fake-executor)
+              results (#'executor/run-tool-calls! ctx* session-ctx-id tool-calls nil)]
+          (is (= 2 (count @submitted)))
+          (is (= ["call-1" "call-2"] (mapv :tool-call-id results))))))))
+
+(deftest create-context-provides-shared-tool-batch-executor-test
+  (testing "create-context provisions a shared tool batch executor from config"
+    (let [ctx (session-core/create-context {:persist? false
+                                            :config {:tool-batch-max-parallelism 2}})]
+      (try
+        (is (some? (:tool-batch-executor ctx)))
+        (finally
+          (session-core/shutdown-context! ctx))))))
 
 (deftest execute-tool-calls-test
   (testing "execute-tool-calls! delegates batch execution while preserving outcome semantics"

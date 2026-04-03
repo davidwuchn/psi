@@ -80,11 +80,25 @@
    [psi.agent-session.workflows :as wf]
    [psi.history.resolvers :as history-resolvers]
    [psi.query.core :as query]
-   [psi.ui.state :as ui-state]))
+   [psi.ui.state :as ui-state])
+  (:import
+   (java.util.concurrent ExecutorService Executors TimeUnit)))
 
 ;;; Forward declarations
 
 (declare execute-compaction-in!)
+
+(defn- create-tool-batch-executor
+  ^ExecutorService
+  [config]
+  (let [n (long (max 1 (or (:tool-batch-max-parallelism config) 4)))]
+    (Executors/newFixedThreadPool n)))
+
+(defn- shutdown-tool-batch-executor!
+  [^ExecutorService executor]
+  (when executor
+    (.shutdown executor)
+    (.awaitTermination executor 5 TimeUnit/SECONDS)))
 
 ;;; Query graph registration
 
@@ -200,6 +214,7 @@
   (let [resolved-cwd      (or cwd (System/getProperty "user.dir"))
         resolved-defaults (resolve-session-defaults session-defaults resolved-cwd ui-type)
         state*            (atom (initial-root-state nrepl-runtime-atom recursion-ctx))
+        tool-batch-executor (create-tool-batch-executor (merge session/default-config (or config {})))
         ctx0              (merge
                            {:sc-env                (sc/create-sc-env)
                             :started-at            (java.time.Instant/now)
@@ -217,6 +232,7 @@
                             :compaction-fn         (or compaction-fn compaction/stub-compaction-fn)
                             :branch-summary-fn     (or branch-summary-fn compaction/stub-branch-summary-fn)
                             :config                (merge session/default-config (or config {}))
+                            :tool-batch-executor   tool-batch-executor
                             ;; Atom holding (fn [text source]) that actually runs the agent loop.
                             ;; Set by the runtime layer (main/RPC) after bootstrap.
                             ;; Extensions use this to submit prompts that trigger real LLM calls.
@@ -255,6 +271,12 @@
   ([] (create-context {}))
   ([opts]
    (create-context* opts)))
+
+(defn shutdown-context!
+  "Release runtime resources owned by ctx. Safe to call multiple times."
+  [ctx]
+  (shutdown-tool-batch-executor! (:tool-batch-executor ctx))
+  nil)
 
 ;;; Session lifecycle — delegates directly to session-lifecycle.clj
 

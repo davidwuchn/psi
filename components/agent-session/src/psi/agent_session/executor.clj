@@ -21,7 +21,7 @@
    [psi.agent-session.turn-accumulator :as accum]
    [psi.agent-session.turn-statechart :as turn-sc])
   (:import
-   (java.util.concurrent Callable Executors Future TimeUnit)))
+   (java.util.concurrent Callable ExecutorService Future)))
 
 ;; Re-export public tool-execution entry point so callers keep a single require.
 (def run-tool-call-through-runtime-effect!
@@ -206,13 +206,10 @@
                        :progress-queue progress-queue}
                       {:origin :core}))
 
-(def ^:private default-tool-batch-max-parallelism 4)
-
-(defn- session-tool-batch-max-parallelism [ctx]
-  (let [v (get-in ctx [:config :tool-batch-max-parallelism])]
-    (if (and (integer? v) (pos? v))
-      v
-      default-tool-batch-max-parallelism)))
+(defn- tool-batch-executor [ctx]
+  (or (:tool-batch-executor ctx)
+      (throw (ex-info "No tool batch executor configured on ctx"
+                      {:missing :tool-batch-executor}))))
 
 (defn- make-tool-call-task [ctx session-id tool-call progress-queue]
   ^Callable
@@ -251,19 +248,13 @@
       [(run-tool-call! ctx session-id (first tool-calls*) progress-queue)]
 
       :else
-      (let [max-parallelism (min task-count (session-tool-batch-max-parallelism ctx))
-            executor        (Executors/newFixedThreadPool max-parallelism)
-            tasks           (mapv #(make-tool-call-task ctx session-id % progress-queue) tool-calls*)]
-        (try
-          (let [futures (.invokeAll executor ^java.util.Collection tasks)]
-            (mapv (fn [idx ^Future future]
-                    (let [shaped-result (.get future)]
-                      (tool-exec/record-tool-call-result! ctx session-id shaped-result progress-queue)))
-                  (range)
-                  futures))
-          (finally
-            (.shutdown executor)
-            (.awaitTermination executor 5 TimeUnit/SECONDS)))))))
+      (let [executor ^ExecutorService (tool-batch-executor ctx)
+            tasks    (mapv #(make-tool-call-task ctx session-id % progress-queue) tool-calls*)
+            futures  (.invokeAll executor ^java.util.Collection tasks)]
+        (mapv (fn [^Future future]
+                (let [shaped-result (.get future)]
+                  (tool-exec/record-tool-call-result! ctx session-id shaped-result progress-queue)))
+              futures)))))
 
 (defn- execute-tool-calls!
   "Execute all tool calls from a tool-use outcome. Returns tool results."

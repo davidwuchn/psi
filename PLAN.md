@@ -43,7 +43,6 @@ Current policy surface:
 Follow-up candidates:
 - per-tool opt-out / concurrency class metadata
 - model/provider/session policy selection
-- dispatch-owned shared executor instead of per-batch pool creation
 
 # Ideas
 
