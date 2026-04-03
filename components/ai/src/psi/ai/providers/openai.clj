@@ -449,6 +449,14 @@
                          :reason reason}
                   usage (assoc :usage usage)))))
 
+;; Chat tool lifecycle
+;; ─────────────────────────────────────────────────────────────────────────
+;; Chat tool streaming invariants:
+;; - tool indexes remain stable once assigned
+;; - toolcall-start is emitted at most once per index
+;; - argument buffers accept both true deltas and cumulative snapshots
+;; - pending tools are force-started before terminal completion so every
+;;   buffered tool call has a normalized start/delta/end sequence
 (defn- update-tool-index! [tool-index-by-id next-tool-index call-id idx]
   (when (seq call-id)
     (swap! tool-index-by-id assoc call-id idx))
@@ -558,6 +566,8 @@
                    :content-index idx})))
   (reset! tool-state {}))
 
+;; Chat chunk normalization
+;; ─────────────────────────────────────────────────────────────────────────
 (defn- emit-chat-chunk!
   [stream-state consume-fn choice delta]
   (let [{:keys [stream-started?]} stream-state
@@ -844,6 +854,12 @@
       {:headers headers
        :body    (json/generate-string body)})))
 
+;; Codex tool lifecycle
+;; ─────────────────────────────────────────────────────────────────────────
+;; Codex streaming invariants:
+;; - output_index and item id both participate in stable tool index resolution
+;; - streamed argument deltas accumulate until output_item.done finalizes the call
+;; - response completion closes any still-open tool calls exactly once
 (defn- make-codex-stream-state
   []
   {:started?             (atom false)
@@ -1023,6 +1039,8 @@
       "reasoning" (emit-codex-thinking-boundary! stream-state consume-fn)
       nil)))
 
+;; Codex event normalization
+;; ─────────────────────────────────────────────────────────────────────────
 (defn- handle-codex-event!
   [stream-state consume-fn model options url event]
   (capture-response! options :openai-codex-responses url event)
