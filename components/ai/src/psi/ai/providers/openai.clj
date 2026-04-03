@@ -941,6 +941,16 @@
                  :content-index 0
                  :delta delta})))
 
+(def ^:private codex-thinking-delta-event-types
+  #{"response.reasoning_summary_text.delta"
+    "response.reasoning_text.delta"
+    "response.reasoning_summary.delta"
+    "response.reasoning.delta"})
+
+(def ^:private codex-done-event-types
+  #{"response.completed"
+    "response.done"})
+
 (defn- finish-codex-tool-call!
   [stream-state consume-fn event item]
   (let [{:keys [tool-args-by-index open-tool-indexes]} stream-state
@@ -1006,63 +1016,50 @@
 (defn- handle-codex-event!
   [stream-state consume-fn model options url event]
   (capture-response! options :openai-codex-responses url event)
-  (case (:type event)
-    "response.output_item.added"
-    (handle-codex-output-item-added! stream-state consume-fn event)
+  (let [event-type (:type event)]
+    (cond
+      (= "response.output_item.added" event-type)
+      (handle-codex-output-item-added! stream-state consume-fn event)
 
-    "response.function_call_arguments.delta"
-    (let [idx   (resolve-codex-tool-index stream-state event)
-          delta (:delta event)]
-      (when (and (number? idx) (seq delta))
+      (= "response.function_call_arguments.delta" event-type)
+      (let [idx   (resolve-codex-tool-index stream-state event)
+            delta (:delta event)]
+        (when (and (number? idx) (seq delta))
+          (emit-codex-start! consume-fn (:started? stream-state))
+          (emit-codex-tool-delta! stream-state consume-fn idx delta)))
+
+      (= "response.output_item.done" event-type)
+      (handle-codex-output-item-done! stream-state consume-fn event)
+
+      (= "response.output_text.delta" event-type)
+      (when-let [delta (string-fragment (:delta event))]
         (emit-codex-start! consume-fn (:started? stream-state))
-        (emit-codex-tool-delta! stream-state consume-fn idx delta)))
+        (consume-fn {:type :text-delta
+                     :content-index 0
+                     :delta delta}))
 
-    "response.output_item.done"
-    (handle-codex-output-item-done! stream-state consume-fn event)
+      (contains? codex-thinking-delta-event-types event-type)
+      (emit-codex-thinking-delta! stream-state consume-fn event)
 
-    "response.output_text.delta"
-    (when-let [delta (string-fragment (:delta event))]
-      (emit-codex-start! consume-fn (:started? stream-state))
-      (consume-fn {:type :text-delta
-                   :content-index 0
-                   :delta delta}))
+      (contains? codex-done-event-types event-type)
+      (do
+        (emit-codex-start! consume-fn (:started? stream-state))
+        (emit-codex-done! stream-state consume-fn model event))
 
-    "response.reasoning_summary_text.delta"
-    (emit-codex-thinking-delta! stream-state consume-fn event)
+      (= "response.failed" event-type)
+      (emit-codex-error! stream-state consume-fn options url
+                         (or (get-in event [:response :error :message])
+                             "Codex response failed")
+                         nil)
 
-    "response.reasoning_text.delta"
-    (emit-codex-thinking-delta! stream-state consume-fn event)
+      (= "error" event-type)
+      (emit-codex-error! stream-state consume-fn options url
+                         (or (:message event)
+                             (:error event)
+                             "Codex stream error")
+                         nil)
 
-    "response.reasoning_summary.delta"
-    (emit-codex-thinking-delta! stream-state consume-fn event)
-
-    "response.reasoning.delta"
-    (emit-codex-thinking-delta! stream-state consume-fn event)
-
-    "response.completed"
-    (do
-      (emit-codex-start! consume-fn (:started? stream-state))
-      (emit-codex-done! stream-state consume-fn model event))
-
-    "response.done"
-    (do
-      (emit-codex-start! consume-fn (:started? stream-state))
-      (emit-codex-done! stream-state consume-fn model event))
-
-    "response.failed"
-    (emit-codex-error! stream-state consume-fn options url
-                       (or (get-in event [:response :error :message])
-                           "Codex response failed")
-                       nil)
-
-    "error"
-    (emit-codex-error! stream-state consume-fn options url
-                       (or (:message event)
-                           (:error event)
-                           "Codex stream error")
-                       nil)
-
-    nil))
+      :else nil)))
 
 (defn stream-openai-codex
   "Stream response from OpenAI Codex Responses API (ChatGPT backend).
