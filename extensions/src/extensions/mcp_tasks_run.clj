@@ -1143,355 +1143,380 @@
 
 ;;; Workflow-native step runner
 
-(defn- run-loop-job
+(defn- run-error-result
+  [{:keys [run-id task-id worktree-dir phase steps history started-ms]} error-message]
+  (run-result {:status        :error
+               :run-id        run-id
+               :task-id       task-id
+               :worktree-dir  worktree-dir
+               :current-state phase
+               :steps         steps
+               :history       history
+               :started-ms    started-ms
+               :error-message error-message}))
+
+(defn- base-run-ctx
   [{:keys [run-id task-id project-dir worktree-dir control max-steps
            current-state steps history user-confirmation user-answer
            get-api-key-fn]}]
-  (let [started-ms           (now-ms)
-        max-steps*           (long (or max-steps max-steps-default))
-        steps                (long (or steps 0))
-        history              (vec (or history []))
-        phase                (normalize-run-phase current-state)
-        merge?               (boolean (:merge? @control))
-        answer               (or (:answer @control) user-answer)
-        pending-step-session (:pending-step-session @control)]
+  (let [control-state @control]
+    {:run-id               run-id
+     :task-id              task-id
+     :project-dir          project-dir
+     :worktree-dir         worktree-dir
+     :control              control
+     :control-state        control-state
+     :max-steps            (long (or max-steps max-steps-default))
+     :phase                (normalize-run-phase current-state)
+     :steps                (long (or steps 0))
+     :history              (vec (or history []))
+     :started-ms           (now-ms)
+     :user-confirmation    user-confirmation
+     :user-answer          user-answer
+     :get-api-key-fn       get-api-key-fn
+     :merge?               (boolean (:merge? control-state))
+     :answer               (or (:answer control-state) user-answer)
+     :pending-step-session (:pending-step-session control-state)}))
+
+(defn- pause-result
+  [ctx pause-reason current-state extra]
+  (run-result (merge {:status        :paused
+                      :run-id        (:run-id ctx)
+                      :task-id       (:task-id ctx)
+                      :worktree-dir  (:worktree-dir ctx)
+                      :current-state current-state
+                      :steps         (:steps ctx)
+                      :history       (:history ctx)
+                      :started-ms    (:started-ms ctx)
+                      :pause-reason  pause-reason}
+                     extra)))
+
+(defn- running-result
+  [ctx current-state extra]
+  (run-result (merge {:status        :running
+                      :run-id        (:run-id ctx)
+                      :task-id       (:task-id ctx)
+                      :worktree-dir  (:worktree-dir ctx)
+                      :current-state current-state
+                      :steps         (:steps ctx)
+                      :history       (:history ctx)
+                      :started-ms    (:started-ms ctx)}
+                     extra)))
+
+(defn- cancelled-result
+  [ctx]
+  (run-result {:status        :cancelled
+               :run-id        (:run-id ctx)
+               :task-id       (:task-id ctx)
+               :worktree-dir  (:worktree-dir ctx)
+               :current-state (:phase ctx)
+               :steps         (:steps ctx)
+               :history       (:history ctx)
+               :started-ms    (:started-ms ctx)
+               :final-state   :cancelled}))
+
+(defn- ensure-worktree-phase
+  [ctx]
+  (let [{wt :worktree-dir wt-error :error}
+        (if (seq (:worktree-dir ctx))
+          {:worktree-dir (:worktree-dir ctx)}
+          (ensure-worktree! (:project-dir ctx) (:task-id ctx)))]
+    (if wt-error
+      (run-error-result ctx wt-error)
+      (running-result ctx :derive-state {:worktree-dir wt}))))
+
+(defn- wait-user-confirmation-without-answer?
+  [ctx]
+  (and (= :wait-user-confirmation (:phase ctx))
+       (str/blank? (str (:answer ctx)))))
+
+(defn- derive-resume-step-session
+  [ctx]
+  (when (and (= :wait-user-confirmation (:phase ctx))
+             (seq (str (:answer ctx)))
+             (map? (:pending-step-session ctx)))
+    (:pending-step-session ctx)))
+
+(defn- step-context
+  [ctx derived]
+  (let [{:keys [task children entity-type state completed-count]} derived
+        resume-step-session  (derive-resume-step-session ctx)
+        step-state*          (if (and (= state :wait-pr-merge) (:merge? ctx)) :merging-pr state)
+        step-state           (or (:step-state resume-step-session) step-state*)
+        prompt-name          (or (:step-name resume-step-session)
+                                 (step-prompt-name entity-type step-state))
+        confirmation-context (or (:user-confirmation ctx)
+                                 (:user-confirmation resume-step-session))]
+    {:task task
+     :children children
+     :entity-type entity-type
+     :state state
+     :completed-count completed-count
+     :resume-step-session resume-step-session
+     :step-state step-state
+     :prompt-name prompt-name
+     :confirmation-context confirmation-context}))
+
+(defn- derived-terminal-result
+  [ctx {:keys [entity-type state confirmation-context]}]
+  (cond
+    (= state :terminated)
+    (run-result {:status        :done
+                 :run-id        (:run-id ctx)
+                 :task-id       (:task-id ctx)
+                 :entity-type   entity-type
+                 :worktree-dir  (:worktree-dir ctx)
+                 :current-state :done
+                 :steps         (:steps ctx)
+                 :history       (:history ctx)
+                 :started-ms    (:started-ms ctx)
+                 :final-state   :terminated})
+
+    (and (= state :wait-pr-merge) (not (:merge? ctx)))
+    (pause-result ctx :wait-pr-merge :wait-pr-merge {:entity-type entity-type})
+
+    (= state :wait-user-confirmation)
+    (pause-result ctx :wait-user-confirmation :wait-user-confirmation
+                  {:entity-type entity-type
+                   :user-confirmation confirmation-context})
+
+    :else nil))
+
+(defn- clear-step-control! [control]
+  (when (instance? clojure.lang.IAtom control)
+    (swap! control assoc :answer nil :pending-step-session nil)))
+
+(defn- pause-for-confirmation!
+  [ctx step-ctx step-result history' confirmation]
+  (when (instance? clojure.lang.IAtom (:control ctx))
+    (swap! (:control ctx) assoc
+           :answer nil
+           :pause? false
+           :pending-step-session (or (:step-session step-result)
+                                     (:resume-step-session step-ctx))))
+  (run-result {:status            :paused
+               :run-id            (:run-id ctx)
+               :task-id           (:task-id ctx)
+               :entity-type       (:entity-type step-ctx)
+               :worktree-dir      (:worktree-dir ctx)
+               :current-state     :wait-user-confirmation
+               :steps             (inc (:steps ctx))
+               :history           history'
+               :last-step         (:prompt-name step-ctx)
+               :last-output       (task-preview (:text step-result) 500)
+               :started-ms        (:started-ms ctx)
+               :pause-reason      :wait-user-confirmation
+               :user-confirmation confirmation
+               :user-answer       nil}))
+
+(defn- no-progress-error-message [prompt-name next-state has-tasks-stall? no-progress-streak]
+  (if has-tasks-stall?
+    (str "No progress after step " prompt-name
+         ", state remained " (name next-state)
+         " for " no-progress-streak " consecutive attempt(s)")
+    (str "No progress after step " prompt-name
+         ", state remained " (name next-state))))
+
+(defn- progressed-run-result
+  [ctx step-ctx step-result _history' history'']
+  (when (= (:step-state step-ctx) :merging-pr)
+    (swap! (:control ctx) assoc :merge? false))
+  (run-result {:status        :running
+               :run-id        (:run-id ctx)
+               :task-id       (:task-id ctx)
+               :entity-type   (:entity-type step-ctx)
+               :worktree-dir  (:worktree-dir ctx)
+               :current-state :derive-state
+               :steps         (inc (:steps ctx))
+               :history       history''
+               :last-step     (:prompt-name step-ctx)
+               :last-output   (task-preview (:text step-result) 500)
+               :started-ms    (:started-ms ctx)}))
+
+(defn- stalled-run-result
+  [ctx step-ctx step-result history'' next-state has-tasks-stall? no-progress-streak]
+  (if (and has-tasks-stall?
+           (< no-progress-streak max-has-tasks-no-progress-default))
+    (run-result {:status        :running
+                 :run-id        (:run-id ctx)
+                 :task-id       (:task-id ctx)
+                 :entity-type   (:entity-type step-ctx)
+                 :worktree-dir  (:worktree-dir ctx)
+                 :current-state :derive-state
+                 :steps         (inc (:steps ctx))
+                 :history       history''
+                 :last-step     (:prompt-name step-ctx)
+                 :last-output   (task-preview (:text step-result) 500)
+                 :started-ms    (:started-ms ctx)})
+    (run-result {:status        :error
+                 :run-id        (:run-id ctx)
+                 :task-id       (:task-id ctx)
+                 :entity-type   (:entity-type step-ctx)
+                 :worktree-dir  (:worktree-dir ctx)
+                 :current-state next-state
+                 :steps         (inc (:steps ctx))
+                 :history       history''
+                 :last-step     (:prompt-name step-ctx)
+                 :last-output   (task-preview (:text step-result) 500)
+                 :started-ms    (:started-ms ctx)
+                 :error-message (no-progress-error-message (:prompt-name step-ctx)
+                                                          next-state
+                                                          has-tasks-stall?
+                                                          no-progress-streak)})))
+
+(defn- post-step-result
+  [ctx step-ctx step-result base-entry history']
+  (clear-step-control! (:control ctx))
+  (let [derived2 (derive-current! (:project-dir ctx) (:worktree-dir ctx) (:task-id ctx))]
+    (if-let [err2 (:error derived2)]
+      (run-result {:status        :error
+                   :run-id        (:run-id ctx)
+                   :task-id       (:task-id ctx)
+                   :entity-type   (:entity-type step-ctx)
+                   :worktree-dir  (:worktree-dir ctx)
+                   :current-state (:step-state step-ctx)
+                   :steps         (:steps ctx)
+                   :history       history'
+                   :last-step     (:prompt-name step-ctx)
+                   :last-output   (task-preview (:text step-result) 500)
+                   :started-ms    (:started-ms ctx)
+                   :error-message err2})
+      (let [next-state         (:state derived2)
+            next-completed     (:completed-count derived2)
+            next-task          (:task derived2)
+            next-children      (:children derived2)
+            pre-snapshot       (progress-snapshot (:entity-type step-ctx)
+                                                  (:task step-ctx)
+                                                  (:children step-ctx)
+                                                  (:completed-count step-ctx))
+            next-snapshot      (progress-snapshot (:entity-type step-ctx)
+                                                  next-task
+                                                  next-children
+                                                  next-completed)
+            progress?          (not (no-progress? (:state step-ctx)
+                                                  next-state
+                                                  (:completed-count step-ctx)
+                                                  next-completed
+                                                  pre-snapshot
+                                                  next-snapshot))
+            history-entry      (assoc base-entry
+                                      :ok? true
+                                      :next-state next-state
+                                      :completed-count next-completed
+                                      :progress? progress?)
+            history''          (conj (:history ctx) history-entry)
+            has-tasks-stall?   (and (= (:state step-ctx) :has-tasks)
+                                    (= next-state :has-tasks))
+            no-progress-streak (when has-tasks-stall?
+                                 (has-tasks-no-progress-streak history''))]
+        (if progress?
+          (progressed-run-result ctx step-ctx step-result history' history'')
+          (stalled-run-result ctx step-ctx step-result history'' next-state has-tasks-stall? no-progress-streak))))))
+
+(defn- execute-step-phase
+  [ctx step-ctx]
+  (if-not (:prompt-name step-ctx)
+    (run-result {:status        :error
+                 :run-id        (:run-id ctx)
+                 :task-id       (:task-id ctx)
+                 :entity-type   (:entity-type step-ctx)
+                 :worktree-dir  (:worktree-dir ctx)
+                 :current-state (:step-state step-ctx)
+                 :steps         (:steps ctx)
+                 :history       (:history ctx)
+                 :started-ms    (:started-ms ctx)
+                 :error-message (str "No prompt mapping for state " (name (:step-state step-ctx)))})
+    (let [prompt-body (resolve-step-prompt (:project-dir ctx) (:prompt-name step-ctx))
+          cat-prompt  (resolve-category-for-step (:prompt-name step-ctx)
+                                                 (:task step-ctx)
+                                                 (:children step-ctx)
+                                                 (:entity-type step-ctx)
+                                                 (:project-dir ctx))
+          step-start  (now-ms)
+          step-result (run-step-agent! {:run-id (:run-id ctx)
+                                        :step-name (:prompt-name step-ctx)
+                                        :prompt-body prompt-body
+                                        :task-id (:task-id ctx)
+                                        :entity-type (:entity-type step-ctx)
+                                        :project-dir (:project-dir ctx)
+                                        :worktree-dir (:worktree-dir ctx)
+                                        :task (:task step-ctx)
+                                        :children (:children step-ctx)
+                                        :state (:step-state step-ctx)
+                                        :user-confirmation (:confirmation-context step-ctx)
+                                        :user-answer (:answer ctx)
+                                        :get-api-key-fn (:get-api-key-fn ctx)
+                                        :category-prompt cat-prompt
+                                        :resume-step-session (:resume-step-session step-ctx)})
+          step-elapsed (- (now-ms) step-start)
+          base-entry {:state (:step-state step-ctx)
+                      :step (:prompt-name step-ctx)
+                      :elapsed-ms step-elapsed
+                      :output (task-preview (:text step-result) 500)}]
+      (if-not (:ok? step-result)
+        (do
+          (clear-step-control! (:control ctx))
+          (let [history' (conj (:history ctx) (assoc base-entry :ok? false))]
+            (run-result {:status        :error
+                         :run-id        (:run-id ctx)
+                         :task-id       (:task-id ctx)
+                         :entity-type   (:entity-type step-ctx)
+                         :worktree-dir  (:worktree-dir ctx)
+                         :current-state (:step-state step-ctx)
+                         :steps         (:steps ctx)
+                         :history       history'
+                         :last-step     (:prompt-name step-ctx)
+                         :last-output   (task-preview (:text step-result) 500)
+                         :started-ms    (:started-ms ctx)
+                         :error-message (or (:error-message step-result)
+                                            (:text step-result)
+                                            "Step failed")})))
+        (let [confirmation (parse-user-confirmation (:text step-result))
+              history'     (conj (:history ctx) (assoc base-entry :ok? true))]
+          (if confirmation
+            (pause-for-confirmation! ctx step-ctx step-result history' confirmation)
+            (post-step-result ctx step-ctx step-result base-entry history')))))))
+
+(defn- orchestrator-phase-result
+  [ctx]
+  (let [derived (derive-current! (:project-dir ctx) (:worktree-dir ctx) (:task-id ctx))]
+    (if-let [err (:error derived)]
+      (run-error-result ctx err)
+      (let [step-ctx (step-context ctx derived)]
+        (or (derived-terminal-result ctx step-ctx)
+            (execute-step-phase ctx step-ctx))))))
+
+(defn- run-loop-job
+  [params]
+  (let [ctx (base-run-ctx params)]
     (try
       (cond
-        (>= steps max-steps*)
-        (run-result {:status        :error
-                     :run-id        run-id
-                     :task-id       task-id
-                     :worktree-dir  worktree-dir
-                     :current-state phase
-                     :steps         steps
-                     :history       history
-                     :started-ms    started-ms
-                     :error-message (str "Reached max steps (" max-steps* ")")})
+        (>= (:steps ctx) (:max-steps ctx))
+        (run-error-result ctx (str "Reached max steps (" (:max-steps ctx) ")"))
 
-        (:cancel? @control)
-        (run-result {:status        :cancelled
-                     :run-id        run-id
-                     :task-id       task-id
-                     :worktree-dir  worktree-dir
-                     :current-state phase
-                     :steps         steps
-                     :history       history
-                     :started-ms    started-ms
-                     :final-state   :cancelled})
+        (:cancel? (:control-state ctx))
+        (cancelled-result ctx)
 
-        (and (:pause? @control)
-             (not (contains? #{:wait-pr-merge :wait-user-confirmation} phase)))
-        (run-result {:status        :paused
-                     :run-id        run-id
-                     :task-id       task-id
-                     :worktree-dir  worktree-dir
-                     :current-state :paused
-                     :steps         steps
-                     :history       history
-                     :started-ms    started-ms
-                     :pause-reason  :user-paused})
+        (and (:pause? (:control-state ctx))
+             (not (contains? #{:wait-pr-merge :wait-user-confirmation} (:phase ctx))))
+        (pause-result ctx :user-paused :paused {})
 
-        (= phase :ensure-worktree)
-        (let [{wt :worktree-dir wt-error :error}
-              (if (seq worktree-dir)
-                {:worktree-dir worktree-dir}
-                (ensure-worktree! project-dir task-id))]
-          (if wt-error
-            (run-result {:status        :error
-                         :run-id        run-id
-                         :task-id       task-id
-                         :worktree-dir  worktree-dir
-                         :current-state phase
-                         :steps         steps
-                         :history       history
-                         :started-ms    started-ms
-                         :error-message wt-error})
-            (run-result {:status        :running
-                         :run-id        run-id
-                         :task-id       task-id
-                         :worktree-dir  wt
-                         :current-state :derive-state
-                         :steps         steps
-                         :history       history
-                         :started-ms    started-ms})))
+        (= :ensure-worktree (:phase ctx))
+        (ensure-worktree-phase ctx)
 
-        (and (= phase :wait-user-confirmation)
-             (str/blank? (str answer)))
-        (run-result {:status            :paused
-                     :run-id            run-id
-                     :task-id           task-id
-                     :worktree-dir      worktree-dir
-                     :current-state     :wait-user-confirmation
-                     :steps             steps
-                     :history           history
-                     :started-ms        started-ms
-                     :pause-reason      :wait-user-confirmation
-                     :user-confirmation user-confirmation
-                     :user-answer       nil
-                     :error-message     "Resume requires explicit answer payload for user confirmation."})
+        (wait-user-confirmation-without-answer? ctx)
+        (pause-result ctx :wait-user-confirmation :wait-user-confirmation
+                      {:user-confirmation (:user-confirmation ctx)
+                       :user-answer nil
+                       :error-message "Resume requires explicit answer payload for user confirmation."})
 
-        (contains? orchestrator-phases phase)
-        (let [derived (derive-current! project-dir worktree-dir task-id)]
-          (if-let [err (:error derived)]
-            (run-result {:status        :error
-                         :run-id        run-id
-                         :task-id       task-id
-                         :worktree-dir  worktree-dir
-                         :current-state phase
-                         :steps         steps
-                         :history       history
-                         :started-ms    started-ms
-                         :error-message err})
-            (let [{:keys [task children entity-type state completed-count]} derived
-                  resume-step-session
-                  (when (and (= phase :wait-user-confirmation)
-                             (seq (str answer))
-                             (map? pending-step-session))
-                    pending-step-session)
-                  step-state*
-                  (if (and (= state :wait-pr-merge) merge?) :merging-pr state)
-                  step-state
-                  (or (:step-state resume-step-session)
-                      step-state*)
-                  prompt-name
-                  (or (:step-name resume-step-session)
-                      (step-prompt-name entity-type step-state))
-                  confirmation-context
-                  (or user-confirmation
-                      (:user-confirmation resume-step-session))]
-              (cond
-                (= state :terminated)
-                (run-result {:status        :done
-                             :run-id        run-id
-                             :task-id       task-id
-                             :entity-type   entity-type
-                             :worktree-dir  worktree-dir
-                             :current-state :done
-                             :steps         steps
-                             :history       history
-                             :started-ms    started-ms
-                             :final-state   :terminated})
-
-                (and (= state :wait-pr-merge) (not merge?))
-                (run-result {:status        :paused
-                             :run-id        run-id
-                             :task-id       task-id
-                             :entity-type   entity-type
-                             :worktree-dir  worktree-dir
-                             :current-state :wait-pr-merge
-                             :steps         steps
-                             :history       history
-                             :started-ms    started-ms
-                             :pause-reason  :wait-pr-merge})
-
-                (= state :wait-user-confirmation)
-                (run-result {:status            :paused
-                             :run-id            run-id
-                             :task-id           task-id
-                             :entity-type       entity-type
-                             :worktree-dir      worktree-dir
-                             :current-state     :wait-user-confirmation
-                             :steps             steps
-                             :history           history
-                             :started-ms        started-ms
-                             :pause-reason      :wait-user-confirmation
-                             :user-confirmation confirmation-context})
-
-                :else
-                (if prompt-name
-                  (let [prompt-body (resolve-step-prompt project-dir prompt-name)
-                        cat-prompt  (resolve-category-for-step
-                                     prompt-name task children entity-type project-dir)
-                        step-start  (now-ms)
-                        step-result (run-step-agent!
-                                     {:run-id run-id
-                                      :step-name prompt-name
-                                      :prompt-body prompt-body
-                                      :task-id task-id
-                                      :entity-type entity-type
-                                      :project-dir project-dir
-                                      :worktree-dir worktree-dir
-                                      :task task
-                                      :children children
-                                      :state step-state
-                                      :user-confirmation confirmation-context
-                                      :user-answer answer
-                                      :get-api-key-fn get-api-key-fn
-                                      :category-prompt cat-prompt
-                                      :resume-step-session resume-step-session})
-                        step-elapsed (- (now-ms) step-start)
-                        base-entry   {:state      step-state
-                                      :step       prompt-name
-                                      :elapsed-ms step-elapsed
-                                      :output     (task-preview (:text step-result) 500)}]
-                    (if-not (:ok? step-result)
-                      (do
-                        (when (instance? clojure.lang.IAtom control)
-                          (swap! control assoc :answer nil :pending-step-session nil))
-                        (let [history' (conj history (assoc base-entry :ok? false))]
-                          (run-result {:status        :error
-                                       :run-id        run-id
-                                       :task-id       task-id
-                                       :entity-type   entity-type
-                                       :worktree-dir  worktree-dir
-                                       :current-state step-state
-                                       :steps         steps
-                                       :history       history'
-                                       :last-step     prompt-name
-                                       :last-output   (task-preview (:text step-result) 500)
-                                       :started-ms    started-ms
-                                       :error-message (or (:error-message step-result)
-                                                          (:text step-result)
-                                                          "Step failed")})))
-                      (let [confirmation (parse-user-confirmation (:text step-result))
-                            history'     (conj history (assoc base-entry :ok? true))]
-                        (if confirmation
-                          (do
-                            (when (instance? clojure.lang.IAtom control)
-                              (swap! control assoc
-                                     :answer nil
-                                     :pause? false
-                                     :pending-step-session (or (:step-session step-result)
-                                                               resume-step-session)))
-                            (run-result {:status            :paused
-                                         :run-id            run-id
-                                         :task-id           task-id
-                                         :entity-type       entity-type
-                                         :worktree-dir      worktree-dir
-                                         :current-state     :wait-user-confirmation
-                                         :steps             (inc steps)
-                                         :history           history'
-                                         :last-step         prompt-name
-                                         :last-output       (task-preview (:text step-result) 500)
-                                         :started-ms        started-ms
-                                         :pause-reason      :wait-user-confirmation
-                                         :user-confirmation confirmation
-                                         :user-answer       nil}))
-                          (do
-                            (when (instance? clojure.lang.IAtom control)
-                              (swap! control assoc :answer nil :pending-step-session nil))
-                            (let [derived2 (derive-current! project-dir worktree-dir task-id)]
-                              (if-let [err2 (:error derived2)]
-                                (run-result {:status        :error
-                                             :run-id        run-id
-                                             :task-id       task-id
-                                             :entity-type   entity-type
-                                             :worktree-dir  worktree-dir
-                                             :current-state step-state
-                                             :steps         steps
-                                             :history       history'
-                                             :last-step     prompt-name
-                                             :last-output   (task-preview (:text step-result) 500)
-                                             :started-ms    started-ms
-                                             :error-message err2})
-                                (let [next-state     (:state derived2)
-                                      next-completed (:completed-count derived2)
-                                      next-task      (:task derived2)
-                                      next-children  (:children derived2)
-                                      pre-snapshot   (progress-snapshot entity-type
-                                                                        task
-                                                                        children
-                                                                        completed-count)
-                                      next-snapshot  (progress-snapshot entity-type
-                                                                        next-task
-                                                                        next-children
-                                                                        next-completed)
-                                      progress?      (not (no-progress? state
-                                                                        next-state
-                                                                        completed-count
-                                                                        next-completed
-                                                                        pre-snapshot
-                                                                        next-snapshot))
-                                      history-entry  (assoc base-entry
-                                                            :ok? true
-                                                            :next-state next-state
-                                                            :completed-count next-completed
-                                                            :progress? progress?)
-                                      history''      (conj history history-entry)
-                                      has-tasks-stall? (and (= state :has-tasks)
-                                                            (= next-state :has-tasks))
-                                      no-progress-streak (when has-tasks-stall?
-                                                           (has-tasks-no-progress-streak history''))]
-                                  (cond
-                                    progress?
-                                    (do
-                                      (when (= step-state :merging-pr)
-                                        (swap! control assoc :merge? false))
-                                      (run-result {:status        :running
-                                                   :run-id        run-id
-                                                   :task-id       task-id
-                                                   :entity-type   entity-type
-                                                   :worktree-dir  worktree-dir
-                                                   :current-state :derive-state
-                                                   :steps         (inc steps)
-                                                   :history       history''
-                                                   :last-step     prompt-name
-                                                   :last-output   (task-preview (:text step-result) 500)
-                                                   :started-ms    started-ms}))
-
-                                    (and has-tasks-stall?
-                                         (< no-progress-streak max-has-tasks-no-progress-default))
-                                    (run-result {:status        :running
-                                                 :run-id        run-id
-                                                 :task-id       task-id
-                                                 :entity-type   entity-type
-                                                 :worktree-dir  worktree-dir
-                                                 :current-state :derive-state
-                                                 :steps         (inc steps)
-                                                 :history       history''
-                                                 :last-step     prompt-name
-                                                 :last-output   (task-preview (:text step-result) 500)
-                                                 :started-ms    started-ms})
-
-                                    :else
-                                    (run-result {:status        :error
-                                                 :run-id        run-id
-                                                 :task-id       task-id
-                                                 :entity-type   entity-type
-                                                 :worktree-dir  worktree-dir
-                                                 :current-state next-state
-                                                 :steps         (inc steps)
-                                                 :history       history''
-                                                 :last-step     prompt-name
-                                                 :last-output   (task-preview (:text step-result) 500)
-                                                 :started-ms    started-ms
-                                                 :error-message (if has-tasks-stall?
-                                                                  (str "No progress after step " prompt-name
-                                                                       ", state remained " (name next-state)
-                                                                       " for " no-progress-streak " consecutive attempt(s)")
-                                                                  (str "No progress after step " prompt-name
-                                                                       ", state remained " (name next-state)))}))))))))))
-                  (run-result {:status        :error
-                               :run-id        run-id
-                               :task-id       task-id
-                               :entity-type   entity-type
-                               :worktree-dir  worktree-dir
-                               :current-state step-state
-                               :steps         steps
-                               :history       history
-                               :started-ms    started-ms
-                               :error-message (str "No prompt mapping for state " (name step-state))}))))))
+        (contains? orchestrator-phases (:phase ctx))
+        (orchestrator-phase-result ctx)
 
         :else
-        (run-result {:status        :error
-                     :run-id        run-id
-                     :task-id       task-id
-                     :worktree-dir  worktree-dir
-                     :current-state phase
-                     :steps         steps
-                     :history       history
-                     :started-ms    started-ms
-                     :error-message (str "Unknown workflow phase: " (name phase))}))
+        (run-error-result ctx (str "Unknown workflow phase: " (name (:phase ctx)))))
       (catch Exception e
-        (run-result {:status        :error
-                     :run-id        run-id
-                     :task-id       task-id
-                     :worktree-dir  worktree-dir
-                     :current-state phase
-                     :steps         steps
-                     :history       history
-                     :started-ms    started-ms
-                     :error-message (or (ex-message e) "Unexpected run failure")})))))
+        (run-error-result ctx (or (ex-message e) "Unexpected run failure"))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Workflow chart
