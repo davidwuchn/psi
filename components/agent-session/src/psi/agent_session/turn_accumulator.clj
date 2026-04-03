@@ -190,6 +190,175 @@
 ;; Turn actions factory
 ;; ============================================================
 
+(defn- content-index [data]
+  (or (:content-index data) 0))
+
+(defn- anthropic-thinking-block [idx data]
+  {:content-index idx
+   :provider      :anthropic
+   :text          (or (:thinking data) "")
+   :signature     (:signature data)})
+
+(defn- update-thinking-block-text [blocks idx merged]
+  (let [blocks* (or blocks (sorted-map))
+        current (get blocks* idx {:content-index idx :provider :anthropic :signature nil})]
+    (assoc blocks* idx (assoc current :text merged))))
+
+(defn- update-thinking-block-signature [blocks idx signature]
+  (let [blocks* (or blocks (sorted-map))
+        current (get blocks* idx {:content-index idx :provider :anthropic :text ""})]
+    (assoc blocks* idx (assoc current :signature signature))))
+
+(defn- canonical-provider-tool-call-id [turn-id tool-id]
+  (when-not (str/starts-with? (str tool-id) (str turn-id "/toolcall/"))
+    tool-id))
+
+(defn- update-tool-call-start [td idx tc-id tc-name]
+  (get-in (swap! td update-in [:tool-calls idx]
+                 (fn [cur]
+                   (let [merged (merge {:id nil :name nil :arguments "" :content-index idx}
+                                       cur
+                                       {:id (or tc-id (:id cur))
+                                        :name (or tc-name (:name cur))
+                                        :content-index idx})]
+                     (assoc merged :id (canonical-tool-call-id (:turn-id @td) idx (:id merged))))))
+          [:tool-calls idx]))
+
+(defn- update-tool-call-delta [td idx delta]
+  (get-in (swap! td update-in [:tool-calls idx]
+                 (fn [cur]
+                   (let [current-args (or (:arguments cur) "")
+                         merged       (merge {:id nil :name nil :arguments "" :content-index idx}
+                                             cur
+                                             {:arguments     (str current-args (or delta ""))
+                                              :content-index idx})]
+                     (assoc merged :id (canonical-tool-call-id (:turn-id @td) idx (:id merged))))))
+          [:tool-calls idx]))
+
+(defn- emit-tool-assembly-progress! [progress-queue td phase idx updated provider-tool-id]
+  (emit-progress! progress-queue
+                  {:event-kind            :tool-call-assembly
+                   :phase                 phase
+                   :turn-id               (:turn-id @td)
+                   :content-index         idx
+                   :tool-id               (:id updated)
+                   :provider-tool-call-id provider-tool-id
+                   :tool-name             (:name updated)
+                   :arguments             (:arguments updated)}))
+
+(defn- handle-text-start! [td data]
+  (let [idx (content-index data)]
+    (note-last-provider-event! td :text-start data)
+    (begin-content-block! td idx)
+    (update-content-block! td idx #(assoc % :kind :text))))
+
+(defn- handle-text-delta! [td progress-queue data]
+  (let [idx    (content-index data)
+        merged (:text-buffer (swap! td update :text-buffer merge-stream-text (:delta data)))]
+    (note-last-provider-event! td :text-delta data)
+    (note-content-delta! td idx :text)
+    (emit-progress! progress-queue {:event-kind :text-delta :content-index idx :text merged})))
+
+(defn- handle-thinking-start! [td ai-model data]
+  (let [idx (content-index data)]
+    (note-last-provider-event! td :thinking-start data)
+    (begin-content-block! td idx)
+    (update-content-block! td idx #(assoc % :kind :thinking))
+    (when (anthropic-provider? ai-model)
+      (swap! td update :thinking-blocks
+             (fnil assoc (sorted-map)) idx
+             (anthropic-thinking-block idx data)))))
+
+(defn- handle-thinking-delta! [td progress-queue ai-model thinking-buffers data]
+  (let [idx    (content-index data)
+        raw    (let [d (:delta data)] (if (string? d) d (str (or d ""))))
+        merged (get (swap! thinking-buffers update idx merge-stream-text raw) idx)]
+    (note-last-provider-event! td :thinking-delta data)
+    (note-content-delta! td idx :thinking)
+    (when (anthropic-provider? ai-model)
+      (swap! td update :thinking-blocks update-thinking-block-text idx merged))
+    (emit-progress! progress-queue {:event-kind :thinking-delta :content-index idx :text merged})))
+
+(defn- handle-thinking-signature-delta! [td ai-model data]
+  (let [idx (content-index data)]
+    (when (anthropic-provider? ai-model)
+      (swap! td update :thinking-blocks update-thinking-block-signature idx (:signature data)))))
+
+(defn- handle-toolcall-start! [ctx session-id td progress-queue ai-model thinking-buffers data]
+  (let [idx     (:content-index data)
+        tc-id   (:tool-id data)
+        tc-name (:tool-name data)
+        updated (update-tool-call-start td idx tc-id tc-name)]
+    (reset-thinking-buffers-on-toolcall-start! thinking-buffers ai-model idx)
+    (note-last-provider-event! td :toolcall-start data)
+    (begin-content-block! td idx)
+    (update-content-block! td idx #(assoc % :kind :tool-call))
+    (sa/append-tool-call-attempt-in! ctx session-id
+                                     {:turn-id       (:turn-id @td)
+                                      :event-kind    :toolcall-start
+                                      :content-index idx
+                                      :id            tc-id
+                                      :name          tc-name})
+    (emit-tool-assembly-progress! progress-queue td :start idx updated
+                                  (when (= tc-id (:id updated)) tc-id))))
+
+(defn- handle-toolcall-delta! [ctx session-id td progress-queue data]
+  (let [idx     (:content-index data)
+        delta   (:delta data)
+        updated (update-tool-call-delta td idx delta)]
+    (note-last-provider-event! td :toolcall-delta data)
+    (note-content-delta! td idx :tool-call)
+    (sa/append-tool-call-attempt-in! ctx session-id
+                                     {:turn-id       (:turn-id @td)
+                                      :event-kind    :toolcall-delta
+                                      :content-index idx
+                                      :delta         delta})
+    (emit-tool-assembly-progress! progress-queue td :delta idx updated
+                                  (canonical-provider-tool-call-id (:turn-id @td) (:id updated)))))
+
+(defn- handle-toolcall-end! [ctx session-id td progress-queue data]
+  (let [idx     (:content-index data)
+        updated (get-in @td [:tool-calls idx])]
+    (note-last-provider-event! td :toolcall-end data)
+    (end-content-block! td idx)
+    (sa/append-tool-call-attempt-in! ctx session-id
+                                     {:turn-id       (:turn-id @td)
+                                      :event-kind    :toolcall-end
+                                      :content-index idx})
+    (emit-tool-assembly-progress! progress-queue td :end idx updated
+                                  (canonical-provider-tool-call-id (:turn-id @td) (:id updated)))))
+
+(defn- handle-done! [td done-p progress-queue data]
+  (let [{:keys [thinking-blocks text-buffer tool-calls]} @td
+        completed (complete-tool-calls (:turn-id @td) tool-calls)
+        content   (build-final-content thinking-blocks text-buffer completed)
+        usage     (:usage data)
+        final     (cond-> {:role        "assistant"
+                           :content     content
+                           :stop-reason (or (:reason data) :stop)
+                           :timestamp   (java.time.Instant/now)}
+                    (map? usage) (assoc :usage usage))]
+    (note-last-provider-event! td :done data)
+    (emit-tool-assembly-errors! progress-queue completed)
+    (swap! td assoc :final-message final)
+    (deliver done-p final)))
+
+(defn- handle-error! [td done-p data]
+  (let [{:keys [text-buffer]} @td
+        err-msg (:error-message data)
+        content (cond-> []
+                  (seq text-buffer) (conj {:type :text :text text-buffer})
+                  :always           (conj {:type :error :text err-msg}))
+        final   (cond-> {:role          "assistant"
+                         :content       content
+                         :stop-reason   :error
+                         :error-message err-msg
+                         :timestamp     (java.time.Instant/now)}
+                  (:http-status data) (assoc :http-status (:http-status data)))]
+    (note-last-provider-event! td :error data)
+    (swap! td assoc :final-message final :error-message err-msg)
+    (deliver done-p final)))
+
 (defn make-turn-actions
   "Create the actions-fn for the per-turn statechart.
    Handles data accumulation (in turn-data atom) and session-data writes.
@@ -206,185 +375,20 @@
   (fn [action-key data]
     (let [td (:turn-data data)]
       (case action-key
-        :on-stream-start
-        (note-last-provider-event! td :start data)
-
-        :on-text-start
-        (let [idx (or (:content-index data) 0)]
-          (note-last-provider-event! td :text-start data)
-          (begin-content-block! td idx)
-          (update-content-block! td idx #(assoc % :kind :text)))
-
-        :on-text-delta
-        (let [idx    (or (:content-index data) 0)
-              merged (:text-buffer (swap! td update :text-buffer merge-stream-text (:delta data)))]
-          (note-last-provider-event! td :text-delta data)
-          (note-content-delta! td idx :text)
-          (emit-progress! progress-queue {:event-kind :text-delta :content-index idx :text merged}))
-
-        :on-text-end
-        (do
-          (note-last-provider-event! td :text-end data)
-          (end-content-block! td (or (:content-index data) 0)))
-
-        :on-thinking-start
-        (let [idx (or (:content-index data) 0)]
-          (note-last-provider-event! td :thinking-start data)
-          (begin-content-block! td idx)
-          (update-content-block! td idx #(assoc % :kind :thinking))
-          (when (anthropic-provider? ai-model)
-            (swap! td update :thinking-blocks
-                   (fnil assoc (sorted-map)) idx
-                   {:content-index idx
-                    :provider      :anthropic
-                    :text          (or (:thinking data) "")
-                    :signature     (:signature data)})))
-
-        :on-thinking-delta
-        (let [idx    (or (:content-index data) 0)
-              raw    (let [d (:delta data)] (if (string? d) d (str (or d ""))))
-              merged (get (swap! thinking-buffers update idx merge-stream-text raw) idx)]
-          (note-last-provider-event! td :thinking-delta data)
-          (note-content-delta! td idx :thinking)
-          (when (anthropic-provider? ai-model)
-            (swap! td update :thinking-blocks
-                   (fn [blocks]
-                     (let [blocks* (or blocks (sorted-map))
-                           current (get blocks* idx {:content-index idx :provider :anthropic :signature nil})]
-                       (assoc blocks* idx (assoc current :text merged))))))
-          (emit-progress! progress-queue {:event-kind :thinking-delta :content-index idx :text merged}))
-
-        :on-thinking-signature-delta
-        (let [idx (or (:content-index data) 0)]
-          (when (anthropic-provider? ai-model)
-            (swap! td update :thinking-blocks
-                   (fn [blocks]
-                     (let [blocks* (or blocks (sorted-map))
-                           current (get blocks* idx {:content-index idx :provider :anthropic :text ""})]
-                       (assoc blocks* idx (assoc current :signature (:signature data))))))))
-
-        :on-thinking-end
-        (do
-          (note-last-provider-event! td :thinking-end data)
-          (end-content-block! td (or (:content-index data) 0)))
-
-        :on-toolcall-start
-        (let [idx     (:content-index data)
-              tc-id   (:tool-id data)
-              tc-name (:tool-name data)
-              updated (get-in (swap! td update-in [:tool-calls idx]
-                                     (fn [cur]
-                                       (let [merged (merge {:id nil :name nil :arguments "" :content-index idx}
-                                                           cur
-                                                           {:id (or tc-id (:id cur))
-                                                            :name (or tc-name (:name cur))
-                                                            :content-index idx})]
-                                         (assoc merged :id (canonical-tool-call-id (:turn-id @td) idx (:id merged))))))
-                              [:tool-calls idx])]
-          (reset-thinking-buffers-on-toolcall-start! thinking-buffers ai-model idx)
-          (note-last-provider-event! td :toolcall-start data)
-          (begin-content-block! td idx)
-          (update-content-block! td idx #(assoc % :kind :tool-call))
-          (sa/append-tool-call-attempt-in! ctx session-id
-                                           {:turn-id       (:turn-id @td)
-                                            :event-kind    :toolcall-start
-                                            :content-index idx
-                                            :id            tc-id
-                                            :name          tc-name})
-          (emit-progress! progress-queue
-                          {:event-kind            :tool-call-assembly
-                           :phase                 :start
-                           :turn-id               (:turn-id @td)
-                           :content-index         idx
-                           :tool-id               (:id updated)
-                           :provider-tool-call-id (when (= tc-id (:id updated)) tc-id)
-                           :tool-name             (:name updated)
-                           :arguments             (:arguments updated)}))
-
-        :on-toolcall-delta
-        (let [idx   (:content-index data)
-              delta (:delta data)
-              updated (get-in (swap! td update-in [:tool-calls idx]
-                                     (fn [cur]
-                                       (let [current-args (or (:arguments cur) "")
-                                             merged       (merge {:id nil :name nil :arguments "" :content-index idx}
-                                                                 cur
-                                                                 {:arguments     (str current-args (or delta ""))
-                                                                  :content-index idx})]
-                                         (assoc merged :id (canonical-tool-call-id (:turn-id @td) idx (:id merged))))))
-                              [:tool-calls idx])]
-          (note-last-provider-event! td :toolcall-delta data)
-          (note-content-delta! td idx :tool-call)
-          (sa/append-tool-call-attempt-in! ctx session-id
-                                           {:turn-id       (:turn-id @td)
-                                            :event-kind    :toolcall-delta
-                                            :content-index idx
-                                            :delta         delta})
-          (emit-progress! progress-queue
-                          {:event-kind            :tool-call-assembly
-                           :phase                 :delta
-                           :turn-id               (:turn-id @td)
-                           :content-index         idx
-                           :tool-id               (:id updated)
-                           :provider-tool-call-id (when-not (str/starts-with? (str (:id updated))
-                                                                               (str (:turn-id @td) "/toolcall/"))
-                                                    (:id updated))
-                           :tool-name             (:name updated)
-                           :arguments             (:arguments updated)}))
-
-        :on-toolcall-end
-        (let [idx     (:content-index data)
-              updated (get-in @td [:tool-calls idx])]
-          (note-last-provider-event! td :toolcall-end data)
-          (end-content-block! td idx)
-          (sa/append-tool-call-attempt-in! ctx session-id
-                                           {:turn-id       (:turn-id @td)
-                                            :event-kind    :toolcall-end
-                                            :content-index idx})
-          (emit-progress! progress-queue
-                          {:event-kind            :tool-call-assembly
-                           :phase                 :end
-                           :turn-id               (:turn-id @td)
-                           :content-index         idx
-                           :tool-id               (:id updated)
-                           :provider-tool-call-id (when-not (str/starts-with? (str (:id updated))
-                                                                               (str (:turn-id @td) "/toolcall/"))
-                                                    (:id updated))
-                           :tool-name             (:name updated)
-                           :arguments             (:arguments updated)}))
-
-        :on-done
-        (let [{:keys [thinking-blocks text-buffer tool-calls]} @td
-              completed (complete-tool-calls (:turn-id @td) tool-calls)
-              content   (build-final-content thinking-blocks text-buffer completed)
-              usage     (:usage data)
-              final     (cond-> {:role        "assistant"
-                                 :content     content
-                                 :stop-reason (or (:reason data) :stop)
-                                 :timestamp   (java.time.Instant/now)}
-                          (map? usage) (assoc :usage usage))]
-          (note-last-provider-event! td :done data)
-          (emit-tool-assembly-errors! progress-queue completed)
-          (swap! td assoc :final-message final)
-          (deliver done-p final))
-
-        :on-error
-        (let [{:keys [text-buffer]} @td
-              err-msg (:error-message data)
-              content (cond-> []
-                        (seq text-buffer) (conj {:type :text :text text-buffer})
-                        :always           (conj {:type :error :text err-msg}))
-              final   (cond-> {:role          "assistant"
-                                :content       content
-                                :stop-reason   :error
-                                :error-message err-msg
-                                :timestamp     (java.time.Instant/now)}
-                        (:http-status data) (assoc :http-status (:http-status data)))]
-          (note-last-provider-event! td :error data)
-          (swap! td assoc :final-message final :error-message err-msg)
-          (deliver done-p final))
-
-        :on-reset
-        (reset! td (turn-sc/create-turn-data))
-
+        :on-stream-start (note-last-provider-event! td :start data)
+        :on-text-start (handle-text-start! td data)
+        :on-text-delta (handle-text-delta! td progress-queue data)
+        :on-text-end (do (note-last-provider-event! td :text-end data)
+                         (end-content-block! td (content-index data)))
+        :on-thinking-start (handle-thinking-start! td ai-model data)
+        :on-thinking-delta (handle-thinking-delta! td progress-queue ai-model thinking-buffers data)
+        :on-thinking-signature-delta (handle-thinking-signature-delta! td ai-model data)
+        :on-thinking-end (do (note-last-provider-event! td :thinking-end data)
+                             (end-content-block! td (content-index data)))
+        :on-toolcall-start (handle-toolcall-start! ctx session-id td progress-queue ai-model thinking-buffers data)
+        :on-toolcall-delta (handle-toolcall-delta! ctx session-id td progress-queue data)
+        :on-toolcall-end (handle-toolcall-end! ctx session-id td progress-queue data)
+        :on-done (handle-done! td done-p progress-queue data)
+        :on-error (handle-error! td done-p data)
+        :on-reset (reset! td (turn-sc/create-turn-data))
         nil))))
