@@ -19,7 +19,8 @@
         psi/agent-session                             {:local/root "components/agent-session"}
         psi/recursion                                 {:local/root "components/recursion"}
         psi/ui-state                                  {:local/root "components/ui-state"}
-        psi/system-bootstrap                          {:local/root "components/system-bootstrap"}}
+        psi/system-bootstrap                          {:local/root "components/system-bootstrap"}
+        psi/main                                      {:local/root "bases/main"}}
  :aliases
  {:dev   {:extra-paths ["dev"]}
   :run   {:extra-paths ["bases/main/src"
