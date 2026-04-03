@@ -428,6 +428,33 @@
 (defn- new-msg-id  [] (str "msg_"  (UUID/randomUUID)))
 (defn- new-call-id [] (str "call_" (UUID/randomUUID)))
 
+(defn- completions-usage-map
+  [model usage]
+  (let [usage-map {:input-tokens       (or (:prompt_tokens usage) 0)
+                   :output-tokens      (or (:completion_tokens usage) 0)
+                   :cache-read-tokens  0
+                   :cache-write-tokens 0
+                   :total-tokens       (or (:total_tokens usage)
+                                           (+ (or (:prompt_tokens usage) 0)
+                                              (or (:completion_tokens usage) 0)))}]
+    (assoc usage-map :cost (models/calculate-cost model usage-map))))
+
+(defn- emit-chat-completion-finish!
+  [consume-fn stream-started? done? reason usage]
+  (when-not @done?
+    (reset! done? true)
+    (when (compare-and-set! stream-started? false true)
+      (consume-fn {:type :start}))
+    (consume-fn (cond-> {:type :done
+                         :reason reason}
+                  usage (assoc :usage usage)))))
+
+(defn- update-tool-index! [tool-index-by-id next-tool-index call-id idx]
+  (when (seq call-id)
+    (swap! tool-index-by-id assoc call-id idx))
+  (swap! next-tool-index #(max % (inc idx)))
+  idx)
+
 (defn stream-openai
   "Stream response from OpenAI Chat Completions API.
 
@@ -457,26 +484,19 @@
                 (consume-fn {:type :start})))
 
             (resolve-tool-index [tool-call fallback-idx]
-              (let [idx    (:index tool-call)
+              (let [idx     (:index tool-call)
                     call-id (:id tool-call)]
                 (cond
                   (number? idx)
-                  (do
-                    (when (seq call-id)
-                      (swap! tool-index-by-id assoc call-id idx))
-                    (swap! next-tool-index #(max % (inc idx)))
-                    idx)
+                  (update-tool-index! tool-index-by-id next-tool-index call-id idx)
 
                   (and (seq call-id)
                        (contains? @tool-index-by-id call-id))
                   (get @tool-index-by-id call-id)
 
                   :else
-                  (let [allocated (or fallback-idx @next-tool-index)]
-                    (swap! next-tool-index #(max % (inc allocated)))
-                    (when (seq call-id)
-                      (swap! tool-index-by-id assoc call-id allocated))
-                    allocated))))
+                  (update-tool-index! tool-index-by-id next-tool-index call-id
+                                      (or fallback-idx @next-tool-index)))))
 
             (ensure-tool-entry! [idx]
               (swap! tool-state update idx
@@ -517,9 +537,7 @@
                   (swap! tool-index-by-id assoc call-id idx))
                 (when (seq call-name)
                   (swap! tool-state assoc-in [idx :name] call-name))
-
                 (start-tool-if-ready! idx false)
-
                 (when (seq args)
                   (let [current-buffer (get-in @tool-state [idx :args-buffer] "")
                         {:keys [buffer delta]} (accumulate-tool-arguments current-buffer args)]
@@ -530,7 +548,6 @@
                       (consume-fn {:type :toolcall-delta
                                    :content-index idx
                                    :delta delta}))))
-
                 (start-tool-if-ready! idx false)))
 
             (force-start-pending-tools! []
@@ -556,61 +573,41 @@
                       delta           (:delta choice)
                       text-delta      (extract-text-delta delta)
                       reasoning-delta (extract-reasoning-delta delta)]
-
-                  ;; Start of response — fires once, does NOT gate other fields.
                   (when (and choice (= (:role delta) "assistant"))
                     (emit-start!))
-
-                  ;; Non-terminal deltas can co-exist in one chunk.
                   (when (seq text-delta)
                     (emit-start!)
                     (consume-fn {:type :text-delta
                                  :content-index 0
                                  :delta text-delta}))
-
                   (when (seq reasoning-delta)
                     (emit-start!)
                     (consume-fn {:type :thinking-delta
                                  :content-index 0
                                  :delta reasoning-delta}))
-
-                  ;; Tool calls (delta + message fallbacks, including legacy function_call)
-                  (let [tool-fragments (extract-tool-call-fragments choice delta)]
-                    (doseq [[fallback-idx tool-call] (map-indexed vector tool-fragments)]
-                      (let [idx (resolve-tool-index tool-call fallback-idx)]
-                        (process-tool-call! idx tool-call))))
-
+                  (doseq [[fallback-idx tool-call]
+                          (map-indexed vector (extract-tool-call-fragments choice delta))]
+                    (process-tool-call! (resolve-tool-index tool-call fallback-idx) tool-call))
                   (cond
-                    ;; Completion with usage (final chunk)
                     (:usage chunk)
-                    (let [usage (:usage chunk)
-                          usage-map {:input-tokens       (or (:prompt_tokens usage) 0)
-                                     :output-tokens      (or (:completion_tokens usage) 0)
-                                     :cache-read-tokens  0
-                                     :cache-write-tokens 0
-                                     :total-tokens       (or (:total_tokens usage)
-                                                             (+ (or (:prompt_tokens usage) 0)
-                                                                (or (:completion_tokens usage) 0)))}]
+                    (do
                       (force-start-pending-tools!)
                       (emit-tool-ends!)
-                      (when-not @done?
-                        (reset! done? true)
-                        (emit-start!)
-                        (consume-fn {:type :done
-                                     :reason (keyword (get-in choice [:finish_reason] "stop"))
-                                     :usage (assoc usage-map
-                                                   :cost (models/calculate-cost model usage-map))})))
+                      (emit-chat-completion-finish! consume-fn
+                                                    stream-started?
+                                                    done?
+                                                    (keyword (get-in choice [:finish_reason] "stop"))
+                                                    (completions-usage-map model (:usage chunk))))
 
-                    ;; Finish without usage
                     (:finish_reason choice)
                     (do
                       (force-start-pending-tools!)
                       (emit-tool-ends!)
-                      (when-not @done?
-                        (reset! done? true)
-                        (emit-start!)
-                        (consume-fn {:type :done
-                                     :reason (keyword (:finish_reason choice))})))))))))
+                      (emit-chat-completion-finish! consume-fn
+                                                    stream-started?
+                                                    done?
+                                                    (keyword (:finish_reason choice))
+                                                    nil))))))))
         (catch Exception e
           (let [err (exception->error e)]
             (capture-response! options :openai-completions url err)
