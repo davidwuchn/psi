@@ -640,73 +640,99 @@
 (defn- has-active-dialog? [state]
   (boolean (get-in state [:ui-snapshot :dialog-queue :active])))
 
+(defn- clear-dialog-local-state
+  [state]
+  (dissoc state :dialog-selected-index :dialog-input-text))
+
+(defn- dispatch-ui-event!
+  [state event data]
+  (when-let [f (:ui-dispatch-fn state)]
+    (f event data)))
+
+(defn- resolve-dialog!
+  [state dialog result]
+  (dispatch-ui-event! state :session/ui-resolve-dialog {:dialog-id (:id dialog)
+                                                        :result result}))
+
+(defn- cancel-dialog!
+  [state]
+  (dispatch-ui-event! state :session/ui-cancel-dialog {}))
+
+(defn- dialog-select-index
+  [state]
+  (or (:dialog-selected-index state) 0))
+
+(defn- move-dialog-selection
+  [state dialog delta]
+  (let [idx      (dialog-select-index state)
+        last-idx (max 0 (dec (count (:options dialog))))]
+    [(assoc state :dialog-selected-index
+            (-> idx (+ delta) (max 0) (min last-idx)))
+     nil]))
+
+(defn- backspace-dialog-input
+  [state]
+  [(assoc state :dialog-input-text
+          (let [s (or (:dialog-input-text state) "")]
+            (if (pos? (count s)) (subs s 0 (dec (count s))) s)))
+   nil])
+
+(defn- append-dialog-input
+  [state m]
+  (let [ch (printable-key (:key m))]
+    [(if ch
+       (assoc state :dialog-input-text (str (or (:dialog-input-text state) "") ch))
+       state)
+     nil]))
+
+(defn- submit-dialog
+  [state dialog]
+  (case (:kind dialog)
+    :confirm
+    (do
+      (resolve-dialog! state dialog true)
+      [(clear-dialog-local-state state) nil])
+
+    :select
+    (let [idx     (dialog-select-index state)
+          options (:options dialog)
+          value   (when (seq options) (:value (nth options idx nil)))]
+      (when value
+        (resolve-dialog! state dialog value))
+      [(clear-dialog-local-state state) nil])
+
+    :input
+    (do
+      (resolve-dialog! state dialog (or (:dialog-input-text state) ""))
+      [(clear-dialog-local-state state) nil])
+
+    [state nil]))
+
 (defn- handle-dialog-key
   "Route keypress to the active dialog. Returns [new-state cmd] or nil
    if no dialog is active."
   [state m]
   (when-let [dialog (get-in state [:ui-snapshot :dialog-queue :active])]
     (cond
-      ;; Escape cancels any dialog
       (msg/key-match? m "escape")
-      (do (when-let [f (:ui-dispatch-fn state)] (f :session/ui-cancel-dialog {}))
-          [(-> state
-               (dissoc :dialog-selected-index :dialog-input-text))
-           nil])
+      (do
+        (cancel-dialog! state)
+        [(clear-dialog-local-state state) nil])
 
-      ;; Enter confirms / submits
       (msg/key-match? m "enter")
-      (case (:kind dialog)
-        :confirm
-        (do (when-let [f (:ui-dispatch-fn state)] (f :session/ui-resolve-dialog {:dialog-id (:id dialog) :result true}))
-            [(-> state
-                 (dissoc :dialog-selected-index :dialog-input-text))
-             nil])
+      (submit-dialog state dialog)
 
-        :select
-        (let [idx     (or (:dialog-selected-index state) 0)
-              options (:options dialog)
-              value   (when (seq options) (:value (nth options idx nil)))]
-          (when value
-            (when-let [f (:ui-dispatch-fn state)] (f :session/ui-resolve-dialog {:dialog-id (:id dialog) :result value})))
-          [(-> state
-               (dissoc :dialog-selected-index :dialog-input-text))
-           nil])
-
-        :input
-        (let [text (or (:dialog-input-text state) "")]
-          (when-let [f (:ui-dispatch-fn state)] (f :session/ui-resolve-dialog {:dialog-id (:id dialog) :result text}))
-          [(-> state
-               (dissoc :dialog-selected-index :dialog-input-text))
-           nil])
-
-        ;; fallback
-        [state nil])
-
-      ;; For select: up/down to change selection
       (and (= :select (:kind dialog)) (msg/key-match? m "up"))
-      [(assoc state :dialog-selected-index
-              (max 0 (dec (or (:dialog-selected-index state) 0))))
-       nil]
+      (move-dialog-selection state dialog -1)
 
       (and (= :select (:kind dialog)) (msg/key-match? m "down"))
-      [(assoc state :dialog-selected-index
-              (min (dec (count (:options dialog)))
-                   (inc (or (:dialog-selected-index state) 0))))
-       nil]
+      (move-dialog-selection state dialog 1)
 
-      ;; For input: printable chars and backspace
       (and (= :input (:kind dialog)) (msg/key-match? m "backspace"))
-      [(assoc state :dialog-input-text
-              (let [s (or (:dialog-input-text state) "")]
-                (if (pos? (count s)) (subs s 0 (dec (count s))) s)))
-       nil]
+      (backspace-dialog-input state)
 
       (and (= :input (:kind dialog)) (msg/key-press? m))
-      (let [ch (printable-key (:key m))]
-        [(if ch
-           (assoc state :dialog-input-text (str (or (:dialog-input-text state) "") ch))
-           state)
-         nil])
+      (append-dialog-input state m)
 
       :else [state nil])))
 
@@ -1106,116 +1132,166 @@
           (set-input-model (charm/text-input-reset (:input state))))
       nil])))
 
+(defn- restored-session-payload
+  [restored]
+  {:messages   (vec (or (if (map? restored) (:messages restored) restored) []))
+   :tool-calls (or (when (map? restored) (:tool-calls restored)) {})
+   :tool-order (vec (or (when (map? restored) (:tool-order restored)) []))})
+
+(defn- reset-input-model
+  [state]
+  (set-input-model state (charm/text-input-reset (:input state))))
+
+(defn- append-assistant-message
+  [state text]
+  (update state :messages conj {:role :assistant :text text}))
+
+(defn- restore-session-view
+  [state {:keys [messages tool-calls tool-order]} extra]
+  (-> state
+      (assoc :messages messages
+             :stream-text nil
+             :stream-thinking nil
+             :tool-calls tool-calls
+             :tool-order tool-order
+             :force-clear? true)
+      (merge extra)
+      reset-input-model))
+
+(defn- session-switch-unavailable
+  [state]
+  [(-> state
+       (assoc :session-selector nil
+              :session-selector-mode nil
+              :phase :idle)
+       reset-input-model
+       (append-assistant-message "Session switch is unavailable in this runtime."))
+   nil])
+
+(defn- handle-tree-switch-result
+  [state result]
+  (let [switch-fn (:switch-session-fn! state)
+        sid       (:session-id result)]
+    (if (and switch-fn (string? sid) (not (str/blank? sid)))
+      [(restore-session-view state
+                             (restored-session-payload (switch-fn sid))
+                             {:phase :idle
+                              :focus-session-id sid
+                              :session-selector nil
+                              :session-selector-mode nil})
+       nil]
+      (session-switch-unavailable state))))
+
+(defn- query-current-session-id
+  [state]
+  (when-let [qfn (:query-fn state)]
+    (try
+      (:psi.agent-session/session-id (qfn [:psi.agent-session/session-id]))
+      (catch Exception _ nil))))
+
+(defn- handle-new-session-result
+  [state result]
+  (let [payload (restored-session-payload (:rehydrate result))
+        new-sid (query-current-session-id state)]
+    [(-> (restore-session-view state payload {:error nil})
+         (cond-> new-sid (assoc :focus-session-id new-sid))
+         (append-assistant-message (:message result)))
+     nil]))
+
+(defn- handle-text-result
+  [state text]
+  [(-> state
+       reset-input-model
+       (append-assistant-message text))
+   nil])
+
+(defn- run-extension-command
+  [result]
+  (try
+    (when-let [handler (:handler result)]
+      (let [captured (with-out-str (handler (:args result)))]
+        (when-not (str/blank? captured)
+          (str/trimr captured))))
+    (catch Exception e
+      (timbre/warn "Extension command error:" (ex-message e))
+      (str "[command error: " (ex-message e) "]"))))
+
+(defn- login-start-message
+  [result]
+  (str "🔑 Login to " (get-in result [:provider :name])
+       "\n\nOpen this URL in your browser:\n" (:url result)
+       (if (:uses-callback-server result)
+         "\n\nWaiting for browser callback…"
+         "\n\nPaste the authorization code below ↓")))
+
 (defn- handle-dispatch-result
   "Translate a command dispatch result map into [new-state cmd].
    Returns nil if the result is nil (not a command)."
   [state result]
   (when result
     (case (:type result)
-      :quit
-      [state charm/quit-cmd]
-
-      :resume
-      (open-session-selector state :resume)
-
-      :tree-open
-      (open-session-selector state :tree)
-
-      :tree-switch
-      (let [switch-fn (:switch-session-fn! state)
-            sid       (:session-id result)]
-        (if (and switch-fn (string? sid) (not (str/blank? sid)))
-          (let [restored (switch-fn sid)
-                restored-msgs (if (map? restored) (:messages restored) restored)
-                restored-tool-calls (if (map? restored) (:tool-calls restored) nil)
-                restored-tool-order (if (map? restored) (:tool-order restored) nil)]
-            [(-> state
-                 (assoc :phase :idle
-                        :focus-session-id sid
-                        :messages (vec (or restored-msgs []))
-                        :stream-text nil
-                        :stream-thinking nil
-                        :tool-calls (or restored-tool-calls {})
-                        :tool-order (vec (or restored-tool-order []))
-                        :session-selector nil
-                        :session-selector-mode nil
-                        :force-clear? true)
-                 (set-input-model (charm/text-input-reset (:input state))))
-             nil])
-          [(-> state
-               (assoc :session-selector nil
-                      :session-selector-mode nil
-                      :phase :idle)
-               (set-input-model (charm/text-input-reset (:input state)))
-               (update :messages conj {:role :assistant
-                                       :text "Session switch is unavailable in this runtime."}))
-           nil]))
-
-      :new-session
-      (let [rehydrate (:rehydrate result)
-            restored-msgs (when (map? rehydrate) (:messages rehydrate))
-            restored-tool-calls (when (map? rehydrate) (:tool-calls rehydrate))
-            restored-tool-order (when (map? rehydrate) (:tool-order rehydrate))
-            ;; Query the new session-id to update TUI focus
-            new-sid (when-let [qfn (:query-fn state)]
-                      (try (:psi.agent-session/session-id (qfn [:psi.agent-session/session-id]))
-                           (catch Exception _ nil)))]
-        [(-> state
-             (cond-> new-sid (assoc :focus-session-id new-sid))
-             (assoc :messages (vec (or restored-msgs []))
-                    :tool-calls (or restored-tool-calls {})
-                    :tool-order (vec (or restored-tool-order []))
-                    :error    nil
-                    :force-clear? true)
-             (set-input-model (charm/text-input-reset (:input state)))
-             (update :messages conj {:role :assistant :text (:message result)}))
-         nil])
-
-      :text
-      [(-> state
-           (set-input-model (charm/text-input-reset (:input state)))
-           (update :messages conj {:role :assistant :text (:message result)}))
-       nil]
-
-      (:login-error :logout)
-      [(-> state
-           (set-input-model (charm/text-input-reset (:input state)))
-           (update :messages conj {:role :assistant :text (:message result)}))
-       nil]
-
+      :quit [state charm/quit-cmd]
+      :resume (open-session-selector state :resume)
+      :tree-open (open-session-selector state :tree)
+      :tree-switch (handle-tree-switch-result state result)
+      :new-session (handle-new-session-result state result)
+      :text (handle-text-result state (:message result))
+      (:login-error :logout) (handle-text-result state (:message result))
       :extension-cmd
-      (let [output (try
-                     (when-let [handler (:handler result)]
-                       (let [captured (with-out-str (handler (:args result)))]
-                         (when-not (str/blank? captured)
-                           (str/trimr captured))))
-                     (catch Exception e
-                       (timbre/warn "Extension command error:" (ex-message e))
-                       (str "[command error: " (ex-message e) "]")))]
-        [(cond-> (set-input-model state (charm/text-input-reset (:input state)))
-           output (update :messages conj {:role :assistant :text output}))
+      (let [output (run-extension-command result)]
+        [(cond-> (reset-input-model state)
+           output (append-assistant-message output))
          nil])
+      :login-start (handle-text-result state (login-start-message result))
+      (handle-text-result state (str result)))))
 
-      ;; Login start — show URL. For callback-server providers, the
-      ;; dispatch-fn in main.clj kicks off async completion. For manual-code
-      ;; providers, the next input will be treated as the auth code.
-      :login-start
-      [(-> state
-           (set-input-model (charm/text-input-reset (:input state)))
-           (update :messages conj
-                   {:role :assistant
-                    :text (str "🔑 Login to " (get-in result [:provider :name])
-                               "\n\nOpen this URL in your browser:\n" (:url result)
-                               (if (:uses-callback-server result)
-                                 "\n\nWaiting for browser callback…"
-                                 "\n\nPaste the authorization code below ↓"))}))
-       nil]
+(defn- close-session-selector
+  [state]
+  [(assoc state :phase :idle :session-selector nil :session-selector-mode nil) nil])
 
-      ;; Fallback — treat as text
-      [(-> state
-           (set-input-model (charm/text-input-reset (:input state)))
-           (update :messages conj {:role :assistant :text (str result)}))
-       nil])))
+(defn- toggle-selector-scope
+  [sel]
+  (let [new-scope (if (= :current (:scope sel)) :all :current)]
+    (if (and (= :all new-scope) (nil? (:all-sessions sel)))
+      (-> sel
+          (assoc :scope :all :all-sessions (persist/list-all-sessions))
+          selector-clamp)
+      (-> sel
+          (assoc :scope new-scope)
+          selector-clamp))))
+
+(defn- choose-tree-session
+  [state chosen]
+  (let [sid (:session-id chosen)]
+    [(restore-session-view state
+                           (restored-session-payload ((:switch-session-fn! state) sid))
+                           {:phase :idle
+                            :focus-session-id sid
+                            :session-selector nil
+                            :session-selector-mode nil})
+     nil]))
+
+(defn- choose-resume-session
+  [state chosen]
+  (let [path (:path chosen)
+        restored (when-let [resume-fn (:resume-fn! state)]
+                   (resume-fn path))]
+    [(restore-session-view state
+                           (restored-session-payload restored)
+                           {:phase :idle
+                            :session-selector nil
+                            :session-selector-mode nil
+                            :current-session-file path})
+     nil]))
+
+(defn- handle-selector-enter
+  [state sel]
+  (let [chosen (nth (selector-filtered sel) (:selected sel) nil)
+        mode   (:session-selector-mode state :resume)]
+    (cond
+      (nil? chosen) (close-session-selector state)
+      (= :tree mode) (choose-tree-session state chosen)
+      :else (choose-resume-session state chosen))))
 
 (defn- handle-selector-key
   "Handle a keypress while the session selector is open.
@@ -1224,90 +1300,15 @@
   (let [sel       (:session-selector state)
         key-token (when (msg/key-press? m) (:key m))]
     (cond
-      ;; Escape — cancel, return to idle
-      (msg/key-match? m "escape")
-      [(assoc state :phase :idle :session-selector nil :session-selector-mode nil) nil]
-
-      ;; Ctrl+C — quit
-      (msg/key-match? m "ctrl+c")
-      [state charm/quit-cmd]
-
-      ;; Tab — toggle scope (resume mode only)
+      (msg/key-match? m "escape") (close-session-selector state)
+      (msg/key-match? m "ctrl+c") [state charm/quit-cmd]
       (and (msg/key-match? m "tab")
            (not= :tree (:session-selector-mode state)))
-      (let [new-scope (if (= :current (:scope sel)) :all :current)
-            new-sel   (if (and (= :all new-scope) (nil? (:all-sessions sel)))
-                        ;; Lazily load all sessions on first Tab to :all
-                        (let [all (persist/list-all-sessions)]
-                          (-> sel
-                              (assoc :scope :all :all-sessions all)
-                              selector-clamp))
-                        (-> sel
-                            (assoc :scope new-scope)
-                            selector-clamp))]
-        [(assoc state :session-selector new-sel) nil])
-
-      ;; Up
-      (msg/key-match? m "up")
-      [(update state :session-selector selector-move -1) nil]
-
-      ;; Down
-      (msg/key-match? m "down")
-      [(update state :session-selector selector-move 1) nil]
-
-      ;; Enter — select the highlighted session
-      (msg/key-match? m "enter")
-      (let [filtered (selector-filtered sel)
-            chosen   (nth filtered (:selected sel) nil)
-            mode     (:session-selector-mode state :resume)]
-        (if chosen
-          (if (= :tree mode)
-            (let [sid             (:session-id chosen)
-                  switch-fn       (:switch-session-fn! state)
-                  restored        (when (and switch-fn sid) (switch-fn sid))
-                  restored-msgs   (if (map? restored) (:messages restored) restored)
-                  restored-tool-calls (if (map? restored) (:tool-calls restored) nil)
-                  restored-tool-order (if (map? restored) (:tool-order restored) nil)
-                  new-state       (-> state
-                                      (assoc :phase :idle
-                                             :focus-session-id sid
-                                             :session-selector nil
-                                             :session-selector-mode nil
-                                             :messages (vec (or restored-msgs []))
-                                             :stream-text nil
-                                             :stream-thinking nil
-                                             :tool-calls (or restored-tool-calls {})
-                                             :tool-order (vec (or restored-tool-order []))
-                                             :force-clear? true))]
-              [new-state nil])
-            (let [path         (:path chosen)
-                  resume-fn    (:resume-fn! state)
-                  ;; resume-fn! returns {:messages [...]
-                  ;;                      :tool-calls {...}
-                  ;;                      :tool-order [...]}.
-                  ;; Fallback keeps older callback shape ([{:role ... :text ...} ...]).
-                  restored     (when resume-fn (resume-fn path))
-                  restored-msgs (if (map? restored) (:messages restored) restored)
-                  restored-tool-calls (if (map? restored) (:tool-calls restored) nil)
-                  restored-tool-order (if (map? restored) (:tool-order restored) nil)
-                  new-state    (-> state
-                                   (assoc :phase            :idle
-                                          :session-selector nil
-                                          :session-selector-mode nil
-                                          :current-session-file path
-                                          :messages         (vec (or restored-msgs []))
-                                          :stream-text      nil
-                                          :stream-thinking  nil
-                                          :tool-calls       (or restored-tool-calls {})
-                                          :tool-order       (vec (or restored-tool-order []))))]
-              [new-state nil]))
-          ;; Nothing selected — just close
-          [(assoc state :phase :idle :session-selector nil :session-selector-mode nil) nil]))
-
-      ;; Backspace / printable chars — update search
-      (msg/key-press? m)
-      [(update state :session-selector selector-type key-token) nil]
-
+      [(assoc state :session-selector (toggle-selector-scope sel)) nil]
+      (msg/key-match? m "up") [(update state :session-selector selector-move -1) nil]
+      (msg/key-match? m "down") [(update state :session-selector selector-move 1) nil]
+      (msg/key-match? m "enter") (handle-selector-enter state sel)
+      (msg/key-press? m) [(update state :session-selector selector-type key-token) nil]
       :else [state nil])))
 
 (declare clear-live-turn)
@@ -1787,6 +1788,199 @@
 
 ;; ── Update ──────────────────────────────────────────────────
 
+(defn- update-tick-state
+  [state]
+  (let [state (cond-> state
+                (:force-clear? state) (assoc :force-clear? false))
+        state (if-let [read-fn (:ui-read-fn state)]
+                (let [snap (read-fn)]
+                  (assoc state :ui-snapshot snap :tools-expanded? (boolean (:tools-expanded? snap))))
+                state)]
+    (dispatch-ui-event! state :session/ui-dismiss-expired {})
+    (dispatch-ui-event! state :session/ui-dismiss-overflow {})
+    (refresh-extension-command-names state)))
+
+(defn- log-key-debug!
+  [m]
+  (when (and (key-debug-enabled?) (msg/key-press? m))
+    (println (str "[key-debug] key=" (pr-str (:key m))
+                  " ctrl=" (boolean (:ctrl m))
+                  " alt=" (boolean (:alt m))
+                  " shift=" (boolean (:shift m))))))
+
+(defn- handle-window-size-message
+  [state m]
+  (when (msg/window-size? m)
+    [(assoc state
+            :width (:width m)
+            :height (:height m)
+            :force-clear? true)
+     nil]))
+
+(defn- external-message-text
+  [m]
+  (or (some #(when (= :text (:type %)) (:text %)) (get-in m [:message :content]))
+      ""))
+
+(defn- handle-agent-message
+  [state m]
+  (cond
+    (agent-event? m)
+    (let [[new-state cmd] (handle-agent-event state m)]
+      [new-state (or cmd (poll-cmd (:queue state)))])
+
+    (external-message? m)
+    (let [text (external-message-text m)]
+      [(cond-> state
+         (seq text) (update :messages conj {:role :assistant
+                                            :text text
+                                            :custom-type (:custom-type m)}))
+       (poll-cmd (:queue state))])
+
+    (agent-result? m)
+    (handle-agent-result state (:result m))
+
+    (agent-error? m)
+    [(assoc state :phase :idle :error (:error m))
+     (poll-cmd (:queue state))]
+
+    (= :agent-aborted (:type m))
+    (let [merged-text (merge-queued-and-draft (:queued-text m) (input-value state))
+          status-msg  (or (:message m) "Interrupted.")]
+      [(-> state
+           (set-input-value merged-text)
+           (assoc :phase :idle)
+           clear-live-turn
+           (append-assistant-status status-msg))
+       (poll-cmd (:queue state))])
+
+    (agent-poll? m)
+    (if (= :streaming (:phase state))
+      (handle-agent-poll state)
+      [state (poll-cmd (:queue state))])
+
+    :else nil))
+
+(defn- handle-streaming-input
+  [state m]
+  (cond
+    (and (= :streaming (:phase state))
+         (msg/key-match? m "escape"))
+    (handle-streaming-escape state)
+
+    (and (= :streaming (:phase state))
+         (msg/key-match? m "enter"))
+    (handle-streaming-submit state)
+
+    (and (= :streaming (:phase state))
+         (msg/key-match? m "backspace"))
+    (let [[new-input cmd] (charm/text-input-update (:input state) m)]
+      [(set-input-model state new-input) cmd])
+
+    (and (= :streaming (:phase state))
+         (msg/key-match? m "space"))
+    (let [[new-input cmd] (charm/text-input-update (:input state) (msg/key-press " "))]
+      [(set-input-model state new-input) cmd])
+
+    (and (= :streaming (:phase state))
+         (msg/key-press? m))
+    (let [[new-input cmd] (charm/text-input-update (:input state) m)]
+      [(set-input-model state new-input) cmd])
+
+    :else nil))
+
+(defn- continue-input-line?
+  [state m]
+  (and (msg/key-match? m "enter")
+       (or (:shift m)
+           (:alt m)
+           (and (:ctrl m) (:alt m))
+           (str/ends-with? (charm/text-input-value (:input state)) "\\"))))
+
+(defn- toggle-tools-expanded
+  [state]
+  (let [new-expanded? (not (:tools-expanded? state))]
+    (dispatch-ui-event! state :session/ui-set-tools-expanded {:expanded? new-expanded?})
+    [(assoc state :tools-expanded? new-expanded?) nil]))
+
+(defn- delete-prev-word-update
+  [state]
+  (let [before    (charm/text-input-value (:input state))
+        new-state (update state :input delete-prev-word)
+        after     (charm/text-input-value (:input new-state))]
+    (when (key-debug-enabled?)
+      (println (str "[key-debug] branch=alt+backspace before=" (pr-str before)
+                    " after=" (pr-str after)
+                    " pos=" (:pos (:input new-state)))))
+    [new-state nil]))
+
+(defn- idle-edit-update
+  [state update-message next-state-fn]
+  (let [[new-input cmd] (charm/text-input-update (:input state) update-message)]
+    [(next-state-fn (set-input-model state new-input)) cmd]))
+
+(defn- idle-next-state-after-edit
+  [state key-token]
+  (if (autocomplete-open? state)
+    (refresh-autocomplete state (get-in state [:prompt-input-state :autocomplete :trigger-mode]))
+    (maybe-auto-open-autocomplete state key-token)))
+
+(defn- autocomplete-nav-update
+  [state m autocomplete?]
+  (cond
+    (and autocomplete? (msg/key-match? m "up")) [(move-autocomplete-selection state -1) nil]
+    (and autocomplete? (msg/key-match? m "down")) [(move-autocomplete-selection state 1) nil]
+    (and (not autocomplete?) (msg/key-match? m "up")) [(browse-history state :up) nil]
+    (and (not autocomplete?) (msg/key-match? m "down")) [(browse-history state :down) nil]
+    :else nil))
+
+(defn- autocomplete-submit-update
+  [state m autocomplete? run-agent-fn!]
+  (cond
+    (and autocomplete? (msg/key-match? m "tab")) [(apply-selected-autocomplete state) nil]
+    (msg/key-match? m "tab") [(open-tab-autocomplete state) nil]
+    (continue-input-line? state m) (continue-input-line state)
+    (and autocomplete? (msg/key-match? m "enter"))
+    (let [slash?     (= :slash_command (get-in state [:prompt-input-state :autocomplete :context]))
+          next-state (apply-selected-autocomplete state)]
+      (if slash?
+        (submit-input next-state run-agent-fn!)
+        [next-state nil]))
+    (msg/key-match? m "enter") (submit-input state run-agent-fn!)
+    :else nil))
+
+(defn- idle-special-key-update
+  [state m autocomplete?]
+  (cond
+    (msg/key-match? m "ctrl+d") (handle-ctrl-d state)
+    (and autocomplete? (msg/key-match? m "escape")) [(clear-autocomplete state) nil]
+    (and (not (has-active-dialog? state)) (msg/key-match? m "escape")) (handle-idle-escape state)
+    (msg/key-match? m "ctrl+o") (toggle-tools-expanded state)
+    (msg/key-match? m "alt+backspace") (delete-prev-word-update state)
+    :else nil))
+
+(defn- idle-text-edit-update
+  [state m autocomplete?]
+  (cond
+    (msg/key-match? m "backspace")
+    (idle-edit-update state m #(if autocomplete?
+                                 (refresh-autocomplete % (get-in state [:prompt-input-state :autocomplete :trigger-mode]))
+                                 %))
+    (msg/key-match? m "space")
+    (idle-edit-update state (msg/key-press " ") #(idle-next-state-after-edit % :space))
+    (msg/key-press? m)
+    (let [key-token (:key m)]
+      (idle-edit-update state m #(idle-next-state-after-edit % key-token)))
+    :else nil))
+
+(defn- handle-idle-key-message
+  [state m run-agent-fn!]
+  (let [autocomplete? (autocomplete-open? state)]
+    (or (idle-special-key-update state m autocomplete?)
+        (autocomplete-nav-update state m autocomplete?)
+        (autocomplete-submit-update state m autocomplete? run-agent-fn!)
+        (idle-text-edit-update state m autocomplete?))))
+
 (defn make-update
   "Create an update function.
 
@@ -1795,256 +1989,20 @@
    or {:kind :error :message str} on queue when finished."
   [run-agent-fn!]
   (fn [state m]
-    ;; One-shot render flag used by view for explicit full-screen clears.
-    (let [state (if (:force-clear? state)
-                  (assoc state :force-clear? false)
-                  state)
-          ;; Refresh ui-snapshot and sync tools-expanded each tick.
-          state (if-let [read-fn (:ui-read-fn state)]
-                  (let [snap (read-fn)]
-                    (assoc state :ui-snapshot snap :tools-expanded? (boolean (:tools-expanded? snap))))
-                  state)
-          ;; Dismiss expired/overflow notifications via dispatch each tick.
-          _ (when-let [dispatch-fn (:ui-dispatch-fn state)]
-              (dispatch-fn :session/ui-dismiss-expired {})
-              (dispatch-fn :session/ui-dismiss-overflow {}))
-          ;; Refresh extension slash commands discovered from the backend.
-          state (refresh-extension-command-names state)]
-
-      (when (and (key-debug-enabled?) (msg/key-press? m))
-        (println (str "[key-debug] key=" (pr-str (:key m))
-                      " ctrl=" (boolean (:ctrl m))
-                      " alt=" (boolean (:alt m))
-                      " shift=" (boolean (:shift m)))))
-
-      (cond
-      ;; Ctrl+C — clear first, then quit on second press within window.
-        (msg/key-match? m "ctrl+c")
-        (handle-ctrl-c state)
-
-      ;; Ctrl+D — exit only when input is empty.
-        (and (= :idle (:phase state))
-             (msg/key-match? m "ctrl+d"))
-        (handle-ctrl-d state)
-
-      ;; Escape closes autocomplete first.
-        (and (= :idle (:phase state))
-             (autocomplete-open? state)
-             (msg/key-match? m "escape"))
-        [(clear-autocomplete state) nil]
-
-      ;; Escape in streaming interrupts active work.
-        (and (= :streaming (:phase state))
-             (msg/key-match? m "escape"))
-        (handle-streaming-escape state)
-
-      ;; Escape while idle delegates to interrupt/double-escape behavior.
-        (and (= :idle (:phase state))
-             (not (has-active-dialog? state))
-             (msg/key-match? m "escape"))
-        (handle-idle-escape state)
-
-      ;; Window resize
-        (msg/window-size? m)
-        [(assoc state
-                :width (:width m)
-                :height (:height m)
-                :force-clear? true)
-         nil]
-
-      ;; Dialog active — route all key input to dialog handler
-        (and (has-active-dialog? state) (msg/key-press? m))
-        (or (handle-dialog-key state m) [state nil])
-
-      ;; Agent progress event (tool start, delta, result, text delta)
-        (agent-event? m)
-        (let [[new-state cmd] (handle-agent-event state m)]
-          [new-state (or cmd (poll-cmd (:queue state)))])
-
-      ;; Async external transcript message (e.g. extension background completion)
-        (external-message? m)
-        (let [msg        (:message m)
-              text       (or (some #(when (= :text (:type %)) (:text %)) (:content msg))
-                             "")
-              custom-type (:custom-type msg)]
-          [(cond-> state
-             (seq text) (update :messages conj {:role :assistant
-                                                :text text
-                                                :custom-type custom-type}))
-           (poll-cmd (:queue state))])
-
-      ;; Agent result
-        (agent-result? m)
-        (handle-agent-result state (:result m))
-
-      ;; Agent error
-        (agent-error? m)
-        [(-> state
-             (assoc :phase :idle
-                    :error (:error m)))
-         (poll-cmd (:queue state))]
-
-      ;; Agent aborted via interrupt
-        (= :agent-aborted (:type m))
-        (let [queued-text (:queued-text m)
-              merged-text (merge-queued-and-draft queued-text (input-value state))
-              status-msg  (or (:message m) "Interrupted.")]
-          [(-> state
-               (set-input-value merged-text)
-               (assoc :phase :idle)
-               clear-live-turn
-               (append-assistant-status status-msg))
-           (poll-cmd (:queue state))])
-
-      ;; Agent poll timeout → keep polling (and animate spinner while streaming)
-        (agent-poll? m)
-        (if (= :streaming (:phase state))
-          (handle-agent-poll state)
-          [state (poll-cmd (:queue state))])
-
-      ;; Session selector active — route all key input to selector handler
-        (= :selecting-session (:phase state))
-        (handle-selector-key state m)
-
-      ;; Ctrl+O toggles global tool expansion state.
-        (and (= :idle (:phase state))
-             (msg/key-match? m "ctrl+o"))
-        (let [new-expanded? (not (:tools-expanded? state))]
-          (when-let [dispatch-fn (:ui-dispatch-fn state)]
-            (dispatch-fn :session/ui-set-tools-expanded {:expanded? new-expanded?}))
-          [(assoc state :tools-expanded? new-expanded?) nil])
-
-      ;; Alt/Meta+Backspace delete previous word.
-      ;; (Explicit handling to avoid charm's binding-order issue.)
-        (and (= :idle (:phase state))
-             (msg/key-match? m "alt+backspace"))
-        (let [before (charm/text-input-value (:input state))
-              new-state (update state :input delete-prev-word)
-              after  (charm/text-input-value (:input new-state))]
-          (when (key-debug-enabled?)
-            (println (str "[key-debug] branch=alt+backspace before=" (pr-str before)
-                          " after=" (pr-str after)
-                          " pos=" (:pos (:input new-state)))))
-          [new-state nil])
-
-      ;; Up/Down navigate autocomplete selection when menu is open.
-        (and (= :idle (:phase state))
-             (autocomplete-open? state)
-             (msg/key-match? m "up"))
-        [(move-autocomplete-selection state -1) nil]
-
-        (and (= :idle (:phase state))
-             (autocomplete-open? state)
-             (msg/key-match? m "down"))
-        [(move-autocomplete-selection state 1) nil]
-
-      ;; Up/Down browse prompt history when autocomplete is closed.
-        (and (= :idle (:phase state))
-             (not (autocomplete-open? state))
-             (msg/key-match? m "up"))
-        [(browse-history state :up) nil]
-
-        (and (= :idle (:phase state))
-             (not (autocomplete-open? state))
-             (msg/key-match? m "down"))
-        [(browse-history state :down) nil]
-
-      ;; Tab accepts selected autocomplete suggestion.
-        (and (= :idle (:phase state))
-             (autocomplete-open? state)
-             (msg/key-match? m "tab"))
-        [(apply-selected-autocomplete state) nil]
-
-      ;; Tab opens contextual slash/path autocomplete when no menu exists.
-        (and (= :idle (:phase state))
-             (msg/key-match? m "tab"))
-        [(open-tab-autocomplete state) nil]
-
-      ;; Enter behavior:
-      ;; - shift/alt/cmd(ctrl+alt)+enter => newline continuation
-      ;; - trailing "\\" + enter => newline continuation
-      ;; - plain enter accepts autocomplete (and submits slash command)
-      ;; - otherwise plain enter submits
-        (and (= :idle (:phase state))
-             (msg/key-match? m "enter")
-             (or (:shift m)
-                 (:alt m)
-                 (and (:ctrl m) (:alt m))
-                 (str/ends-with? (charm/text-input-value (:input state)) "\\")))
-        (continue-input-line state)
-
-        (and (= :idle (:phase state))
-             (autocomplete-open? state)
-             (msg/key-match? m "enter"))
-        (let [slash? (= :slash_command (get-in state [:prompt-input-state :autocomplete :context]))
-              s1     (apply-selected-autocomplete state)]
-          (if slash?
-            (submit-input s1 run-agent-fn!)
-            [s1 nil]))
-
-      ;; Enter → submit (idle + has text)
-        (and (= :idle (:phase state))
-             (msg/key-match? m "enter"))
-        (submit-input state run-agent-fn!)
-
-      ;; Enter while streaming queues steering/follow-up input.
-        (and (= :streaming (:phase state))
-             (msg/key-match? m "enter"))
-        (handle-streaming-submit state)
-
-      ;; Backspace edits text while streaming.
-        (and (= :streaming (:phase state))
-             (msg/key-match? m "backspace"))
-        (let [[new-input cmd] (charm/text-input-update (:input state) m)]
-          [(set-input-model state new-input) cmd])
-
-      ;; Space may arrive as keyword :space while streaming.
-        (and (= :streaming (:phase state))
-             (msg/key-match? m "space"))
-        (let [[new-input cmd] (charm/text-input-update (:input state) (msg/key-press " "))]
-          [(set-input-model state new-input) cmd])
-
-      ;; Text input remains editable while streaming.
-        (and (= :streaming (:phase state))
-             (msg/key-press? m))
-        (let [[new-input cmd] (charm/text-input-update (:input state) m)]
-          [(set-input-model state new-input) cmd])
-
-      ;; Backspace edits text then refreshes open autocomplete.
-        (and (= :idle (:phase state))
-             (msg/key-match? m "backspace"))
-        (let [[new-input cmd] (charm/text-input-update (:input state) m)
-              next-state      (set-input-model state new-input)
-              next-state      (if (autocomplete-open? state)
-                                (refresh-autocomplete next-state (get-in state [:prompt-input-state :autocomplete :trigger-mode]))
-                                next-state)]
-          [next-state cmd])
-
-      ;; Space from terminal input may arrive as keyword :space (not " ").
-      ;; Normalize to a printable char so it inserts immediately.
-        (and (= :idle (:phase state))
-             (msg/key-match? m "space"))
-        (let [[new-input cmd] (charm/text-input-update (:input state) (msg/key-press " "))
-              next-state      (set-input-model state new-input)
-              next-state      (if (autocomplete-open? state)
-                                (refresh-autocomplete next-state (get-in state [:prompt-input-state :autocomplete :trigger-mode]))
-                                (maybe-auto-open-autocomplete next-state :space))]
-          [next-state cmd])
-
-      ;; All other keys → text input (idle only)
-        (and (= :idle (:phase state))
-             (msg/key-press? m))
-        (let [key-token       (:key m)
-              [new-input cmd] (charm/text-input-update (:input state) m)
-              next-state      (set-input-model state new-input)
-              next-state      (if (autocomplete-open? state)
-                                (refresh-autocomplete next-state (get-in state [:prompt-input-state :autocomplete :trigger-mode]))
-                                (maybe-auto-open-autocomplete next-state key-token))]
-          [next-state cmd])
-
-      ;; Ignore everything else (keys during streaming, etc.)
-        :else
-        [state nil]))))
+    (let [state (update-tick-state state)]
+      (log-key-debug! m)
+      (or (when (msg/key-match? m "ctrl+c")
+            (handle-ctrl-c state))
+          (handle-window-size-message state m)
+          (when (and (has-active-dialog? state) (msg/key-press? m))
+            (or (handle-dialog-key state m) [state nil]))
+          (handle-agent-message state m)
+          (when (= :selecting-session (:phase state))
+            (handle-selector-key state m))
+          (when (= :idle (:phase state))
+            (handle-idle-key-message state m run-agent-fn!))
+          (handle-streaming-input state m)
+          [state nil]))))
 
 ;; ── View ────────────────────────────────────────────────────
 
@@ -2252,82 +2210,89 @@
       (and (number? fraction) (> fraction 0.7)) (charm/render notify-warning-style text)
       :else (charm/render dim-style text))))
 
-(defn- build-footer-lines
-  [state width]
-  (let [d                (footer-data state)
-        cwd              (or (:psi.agent-session/cwd d) (:cwd state) "")
-        git-branch       (:psi.agent-session/git-branch d)
-        session-name     (:psi.agent-session/session-name d)
-        usage-input      (or (:psi.agent-session/usage-input d) 0)
-        usage-output     (or (:psi.agent-session/usage-output d) 0)
-        usage-cache-read (or (:psi.agent-session/usage-cache-read d) 0)
-        usage-cache-write (or (:psi.agent-session/usage-cache-write d) 0)
-        usage-cost-total (or (:psi.agent-session/usage-cost-total d) 0.0)
-        context-fraction (:psi.agent-session/context-fraction d)
-        context-window   (:psi.agent-session/context-window d)
-        auto-compact?    (boolean (:psi.agent-session/auto-compaction-enabled d))
-        model-provider   (:psi.agent-session/model-provider d)
-        model-id         (:psi.agent-session/model-id d)
+(defn- footer-path-line
+  [d state width]
+  (let [cwd          (or (:psi.agent-session/cwd d) (:cwd state) "")
+        git-branch   (:psi.agent-session/git-branch d)
+        session-name (:psi.agent-session/session-name d)
+        path0        (replace-home-with-tilde cwd)
+        path1        (if (seq git-branch) (str path0 " (" git-branch ")") path0)
+        path2        (if (seq session-name) (str path1 " • " session-name) path1)]
+    (charm/render dim-style (middle-truncate path2 (max 1 width)))))
+
+(defn- footer-left-parts
+  [d]
+  (cond-> []
+    (pos? (or (:psi.agent-session/usage-input d) 0))
+    (conj (charm/render dim-style (str "↑" (format-token-count (:psi.agent-session/usage-input d)))))
+    (pos? (or (:psi.agent-session/usage-output d) 0))
+    (conj (charm/render dim-style (str "↓" (format-token-count (:psi.agent-session/usage-output d)))))
+    (pos? (or (:psi.agent-session/usage-cache-read d) 0))
+    (conj (charm/render dim-style (str "R" (format-token-count (:psi.agent-session/usage-cache-read d)))))
+    (pos? (or (:psi.agent-session/usage-cache-write d) 0))
+    (conj (charm/render dim-style (str "W" (format-token-count (:psi.agent-session/usage-cache-write d)))))
+    (pos? (or (:psi.agent-session/usage-cost-total d) 0.0))
+    (conj (charm/render dim-style (format "$%.3f" (double (:psi.agent-session/usage-cost-total d)))))
+    :always
+    (conj (context-piece (:psi.agent-session/context-fraction d)
+                         (:psi.agent-session/context-window d)
+                         (boolean (:psi.agent-session/auto-compaction-enabled d))))))
+
+(defn- footer-right-text
+  [d]
+  (let [model-label      (or (:psi.agent-session/model-id d) "no-model")
+        provider-label   (or (:psi.agent-session/model-provider d) "no-provider")
         model-reasoning? (boolean (:psi.agent-session/model-reasoning d))
         thinking-level   (:psi.agent-session/thinking-level d)
-        statuses         (or (:psi.ui/statuses d) [])
+        right-base       (if model-reasoning?
+                           (if (= :off thinking-level)
+                             (str model-label " • thinking off")
+                             (str model-label " • " (name (or thinking-level :off))))
+                           model-label)]
+    (str "(" provider-label ") " right-base)))
 
-        path0 (replace-home-with-tilde cwd)
-        path1 (if (seq git-branch) (str path0 " (" git-branch ")") path0)
-        path2 (if (seq session-name) (str path1 " • " session-name) path1)
-        path-line (charm/render dim-style (middle-truncate path2 (max 1 width)))
-
-        left-parts (cond-> []
-                     (pos? usage-input) (conj (charm/render dim-style (str "↑" (format-token-count usage-input))))
-                     (pos? usage-output) (conj (charm/render dim-style (str "↓" (format-token-count usage-output))))
-                     (pos? usage-cache-read) (conj (charm/render dim-style (str "R" (format-token-count usage-cache-read))))
-                     (pos? usage-cache-write) (conj (charm/render dim-style (str "W" (format-token-count usage-cache-write))))
-                     (pos? usage-cost-total) (conj (charm/render dim-style (format "$%.3f" (double usage-cost-total))))
-                     :always (conj (context-piece context-fraction context-window auto-compact?)))
-        left0 (str/join " " left-parts)
-        left  (if (> (ansi/visible-width left0) width)
-                (trim-right-visible left0 width)
-                left0)
-
-        model-label (or model-id "no-model")
-        right-base (if model-reasoning?
-                     (if (= :off thinking-level)
-                       (str model-label " • thinking off")
-                       (str model-label " • " (name (or thinking-level :off))))
-                     model-label)
-        provider-label (or model-provider "no-provider")
-        right0 (str "(" provider-label ") " right-base)
-        right (charm/render dim-style right0)
-
+(defn- footer-stats-line
+  [left right0 width]
+  (let [left    (if (> (ansi/visible-width left) width)
+                  (trim-right-visible left width)
+                  left)
+        right   (charm/render dim-style right0)
         left-w  (ansi/visible-width left)
         right-w (ansi/visible-width right)
-        min-pad 2
-        total-needed (+ left-w min-pad right-w)
-        stats-line
-        (cond
-          (<= total-needed width)
-          (str left (apply str (repeat (- width left-w right-w) " ")) right)
+        min-pad 2]
+    (cond
+      (<= (+ left-w min-pad right-w) width)
+      (str left (apply str (repeat (- width left-w right-w) " ")) right)
 
-          (> (- width left-w min-pad) 3)
-          (let [avail (- width left-w min-pad)
-                right-trunc (charm/render dim-style (trim-right-visible right0 avail))]
-            (str left (apply str (repeat (max min-pad (- width left-w (ansi/visible-width right-trunc))) " ")) right-trunc))
+      (> (- width left-w min-pad) 3)
+      (let [avail       (- width left-w min-pad)
+            right-trunc (charm/render dim-style (trim-right-visible right0 avail))]
+        (str left
+             (apply str (repeat (max min-pad (- width left-w (ansi/visible-width right-trunc))) " "))
+             right-trunc))
 
-          :else left)
+      :else left)))
 
-        status-line
-        (when (seq statuses)
-          (let [joined (->> statuses
-                            (sort-by :extension-id)
-                            (map (comp sanitize-status-text :text))
-                            (remove str/blank?)
-                            (str/join " "))]
-            (when (seq joined)
-              (ansi/truncate-to-width joined width (charm/render dim-style "...")))))
+(defn- footer-status-line
+  [d width]
+  (let [joined (->> (or (:psi.ui/statuses d) [])
+                    (sort-by :extension-id)
+                    (map (comp sanitize-status-text :text))
+                    (remove str/blank?)
+                    (str/join " "))]
+    (when (seq joined)
+      (ansi/truncate-to-width joined width (charm/render dim-style "...")))))
 
-        lines (cond-> [path-line stats-line]
-                status-line (conj status-line))]
-    lines))
+(defn- build-footer-lines
+  [state width]
+  (let [d           (footer-data state)
+        path-line   (footer-path-line d state width)
+        left        (str/join " " (footer-left-parts d))
+        right0      (footer-right-text d)
+        stats-line  (footer-stats-line left right0 width)
+        status-line (footer-status-line d width)]
+    (cond-> [path-line stats-line]
+      status-line (conj status-line))))
 
 (defn- render-footer
   [state width]
@@ -2514,90 +2479,104 @@
       (str "~" (subs p (count home)))
       (or p ""))))
 
+(defn- selector-scope-string
+  [scope tree-mode?]
+  (if tree-mode?
+    ""
+    (if (= :current scope)
+      (str (charm/render selector-sel-style "◉ Current") "  ○ All")
+      (str "○ Current  " (charm/render selector-sel-style "◉ All")))))
+
+(defn- selector-title
+  [scope tree-mode?]
+  (let [title-label (if tree-mode? "Session Tree" "Resume Session")
+        title-hints (if tree-mode?
+                      "[↑↓=nav Enter=switch Esc=cancel]"
+                      "[Tab=scope ↑↓=nav Enter=select Esc=cancel]")
+        scope-str   (selector-scope-string scope tree-mode?)]
+    (str (charm/render selector-title-style title-label)
+         (when (seq scope-str) (str "  " scope-str))
+         "  " (charm/render selector-hint-style title-hints))))
+
+(defn- selector-label-base
+  [info]
+  (let [sid-str (some-> (:session-id info) str)]
+    (-> (or (:name info)
+            (when sid-str
+              (str "session-" (subs sid-str 0 (min 8 (count sid-str)))))
+            (:first-message info)
+            "(empty)")
+        (str/replace #"\n" " "))))
+
+(defn- tree-selector-label
+  [info]
+  (let [glyph    (when (zero? (int (or (:tree-depth info) 0)))
+                   (charm/render dim-style "● "))
+        worktree (shorten-path (or (:worktree-path info) (:cwd info)))]
+    (str (or (:tree-prefix info) "")
+         (or glyph "")
+         (selector-label-base info)
+         (when (seq worktree)
+           (charm/render dim-style (str "  " worktree))))))
+
+(defn- selector-right-cell
+  [sel-state info scope tree-mode?]
+  (let [worktree (shorten-path (or (:worktree-path info) (:cwd info)))]
+    (if tree-mode?
+      (let [sid         (:session-id info)
+            sid-str     (some-> sid str)
+            active?     (= sid (:active-session-id sel-state))
+            streaming?  (boolean (:is-streaming info))]
+        (str (render-tree-status-cell active? streaming?)
+             (when sid-str
+               (charm/render dim-style
+                             (str "  " (subs sid-str 0 (min 8 (count sid-str))))))))
+      (str (charm/render dim-style (str (:message-count info) " " (format-age (:modified info))))
+           (when (= :all scope)
+             (str " " (charm/render dim-style worktree)))))))
+
+(defn- selector-entry-line
+  [sel-state current-session-file width tree-mode? scope selected i info]
+  (let [is-sel     (= i selected)
+        is-current (if tree-mode?
+                     (or (= (:session-id info) (:active-session-id sel-state))
+                         (= (:session-id info) (:id info)))
+                     (= (:path info) current-session-file))
+        label      (if tree-mode?
+                     (tree-selector-label info)
+                     (selector-label-base info))
+        right      (selector-right-cell sel-state info scope tree-mode?)
+        right-w    (ansi/visible-width right)
+        avail      (max 10 (- width 4 right-w))
+        label-tr   (if (> (ansi/visible-width label) avail)
+                     (ansi/strip-ansi (ansi/truncate-to-width label avail "…"))
+                     label)
+        cursor     (if is-sel
+                     (charm/render selector-sel-style "▸ ")
+                     "  ")
+        styled-lbl (cond
+                     is-current (charm/render selector-cur-style label-tr)
+                     is-sel (charm/render selector-sel-style label-tr)
+                     :else label-tr)
+        pad        (str/join (repeat (max 1 (- width 2 (ansi/visible-width label-tr) right-w)) " "))]
+    (str cursor styled-lbl pad right)))
+
 (defn- render-session-selector
   "Render the /resume or /tree session picker."
   [sel-state current-session-file width mode]
   (let [{:keys [scope search selected]} sel-state
-        filtered  (selector-filtered sel-state)
-        n         (count filtered)
-        tree-mode? (= :tree mode)
-        scope-str (if tree-mode?
-                    ""
-                    (if (= :current scope)
-                      (str (charm/render selector-sel-style "◉ Current") "  ○ All")
-                      (str "○ Current  " (charm/render selector-sel-style "◉ All"))))
-        title-label (if tree-mode? "Session Tree" "Resume Session")
-        title-hints (if tree-mode?
-                      "[↑↓=nav Enter=switch Esc=cancel]"
-                      "[Tab=scope ↑↓=nav Enter=select Esc=cancel]")
-        title     (str (charm/render selector-title-style title-label)
-                       (when (seq scope-str) (str "  " scope-str))
-                       "  " (charm/render selector-hint-style title-hints))]
-    (str title "\n"
+        filtered   (selector-filtered sel-state)
+        n          (count filtered)
+        tree-mode? (= :tree mode)]
+    (str (selector-title scope tree-mode?) "\n"
          (charm/render selector-search-style (str "Search: " search "█")) "\n"
          (render-separator width) "\n"
          (if (zero? n)
            (charm/render dim-style "  (no sessions found)\n")
            (str/join "\n"
-                     (map-indexed
-                      (fn [i info]
-                        (let [is-sel     (= i selected)
-                              is-current (if tree-mode?
-                                           (or (= (:session-id info) (:active-session-id sel-state))
-                                               (= (:session-id info) (:id info)))
-                                           (= (:path info) current-session-file))
-                              age        (format-age (:modified info))
-                              sid-str    (some-> (:session-id info) str)
-                              label-base (or (:name info)
-                                             (when sid-str
-                                               (str "session-" (subs sid-str 0 (min 8 (count sid-str)))))
-                                             (:first-message info)
-                                             "(empty)")
-                              label      (str/replace label-base #"\n" " ")
-                              tree-prefix (if tree-mode? (or (:tree-prefix info) "") "")
-                              tree-depth (int (or (:tree-depth info) 0))
-                              root?      (zero? tree-depth)
-                              glyph      (when tree-mode?
-                                           (if root?
-                                             (charm/render dim-style "● ")
-                                             ""))
-                              worktree   (shorten-path (or (:worktree-path info) (:cwd info)))
-                              label      (if tree-mode?
-                                           (str tree-prefix glyph label
-                                                (when (seq worktree)
-                                                  (charm/render dim-style (str "  " worktree))))
-                                           label)
-                              right      (if tree-mode?
-                                           (let [sid         (:session-id info)
-                                                 sid-str     (some-> sid str)
-                                                 active?     (= sid (:active-session-id sel-state))
-                                                 streaming?  (boolean (:is-streaming info))
-                                                 status-cell (render-tree-status-cell active? streaming?)]
-                                             (str status-cell
-                                                  (when sid-str
-                                                    (charm/render dim-style
-                                                                  (str "  " (subs sid-str 0 (min 8 (count sid-str))))))))
-                                           (let [cwd-part   (when (= :all scope)
-                                                              (str " " (charm/render dim-style worktree)))
-                                                 mc (:message-count info)]
-                                             (str (charm/render dim-style
-                                                                (str mc " " age))
-                                                  (or cwd-part ""))))
-                              right-w    (ansi/visible-width right)
-                              avail      (max 10 (- width 4 right-w))
-                              label-tr   (if (> (ansi/visible-width label) avail)
-                                           (ansi/strip-ansi (ansi/truncate-to-width label avail "…"))
-                                           label)
-                              cursor     (if is-sel
-                                           (charm/render selector-sel-style "▸ ")
-                                           "  ")
-                              styled-lbl (cond
-                                           is-current (charm/render selector-cur-style label-tr)
-                                           is-sel     (charm/render selector-sel-style label-tr)
-                                           :else      label-tr)
-                              pad        (str/join (repeat (max 1 (- width 2 (ansi/visible-width label-tr) right-w)) " "))]
-                          (str cursor styled-lbl pad right)))
-                      filtered)))
+                     (map-indexed (fn [i info]
+                                    (selector-entry-line sel-state current-session-file width tree-mode? scope selected i info))
+                                  filtered)))
          "\n"
          (when (pos? n)
            (charm/render dim-style (str "  " (inc selected) "/" n "\n"))))))
