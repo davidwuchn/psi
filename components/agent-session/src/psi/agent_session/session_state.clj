@@ -67,12 +67,25 @@
   [sid]
   [:agent-session :sessions sid :turn :ctx])
 
-(def ^:private nrepl-runtime-path [:runtime :nrepl])
-(def ^:private background-jobs-path [:background-jobs :store])
-(def ^:private ui-state-path [:ui :extension-ui])
-(def ^:private recursion-state-path [:recursion])
-(def ^:private oauth-state-path [:oauth])
-(def ^:private rpc-trace-path [:runtime :rpc-trace])
+(def ^:private static-state-paths
+  {:nrepl-runtime   [:runtime :nrepl]
+   :background-jobs [:background-jobs :store]
+   :ui-state        [:ui :extension-ui]
+   :recursion       [:recursion]
+   :oauth           [:oauth]
+   :rpc-trace       [:runtime :rpc-trace]})
+
+(def ^:private session-state-path-builders
+  {:session-data             session-data-path
+   :provider-error-replies   #(conj (session-data-path %) :provider-error-replies)
+   :tool-output-stats        #(session-telemetry-path % :tool-output-stats)
+   :tool-call-attempts       #(session-telemetry-path % :tool-call-attempts)
+   :tool-lifecycle-events    #(session-telemetry-path % :tool-lifecycle-events)
+   :provider-requests        #(session-telemetry-path % :provider-requests)
+   :provider-replies         #(session-telemetry-path % :provider-replies)
+   :journal                  session-journal-path
+   :flush-state              session-flush-state-path
+   :turn-ctx                 session-turn-ctx-path})
 
 (defn state-path
   "Return the canonical root-state path vector for the named state key.
@@ -84,24 +97,9 @@
    Returns nil for unknown keys."
   ([k] (state-path k nil))
   ([k sid]
-   (case k
-     :session-data (when sid (session-data-path sid))
-     :provider-error-replies (when sid (conj (session-data-path sid) :provider-error-replies))
-     :tool-output-stats (when sid (session-telemetry-path sid :tool-output-stats))
-     :tool-call-attempts (when sid (session-telemetry-path sid :tool-call-attempts))
-     :tool-lifecycle-events (when sid (session-telemetry-path sid :tool-lifecycle-events))
-     :provider-requests (when sid (session-telemetry-path sid :provider-requests))
-     :provider-replies (when sid (session-telemetry-path sid :provider-replies))
-     :nrepl-runtime nrepl-runtime-path
-     :journal (when sid (session-journal-path sid))
-     :flush-state (when sid (session-flush-state-path sid))
-     :turn-ctx (when sid (session-turn-ctx-path sid))
-     :background-jobs background-jobs-path
-     :ui-state ui-state-path
-     :recursion recursion-state-path
-     :oauth oauth-state-path
-     :rpc-trace rpc-trace-path
-     nil)))
+   (if-let [build-path (get session-state-path-builders k)]
+     (when sid (build-path sid))
+     (get static-state-paths k))))
 
 ;;; Private state primitives
 
