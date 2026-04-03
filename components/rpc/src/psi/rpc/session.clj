@@ -355,6 +355,82 @@
         (when state (events/focus-session-id state))
         (default-session-id-in ctx))))
 
+(defn- prompt-request-args
+  [ctx request emit-frame! state session-id session-deps]
+  {:ctx ctx
+   :request request
+   :emit-frame! emit-frame!
+   :state state
+   :session-id session-id
+   :session-deps session-deps
+   :current-ai-model current-ai-model
+   :effective-sync-on-git-head-change? effective-sync-on-git-head-change?
+   :start-daemon-thread! start-daemon-thread!
+   :login-handle-start-command! login/handle-login-start-command!
+   :login-pending-state login/pending-login-state
+   :login-complete-pending! login/complete-pending-login!})
+
+(defn- navigation-request
+  [ctx request emit-frame! state session-id]
+  {:ctx ctx
+   :request (assoc request :emit-frame! emit-frame!)
+   :params (params-map request)
+   :state state
+   :session-id session-id})
+
+(defn- dispatch-rpc-op
+  [{:keys [ctx request emit-frame! state session-id session-deps on-new-session!]}]
+  (let [op     (:op request)
+        params (params-map request)]
+    (case op
+      "ping" (ops/handle-ping request)
+      "query_eql" (ops/handle-query-eql {:ctx ctx :request request :params params :session-id session-id :parse-query-edn! parse-query-edn!})
+      "command" (rpc.commands/run-command! {:ctx ctx
+                                             :request request
+                                             :emit-frame! emit-frame!
+                                             :state state
+                                             :session-id session-id
+                                             :session-deps session-deps
+                                             :current-ai-model current-ai-model
+                                             :start-daemon-thread! start-daemon-thread!
+                                             :login-handler login/handle-login-start-command!})
+      "frontend_action_result" (frontend-actions/handle-frontend-action-result! {:ctx ctx :request (assoc request :emit-frame! emit-frame!) :params params :state state :session-id session-id :resolve-model resolve-model})
+      "prompt" (let [_message (req-arg! request params :message #(and (string? %) (not (str/blank? %))) "non-empty string")]
+                 (prompt/run-prompt-async! (prompt-request-args ctx request emit-frame! state session-id session-deps)))
+      "prompt_while_streaming" (ops/handle-prompt-while-streaming {:ctx ctx :request request :params params :state state :session-id session-id})
+      "steer" (ops/handle-steer {:ctx ctx :request request :params params :state state :session-id session-id})
+      "follow_up" (ops/handle-follow-up {:ctx ctx :request request :params params :state state :session-id session-id})
+      "abort" (ops/handle-abort {:ctx ctx :request request :state state :session-id session-id})
+      "interrupt" (ops/handle-interrupt {:ctx ctx :request request :state state :session-id session-id})
+      "list_background_jobs" (handle-list-background-jobs! ctx request params session-id)
+      "inspect_background_job" (handle-inspect-background-job! ctx request params session-id)
+      "cancel_background_job" (handle-cancel-background-job! ctx request params session-id)
+      "login_begin" (login/handle-login-begin! {:ctx ctx :request request :params params :state state :session-id session-id :session-deps session-deps :current-ai-model current-ai-model})
+      "login_complete" (login/handle-login-complete! {:ctx ctx :request request :params params :state state})
+      "new_session" (navigation/handle-new-session! {:ctx ctx
+                                                      :request (assoc request :emit-frame! emit-frame!)
+                                                      :state state
+                                                      :on-new-session! on-new-session!})
+      "switch_session" (navigation/handle-switch-session! (navigation-request ctx request emit-frame! state session-id))
+      "list_sessions" (ops/handle-list-sessions {:ctx ctx :request request :state state :session-id session-id})
+      "fork" (navigation/handle-fork! (navigation-request ctx request emit-frame! state session-id))
+      "set_session_name" (ops/handle-set-session-name {:ctx ctx :request request :params params :state state :session-id session-id})
+      "set_model" (ops/handle-set-model {:ctx ctx :request request :params params :state state :session-id session-id :resolve-model resolve-model})
+      "cycle_model" (ops/handle-cycle-model {:ctx ctx :request request :params params :state state :session-id session-id})
+      "set_thinking_level" (ops/handle-set-thinking-level {:ctx ctx :request request :params params :state state :session-id session-id})
+      "cycle_thinking_level" (ops/handle-cycle-thinking-level {:ctx ctx :request request :state state :session-id session-id})
+      "compact" (ops/handle-compact {:ctx ctx :request request :params params :state state :session-id session-id})
+      "set_auto_compaction" (ops/handle-set-auto-compaction {:ctx ctx :request request :params params :state state :session-id session-id})
+      "set_auto_retry" (ops/handle-set-auto-retry {:ctx ctx :request request :params params :state state :session-id session-id})
+      "get_state" (ops/handle-get-state {:ctx ctx :request request :state state :session-id session-id})
+      "get_messages" (ops/handle-get-messages {:ctx ctx :request request :state state :session-id session-id})
+      "get_session_stats" (ops/handle-get-session-stats {:ctx ctx :request request :state state :session-id session-id})
+      "subscribe" (ops/handle-subscribe {:ctx ctx :request (assoc request :emit-frame! emit-frame!) :params params :state state :session-id session-id :session-deps session-deps :maybe-start-external-event-loop! maybe-start-external-event-loop! :register-rpc-extension-run-fn! register-rpc-extension-run-fn! :maybe-start-ui-watch-loop! maybe-start-ui-watch-loop!})
+      "unsubscribe" (ops/handle-unsubscribe {:request request :params params :state state})
+      "resolve_dialog" (handle-resolve-dialog! ctx request params session-id)
+      "cancel_dialog" (handle-cancel-dialog! ctx request params session-id)
+      (ops/handle-op-not-supported request))))
+
 (defn make-session-request-handler
   "Create a canonical op router bound to an agent-session context.
 
@@ -379,136 +455,16 @@
                         (assoc session-deps :sync-on-git-head-change? ::default))
          on-new-session! (:on-new-session! session-deps)]
      (fn [request emit-frame! state]
-     (try
-       (let [op         (:op request)
-             params     (params-map request)
-             session-id (when (contains? targetable-rpc-ops op)
-                          (request-session-id ctx request state))
-             dispatch-op (fn [ctx]
-                           (case op
-                             "ping"
-                             (ops/handle-ping request)
-
-                             "query_eql"
-                             (ops/handle-query-eql {:ctx ctx :request request :params params :session-id session-id :parse-query-edn! parse-query-edn!})
-
-                             "command"
-                             (rpc.commands/run-command! {:ctx ctx
-                                                         :request request
-                                                         :emit-frame! emit-frame!
-                                                         :state state
-                                                         :session-id session-id
-                                                         :session-deps session-deps
-                                                         :current-ai-model current-ai-model
-                                                         :start-daemon-thread! start-daemon-thread!
-                                                         :login-handler login/handle-login-start-command!})
-
-                             "frontend_action_result"
-                             (frontend-actions/handle-frontend-action-result! {:ctx ctx :request (assoc request :emit-frame! emit-frame!) :params params :state state :session-id session-id :resolve-model resolve-model})
-
-                             "prompt"
-                             (let [_message (req-arg! request params :message #(and (string? %) (not (str/blank? %))) "non-empty string")]
-                               (prompt/run-prompt-async! {:ctx ctx :request request :emit-frame! emit-frame! :state state :session-id session-id :session-deps session-deps :current-ai-model current-ai-model :effective-sync-on-git-head-change? effective-sync-on-git-head-change? :start-daemon-thread! start-daemon-thread! :login-handle-start-command! login/handle-login-start-command! :login-pending-state login/pending-login-state :login-complete-pending! login/complete-pending-login!}))
-
-                             "prompt_while_streaming"
-                             (ops/handle-prompt-while-streaming {:ctx ctx :request request :params params :state state :session-id session-id})
-
-                             "steer"
-                             (ops/handle-steer {:ctx ctx :request request :params params :state state :session-id session-id})
-
-                             "follow_up"
-                             (ops/handle-follow-up {:ctx ctx :request request :params params :state state :session-id session-id})
-
-                             "abort"
-                             (ops/handle-abort {:ctx ctx :request request :state state :session-id session-id})
-
-                             "interrupt"
-                             (ops/handle-interrupt {:ctx ctx :request request :state state :session-id session-id})
-
-                             "list_background_jobs"
-                             (handle-list-background-jobs! ctx request params session-id)
-
-                             "inspect_background_job"
-                             (handle-inspect-background-job! ctx request params session-id)
-
-                             "cancel_background_job"
-                             (handle-cancel-background-job! ctx request params session-id)
-
-                             "login_begin"
-                             (login/handle-login-begin! {:ctx ctx :request request :params params :state state :session-id session-id :session-deps session-deps :current-ai-model current-ai-model})
-
-                             "login_complete"
-                             (login/handle-login-complete! {:ctx ctx :request request :params params :state state})
-
-                             "new_session"
-                             (navigation/handle-new-session! {:ctx ctx
-                                                              :request (assoc request :emit-frame! emit-frame!)
-                                                              :state state
-                                                              :on-new-session! on-new-session!})
-
-                             "switch_session"
-                             (navigation/handle-switch-session! {:ctx ctx
-                                                                 :request (assoc request :emit-frame! emit-frame!)
-                                                                 :params params
-                                                                 :state state
-                                                                 :session-id session-id})
-
-                             "list_sessions"
-                             (ops/handle-list-sessions {:ctx ctx :request request :state state :session-id session-id})
-
-                             "fork"
-                             (navigation/handle-fork! {:ctx ctx
-                                                       :request (assoc request :emit-frame! emit-frame!)
-                                                       :params params
-                                                       :state state
-                                                       :session-id session-id})
-
-                             "set_session_name"
-                             (ops/handle-set-session-name {:ctx ctx :request request :params params :state state :session-id session-id})
-
-                             "set_model"
-                             (ops/handle-set-model {:ctx ctx :request request :params params :state state :session-id session-id :resolve-model resolve-model})
-
-                             "cycle_model"
-                             (ops/handle-cycle-model {:ctx ctx :request request :params params :state state :session-id session-id})
-
-                             "set_thinking_level"
-                             (ops/handle-set-thinking-level {:ctx ctx :request request :params params :state state :session-id session-id})
-
-                             "cycle_thinking_level"
-                             (ops/handle-cycle-thinking-level {:ctx ctx :request request :state state :session-id session-id})
-
-                             "compact"
-                             (ops/handle-compact {:ctx ctx :request request :params params :state state :session-id session-id})
-
-                             "set_auto_compaction"
-                             (ops/handle-set-auto-compaction {:ctx ctx :request request :params params :state state :session-id session-id})
-
-                             "set_auto_retry"
-                             (ops/handle-set-auto-retry {:ctx ctx :request request :params params :state state :session-id session-id})
-
-                             "get_state"
-                             (ops/handle-get-state {:ctx ctx :request request :state state :session-id session-id})
-
-                             "get_messages"
-                             (ops/handle-get-messages {:ctx ctx :request request :state state :session-id session-id})
-
-                             "get_session_stats"
-                             (ops/handle-get-session-stats {:ctx ctx :request request :state state :session-id session-id})
-
-                             "subscribe"
-                             (ops/handle-subscribe {:ctx ctx :request (assoc request :emit-frame! emit-frame!) :params params :state state :session-id session-id :session-deps session-deps :maybe-start-external-event-loop! maybe-start-external-event-loop! :register-rpc-extension-run-fn! register-rpc-extension-run-fn! :maybe-start-ui-watch-loop! maybe-start-ui-watch-loop!})
-
-                             "unsubscribe"
-                             (ops/handle-unsubscribe {:request request :params params :state state})
-
-                             "resolve_dialog"
-                             (handle-resolve-dialog! ctx request params session-id)
-
-                             "cancel_dialog"
-                             (handle-cancel-dialog! ctx request params session-id)
-
-                             (ops/handle-op-not-supported request)))]
-         (dispatch-op ctx))
-       (catch Throwable e
-         (exception->error-frame request e)))))))
+       (try
+         (let [op         (:op request)
+               session-id (when (contains? targetable-rpc-ops op)
+                            (request-session-id ctx request state))]
+           (dispatch-rpc-op {:ctx ctx
+                             :request request
+                             :emit-frame! emit-frame!
+                             :state state
+                             :session-id session-id
+                             :session-deps session-deps
+                             :on-new-session! on-new-session!}))
+         (catch Throwable e
+           (exception->error-frame request e)))))))
