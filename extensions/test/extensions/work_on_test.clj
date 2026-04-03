@@ -24,6 +24,27 @@
       {:git.branch/default-branch {:branch "main" :source :fallback}}
       :else {})))
 
+(defn- with-printed-output [printed f]
+  (with-redefs [println (fn [& xs] (swap! printed conj (apply str xs)))]
+    (f)))
+
+(defn- worktree-ff-state
+  [state]
+  (fn [ctx branch]
+    (cond
+      (= "/repo/feature-x" (:repo-dir ctx))
+      (if (instance? clojure.lang.IDeref state)
+        (and (= branch "main") (= :after @state))
+        (= branch "main"))
+
+      (= "/repo/main" (:repo-dir ctx))
+      (= branch "feature-x")
+
+      :else false)))
+
+(defn- run-work-command! [state command]
+  ((get-in @state [:commands command :handler]) ""))
+
 (deftest mechanical-slug-test
   (testing "slug is mechanical and limited to four significant words"
     (is (= {:raw-description "Fix the footer not displayed after tree session switch"
@@ -228,31 +249,24 @@
                                                psi.extension/switch-session (do (swap! switched conj (:session-id params))
                                                                                 {:psi.agent-session/session-id (:session-id params)})
                                                nil))})]
-      (with-redefs [println (fn [& xs] (swap! printed conj (apply str xs)))
-                    git/branch-tip-merged-into-current? (fn [ctx branch]
-                                                          (cond
-                                                            (= "/repo/feature-x" (:repo-dir ctx))
-                                                            (= branch "main")
-
-                                                            (= "/repo/main" (:repo-dir ctx))
-                                                            (= branch "feature-x")
-
-                                                            :else false))
+      (with-redefs [git/branch-tip-merged-into-current? (worktree-ff-state nil)
                     git/current-branch (fn [_ctx] "main")
                     git/current-commit (fn [_ctx] "main-sha")]
-        (sut/init api)
-        ((get-in @state [:commands "work-done" :handler]) "")
-        ((get-in @state [:commands "work-rebase" :handler]) "")
-        (is (= ["main-s"] @switched))
-        (is (= "/repo/main" (get-in @merge-params [:git/context :cwd]))
-            "merge must execute in the main worktree context")
-        (is (re-find #"Fast-forwarded `feature-x` into `main`" (first @printed)))
-        (is (re-find #"Rebased `feature-x` onto `main`" (second @printed))))))
+        (with-printed-output printed
+          #(do
+             (sut/init api)
+             (run-work-command! state "work-done")
+             (run-work-command! state "work-rebase"))))
+      (is (= ["main-s"] @switched))
+      (is (= "/repo/main" (get-in @merge-params [:git/context :cwd]))
+          "merge must execute in the main worktree context")
+      (is (re-find #"Fast-forwarded `feature-x` into `main`" (first @printed)))
+      (is (re-find #"Rebased `feature-x` onto `main`" (second @printed)))))
 
   (testing "/work-done creates a main-worktree session when none exists"
     (let [created  (atom [])
           switched (atom [])
-          printed  (atom nil)
+          printed  (atom [])
           {:keys [api state]} (nullable/create-nullable-extension-api
                                {:path "/test/work_on.clj"
                                 :query-fn (with-session-query
@@ -280,30 +294,23 @@
                                                psi.extension/switch-session (do (swap! switched conj (:session-id params))
                                                                                 {:psi.agent-session/session-id (:session-id params)})
                                                nil))})]
-      (with-redefs [println (fn [& xs] (reset! printed (apply str xs)))
-                    git/branch-tip-merged-into-current? (fn [ctx branch]
-                                                          (cond
-                                                            (= "/repo/feature-x" (:repo-dir ctx))
-                                                            (= branch "main")
-
-                                                            (= "/repo/main" (:repo-dir ctx))
-                                                            (= branch "feature-x")
-
-                                                            :else false))
+      (with-redefs [git/branch-tip-merged-into-current? (worktree-ff-state nil)
                     git/current-branch (fn [_ctx] "main")
                     git/current-commit (fn [_ctx] "main-sha")]
-        (sut/init api)
-        ((get-in @state [:commands "work-done" :handler]) "")
-        (is (= [{:psi.agent-session/session-id "s-main-created"
-                 :psi.agent-session/session-name "main"
-                 :psi.agent-session/cwd "/repo/main"}]
-               @created))
-        (is (= ["s-main-created"] @switched))
-        (is (re-find #"Fast-forwarded `feature-x` into `main`" @printed))))))
+        (with-printed-output printed
+          #(do
+             (sut/init api)
+             (run-work-command! state "work-done"))))
+      (is (= [{:psi.agent-session/session-id "s-main-created"
+               :psi.agent-session/session-name "main"
+               :psi.agent-session/cwd "/repo/main"}]
+             @created))
+      (is (= ["s-main-created"] @switched))
+      (is (re-find #"Fast-forwarded `feature-x` into `main`" (first @printed))))))
 
-(deftest work-done-auto-rebase-and-failure-messages-test
+(deftest work-done-auto-rebase-success-test
   (testing "/work-done auto-rebases with a forked sync agent when ff is not yet possible"
-    (let [printed      (atom nil)
+    (let [printed      (atom [])
           chain-calls  (atom [])
           remove-calls (atom 0)
           ff-state     (atom :before)
@@ -337,30 +344,24 @@
                                                git.branch/delete! {:deleted true}
                                                psi.extension/switch-session {:psi.agent-session/session-id "main-s"}
                                                nil))})]
-      (with-redefs [println (fn [& xs] (reset! printed (apply str xs)))
-                    git/branch-tip-merged-into-current? (fn [ctx branch]
-                                                          (cond
-                                                            (= "/repo/feature-x" (:repo-dir ctx))
-                                                            (and (= branch "main") (= :after @ff-state))
-
-                                                            (= "/repo/main" (:repo-dir ctx))
-                                                            (= branch "feature-x")
-
-                                                            :else false))
+      (with-redefs [git/branch-tip-merged-into-current? (worktree-ff-state ff-state)
                     git/current-branch (fn [_ctx] "main")
                     git/current-commit (fn [_ctx] "main-sha")]
-        (sut/init api)
-        ((get-in @state [:commands "work-done" :handler]) "")
-        (is (= 1 (count @chain-calls)))
-        (is (= "agent" (get-in (first @chain-calls) [:steps 0 :tool])))
-        (is (= "create" (get-in (first @chain-calls) [:steps 0 :args "action"])))
-        (is (= "sync" (get-in (first @chain-calls) [:steps 0 :args "mode"])))
-        (is (= true (get-in (first @chain-calls) [:steps 0 :args "fork_session"])))
-        (is (= 1 @remove-calls))
-        (is (re-find #"after automatic rebase" @printed)))))
+        (with-printed-output printed
+          #(do
+             (sut/init api)
+             (run-work-command! state "work-done"))))
+      (is (= 1 (count @chain-calls)))
+      (is (= "agent" (get-in (first @chain-calls) [:steps 0 :tool])))
+      (is (= "create" (get-in (first @chain-calls) [:steps 0 :args "action"])))
+      (is (= "sync" (get-in (first @chain-calls) [:steps 0 :args "mode"])))
+      (is (= true (get-in (first @chain-calls) [:steps 0 :args "fork_session"])))
+      (is (= 1 @remove-calls))
+      (is (re-find #"after automatic rebase" (first @printed))))))
 
+(deftest work-done-auto-rebase-failure-test
   (testing "/work-done stops with an informative message when automatic rebase fails"
-    (let [printed      (atom nil)
+    (let [printed      (atom [])
           remove-calls (atom 0)
           {:keys [api state]} (nullable/create-nullable-extension-api
                                {:path "/test/work_on.clj"
@@ -384,16 +385,18 @@
                                                git.worktree/remove! (do (swap! remove-calls inc)
                                                                         {:success true})
                                                nil))})]
-      (with-redefs [println (fn [& xs] (reset! printed (apply str xs)))
-                    git/branch-tip-merged-into-current? (fn [_ctx _branch] false)]
-        (sut/init api)
-        ((get-in @state [:commands "work-done" :handler]) "")
-        (is (= 0 @remove-calls))
-        (is (= "automatic rebase onto `main` failed: agent failed"
-               @printed)))))
+      (with-redefs [git/branch-tip-merged-into-current? (fn [_ctx _branch] false)]
+        (with-printed-output printed
+          #(do
+             (sut/init api)
+             (run-work-command! state "work-done"))))
+      (is (= 0 @remove-calls))
+      (is (= "automatic rebase onto `main` failed: agent failed"
+             (first @printed))))))
 
+(deftest work-done-merge-verification-failure-test
   (testing "/work-done preserves the worktree when merge verification fails"
-    (let [printed      (atom nil)
+    (let [printed      (atom [])
           remove-calls (atom 0)
           {:keys [api state]} (nullable/create-nullable-extension-api
                                {:path "/test/work_on.clj"
@@ -417,8 +420,7 @@
                                                                         {:success true})
                                                git.branch/delete! {:deleted true}
                                                nil))})]
-      (with-redefs [println (fn [& xs] (reset! printed (apply str xs)))
-                    git/branch-tip-merged-into-current? (fn [ctx branch]
+      (with-redefs [git/branch-tip-merged-into-current? (fn [ctx branch]
                                                           (cond
                                                             (= "/repo/feature-x" (:repo-dir ctx))
                                                             (= branch "main")
@@ -434,21 +436,24 @@
                                              0 "before-sha"
                                              1 "after-sha"
                                              "after-sha")))]
-        (sut/init api)
-        ((get-in @state [:commands "work-done" :handler]) "")
-        (is (= 0 @remove-calls) "worktree removal must not run when merge is not verified")
-        (is (re-find #"merge did not update main; worktree preserved for safety" @printed))
-        (is (re-find #"source=feature-x" @printed))
-        (is (re-find #"merge-reported=true" @printed))
-        (is (re-find #"before-branch=main" @printed))
-        (is (re-find #"after-branch=main" @printed))
-        (is (re-find #"before-head=before-sha" @printed))
-        (is (re-find #"after-head=after-sha" @printed))
-        (is (re-find #"head-changed=true" @printed))
-        (is (re-find #"verification=branch tip not ancestor of target HEAD" @printed)))))
+        (with-printed-output printed
+          #(do
+             (sut/init api)
+             (run-work-command! state "work-done"))))
+      (is (= 0 @remove-calls) "worktree removal must not run when merge is not verified")
+      (is (re-find #"merge did not update main; worktree preserved for safety" (first @printed)))
+      (is (re-find #"source=feature-x" (first @printed)))
+      (is (re-find #"merge-reported=true" (first @printed)))
+      (is (re-find #"before-branch=main" (first @printed)))
+      (is (re-find #"after-branch=main" (first @printed)))
+      (is (re-find #"before-head=before-sha" (first @printed)))
+      (is (re-find #"after-head=after-sha" (first @printed)))
+      (is (re-find #"head-changed=true" (first @printed)))
+      (is (re-find #"verification=branch tip not ancestor of target HEAD" (first @printed))))))
 
+(deftest work-done-main-worktree-guard-test
   (testing "/work-done rejects execution on the main worktree"
-    (let [printed (atom nil)
+    (let [printed (atom [])
           {:keys [api state]} (nullable/create-nullable-extension-api
                                {:path "/test/work_on.clj"
                                 :query-fn (with-session-query
@@ -459,11 +464,12 @@
                                              :git.worktree/list [{:git.worktree/path "/repo/main"
                                                                   :git.worktree/branch-name "main"
                                                                   :git.worktree/current? true}]})})]
-      (with-redefs [println (fn [& xs] (reset! printed (apply str xs)))]
-        (sut/init api)
-        ((get-in @state [:commands "work-done" :handler]) "")
-        (is (= "already on main worktree; nothing to do"
-               @printed))))))
+      (with-printed-output printed
+        #(do
+           (sut/init api)
+           (run-work-command! state "work-done")))
+      (is (= "already on main worktree; nothing to do"
+             (first @printed))))))
 
 (deftest work-main-worktree-guards-and-status-test
   (testing "/work-rebase rejects execution on the main worktree"
