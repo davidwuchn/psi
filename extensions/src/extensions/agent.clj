@@ -1136,82 +1136,93 @@
                    ".")
      :is-error false}))
 
+(defn- remove-agent-tool-result [id result]
+  (if-let [e (:error result)]
+    (tool-error e)
+    {:content (str "Agent #" id " removed.")
+     :is-error false}))
+
+(defn- invalid-bool-error [field]
+  (tool-error (str "Error: " field " must be true or false.")))
+
+(defn- execute-create-agent-tool [args opts parsed]
+  (let [{:keys [mode timeout-ms fork-session include-result-in-context]} parsed
+        task         (str/trim (or (get args "task") ""))
+        agent-name   (normalize-agent-name (get args "agent"))
+        tool-call-id (tool-call-id-from-opts opts)]
+    (cond
+      (= timeout-ms ::invalid)
+      (tool-error "Error: timeout_ms must be a positive integer.")
+
+      (= fork-session ::invalid)
+      (invalid-bool-error "fork_session")
+
+      (= include-result-in-context ::invalid)
+      (invalid-bool-error "include_result_in_context")
+
+      (str/blank? task)
+      (tool-error "Error: task is required.")
+
+      :else
+      (let [fork?    (true? fork-session)
+            include? (true? include-result-in-context)
+            result   (spawn-agent! task agent-name {:mode mode
+                                                    :tool-call-id tool-call-id
+                                                    :timeout-ms timeout-ms
+                                                    :fork-session? fork?
+                                                    :include-result-in-context? include?})]
+        (create-agent-tool-result agent-name fork? result)))))
+
+(defn- execute-continue-agent-tool [args opts parsed]
+  (let [{:keys [include-result-in-context]} parsed
+        id           (parse-int (get args "id"))
+        prompt       (str/trim (or (get args "prompt") ""))
+        tool-call-id (tool-call-id-from-opts opts)]
+    (cond
+      (some? (get args "mode"))
+      (tool-error "Error: mode is only supported for action=create")
+
+      (some? (get args "fork_session"))
+      (tool-error "Error: fork_session is only supported for action=create")
+
+      (= include-result-in-context ::invalid)
+      (invalid-bool-error "include_result_in_context")
+
+      (nil? id)
+      (tool-error "Error: id is required.")
+
+      (str/blank? prompt)
+      (tool-error "Error: prompt is required.")
+
+      :else
+      (continue-agent-tool-result id
+                                  (continue-agent! id prompt {:tool-call-id tool-call-id
+                                                              :include-result-in-context? include-result-in-context})))))
+
+(defn- execute-remove-agent-tool [args]
+  (let [id (parse-int (get args "id"))]
+    (if (nil? id)
+      (tool-error "Error: id is required.")
+      (remove-agent-tool-result id (remove-agent! id)))))
+
+(defn- parse-agent-tool-args [args]
+  {:action                    (some-> (get args "action") str str/trim str/lower-case)
+   :mode                      (parse-create-mode (get args "mode"))
+   :timeout-ms                (parse-timeout-ms (get args "timeout_ms"))
+   :fork-session              (parse-bool (get args "fork_session"))
+   :include-result-in-context (parse-optional-bool (get args "include_result_in_context"))})
+
 (defn- execute-agent-tool
   ([args]
    (execute-agent-tool args nil))
   ([args opts]
-   (let [action                    (some-> (get args "action") str str/trim str/lower-case)
-         mode                      (parse-create-mode (get args "mode"))
-         timeout-ms                (parse-timeout-ms (get args "timeout_ms"))
-         fork-session              (parse-bool (get args "fork_session"))
-         include-result-in-context (parse-optional-bool (get args "include_result_in_context"))]
+   (let [{:keys [action] :as parsed} (parse-agent-tool-args args)]
      (case action
-       "create"
-       (let [task         (str/trim (or (get args "task") ""))
-             agent-name   (normalize-agent-name (get args "agent"))
-             tool-call-id (tool-call-id-from-opts opts)]
-         (cond
-           (= timeout-ms ::invalid)
-           (tool-error "Error: timeout_ms must be a positive integer.")
-
-           (= fork-session ::invalid)
-           (tool-error "Error: fork_session must be true or false.")
-
-           (= include-result-in-context ::invalid)
-           (tool-error "Error: include_result_in_context must be true or false.")
-
-           (str/blank? task)
-           (tool-error "Error: task is required.")
-
-           :else
-           (let [fork?    (true? fork-session)
-                 include? (true? include-result-in-context)
-                 r        (spawn-agent! task agent-name {:mode mode
-                                                         :tool-call-id tool-call-id
-                                                         :timeout-ms timeout-ms
-                                                         :fork-session? fork?
-                                                         :include-result-in-context? include?})]
-             (create-agent-tool-result agent-name fork? r))))
-
-       "continue"
-       (let [id           (parse-int (get args "id"))
-             prompt       (str/trim (or (get args "prompt") ""))
-             tool-call-id (tool-call-id-from-opts opts)]
-         (cond
-           (not (nil? (get args "mode")))
-           (tool-error "Error: mode is only supported for action=create")
-
-           (not (nil? (get args "fork_session")))
-           (tool-error "Error: fork_session is only supported for action=create")
-
-           (= include-result-in-context ::invalid)
-           (tool-error "Error: include_result_in_context must be true or false.")
-
-           (nil? id)
-           (tool-error "Error: id is required.")
-
-           (str/blank? prompt)
-           (tool-error "Error: prompt is required.")
-
-           :else
-           (continue-agent-tool-result id
-                                       (continue-agent! id prompt {:tool-call-id tool-call-id
-                                                                   :include-result-in-context? include-result-in-context}))))
-
-       "remove"
-       (let [id (parse-int (get args "id"))]
-         (if (nil? id)
-           (tool-error "Error: id is required.")
-           (let [result (remove-agent! id)]
-             (if-let [e (:error result)]
-               (tool-error e)
-               {:content (str "Agent #" id " removed.")
-                :is-error false}))))
-
-       "list"
-       {:content  (list-agents-text)
-        :is-error false}
-
+       "create" (execute-create-agent-tool args opts parsed)
+       "continue" (execute-continue-agent-tool args opts parsed)
+       "remove" (execute-remove-agent-tool args)
+       "list" {:content  (list-agents-text)
+                :is-error false}
        (tool-error (str "Error: action must be one of "
                         (str/join ", " agent-actions)
                         "."))))))
