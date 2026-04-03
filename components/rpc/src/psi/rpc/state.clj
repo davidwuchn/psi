@@ -25,74 +25,76 @@
           :ui-watch-loop nil
           :external-event-loop nil}}))
 
+(defn- nested-or-flat
+  [nested flat fallback]
+  (if (contains? nested flat)
+    (get nested flat)
+    (or (get fallback flat)
+        (when-let [legacy* (get fallback (keyword (str (name flat) "*")))]
+          (deref legacy*)))))
+
+(defn- legacy-registered?
+  [state]
+  (boolean (or (:rpc-run-fn-registered? state)
+               (:rpc-run-fn-registered state))))
+
+(defn- normalized-transport-state
+  [s err]
+  (let [transport-existing (or (:transport s) {})]
+    {:ready?                       (if (contains? transport-existing :ready?)
+                                     (:ready? transport-existing)
+                                     (boolean (:ready? s)))
+     :negotiated-protocol-version  (nested-or-flat transport-existing :negotiated-protocol-version s)
+     :pending                      (or (nested-or-flat transport-existing :pending s) {})
+     :max-pending-requests         (or (nested-or-flat transport-existing :max-pending-requests s)
+                                       default-max-pending-requests)
+     :err                          err}))
+
+(defn- normalized-connection-state
+  [s]
+  (let [connection-existing (or (:connection s) {})]
+    {:focus-session-id  (nested-or-flat connection-existing :focus-session-id s)
+     :subscribed-topics (or (nested-or-flat connection-existing :subscribed-topics s) #{})
+     :event-seq         (or (nested-or-flat connection-existing :event-seq s) 0)}))
+
+(defn- normalized-worker-state
+  [s]
+  (let [workers-existing (or (:workers s) {})]
+    {:inflight-futures       (or (nested-or-flat workers-existing :inflight-futures s) [])
+     :rpc-run-fn-registered? (if (contains? workers-existing :rpc-run-fn-registered?)
+                               (:rpc-run-fn-registered? workers-existing)
+                               (legacy-registered? s))
+     :ui-watch-loop          (nested-or-flat workers-existing :ui-watch-loop s)
+     :external-event-loop    (nested-or-flat workers-existing :external-event-loop s)}))
+
+(defn- apply-compatibility-flat-keys
+  [s transport connection workers]
+  (assoc s
+         :err (:err transport)
+         :ready? (:ready? transport)
+         :negotiated-protocol-version (:negotiated-protocol-version transport)
+         :pending (:pending transport)
+         :max-pending-requests (:max-pending-requests transport)
+         :focus-session-id (:focus-session-id connection)
+         :subscribed-topics (:subscribed-topics connection)
+         :event-seq (:event-seq connection)
+         :inflight-futures (:inflight-futures workers)
+         :rpc-run-fn-registered? (:rpc-run-fn-registered? workers)
+         :ui-watch-loop (:ui-watch-loop workers)
+         :external-event-loop (:external-event-loop workers)))
+
 (defn initialize-transport-state!
   [state err]
   (swap! state
          (fn [s]
-           (let [transport-existing  (or (:transport s) {})
-                 connection-existing (or (:connection s) {})
-                 workers-existing    (or (:workers s) {})
-                 ready*              (if (contains? transport-existing :ready?)
-                                       (:ready? transport-existing)
-                                       (boolean (:ready? s)))
-                 negotiated*         (if (contains? transport-existing :negotiated-protocol-version)
-                                       (:negotiated-protocol-version transport-existing)
-                                       (:negotiated-protocol-version s))
-                 pending*            (if (contains? transport-existing :pending)
-                                       (:pending transport-existing)
-                                       (or (:pending s) {}))
-                 max-pending*        (if (contains? transport-existing :max-pending-requests)
-                                       (:max-pending-requests transport-existing)
-                                       (or (:max-pending-requests s) default-max-pending-requests))
-                 focus*              (if (contains? connection-existing :focus-session-id)
-                                       (:focus-session-id connection-existing)
-                                       (or (:focus-session-id s)
-                                           (some-> s :focus-session-id* deref)))
-                 subscribed*         (if (contains? connection-existing :subscribed-topics)
-                                       (:subscribed-topics connection-existing)
-                                       (or (:subscribed-topics s) #{}))
-                 event-seq*          (if (contains? connection-existing :event-seq)
-                                       (:event-seq connection-existing)
-                                       (or (:event-seq s) 0))
-                 inflight*           (if (contains? workers-existing :inflight-futures)
-                                       (:inflight-futures workers-existing)
-                                       (or (:inflight-futures s) []))
-                 registered*         (if (contains? workers-existing :rpc-run-fn-registered?)
-                                       (:rpc-run-fn-registered? workers-existing)
-                                       (boolean (or (:rpc-run-fn-registered? s)
-                                                    (:rpc-run-fn-registered s))))
-                 ui-watch-loop*      (if (contains? workers-existing :ui-watch-loop)
-                                       (:ui-watch-loop workers-existing)
-                                       (:ui-watch-loop s))
-                 external-loop*      (if (contains? workers-existing :external-event-loop)
-                                       (:external-event-loop workers-existing)
-                                       (:external-event-loop s))]
+           (let [transport  (normalized-transport-state s err)
+                 connection (normalized-connection-state s)
+                 workers    (normalized-worker-state s)]
              (-> s
-                 (assoc :transport {:ready? ready*
-                                    :negotiated-protocol-version negotiated*
-                                    :pending pending*
-                                    :max-pending-requests max-pending*
-                                    :err err})
-                 (assoc :connection {:focus-session-id focus*
-                                     :subscribed-topics subscribed*
-                                     :event-seq event-seq*})
-                 (assoc :workers {:inflight-futures inflight*
-                                  :rpc-run-fn-registered? registered*
-                                  :ui-watch-loop ui-watch-loop*
-                                  :external-event-loop external-loop*})
-                 ;; Compatibility for legacy flat state maps used in tests.
-                 (assoc :err err
-                        :ready? ready*
-                        :negotiated-protocol-version negotiated*
-                        :pending pending*
-                        :max-pending-requests max-pending*
-                        :focus-session-id focus*
-                        :subscribed-topics subscribed*
-                        :event-seq event-seq*
-                        :inflight-futures inflight*
-                        :rpc-run-fn-registered? registered*
-                        :ui-watch-loop ui-watch-loop*
-                        :external-event-loop external-loop*)))))
+                 (assoc :transport transport
+                        :connection connection
+                        :workers workers)
+                 (apply-compatibility-flat-keys transport connection workers)))))
   state)
 
 (defn err-writer [state]
