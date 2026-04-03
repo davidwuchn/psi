@@ -178,8 +178,8 @@
           (is (= "call-life" (:tool-id (first lifecycle))))
           (is (= "read" (:tool-name (first lifecycle)))))))))
 
-(deftest runtime-effect-tool-run-helper-test
-  (testing "runtime tool-run helper owns the full tool-call transaction"
+(deftest dispatch-owned-tool-run-composes-execute-and-record-phases-test
+  (testing "session/tool-run owns the full transaction via dispatch execute+record phases"
     (let [agent-ctx   (setup-agent-ctx!)
           [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
           tc          {:id "call-effect" :name "read" :arguments "{}"}
@@ -197,8 +197,15 @@
                       (fn [ctx event-type event-data opts]
                         (swap! events conj event-type)
                         (orig ctx event-type event-data opts)))]
-        (let [result (executor/run-tool-call-through-runtime-effect! session-ctx session-ctx-id tc {} nil)]
+        (let [result (dispatch/dispatch! session-ctx :session/tool-run
+                                         {:session-id session-ctx-id
+                                          :tool-call tc
+                                          :parsed-args {}
+                                          :progress-queue nil}
+                                         {:origin :core})]
           (is (= "call-effect" (:tool-call-id result)))
+          (is (some #{:session/tool-execute-prepared} @events))
+          (is (some #{:session/tool-record-result} @events))
           (is (some #{:session/tool-agent-start} @events))
           (is (some #{:session/tool-execute} @events))
           (is (some #{:session/tool-agent-end} @events))
@@ -223,6 +230,8 @@
         (let [result (#'executor/run-tool-call! session-ctx session-ctx-id tc q)]
           (is (= "call-dispatch" (:tool-call-id result)))
           (is (some #{:session/tool-run} @events))
+          (is (some #{:session/tool-execute-prepared} @events))
+          (is (some #{:session/tool-record-result} @events))
           (is (some #{:session/tool-execute} @events)))))))
 
 (deftest tool-lifecycle-progress-derived-from-canonical-event-test

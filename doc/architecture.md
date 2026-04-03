@@ -191,6 +191,16 @@ Current intentional boundary:
 - prompt journal append is now dispatch-visible, but deeper turn streaming behavior
   still lives across executor/turn-statechart paths and is the next major
   candidate for broader dispatch convergence
+- tool execution is now dispatch-owned end-to-end:
+  - `:session/tool-run` composes two dispatch-owned phases:
+    1. `:session/tool-execute-prepared` — may run concurrently, emits start/executing
+       lifecycle, performs runtime tool execution through `:runtime/tool-execute`, and
+       returns a shaped result without final recording
+    2. `:session/tool-record-result` — records the final tool result in deterministic
+       tool-call order, including lifecycle projection, telemetry, journal append,
+       and agent-core tool-result recording
+  - the executor now owns only batch scheduling and deterministic ordered recording,
+    not tool transaction semantics
 
 ## Roadmap
 

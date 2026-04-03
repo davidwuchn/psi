@@ -3,8 +3,7 @@
    Dispatches on :effect/type via defmulti.
 
    All back-references to core.clj private helpers are routed through ctx
-   keys (the same callback-on-ctx pattern already used for :run-tool-call-fn).
-   This avoids a circular ns dependency between dispatch-effects and core."
+   keys. This avoids a circular ns dependency between dispatch-effects and core."
   (:require
    [psi.agent-core.core :as agent]
    [psi.agent-session.extensions :as ext]
@@ -112,13 +111,6 @@
     (catch Exception e
       {:content  (str "Error: " (ex-message e))
        :is-error true})))
-
-(defmethod execute-effect! :runtime/tool-run [ctx effect]
-  ((or (:run-tool-call-fn ctx)
-       (fn [_ _]
-         (throw (ex-info "No runtime tool runner configured"
-                         {:effect/type :runtime/tool-run}))))
-   ctx effect))
 
 ;;; Background job effects — via ctx callbacks
 

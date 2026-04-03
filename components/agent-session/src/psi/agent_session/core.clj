@@ -238,12 +238,9 @@
                             ;; Extensions use this to submit prompts that trigger real LLM calls.
                             :extension-run-fn-atom (atom nil)}
                            (callback-fns mutations))
-        run-tool-call-fn  (fn [ctx {:keys [session-id tool-call parsed-args progress-queue]}]
-                            (executor/run-tool-call-through-runtime-effect! ctx session-id tool-call parsed-args progress-queue))
-        ctx*              (assoc ctx0 :run-tool-call-fn run-tool-call-fn)
-        _                 (dispatch-handlers/register-all! ctx*)
-        actions-fn        (dispatch-handlers/make-actions-fn ctx*)
-        ctx               (assoc ctx* :session-actions-fn actions-fn)]
+        _                 (dispatch-handlers/register-all! ctx0)
+        actions-fn        (dispatch-handlers/make-actions-fn ctx0)
+        ctx               (assoc ctx0 :session-actions-fn actions-fn)]
     ctx))
 
 (defn create-context

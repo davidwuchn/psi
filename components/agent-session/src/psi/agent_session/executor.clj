@@ -5,11 +5,10 @@
    Delegates to:
    - psi.agent-session.conversation   — agent-core ↔ ai/conversation translation
    - psi.agent-session.turn-accumulator — streaming accumulation + turn actions
-   - psi.agent-session.tool-execution  — tool call execution pipeline
+   - dispatch-owned tool execution phases for execute/record
 
    Public API:
-   - run-agent-loop!                   — run the full loop from current state
-   - run-tool-call-through-runtime-effect! — runtime-effect boundary for tool dispatch"
+   - run-agent-loop! — run the full loop from current state"
   (:require
    [psi.ai.core :as ai]
    [psi.agent-session.conversation :as conv-translate]
@@ -17,15 +16,10 @@
    [psi.agent-session.state-accessors :as sa]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.statechart :as sc]
-   [psi.agent-session.tool-execution :as tool-exec]
    [psi.agent-session.turn-accumulator :as accum]
    [psi.agent-session.turn-statechart :as turn-sc])
   (:import
    (java.util.concurrent Callable ExecutorService Future)))
-
-;; Re-export public tool-execution entry point so callers keep a single require.
-(def run-tool-call-through-runtime-effect!
-  tool-exec/run-tool-call-through-runtime-effect!)
 
 ;; ============================================================
 ;; Session-data reads
@@ -214,26 +208,14 @@
 (defn- make-tool-call-task [ctx session-id tool-call progress-queue]
   ^Callable
   (fn []
-    (let [parsed-tool-call (assoc tool-call :parsed-args
-                                  (or (:parsed-args tool-call)
-                                      (conv-translate/parse-args (:arguments tool-call))))]
-      (tool-exec/start-tool-call! ctx session-id parsed-tool-call progress-queue)
-      (try
-        (tool-exec/execute-tool-call! ctx session-id parsed-tool-call progress-queue)
-        (catch Exception e
-          (let [err-text   (str "Error: " (ex-message e))
-                result-msg {:role         "toolResult"
-                            :tool-call-id (:id parsed-tool-call)
-                            :tool-name    (:name parsed-tool-call)
-                            :content      [{:type :text :text err-text}]
-                            :is-error     true
-                            :details      {:exception true}
-                            :result-text  err-text
-                            :timestamp    (java.time.Instant/now)}]
-            {:tool-call        parsed-tool-call
-             :tool-result      {:content err-text :is-error true}
-             :result-message   result-msg
-             :effective-policy nil}))))))
+    (let [parsed-args (or (:parsed-args tool-call)
+                          (conv-translate/parse-args (:arguments tool-call)))]
+      (dispatch/dispatch! ctx :session/tool-execute-prepared
+                          {:session-id     session-id
+                           :tool-call      tool-call
+                           :parsed-args    parsed-args
+                           :progress-queue progress-queue}
+                          {:origin :core}))))
 
 (defn- run-tool-calls!
   "Execute a batch of tool calls and return tool results in tool-call order."
@@ -253,7 +235,11 @@
             futures  (.invokeAll executor ^java.util.Collection tasks)]
         (mapv (fn [^Future future]
                 (let [shaped-result (.get future)]
-                  (tool-exec/record-tool-call-result! ctx session-id shaped-result progress-queue)))
+                  (dispatch/dispatch! ctx :session/tool-record-result
+                                      {:session-id     session-id
+                                       :shaped-result  shaped-result
+                                       :progress-queue progress-queue}
+                                      {:origin :core})))
               futures)))))
 
 (defn- execute-tool-calls!

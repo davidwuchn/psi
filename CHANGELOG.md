@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-04-03
+
+- λ Δ Made tool execution boundary dispatch-owned end-to-end:
+  - added explicit dispatch-owned tool phases:
+    - `:session/tool-execute-prepared`
+    - `:session/tool-record-result`
+  - `:session/tool-run` now composes those phases instead of bouncing back through a runtime `:tool-run` effect callback
+  - parallel tool batches now execute through dispatch-owned execute phases and record final `toolResult` messages through dispatch-owned record phases
+  - deterministic final tool result recording order remains preserved even when execution completes out of order
+  - removed `:runtime/tool-run` effect indirection and corresponding ctx callback wiring
+- ✓ Verification:
+  - `bb clojure:test:unit --focus psi.agent-session.tool-execution-test --focus psi.agent-session.dispatch-test`
+
 ## 2026-03-31
 
 - λ Δ Increased default streaming stall timeouts from 120s to 600s (10 minutes):

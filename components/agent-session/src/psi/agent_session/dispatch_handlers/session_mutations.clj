@@ -8,7 +8,8 @@
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.dispatch-handlers.session-state :as ss]
    [psi.agent-session.session :as session-data]
-   [psi.agent-session.session-state :as session]))
+   [psi.agent-session.session-state :as session]
+   [psi.agent-session.tool-execution :as tool-exec]))
 
 (defn register!
   "Register all session mutation handlers. Called once during context creation."
@@ -356,15 +357,32 @@
       :return-effect-result? true}))
 
   (dispatch/register-handler!
+   :session/tool-execute-prepared
+   {}
+   (fn [ctx {:keys [session-id tool-call parsed-args progress-queue]}]
+     (tool-exec/execute-tool-call-prepared! ctx session-id tool-call parsed-args progress-queue)))
+
+  (dispatch/register-handler!
+   :session/tool-record-result
+   {}
+   (fn [ctx {:keys [session-id shaped-result progress-queue]}]
+     (tool-exec/record-tool-call-prepared-result! ctx session-id shaped-result progress-queue)))
+
+  (dispatch/register-handler!
    :session/tool-run
    {}
-   (fn [_ctx {:keys [session-id tool-call parsed-args progress-queue]}]
-     {:effects [{:effect/type    :runtime/tool-run
-                 :session-id     session-id
-                 :tool-call      tool-call
-                 :parsed-args    parsed-args
-                 :progress-queue progress-queue}]
-      :return-effect-result? true}))
+   (fn [ctx {:keys [session-id tool-call parsed-args progress-queue]}]
+     (let [shaped-result (dispatch/dispatch! ctx :session/tool-execute-prepared
+                                             {:session-id     session-id
+                                              :tool-call      tool-call
+                                              :parsed-args    parsed-args
+                                              :progress-queue progress-queue}
+                                             {:origin :core})]
+       (dispatch/dispatch! ctx :session/tool-record-result
+                           {:session-id     session-id
+                            :shaped-result  shaped-result
+                            :progress-queue progress-queue}
+                           {:origin :core}))))
 
   (dispatch/register-handler!
    :session/enqueue-steering-message

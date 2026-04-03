@@ -126,8 +126,6 @@
    [:runtime/tool-execute
     [:map [:effect/type [:= :runtime/tool-execute]]
      [:tool-name :string] [:args :map] [:opts {:optional true} [:maybe :map]]]]
-   [:runtime/tool-run
-    [:map [:effect/type [:= :runtime/tool-run]]]]
    [:runtime/event-queue-offer
     [:map [:effect/type [:= :runtime/event-queue-offer]] [:event :any]]]
    ;; Statechart

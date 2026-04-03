@@ -8,7 +8,6 @@
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.dispatch-effects :as dispatch-effects]
    [psi.agent-session.dispatch-handlers :as dispatch-handlers]
-   [psi.agent-session.executor :as executor]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.session :as session-data]
    [psi.agent-session.session-state :as ss]
@@ -106,9 +105,6 @@
         wf-reg        (wf/create-registry)
         sc-env        (session-sc/create-sc-env)
         dispatch-statechart-event-fn dispatch-handlers/dispatch-statechart-event-in!
-        run-tool-call-fn (fn [ctx {:keys [session-id tool-call parsed-args progress-queue]}]
-                           (executor/run-tool-call-through-runtime-effect!
-                            ctx session-id tool-call parsed-args progress-queue))
         tool-batch-executor (Executors/newFixedThreadPool 4)
         ctx           {:state*                       state*
                        :sc-env                       sc-env
@@ -124,7 +120,6 @@
                        :dispatch-statechart-event-fn dispatch-statechart-event-fn
                        :runtime-tool-executor-fn     tool-plan/default-execute-runtime-tool-in!
                        :execute-tool-runtime-fn      #'tool-plan/execute-tool-runtime-in!
-                       :run-tool-call-fn             run-tool-call-fn
                        :persist?                     false
                        :send-extension-message-fn    (fn
                                                        ([ctx role content custom-type]

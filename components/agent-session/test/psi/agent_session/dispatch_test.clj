@@ -575,16 +575,19 @@
   (testing "pure handler can return the first effect result when opted in"
     (let [execute-fn (fn [_ctx effect]
                        (case (:effect/type effect)
-                         :runtime/tool-run {:role "toolResult"
-                                            :tool-call-id "call-1"
-                                            :tool-name "read"
-                                            :content [{:type :text :text "ok"}]}
+                         :runtime/tool-execute {:role "toolResult"
+                                                :tool-call-id "call-1"
+                                                :tool-name "read"
+                                                :content [{:type :text :text "ok"}]}
                          :ignored))
           ctx {:execute-dispatch-effect-fn execute-fn}]
       (dispatch/register-handler!
        :effect-result-test
        (fn [_ctx _data]
-         {:effects [{:effect/type :runtime/tool-run}
+         {:effects [{:effect/type :runtime/tool-execute
+                     :tool-name "read"
+                     :args {}
+                     :opts {}}
                     {:effect/type :ignored}]
           :return-effect-result? true}))
       (is (= {:role "toolResult"

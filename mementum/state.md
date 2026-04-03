@@ -16,7 +16,11 @@ Bootstrapped on 2026-04-02.
 ## Current work state
 - Parallel tool execution landed in incremental commits.
 - Tool batch execution now uses a shared ctx-owned executor instead of creating a pool per batch.
-- Deterministic `toolResult` recording order is preserved even when tool execution completes out of order.
+- Tool execution boundary is now dispatch-owned end-to-end.
+- `:session/tool-run` now composes:
+  - `:session/tool-execute-prepared`
+  - `:session/tool-record-result`
+- Parallel batches execute prepared phases concurrently and record final results in deterministic tool-call order.
 - Current policy surface:
   - `:config {:tool-batch-max-parallelism N}`
   - default parallelism `4`

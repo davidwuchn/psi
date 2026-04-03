@@ -1,12 +1,14 @@
 (ns psi.agent-session.tool-execution
   "Tool call execution — content normalization, output stats, lifecycle events,
-   execute/record pipeline, and the public runtime-effect boundary.
+   execute/record pipeline, and dispatch-owned tool-call phases.
 
    Public entry points:
-   - start-tool-call!                     — emit tool start lifecycle/agent events
-   - execute-tool-call!                   — perform execution and shape the result
-   - record-tool-call-result!             — record one shaped execution result
-   - run-tool-call-through-runtime-effect! — full start→execute→record transaction"
+   - start-tool-call!                       — emit tool start lifecycle/agent events
+   - execute-tool-call!                     — perform execution and shape the result
+   - execute-tool-call-prepared!            — dispatch-owned execute phase
+   - record-tool-call-result!               — record one shaped execution result
+   - record-tool-call-prepared-result!      — dispatch-owned record phase
+   - run-tool-call-through-runtime-effect!  — full start→execute→record transaction"
   (:require
    [clojure.string :as str]
    [psi.agent-session.conversation :as conv-translate]
@@ -200,39 +202,47 @@
                         {:origin :core})
     result-message))
 
+(defn execute-tool-call-prepared!
+  "Dispatch-owned execute phase for one tool call.
+
+   Emits start/executing/update lifecycle and returns a shaped result without
+   recording the final tool result."
+  [ctx session-id tool-call parsed-args progress-queue]
+  (let [prepared-tool-call (assoc tool-call :parsed-args
+                                  (or parsed-args
+                                      (:parsed-args tool-call)
+                                      (conv-translate/parse-args (:arguments tool-call))))]
+    (start-tool-call! ctx session-id prepared-tool-call progress-queue)
+    (try
+      (execute-tool-call! ctx session-id prepared-tool-call progress-queue)
+      (catch Exception e
+        (let [err-text   (str "Error: " (ex-message e))
+              result-msg {:role         "toolResult"
+                          :tool-call-id (:id prepared-tool-call)
+                          :tool-name    (:name prepared-tool-call)
+                          :content      [{:type :text :text err-text}]
+                          :is-error     true
+                          :details      {:exception true}
+                          :result-text  err-text
+                          :timestamp    (java.time.Instant/now)}]
+          {:tool-call        prepared-tool-call
+           :tool-result      {:content err-text :is-error true}
+           :result-message   result-msg
+           :effective-policy nil})))))
+
+(defn record-tool-call-prepared-result!
+  "Dispatch-owned record phase for one previously prepared tool result."
+  [ctx session-id shaped-result progress-queue]
+  (record-tool-call-result! ctx session-id shaped-result progress-queue))
+
 ;; ============================================================
 ;; Public runtime-effect boundary
 ;; ============================================================
 
 (defn run-tool-call-through-runtime-effect!
-  "Execute one tool call inside the dispatch-owned runtime effect boundary.
-
-   Owns the full tool-call transaction:
-   start → execute → progress updates → telemetry/agent-core recording → result.
-
-   Exposed so core can delegate :runtime/tool-run here without
-   re-implementing executor-local shaping logic."
+  "Compatibility helper that composes the dispatch-owned execute and record phases."
   [ctx session-id tool-call parsed-args progress-queue]
-  (start-tool-call! ctx session-id tool-call progress-queue)
-  (try
-    (record-tool-call-result!
-     ctx session-id
-     (execute-tool-call! ctx session-id (assoc tool-call :parsed-args parsed-args) progress-queue)
-     progress-queue)
-    (catch Exception e
-      (let [err-text   (str "Error: " (ex-message e))
-            result-msg {:role         "toolResult"
-                        :tool-call-id (:id tool-call)
-                        :tool-name    (:name tool-call)
-                        :content      [{:type :text :text err-text}]
-                        :is-error     true
-                        :details      {:exception true}
-                        :result-text  err-text
-                        :timestamp    (java.time.Instant/now)}]
-        (record-tool-call-result!
-         ctx session-id
-         {:tool-call        tool-call
-          :tool-result      {:content err-text :is-error true}
-          :result-message   result-msg
-          :effective-policy nil}
-         progress-queue)))))
+  (record-tool-call-prepared-result!
+   ctx session-id
+   (execute-tool-call-prepared! ctx session-id tool-call parsed-args progress-queue)
+   progress-queue))
