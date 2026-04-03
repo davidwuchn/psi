@@ -55,6 +55,16 @@ Then query discovered attrs directly, for example:
 [:psi.memory/status]
 ```
 
+Prompt lifecycle introspection example:
+
+```clojure
+[:psi.agent-session/last-prepared-turn-id
+ :psi.agent-session/last-prepared-message-count
+ :psi.agent-session/last-execution-turn-id
+ :psi.agent-session/last-execution-turn-outcome
+ :psi.agent-session/last-execution-stop-reason]
+```
+
 ## Root discovery
 
 ### `:psi.graph/root-seeds`

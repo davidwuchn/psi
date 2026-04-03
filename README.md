@@ -73,6 +73,9 @@ For the session-root graph discovery surface (`:psi.graph/*`), canonical discove
 workflow, and graph semantics, see:
 - [`doc/graph-surface.md`](doc/graph-surface.md)
 
+For prompt lifecycle introspection summaries and normalized prompt-turn attrs, see:
+- [`doc/architecture.md`](doc/architecture.md)
+
 ## Configuration
 
 Config file locations, precedence (session > project > user > system), settings

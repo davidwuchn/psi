@@ -95,6 +95,56 @@
               :prompt-contributions []}
              (:psi.agent-session/prompt-layers result)))))
 
+  (testing "query-in resolves prompt lifecycle summaries"
+    (let [[ctx session-id] (create-session-context)
+          prepared-at (java.time.Instant/now)
+          recorded-at (java.time.Instant/now)]
+      (test-support/update-state! ctx :session-data assoc
+                                  :last-prepared-request-summary {:turn-id "t-1"
+                                                                  :message-count 2
+                                                                  :tool-count 1
+                                                                  :system-prompt-chars 42
+                                                                  :prepared-at prepared-at}
+                                  :last-execution-result-summary {:turn-id "t-1"
+                                                                  :turn-outcome :turn.outcome/stop
+                                                                  :stop-reason :stop
+                                                                  :tool-call-count 1
+                                                                  :recorded-at recorded-at})
+      (let [result (session/query-in ctx [:psi.agent-session/last-prepared-request-summary
+                                          :psi.agent-session/last-prepared-turn-id
+                                          :psi.agent-session/last-prepared-message-count
+                                          :psi.agent-session/last-prepared-tool-count
+                                          :psi.agent-session/last-prepared-system-prompt-chars
+                                          :psi.agent-session/last-prepared-at
+                                          :psi.agent-session/last-execution-result-summary
+                                          :psi.agent-session/last-execution-turn-id
+                                          :psi.agent-session/last-execution-turn-outcome
+                                          :psi.agent-session/last-execution-stop-reason
+                                          :psi.agent-session/last-execution-tool-call-count
+                                          :psi.agent-session/last-execution-recorded-at])]
+        (is (= {:turn-id "t-1"
+                :message-count 2
+                :tool-count 1
+                :system-prompt-chars 42
+                :prepared-at prepared-at}
+               (:psi.agent-session/last-prepared-request-summary result)))
+        (is (= "t-1" (:psi.agent-session/last-prepared-turn-id result)))
+        (is (= 2 (:psi.agent-session/last-prepared-message-count result)))
+        (is (= 1 (:psi.agent-session/last-prepared-tool-count result)))
+        (is (= 42 (:psi.agent-session/last-prepared-system-prompt-chars result)))
+        (is (= prepared-at (:psi.agent-session/last-prepared-at result)))
+        (is (= {:turn-id "t-1"
+                :turn-outcome :turn.outcome/stop
+                :stop-reason :stop
+                :tool-call-count 1
+                :recorded-at recorded-at}
+               (:psi.agent-session/last-execution-result-summary result)))
+        (is (= "t-1" (:psi.agent-session/last-execution-turn-id result)))
+        (is (= :turn.outcome/stop (:psi.agent-session/last-execution-turn-outcome result)))
+        (is (= :stop (:psi.agent-session/last-execution-stop-reason result)))
+        (is (= 1 (:psi.agent-session/last-execution-tool-call-count result)))
+        (is (= recorded-at (:psi.agent-session/last-execution-recorded-at result))))))
+
   (testing "query-in resolves context fraction"
     (let [[ctx session-id] (create-session-context)]
       (dispatch/dispatch! ctx :session/update-context-usage {:session-id session-id :tokens 4000 :window 10000} {:origin :core})

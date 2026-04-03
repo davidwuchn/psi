@@ -30,6 +30,15 @@ TUI    (charm.clj)   → Elm Architecture terminal UI
   - `[:psi.agent-session/ui-type]`  ; `:console` | `:tui` | `:emacs`
 - For prompt sizing (chars + estimated tokens), use:
   - `[{:psi.agent-session/request-shape [:psi.request-shape/system-prompt-chars :psi.request-shape/estimated-tokens :psi.request-shape/total-chars]}]`
+- For prompt lifecycle introspection summaries, use:
+  - `[:psi.agent-session/last-prepared-request-summary :psi.agent-session/last-execution-result-summary]`
+- For normalized prompt lifecycle fields, use attrs such as:
+  - `:psi.agent-session/last-prepared-turn-id`
+  - `:psi.agent-session/last-prepared-message-count`
+  - `:psi.agent-session/last-prepared-tool-count`
+  - `:psi.agent-session/last-execution-turn-id`
+  - `:psi.agent-session/last-execution-turn-outcome`
+  - `:psi.agent-session/last-execution-stop-reason`
 - Anthropic prompt caching is session policy projected into request shape:
   - session state stores `:cache-breakpoints` such as `:system` and `:tools`
   - executor projects those into conversation `:system-prompt-blocks` / tool `:cache-control`

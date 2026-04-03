@@ -92,8 +92,25 @@
 
 ;; ── Queues and message counts ───────────────────────────
 
+(defn- prompt-summary-fields
+  [sd]
+  (let [prepared  (:last-prepared-request-summary sd)
+        executed  (:last-execution-result-summary sd)]
+    {:psi.agent-session/last-prepared-request-summary prepared
+     :psi.agent-session/last-prepared-turn-id         (:turn-id prepared)
+     :psi.agent-session/last-prepared-message-count   (:message-count prepared)
+     :psi.agent-session/last-prepared-tool-count      (:tool-count prepared)
+     :psi.agent-session/last-prepared-system-prompt-chars (:system-prompt-chars prepared)
+     :psi.agent-session/last-prepared-at              (:prepared-at prepared)
+     :psi.agent-session/last-execution-result-summary executed
+     :psi.agent-session/last-execution-turn-id        (:turn-id executed)
+     :psi.agent-session/last-execution-turn-outcome   (:turn-outcome executed)
+     :psi.agent-session/last-execution-stop-reason    (:stop-reason executed)
+     :psi.agent-session/last-execution-tool-call-count (:tool-call-count executed)
+     :psi.agent-session/last-execution-recorded-at    (:recorded-at executed)}))
+
 (pco/defresolver agent-session-queues
-  "Resolve queue depths and prompt layers."
+  "Resolve queue depths, prompt layers, and prompt lifecycle summaries."
   [{:keys [psi/agent-session-ctx]}]
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.agent-session/base-system-prompt
@@ -105,27 +122,41 @@
                  :psi.agent-session/pending-message-count
                  :psi.agent-session/has-pending-messages
                  :psi.agent-session/steering-messages
-                 :psi.agent-session/follow-up-messages]}
+                 :psi.agent-session/follow-up-messages
+                 :psi.agent-session/last-prepared-request-summary
+                 :psi.agent-session/last-prepared-turn-id
+                 :psi.agent-session/last-prepared-message-count
+                 :psi.agent-session/last-prepared-tool-count
+                 :psi.agent-session/last-prepared-system-prompt-chars
+                 :psi.agent-session/last-prepared-at
+                 :psi.agent-session/last-execution-result-summary
+                 :psi.agent-session/last-execution-turn-id
+                 :psi.agent-session/last-execution-turn-outcome
+                 :psi.agent-session/last-execution-stop-reason
+                 :psi.agent-session/last-execution-tool-call-count
+                 :psi.agent-session/last-execution-recorded-at]}
   (let [sd         (support/session-data agent-session-ctx)
         base       (:base-system-prompt sd)
         sys        (:system-prompt sd)
         dev        (:developer-prompt sd)
         dev-source (:developer-prompt-source sd)
         contribs   (vec (:prompt-contributions sd))]
-    {:psi.agent-session/base-system-prompt      base
-     :psi.agent-session/system-prompt           sys
-     :psi.agent-session/developer-prompt        dev
-     :psi.agent-session/developer-prompt-source dev-source
-     :psi.agent-session/prompt-layers           {:base-system-prompt base
-                                                 :system-prompt sys
-                                                 :developer-prompt dev
-                                                 :developer-prompt-source dev-source
-                                                 :prompt-contributions (mapv support/contribution->attrs contribs)}
-     :psi.agent-session/prompt-contributions    (mapv support/contribution->attrs contribs)
-     :psi.agent-session/pending-message-count   (session/pending-message-count sd)
-     :psi.agent-session/has-pending-messages    (session/has-pending-messages? sd)
-     :psi.agent-session/steering-messages       (:steering-messages sd)
-     :psi.agent-session/follow-up-messages      (:follow-up-messages sd)}))
+    (merge
+     {:psi.agent-session/base-system-prompt      base
+      :psi.agent-session/system-prompt           sys
+      :psi.agent-session/developer-prompt        dev
+      :psi.agent-session/developer-prompt-source dev-source
+      :psi.agent-session/prompt-layers           {:base-system-prompt base
+                                                  :system-prompt sys
+                                                  :developer-prompt dev
+                                                  :developer-prompt-source dev-source
+                                                  :prompt-contributions (mapv support/contribution->attrs contribs)}
+      :psi.agent-session/prompt-contributions    (mapv support/contribution->attrs contribs)
+      :psi.agent-session/pending-message-count   (session/pending-message-count sd)
+      :psi.agent-session/has-pending-messages    (session/has-pending-messages? sd)
+      :psi.agent-session/steering-messages       (:steering-messages sd)
+      :psi.agent-session/follow-up-messages      (:follow-up-messages sd)}
+     (prompt-summary-fields sd))))
 
 ;; ── Retry and compaction config ─────────────────────────
 

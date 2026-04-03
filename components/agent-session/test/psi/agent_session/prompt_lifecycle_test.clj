@@ -91,3 +91,36 @@
           (is (= 2 (count msgs)))
           (is (= "assistant" (:role (first msgs))))
           (is (= "assistant" (:role (second msgs)))))))))
+
+(deftest prompt-in-end-to-end-updates-prompt-lifecycle-summaries-test
+  (let [[ctx session-id] (create-session-context {:persist? false})]
+    (dispatch/clear-event-log!)
+    (with-redefs [psi.agent-session.prompt-runtime/execute-prepared-request!
+                  (fn [_ai-ctx _ctx sid _agent-ctx prepared _pq]
+                    {:execution-result/turn-id (:prepared-request/id prepared)
+                     :execution-result/session-id sid
+                     :execution-result/assistant-message {:role "assistant"
+                                                         :content [{:type :text :text "hello back"}]
+                                                         :stop-reason :stop
+                                                         :timestamp (java.time.Instant/now)}
+                     :execution-result/turn-outcome :turn.outcome/stop
+                     :execution-result/tool-calls []
+                     :execution-result/stop-reason :stop})]
+      (session/prompt-in! ctx session-id "hello"))
+    (let [result (session/query-in ctx [:psi.agent-session/last-prepared-turn-id
+                                        :psi.agent-session/last-prepared-message-count
+                                        :psi.agent-session/last-execution-turn-id
+                                        :psi.agent-session/last-execution-turn-outcome
+                                        :psi.agent-session/last-execution-stop-reason])
+          entries (dispatch/event-log-entries)
+          msgs    (journal-messages ctx session-id)]
+      (is (string? (:psi.agent-session/last-prepared-turn-id result)))
+      (is (number? (:psi.agent-session/last-prepared-message-count result)))
+      (is (= (:psi.agent-session/last-prepared-turn-id result)
+             (:psi.agent-session/last-execution-turn-id result)))
+      (is (= :turn.outcome/stop (:psi.agent-session/last-execution-turn-outcome result)))
+      (is (= :stop (:psi.agent-session/last-execution-stop-reason result)))
+      (is (some #(= :session/prompt-submit (:event-type %)) entries))
+      (is (some #(= :session/prompt-prepare-request (:event-type %)) entries))
+      (is (some #(= :session/prompt-record-response (:event-type %)) entries))
+      (is (= ["user" "assistant"] (mapv :role msgs))))))
