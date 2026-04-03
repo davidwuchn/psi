@@ -350,267 +350,265 @@
 ;; Central command dispatch
 ;; ============================================================
 
+(defn- tree-sessions
+  [ctx session-id]
+  (let [sd        (ss/get-session-data-in ctx session-id)
+        sessions0 (vec (or (ss/list-context-sessions-in ctx) []))]
+    (if (seq sessions0)
+      sessions0
+      [(select-keys sd [:session-id :session-name :worktree-path])])))
+
+(defn- match-session-in-context
+  [sessions arg]
+  (or (some #(when (= arg (:session-id %)) %) sessions)
+      (let [matches (filterv #(str/starts-with? (or (:session-id %) "") arg) sessions)]
+        (when (= 1 (count matches))
+          (first matches)))))
+
+(defn- dispatch-tree-command
+  [ctx session-id trimmed supports-session-tree?]
+  (if-not supports-session-tree?
+    {:type :text
+     :message "[/tree is only available in TUI mode (--tui)]"}
+    (let [arg      (-> (str/replace trimmed #"^/tree\s*" "") str/trim)
+          sessions (tree-sessions ctx session-id)]
+      (if (str/blank? arg)
+        {:type :tree-open}
+        (let [chosen (match-session-in-context sessions arg)
+              sid    (:session-id chosen)]
+          (cond
+            (nil? chosen)
+            {:type :text :message (str "Session not found in context: " arg)}
+
+            (= sid session-id)
+            {:type :text :message (str "Already active session: " sid)}
+
+            :else
+            {:type :tree-switch :session-id sid}))))))
+
+(defn- dispatch-jobs-command
+  [ctx session-id trimmed]
+  (let [tail     (-> (str/replace trimmed #"^/jobs\s*" "") str/trim)
+        statuses (parse-job-statuses tail)
+        invalid? (and (not (str/blank? tail)) (empty? statuses))
+        jobs     (if statuses
+                   (bg-rt/list-background-jobs-in! ctx session-id statuses)
+                   (bg-rt/list-background-jobs-in! ctx session-id))]
+    (if invalid?
+      {:type :text :message "Usage: /jobs [status ...]"}
+      {:type :text
+       :message (str "── Background jobs ─────────────────────\n"
+                     (if (empty? jobs)
+                       "  (none)"
+                       (str/join "\n"
+                                 (map (fn [job]
+                                        (str "  " (:job-id job)
+                                             "  [" (name (:status job)) "]"
+                                             "  " (:tool-name job)))
+                                      jobs)))
+                     "\n───────────────────────────────────────")})))
+
+(defn- dispatch-job-command
+  [ctx session-id trimmed]
+  (let [job-id (-> (str/replace trimmed #"^/job\s*" "") str/trim)]
+    (if (str/blank? job-id)
+      {:type :text :message "Usage: /job <job-id>"}
+      (let [job (bg-rt/inspect-background-job-in! ctx session-id job-id)]
+        {:type :text
+         :message (str "── Background job ──────────────────────\n"
+                       (safe-pr-str job)
+                       "\n───────────────────────────────────────")}))))
+
+(defn- dispatch-cancel-job-command
+  [ctx session-id trimmed]
+  (let [job-id (-> (str/replace trimmed #"^/cancel-job\s*" "") str/trim)]
+    (if (str/blank? job-id)
+      {:type :text :message "Usage: /cancel-job <job-id>"}
+      (let [job (bg-rt/cancel-background-job-in! ctx session-id job-id :user)]
+        {:type :text
+         :message (str "Cancellation requested for " job-id
+                       " (status=" (name (:status job)) ")")}))))
+
+(defn- dispatch-remember-command
+  [ctx session-id trimmed]
+  (if-let [memory-ctx (:memory-ctx ctx)]
+    (if-not (memory-ready? ctx)
+      {:type :text
+       :message (str "✗ Remember blocked"
+                     "\n  reason: memory_capture_prerequisites_not_ready"
+                     "\n  detail: :psi.memory/status must be :ready")}
+      (let [reason (-> (str/replace trimmed #"^/remember\s*" "") str/trim not-empty)]
+        {:type :text
+         :message (remember-text! (assoc ctx :memory-ctx memory-ctx) session-id reason)}))
+    {:type :text
+     :message "✗ Memory context not configured."}))
+
+(defn- dispatch-model-command
+  [ctx session-id trimmed]
+  (let [args (-> (str/replace trimmed #"^/model\s*" "") str/trim)
+        sd   (ss/get-session-data-in ctx session-id)]
+    (if (str/blank? args)
+      (let [m (:model sd)]
+        {:type :text
+         :message (if m
+                    (str "Current model: " (:provider m) " " (:id m))
+                    "No model selected.")})
+      (let [tokens (str/split args #"\s+")]
+        (if (not= 2 (count tokens))
+          {:type :text
+           :message "Usage: /model OR /model <provider> <model-id>"}
+          (let [[provider model-id] tokens
+                resolved (resolve-runtime-model provider model-id)]
+            (if-not resolved
+              {:type :text
+               :message (str "Unknown model: " provider " " model-id)}
+              (let [provider-str (name (:provider resolved))
+                    model {:provider provider-str
+                           :id (:id resolved)
+                           :reasoning (:supports-reasoning resolved)}
+                    result (session/set-model-in! ctx session-id model)]
+                {:type :text
+                 :message (str "✓ Model set to "
+                               (get-in result [:model :provider]) " "
+                               (get-in result [:model :id]))}))))))))
+
+(defn- dispatch-thinking-command
+  [ctx session-id trimmed]
+  (let [args (-> (str/replace trimmed #"^/thinking\s*" "") str/trim)
+        sd   (ss/get-session-data-in ctx session-id)]
+    (if (str/blank? args)
+      {:type :text
+       :message (str "Current thinking level: " (name (or (:thinking-level sd) :off)))}
+      (let [tokens (str/split args #"\s+")]
+        (if (not= 1 (count tokens))
+          {:type :text
+           :message "Usage: /thinking OR /thinking <level>"}
+          (let [level-input (first tokens)
+                level (normalize-thinking-level level-input)]
+            (if-not (known-thinking-level? level)
+              {:type :text
+               :message (unknown-thinking-level-message level-input)}
+              (let [result (session/set-thinking-level-in! ctx session-id level)]
+                {:type :text
+                 :message (str "✓ Thinking level set to "
+                               (name (:thinking-level result)))}))))))))
+
+(defn- dispatch-login-command
+  [oauth-ctx ai-model trimmed]
+  (if-not oauth-ctx
+    {:type :login-error :message "OAuth not available."}
+    (let [provider-arg (second (str/split trimmed #"\s+" 2))
+          providers    (oauth/available-providers oauth-ctx)
+          {:keys [provider error]}
+          (select-login-provider providers (:provider ai-model) provider-arg)]
+      (if error
+        {:type :login-error :message (str "✗ " error)}
+        (try
+          (let [{:keys [url login-state]} (oauth/begin-login! oauth-ctx (:id provider))]
+            {:type                 :login-start
+             :provider             provider
+             :url                  url
+             :login-state          login-state
+             :uses-callback-server (and (:uses-callback-server provider)
+                                        (:callback-server login-state))})
+          (catch Exception e
+            {:type :login-error
+             :message (str "✗ Login failed: " (ex-message e))}))))))
+
+(defn- dispatch-logout-command
+  [oauth-ctx]
+  (if-not oauth-ctx
+    {:type :text :message "OAuth not available."}
+    (let [logged-in (oauth/logged-in-providers oauth-ctx)]
+      (if (empty? logged-in)
+        {:type :text :message "No OAuth providers logged in. Use /login first."}
+        (do
+          (doseq [p logged-in]
+            (oauth/logout! oauth-ctx (:id p)))
+          {:type    :logout
+           :message (str "✓ Logged out of: "
+                         (str/join ", " (map :name logged-in)))})))))
+
+(defn- dispatch-extension-command
+  [ctx trimmed]
+  (let [parts    (str/split (subs trimmed 1) #"\s" 2)
+        cmd-name (first parts)
+        args-str (or (second parts) "")
+        cmd      (ext/get-command-in (:extension-registry ctx) cmd-name)]
+    {:type :extension-cmd :name cmd-name :args args-str :handler (:handler cmd)}))
+
+(defn- new-session-result
+  [ctx session-id on-new-session!]
+  (let [rehydrate (if on-new-session!
+                    (on-new-session! session-id)
+                    (let [sd (session/new-session-in! ctx session-id {})]
+                      {:session-id (:session-id sd) :messages [] :tool-calls {} :tool-order []}))]
+    {:type :new-session
+     :message "[New session started]"
+     :rehydrate rehydrate}))
+
+(defn- exact-command-handler
+  [trimmed]
+  (case trimmed
+    "/quit" :quit
+    "/exit" :quit
+    "/new" :new
+    "/resume" :resume
+    "/status" :status
+    "/history" :history
+    "/help" :help
+    "/?" :help
+    "/prompts" :prompts
+    "/skills" :skills
+    "/worktree" :worktree
+    "/logout" :logout
+    nil))
+
+(defn- prefixed-command
+  [trimmed]
+  (some (fn [prefix]
+          (when (or (= trimmed prefix)
+                    (str/starts-with? trimmed (str prefix " ")))
+            prefix))
+        ["/tree" "/jobs" "/job" "/cancel-job" "/remember" "/model" "/thinking" "/login"]))
+
+(defn- dispatch-prefixed-command
+  [ctx session-id trimmed {:keys [oauth-ctx ai-model supports-session-tree?]}]
+  (case (prefixed-command trimmed)
+    "/tree" (dispatch-tree-command ctx session-id trimmed supports-session-tree?)
+    "/jobs" (dispatch-jobs-command ctx session-id trimmed)
+    "/job" (dispatch-job-command ctx session-id trimmed)
+    "/cancel-job" (dispatch-cancel-job-command ctx session-id trimmed)
+    "/remember" (dispatch-remember-command ctx session-id trimmed)
+    "/model" (dispatch-model-command ctx session-id trimmed)
+    "/thinking" (dispatch-thinking-command ctx session-id trimmed)
+    "/login" (dispatch-login-command oauth-ctx ai-model trimmed)
+    nil))
+
 (defn- dispatch*
   "Single command dispatch pipeline.
 
    Requires explicit `session-id` for session-scoped commands."
-  [ctx session-id text {:keys [oauth-ctx ai-model on-new-session! supports-session-tree?]}]
+  [ctx session-id text {:keys [oauth-ctx on-new-session!] :as opts}]
   (let [trimmed (str/trim text)]
-    (cond
-      ;; Quit
-      (or (= trimmed "/quit") (= trimmed "/exit"))
-      {:type :quit}
-
-      ;; New session
-      (= trimmed "/new")
-      (let [rehydrate (if on-new-session!
-                        (on-new-session! session-id)
-                        (let [sd (session/new-session-in! ctx session-id {})]
-                          {:session-id (:session-id sd) :messages [] :tool-calls {} :tool-order []}))]
-        {:type :new-session
-         :message "[New session started]"
-         :rehydrate rehydrate})
-
-      ;; Resume
-      (= trimmed "/resume")
-      {:type :resume}
-
-      ;; Session tree (TUI multi-session surface)
-      (or (= trimmed "/tree")
-          (str/starts-with? trimmed "/tree "))
-      (if-not supports-session-tree?
-        {:type :text
-         :message "[/tree is only available in TUI mode (--tui)]"}
-        (let [arg       (-> (str/replace trimmed #"^/tree\s*" "") str/trim)
-              sd        (ss/get-session-data-in ctx session-id)
-              active-id session-id
-              sessions0 (vec (or (ss/list-context-sessions-in ctx) []))
-              sessions  (if (seq sessions0)
-                          sessions0
-                          [(select-keys sd
-                                        [:session-id :session-name :worktree-path])])]
-          (cond
-            (str/blank? arg)
-            {:type :tree-open}
-
-            :else
-            (let [match-by-id
-                  (some (fn [m]
-                          (when (= arg (:session-id m))
-                            m))
-                        sessions)
-                  match-by-prefix
-                  (when-not match-by-id
-                    (let [matches (filterv (fn [m]
-                                             (str/starts-with? (or (:session-id m) "") arg))
-                                           sessions)]
-                      (when (= 1 (count matches))
-                        (first matches))))
-                  chosen (or match-by-id match-by-prefix)
-                  sid    (:session-id chosen)]
-              (cond
-                (nil? chosen)
-                {:type :text
-                 :message (str "Session not found in context: " arg)}
-
-                (= sid active-id)
-                {:type :text
-                 :message (str "Already active session: " sid)}
-
-                :else
-                {:type :tree-switch
-                 :session-id sid})))))
-
-      ;; Status
-      (= trimmed "/status")
-      {:type :text :message (format-status ctx session-id)}
-
-      ;; History
-      (= trimmed "/history")
-      {:type :text :message (format-history ctx session-id)}
-
-      ;; Help
-      (or (= trimmed "/help") (= trimmed "/?"))
-      {:type :text :message (format-help ctx session-id)}
-
-      ;; Prompts
-      (= trimmed "/prompts")
-      {:type :text :message (format-prompts ctx session-id)}
-
-      ;; Skills
-      (= trimmed "/skills")
-      {:type :text :message (format-skills ctx session-id)}
-
-      ;; Worktree
-      (= trimmed "/worktree")
-      {:type :text :message (format-worktree ctx session-id)}
-
-      ;; Background jobs list
-      (or (= trimmed "/jobs")
-          (str/starts-with? trimmed "/jobs "))
-      (let [tail     (-> (str/replace trimmed #"^/jobs\s*" "") str/trim)
-            statuses (parse-job-statuses tail)
-            invalid? (and (not (str/blank? tail)) (empty? statuses))
-            jobs     (if statuses
-                       (bg-rt/list-background-jobs-in! ctx session-id statuses)
-                       (bg-rt/list-background-jobs-in! ctx session-id))]
-        (if invalid?
-          {:type :text :message "Usage: /jobs [status ...]"}
-          {:type :text
-           :message (str "── Background jobs ─────────────────────\n"
-                         (if (empty? jobs)
-                           "  (none)"
-                           (str/join "\n"
-                                     (map (fn [job]
-                                            (str "  " (:job-id job)
-                                                 "  [" (name (:status job)) "]"
-                                                 "  " (:tool-name job)))
-                                          jobs)))
-                         "\n───────────────────────────────────────")}))
-
-      ;; Background job inspect
-      (or (= trimmed "/job")
-          (str/starts-with? trimmed "/job "))
-      (let [job-id (-> (str/replace trimmed #"^/job\s*" "") str/trim)]
-        (if (str/blank? job-id)
-          {:type :text :message "Usage: /job <job-id>"}
-          (let [job (bg-rt/inspect-background-job-in! ctx session-id job-id)]
-            {:type :text
-             :message (str "── Background job ──────────────────────\n"
-                           (safe-pr-str job)
-                           "\n───────────────────────────────────────")})))
-
-      ;; Background job cancel
-      (or (= trimmed "/cancel-job")
-          (str/starts-with? trimmed "/cancel-job "))
-      (let [job-id (-> (str/replace trimmed #"^/cancel-job\s*" "") str/trim)]
-        (if (str/blank? job-id)
-          {:type :text :message "Usage: /cancel-job <job-id>"}
-          (let [job (bg-rt/cancel-background-job-in! ctx session-id job-id :user)]
-            {:type :text
-             :message (str "Cancellation requested for " job-id
-                           " (status=" (name (:status job)) ")")})))
-
-      ;; Remember
-      (or (= trimmed "/remember")
-          (str/starts-with? trimmed "/remember "))
-      (if-let [memory-ctx (:memory-ctx ctx)]
-        (if-not (memory-ready? ctx)
-          {:type :text
-           :message (str "✗ Remember blocked"
-                         "\n  reason: memory_capture_prerequisites_not_ready"
-                         "\n  detail: :psi.memory/status must be :ready")}
-          (let [reason (-> (str/replace trimmed #"^/remember\s*" "") str/trim not-empty)]
-            {:type :text
-             :message (remember-text! (assoc ctx :memory-ctx memory-ctx) session-id reason)}))
-        {:type :text
-         :message "✗ Memory context not configured."})
-
-      ;; Model
-      (or (= trimmed "/model")
-          (str/starts-with? trimmed "/model "))
-      (let [args (-> (str/replace trimmed #"^/model\s*" "")
-                     str/trim)
-            sd   (ss/get-session-data-in ctx session-id)]
-        (if (str/blank? args)
-          (let [m (:model sd)]
-            {:type :text
-             :message (if m
-                        (str "Current model: " (:provider m) " " (:id m))
-                        "No model selected.")})
-          (let [tokens (str/split args #"\s+")]
-            (if (not= 2 (count tokens))
-              {:type :text
-               :message "Usage: /model OR /model <provider> <model-id>"}
-              (let [[provider model-id] tokens
-                    resolved (resolve-runtime-model provider model-id)]
-                (if-not resolved
-                  {:type :text
-                   :message (str "Unknown model: " provider " " model-id)}
-                  (let [provider-str (name (:provider resolved))
-                        model {:provider provider-str
-                               :id (:id resolved)
-                               :reasoning (:supports-reasoning resolved)}
-                        result (session/set-model-in! ctx session-id model)]
-                    {:type :text
-                     :message (str "✓ Model set to "
-                                   (get-in result [:model :provider]) " "
-                                   (get-in result [:model :id]))})))))))
-
-      ;; Thinking level
-      (or (= trimmed "/thinking")
-          (str/starts-with? trimmed "/thinking "))
-      (let [args (-> (str/replace trimmed #"^/thinking\s*" "")
-                     str/trim)
-            sd   (ss/get-session-data-in ctx session-id)]
-        (if (str/blank? args)
-          (let [level (:thinking-level sd)]
-            {:type :text
-             :message (str "Current thinking level: " (name (or level :off)))})
-          (let [tokens (str/split args #"\s+")]
-            (if (not= 1 (count tokens))
-              {:type :text
-               :message "Usage: /thinking OR /thinking <level>"}
-              (let [level-input (first tokens)
-                    level (normalize-thinking-level level-input)]
-                (if-not (known-thinking-level? level)
-                  {:type :text
-                   :message (unknown-thinking-level-message level-input)}
-                  (let [result (session/set-thinking-level-in! ctx session-id level)]
-                    {:type :text
-                     :message (str "✓ Thinking level set to "
-                                   (name (:thinking-level result)))})))))))
-
-      ;; Login
-      (or (= trimmed "/login")
-          (str/starts-with? trimmed "/login "))
-      (if-not oauth-ctx
-        {:type :login-error :message "OAuth not available."}
-        (let [provider-arg (second (str/split trimmed #"\s+" 2))
-              providers    (oauth/available-providers oauth-ctx)
-              {:keys [provider error]}
-              (select-login-provider providers (:provider ai-model) provider-arg)]
-          (if error
-            {:type :login-error :message (str "✗ " error)}
-            (try
-              (let [{:keys [url login-state]}
-                    (oauth/begin-login! oauth-ctx (:id provider))]
-                {:type                 :login-start
-                 :provider             provider
-                 :url                  url
-                 :login-state          login-state
-                 :uses-callback-server (and (:uses-callback-server provider)
-                                            (:callback-server login-state))})
-              (catch Exception e
-                {:type :login-error
-                 :message (str "✗ Login failed: " (ex-message e))})))))
-
-      ;; Logout
-      (= trimmed "/logout")
-      (if-not oauth-ctx
-        {:type :text :message "OAuth not available."}
-        (let [logged-in (oauth/logged-in-providers oauth-ctx)]
-          (if (empty? logged-in)
-            {:type :text :message "No OAuth providers logged in. Use /login first."}
-            (do (doseq [p logged-in]
-                  (oauth/logout! oauth-ctx (:id p)))
-                {:type    :logout
-                 :message (str "✓ Logged out of: "
-                               (str/join ", " (map :name logged-in)))}))))
-
-      ;; Extension command: /name args
-      (and (str/starts-with? trimmed "/")
-           (let [cmd-name (first (str/split (subs trimmed 1) #"\s" 2))]
-             (ext/get-command-in (:extension-registry ctx) cmd-name)))
-      (let [parts    (str/split (subs trimmed 1) #"\s" 2)
-            cmd-name (first parts)
-            args-str (or (second parts) "")
-            cmd      (ext/get-command-in (:extension-registry ctx) cmd-name)]
-        {:type :extension-cmd :name cmd-name :args args-str :handler (:handler cmd)})
-
-      ;; Not a command
-      :else
-      nil)))
+    (or
+     (case (exact-command-handler trimmed)
+       :quit {:type :quit}
+       :new (new-session-result ctx session-id on-new-session!)
+       :resume {:type :resume}
+       :status {:type :text :message (format-status ctx session-id)}
+       :history {:type :text :message (format-history ctx session-id)}
+       :help {:type :text :message (format-help ctx session-id)}
+       :prompts {:type :text :message (format-prompts ctx session-id)}
+       :skills {:type :text :message (format-skills ctx session-id)}
+       :worktree {:type :text :message (format-worktree ctx session-id)}
+       :logout (dispatch-logout-command oauth-ctx)
+       nil)
+     (dispatch-prefixed-command ctx session-id trimmed opts)
+     (when (str/starts-with? trimmed "/")
+       (let [cmd-name (first (str/split (subs trimmed 1) #"\s" 2))]
+         (when (ext/get-command-in (:extension-registry ctx) cmd-name)
+           (dispatch-extension-command ctx trimmed)))))))
 
 (defn dispatch-in
   "Explicit session-targeted command dispatch over the shared pipeline."
