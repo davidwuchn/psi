@@ -223,6 +223,275 @@
 
 ;;;; Editor (multi-line)
 
+(defn- editor-cursor [editor]
+  (:cursor editor))
+
+(defn- editor-cur-line [editor]
+  (:line (editor-cursor editor)))
+
+(defn- editor-cur-col [editor]
+  (:col (editor-cursor editor)))
+
+(defn- editor-line-at [editor idx]
+  (nth (:lines editor) idx ""))
+
+(defn- editor-set-cursor [editor line col]
+  (assoc editor :cursor {:line line :col col}))
+
+(defn- editor-set-buffer [editor new-lines line col]
+  (-> editor
+      (assoc :lines new-lines)
+      (editor-set-cursor line col)))
+
+(defn- editor-history-lines [entry]
+  (let [hist-lines (str/split-lines entry)]
+    (if (seq hist-lines) (vec hist-lines) [""])))
+
+(defn- editor-append-history [history text]
+  (let [trimmed (str/trim text)]
+    (if (and (seq trimmed)
+             (or (empty? history)
+                 (not= (first history) trimmed)))
+      (into [trimmed]
+            (take (dec (:editor-max-history config)) history))
+      history)))
+
+(defn- editor-visible-lines [editor]
+  (let [max-visible (max (:editor-min-visible config)
+                         (int (* 24 (:editor-max-visible-pct config))))]
+    (take max-visible
+          (drop (:scroll-offset editor)
+                (map-indexed vector (:lines editor))))))
+
+(defn- editor-render-line [editor width [i line]]
+  (let [pad-x       (or (:padding-x editor) 0)
+        inner       (- width (* 2 pad-x))
+        cursor-line (editor-cur-line editor)
+        cursor-col  (editor-cur-col editor)
+        marker      (if (:focused editor) (:cursor-marker config) "")
+        rendered    (if (= i cursor-line)
+                      (let [split-col (min cursor-col (count line))]
+                        (str (subs line 0 split-col)
+                             marker
+                             (subs line split-col)))
+                      line)]
+    (str (apply str (repeat pad-x \space))
+         (ansi/truncate-to-width rendered inner)
+         (apply str (repeat pad-x \space)))))
+
+(defn- editor-submit [editor]
+  (assoc editor
+         :lines [""]
+         :cursor {:line 0 :col 0}
+         :scroll-offset 0
+         :history-index -1
+         :history (editor-append-history (:history editor)
+                                         (str/join "\n" (:lines editor)))))
+
+(defn- editor-insert-newline [editor]
+  (let [cur-line  (editor-cur-line editor)
+        cur-col   (editor-cur-col editor)
+        line      (editor-line-at editor cur-line)
+        before    (subs line 0 cur-col)
+        after     (subs line cur-col)
+        new-lines (vec (concat (take cur-line (:lines editor))
+                               [before after]
+                               (drop (inc cur-line) (:lines editor))))]
+    (editor-set-buffer editor new-lines (inc cur-line) 0)))
+
+(defn- editor-insert-char [editor raw]
+  (let [cur-line  (editor-cur-line editor)
+        cur-col   (editor-cur-col editor)
+        line      (editor-line-at editor cur-line)
+        new-line  (str (subs line 0 cur-col) raw (subs line cur-col))]
+    (editor-set-buffer editor
+                       (assoc (:lines editor) cur-line new-line)
+                       cur-line
+                       (inc cur-col))))
+
+(defn- editor-backspace [editor]
+  (let [cur-line (editor-cur-line editor)
+        cur-col  (editor-cur-col editor)]
+    (cond
+      (pos? cur-col)
+      (let [line     (editor-line-at editor cur-line)
+            new-line (str (subs line 0 (dec cur-col)) (subs line cur-col))]
+        (editor-set-buffer editor
+                           (assoc (:lines editor) cur-line new-line)
+                           cur-line
+                           (dec cur-col)))
+
+      (pos? cur-line)
+      (let [prev-line    (editor-line-at editor (dec cur-line))
+            cur-line-str (editor-line-at editor cur-line)
+            merged       (str prev-line cur-line-str)
+            new-lines    (vec (concat (take (dec cur-line) (:lines editor))
+                                      [merged]
+                                      (drop (inc cur-line) (:lines editor))))]
+        (editor-set-buffer editor new-lines (dec cur-line) (count prev-line)))
+
+      :else editor)))
+
+(defn- editor-move-left [editor]
+  (let [cur-line (editor-cur-line editor)
+        cur-col  (editor-cur-col editor)]
+    (cond
+      (pos? cur-col)
+      (editor-set-cursor editor cur-line (dec cur-col))
+
+      (pos? cur-line)
+      (editor-set-cursor editor (dec cur-line) (count (editor-line-at editor (dec cur-line))))
+
+      :else editor)))
+
+(defn- editor-move-right [editor]
+  (let [cur-line (editor-cur-line editor)
+        cur-col  (editor-cur-col editor)
+        line     (editor-line-at editor cur-line)]
+    (cond
+      (< cur-col (count line))
+      (editor-set-cursor editor cur-line (inc cur-col))
+
+      (< cur-line (dec (count (:lines editor))))
+      (editor-set-cursor editor (inc cur-line) 0)
+
+      :else editor)))
+
+(defn- editor-history-up [editor]
+  (let [new-idx (inc (:history-index editor))]
+    (if (< new-idx (count (:history editor)))
+      (let [hist-lines (editor-history-lines (nth (:history editor) new-idx))]
+        (-> editor
+            (assoc :lines hist-lines
+                   :history-index new-idx)
+            (editor-set-cursor (dec (count hist-lines))
+                               (count (last hist-lines)))))
+      editor)))
+
+(defn- editor-history-down [editor]
+  (let [new-idx (dec (:history-index editor))]
+    (cond
+      (= new-idx -1)
+      (-> editor
+          (assoc :lines [""]
+                 :history-index -1)
+          (editor-set-cursor 0 0))
+
+      (>= new-idx 0)
+      (let [hist-lines (editor-history-lines (nth (:history editor) new-idx))]
+        (-> editor
+            (assoc :lines hist-lines
+                   :history-index new-idx)
+            (editor-set-cursor (dec (count hist-lines))
+                               (count (last hist-lines)))))
+
+      :else editor)))
+
+(defn- editor-move-up [editor]
+  (let [cur-line (editor-cur-line editor)]
+    (if (pos? cur-line)
+      (let [new-line (dec cur-line)
+            line     (editor-line-at editor new-line)
+            new-col  (min (editor-cur-col editor) (count line))]
+        (editor-set-cursor editor new-line new-col))
+      (editor-history-up editor))))
+
+(defn- editor-move-down [editor]
+  (let [cur-line (editor-cur-line editor)]
+    (if (< cur-line (dec (count (:lines editor))))
+      (let [new-line (inc cur-line)
+            line     (editor-line-at editor new-line)
+            new-col  (min (editor-cur-col editor) (count line))]
+        (editor-set-cursor editor new-line new-col))
+      (editor-history-down editor))))
+
+(defn- editor-line-start [editor]
+  (editor-set-cursor editor (editor-cur-line editor) 0))
+
+(defn- editor-line-end [editor]
+  (let [cur-line (editor-cur-line editor)]
+    (editor-set-cursor editor cur-line (count (editor-line-at editor cur-line)))))
+
+(defn- editor-delete-to-line-end [editor]
+  (let [cur-line (editor-cur-line editor)
+        cur-col  (editor-cur-col editor)
+        line     (editor-line-at editor cur-line)
+        new-line (subs line 0 cur-col)]
+    (assoc editor :lines (assoc (:lines editor) cur-line new-line))))
+
+(defn- editor-delete-to-line-start [editor]
+  (let [cur-line (editor-cur-line editor)
+        cur-col  (editor-cur-col editor)
+        line     (editor-line-at editor cur-line)
+        new-line (subs line cur-col)]
+    (-> editor
+        (assoc :lines (assoc (:lines editor) cur-line new-line))
+        (editor-set-cursor cur-line 0))))
+
+(defn- editor-submit-key? [editor raw]
+  (and (matches-key? raw "enter")
+       (not (:disable-submit editor))
+       (not (:autocomplete-active editor))))
+
+(defn- editor-newline-key? [raw]
+  (or (matches-key? raw "shift+enter")
+      (matches-key? raw "alt+enter")
+      (matches-key? raw "ctrl+enter")))
+
+(defn- editor-backspace-key? [raw]
+  (or (matches-key? raw "backspace")
+      (= raw "\u007f")))
+
+(defn- editor-left-key? [raw]
+  (or (matches-key? raw "left")
+      (matches-key? raw "\u0002")))
+
+(defn- editor-right-key? [raw]
+  (or (matches-key? raw "right")
+      (matches-key? raw "\u0006")))
+
+(defn- editor-line-start-key? [raw]
+  (or (matches-key? raw "home")
+      (matches-key? raw "\u0001")))
+
+(defn- editor-line-end-key? [raw]
+  (or (matches-key? raw "end")
+      (matches-key? raw "\u0005")))
+
+(defn- editor-input-op [editor raw]
+  (cond
+    (editor-submit-key? editor raw) :submit
+    (editor-newline-key? raw) :newline
+    (and (printable? raw) (= (:jump-mode editor) :none)) :insert-char
+    (editor-backspace-key? raw) :backspace
+    (editor-left-key? raw) :left
+    (editor-right-key? raw) :right
+    (matches-key? raw "up") :up
+    (matches-key? raw "down") :down
+    (editor-line-start-key? raw) :line-start
+    (editor-line-end-key? raw) :line-end
+    (matches-key? raw "\u000b") :delete-to-line-end
+    (matches-key? raw "\u0015") :delete-to-line-start
+    (and (:autocomplete-active editor) (matches-key? raw "escape")) :autocomplete-cancel
+    :else nil))
+
+(defn- editor-handle-input [editor raw]
+  (case (editor-input-op editor raw)
+    :submit (editor-submit editor)
+    :newline (editor-insert-newline editor)
+    :insert-char (editor-insert-char editor raw)
+    :backspace (editor-backspace editor)
+    :left (editor-move-left editor)
+    :right (editor-move-right editor)
+    :up (editor-move-up editor)
+    :down (editor-move-down editor)
+    :line-start (editor-line-start editor)
+    :line-end (editor-line-end editor)
+    :delete-to-line-end (editor-delete-to-line-end editor)
+    :delete-to-line-start (editor-delete-to-line-start editor)
+    :autocomplete-cancel (assoc editor :autocomplete-active false)
+    editor))
+
 (defrecord Editor
            [lines cursor scroll-offset padding-x focused
             disable-submit autocomplete-active
@@ -231,202 +500,12 @@
             invalidated]
 
   proto/Component
-  (render [_this width]
-    (let [pad-x         (or padding-x 0)
-          inner         (- width (* 2 pad-x))
-          cursor-line   (:line cursor)
-          cursor-col    (:col cursor)
-          max-visible   (max (:editor-min-visible config)
-                             (int (* 24 (:editor-max-visible-pct config))))
-          visible-lines (take max-visible
-                              (drop scroll-offset
-                                    (map-indexed vector lines)))
-          marker        (if focused (:cursor-marker config) "")]
-      (vec (for [[i line] visible-lines]
-             (let [rendered (if (= i cursor-line)
-                              (str (subs line 0 (min cursor-col (count line)))
-                                   marker
-                                   (subs line (min cursor-col (count line))))
-                              line)
-                   padded   (str (apply str (repeat pad-x \space))
-                                 (ansi/truncate-to-width rendered inner)
-                                 (apply str (repeat pad-x \space)))]
-               padded)))))
+  (render [this width]
+    (mapv #(editor-render-line this width %)
+          (editor-visible-lines this)))
 
   (handle-input [this raw]
-    (cond
-      ;; EditorSubmitted
-      (and (matches-key? raw "enter")
-           (not disable-submit)
-           (not autocomplete-active))
-      (let [text (str/join "\n" lines)
-            trimmed (str/trim text)
-            new-hist (if (and (seq trimmed)
-                              (or (empty? history)
-                                  (not= (first history) trimmed)))
-                       (into [trimmed]
-                             (take (dec (:editor-max-history config)) history))
-                       history)]
-        (assoc this
-               :lines [""]
-               :cursor {:line 0 :col 0}
-               :scroll-offset 0
-               :history-index -1
-               :history new-hist))
-
-      ;; EditorNewLine
-      (or (matches-key? raw "shift+enter")
-          (matches-key? raw "alt+enter")
-          (matches-key? raw "ctrl+enter"))
-      (let [cur-line  (:line cursor)
-            cur-col   (:col cursor)
-            line      (nth lines cur-line)
-            before    (subs line 0 cur-col)
-            after     (subs line cur-col)
-            new-lines (vec (concat (take cur-line lines)
-                                   [before after]
-                                   (drop (inc cur-line) lines)))]
-        (assoc this
-               :lines new-lines
-               :cursor {:line (inc cur-line) :col 0}))
-
-      ;; EditorCharInserted
-      (and (printable? raw) (= jump-mode :none))
-      (let [cur-line  (:line cursor)
-            cur-col   (:col cursor)
-            line      (nth lines cur-line "")
-            new-line  (str (subs line 0 cur-col) raw (subs line cur-col))
-            new-lines (assoc lines cur-line new-line)]
-        (assoc this
-               :lines new-lines
-               :cursor {:line cur-line :col (inc cur-col)}))
-
-      ;; EditorBackspace
-      (or (matches-key? raw "backspace") (= raw "\u007f"))
-      (let [cur-line (:line cursor)
-            cur-col  (:col cursor)]
-        (if (pos? cur-col)
-          ;; Delete char before cursor on same line
-          (let [line     (nth lines cur-line)
-                new-line (str (subs line 0 (dec cur-col)) (subs line cur-col))]
-            (assoc this
-                   :lines (assoc lines cur-line new-line)
-                   :cursor {:line cur-line :col (dec cur-col)}))
-          ;; At start of line — merge with previous line
-          (if (pos? cur-line)
-            (let [prev-line    (nth lines (dec cur-line))
-                  cur-line-str (nth lines cur-line)
-                  merged       (str prev-line cur-line-str)
-                  new-lines    (vec (concat (take (dec cur-line) lines)
-                                            [merged]
-                                            (drop (inc cur-line) lines)))]
-              (assoc this
-                     :lines new-lines
-                     :cursor {:line (dec cur-line) :col (count prev-line)}))
-            this)))
-
-      ;; EditorCursorLeft
-      (or (matches-key? raw "left") (matches-key? raw "\u0002"))
-      (let [cur-line (:line cursor)
-            cur-col  (:col cursor)]
-        (cond
-          (pos? cur-col)
-          (assoc this :cursor {:line cur-line :col (dec cur-col)})
-          (pos? cur-line)
-          (let [prev-line (nth lines (dec cur-line))]
-            (assoc this :cursor {:line (dec cur-line) :col (count prev-line)}))
-          :else this))
-
-      ;; EditorCursorRight
-      (or (matches-key? raw "right") (matches-key? raw "\u0006"))
-      (let [cur-line (:line cursor)
-            cur-col  (:col cursor)
-            line     (nth lines cur-line "")]
-        (cond
-          (< cur-col (count line))
-          (assoc this :cursor {:line cur-line :col (inc cur-col)})
-          (< cur-line (dec (count lines)))
-          (assoc this :cursor {:line (inc cur-line) :col 0})
-          :else this))
-
-      ;; EditorCursorUp / EditorCursorDown (history navigation at buffer edges)
-      (matches-key? raw "up")
-      (let [cur-line (:line cursor)]
-        (if (pos? cur-line)
-          (let [new-line (dec cur-line)
-                line     (nth lines new-line "")
-                new-col  (min (:col cursor) (count line))]
-            (assoc this :cursor {:line new-line :col new-col}))
-          ;; At first line — navigate history upward
-          (let [new-idx (inc history-index)]
-            (if (< new-idx (count history))
-              (let [hist-lines (str/split-lines (nth history new-idx))
-                    hist-lines (if (seq hist-lines) hist-lines [""])]
-                (assoc this
-                       :lines (vec hist-lines)
-                       :cursor {:line (dec (count hist-lines))
-                                :col  (count (last hist-lines))}
-                       :history-index new-idx))
-              this))))
-
-      (matches-key? raw "down")
-      (let [cur-line (:line cursor)]
-        (if (< cur-line (dec (count lines)))
-          (let [new-line (inc cur-line)
-                line     (nth lines new-line "")
-                new-col  (min (:col cursor) (count line))]
-            (assoc this :cursor {:line new-line :col new-col}))
-          ;; At last line — navigate history downward
-          (let [new-idx (dec history-index)]
-            (cond
-              (= new-idx -1)
-              (assoc this
-                     :lines [""]
-                     :cursor {:line 0 :col 0}
-                     :history-index -1)
-              (>= new-idx 0)
-              (let [hist-lines (str/split-lines (nth history new-idx))
-                    hist-lines (if (seq hist-lines) hist-lines [""])]
-                (assoc this
-                       :lines (vec hist-lines)
-                       :cursor {:line (dec (count hist-lines))
-                                :col  (count (last hist-lines))}
-                       :history-index new-idx))
-              :else this))))
-
-      ;; EditorLineStart
-      (or (matches-key? raw "home") (matches-key? raw "\u0001"))
-      (assoc this :cursor {:line (:line cursor) :col 0})
-
-      ;; EditorLineEnd
-      (or (matches-key? raw "end") (matches-key? raw "\u0005"))
-      (let [cur-line (:line cursor)
-            line     (nth lines cur-line "")]
-        (assoc this :cursor {:line cur-line :col (count line)}))
-
-      ;; EditorDeleteToLineEnd
-      (matches-key? raw "\u000b")
-      (let [cur-line (:line cursor)
-            cur-col  (:col cursor)
-            line     (nth lines cur-line "")
-            new-line (subs line 0 cur-col)]
-        (assoc this :lines (assoc lines cur-line new-line)))
-
-      ;; EditorDeleteToLineStart
-      (matches-key? raw "\u0015")
-      (let [cur-line (:line cursor)
-            cur-col  (:col cursor)
-            line     (nth lines cur-line "")
-            new-line (subs line cur-col)]
-        (assoc this
-               :lines (assoc lines cur-line new-line)
-               :cursor {:line cur-line :col 0}))
-
-      ;; AutocompleteCancelled / AutocompleteItemSelected
-      (and autocomplete-active (matches-key? raw "escape"))
-      (assoc this :autocomplete-active false)
-
-      :else this))
+    (editor-handle-input this raw))
 
   (invalidate [this] (assoc this :invalidated true))
 
