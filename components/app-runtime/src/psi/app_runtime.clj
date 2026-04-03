@@ -47,7 +47,6 @@
      /history — print message history
      /help    — print available commands"
   (:require
-   [clojure.java.io :as io]
    [clojure.string :as str]
    [taoensso.timbre :as timbre]
    [psi.agent-session.bootstrap :as session-bootstrap]
@@ -244,34 +243,39 @@ Available: " (str/join ", " (map name (keys models/all-models))))
     (string? x)  (keyword x)
     :else        nil))
 
+(defn- block-attr
+  [block k]
+  (or (get block k)
+      (get block (name k))))
+
+(defn- tool-call-block?
+  [block]
+  (= :tool-call (->kw (or (block-attr block :type)
+                          (block-attr block :kind)))))
+
+(defn- normalize-tool-call-block
+  [block]
+  {:id        (block-attr block :id)
+   :name      (block-attr block :name)
+   :arguments (or (block-attr block :arguments)
+                  (some-> (block-attr block :input) pr-str)
+                  "")})
+
 (defn- assistant-tool-call-blocks
   [content]
-  (letfn [(tool-call? [block]
-            (= :tool-call (->kw (or (:type block)
-                                    (get block "type")
-                                    (:kind block)
-                                    (get block "kind")))))]
-    (cond
-      (sequential? content)
-      (->> content
-           (filter map?)
-           (filter tool-call?)
-           (mapv (fn [block]
-                   {:id        (or (:id block) (get block "id"))
-                    :name      (or (:name block) (get block "name"))
-                    :arguments (or (:arguments block)
-                                   (get block "arguments")
-                                   (some-> (or (:input block)
-                                               (get block "input"))
-                                           pr-str)
-                                   "")})))
+  (cond
+    (sequential? content)
+    (->> content
+         (filter map?)
+         (filter tool-call-block?)
+         (mapv normalize-tool-call-block))
 
-      (and (map? content)
-           (= :structured (->kw (or (:kind content) (get content "kind")))))
-      (assistant-tool-call-blocks (or (:blocks content) (get content "blocks")))
+    (and (map? content)
+         (= :structured (->kw (block-attr content :kind))))
+    (assistant-tool-call-blocks (block-attr content :blocks))
 
-      :else
-      [])))
+    :else
+    []))
 
 (defn- tool-result->display-text
   "Best-effort display text for a toolResult message content vector."
@@ -551,6 +555,102 @@ Available: " (str/join ", " (map name (keys models/all-models))))
 ;; Main prompt loop
 ;; ============================================================
 
+(defn- print-command-message! [message]
+  (println (str "\n" message "\n")))
+
+(defn- complete-cli-login!
+  [oauth-ctx {:keys [provider url login-state uses-callback-server]}]
+  (println "\n── OAuth Login ────────────────────────")
+  (println (str "  Open: " url "\n"))
+  (if uses-callback-server
+    (do
+      (println "  Waiting for browser callback…")
+      (try
+        (oauth/complete-login! oauth-ctx (:id provider) nil login-state)
+        (println (str "\n  ✓ Logged in to " (:name provider) "\n"))
+        (catch Exception e
+          (println (str "\n  ✗ Login failed: " (ex-message e) "\n")))))
+    (do
+      (print "  Paste authorization code: ")
+      (flush)
+      (when-let [code (try (read-line) (catch Exception _ nil))]
+        (try
+          (oauth/complete-login! oauth-ctx (:id provider) (str/trim code) login-state)
+          (println (str "\n  ✓ Logged in to " (:name provider) "\n"))
+          (catch Exception e
+            (println (str "\n  ✗ Login failed: " (ex-message e) "\n"))))))))
+
+(defn- run-cli-prompt! [ctx sid ai-ctx ai-model trimmed]
+  (try
+    (run-prompt! ctx sid ai-ctx ai-model trimmed)
+    (catch Exception e
+      (println (str "\n[Error: " (ex-message e) "]\n")))))
+
+(defn- handle-cli-command-result!
+  [oauth-ctx result]
+  (case (:type result)
+    :quit false
+    :resume (do (print-command-message! "  /resume is only available in TUI mode (--tui).") true)
+    (:text :new-session :logout)
+    (do
+      (when (= :new-session (:type result))
+        (print-initial-transcript! (:rehydrate result)))
+      (print-command-message! (:message result))
+      true)
+    :login-start (do (complete-cli-login! oauth-ctx result) true)
+    :login-error (do (print-command-message! (str "  " (:message result))) true)
+    :extension-cmd
+    (do
+      (try
+        (when-let [handler (:handler result)]
+          (let [captured (with-out-str (handler (:args result)))]
+            (when-not (str/blank? captured)
+              (print-command-message! (str/trimr captured)))))
+        (catch Exception e
+          (println (str "\n[Command error: " (ex-message e) "]\n"))))
+      true)
+    (do
+      (print-command-message! result)
+      true)))
+
+(defn- cli-command-opts
+  [ctx cli-focus* ai-ctx ai-model oauth-ctx]
+  {:oauth-ctx oauth-ctx
+   :ai-model ai-model
+   :supports-session-tree? false
+   :on-new-session! (fn [_source-session-id]
+                      (let [source-session-id @cli-focus*
+                            result             (start-new-session-with-startup! ctx source-session-id ai-ctx ai-model)]
+                        (reset! cli-focus* (:session-id result))
+                        result))})
+
+(defn- run-cli-loop!
+  [ctx cli-focus* ai-ctx ai-model oauth-ctx cmd-opts]
+  (loop []
+    (print "刀: ")
+    (flush)
+    (when-let [line (try (read-line) (catch Exception _ nil))]
+      (let [trimmed (str/trim line)
+            sid     @cli-focus*
+            result  (when-not (str/blank? trimmed)
+                      (commands/dispatch-in ctx sid trimmed cmd-opts))]
+        (when result
+          (runtime/journal-user-message-in! ctx sid trimmed nil))
+        (cond
+          (str/blank? trimmed)
+          (recur)
+
+          (nil? result)
+          (do
+            (run-cli-prompt! ctx sid ai-ctx ai-model trimmed)
+            (recur))
+
+          (handle-cli-command-result! oauth-ctx result)
+          (recur)
+
+          :else
+          (println "\nψ: Goodbye.\n"))))))
+
 (defn run-session
   "Create a session and enter the interactive prompt loop.
   Returns when the user exits.
@@ -572,100 +672,14 @@ Available: " (str/join ", " (map name (keys models/all-models))))
                                                    :thinking-level-override (:thinking-level-override startup-opts)})
          {:keys [templates skills startup-rehydrate]}
          (bootstrap-runtime-session! ctx session-id ai-model {:memory-runtime-opts memory-runtime-opts})
-         cli-focus* (atom session-id)]
+         cli-focus* (atom session-id)
+         cmd-opts   (cli-command-opts ctx cli-focus* ai-ctx ai-model oauth-ctx)]
      (reset! session-state {:ctx ctx :ai-ctx ai-ctx :ai-model ai-model
                             :oauth-ctx oauth-ctx
                             :nrepl-runtime-atom nrepl-runtime})
      (print-banner ai-model templates skills ctx)
      (print-initial-transcript! startup-rehydrate)
-     (let [cmd-opts {:oauth-ctx oauth-ctx
-                     :ai-model ai-model
-                     :supports-session-tree? false
-                     :on-new-session! (fn [_source-session-id]
-                                        (let [source-session-id @cli-focus*
-                                              result             (start-new-session-with-startup! ctx source-session-id ai-ctx ai-model)]
-                                          (reset! cli-focus* (:session-id result))
-                                          result))}]
-       (loop []
-         (print "刀: ")
-         (flush)
-         (when-let [line (try (read-line) (catch Exception _ nil))]
-           (let [trimmed (str/trim line)
-                 sid     @cli-focus*
-                 result  (when-not (str/blank? trimmed)
-                           (commands/dispatch-in ctx sid trimmed cmd-opts))]
-             (when result
-               (runtime/journal-user-message-in! ctx sid trimmed nil))
-             (cond
-               (nil? result)
-               (if (str/blank? trimmed)
-                 (recur)
-                 (do
-                   (try
-                     (run-prompt! ctx sid ai-ctx ai-model trimmed)
-                     (catch Exception e
-                       (println (str "\n[Error: " (ex-message e) "]\n"))))
-                   (recur)))
-
-                 (= :quit (:type result))
-                 (println "\nψ: Goodbye.\n")
-
-               (= :resume (:type result))
-               (do
-                 (println "\n  /resume is only available in TUI mode (--tui).\n")
-                 (recur))
-
-                 (#{:text :new-session :logout} (:type result))
-                 (do
-                   (when (= :new-session (:type result))
-                     (print-initial-transcript! (:rehydrate result)))
-                   (println (str "\n" (:message result) "\n"))
-                   (recur))
-
-               (= :login-start (:type result))
-               (do
-                 (println "\n── OAuth Login ────────────────────────")
-                 (let [{:keys [provider url login-state uses-callback-server]} result]
-                   (println (str "  Open: " url "\n"))
-                   (if uses-callback-server
-                     (do
-                       (println "  Waiting for browser callback…")
-                       (try
-                         (oauth/complete-login! oauth-ctx (:id provider) nil login-state)
-                         (println (str "\n  ✓ Logged in to " (:name provider) "\n"))
-                         (catch Exception e
-                           (println (str "\n  ✗ Login failed: " (ex-message e) "\n")))))
-                     (do
-                       (print "  Paste authorization code: ")
-                       (flush)
-                       (when-let [code (try (read-line) (catch Exception _ nil))]
-                         (try
-                           (oauth/complete-login! oauth-ctx (:id provider) (str/trim code) login-state)
-                           (println (str "\n  ✓ Logged in to " (:name provider) "\n"))
-                           (catch Exception e
-                             (println (str "\n  ✗ Login failed: " (ex-message e) "\n"))))))))
-                 (recur))
-
-               (= :login-error (:type result))
-               (do
-                 (println (str "\n  " (:message result) "\n"))
-                 (recur))
-
-               (= :extension-cmd (:type result))
-               (do
-                 (try
-                   (when-let [handler (:handler result)]
-                     (let [captured (with-out-str (handler (:args result)))]
-                       (when-not (str/blank? captured)
-                         (println (str "\n" (str/trimr captured) "\n")))))
-                   (catch Exception e
-                     (println (str "\n[Command error: " (ex-message e) "]\n"))))
-                 (recur))
-
-               :else
-               (do
-                 (println (str "\n" result "\n"))
-                 (recur))))))))))
+     (run-cli-loop! ctx cli-focus* ai-ctx ai-model oauth-ctx cmd-opts))))
 
 ;; TUI session (charm.clj Elm Architecture)
 ;; ============================================================
