@@ -468,6 +468,11 @@
   (when (compare-and-set! stream-started? false true)
     (consume-fn {:type :start})))
 
+(defn- emit-started-event!
+  [consume-fn stream-started? event]
+  (emit-stream-start! consume-fn stream-started?)
+  (consume-fn event))
+
 (defn- resolve-chat-tool-index
   [{:keys [tool-index-by-id next-tool-index]} tool-call fallback-idx]
   (let [idx     (:index tool-call)
@@ -504,11 +509,11 @@
               :name name
               :started? true
               :args-buffer (or args-buffer "")})
-      (emit-stream-start! consume-fn stream-started?)
-      (consume-fn {:type :toolcall-start
-                   :content-index idx
-                   :id id*
-                   :name name})
+      (emit-started-event! consume-fn stream-started?
+                           {:type :toolcall-start
+                            :content-index idx
+                            :id id*
+                            :name name})
       (when (seq args-buffer)
         (consume-fn {:type :toolcall-delta
                      :content-index idx
@@ -534,10 +539,10 @@
         (swap! tool-state assoc-in [idx :args-buffer] buffer)
         (when (and (get-in @tool-state [idx :started?])
                    (seq delta))
-          (emit-stream-start! consume-fn stream-started?)
-          (consume-fn {:type :toolcall-delta
-                       :content-index idx
-                       :delta delta}))))
+          (emit-started-event! consume-fn stream-started?
+                               {:type :toolcall-delta
+                                :content-index idx
+                                :delta delta}))))
     (start-chat-tool-if-ready! stream-state consume-fn idx false)))
 
 (defn- force-start-pending-chat-tools!
@@ -561,15 +566,15 @@
     (when (and choice (= (:role delta) "assistant"))
       (emit-stream-start! consume-fn stream-started?))
     (when (seq text-delta)
-      (emit-stream-start! consume-fn stream-started?)
-      (consume-fn {:type :text-delta
-                   :content-index 0
-                   :delta text-delta}))
+      (emit-started-event! consume-fn stream-started?
+                           {:type :text-delta
+                            :content-index 0
+                            :delta text-delta}))
     (when (seq reasoning-delta)
-      (emit-stream-start! consume-fn stream-started?)
-      (consume-fn {:type :thinking-delta
-                   :content-index 0
-                   :delta reasoning-delta}))
+      (emit-started-event! consume-fn stream-started?
+                           {:type :thinking-delta
+                            :content-index 0
+                            :delta reasoning-delta}))
     (doseq [[fallback-idx tool-call]
             (map-indexed vector (extract-tool-call-fragments choice delta))]
       (process-chat-tool-call! stream-state consume-fn
@@ -854,6 +859,11 @@
   (when (compare-and-set! started? false true)
     (consume-fn {:type :start})))
 
+(defn- emit-codex-started-event!
+  [consume-fn started? event]
+  (emit-codex-start! consume-fn started?)
+  (consume-fn event))
+
 (defn- register-codex-tool-index!
   [{:keys [next-tool-index tool-by-item-id tool-by-output-index]} event item]
   (let [output-idx (:output_index event)
@@ -929,17 +939,17 @@
 
 (defn- emit-codex-thinking-boundary!
   [stream-state consume-fn]
-  (emit-codex-start! consume-fn (:started? stream-state))
-  (consume-fn {:type :thinking-start :content-index 0})
+  (emit-codex-started-event! consume-fn (:started? stream-state)
+                             {:type :thinking-start :content-index 0})
   (consume-fn {:type :thinking-end :content-index 0}))
 
 (defn- emit-codex-thinking-delta!
   [stream-state consume-fn event]
   (when-let [delta (string-fragment (:delta event))]
-    (emit-codex-start! consume-fn (:started? stream-state))
-    (consume-fn {:type :thinking-delta
-                 :content-index 0
-                 :delta delta})))
+    (emit-codex-started-event! consume-fn (:started? stream-state)
+                               {:type :thinking-delta
+                                :content-index 0
+                                :delta delta})))
 
 (def ^:private codex-thinking-delta-event-types
   #{"response.reasoning_summary_text.delta"
@@ -993,12 +1003,12 @@
             item-id   (:id item)
             tool-id   (if (seq item-id) (str call-id "|" item-id) call-id)
             tool-name (or (:name item) "tool")]
-        (emit-codex-start! consume-fn started?)
+        (emit-codex-started-event! consume-fn started?
+                                   {:type          :toolcall-start
+                                    :content-index idx
+                                    :id            tool-id
+                                    :name          tool-name})
         (swap! open-tool-indexes conj idx)
-        (consume-fn {:type          :toolcall-start
-                     :content-index idx
-                     :id            tool-id
-                     :name          tool-name})
         (when-let [args (:arguments item)]
           (emit-codex-tool-delta! stream-state consume-fn idx args)))
 
@@ -1033,10 +1043,10 @@
 
       (= "response.output_text.delta" event-type)
       (when-let [delta (string-fragment (:delta event))]
-        (emit-codex-start! consume-fn (:started? stream-state))
-        (consume-fn {:type :text-delta
-                     :content-index 0
-                     :delta delta}))
+        (emit-codex-started-event! consume-fn (:started? stream-state)
+                                   {:type :text-delta
+                                    :content-index 0
+                                    :delta delta}))
 
       (contains? codex-thinking-delta-event-types event-type)
       (emit-codex-thinking-delta! stream-state consume-fn event)
