@@ -13,6 +13,7 @@
    [clojure.string :as str]
    [psi.agent-session.conversation :as conv-translate]
    [psi.agent-session.dispatch :as dispatch]
+   [psi.agent-session.post-tool :as post-tool]
    [psi.agent-session.session-state :as session]
    [psi.agent-session.state-accessors :as sa]
    [psi.agent-session.tool-output :as tool-output]
@@ -113,6 +114,18 @@
                       {:session-id session-id :tool-call tool-call}
                       {:origin :core}))
 
+(defn- apply-post-tool-processing
+  [ctx session-id tool-call args tool-result]
+  (post-tool/run-post-tool-processing-in!
+   ctx
+   {:session-id    session-id
+    :tool-name     (:name tool-call)
+    :tool-call-id  (:id tool-call)
+    :tool-args     args
+    :tool-result   tool-result
+    :worktree-path (or (:worktree-path (session/get-session-data-in ctx session-id))
+                       (:cwd ctx))}))
+
 (defn execute-tool-call!
   "Execute one tool call and return a shaped result map before recording.
 
@@ -120,7 +133,8 @@
   [ctx session-id tool-call progress-queue]
   (let [call-id (:id tool-call)
         name    (:name tool-call)
-        args    (or (:parsed-args tool-call) (conv-translate/parse-args (:arguments tool-call)))]
+        args    (or (:parsed-args tool-call)
+                    (conv-translate/parse-args (:arguments tool-call)))]
     (accum/emit-progress!
      progress-queue
      (emit-tool-lifecycle!
@@ -128,39 +142,40 @@
       (tool-lifecycle-event :tool-executing call-id name
                             :arguments (:arguments tool-call)
                             :parsed-args args)))
-    (let [sd   (session/get-session-data-in ctx session-id)
-          opts {:cwd          (or (:worktree-path sd) (:cwd ctx))
-                :overrides    (:tool-output-overrides sd)
-                :tool-call-id call-id
-                :on-update    (fn [{:keys [content details is-error]}]
-                                (let [content-blocks (normalize-tool-content content)
-                                      text-fallback  (tool-content->text content)]
-                                  (accum/emit-progress!
-                                   progress-queue
-                                   (emit-tool-lifecycle!
-                                    ctx session-id
-                                    (tool-lifecycle-event :tool-execution-update call-id name
-                                                          :content content-blocks
-                                                          :result-text text-fallback
-                                                          :details details
-                                                          :is-error (boolean is-error))))))}
+    (let [sd              (session/get-session-data-in ctx session-id)
+          opts            {:cwd          (or (:worktree-path sd) (:cwd ctx))
+                           :overrides    (:tool-output-overrides sd)
+                           :tool-call-id call-id
+                           :on-update    (fn [{:keys [content details is-error]}]
+                                           (let [content-blocks (normalize-tool-content content)
+                                                 text-fallback  (tool-content->text content)]
+                                             (accum/emit-progress!
+                                              progress-queue
+                                              (emit-tool-lifecycle!
+                                               ctx session-id
+                                               (tool-lifecycle-event :tool-execution-update call-id name
+                                                                     :content content-blocks
+                                                                     :result-text text-fallback
+                                                                     :details details
+                                                                     :is-error (boolean is-error))))))}
+          raw-tool-result (or (dispatch/dispatch! ctx
+                                                  :session/tool-execute
+                                                  {:session-id session-id :tool-name name :args args :opts opts}
+                                                  {:origin :core})
+                              {:content "Error: tool execution returned no result" :is-error true})
           {:keys [content is-error details] :as tool-result}
-          (or (dispatch/dispatch! ctx
-                                  :session/tool-execute
-                                  {:session-id session-id :tool-name name :args args :opts opts}
-                                  {:origin :core})
-              {:content "Error: tool execution returned no result" :is-error true})
-          content-blocks (normalize-tool-content content)
-          text-fallback  (tool-content->text content)
-          policy         (effective-tool-output-policy ctx session-id name)
-          result-msg     {:role         "toolResult"
-                          :tool-call-id call-id
-                          :tool-name    name
-                          :content      content-blocks
-                          :is-error     is-error
-                          :details      details
-                          :result-text  text-fallback
-                          :timestamp    (java.time.Instant/now)}]
+          (apply-post-tool-processing ctx session-id tool-call args raw-tool-result)
+          content-blocks  (normalize-tool-content content)
+          text-fallback   (tool-content->text content)
+          policy          (effective-tool-output-policy ctx session-id name)
+          result-msg      {:role         "toolResult"
+                           :tool-call-id call-id
+                           :tool-name    name
+                           :content      content-blocks
+                           :is-error     is-error
+                           :details      details
+                           :result-text  text-fallback
+                           :timestamp    (java.time.Instant/now)}]
       {:tool-call        tool-call
        :tool-result      tool-result
        :result-message   result-msg
