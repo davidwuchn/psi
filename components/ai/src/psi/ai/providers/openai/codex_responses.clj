@@ -1,7 +1,6 @@
 (ns psi.ai.providers.openai.codex-responses
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [clj-http.client :as http]
             [cheshire.core :as json]
             [psi.ai.models :as models]
             [psi.ai.providers.openai.common :as common]))
@@ -393,8 +392,7 @@
     (try
       (let [request  (build-codex-request conversation model options)
             _        (common/capture-request! options :openai-codex-responses url request)
-            response (http/post url
-                                (merge request {:as :stream :cookie-policy :none}))]
+            response (common/stream-response url request)]
         (with-open [reader (io/reader (:body response))]
           (doseq [line (line-seq reader)]
             (when-let [event (common/parse-sse-line line)]

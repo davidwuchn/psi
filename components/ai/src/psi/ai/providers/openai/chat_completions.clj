@@ -1,7 +1,6 @@
 (ns psi.ai.providers.openai.chat-completions
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [clj-http.client :as http]
             [cheshire.core :as json]
             [psi.ai.models :as models]
             [psi.ai.providers.openai.common :as common]))
@@ -354,8 +353,7 @@
         stream-state (make-chat-stream-state)]
     (try
       (common/capture-request! options :openai-completions url request)
-      (let [response (http/post url
-                                (merge request {:as :stream :cookie-policy :none}))]
+      (let [response (common/stream-response url request)]
         (with-open [reader (io/reader (:body response))]
           (doseq [line (line-seq reader)]
             (process-chat-sse-line! stream-state consume-fn model options url line))))

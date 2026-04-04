@@ -563,19 +563,29 @@
           (catch Exception _
             nil))))))
 
+(defn- update-usage!
+  [usage-acc usage usage-map]
+  (when usage
+    (swap! usage-acc
+           (fn [acc]
+             (reduce-kv (fn [m k usage-key]
+                          (assoc m k (or (get usage usage-key) 0)))
+                        acc
+                        usage-map)))))
+
 (defn- update-start-usage!
   [usage-acc usage]
-  (when usage
-    (swap! usage-acc assoc
-           :input-tokens       (or (:input_tokens usage) 0)
-           :cache-read-tokens  (or (:cache_read_input_tokens usage) 0)
-           :cache-write-tokens (or (:cache_creation_input_tokens usage) 0))))
+  (update-usage! usage-acc
+                 usage
+                 {:input-tokens       :input_tokens
+                  :cache-read-tokens  :cache_read_input_tokens
+                  :cache-write-tokens :cache_creation_input_tokens}))
 
 (defn- update-output-usage!
   [usage-acc usage]
-  (when usage
-    (swap! usage-acc assoc
-           :output-tokens (or (:output_tokens usage) 0))))
+  (update-usage! usage-acc
+                 usage
+                 {:output-tokens :output_tokens}))
 
 (defn- usage-with-cost
   [model usage-acc]
@@ -837,6 +847,10 @@
   [request f]
   (update request :headers #(f (or % {}))))
 
+(defn- clear-beta-header
+  [headers]
+  (dissoc headers "anthropic-beta"))
+
 (defn- strip-cache-control-fields
   [x]
   (cond
@@ -900,8 +914,7 @@
           (update-request-body #(dissoc % :thinking))))
 
     :without-all-betas
-    #(update-request-headers % (fn [headers]
-                                 (dissoc headers "anthropic-beta")))
+    #(update-request-headers % clear-beta-header)
 
     identity))
 

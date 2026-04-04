@@ -1,5 +1,6 @@
 (ns psi.ai.providers.openai.common
   (:require [clojure.string :as str]
+            [clj-http.client :as http]
             [cheshire.core :as json])
   (:import [java.util Base64 UUID]))
 
@@ -113,6 +114,10 @@
       (f payload)
       (catch Exception _
         nil))))
+
+(defn stream-response
+  [url request]
+  (http/post url (merge request {:as :stream :cookie-policy :none})))
 
 (defn redact-authorization
   [value]

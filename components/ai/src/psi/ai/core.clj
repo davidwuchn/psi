@@ -146,6 +146,10 @@
 ;; Streaming — context-aware core (used by public API and tests)
 ;; ───────────────────────────────────────────────────────────────────────────
 
+(defn- context-provider-registry
+  [ctx]
+  (:provider-registry ctx))
+
 (defn- resolve-provider
   "Look up the provider impl for `model` from `registry-atom`, throwing if absent."
   [registry-atom model]
@@ -153,6 +157,17 @@
     (when-not provider-impl
       (throw (ex-info "Unknown provider" {:provider (:provider model)})))
     provider-impl))
+
+(defn- provider-stream
+  [ctx model]
+  (resolve-provider (context-provider-registry ctx) model))
+
+(defn- stream-with
+  [stream-fn ctx conversation model options & [consume-fn]]
+  (let [provider-impl (provider-stream ctx model)]
+    (if consume-fn
+      (stream-fn provider-impl conversation model options consume-fn)
+      (stream-fn provider-impl conversation model options))))
 
 (defn stream-response-in
   "Stream assistant response in an isolated `ctx`, calling `consume-fn` for each event.
@@ -163,8 +178,12 @@
   {:pre [(schemas/valid? schemas/Conversation conversation)
          (schemas/valid? schemas/Model model)
          (schemas/valid? schemas/StreamOptions options)]}
-  (let [provider-impl (resolve-provider (:provider-registry ctx) model)]
-    (streaming/stream-response provider-impl conversation model options consume-fn)))
+  (stream-with streaming/stream-response
+               ctx
+               conversation
+               model
+               options
+               consume-fn))
 
 (defn stream-response-seq-in
   "Stream assistant response as a lazy sequence of events in an isolated `ctx`.
@@ -174,8 +193,11 @@
   {:pre [(schemas/valid? schemas/Conversation conversation)
          (schemas/valid? schemas/Model model)
          (schemas/valid? schemas/StreamOptions options)]}
-  (let [provider-impl (resolve-provider (:provider-registry ctx) model)]
-    (streaming/stream-response-seq provider-impl conversation model options)))
+  (stream-with streaming/stream-response-seq
+               ctx
+               conversation
+               model
+               options))
 
 ;; ───────────────────────────────────────────────────────────────────────────
 ;; Public API — streaming (global wrappers)

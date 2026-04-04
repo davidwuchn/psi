@@ -15,11 +15,19 @@
 (def stream-openai chat/stream-openai)
 (def stream-openai-codex codex/stream-openai-codex)
 
+(defn- codex-model?
+  [model]
+  (= :openai-codex-responses (:api model)))
+
+(defn- provider-stream
+  [model]
+  (if (codex-model? model)
+    stream-openai-codex
+    stream-openai))
+
 (defn stream-openai-dispatch
   [conversation model options consume-fn]
-  (if (= :openai-codex-responses (:api model))
-    (stream-openai-codex conversation model options consume-fn)
-    (stream-openai conversation model options consume-fn)))
+  ((provider-stream model) conversation model options consume-fn))
 
 (def provider
   {:name   :openai
