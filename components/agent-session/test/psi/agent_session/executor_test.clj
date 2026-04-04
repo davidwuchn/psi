@@ -658,3 +658,82 @@
                         session-ctx child-id agent-ctx result)]
           (is (= result returned)
               "should return the result unchanged"))))))
+
+(deftest run-tool-calls-serialises-same-file-test
+  (testing "tool calls targeting the same file path execute sequentially, not concurrently"
+    (let [agent-ctx   (setup-agent-ctx!)
+          [session-ctx* session-ctx-id] (setup-session-ctx! agent-ctx)
+          session-ctx  (assoc session-ctx* :tool-batch-executor (Executors/newFixedThreadPool 4))
+          path         "/tmp/shared.txt"
+          tool-calls   [{:type :tool-call :id "call-1" :name "write"
+                         :arguments (str "{\"path\":\"" path "\"}")}
+                        {:type :tool-call :id "call-2" :name "edit"
+                         :arguments (str "{\"path\":\"" path "\"}")}
+                        {:type :tool-call :id "call-3" :name "read"
+                         :arguments (str "{\"path\":\"" path "\"}")}]
+          active       (atom 0)
+          max-active   (atom 0)]
+      (with-redefs [psi.agent-session.tool-execution/start-tool-call! (fn [_ _ _ _] nil)
+                    psi.agent-session.tool-execution/execute-tool-call!
+                    (fn [_ _ tc _]
+                      (let [n (swap! active inc)]
+                        (swap! max-active max n)
+                        (Thread/sleep 20)
+                        (swap! active dec)
+                        {:tool-call tc
+                         :tool-result {:content (str "ok-" (:id tc)) :is-error false}
+                         :result-message {:role "toolResult"
+                                          :tool-call-id (:id tc)
+                                          :tool-name (:name tc)
+                                          :content [{:type :text :text (str "ok-" (:id tc))}]}
+                         :effective-policy nil}))
+                    psi.agent-session.tool-execution/record-tool-call-result!
+                    (fn [_ _ shaped _] (:result-message shaped))]
+        (let [results (#'executor/run-tool-calls! session-ctx session-ctx-id tool-calls nil)]
+          (is (= 1 @max-active)
+              "same-file calls must not overlap — max concurrent should be 1")
+          (is (= ["call-1" "call-2" "call-3"] (mapv :tool-call-id results)))))
+      (.shutdown ^ExecutorService (:tool-batch-executor session-ctx)))))
+
+(deftest run-tool-calls-parallelises-different-files-test
+  (testing "tool calls targeting different files still execute in parallel"
+    (let [agent-ctx   (setup-agent-ctx!)
+          [session-ctx* session-ctx-id] (setup-session-ctx! agent-ctx)
+          session-ctx  (assoc session-ctx* :tool-batch-executor (Executors/newFixedThreadPool 4))
+          tool-calls   [{:type :tool-call :id "call-1" :name "read"
+                         :arguments "{\"path\":\"/tmp/a.txt\"}"}
+                        {:type :tool-call :id "call-2" :name "read"
+                         :arguments "{\"path\":\"/tmp/b.txt\"}"}
+                        {:type :tool-call :id "call-3" :name "bash"
+                         :arguments "{}"}]
+          active       (atom 0)
+          max-active   (atom 0)
+          started      (promise)
+          release      (promise)]
+      (with-redefs [psi.agent-session.tool-execution/start-tool-call! (fn [_ _ _ _] nil)
+                    psi.agent-session.tool-execution/execute-tool-call!
+                    (fn [_ _ tc _]
+                      (let [n (swap! active inc)]
+                        (swap! max-active max n)
+                        (when (= 2 n) (deliver started true))
+                        (when (= "call-1" (:id tc))
+                          @started @release)
+                        (Thread/sleep 10)
+                        (swap! active dec)
+                        {:tool-call tc
+                         :tool-result {:content (str "ok-" (:id tc)) :is-error false}
+                         :result-message {:role "toolResult"
+                                          :tool-call-id (:id tc)
+                                          :tool-name (:name tc)
+                                          :content [{:type :text :text (str "ok-" (:id tc))}]}
+                         :effective-policy nil}))
+                    psi.agent-session.tool-execution/record-tool-call-result!
+                    (fn [_ _ shaped _] (:result-message shaped))]
+        (let [runner (future (#'executor/run-tool-calls! session-ctx session-ctx-id tool-calls nil))]
+          @started
+          (deliver release true)
+          (let [results @runner]
+            (is (>= @max-active 2)
+                "different-file calls should overlap — max concurrent should be >=2")
+            (is (= ["call-1" "call-2" "call-3"] (mapv :tool-call-id results))))))
+      (.shutdown ^ExecutorService (:tool-batch-executor session-ctx)))))
