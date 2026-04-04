@@ -14,6 +14,8 @@
    [psi.agent-session.extension-runtime :as ext-rt]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.persistence :as persist]
+   [psi.agent-session.post-tool :as post-tool]
+   [psi.agent-session.services :as services]
    [psi.agent-session.session :as session]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.tool-plan :as tool-plan]
@@ -171,6 +173,37 @@
   (let [reg (:extension-registry agent-session-ctx)]
     (ext/register-shortcut-in! reg ext-path (assoc opts :key key))
     {:psi.extension/path ext-path}))
+
+(pco/defmutation register-post-tool-processor
+  "Register an extension-owned post-tool processor."
+  [_ {:keys [psi/agent-session-ctx ext-path name match timeout-ms handler]}]
+  {::pco/op-name 'psi.extension/register-post-tool-processor
+   ::pco/params  [:psi/agent-session-ctx :ext-path :name :match :timeout-ms :handler]
+   ::pco/output  [:psi.extension/path]}
+  (post-tool/register-processor-in!
+   agent-session-ctx
+   {:name name :ext-path ext-path :match match :timeout-ms timeout-ms :handler handler})
+  {:psi.extension/path ext-path})
+
+(pco/defmutation ensure-service
+  "Ensure an extension-owned managed service exists."
+  [_ {:keys [psi/agent-session-ctx ext-path key type spec]}]
+  {::pco/op-name 'psi.extension/ensure-service
+   ::pco/params  [:psi/agent-session-ctx :ext-path :key :type :spec]
+   ::pco/output  [:psi.extension/path]}
+  (services/ensure-service-in!
+   agent-session-ctx
+   {:key key :type type :spec spec :ext-path ext-path})
+  {:psi.extension/path ext-path})
+
+(pco/defmutation stop-service
+  "Stop an extension-owned managed service by key."
+  [_ {:keys [psi/agent-session-ctx ext-path key]}]
+  {::pco/op-name 'psi.extension/stop-service
+   ::pco/params  [:psi/agent-session-ctx :ext-path :key]
+   ::pco/output  [:psi.extension/path]}
+  (services/stop-service-in! agent-session-ctx key)
+  {:psi.extension/path ext-path})
 
 ;;; Prompt-contribution mutations
 
@@ -881,6 +914,9 @@
    register-handler
    register-flag
    register-shortcut
+   register-post-tool-processor
+   ensure-service
+   stop-service
    register-prompt-contribution
    update-prompt-contribution
    unregister-prompt-contribution
