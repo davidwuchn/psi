@@ -556,6 +556,47 @@
      (fn [name]
        (get-flag-in reg name))
 
+     ;; ── Managed services + post-tool processors ────────
+     :register-post-tool-processor
+     (fn [{:keys [name match timeout-ms handler]}]
+       (if mutate-fn
+         (mutate-fn 'psi.extension/register-post-tool-processor
+                    {:ext-path ext-path
+                     :name     name
+                     :match    match
+                     :timeout-ms timeout-ms
+                     :handler  handler})
+         (runtime-not-initialized :register-post-tool-processor)))
+
+     :ensure-service
+     (fn [{:keys [key type spec]}]
+       (if mutate-fn
+         (mutate-fn 'psi.extension/ensure-service
+                    {:ext-path ext-path
+                     :key      key
+                     :type     type
+                     :spec     spec})
+         (runtime-not-initialized :ensure-service)))
+
+     :stop-service
+     (fn [key]
+       (if mutate-fn
+         (mutate-fn 'psi.extension/stop-service
+                    {:ext-path ext-path
+                     :key      key})
+         (runtime-not-initialized :stop-service)))
+
+     :list-services
+     (fn []
+       (if query-fn
+         (:psi.service/services (query-fn [{:psi.service/services [:psi.service/key
+                                                                   :psi.service/status
+                                                                   :psi.service/command
+                                                                   :psi.service/cwd
+                                                                   :psi.service/transport
+                                                                   :psi.service/ext-path]}]))
+         (runtime-not-initialized :list-services)))
+
      ;; ── Prompt contribution helpers (extension-scoped) ─
      :register-prompt-contribution
      (fn [id contribution]
