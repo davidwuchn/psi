@@ -9,7 +9,8 @@
    - extension commands for LSP status/restart surfaces"
   (:require
    [clojure.java.io :as io]
-   [clojure.string :as str]))
+   [clojure.string :as str]
+   [psi.agent-session.service-protocol :as service-protocol]))
 
 (def ^:private default-lsp-config
   {:command ["clojure-lsp"]
@@ -188,9 +189,9 @@
                                                   :method "textDocument/diagnostic"
                                                   :params (document-diagnostics-request path)
                                                   :timeout-ms diagnostics-timeout-ms})
-                  payload  (get response :psi.extension.service/response)
-                  result   (or (get payload "result")
-                               (get-in response [:response :payload "result"])
+                  result   (or (service-protocol/await-jsonrpc-result
+                                 {:response (:psi.extension.service/response response)})
+                               (service-protocol/await-jsonrpc-result response)
                                [])
                   items    (cond
                              (vector? result) result
@@ -337,6 +338,36 @@
     (cwd-fn)
     (System/getProperty "user.dir")))
 
+(defn command-target
+  [api args]
+  (let [arg  (some-> args str str/trim not-empty)
+        path (when arg (.getPath (io/file arg)))
+        f    (when path (io/file path))
+        cwd  (cond
+               (nil? path) (current-cwd api)
+               (.isDirectory f) (.getPath f)
+               :else (some-> f .getParentFile .getPath))]
+    {:cwd  (or cwd (current-cwd api))
+     :path path}))
+
+(defn close-document!
+  [api {:keys [workspace-root path]}]
+  (when (document-open? path)
+    (when-let [notify! (:service-notify api)]
+      (jsonrpc-notify! api {:workspace-root workspace-root
+                            :method "textDocument/didClose"
+                            :params {"textDocument" {"uri" (file-uri path)}}}))
+    (swap! state update :documents dissoc path)
+    {:path path :closed? true}))
+
+(defn close-workspace-documents!
+  [api workspace-root]
+  (->> (:documents @state)
+       (keep (fn [[path _]]
+               (when (path-in-workspace? workspace-root path)
+                 (close-document! api {:workspace-root workspace-root :path path}))))
+       vec))
+
 (defn print-workspace-status!
   [api opts]
   (doseq [line (workspace-status-lines api opts)]
@@ -346,6 +377,7 @@
 (defn restart-workspace!
   [api {:keys [worktree-path path cwd config]}]
   (let [root (workspace-root {:worktree-path worktree-path :path path :cwd cwd})]
+    (close-workspace-documents! api root)
     (stop-lsp-service! api {:workspace-root root})
     (ensure-lsp-service! api {:worktree-path worktree-path :path path :cwd cwd :config config})
     (println (str "Restarted LSP workspace " root))
@@ -363,12 +395,12 @@
     :timeout-ms (:diagnostics-timeout-ms (default-config))
     :handler (make-post-tool-handler api)})
   ((:register-command api) "lsp-status"
-   {:description "Show LSP workspace status for the current worktree"
-    :handler (fn [_args]
-               (print-workspace-status! api {:cwd (current-cwd api)}))})
+   {:description "Show LSP workspace status for the current worktree or a provided path"
+    :handler (fn [args]
+               (print-workspace-status! api (command-target api args)))})
   ((:register-command api) "lsp-restart"
-   {:description "Restart LSP workspace service for the current worktree"
-    :handler (fn [_args]
-               (restart-workspace! api {:cwd (current-cwd api)}))})
+   {:description "Restart LSP workspace service for the current worktree or a provided path"
+    :handler (fn [args]
+               (restart-workspace! api (command-target api args)))})
   (when-let [ui (:ui api)]
     ((:notify ui) "lsp loaded" :info)))

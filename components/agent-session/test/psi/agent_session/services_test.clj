@@ -70,3 +70,24 @@
       (is (= :stopped (:status svc)))
       (is (some? (:stopped-at svc)))
       (is (= :stopped (:status (services/service-in ctx [:stop "repo"])))))))
+
+(deftest set-service-runtime-fns-test
+  (testing "runtime adapter fns can be attached to an existing service"
+    (let [ctx (make-test-ctx)
+          _   (services/ensure-service-in!
+               ctx
+               {:key [:runtime "repo"]
+                :type :subprocess
+                :spec {:command ["bash" "-lc" "sleep 5"]
+                       :cwd "/tmp"}})
+          send-fn (fn [_] nil)
+          await-fn (fn [_] {:payload {"result" :ok}})
+          svc (services/set-service-runtime-fns-in!
+               ctx [:runtime "repo"]
+               {:send-fn send-fn
+                :await-response-fn await-fn})]
+      (try
+        (is (fn? (:send-fn svc)))
+        (is (fn? (:await-response-fn svc)))
+        (finally
+          (services/stop-service-in! ctx [:runtime "repo"]))))))

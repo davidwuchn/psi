@@ -16,6 +16,7 @@
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.post-tool :as post-tool]
    [psi.agent-session.service-protocol :as service-protocol]
+   [psi.agent-session.service-protocol-stdio-jsonrpc :as stdio-jsonrpc]
    [psi.agent-session.services :as services]
    [psi.agent-session.session :as session]
    [psi.agent-session.session-state :as ss]
@@ -195,6 +196,9 @@
   (services/ensure-service-in!
    agent-session-ctx
    {:key key :type type :spec spec :ext-path ext-path})
+  (when (and (= :subprocess (or type :subprocess))
+             (#{:json-rpc :jsonrpc} (:protocol spec)))
+    (stdio-jsonrpc/attach-jsonrpc-runtime-in! agent-session-ctx key))
   {:psi.extension/path ext-path})
 
 (pco/defmutation stop-service

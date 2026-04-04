@@ -76,7 +76,9 @@
                       :ensure-service (fn [spec]
                                         ((:mutate api) 'psi.extension/ensure-service spec))
                       :stop-service (fn [key]
-                                      ((:mutate api) 'psi.extension/stop-service {:key key})))
+                                      ((:mutate api) 'psi.extension/stop-service {:key key}))
+                      :service-notify (fn [spec]
+                                        ((:mutate api) 'psi.extension/service-notify spec)))
           printed (atom [])]
       (with-redefs [println (fn [& xs] (swap! printed conj (apply str xs)))]
         (sut/restart-workspace! api' {:cwd "/repo"})
@@ -114,8 +116,29 @@
         (is (some #(= "LSP workspace: /repo" %) @printed))
         (is (some #(= "Tracked documents: 1" %) @printed))))))
 
+(deftest lsp-status-command-handler-explicit-path-test
+  (testing "registered lsp-status command accepts an explicit path argument"
+    (reset! sut/state {:initialized-workspaces #{"/repo"}
+                       :documents {"/repo/src/foo.clj" {:open? true :version 2 :text "x"}}})
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api {:path "/test/lsp.clj"})
+          api' (assoc api
+                      :register-post-tool-processor (fn [spec]
+                                                      ((:mutate api) 'psi.extension/register-post-tool-processor spec))
+                      :list-services (fn []
+                                       [{:psi.service/key [:lsp "/repo"]
+                                         :psi.service/status :running
+                                         :psi.service/command ["clojure-lsp"]
+                                         :psi.service/cwd "/repo"
+                                         :psi.service/transport :stdio
+                                         :psi.service/ext-path "/test/lsp.clj"}]))
+          printed (atom [])]
+      (with-redefs [println (fn [& xs] (swap! printed conj (apply str xs)))]
+        (sut/init (assoc api' :cwd-fn (fn [] "/other")))
+        ((get-in @state [:commands "lsp-status" :handler]) "/repo/.git")
+        (is (some #(= "LSP workspace: /repo" %) @printed))))))
+
 (deftest lsp-restart-command-handler-test
-  (testing "registered lsp-restart command restarts current workspace"
+  (testing "registered lsp-restart command restarts current workspace and closes open docs"
     (reset! sut/state {:initialized-workspaces #{"/repo"}
                        :documents {"/repo/src/foo.clj" {:open? true :version 2 :text "x"}}})
     (let [{:keys [api state]} (nullable/create-nullable-extension-api {:path "/test/lsp.clj"})
@@ -125,7 +148,9 @@
                       :ensure-service (fn [spec]
                                         ((:mutate api) 'psi.extension/ensure-service spec))
                       :stop-service (fn [key]
-                                      ((:mutate api) 'psi.extension/stop-service {:key key})))
+                                      ((:mutate api) 'psi.extension/stop-service {:key key}))
+                      :service-notify (fn [spec]
+                                        ((:mutate api) 'psi.extension/service-notify spec)))
           printed (atom [])]
       (with-redefs [println (fn [& xs] (swap! printed conj (apply str xs)))]
         (sut/init (assoc api' :cwd-fn (fn [] "/repo")))
@@ -137,6 +162,35 @@
                         :transport :stdio
                         :env nil}}]
                (:services @state)))
+        (is (= "textDocument/didClose"
+               (get-in @state [:service-notifications 0 :payload "method"])))
         (is (= {}
                (:documents @sut/state)))
+        (is (some #(re-find #"Restarted LSP workspace /repo" %) @printed))))))
+
+(deftest lsp-restart-command-handler-explicit-path-test
+  (testing "registered lsp-restart command accepts an explicit path argument"
+    (reset! sut/state {:initialized-workspaces #{"/repo"}
+                       :documents {"/repo/src/foo.clj" {:open? true :version 2 :text "x"}}})
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api {:path "/test/lsp.clj"})
+          api' (assoc api
+                      :register-post-tool-processor (fn [spec]
+                                                      ((:mutate api) 'psi.extension/register-post-tool-processor spec))
+                      :ensure-service (fn [spec]
+                                        ((:mutate api) 'psi.extension/ensure-service spec))
+                      :stop-service (fn [key]
+                                      ((:mutate api) 'psi.extension/stop-service {:key key}))
+                      :service-notify (fn [spec]
+                                        ((:mutate api) 'psi.extension/service-notify spec)))
+          printed (atom [])]
+      (with-redefs [println (fn [& xs] (swap! printed conj (apply str xs)))]
+        (sut/init (assoc api' :cwd-fn (fn [] "/other")))
+        ((get-in @state [:commands "lsp-restart" :handler]) "/repo/.git")
+        (is (= [{:key [:lsp "/repo"]
+                 :type :subprocess
+                 :spec {:command ["clojure-lsp"]
+                        :cwd "/repo"
+                        :transport :stdio
+                        :env nil}}]
+               (:services @state)))
         (is (some #(re-find #"Restarted LSP workspace /repo" %) @printed))))))

@@ -44,6 +44,25 @@
 (defn service-in [ctx key]
   (get-in @(:state (:service-registry ctx)) [:services key]))
 
+(defn update-service-in!
+  [ctx key f & args]
+  (apply swap! (:state (:service-registry ctx)) update-in [:services key] f args)
+  (service-in ctx key))
+
+(defn set-service-runtime-fns-in!
+  "Attach transport/runtime adapter fns to an existing managed service.
+
+   Intended for protocol adapters and tests. These fns remain runtime-only and
+   are not projected through EQL.
+
+   Supported keys:
+   - :send-fn            fire-and-forget write function
+   - :notify-fn          optional notification-specific write function
+   - :request-fn         synchronous request/response shim
+   - :await-response-fn  async response waiter: (fn [{:request-id :payload :timeout-ms}])"
+  [ctx key runtime-fns]
+  (update-service-in! ctx key merge runtime-fns))
+
 (defn services-in [ctx]
   (vals (get-in @(:state (:service-registry ctx)) [:services])))
 
@@ -75,6 +94,7 @@
                      :cwd           (:cwd spec)
                      :env           (:env spec)
                      :transport     (or (:transport spec) :stdio)
+                     :protocol      (:protocol spec)
                      :ext-path      ext-path
                      :process       process
                      :pid           (.pid process)
@@ -83,7 +103,7 @@
                      :restart-count (if svc (long (inc (or (:restart-count svc) 0))) 0)
                      :last-error    nil}]
         (swap! state assoc-in [:services key] svc')
-        svc'))))
+        (service-in ctx key)))))
 
 (defn stop-service-in!
   [ctx key]

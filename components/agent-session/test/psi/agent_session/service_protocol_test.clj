@@ -47,6 +47,28 @@
         (is (= {"result" []}
                (get-in result [:response :payload])))))))
 
+(deftest send-service-request-awaits-correlated-response-test
+  (testing "await-response-fn is used after send-fn when request-fn is absent"
+    (let [sent* (atom [])
+          ctx   {:service-registry (services/create-registry)}
+          reg   (:state (:service-registry ctx))]
+      (swap! reg assoc-in [:services [:svc "repo"]]
+             {:key [:svc "repo"]
+              :status :running
+              :transport :stdio
+              :send-fn (fn [payload] (swap! sent* conj payload))
+              :await-response-fn (fn [{:keys [request-id]}]
+                                   {:payload {"result" request-id}
+                                    :is-error false})})
+      (let [result (protocol/send-service-request!
+                    ctx [:svc "repo"]
+                    {:request-id "r3"
+                     :payload {"jsonrpc" "2.0"}
+                     :timeout-ms 200})]
+        (is (= [{"jsonrpc" "2.0"}] @sent*))
+        (is (= {"result" "r3"}
+               (get-in result [:response :payload])))))))
+
 (deftest send-service-notification-test
   (testing "send-service-notification! does not require request id"
     (let [sent*  (atom [])
@@ -63,6 +85,14 @@
       (protocol/jsonrpc-request! ctx [:svc "repo"] {:id "1" :method "m" :params {:a 1}} {:timeout-ms 321})
       (is (= [{"jsonrpc" "2.0" "id" "1" "method" "m" "params" {:a 1}}]
              @sent*)))))
+
+(deftest await-jsonrpc-result-test
+  (testing "await-jsonrpc-result unwraps jsonrpc result payload"
+    (is (= {"items" []}
+           (protocol/await-jsonrpc-result {:response {:payload {"result" {"items" []}}}})))
+    (is (= {:raw true}
+           (protocol/await-jsonrpc-result {:response {:payload {:raw true}}})))
+    (is (nil? (protocol/await-jsonrpc-result {:response nil})))))
 
 (deftest jsonrpc-notify-helper-test
   (testing "jsonrpc-notify! preserves protocol fields"
