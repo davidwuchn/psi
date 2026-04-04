@@ -5,7 +5,8 @@
    - default clojure-lsp runtime config
    - nearest-`.git` workspace root detection
    - logical workspace key derivation for service reuse
-   - extension registration for write/edit post-tool processing"
+   - extension registration for write/edit post-tool processing
+   - extension commands for LSP status/restart surfaces"
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]))
@@ -65,7 +66,7 @@
      :env env}))
 
 (defn ensure-lsp-service!
-  [api {:keys [config ext-path] :as input}]
+  [api {:keys [config] :as input}]
   (let [root (workspace-root input)]
     (when (str/blank? root)
       (throw (ex-info "Unable to resolve LSP workspace root"
@@ -74,6 +75,25 @@
      {:key (workspace-key root)
       :type :subprocess
       :spec (service-spec root config)})))
+
+(defn- path-in-workspace?
+  [workspace-root path]
+  (let [root (str workspace-root)
+        p    (str path)]
+    (or (= root p)
+        (str/starts-with? p (str root "/")))))
+
+(defn stop-lsp-service!
+  [api {:keys [workspace-root]}]
+  ((:stop-service api) (workspace-key workspace-root))
+  (swap! state update :initialized-workspaces disj workspace-root)
+  (swap! state update :documents
+         (fn [docs]
+           (into {}
+                 (remove (fn [[path _]]
+                           (path-in-workspace? workspace-root path))
+                         docs))))
+  workspace-root)
 
 (defn jsonrpc-request!
   [api {:keys [workspace-root id method params timeout-ms]}]
@@ -170,7 +190,7 @@
                                                   :timeout-ms diagnostics-timeout-ms})
                   payload  (get response :psi.extension.service/response)
                   result   (or (get payload "result")
-                               (get-in response [:response :payload "result"]) 
+                               (get-in response [:response :payload "result"])
                                [])
                   items    (cond
                              (vector? result) result
@@ -231,7 +251,7 @@
     {:path path :version version :first-open? first-open? :method method}))
 
 (defn sync-tool-result!
-  [api {:keys [tool-result worktree-path config] :as input}]
+  [api {:keys [worktree-path config] :as input}]
   (let [cfg   (normalize-config config)
         paths (changed-paths input)
         root  (workspace-root {:worktree-path worktree-path
@@ -292,6 +312,39 @@
                            :tool-call-id (:tool-call-id input)
                            :tool-name (:tool-name input)})]})))))
 
+(defn workspace-status-lines
+  [api {:keys [worktree-path path cwd]}]
+  (let [root      (workspace-root {:worktree-path worktree-path :path path :cwd cwd})
+        services  (or ((:list-services api)) [])
+        service   (some #(when (= (workspace-key root) (:psi.service/key %)) %) services)
+        docs      (->> (:documents @state)
+                       (filter (fn [[doc-path _]]
+                                 (path-in-workspace? root doc-path)))
+                       (into (sorted-map)))
+        init?     (workspace-initialized? root)]
+    (cond-> [(str "LSP workspace: " root)
+             (str "Initialized: " init?)
+             (str "Service status: " (or (:psi.service/status service) :missing))
+             (str "Tracked documents: " (count docs))]
+      (seq docs)
+      (into (map (fn [[doc-path {:keys [version open?]}]]
+                   (str "- " doc-path " (version " version ", open=" open? ")"))
+                 docs)))))
+
+(defn print-workspace-status!
+  [api opts]
+  (doseq [line (workspace-status-lines api opts)]
+    (println line))
+  nil)
+
+(defn restart-workspace!
+  [api {:keys [worktree-path path cwd config]}]
+  (let [root (workspace-root {:worktree-path worktree-path :path path :cwd cwd})]
+    (stop-lsp-service! api {:workspace-root root})
+    (ensure-lsp-service! api {:worktree-path worktree-path :path path :cwd cwd :config config})
+    (println (str "Restarted LSP workspace " root))
+    root))
+
 (defn lsp-post-tool-handler
   "Backward-compatible handler constructor entrypoint used in tests."
   [input]
@@ -302,4 +355,14 @@
    {:name "lsp-diagnostics"
     :match {:tools #{"write" "edit"}}
     :timeout-ms (:diagnostics-timeout-ms (default-config))
-    :handler (make-post-tool-handler api)}))
+    :handler (make-post-tool-handler api)})
+  ((:register-command api) "lsp-status"
+   {:description "Show LSP workspace status for the current worktree"
+    :handler (fn [_args]
+               (print-workspace-status! api {:cwd (System/getProperty "user.dir")}))})
+  ((:register-command api) "lsp-restart"
+   {:description "Restart LSP workspace service for the current worktree"
+    :handler (fn [_args]
+               (restart-workspace! api {:cwd (System/getProperty "user.dir")}))})
+  (when-let [ui (:ui api)]
+    ((:notify ui) "lsp loaded" :info)))

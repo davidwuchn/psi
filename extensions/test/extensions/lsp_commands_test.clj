@@ -1,0 +1,93 @@
+(ns extensions.lsp-commands-test
+  (:require
+   [clojure.java.io :as io]
+   [clojure.test :refer [deftest is testing]]
+   [extensions.lsp :as sut]
+   [psi.extension-test-helpers.nullable-api :as nullable]))
+
+(defn- mkdirs! [path]
+  (.mkdirs (io/file path))
+  path)
+
+(defn- tmp-dir []
+  (str (java.nio.file.Files/createTempDirectory
+        "psi-lsp-commands-"
+        (make-array java.nio.file.attribute.FileAttribute 0))))
+
+(deftest init-registers-lsp-commands-test
+  (testing "init registers lsp status/restart commands and notifies ui"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api {:path "/test/lsp.clj"})
+          api' (assoc api
+                      :register-post-tool-processor (fn [spec]
+                                                      ((:mutate api) 'psi.extension/register-post-tool-processor spec)))]
+      (sut/init api')
+      (is (contains? (:commands @state) "lsp-status"))
+      (is (contains? (:commands @state) "lsp-restart"))
+      (is (= "lsp loaded"
+             (-> @state :notifications last :text))))))
+
+(deftest workspace-status-lines-test
+  (testing "status lines summarize workspace service/init/document state"
+    (reset! sut/state {:initialized-workspaces #{"/repo"}
+                       :documents {"/repo/src/foo.clj" {:open? true :version 2 :text "x"}
+                                   "/repo/src/foo/core.clj" {:open? true :version 1 :text "y"}}})
+    (let [{:keys [api]} (nullable/create-nullable-extension-api
+                         {:path "/test/lsp.clj"
+                          :query-fn (fn [q]
+                                      (if (= [{:psi.service/services [:psi.service/key
+                                                                      :psi.service/status
+                                                                      :psi.service/command
+                                                                      :psi.service/cwd
+                                                                      :psi.service/transport
+                                                                      :psi.service/ext-path]}]
+                                             q)
+                                        {:psi.service/services [{:psi.service/key [:lsp "/repo"]
+                                                                :psi.service/status :running
+                                                                :psi.service/command ["clojure-lsp"]
+                                                                :psi.service/cwd "/repo"
+                                                                :psi.service/transport :stdio
+                                                                :psi.service/ext-path "/test/lsp.clj"}]}
+                                        {}))})
+          lines (sut/workspace-status-lines (assoc api :list-services (fn []
+                                                                        (:psi.service/services
+                                                                         ((:query api)
+                                                                          [{:psi.service/services [:psi.service/key
+                                                                                                   :psi.service/status
+                                                                                                   :psi.service/command
+                                                                                                   :psi.service/cwd
+                                                                                                   :psi.service/transport
+                                                                                                   :psi.service/ext-path]}]))))
+                                           {:cwd "/repo"})]
+      (is (= "LSP workspace: /repo" (first lines)))
+      (is (some #(= "Initialized: true" %) lines))
+      (is (some #(= "Service status: :running" %) lines))
+      (is (some #(= "Tracked documents: 2" %) lines))
+      (is (some #(re-find #"/repo/src/foo.clj" %) lines)))))
+
+(deftest lsp-restart-command-test
+  (testing "restart command stops old workspace service and ensures a new one"
+    (reset! sut/state {:initialized-workspaces #{"/repo"}
+                       :documents {"/repo/src/foo.clj" {:open? true :version 2 :text "x"}
+                                   "/repo/src/foo/core.clj" {:open? true :version 1 :text "y"}}})
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api {:path "/test/lsp.clj"})
+          api' (assoc api
+                      :register-post-tool-processor (fn [spec]
+                                                      ((:mutate api) 'psi.extension/register-post-tool-processor spec))
+                      :ensure-service (fn [spec]
+                                        ((:mutate api) 'psi.extension/ensure-service spec))
+                      :stop-service (fn [key]
+                                      ((:mutate api) 'psi.extension/stop-service {:key key})))
+          printed (atom [])]
+      (with-redefs [println (fn [& xs] (swap! printed conj (apply str xs)))]
+        (sut/restart-workspace! api' {:cwd "/repo"})
+        (is (= [{:key [:lsp "/repo"]
+                 :type :subprocess
+                 :spec {:command ["clojure-lsp"]
+                        :cwd "/repo"
+                        :transport :stdio
+                        :env nil}}]
+               (:services @state)))
+        (is (not (contains? (:initialized-workspaces @sut/state) "/repo")))
+        (is (= {}
+               (:documents @sut/state)))
+        (is (some #(re-find #"Restarted LSP workspace /repo" %) @printed))))))
