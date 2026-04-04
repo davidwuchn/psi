@@ -78,87 +78,106 @@
     (assoc payload :cache_control cache-control*)
     payload))
 
+(defn- text-block
+  ([text]
+   {:type "text"
+    :text (or text "")})
+  ([text cache-control]
+   (with-cache-control (text-block text)
+     cache-control)))
+
+(defn- content-text
+  [content]
+  (if (map? content)
+    (or (:text content) "")
+    (str content)))
+
+(defn- user-text-blocks
+  [content]
+  (->> content
+       (keep (fn [block]
+               (when (= :text (:kind block))
+                 (text-block (:text block)
+                             (:cache-control block)))))
+       vec))
+
+(defn- provider-text-blocks
+  [content]
+  (->> content
+       (keep (fn [block]
+               (when (= :text (:type block))
+                 (text-block (:text block)
+                             (:cache-control block)))))
+       vec))
+
 (defn- user-content
   [msg]
   (let [content (:content msg)]
     (cond
       (and (map? content)
            (= :text (:kind content)))
-      [(with-cache-control {:type "text"
-                            :text (or (:text content) "")}
-         (:cache-control content))]
+      [(text-block (:text content)
+                   (:cache-control content))]
 
       (and (map? content)
            (= :structured (:kind content)))
-      (->> (:blocks content)
-           (keep (fn [block]
-                   (when (= :text (:kind block))
-                     (with-cache-control {:type "text"
-                                          :text (or (:text block) "")}
-                       (:cache-control block)))))
-           vec)
+      (user-text-blocks (:blocks content))
 
       (and (sequential? content)
            (seq content))
-      (->> content
-           (keep (fn [block]
-                   (when (= :text (:type block))
-                     (with-cache-control {:type "text"
-                                          :text (or (:text block) "")}
-                       (:cache-control block)))))
-           vec)
+      (provider-text-blocks content)
 
       :else
       ;; Last-resort coercion: wrap whatever arrived as a plain text block so
       ;; the message list is never empty and the API call can still proceed.
-      [{:type "text"
-        :text (get-in msg [:content :text]
-                      (str content))}])))
+      [(text-block (content-text content))])))
+
+(defn- assistant-thinking-block
+  [block]
+  (cond-> {:type     "thinking"
+           :thinking (or (:text block) "")}
+    (some? (:signature block)) (assoc :signature (:signature block))))
+
+(defn- assistant-tool-use-block
+  [canonical-id block]
+  (with-cache-control {:type  "tool_use"
+                       :id    (canonical-id (:id block))
+                       :name  (:name block)
+                       :input (if (map? (:input block))
+                                (:input block)
+                                {})}
+    (:cache-control block)))
 
 (defn- assistant-block
   [canonical-id block]
   (case (:kind block)
     :thinking
-    (cond-> {:type     "thinking"
-             :thinking (or (:text block) "")}
-      (some? (:signature block)) (assoc :signature (:signature block)))
+    (assistant-thinking-block block)
 
     :text
-    (with-cache-control {:type "text"
-                         :text (:text block)}
-      (:cache-control block))
+    (text-block (:text block)
+                (:cache-control block))
 
     :tool-call
-    (with-cache-control {:type  "tool_use"
-                         :id    (canonical-id (:id block))
-                         :name  (:name block)
-                         :input (if (map? (:input block))
-                                  (:input block)
-                                  {})}
-      (:cache-control block))
+    (assistant-tool-use-block canonical-id block)
 
     ;; Intentional fallback: unknown block kinds are stringified as plain text
     ;; rather than dropped, so future block types degrade gracefully.
-    {:type "text"
-     :text (str block)}))
+    (text-block (str block))))
 
 (defn- assistant-content
   [msg canonical-id]
   (if (= :structured (get-in msg [:content :kind]))
     (mapv (partial assistant-block canonical-id)
           (get-in msg [:content :blocks]))
-    [{:type "text"
-      :text (get-in msg [:content :text] "")}]))
+    [(text-block (get-in msg [:content :text] ""))]))
 
 (defn- tool-result-block
   [msg canonical-id]
-  (let [text (if (map? (:content msg))
-               (get-in msg [:content :text] "")
-               (str (:content msg)))]
-    (cond-> {:type        "tool_result"
-             :tool_use_id (canonical-id (:tool-call-id msg))
-             :content     text}
-      (:is-error msg) (assoc :is_error true))))
+  (cond-> {:type        "tool_result"
+           :tool_use_id (canonical-id (:tool-call-id msg))
+           :content     (content-text (:content msg))}
+    (:is-error msg) (assoc :is_error true)))
 
 (defn- append-tool-result
   [acc block]
@@ -636,16 +655,18 @@
       :else (str body))
     (catch Exception _ nil)))
 
-(defn- parse-error-message
-  [body-text]
-  (when (seq body-text)
+(defn- parse-json-text-safe
+  [text]
+  (when (seq text)
     (try
-      (let [m (json/parse-string body-text true)]
-        (or (get-in m [:error :message])
-            (get-in m [:message])
-            body-text))
+      (json/parse-string text true)
       (catch Exception _
-        body-text))))
+        nil))))
+
+(defn- parsed-error-message
+  [parsed-body]
+  (or (get-in parsed-body [:error :message])
+      (get-in parsed-body [:message])))
 
 (defn- request-id-from-headers
   [headers]
@@ -717,55 +738,67 @@
          (or (request-diagnostic-hint request) ""))
     base-msg))
 
+(defn- base-error-message
+  [{:keys [status fallback-message parsed-body]}]
+  (or (when-let [parsed-msg (some-> parsed-body parsed-error-message)]
+        (when (meaningful-error-message? parsed-msg)
+          parsed-msg))
+      (when (meaningful-error-message? fallback-message)
+        fallback-message)
+      (fallback-status-message status)))
+
+(defn- error-message
+  [{:keys [status headers body-text fallback-message request parsed-body]}]
+  (let [base-msg (base-error-message {:status status
+                                      :body-text body-text
+                                      :fallback-message fallback-message
+                                      :parsed-body parsed-body})
+        base-msg (cond-> base-msg
+                   (= 400 status) (augment-400-message body-text
+                                                       (oauth-auth-request? request)
+                                                       request))]
+    (str base-msg
+         (when status
+           (str " (status " status ")"))
+         (when-let [req-id (request-id-from-headers headers)]
+           (str " [request-id " req-id "]")))))
+
 (defn- error-from-response-data
   [{:keys [status headers body-text fallback-message request]}]
-  (let [parsed-body (when (seq body-text)
-                      (try
-                        (json/parse-string body-text true)
-                        (catch Exception _ nil)))
-        parsed-msg  (or (get-in parsed-body [:error :message])
-                        (get-in parsed-body [:message])
-                        (parse-error-message body-text))
-        base-msg    (or (when (meaningful-error-message? parsed-msg)
-                          parsed-msg)
-                        (when (meaningful-error-message? fallback-message)
-                          fallback-message)
-                        (fallback-status-message status))
-        oauth?      (oauth-auth-request? request)
-        base-msg    (cond-> base-msg
-                      (= 400 status) (augment-400-message body-text oauth? request))
-        req-id      (request-id-from-headers headers)
-        full-msg    (str base-msg
-                         (when status
-                           (str " (status " status ")"))
-                         (when req-id
-                           (str " [request-id " req-id "]")))]
+  (let [parsed-body (parse-json-text-safe body-text)]
     (cond-> {:type :error
-             :error-message full-msg
+             :error-message (error-message {:status status
+                                            :headers headers
+                                            :body-text body-text
+                                            :fallback-message fallback-message
+                                            :request request
+                                            :parsed-body parsed-body})
              :headers headers}
-      status           (assoc :http-status status)
-      (seq body-text)  (assoc :body-text body-text)
-      parsed-body      (assoc :body parsed-body))))
+      status          (assoc :http-status status)
+      (seq body-text) (assoc :body-text body-text)
+      parsed-body     (assoc :body parsed-body))))
+
+(defn- error-context
+  ([body headers]
+   {:headers headers
+    :body-text (body->text body)})
+  ([body headers request]
+   (assoc (error-context body headers)
+          :request request)))
 
 (defn- exception->error
   [e]
-  (let [data      (ex-data e)
-        status    (:status data)
-        headers   (:headers data)
-        body-text (body->text (:body data))]
+  (let [data (ex-data e)]
     (error-from-response-data
-     {:status status
-      :headers headers
-      :body-text body-text
-      :fallback-message (or (ex-message e) (str e))})))
+     (merge (error-context (:body data) (:headers data))
+            {:status (:status data)
+             :fallback-message (or (ex-message e) (str e))}))))
 
 (defn- response->error
   [response request]
   (error-from-response-data
-   {:status (:status response)
-    :headers (:headers response)
-    :body-text (body->text (:body response))
-    :request request}))
+   (merge (error-context (:body response) (:headers response) request)
+          {:status (:status response)})))
 
 (defn- split-beta-values
   [beta-header]
@@ -799,6 +832,10 @@
   ;; Keep prompt-caching-scope for OAuth compatibility; remove only the
   ;; prompt-caching execution beta when retrying without cache directives.
   (remove-beta-values headers #{prompt-caching-beta}))
+
+(defn- update-request-headers
+  [request f]
+  (update request :headers #(f (or % {}))))
 
 (defn- strip-cache-control-fields
   [x]
@@ -838,29 +875,42 @@
     (assoc body :system (system-blocks->text (:system body)))
     body))
 
-(defn- request-without-prompt-caching
-  [request]
+(defn- update-request-body
+  [request f]
   (if-let [body* (request-body-map request)]
-    (-> request
-        (assoc :headers (remove-prompt-caching-betas (:headers request)))
-        (request-with-body-map (-> body*
-                                   strip-cache-control-fields
-                                   collapse-system-blocks-if-plain-text)))
-    (assoc request
-           :headers (remove-prompt-caching-betas (:headers request)))))
+    (request-with-body-map request (f body*))
+    request))
 
-(defn- request-without-thinking
-  [request]
-  (let [request* (assoc request
-                        :headers (remove-beta-values (:headers request)
-                                                     #{interleaved-thinking-beta}))]
-    (if-let [body* (request-body-map request*)]
-      (request-with-body-map request* (dissoc body* :thinking))
-      request*)))
+(defn- request-transform
+  [step]
+  (case step
+    :without-prompt-caching
+    (fn [request]
+      (-> request
+          (update-request-headers remove-prompt-caching-betas)
+          (update-request-body #(-> %
+                                    strip-cache-control-fields
+                                    collapse-system-blocks-if-plain-text))))
 
-(defn- request-without-all-betas
-  [request]
-  (assoc request :headers (dissoc (or (:headers request) {}) "anthropic-beta")))
+    :without-thinking
+    (fn [request]
+      (-> request
+          (update-request-headers #(remove-beta-values %
+                                                       #{interleaved-thinking-beta}))
+          (update-request-body #(dissoc % :thinking))))
+
+    :without-all-betas
+    #(update-request-headers % (fn [headers]
+                                 (dissoc headers "anthropic-beta")))
+
+    identity))
+
+(defn- apply-request-transforms
+  [request steps]
+  (reduce (fn [req step]
+            ((request-transform step) req))
+          request
+          steps))
 
 (defn- prompt-caching-request?
   [request]
@@ -875,24 +925,60 @@
   [request]
   (seq (split-beta-values (get-in request [:headers "anthropic-beta"]))))
 
+(defn- fallback-request-steps-for-400
+  [request]
+  (cond-> []
+    (prompt-caching-request? request)              (conj :without-prompt-caching)
+    (thinking-request? request)                    (conj :without-thinking)
+    (and (has-any-beta-header? request)
+         (not (oauth-auth-request? request)))      (conj :without-all-betas)))
+
 (defn- fallback-request-for-400
   [request]
-  (let [steps (cond-> []
-                (prompt-caching-request? request)              (conj :without-prompt-caching)
-                (thinking-request? request)                    (conj :without-thinking)
-                (and (has-any-beta-header? request)
-                     (not (oauth-auth-request? request)))      (conj :without-all-betas))
-        retried (reduce (fn [req step]
-                          (case step
-                            :without-prompt-caching (request-without-prompt-caching req)
-                            :without-thinking       (request-without-thinking req)
-                            :without-all-betas      (request-without-all-betas req)
-                            req))
-                        request
-                        steps)]
+  (let [steps   (fallback-request-steps-for-400 request)
+        retried (apply-request-transforms request steps)]
     (when (not= request retried)
       {:request retried
        :steps steps})))
+
+(defn- stream-response
+  [url request]
+  (http/post url (merge request {:as :stream :throw-exceptions false})))
+
+(defn- error-status?
+  [status]
+  (and (number? status)
+       (>= status 400)))
+
+(defn- emit-error!
+  [options url consume-fn err]
+  (capture-response! options url err)
+  (consume-fn err))
+
+(defn- consume-retry-response!
+  [options url consume-fn consume-stream-response! retry-request]
+  (capture-request! options url retry-request)
+  (let [retry-response (stream-response url retry-request)
+        retry-status   (:status retry-response)]
+    (if (error-status? retry-status)
+      (emit-error! options url consume-fn
+                   (response->error retry-response retry-request))
+      (consume-stream-response! retry-response))))
+
+(defn- handle-400-response!
+  [options url request response consume-fn consume-stream-response!]
+  (if-let [fallback (fallback-request-for-400 request)]
+    (let [first-error (response->error response request)]
+      (capture-response! options url (assoc first-error
+                                            :retrying-with-compatibility-fallback true
+                                            :retry-fallback-steps (:steps fallback)))
+      (consume-retry-response! options
+                               url
+                               consume-fn
+                               consume-stream-response!
+                               (:request fallback)))
+    (emit-error! options url consume-fn
+                 (response->error response request))))
 
 (defn stream-anthropic
   "Stream response from Anthropic API.
@@ -966,33 +1052,20 @@
                           (consume-fn {:type :done :reason :stop}))
 
                         nil)))))]
-        (let [response (http/post url (merge request {:as :stream :throw-exceptions false}))
+        (let [response (stream-response url request)
               status   (:status response)]
           (cond
             (= 400 status)
-            (if-let [fallback (fallback-request-for-400 request)]
-              (let [first-error   (response->error response request)
-                    retry-request (:request fallback)
-                    retry-steps   (:steps fallback)]
-                (capture-response! options url (assoc first-error
-                                                      :retrying-with-compatibility-fallback true
-                                                      :retry-fallback-steps retry-steps))
-                (capture-request! options url retry-request)
-                (let [retry-response (http/post url (merge retry-request {:as :stream :throw-exceptions false}))
-                      retry-status   (:status retry-response)]
-                  (if (and (number? retry-status) (>= retry-status 400))
-                    (let [err (response->error retry-response retry-request)]
-                      (capture-response! options url err)
-                      (consume-fn err))
-                    (consume-stream-response! retry-response))))
-              (let [err (response->error response request)]
-                (capture-response! options url err)
-                (consume-fn err)))
+            (handle-400-response! options
+                                  url
+                                  request
+                                  response
+                                  consume-fn
+                                  consume-stream-response!)
 
-            (and (number? status) (>= status 400))
-            (let [err (response->error response request)]
-              (capture-response! options url err)
-              (consume-fn err))
+            (error-status? status)
+            (emit-error! options url consume-fn
+                         (response->error response request))
 
             :else
             (consume-stream-response! response))))
