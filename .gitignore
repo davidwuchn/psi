@@ -2,3 +2,6 @@
 .psi/project.edn
 .clj-konde/imports.claude/
 .clj-kondo/imports
+/target/
+/target/coverage/
+/target/coverage-ai/

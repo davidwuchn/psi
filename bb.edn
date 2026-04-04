@@ -25,6 +25,14 @@
   {:doc     "Run both Clojure unit and extension test suites."
    :depends [clojure:test:unit clojure:test:extensions]}
 
+  coverage
+  {:doc  "Run Kaocha unit suite with Cloverage plugin and write coverage report to target/coverage."
+   :task (shell "clojure -M:test:coverage --plugin kaocha.plugin/cloverage --cov-output target/coverage --cov-summary --cov-html --no-cov-text --focus unit")}
+
+  coverage:ai
+  {:doc  "Run isolated AI suite with Kaocha Cloverage report written to target/coverage-ai."
+   :task (shell "clojure -M:test:coverage --plugin kaocha.plugin/cloverage -c tests-component-isolated.edn --cov-output target/coverage-ai --cov-summary --cov-html --no-cov-text --focus :ai")}
+
   emacs:test
   {:doc  "Run Emacs frontend ERT suites (psi-rpc + psi + widget)."
    :task (shell "emacs -Q --batch -L components/emacs-ui -l components/emacs-ui/test/psi-rpc-test.el -l components/emacs-ui/test/psi-test.el -l components/emacs-ui/test/psi-anthropic-rehydrate-regression-test.el -l components/emacs-ui/test/psi-new-anthropic-flow-regression-test.el -l components/emacs-ui/test/psi-widget-renderer-test.el -l components/emacs-ui/test/psi-widget-projection-test.el -f ert-run-tests-batch-and-exit")}
