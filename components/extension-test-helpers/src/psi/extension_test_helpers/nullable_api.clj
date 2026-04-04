@@ -32,7 +32,9 @@
          :workflows            {}
          :prompt-contributions {}
          :post-tool-processors []
-         :services             []}))
+         :services             []
+         :service-requests     []
+         :service-notifications []}))
 
 (defn- workflow-seq
   [state ext-path]
@@ -229,6 +231,18 @@
   (swap! state update :services (fn [svc] (vec (remove #(= (:key %) (:key params)) svc))))
   {:psi.extension/service-stopped? true})
 
+(defn- service-request! [state params]
+  (swap! state update :service-requests (fnil conj []) params)
+  {:psi.extension.service/service-key (:key params)
+   :psi.extension.service/request-id (:request-id params)
+   :psi.extension.service/payload (:payload params)
+   :psi.extension.service/timeout-ms (:timeout-ms params)})
+
+(defn- service-notify! [state params]
+  (swap! state update :service-notifications (fnil conj []) params)
+  {:psi.extension.service/service-key (:key params)
+   :psi.extension.service/payload (:payload params)})
+
 (def ^:private mutation-handlers
   {'psi.extension/register-command register-command!
    'psi.extension/register-handler register-handler!
@@ -248,7 +262,9 @@
    'psi.extension/send-prompt send-prompt!
    'psi.extension/register-post-tool-processor register-post-tool-processor!
    'psi.extension/ensure-service ensure-service!
-   'psi.extension/stop-service stop-service!})
+   'psi.extension/stop-service stop-service!
+   'psi.extension/service-request service-request!
+   'psi.extension/service-notify service-notify!})
 
 (defn- default-mutate-fn
   [state _opts op params]

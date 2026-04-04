@@ -586,6 +586,26 @@
                      :key      key})
          (runtime-not-initialized :stop-service)))
 
+     :service-request
+     (fn [{:keys [key request-id payload timeout-ms]}]
+       (if mutate-fn
+         (mutate-fn 'psi.extension/service-request
+                    {:ext-path   ext-path
+                     :key        key
+                     :request-id request-id
+                     :payload    payload
+                     :timeout-ms timeout-ms})
+         (runtime-not-initialized :service-request)))
+
+     :service-notify
+     (fn [{:keys [key payload]}]
+       (if mutate-fn
+         (mutate-fn 'psi.extension/service-notify
+                    {:ext-path ext-path
+                     :key      key
+                     :payload  payload})
+         (runtime-not-initialized :service-notify)))
+
      :list-services
      (fn []
        (if query-fn

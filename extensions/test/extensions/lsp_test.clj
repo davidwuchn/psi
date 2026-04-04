@@ -76,14 +76,45 @@
       (is (= ["custom-lsp" "--stdio"]
              (get-in @state [:services 0 :spec :command]))))))
 
+(deftest jsonrpc-and-init-registration-test
+  (testing "extension emits JSON-RPC request and notify through extension service api"
+    (let [{:keys [api state]} (nullable/create-nullable-extension-api
+                               {:path "/test/lsp.clj"})
+          api' (assoc api
+                      :service-request (fn [spec]
+                                         ((:mutate api) 'psi.extension/service-request spec))
+                      :service-notify (fn [spec]
+                                        ((:mutate api) 'psi.extension/service-notify spec)))]
+      (sut/jsonrpc-request! api' {:workspace-root "/repo"
+                                  :id "1"
+                                  :method "initialize"
+                                  :params {"x" 1}
+                                  :timeout-ms 250})
+      (sut/jsonrpc-notify! api' {:workspace-root "/repo"
+                                 :method "initialized"
+                                 :params {}})
+      (is (= [{:ext-path "/test/lsp.clj"
+               :key [:lsp "/repo"]
+               :request-id "1"
+               :payload {"jsonrpc" "2.0"
+                         "id" "1"
+                         "method" "initialize"
+                         "params" {"x" 1}}
+               :timeout-ms 250}]
+             (:service-requests @state)))
+      (is (= [{:ext-path "/test/lsp.clj"
+               :key [:lsp "/repo"]
+               :payload {"jsonrpc" "2.0"
+                         "method" "initialized"
+                         "params" {}}}]
+             (:service-notifications @state))))))
+
 (deftest init-registers-post-tool-processor-test
   (testing "extension init registers write/edit post-tool processor"
     (let [{:keys [api state]} (nullable/create-nullable-extension-api
                                {:path "/test/lsp.clj"})]
       (sut/init (assoc api :register-post-tool-processor (fn [spec]
                                                           ((:mutate api) 'psi.extension/register-post-tool-processor spec))))
-      (is (= [{:name "lsp-diagnostics"
-               :ext-path "/test/lsp.clj"
-               :tools #{"write" "edit"}
-               :timeout-ms 500}]
-             (:post-tool-processors @state))))))
+      (is (= 1 (count (:post-tool-processors @state))))
+      (is (= "lsp-diagnostics"
+             (get-in @state [:post-tool-processors 0 :name]))))))

@@ -15,6 +15,7 @@
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.post-tool :as post-tool]
+   [psi.agent-session.service-protocol :as service-protocol]
    [psi.agent-session.services :as services]
    [psi.agent-session.session :as session]
    [psi.agent-session.session-state :as ss]
@@ -204,6 +205,41 @@
    ::pco/output  [:psi.extension/path]}
   (services/stop-service-in! agent-session-ctx key)
   {:psi.extension/path ext-path})
+
+(pco/defmutation service-request
+  "Send a correlated request to an extension-owned managed service."
+  [_ {:keys [psi/agent-session-ctx ext-path key request-id payload timeout-ms]}]
+  {::pco/op-name 'psi.extension/service-request
+   ::pco/params  [:psi/agent-session-ctx :ext-path :key :request-id :payload :timeout-ms]
+   ::pco/output  [:psi.extension/path
+                  :psi.extension.service/service-key
+                  :psi.extension.service/request-id
+                  :psi.extension.service/payload
+                  :psi.extension.service/timeout-ms]}
+  (let [result (service-protocol/send-service-request!
+                agent-session-ctx key
+                {:request-id request-id
+                 :payload payload
+                 :timeout-ms timeout-ms})]
+    {:psi.extension/path                ext-path
+     :psi.extension.service/service-key (:service-key result)
+     :psi.extension.service/request-id  (:request-id result)
+     :psi.extension.service/payload     (:payload result)
+     :psi.extension.service/timeout-ms  (:timeout-ms result)}))
+
+(pco/defmutation service-notify
+  "Send a notification to an extension-owned managed service."
+  [_ {:keys [psi/agent-session-ctx ext-path key payload]}]
+  {::pco/op-name 'psi.extension/service-notify
+   ::pco/params  [:psi/agent-session-ctx :ext-path :key :payload]
+   ::pco/output  [:psi.extension/path
+                  :psi.extension.service/service-key
+                  :psi.extension.service/payload]}
+  (let [result (service-protocol/send-service-notification!
+                agent-session-ctx key payload)]
+    {:psi.extension/path                ext-path
+     :psi.extension.service/service-key (:service-key result)
+     :psi.extension.service/payload     (:payload result)}))
 
 ;;; Prompt-contribution mutations
 
@@ -917,6 +953,8 @@
    register-post-tool-processor
    ensure-service
    stop-service
+   service-request
+   service-notify
    register-prompt-contribution
    update-prompt-contribution
    unregister-prompt-contribution
