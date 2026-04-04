@@ -12,6 +12,8 @@ use "./tools/write.allium" as write
 use "./tools/app-query-tool.allium" as eql
 use "./tools/tool-naming.allium" as naming
 use "./background-tool-jobs.allium" as background_jobs
+use "./post-tool-processing.allium" as post_tool
+use "./service-protocol-helpers.allium" as service_helpers
 
 surface ToolSuiteIndex {
     facing caller: RuntimeEngineer
@@ -26,10 +28,15 @@ surface ToolSuiteIndex {
         eql/EqlQueryToolApi
         naming/ToolNamingApi
         background_jobs/BackgroundToolJobsApi
+        post_tool/PostToolProcessingApi
+        post_tool/PostToolProcessingEqlApi
+        service_helpers/ServiceProtocolHelpersApi
 
     @guidance
         -- This is the top-level reference for built-in tool contracts.
         -- Runtime dispatch/limits/stats are specified in tools/runtime.allium.
+        -- Managed services, post-tool processors, and processor telemetry are queryable through the post-tool EQL surface.
+        -- Shared stdio/JSON-RPC request-response helper semantics are specified in service-protocol-helpers.allium.
 }
 
 open question "Should future built-in tools be grouped by capability domains (filesystem, shell, graph) in this index?"

@@ -2,14 +2,16 @@
 
 -- extension-system.allium
 -- Scope: Extension system — registration, event dispatch, tool wrapping,
--- commands, flags, shortcuts, custom messages, and prompt contributions.
+-- commands, flags, shortcuts, custom messages, prompt contributions,
+-- and post-tool processor registration.
 --
 -- Extensions are context resources. A context loads extensions once;
 -- sessions in that context observe and use the resulting commands, tools,
--- handlers, and prompt contributions.
+-- handlers, prompt contributions, and post-tool processors.
 
 use "./agent-extension.allium" as agent
 use "./session-core.allium" as core
+use "./post-tool-processing.allium" as post_tool
 
 external entity AgentContext {
     id: String
@@ -95,6 +97,13 @@ entity PromptContribution {
     enabled: Boolean
     created_at: Timestamp
     updated_at: Timestamp
+}
+
+entity RegisteredPostToolProcessor {
+    name: String
+    extension_path: String
+    tools: Set<String>
+    timeout_ms: Integer
 }
 
 config {
@@ -211,6 +220,19 @@ rule PromptContributionRenderOrder {
     )
 }
 
+rule ExtensionPostToolProcessorRegistered {
+    when: ExtensionPostToolProcessorRegistered(extension_path, name, tools, timeout_ms)
+
+    ensures: exists RegisteredPostToolProcessor {
+        name: name,
+        extension_path: extension_path,
+        tools: tools,
+        timeout_ms: timeout_ms
+    }
+
+    ensures: post_tool/PostToolProcessorRegistered(name, extension_path, tools, timeout_ms)
+}
+
 surface ExtensionApi {
     facing caller: core/EqlClient
 
@@ -227,6 +249,10 @@ surface ExtensionApi {
         PromptContribution.section
         PromptContribution.priority
         PromptContribution.enabled
+        RegisteredPostToolProcessor.name
+        RegisteredPostToolProcessor.extension_path
+        RegisteredPostToolProcessor.tools
+        RegisteredPostToolProcessor.timeout_ms
 
     provides:
         ExtensionsLoaded(context, extension_paths)
@@ -234,6 +260,7 @@ surface ExtensionApi {
         PromptContributionRegistered(session, extension_path, contribution)
         PromptContributionUpdated(session, extension_path, contribution_id, patch)
         PromptContributionRemoved(session, extension_path, contribution_id)
+        ExtensionPostToolProcessorRegistered(extension_path, name, tools, timeout_ms)
         ExtensionPromptSent(session, prompt_text)
         CustomMessageSent(session, message)
 
@@ -241,6 +268,7 @@ surface ExtensionApi {
         -- Extensions are loaded once per context and shared by sessions in that context.
 
     @guarantee SessionsConsumeExtensionEffects
-        -- Sessions receive extension commands, prompt contributions, and messages
-        -- as context-derived behavior plus session-local prompt recomposition.
+        -- Sessions receive extension commands, prompt contributions, post-tool
+        -- processors, and messages as context-derived behavior plus session-local
+        -- prompt recomposition.
 }

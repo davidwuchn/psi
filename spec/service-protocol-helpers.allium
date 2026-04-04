@@ -1,0 +1,112 @@
+-- allium: 1
+
+-- service-protocol-helpers.allium
+-- Shared stdio request/response helper semantics for ctx-owned managed services.
+--
+-- Scope:
+--   - line- or frame-oriented request/response over stdio
+--   - correlation by request id
+--   - timeout-bounded request completion
+--   - helper suitability for JSON-RPC style protocols used by LSP/nREPL adapters
+
+use "./post-tool-processing.allium" as post_tool
+
+value ServiceRequest {
+    service_key: post_tool/ManagedServiceKey
+    request_id: String
+    payload: Map<String, Any>
+    timeout_ms: Integer
+}
+
+value ServiceResponse {
+    service_key: post_tool/ManagedServiceKey
+    request_id: String
+    payload: Map<String, Any>
+    is_error: Boolean
+}
+
+value ServiceNotification {
+    service_key: post_tool/ManagedServiceKey
+    payload: Map<String, Any>
+}
+
+rule ManagedServiceStdioRequestsCorrelateByRequestId {
+    when: ServiceRequestSent(request)
+
+    ensures: RequestWrittenToServiceStdio(request.service_key, request.payload)
+    ensures: AwaitingServiceResponse(request.service_key, request.request_id)
+}
+
+rule ManagedServiceResponseCompletesMatchingRequest {
+    when: ServiceResponseReceived(response)
+    requires: AwaitingServiceResponse(response.service_key, response.request_id)
+
+    ensures: ServiceRequestCompleted(response.service_key, response.request_id, response.payload)
+    ensures: not AwaitingServiceResponse(response.service_key, response.request_id)
+}
+
+rule ManagedServiceRequestTimeoutCompletesWithTimeoutOutcome {
+    when: ServiceRequestSent(request)
+    requires: not ServiceResponseReceivedFor(request.service_key, request.request_id, within_ms: request.timeout_ms)
+
+    ensures: ServiceRequestTimedOut(request.service_key, request.request_id)
+    ensures: not AwaitingServiceResponse(request.service_key, request.request_id)
+}
+
+rule ManagedServiceNotificationsDoNotAwaitResponse {
+    when: ServiceNotificationSent(notification)
+
+    ensures: RequestWrittenToServiceStdio(notification.service_key, notification.payload)
+    ensures: not AwaitingAnonymousServiceResponse(notification.service_key)
+}
+
+rule JsonRpcHelpersPreserveProtocolFields {
+    when: JsonRpcRequestSent(service_key, request_id, method, params, timeout_ms)
+
+    ensures: ServiceRequestSent(ServiceRequest{
+        service_key: service_key,
+        request_id: request_id,
+        payload: {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method,
+            "params": params
+        },
+        timeout_ms: timeout_ms
+    })
+}
+
+rule JsonRpcNotificationsPreserveProtocolFields {
+    when: JsonRpcNotificationSent(service_key, method, params)
+
+    ensures: ServiceNotificationSent(ServiceNotification{
+        service_key: service_key,
+        payload: {
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params
+        }
+    })
+}
+
+surface ServiceProtocolHelpersApi {
+    facing caller: RuntimeEngineer | ExtensionRuntime
+
+    provides:
+        ServiceRequestSent(request)
+        ServiceResponseReceived(response)
+        ServiceNotificationSent(notification)
+        JsonRpcRequestSent(service_key, request_id, method, params, timeout_ms)
+        JsonRpcNotificationSent(service_key, method, params)
+
+    exposes:
+        ServiceRequest
+        ServiceResponse
+        ServiceNotification
+
+    @guidance
+        -- These helpers abstract stdio request/response correlation for managed services.
+        -- They are suitable for JSON-RPC protocols used by LSP and similar integrations.
+}
+
+open question "Should psi support streaming partial responses from managed services in the helper layer, or leave that to protocol-specific clients?"

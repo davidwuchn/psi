@@ -21,6 +21,8 @@ A meta model for psi.
 - psi has EQL resolvers that provide introspection of the project
 - psi has EQL mutations that provide extension points for the project
 - psi has a capability graph that is queryable via EQL
+- psi runtime owns process-scoped managed services on ctx for long-lived subprocesses and similar runtime resources
+- managed services are keyed by logical identity and reused within ctx rather than extension-local hidden state
 
 - psi interacts with AI LLM models via sessions
 - psi hosts multiple sessions concurrently inside one process
@@ -33,6 +35,7 @@ A meta model for psi.
 - a session has a system prompt
 - a session contains a sequence of messages (user, assistant, tool, and system/extension messages)
 - sessions support tools
+- tool results may carry structured metadata including execution effects and enrichments in addition to human-readable content
 - assistant reply messages are streamed
 - a session has a start instant
 - a prompt lifecycle is a first-class session transaction
@@ -61,6 +64,7 @@ A meta model for psi.
 
 - a git worktree is a first-class context boundary for sessions
 - psi uses worktrees with minimal ceremony
+- post-tool processors should consume structured execution effects rather than parsing human-oriented tool success text
 
 - extension widgets have a protocol-level content model designed for cross-UI rendering
 - widget content is a vector of line values where line ∈ string | map

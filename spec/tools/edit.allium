@@ -4,6 +4,7 @@
 -- Target behavior for the edit tool.
 
 use "./path-resolution.allium" as path
+use "../post-tool-processing.allium" as post_tool
 
 value EditArgs {
     path: String
@@ -24,6 +25,13 @@ value EditResult {
     content: String
     is_error: Boolean
     details: EditDiff?
+}
+
+value EditEffect {
+    type: String
+    path: String
+    worktree_path: String?
+    first_changed_line: Integer
 }
 
 rule EditExpandsAndResolvesPathAgainstCwd {
@@ -128,6 +136,29 @@ rule EditReturnsSuccessMessageAndDiffDetails {
     ensures: result.details.first_changed_line >= 1
 }
 
+rule EditProducesStructuredFilesystemEffect {
+    when: ExecuteEdit(args, opts)
+
+    ensures: first_changed_line = FirstChangedLine(BeforeContent(), AfterContent()) or 1
+    ensures: effect = EditEffect{
+        type: "file/edit",
+        path: PathString(PathResolvedForEdit(args, opts)),
+        worktree_path: opts.worktree_path,
+        first_changed_line: first_changed_line
+    }
+
+    ensures: post_tool/ToolEffectProduced(
+        tool_name: "edit",
+        effect: post_tool/ToolEffect{
+            type: "file/edit",
+            path: PathString(PathResolvedForEdit(args, opts)),
+            worktree_path: opts.worktree_path,
+            bytes: null,
+            first_changed_line: first_changed_line
+        }
+    )
+}
+
 rule EditWithoutCwdAcceptsAbsolutePath {
     when: ExecuteEdit(args, opts)
     requires: opts.worktree_path = null
@@ -145,6 +176,7 @@ surface EditToolApi {
 
     exposes:
         EditResult
+        EditEffect
 
     @guidance
         -- API args use snake_case fields: path, old_text, new_text.

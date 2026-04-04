@@ -1,0 +1,416 @@
+-- allium: 1
+
+-- post-tool-processing.allium
+-- Managed subprocesses plus synchronous post-tool result enrichment.
+--
+-- Scope:
+--   - ctx-owned managed subprocess services keyed by logical identity
+--   - synchronous post-tool processor execution after base tool completion
+--   - timeout-bounded additive result composition before provider emission
+--   - structured tool effects lifted into canonical tool results
+--   - processor telemetry for success/timeout/error outcomes
+--   - EQL/query surfaces for services, registered processors, and telemetry
+
+use "./system-context-unification.allium" as system
+use "./session-management.allium" as session
+
+value ManagedServiceKey {
+    parts: List<String>
+}
+
+entity ManagedSubprocessService {
+    key: ManagedServiceKey
+    status: starting | running | stopped | crashed
+    command: List<String>
+    cwd: String
+    transport: stdio
+    ext_path: String?
+    started_at: Timestamp?
+    stopped_at: Timestamp?
+    restart_count: Integer
+    last_error: String?
+}
+
+value ToolEffect {
+    type: String
+    path: String?
+    worktree_path: String?
+    bytes: Integer?
+    first_changed_line: Integer?
+}
+
+value ToolResultMeta {
+    tool_name: String
+    tool_call_id: String?
+}
+
+value ToolEnrichment {
+    type: String
+    source: String
+    label: String?
+    data: Map<String, Any>
+}
+
+value CanonicalToolResult {
+    content: String
+    is_error: Boolean
+    details: Map<String, Any>?
+    meta: ToolResultMeta?
+    effects: List<ToolEffect>
+    enrichments: List<ToolEnrichment>
+}
+
+entity PostToolProcessor {
+    name: String
+    ext_path: String?
+    tools: Set<String>
+    timeout_ms: Integer
+}
+
+value PostToolProcessorInput {
+    session_id: String
+    tool_name: String
+    tool_call_id: String?
+    tool_args: Map<String, Any>
+    tool_result: CanonicalToolResult
+    worktree_path: String?
+}
+
+value PostToolContribution {
+    content_append: String?
+    details_merge: Map<String, Any>?
+    enrichments: List<ToolEnrichment>
+}
+
+value ProcessorTelemetry {
+    tool_call_id: String?
+    tool_name: String
+    processor_name: String
+    status: success | timeout | error
+    duration_ms: Integer
+}
+
+value ServiceProjection {
+    key: ManagedServiceKey
+    status: starting | running | stopped | crashed
+    command: List<String>
+    cwd: String
+    transport: stdio
+    ext_path: String?
+    started_at: Timestamp?
+    stopped_at: Timestamp?
+    restart_count: Integer
+    last_error: String?
+}
+
+value PostToolProcessorProjection {
+    name: String
+    ext_path: String?
+    tools: Set<String>
+    timeout_ms: Integer
+}
+
+value ProcessorTelemetryProjection {
+    tool_call_id: String?
+    tool_name: String
+    processor_name: String
+    status: success | timeout | error
+    duration_ms: Integer
+}
+
+rule ManagedServicesAreCtxOwnedRuntimeHandles {
+    when: system/SystemContextCreated(context, runtime_state)
+
+    ensures: "service_registry" in context.runtime_handle_kinds
+
+    @guidance
+        -- Managed subprocess lifecycles are process-scoped runtime handles on ctx.
+        -- Observable service status may be projected into queryable state; the
+        -- subprocess handle itself remains outside canonical state.
+}
+
+rule ManagedSubprocessEnsureReturnsRunningService {
+    when: ManagedSubprocessEnsureRequested(service_key, command, cwd, ext_path)
+
+    ensures: exists ManagedSubprocessService {
+        key: service_key,
+        status: running,
+        command: command,
+        cwd: cwd,
+        transport: stdio,
+        ext_path: ext_path,
+        started_at: now,
+        stopped_at: null
+    }
+}
+
+rule ManagedSubprocessEnsureReusesHealthyService {
+    when: ManagedSubprocessEnsureRequested(service_key, command, cwd, ext_path)
+    requires: exists ManagedSubprocessService {key: service_key, status: running}
+
+    ensures: ManagedSubprocessFor(service_key).command = command
+    ensures: ManagedSubprocessFor(service_key).cwd = cwd
+}
+
+rule ManagedSubprocessStopTransitionsToStopped {
+    when: ManagedSubprocessStopRequested(service_key)
+    requires: exists ManagedSubprocessService {key: service_key}
+
+    ensures: ManagedSubprocessFor(service_key).status = stopped
+    ensures: ManagedSubprocessFor(service_key).stopped_at = now
+}
+
+rule WriteAndEditExposeStructuredEffects {
+    when: CanonicalToolResultCreated(tool_call_id, tool_name)
+    requires: tool_name in {"write", "edit"}
+
+    ensures: CanonicalResultFor(tool_call_id).meta.tool_name = tool_name
+    ensures: CanonicalResultFor(tool_call_id).meta.tool_call_id = tool_call_id
+    ensures: Count(CanonicalResultFor(tool_call_id).effects) >= 1
+
+    @guidance
+        -- Built-in write and edit results should expose structured filesystem
+        -- effects so post-tool processors do not parse human-oriented success text.
+}
+
+rule StructuredToolEffectsAreLiftedIntoCanonicalResults {
+    when: ToolEffectProduced(tool_name, effect)
+
+    ensures: effect in CanonicalResultFor(CurrentToolCallId(tool_name)).effects
+}
+
+rule PostToolProcessorsCanBeRegisteredByToolName {
+    when: PostToolProcessorRegistered(name, ext_path, tools, timeout_ms)
+
+    ensures: exists PostToolProcessor {
+        name: name,
+        ext_path: ext_path,
+        tools: tools,
+        timeout_ms: timeout_ms
+    }
+}
+
+rule PostToolProcessingRunsAfterBaseToolCompletion {
+    when: PostToolProcessingRequested(input)
+
+    ensures: BaseToolResultAvailable(input.tool_call_id)
+    ensures: input.tool_result = CanonicalResultFor(input.tool_call_id)
+    ensures: FinalToolResultReady(input.tool_call_id)
+
+    @guidance
+        -- Post-tool processing occurs after base tool execution and before the
+        -- final tool result is emitted back to the provider.
+}
+
+rule OnlyMatchingProcessorsRun {
+    when: PostToolProcessingRequested(input)
+
+    ensures:
+        for p in PostToolProcessors():
+            if input.tool_name in p.tools:
+                PostToolProcessorInvoked(p.name, input.tool_call_id)
+            else:
+                not PostToolProcessorInvoked(p.name, input.tool_call_id)
+}
+
+rule PostToolProcessorContributionIsAdditive {
+    when: PostToolProcessorReturned(processor_name, tool_call_id, contribution)
+
+    ensures: FinalToolResult(tool_call_id).content =
+             AppendInRegistrationOrder(BaseToolResult(tool_call_id).content,
+                                       ContributionsFor(tool_call_id).content_append)
+    ensures: FinalToolResult(tool_call_id).details =
+             MergeInRegistrationOrder(BaseToolResult(tool_call_id).details,
+                                      ContributionsFor(tool_call_id).details_merge)
+    ensures: FinalToolResult(tool_call_id).enrichments =
+             ConcatInRegistrationOrder(BaseToolResult(tool_call_id).enrichments,
+                                       ContributionsFor(tool_call_id).enrichments)
+    ensures: ProcessorTelemetry.created(
+        tool_call_id: tool_call_id,
+        tool_name: BaseToolResult(tool_call_id).meta.tool_name,
+        processor_name: processor_name,
+        status: success,
+        duration_ms: ProcessorDurationMs(processor_name, tool_call_id)
+    )
+
+    @guidance
+        -- Post-tool processors are additive in v1. They do not rewrite base
+        -- success/failure semantics.
+}
+
+rule PostToolProcessorTimeoutDropsOnlyThatContribution {
+    when: PostToolProcessorTimedOut(processor_name, tool_call_id)
+
+    ensures: ProcessorContributionIgnored(processor_name, tool_call_id)
+    ensures: FinalToolResult(tool_call_id).content =
+             AppendInRegistrationOrder(BaseToolResult(tool_call_id).content,
+                                       SuccessfulContributionsFor(tool_call_id).content_append)
+    ensures: FinalToolResult(tool_call_id).is_error = BaseToolResult(tool_call_id).is_error
+    ensures: ProcessorTelemetry.created(
+        tool_call_id: tool_call_id,
+        tool_name: BaseToolResult(tool_call_id).meta.tool_name,
+        processor_name: processor_name,
+        status: timeout,
+        duration_ms: ProcessorTimeoutBudgetMs(processor_name)
+    )
+
+    @guidance
+        -- Timeout does not fail the underlying tool call by default.
+}
+
+rule PostToolProcessorErrorDropsOnlyThatContribution {
+    when: PostToolProcessorErrored(processor_name, tool_call_id, error)
+
+    ensures: ProcessorContributionIgnored(processor_name, tool_call_id)
+    ensures: FinalToolResult(tool_call_id).is_error = BaseToolResult(tool_call_id).is_error
+    ensures: ProcessorTelemetry.created(
+        tool_call_id: tool_call_id,
+        tool_name: BaseToolResult(tool_call_id).meta.tool_name,
+        processor_name: processor_name,
+        status: error,
+        duration_ms: ProcessorDurationMs(processor_name, tool_call_id)
+    )
+}
+
+surface PostToolProcessingApi {
+    facing caller: RuntimeEngineer | ExtensionRuntime
+
+    provides:
+        ManagedSubprocessEnsureRequested(service_key, command, cwd, ext_path)
+        ManagedSubprocessStopRequested(service_key)
+        ToolEffectProduced(tool_name, effect)
+        CanonicalToolResultCreated(tool_call_id, tool_name)
+        PostToolProcessorRegistered(name, ext_path, tools, timeout_ms)
+        PostToolProcessingRequested(input)
+
+    exposes:
+        ManagedSubprocessService
+        PostToolProcessor
+        CanonicalToolResult
+        PostToolContribution
+        ProcessorTelemetry
+
+    @guidance
+        -- Managed subprocesses are keyed within the single runtime ctx.
+        -- Post-tool processing is synchronous and timeout-bounded.
+        -- The final composed result is the one returned to the provider.
+}
+
+surface PostToolProcessingEqlApi {
+    facing caller: session/User
+
+    exposes:
+        ServiceProjection.key
+        ServiceProjection.status
+        ServiceProjection.command
+        ServiceProjection.cwd
+        ServiceProjection.transport
+        ServiceProjection.ext_path
+        ServiceProjection.started_at
+        ServiceProjection.stopped_at
+        ServiceProjection.restart_count
+        ServiceProjection.last_error
+        PostToolProcessorProjection.name
+        PostToolProcessorProjection.ext_path
+        PostToolProcessorProjection.tools
+        PostToolProcessorProjection.timeout_ms
+        ProcessorTelemetryProjection.tool_call_id
+        ProcessorTelemetryProjection.tool_name
+        ProcessorTelemetryProjection.processor_name
+        ProcessorTelemetryProjection.status
+        ProcessorTelemetryProjection.duration_ms
+
+    provides:
+        PostToolRuntimeAttrsResolvable()
+        PostToolRuntimeAttrsDiscoverableInGraph()
+}
+
+rule PostToolRuntimeAttrsResolvable {
+    when: AgentSessionResolversRegistered()
+
+    ensures: EqlAttributeResolvable(":psi.service/count")
+    ensures: EqlAttributeResolvable(":psi.service/keys")
+    ensures: EqlAttributeResolvable(":psi.service/services")
+    ensures: EqlAttributeResolvable(":psi.post-tool-processor/count")
+    ensures: EqlAttributeResolvable(":psi.post-tool-processors")
+    ensures: EqlAttributeResolvable(":psi.post-tool/processed-count")
+    ensures: EqlAttributeResolvable(":psi.post-tool/timeout-count")
+    ensures: EqlAttributeResolvable(":psi.post-tool/error-count")
+    ensures: EqlAttributeResolvable(":psi.post-tool/recent-events")
+}
+
+rule ServiceEqlValuesProjectCtxOwnedManagedServices {
+    when: ManagedServicesStateRequested()
+
+    ensures: EqlValue(":psi.service/count") = Count(ManagedSubprocessServices())
+    ensures: EqlValue(":psi.service/keys") = KeysOf(ManagedSubprocessServices())
+    ensures: EqlValue(":psi.service/services") = ProjectServices(ManagedSubprocessServices(), fields: {
+        key,
+        status,
+        command,
+        cwd,
+        transport,
+        ext_path,
+        started_at,
+        stopped_at,
+        restart_count,
+        last_error
+    })
+}
+
+rule PostToolProcessorEqlValuesProjectRegisteredProcessors {
+    when: PostToolProcessorStateRequested()
+
+    ensures: EqlValue(":psi.post-tool-processor/count") = Count(PostToolProcessors())
+    ensures: EqlValue(":psi.post-tool-processors") = ProjectPostToolProcessors(PostToolProcessors(), fields: {
+        name,
+        ext_path,
+        tools,
+        timeout_ms
+    })
+}
+
+rule PostToolTelemetryEqlValuesProjectProcessorOutcomes {
+    when: PostToolTelemetryRequested()
+
+    ensures: EqlValue(":psi.post-tool/processed-count") = Count(ProcessorTelemetry where status = success)
+    ensures: EqlValue(":psi.post-tool/timeout-count") = Count(ProcessorTelemetry where status = timeout)
+    ensures: EqlValue(":psi.post-tool/error-count") = Count(ProcessorTelemetry where status = error)
+    ensures: EqlValue(":psi.post-tool/recent-events") = ProjectProcessorTelemetry(RecentProcessorTelemetry(), fields: {
+        tool_call_id,
+        tool_name,
+        processor_name,
+        status,
+        duration_ms
+    })
+}
+
+rule PostToolRuntimeAttrsDiscoverableInGraph {
+    when: AgentSessionResolversRegistered()
+
+    ensures: GraphNodesContainAttributes({
+        ":psi.service/count",
+        ":psi.service/keys",
+        ":psi.service/services",
+        ":psi.post-tool-processor/count",
+        ":psi.post-tool-processors",
+        ":psi.post-tool/processed-count",
+        ":psi.post-tool/timeout-count",
+        ":psi.post-tool/error-count",
+        ":psi.post-tool/recent-events"
+    })
+
+    ensures: GraphEdgesContainAttributes({
+        ":psi.service/count",
+        ":psi.service/keys",
+        ":psi.service/services",
+        ":psi.post-tool-processor/count",
+        ":psi.post-tool-processors",
+        ":psi.post-tool/processed-count",
+        ":psi.post-tool/timeout-count",
+        ":psi.post-tool/error-count",
+        ":psi.post-tool/recent-events"
+    })
+}
+
+open question "Should per-processor timeout be the only budget in v1, or should psi also support an overall post-tool budget?"

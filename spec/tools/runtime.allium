@@ -9,6 +9,7 @@ use "./edit.allium" as edit
 use "./write.allium" as write
 use "./app-query-tool.allium" as eql
 use "./tool-naming.allium" as naming
+use "../post-tool-processing.allium" as post_tool
 
 value ToolSchema {
     name: String
@@ -180,6 +181,33 @@ rule ToolCallOutputStatRecorded {
     )
 }
 
+rule ToolResultsBecomeCanonicalStructuredEnvelopes {
+    when: ToolResultFinalized(tool_call_id, tool_name, truncation, output_text, projected_context_text)
+
+    ensures: CanonicalToolResultEnvelope.created(
+        content: output_text,
+        is_error: ToolCallErrorState(tool_call_id),
+        details: ToolCallDetails(tool_call_id),
+        meta: post_tool/ToolResultMeta{tool_name: tool_name, tool_call_id: tool_call_id},
+        effects: ToolCallEffects(tool_call_id),
+        enrichments: []
+    )
+    ensures: post_tool/CanonicalToolResultCreated(tool_call_id, tool_name)
+}
+
+rule FinalToolResultPassesThroughPostToolProcessing {
+    when: ToolResultFinalized(tool_call_id, tool_name, truncation, output_text, projected_context_text)
+
+    ensures: post_tool/PostToolProcessingRequested(post_tool/PostToolProcessorInput{
+        session_id: ToolCallSessionId(tool_call_id),
+        tool_name: tool_name,
+        tool_call_id: tool_call_id,
+        tool_args: ToolCallArgs(tool_call_id),
+        tool_result: CanonicalResultFor(tool_call_id),
+        worktree_path: ToolCallWorktreePath(tool_call_id)
+    })
+}
+
 rule ToolOutputStatsAggregated {
     when: ToolOutputStatsRequested(session)
 
@@ -203,6 +231,7 @@ surface BuiltInToolsApi {
         ToolCallOutputStat
         SessionToolOutputStats
         ProcessTempStore
+        CanonicalToolResultEnvelope
 }
 
 open question "Should process temp-store cleanup also run opportunistically on startup for stale directories?"

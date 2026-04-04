@@ -4,6 +4,7 @@
 -- Target behavior for the write tool.
 
 use "./path-resolution.allium" as path
+use "../post-tool-processing.allium" as post_tool
 
 value WriteArgs {
     path: String
@@ -17,6 +18,13 @@ value WriteOptions {
 value WriteResult {
     content: String
     is_error: Boolean
+}
+
+value WriteEffect {
+    type: String
+    path: String
+    worktree_path: String?
+    bytes: Integer
 }
 
 rule WriteExpandsAndResolvesPathAgainstCwd {
@@ -55,6 +63,32 @@ rule WriteReturnsByteCountAndResolvedPath {
     }
 }
 
+rule WriteProducesStructuredFilesystemEffect {
+    when: ExecuteWrite(args, opts)
+
+    let expanded = path/ExpandPathCalled(args.path)
+    let resolved = path/ResolveToCwdCalled(expanded, opts.worktree_path)
+    let bytes = Utf8Bytes(args.content or "")
+
+    ensures: effect = WriteEffect{
+        type: "file/write",
+        path: PathString(resolved),
+        worktree_path: opts.worktree_path,
+        bytes: bytes
+    }
+
+    ensures: post_tool/ToolEffectProduced(
+        tool_name: "write",
+        effect: post_tool/ToolEffect{
+            type: "file/write",
+            path: PathString(resolved),
+            worktree_path: opts.worktree_path,
+            bytes: bytes,
+            first_changed_line: null
+        }
+    )
+}
+
 surface WriteToolApi {
     facing caller: AgentToolDispatcher
 
@@ -63,6 +97,7 @@ surface WriteToolApi {
 
     exposes:
         WriteResult
+        WriteEffect
 
     @guidance
         -- write is create-or-overwrite, never append.
