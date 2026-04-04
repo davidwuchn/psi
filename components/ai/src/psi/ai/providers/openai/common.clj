@@ -91,19 +91,55 @@
       {:buffer (str cur inc)
        :delta  inc})))
 
+(defn content-text
+  [content]
+  (if (map? content)
+    (or (:text content) (get content "text") "")
+    (str content)))
+
+(defn structured-blocks
+  [msg]
+  (get-in msg [:content :blocks]))
+
+(defn text-blocks
+  [blocks]
+  (filter #(= :text (:kind %)) blocks))
+
+(defn tool-call-blocks
+  [blocks]
+  (filter #(= :tool-call (:kind %)) blocks))
+
+(defn block-text
+  [block]
+  (:text block))
+
+(defn join-block-text
+  [blocks]
+  (->> blocks
+       (keep block-text)
+       (str/join "\n")))
+
+(defn structured-text
+  [msg]
+  (join-block-text (text-blocks (structured-blocks msg))))
+
+(defn assistant-structured-content
+  [msg]
+  (let [blocks (structured-blocks msg)]
+    {:text (join-block-text (text-blocks blocks))
+     :tool-calls (vec (tool-call-blocks blocks))}))
+
 (defn user-message-text
   [msg]
   (let [content (:content msg)]
     (cond
       (string? content) content
       (and (map? content) (= :text (:kind content)))
-      (or (:text content) (get content "text") "")
+      (content-text content)
       (and (map? content) (= :structured (:kind content)))
-      (->> (:blocks content)
-           (keep #(when (= :text (:kind %)) (:text %)))
-           (str/join "\n"))
+      (structured-text msg)
       (map? content)
-      (or (:text content) (get content "text") "")
+      (content-text content)
       :else
       (str content))))
 
@@ -292,6 +328,43 @@
 
 (defn new-msg-id [] (str "msg_" (UUID/randomUUID)))
 (defn new-call-id [] (str "call_" (UUID/randomUUID)))
+
+(defn tool-result-text
+  [msg]
+  (content-text (:content msg)))
+
+(defn chat-tool-call
+  [tool-call]
+  {:id       (:id tool-call)
+   :type     "function"
+   :function {:name      (:name tool-call)
+              :arguments (json/generate-string (:input tool-call))}})
+
+(defn codex-tool-call-ids
+  [tool-call]
+  (let [raw-id (or (:id tool-call) (new-call-id))]
+    (if (str/includes? raw-id "|")
+      (str/split raw-id #"\|" 2)
+      [raw-id nil])))
+
+(defn codex-tool-call-item
+  [tool-call]
+  (let [[call-id item-id] (codex-tool-call-ids tool-call)]
+    (cond-> {"type"      "function_call"
+             "call_id"   call-id
+             "name"      (or (:name tool-call) "tool")
+             "arguments" (json/generate-string (or (:input tool-call) {}))}
+      (seq item-id) (assoc "id" item-id))))
+
+(defn codex-message-item
+  [text]
+  {"type"    "message"
+   "role"    "assistant"
+   "status"  "completed"
+   "id"      (new-msg-id)
+   "content" [{"type" "output_text"
+                "text" text
+                "annotations" []}]})
 
 (def default-codex-base-url "https://chatgpt.com/backend-api")
 (def codex-beta-header "responses=experimental")

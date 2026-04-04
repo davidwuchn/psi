@@ -1,6 +1,5 @@
 (ns psi.ai.providers.openai.chat-completions
   (:require [clojure.java.io :as io]
-            [clojure.string :as str]
             [cheshire.core :as json]
             [psi.ai.models :as models]
             [psi.ai.providers.openai.common :as common]))
@@ -96,35 +95,21 @@
                        :content (common/user-message-text msg)})
 
             :assistant
-            (let [kind (get-in msg [:content :kind])]
-              (if (= :structured kind)
-                (let [blocks     (get-in msg [:content :blocks])
-                      text-parts (keep #(when (= :text (:kind %)) (:text %)) blocks)
-                      tool-parts (filter #(= :tool-call (:kind %)) blocks)
-                      text       (str/join "\n" text-parts)
-                      base       (cond-> {:role "assistant"}
-                                   (seq text) (assoc :content text))]
-                  (conj acc
-                        (if (seq tool-parts)
-                          (assoc base :tool_calls
-                                 (mapv (fn [tc]
-                                         {:id       (:id tc)
-                                          :type     "function"
-                                          :function {:name      (:name tc)
-                                                     :arguments (json/generate-string
-                                                                 (:input tc))}})
-                                       tool-parts))
-                          base)))
-                (conj acc {:role    "assistant"
-                           :content (get-in msg [:content :text] "")})))
+            (if (= :structured (get-in msg [:content :kind]))
+              (let [{:keys [text tool-calls]} (common/assistant-structured-content msg)
+                    base                     (cond-> {:role "assistant"}
+                                               (seq text) (assoc :content text))]
+                (conj acc
+                      (if (seq tool-calls)
+                        (assoc base :tool_calls (mapv common/chat-tool-call tool-calls))
+                        base)))
+              (conj acc {:role    "assistant"
+                         :content (get-in msg [:content :text] "")}))
 
             :tool-result
-            (let [text (if (map? (:content msg))
-                         (get-in msg [:content :text] "")
-                         (str (:content msg)))]
-              (conj acc {:role         "tool"
-                         :tool_call_id (:tool-call-id msg)
-                         :content      text}))
+            (conj acc {:role         "tool"
+                       :tool_call_id (:tool-call-id msg)
+                       :content      (common/tool-result-text msg)})
 
             acc))
         [])))

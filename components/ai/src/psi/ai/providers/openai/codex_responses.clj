@@ -16,54 +16,25 @@
 
 (defn- assistant-content->codex-items
   [msg]
-  (let [kind (get-in msg [:content :kind])]
-    (if (= :structured kind)
-      (let [blocks      (get-in msg [:content :blocks])
-            text-parts  (keep #(when (= :text (:kind %)) (:text %)) blocks)
-            tool-parts  (filter #(= :tool-call (:kind %)) blocks)
-            text        (str/join "\n" text-parts)
-            text-item   (when (seq text)
-                          {"type"    "message"
-                           "role"    "assistant"
-                           "status"  "completed"
-                           "id"      (common/new-msg-id)
-                           "content" [{"type" "output_text"
-                                       "text" text
-                                       "annotations" []}]})
-            tool-items  (map (fn [tc]
-                               (let [raw-id          (or (:id tc) (common/new-call-id))
-                                     [call-id item-id] (if (str/includes? raw-id "|")
-                                                         (str/split raw-id #"\|" 2)
-                                                         [raw-id nil])]
-                                 (cond-> {"type"      "function_call"
-                                          "call_id"   call-id
-                                          "name"      (or (:name tc) "tool")
-                                          "arguments" (json/generate-string (or (:input tc) {}))}
-                                   (seq item-id) (assoc "id" item-id))))
-                             tool-parts)]
-        (vec (concat (when text-item [text-item]) tool-items)))
-      (let [text (get-in msg [:content :text] "")]
-        (if (seq text)
-          [{"type"    "message"
-            "role"    "assistant"
-            "status"  "completed"
-            "id"      (common/new-msg-id)
-            "content" [{"type" "output_text"
-                        "text" text
-                        "annotations" []}]}]
-          [])))))
+  (if (= :structured (get-in msg [:content :kind]))
+    (let [{:keys [text tool-calls]} (common/assistant-structured-content msg)
+          text-item                 (when (seq text)
+                                      (common/codex-message-item text))
+          tool-items                (map common/codex-tool-call-item tool-calls)]
+      (vec (concat (when text-item [text-item]) tool-items)))
+    (let [text (get-in msg [:content :text] "")]
+      (if (seq text)
+        [(common/codex-message-item text)]
+        []))))
 
 (defn- tool-result->codex-item
   [msg]
   (let [raw-id  (or (:tool-call-id msg) "")
         call-id (or (first (str/split raw-id #"\|" 2))
-                    (common/new-call-id))
-        text    (if (map? (:content msg))
-                  (or (get-in msg [:content :text]) "")
-                  (str (:content msg)))]
+                    (common/new-call-id))]
     {"type"    "function_call_output"
      "call_id" call-id
-     "output"  text}))
+     "output"  (common/tool-result-text msg)}))
 
 (defn codex-input-messages
   [conversation]
