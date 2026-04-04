@@ -153,86 +153,48 @@ Execution-result v1 shape:
  :execution-result/stop-reason ...}
 ```
 
-## Managed subprocesses + post-tool processing
+## LSP integration on top of managed services + post-tool processing
 
-Goals:
-- add ctx-owned managed subprocess services for long-lived helpers such as LSP servers and nREPL
-- add a synchronous post-tool processing phase that runs after base tool execution and before the final tool result is returned to the provider
-- add structured tool result metadata (`:meta`, `:effects`, `:enrichments`) so processors consume data rather than parsing human-readable tool text
-- make services, registered post-tool processors, and processor telemetry queryable through EQL
-- add shared stdio / JSON-RPC request-response helpers suitable for LSP-style integrations
+Completed foundation:
+- structured `write` and `edit` tool results now include `:meta`, `:effects`, and `:enrichments`
+- ctx-owned managed subprocess service registry exists
+- additive timeout-bounded post-tool processor runtime exists
+- tool execution now applies post-tool processing before result recording/provider return
+- services, post-tool processors, and telemetry are queryable through EQL
+- extension API exposes post-tool processor registration and managed service hooks
+- mutation layer supports post-tool and service operations
+- shared stdio / JSON-RPC helper layer exists for managed services
+
+Active goals:
+- build an LSP integration on top of the new runtime primitives, starting with `clojure-lsp`
+- key LSP services by logical workspace identity (initially nearest `.git` root)
+- inject lint/diagnostic findings into `write` / `edit` tool results through post-tool processors
+- keep timeout-bounded synchronous behavior so diagnostics can be included before provider return
+- expose enough service/telemetry state to debug LSP startup and request flow
 
 Planned increments:
-1. extend canonical tool results to include structured metadata and effects
-2. make `write` and `edit` emit explicit filesystem effects
-3. add a ctx-owned managed service registry for subprocesses
-4. add a post-tool processor registry with additive composition and timeout handling
-5. integrate post-tool processing into tool execution before provider-facing result emission
-6. expose services / processors / telemetry through EQL
-7. expose service + post-tool registration capabilities through the extension API
-8. add shared stdio / JSON-RPC helper semantics for managed services
-9. build LSP support on top, starting with `clojure-lsp`
+1. define LSP extension/runtime configuration shape, with default `clojure-lsp`
+2. implement workspace keying and nearest-`.git` root detection for LSP service reuse
+3. add LSP-specific service ensure/start logic on top of managed subprocesses
+4. implement JSON-RPC initialize / notification / request flow for LSP servers
+5. add a post-tool processor for `write` and `edit` that syncs documents and requests diagnostics within timeout
+6. shape diagnostics into tool enrichments and provider-facing appended content
+7. add slash/status surfaces for inspecting and restarting LSP services
+8. add focused tests for LSP routing, timeout behavior, and diagnostics projection
 
-Suggested namespace additions:
-- `psi.agent-session.services`
-- `psi.agent-session.post-tool`
+Likely namespaces to add/change next:
+- new extension or runtime namespace for LSP orchestration
 - `psi.agent-session.service-protocol`
-- optionally `psi.agent-session.jsonrpc`
-
-Likely existing namespaces to change:
-- `psi.agent-session.core`
-- `psi.agent-session.executor`
-- `psi.agent-session.tool-execution`
-- `psi.agent-session.extensions`
-- `psi.agent-session.mutations`
-- `psi.agent-session.resolvers`
-- `psi.extension-test-helpers.nullable-api`
-
-Canonical tool result target shape:
-```clojure
-{:content "..."
- :is-error false
- :details {...}
- :meta {:tool-name "write"
-        :tool-call-id "call-1"}
- :effects [{:type :file/write
-            :path "/abs/path"
-            :worktree-path "/repo"
-            :bytes 42}]
- :enrichments []}
-```
-
-Managed service target shape:
-```clojure
-{:key [:lsp "/repo"]
- :type :subprocess
- :status :running
- :command ["clojure-lsp"]
- :cwd "/repo"
- :transport :stdio
- :ext-path "/abs/ext.clj"
- :process ...
- :started-at ...
- :stopped-at nil
- :restart-count 0
- :last-error nil}
-```
-
-Post-tool processor target contract:
-```clojure
-(fn [{:keys [ctx session-id tool-name tool-call-id tool-args tool-result worktree-path]}]
-  {:content/append "..."
-   :details/merge {...}
-   :enrichments [...]})
-```
+- `psi.agent-session.post-tool`
+- `psi.agent-session.services`
+- extension-facing glue where LSP commands/status are surfaced
 
 Acceptance criteria:
-- `write` and `edit` results include structured filesystem effects
-- post-tool processors run synchronously after tool completion and before provider return
-- timeout or exception in a processor does not fail the base tool result by default
-- managed subprocess services are ensured/reused/stopped by logical key on ctx
-- services, registered processors, and processor telemetry resolve via EQL and appear in graph introspection
-- shared request/response helpers support timeout-bounded stdio and JSON-RPC-style interaction
+- `clojure-lsp` can be ensured as a managed service for a workspace key
+- `write` / `edit` can trigger LSP-backed post-tool diagnostics within timeout
+- diagnostics appear as structured enrichments and usable provider-facing content
+- timeout or LSP failure does not fail the underlying tool result by default
+- service state and telemetry are queryable enough to debug LSP behavior
 
 ## Agent tool skill prelude follow-on
 
