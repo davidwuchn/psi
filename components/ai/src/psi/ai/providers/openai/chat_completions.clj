@@ -354,10 +354,18 @@
     (try
       (common/capture-request! options :openai-completions url request)
       (let [response (common/stream-response url request)]
-        (with-open [reader (io/reader (:body response))]
-          (doseq [line (line-seq reader)]
-            (process-chat-sse-line! stream-state consume-fn model options url line))))
+        (if (common/error-status? (:status response))
+          (common/emit-error! options
+                              :openai-completions
+                              url
+                              consume-fn
+                              (common/response->error response))
+          (with-open [reader (io/reader (:body response))]
+            (doseq [line (line-seq reader)]
+              (process-chat-sse-line! stream-state consume-fn model options url line)))))
       (catch Exception e
-        (let [err (common/exception->error e)]
-          (common/capture-response! options :openai-completions url err)
-          (consume-fn err))))))
+        (common/emit-error! options
+                            :openai-completions
+                            url
+                            consume-fn
+                            (common/exception->error e))))))

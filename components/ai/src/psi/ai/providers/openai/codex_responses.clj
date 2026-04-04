@@ -393,13 +393,17 @@
       (let [request  (build-codex-request conversation model options)
             _        (common/capture-request! options :openai-codex-responses url request)
             response (common/stream-response url request)]
-        (with-open [reader (io/reader (:body response))]
-          (doseq [line (line-seq reader)]
-            (when-let [event (common/parse-sse-line line)]
-              (handle-codex-event! stream-state consume-fn model options url event))))
-        (when-not @(-> stream-state :done?)
-          (emit-codex-start! consume-fn (-> stream-state :started?))
-          (emit-codex-done! stream-state consume-fn model {:response {:status "completed"}})))
+        (if (common/error-status? (:status response))
+          (let [{:keys [error-message http-status]} (common/response->error response)]
+            (emit-codex-error! stream-state consume-fn options url error-message http-status))
+          (do
+            (with-open [reader (io/reader (:body response))]
+              (doseq [line (line-seq reader)]
+                (when-let [event (common/parse-sse-line line)]
+                  (handle-codex-event! stream-state consume-fn model options url event))))
+            (when-not @(-> stream-state :done?)
+              (emit-codex-start! consume-fn (-> stream-state :started?))
+              (emit-codex-done! stream-state consume-fn model {:response {:status "completed"}})))))
       (catch Exception e
         (let [{:keys [error-message http-status]} (common/exception->error e)]
           (emit-codex-error! stream-state consume-fn options url error-message http-status))))))

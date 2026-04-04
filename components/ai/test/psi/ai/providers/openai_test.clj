@@ -537,3 +537,48 @@
                   (filter #(= :thinking-delta (:type %)))
                   (mapv :delta))))
       (is (some #(= :done (:type %)) @events)))))
+
+(deftest completions-non-2xx-response-map-surfaces-body-message-test
+  (let [model  (models/get-model :gpt-5)
+        convo  (-> (conv/create "sys")
+                   (conv/add-user-message "hello"))
+        events (atom [])]
+    (with-redefs [http/post (fn [_url _req]
+                              {:status 400
+                               :headers {"x-request-id" "req_oai_400"}
+                               :body (stream-body
+                                      (json/generate-string
+                                       {:error {:message "invalid request payload"}}))})]
+      ((:stream openai/provider)
+       convo model {:api-key "sk-test"}
+       (fn [ev] (swap! events conj ev))))
+    (is (= 1 (count @events)))
+    (is (= :error (:type (first @events))))
+    (is (= "invalid request payload (status 400) [request-id req_oai_400]"
+           (:error-message (first @events))))
+    (is (= 400 (:http-status (first @events))))
+    (is (= "req_oai_400" (get-in (first @events) [:headers "x-request-id"])))
+    (is (= {:error {:message "invalid request payload"}}
+           (:body (first @events))))
+    (is (string? (:body-text (first @events))))))
+
+(deftest codex-non-2xx-response-map-surfaces-body-message-test
+  (let [model  (models/get-model :gpt-5.3-codex)
+        token  (jwt-with-account-id "acc_test")
+        convo  (-> (conv/create "sys")
+                   (conv/add-user-message "hello"))
+        events (atom [])]
+    (with-redefs [http/post (fn [_url _req]
+                              {:status 429
+                               :headers {"x-request-id" "req_oai_429"}
+                               :body (stream-body
+                                      (json/generate-string
+                                       {:error {:message "rate limit exceeded"}}))})]
+      ((:stream openai/provider)
+       convo model {:api-key token}
+       (fn [ev] (swap! events conj ev))))
+    (is (= 1 (count @events)))
+    (is (= :error (:type (first @events))))
+    (is (= "rate limit exceeded (status 429) [request-id req_oai_429]"
+           (:error-message (first @events))))
+    (is (= 429 (:http-status (first @events))))))

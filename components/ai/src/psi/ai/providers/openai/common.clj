@@ -117,7 +117,7 @@
 
 (defn stream-response
   [url request]
-  (http/post url (merge request {:as :stream :cookie-policy :none})))
+  (http/post url (merge request {:as :stream :cookie-policy :none :throw-exceptions false})))
 
 (defn redact-authorization
   [value]
@@ -265,6 +265,22 @@
       headers         (assoc :headers headers)
       (seq body-text) (assoc :body-text body-text)
       parsed-body     (assoc :body parsed-body))))
+
+(defn error-status?
+  [status]
+  (and (number? status)
+       (>= status 400)))
+
+(defn response->error
+  [response]
+  (error-from-response-data {:status (:status response)
+                             :headers (:headers response)
+                             :body-text (body->text (:body response))}))
+
+(defn emit-error!
+  [options api url consume-fn err]
+  (capture-response! options api url err)
+  (consume-fn err))
 
 (defn exception->error
   [e]
