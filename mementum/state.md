@@ -14,30 +14,34 @@ Bootstrapped on 2026-04-02.
 - `AGENTS.md` — bootstrap/system instructions
 
 ## Current work state
-- Parallel tool execution landed in incremental commits.
-- Tool batch execution now uses a shared ctx-owned executor instead of creating a pool per batch.
-- Tool execution boundary is now dispatch-owned end-to-end.
-- `:session/tool-run` now composes:
-  - `:session/tool-execute-prepared`
-  - `:session/tool-record-result`
-- Parallel batches execute prepared phases concurrently and record final results in deterministic tool-call order.
-- Current policy surface:
-  - `:config {:tool-batch-max-parallelism N}`
-  - default parallelism `4`
-  - no per-tool concurrency-safety metadata yet
+- Managed services + post-tool processing foundation is in place.
+- LSP ownership is now being kept extension-local, not core/runtime-local.
+- Added extension `extensions/src/extensions/lsp.clj` with:
+  - default LSP runtime config
+  - nearest-`.git` workspace root detection
+  - logical workspace keying via `[:lsp workspace-root]`
+  - extension-owned `ensure-lsp-service!`
+  - initial registration of a `write`/`edit` post-tool processor placeholder
+- Removed the earlier core-owned `psi.agent-session.lsp` experiment and core callback injection.
+- Added focused extension tests covering:
+  - nearest git root detection
+  - workspace root resolution
+  - service ensure request shaping
+  - config override of spawned LSP command
+  - post-tool processor registration at extension init
 
 ## Recent relevant commits
-- `00fe622` — ⚒ move tool batch executor to shared ctx runtime
-- `052d143` — ◈ document parallel tool execution policy
-- `1eb8ede` — ⚒ add parallel tool batch coverage
-- `e7cee54` — ⚒ verify parallel tool runtime parity
-- `4bb5a44` — ⚒ preserve deterministic tool result recording order
-- `4ed2109` — ⚒ add bounded parallel tool batch execution
-- `3c8ffba` — ⚒ extract tool batch execution helper
+- `7590d0a` — ⚒ extensions: add work-on project link
+- `f972eab` — ◈ plan: pivot to lsp integration on new runtime
+- `12d19e0` — ⚒ protocol: add managed service stdio/jsonrpc helpers
+- `7afa1a3` — ⚒ mutations: register post-tool and service ops
+- `aa15b96` — ⚒ extensions: add post-tool and service api hooks
 
 ## Suggested next step
-- Add per-tool concurrency metadata / opt-out so tools that are not concurrency-safe can force sequential execution.
+- Implement LSP JSON-RPC initialize / notification / request flow on top of the managed service boundary.
+- Then add a `write`/`edit` post-tool processor that syncs changed files and requests diagnostics within timeout.
 
 ## Notes for future ψ
 - Mementum was absent at session start and has now been initialized.
 - Re-run orientation from this file first in future sessions.
+- `bb lint` currently reports unrelated pre-existing repo issues outside this LSP slice; focused LSP/service tests are green.
