@@ -76,6 +76,7 @@
    [psi.agent-session.prompt-request :as prompt-request]
    [psi.agent-session.prompt-runtime :as prompt-runtime]
    [psi.agent-session.resolvers :as resolvers]
+   [psi.agent-session.services :as services]
    [psi.agent-session.session :as session]
    [psi.agent-session.session-lifecycle :as lifecycle]
    [psi.agent-session.session-state :as ss]
@@ -232,6 +233,7 @@
                             :nrepl-runtime-atom    nrepl-runtime-atom
                             :extension-registry    (ext/create-registry)
                             :workflow-registry     (wf/create-registry)
+                            :service-registry      (services/create-registry)
                             :event-queue           event-queue
                             :cwd                   resolved-cwd
                             :persist?              persist?
