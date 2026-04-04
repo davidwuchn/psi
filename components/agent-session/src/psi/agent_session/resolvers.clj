@@ -30,6 +30,7 @@
    [psi.agent-session.resolvers.support :as support]
    [psi.agent-session.resolvers.session :as session-resolvers]
    [psi.agent-session.resolvers.extensions :as extension-resolvers]
+   [psi.agent-session.resolvers.services :as service-resolvers]
    [psi.agent-session.resolvers.telemetry :as telemetry-resolvers]
    [psi.agent-session.resolvers.discovery :as discovery-resolvers]
    [psi.agent-session.session-state :as ss]))
@@ -107,6 +108,7 @@
   "Assembled resolver surface from all domain sub-namespaces."
   (vec (concat session-resolvers/resolvers
                extension-resolvers/resolvers
+               service-resolvers/resolvers
                telemetry-resolvers/resolvers
                discovery-resolvers/resolvers
                [query-graph-bridge])))

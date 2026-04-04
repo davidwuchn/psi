@@ -235,6 +235,7 @@
                             :extension-registry    (ext/create-registry)
                             :workflow-registry     (wf/create-registry)
                             :service-registry      (services/create-registry)
+                            :post-tool-registry    (post-tool/create-registry)
                             :event-queue           event-queue
                             :cwd                   resolved-cwd
                             :persist?              persist?
