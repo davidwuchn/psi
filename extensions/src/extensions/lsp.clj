@@ -331,6 +331,12 @@
                    (str "- " doc-path " (version " version ", open=" open? ")"))
                  docs)))))
 
+(defn current-cwd
+  [api]
+  (if-let [cwd-fn (:cwd-fn api)]
+    (cwd-fn)
+    (System/getProperty "user.dir")))
+
 (defn print-workspace-status!
   [api opts]
   (doseq [line (workspace-status-lines api opts)]
@@ -359,10 +365,10 @@
   ((:register-command api) "lsp-status"
    {:description "Show LSP workspace status for the current worktree"
     :handler (fn [_args]
-               (print-workspace-status! api {:cwd (System/getProperty "user.dir")}))})
+               (print-workspace-status! api {:cwd (current-cwd api)}))})
   ((:register-command api) "lsp-restart"
    {:description "Restart LSP workspace service for the current worktree"
     :handler (fn [_args]
-               (restart-workspace! api {:cwd (System/getProperty "user.dir")}))})
+               (restart-workspace! api {:cwd (current-cwd api)}))})
   (when-let [ui (:ui api)]
     ((:notify ui) "lsp loaded" :info)))
