@@ -14,7 +14,12 @@
   {:command ["clojure-lsp"]
    :transport :stdio
    :diagnostics-timeout-ms 500
-   :startup-timeout-ms 2000})
+   :startup-timeout-ms 2000
+   :sync-timeout-ms 500})
+
+(defonce state
+  (atom {:initialized-workspaces #{}
+         :documents {}}))
 
 (defn default-config []
   default-lsp-config)
@@ -98,19 +103,82 @@
    "capabilities" {"workspace" {}
                      "textDocument" {"publishDiagnostics" {"relatedInformation" true}}}})
 
+(defn workspace-initialized?
+  [workspace-root]
+  (contains? (:initialized-workspaces @state) workspace-root))
+
+(defn mark-workspace-initialized!
+  [workspace-root]
+  (swap! state update :initialized-workspaces conj workspace-root)
+  workspace-root)
+
 (defn ensure-lsp-initialized!
   [api {:keys [workspace-root startup-timeout-ms] :as _opts}]
-  (jsonrpc-request! api {:workspace-root workspace-root
-                         :id "initialize"
-                         :method "initialize"
-                         :params (initialize-request {:workspace-root workspace-root})
-                         :timeout-ms startup-timeout-ms})
-  (jsonrpc-notify! api {:workspace-root workspace-root
-                        :method "initialized"
-                        :params {}}))
+  (when-not (workspace-initialized? workspace-root)
+    (jsonrpc-request! api {:workspace-root workspace-root
+                           :id "initialize"
+                           :method "initialize"
+                           :params (initialize-request {:workspace-root workspace-root})
+                           :timeout-ms startup-timeout-ms})
+    (jsonrpc-notify! api {:workspace-root workspace-root
+                          :method "initialized"
+                          :params {}})
+    (mark-workspace-initialized! workspace-root)))
 
 (defn- file-uri [path]
   (str "file://" (.getCanonicalPath (io/file path))))
+
+(defn document-diagnostics-request
+  [path]
+  {"textDocument" {"uri" (file-uri path)}})
+
+(defn diagnostics-content-append
+  [diagnostics-by-path]
+  (let [lines (->> diagnostics-by-path
+                   (mapcat (fn [[path diagnostics]]
+                             (when (seq diagnostics)
+                               (cons (str "LSP diagnostics for " path ":")
+                                     (map (fn [d]
+                                            (str "- "
+                                                 (or (get d "message") "<no message>")
+                                                 (when-let [sev (get d "severity")]
+                                                   (str " (severity " sev ")"))))
+                                          diagnostics)))))
+                   vec)]
+    (when (seq lines)
+      (str "\n" (str/join "\n" lines)))))
+
+(defn diagnostics-enrichments
+  [diagnostics-by-path]
+  (->> diagnostics-by-path
+       (keep (fn [[path diagnostics]]
+               (when (seq diagnostics)
+                 {:type "lsp/diagnostics"
+                  :source "extensions.lsp"
+                  :label (str "LSP diagnostics: " path)
+                  :data {:path path
+                         :diagnostics diagnostics}})))
+       vec))
+
+(defn request-diagnostics!
+  [api {:keys [workspace-root paths diagnostics-timeout-ms]}]
+  (reduce (fn [acc path]
+            (let [response (jsonrpc-request! api {:workspace-root workspace-root
+                                                  :id (str "diagnostics:" path)
+                                                  :method "textDocument/diagnostic"
+                                                  :params (document-diagnostics-request path)
+                                                  :timeout-ms diagnostics-timeout-ms})
+                  payload  (get response :psi.extension.service/response)
+                  result   (or (get payload "result")
+                               (get-in response [:response :payload "result"]) 
+                               [])
+                  items    (cond
+                             (vector? result) result
+                             (map? result) (vec (or (get result "items") []))
+                             :else [])]
+              (assoc acc path items)))
+          {}
+          paths))
 
 (defn- changed-paths
   [{:keys [tool-result]}]
@@ -122,54 +190,107 @@
 (defn- read-text [path]
   (slurp (io/file path)))
 
-(defn did-open-or-change!
-  [api {:keys [workspace-root path version text first-open?]}]
-  (let [method (if first-open?
-                 "textDocument/didOpen"
-                 "textDocument/didChange")
-        params (if first-open?
-                 {"textDocument" {"uri" (file-uri path)
-                                   "languageId" "clojure"
-                                   "version" version
-                                   "text" text}}
-                 {"textDocument" {"uri" (file-uri path)
-                                   "version" version}
-                  "contentChanges" [{"text" text}]})]
+(defn document-state
+  [path]
+  (get-in @state [:documents path]))
+
+(defn next-document-version
+  [path]
+  (inc (long (or (:version (document-state path)) 0))))
+
+(defn document-open?
+  [path]
+  (true? (:open? (document-state path))))
+
+(defn record-document-sync!
+  [path version text]
+  (swap! state assoc-in [:documents path] {:open? true
+                                           :version version
+                                           :text text})
+  {:path path :version version})
+
+(defn sync-document!
+  [api {:keys [workspace-root path text]}]
+  (let [first-open? (not (document-open? path))
+        version     (next-document-version path)
+        method      (if first-open?
+                      "textDocument/didOpen"
+                      "textDocument/didChange")
+        params      (if first-open?
+                      {"textDocument" {"uri" (file-uri path)
+                                        "languageId" "clojure"
+                                        "version" version
+                                        "text" text}}
+                      {"textDocument" {"uri" (file-uri path)
+                                        "version" version}
+                       "contentChanges" [{"text" text}]})]
     (jsonrpc-notify! api {:workspace-root workspace-root
                           :method method
-                          :params params})))
+                          :params params})
+    (record-document-sync! path version text)
+    {:path path :version version :first-open? first-open? :method method}))
 
 (defn sync-tool-result!
   [api {:keys [tool-result worktree-path config] :as input}]
-  (let [root (workspace-root {:worktree-path worktree-path
-                              :cwd worktree-path
-                              :path (first (changed-paths input))})]
+  (let [cfg   (normalize-config config)
+        paths (changed-paths input)
+        root  (workspace-root {:worktree-path worktree-path
+                               :cwd worktree-path
+                               :path (first paths)})
+        syncs (atom [])]
     (ensure-lsp-service! api {:worktree-path worktree-path
-                              :path (first (changed-paths input))
-                              :config config})
+                              :path (first paths)
+                              :config cfg})
     (ensure-lsp-initialized! api {:workspace-root root
-                                  :startup-timeout-ms (:startup-timeout-ms (normalize-config config))})
-    (doseq [path (changed-paths input)]
-      (did-open-or-change! api {:workspace-root root
-                                :path path
-                                :version 1
-                                :text (read-text path)
-                                :first-open? true}))
+                                  :startup-timeout-ms (:startup-timeout-ms cfg)})
+    (doseq [path paths]
+      (swap! syncs conj (sync-document! api {:workspace-root root
+                                             :path path
+                                             :text (read-text path)})))
     {:workspace-root root
-     :changed-paths (changed-paths input)}))
+     :changed-paths paths
+     :document-syncs @syncs
+     :diagnostics-by-path (request-diagnostics! api {:workspace-root root
+                                                     :paths paths
+                                                     :diagnostics-timeout-ms (:diagnostics-timeout-ms cfg)})}))
+
+(defn- diagnostic-path-count
+  [diagnostics-by-path]
+  (count (filter (comp seq val) diagnostics-by-path)))
+
+(defn- diagnostics-failure-enrichment
+  [message data]
+  {:type "lsp/diagnostics-error"
+   :source "extensions.lsp"
+   :label message
+   :data data})
 
 (defn make-post-tool-handler
   [api]
   (fn [input]
     (when (seq (changed-paths input))
-      (let [{:keys [workspace-root changed-paths] :as sync}
-            (sync-tool-result! api input)]
-        {:details/merge {:lsp {:workspace-root workspace-root
-                               :synced-paths changed-paths}}
-         :enrichments [{:type "lsp/workspace-sync"
-                        :source "extensions.lsp"
-                        :label "LSP workspace synced"
-                        :data sync}]}))))
+      (try
+        (let [{:keys [workspace-root changed-paths diagnostics-by-path] :as sync}
+              (sync-tool-result! api input)
+              diagnostic-enrichments (diagnostics-enrichments diagnostics-by-path)
+              diagnostic-append      (diagnostics-content-append diagnostics-by-path)]
+          {:content/append diagnostic-append
+           :details/merge {:lsp {:workspace-root workspace-root
+                                 :synced-paths changed-paths
+                                 :diagnostic-path-count (diagnostic-path-count diagnostics-by-path)
+                                 :document-syncs (:document-syncs sync)}}
+           :enrichments (into [{:type "lsp/workspace-sync"
+                                :source "extensions.lsp"
+                                :label "LSP workspace synced"
+                                :data sync}]
+                              diagnostic-enrichments)})
+        (catch Throwable t
+          {:details/merge {:lsp {:error (ex-message t)}}
+           :enrichments [(diagnostics-failure-enrichment
+                          "LSP diagnostics unavailable"
+                          {:error (ex-message t)
+                           :tool-call-id (:tool-call-id input)
+                           :tool-name (:tool-name input)})]})))))
 
 (defn lsp-post-tool-handler
   "Backward-compatible handler constructor entrypoint used in tests."

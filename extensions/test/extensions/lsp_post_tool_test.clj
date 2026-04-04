@@ -20,7 +20,8 @@
         (make-array java.nio.file.attribute.FileAttribute 0))))
 
 (deftest lsp-post-tool-handler-syncs-workspace-test
-  (testing "post-tool handler ensures service, initializes, and syncs changed file"
+  (testing "post-tool handler ensures service, initializes once, syncs files, and appends diagnostics"
+    (reset! sut/state {:initialized-workspaces #{} :documents {}})
     (let [root (tmp-dir)
           _    (mkdirs! (str root "/.git"))
           path (spit! (str root "/src/foo/core.clj") "(ns foo.core)")
@@ -30,36 +31,94 @@
                       :ensure-service (fn [spec]
                                         ((:mutate api) 'psi.extension/ensure-service spec))
                       :service-request (fn [spec]
-                                         ((:mutate api) 'psi.extension/service-request spec))
+                                         (let [base ((:mutate api) 'psi.extension/service-request spec)]
+                                           (if (= "textDocument/diagnostic" (get (:payload spec) "method"))
+                                             (assoc base :psi.extension.service/response
+                                                    {"result" {"items" [{"message" "Unused require"
+                                                                           "severity" 2}]}})
+                                             base)))
                       :service-notify (fn [spec]
                                         ((:mutate api) 'psi.extension/service-notify spec)))
           handler (sut/make-post-tool-handler api')
-          contribution (handler {:tool-name "write"
-                                 :tool-call-id "call-1"
-                                 :tool-result {:content "ok"
-                                               :is-error false
-                                               :details nil
-                                               :meta {:tool-name "write" :tool-call-id "call-1"}
-                                               :effects [{:type "file/write"
-                                                          :path path
-                                                          :worktree-path root}]
-                                               :enrichments []}
-                                 :worktree-path root
-                                 :config nil})]
+          input {:tool-name "write"
+                 :tool-call-id "call-1"
+                 :tool-result {:content "ok"
+                               :is-error false
+                               :details nil
+                               :meta {:tool-name "write" :tool-call-id "call-1"}
+                               :effects [{:type "file/write"
+                                          :path path
+                                          :worktree-path root}]
+                               :enrichments []}
+                 :worktree-path root
+                 :config nil}
+          contribution1 (handler input)
+          _             (spit path "(ns foo.core)\n(def x 1)")
+          contribution2 (handler input)]
       (is (= [{:key [:lsp (.getCanonicalPath (io/file root))]
+               :type :subprocess
+               :spec {:command ["clojure-lsp"]
+                      :cwd (.getCanonicalPath (io/file root))
+                      :transport :stdio
+                      :env nil}}
+              {:key [:lsp (.getCanonicalPath (io/file root))]
                :type :subprocess
                :spec {:command ["clojure-lsp"]
                       :cwd (.getCanonicalPath (io/file root))
                       :transport :stdio
                       :env nil}}]
              (:services @state)))
-      (is (= 1 (count (:service-requests @state))))
-      (is (= 2 (count (:service-notifications @state))))
+      (is (= 3 (count (:service-requests @state))))
+      (is (= 3 (count (:service-notifications @state))))
       (is (= "initialize"
              (get-in @state [:service-requests 0 :payload "method"])))
-      (is (= "initialized"
-             (get-in @state [:service-notifications 0 :payload "method"])))
-      (is (= "textDocument/didOpen"
-             (get-in @state [:service-notifications 1 :payload "method"])))
+      (is (= "textDocument/diagnostic"
+             (get-in @state [:service-requests 1 :payload "method"])))
+      (is (= "textDocument/diagnostic"
+             (get-in @state [:service-requests 2 :payload "method"])))
+      (is (= ["initialized" "textDocument/didOpen" "textDocument/didChange"]
+             (mapv #(get-in % [:payload "method"])
+                   (:service-notifications @state))))
+      (is (= 1
+             (get-in contribution1 [:details/merge :lsp :diagnostic-path-count])))
+      (is (= 1
+             (get-in contribution2 [:details/merge :lsp :diagnostic-path-count])))
+      (is (= 1
+             (get-in contribution1 [:details/merge :lsp :document-syncs 0 :version])))
+      (is (= 2
+             (get-in contribution2 [:details/merge :lsp :document-syncs 0 :version])))
       (is (= "LSP workspace synced"
+             (get-in contribution1 [:enrichments 0 :label])))
+      (is (= (str "LSP diagnostics: " path)
+             (get-in contribution1 [:enrichments 1 :label])))
+      (is (re-find #"Unused require"
+                   (:content/append contribution1))))))
+
+(deftest lsp-post-tool-handler-failure-is-non-fatal-test
+  (testing "diagnostics/runtime failure becomes structured enrichment instead of throwing"
+    (reset! sut/state {:initialized-workspaces #{} :documents {}})
+    (let [root (tmp-dir)
+          _    (mkdirs! (str root "/.git"))
+          path (spit! (str root "/src/foo/core.clj") "(ns foo.core)")
+          {:keys [api]} (nullable/create-nullable-extension-api {:path "/test/lsp.clj"})
+          api' (assoc api
+                      :ensure-service (fn [_] (throw (ex-info "boom" {})))
+                      :service-request (fn [_] nil)
+                      :service-notify (fn [_] nil))
+          handler (sut/make-post-tool-handler api')
+          contribution (handler {:tool-name "write"
+                                 :tool-call-id "call-err"
+                                 :tool-result {:content "ok"
+                                               :is-error false
+                                               :details nil
+                                               :meta {:tool-name "write" :tool-call-id "call-err"}
+                                               :effects [{:type "file/write"
+                                                          :path path
+                                                          :worktree-path root}]
+                                               :enrichments []}
+                                 :worktree-path root
+                                 :config nil})]
+      (is (= "boom"
+             (get-in contribution [:details/merge :lsp :error])))
+      (is (= "LSP diagnostics unavailable"
              (get-in contribution [:enrichments 0 :label]))))))

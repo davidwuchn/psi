@@ -236,7 +236,8 @@
   {:psi.extension.service/service-key (:key params)
    :psi.extension.service/request-id (:request-id params)
    :psi.extension.service/payload (:payload params)
-   :psi.extension.service/timeout-ms (:timeout-ms params)})
+   :psi.extension.service/timeout-ms (:timeout-ms params)
+   :psi.extension.service/response (:response params)})
 
 (defn- service-notify! [state params]
   (swap! state update :service-notifications (fnil conj []) params)

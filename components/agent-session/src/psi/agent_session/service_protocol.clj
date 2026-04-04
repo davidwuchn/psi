@@ -6,15 +6,24 @@
 (defn send-service-request!
   "Send a correlated request to a managed service.
    v1 is transport-abstract and expects the service map to carry a writable
-   :send-fn for tests / protocol adapters."
+   :send-fn for tests / protocol adapters.
+
+   If the service exposes :request-fn, it is used as a synchronous request/
+   response shim and its return value is surfaced as :response for higher-level
+   protocol adapters." 
   [ctx service-key {:keys [request-id payload timeout-ms]}]
-  (let [svc (services/service-in ctx service-key)]
+  (let [svc      (services/service-in ctx service-key)
+        response (when-let [request-fn (:request-fn svc)]
+                   (request-fn {:request-id request-id
+                                :payload payload
+                                :timeout-ms timeout-ms}))]
     (when-let [send-fn (:send-fn svc)]
       (send-fn payload))
     {:service-key service-key
      :request-id request-id
      :payload payload
-     :timeout-ms timeout-ms}))
+     :timeout-ms timeout-ms
+     :response response}))
 
 (defn send-service-notification!
   [ctx service-key payload]

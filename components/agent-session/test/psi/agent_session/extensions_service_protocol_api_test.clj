@@ -27,7 +27,8 @@
              :request-id "r1"
              :payload {"jsonrpc" "2.0" "id" "r1"}
              :timeout-ms 123}]
-           (:service-requests @state)))
+           (mapv #(select-keys % [:ext-path :key :request-id :payload :timeout-ms])
+                 (:service-requests @state))))
     (is (= [{:ext-path "/ext/test.clj"
              :key [:lsp "/repo"]
              :payload {"jsonrpc" "2.0" "method" "initialized"}}]

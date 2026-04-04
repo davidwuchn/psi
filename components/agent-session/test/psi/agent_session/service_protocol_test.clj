@@ -28,6 +28,25 @@
       (is (= "r1" (:request-id result)))
       (is (= 123 (:timeout-ms result))))))
 
+(deftest send-service-request-includes-synchronous-response-test
+  (testing "request-fn response is surfaced when present"
+    (let [ctx {:service-registry (services/create-registry)}
+          reg (:state (:service-registry ctx))]
+      (swap! reg assoc-in [:services [:svc "repo"]]
+             {:key [:svc "repo"]
+              :status :running
+              :transport :stdio
+              :request-fn (fn [_]
+                            {:payload {"result" []}
+                             :is-error false})})
+      (let [result (protocol/send-service-request!
+                    ctx [:svc "repo"]
+                    {:request-id "r2"
+                     :payload {:x 2}
+                     :timeout-ms 200})]
+        (is (= {"result" []}
+               (get-in result [:response :payload])))))))
+
 (deftest send-service-notification-test
   (testing "send-service-notification! does not require request id"
     (let [sent*  (atom [])

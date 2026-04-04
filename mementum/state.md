@@ -15,20 +15,26 @@ Bootstrapped on 2026-04-02.
 
 ## Current work state
 - Managed services + post-tool processing foundation is in place.
-- LSP ownership is now being kept extension-local, not core/runtime-local.
-- Added extension `extensions/src/extensions/lsp.clj` with:
-  - default LSP runtime config
+- LSP ownership is now extension-local, not core/runtime-local.
+- The `lsp` extension now owns:
+  - default `clojure-lsp` runtime config
   - nearest-`.git` workspace root detection
-  - logical workspace keying via `[:lsp workspace-root]`
-  - extension-owned `ensure-lsp-service!`
-  - initial registration of a `write`/`edit` post-tool processor placeholder
-- Removed the earlier core-owned `psi.agent-session.lsp` experiment and core callback injection.
-- Added focused extension tests covering:
-  - nearest git root detection
-  - workspace root resolution
-  - service ensure request shaping
-  - config override of spawned LSP command
-  - post-tool processor registration at extension init
+  - workspace service keying via `[:lsp workspace-root]`
+  - extension-owned service ensure
+  - extension-owned JSON-RPC request/notify helpers
+  - initialize + initialized handshake
+  - document sync on `write` / `edit`
+  - diagnostic request shaping for synced files
+  - additive tool result enrichments + appended diagnostic text
+- Core/runtime gained generic extension-facing service protocol mutations only:
+  - `psi.extension/service-request`
+  - `psi.extension/service-notify`
+- Service protocol helper now surfaces synchronous shim responses through `:response` when available.
+- Focused tests cover:
+  - extension API service request/notify surface
+  - mutation delegation to service protocol helpers
+  - extension-owned JSON-RPC shaping
+  - post-tool workspace sync and diagnostics projection
 
 ## Recent relevant commits
 - `7590d0a` — ⚒ extensions: add work-on project link

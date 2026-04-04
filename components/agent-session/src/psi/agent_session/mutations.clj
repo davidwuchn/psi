@@ -215,7 +215,8 @@
                   :psi.extension.service/service-key
                   :psi.extension.service/request-id
                   :psi.extension.service/payload
-                  :psi.extension.service/timeout-ms]}
+                  :psi.extension.service/timeout-ms
+                  :psi.extension.service/response]}
   (let [result (service-protocol/send-service-request!
                 agent-session-ctx key
                 {:request-id request-id
@@ -225,7 +226,8 @@
      :psi.extension.service/service-key (:service-key result)
      :psi.extension.service/request-id  (:request-id result)
      :psi.extension.service/payload     (:payload result)
-     :psi.extension.service/timeout-ms  (:timeout-ms result)}))
+     :psi.extension.service/timeout-ms  (:timeout-ms result)
+     :psi.extension.service/response    (:response result)}))
 
 (pco/defmutation service-notify
   "Send a notification to an extension-owned managed service."
