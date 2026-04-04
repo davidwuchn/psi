@@ -185,16 +185,26 @@
       :else (str body))
     (catch Exception _ nil)))
 
+(defn parse-json-text-safe
+  [text]
+  (when (seq text)
+    (try
+      (json/parse-string text true)
+      (catch Exception _
+        nil))))
+
+(defn parsed-error-message
+  [parsed-body]
+  (or (get-in parsed-body [:error :message])
+      (get-in parsed-body [:message])))
+
 (defn parse-error-message
   [body-text]
   (when (seq body-text)
-    (try
-      (let [m (json/parse-string body-text true)]
-        (or (get-in m [:error :message])
-            (get-in m [:message])
-            body-text))
-      (catch Exception _
-        body-text))))
+    (or (some-> body-text
+                parse-json-text-safe
+                parsed-error-message)
+        body-text)))
 
 (defn request-id-from-headers
   [headers]
@@ -205,21 +215,64 @@
       (get headers "X-OAI-Request-ID")
       (get headers "X-OpenAI-Request-ID")))
 
+(defn meaningful-error-message?
+  [s]
+  (and (string? s)
+       (not (str/blank? s))
+       (not (contains? #{"Error" "error" "Exception"} s))))
+
+(defn fallback-status-message
+  [status]
+  (case status
+    400 "OpenAI rejected the request"
+    401 "OpenAI authentication failed"
+    403 "OpenAI authorization failed"
+    404 "OpenAI endpoint not found"
+    429 "OpenAI rate limit exceeded"
+    500 "OpenAI server error"
+    502 "OpenAI gateway error"
+    503 "OpenAI service unavailable"
+    "OpenAI request failed"))
+
+(defn base-error-message
+  [{:keys [status fallback-message parsed-body]}]
+  (or (when-let [parsed-msg (some-> parsed-body parsed-error-message)]
+        (when (meaningful-error-message? parsed-msg)
+          parsed-msg))
+      (when (meaningful-error-message? fallback-message)
+        fallback-message)
+      (fallback-status-message status)))
+
+(defn error-message
+  [{:keys [status headers fallback-message parsed-body]}]
+  (str (base-error-message {:status status
+                            :fallback-message fallback-message
+                            :parsed-body parsed-body})
+       (when status
+         (str " (status " status ")"))
+       (when-let [req-id (request-id-from-headers headers)]
+         (str " [request-id " req-id "]"))))
+
+(defn error-from-response-data
+  [{:keys [status headers body-text fallback-message]}]
+  (let [parsed-body (parse-json-text-safe body-text)]
+    (cond-> {:type :error
+             :error-message (error-message {:status status
+                                            :headers headers
+                                            :fallback-message fallback-message
+                                            :parsed-body parsed-body})}
+      status          (assoc :http-status status)
+      headers         (assoc :headers headers)
+      (seq body-text) (assoc :body-text body-text)
+      parsed-body     (assoc :body parsed-body))))
+
 (defn exception->error
   [e]
-  (let [data       (ex-data e)
-        status     (:status data)
-        body-text  (body->text (:body data))
-        parsed-msg (parse-error-message body-text)
-        base-msg   (or parsed-msg (ex-message e) (str e))
-        req-id     (request-id-from-headers (:headers data))
-        full-msg   (str base-msg
-                        (when status
-                          (str " (status " status ")"))
-                        (when req-id
-                          (str " [request-id " req-id "]")))]
-    (cond-> {:type :error :error-message full-msg}
-      status (assoc :http-status status))))
+  (let [data (ex-data e)]
+    (error-from-response-data {:status (:status data)
+                               :headers (:headers data)
+                               :body-text (body->text (:body data))
+                               :fallback-message (or (ex-message e) (str e))})))
 
 (defn new-msg-id [] (str "msg_" (UUID/randomUUID)))
 (defn new-call-id [] (str "call_" (UUID/randomUUID)))
