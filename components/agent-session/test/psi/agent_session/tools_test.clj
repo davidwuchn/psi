@@ -230,6 +230,13 @@
           (is (re-find #"Successfully replaced text" (:content result)))
           (is (string? (get-in result [:details :diff])))
           (is (pos-int? (get-in result [:details :first-changed-line])))
+          (is (= "edit" (get-in result [:meta :tool-name])))
+          (is (= [{:type "file/edit"
+                   :path (.getPath (io/file dir "edit-me.txt"))
+                   :worktree-path dir
+                   :first-changed-line (get-in result [:details :first-changed-line])}]
+                 (:effects result)))
+          (is (= [] (:enrichments result)))
           (is (= "new text here" (slurp (io/file dir "edit-me.txt"))))))))
 
   (testing "edit fuzzy fallback handles smart quotes and trailing whitespace"

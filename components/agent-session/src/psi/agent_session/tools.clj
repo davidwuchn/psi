@@ -534,10 +534,16 @@
          diff          (simple-diff raw-content updated-out)
          changed-line  (or (first-changed-line raw-content updated-out) 1)]
      (spit f updated-out)
-     {:content  (str "Successfully replaced text in " fpath ".")
-      :is-error false
-      :details  {:diff diff
-                 :first-changed-line changed-line}})))
+     {:content     (str "Successfully replaced text in " fpath ".")
+      :is-error    false
+      :details     {:diff diff
+                    :first-changed-line changed-line}
+      :meta        {:tool-name "edit"}
+      :effects     [{:type "file/edit"
+                     :path fpath
+                     :worktree-path cwd
+                     :first-changed-line changed-line}]
+      :enrichments []})))
 
 (defn execute-write
   "Write content to a file (creates parent dirs if needed).
@@ -549,8 +555,15 @@
          bytes  (count (.getBytes (or content "") "UTF-8"))]
      (io/make-parents f)
      (spit f content)
-     {:content  (str "Successfully wrote " bytes " bytes to " fpath)
-      :is-error false})))
+     {:content     (str "Successfully wrote " bytes " bytes to " fpath)
+      :is-error    false
+      :details     nil
+      :meta        {:tool-name "write"}
+      :effects     [{:type "file/write"
+                     :path fpath
+                     :worktree-path cwd
+                     :bytes bytes}]
+      :enrichments []})))
 
 (defn- sanitize-app-query-result
   "Remove recursive/non-printable session roots from query results before pr-str.
