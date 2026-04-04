@@ -30,7 +30,9 @@
          :messages             []
          :workflow-types       {}
          :workflows            {}
-         :prompt-contributions {}}))
+         :prompt-contributions {}
+         :post-tool-processors []
+         :services             []}))
 
 (defn- workflow-seq
   [state ext-path]
@@ -208,6 +210,25 @@
   {:psi.extension/prompt-accepted? true
    :psi.extension/prompt-delivery :prompt})
 
+(defn- register-post-tool-processor! [state params]
+  (let [entry {:name (:name params)
+               :ext-path (:ext-path params)
+               :tools (get-in params [:match :tools])
+               :timeout-ms (:timeout-ms params)}]
+    (swap! state update :post-tool-processors conj entry)
+    {:psi.extension/registered-post-tool-processor? true}))
+
+(defn- ensure-service! [state params]
+  (let [entry {:key (:key params)
+               :type (:type params)
+               :spec (:spec params)}]
+    (swap! state update :services conj entry)
+    {:psi.extension/service-ensured? true}))
+
+(defn- stop-service! [state params]
+  (swap! state update :services (fn [svc] (vec (remove #(= (:key %) (:key params)) svc))))
+  {:psi.extension/service-stopped? true})
+
 (def ^:private mutation-handlers
   {'psi.extension/register-command register-command!
    'psi.extension/register-handler register-handler!
@@ -224,7 +245,10 @@
    'psi.extension/unregister-prompt-contribution unregister-prompt-contribution!
    'psi.extension/append-entry append-entry!
    'psi.extension/send-message send-message!
-   'psi.extension/send-prompt send-prompt!})
+   'psi.extension/send-prompt send-prompt!
+   'psi.extension/register-post-tool-processor register-post-tool-processor!
+   'psi.extension/ensure-service ensure-service!
+   'psi.extension/stop-service stop-service!})
 
 (defn- default-mutate-fn
   [state _opts op params]
