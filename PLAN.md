@@ -292,8 +292,6 @@ Current implemented surface:
 - focused LSP integration tests now prove one post-tool sync flow yields a coherent trace chain queryable by `dispatch-id`
 
 Remaining next increments:
-- interceptor enter/exit entries
-- handler result / effects-emitted summary entries
 - broaden tests for failure/restart flows and more dispatch-owned slices
 
 Likely namespaces to add/change next:

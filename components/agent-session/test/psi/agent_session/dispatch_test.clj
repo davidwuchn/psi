@@ -317,30 +317,76 @@
     (is (= :ok (dispatch/dispatch! {} :trace-event {:x 1})))
     (let [entries (dispatch/dispatch-trace-entries)
           received (first entries)
-          completed (second entries)]
-      (is (= 2 (count entries)))
+          completed (last entries)]
       (is (= :dispatch/received (:trace/kind received)))
       (is (= :dispatch/completed (:trace/kind completed)))
       (is (= (:dispatch-id received) (:dispatch-id completed)))
       (is (= :trace-event (:event-type received)))
       (is (= :trace-event (:event-type completed)))))
 
+  (testing "dispatch records interceptor, handler, effect, and completion stages under one dispatch-id"
+    (dispatch/clear-dispatch-trace!)
+    (let [effect-calls (atom [])
+          ctx {:execute-dispatch-effect-fn (fn [_ effect]
+                                             (swap! effect-calls conj effect)
+                                             {:ok true})}]
+      (dispatch/register-handler! :trace-rich
+                                  (fn [_ _]
+                                    {:effects [{:effect/type :effect/demo
+                                                :value 1}]
+                                     :return :done}))
+      (is (= :done (dispatch/dispatch! ctx :trace-rich {:x 1})))
+      (let [entries (dispatch/dispatch-trace-entries)
+            dispatch-id (:dispatch-id (first entries))
+            by-id (filter #(= dispatch-id (:dispatch-id %)) entries)]
+        (is (seq @effect-calls))
+        (is (some #(and (= :dispatch/interceptor-enter (:trace/kind %))
+                        (= :permission (:interceptor-id %)))
+                  by-id))
+        (is (some #(and (= :dispatch/interceptor-exit (:trace/kind %))
+                        (= :apply (:interceptor-id %)))
+                  by-id))
+        (is (some #(and (= :dispatch/handler-result (:trace/kind %))
+                        (= {:kind :pure-result
+                            :effect-count 1
+                            :has-root-state-update false
+                            :has-return true
+                            :return-key nil
+                            :return-effect-result? false}
+                           (:result %)))
+                  by-id))
+        (is (some #(and (= :dispatch/effects-emitted (:trace/kind %))
+                        (= [{:effect/type :effect/demo
+                             :value 1}]
+                           (:effects %)))
+                  by-id))
+        (is (some #(and (= :dispatch/effect-start (:trace/kind %))
+                        (= :effect/demo (:effect-type %)))
+                  by-id))
+        (is (some #(and (= :dispatch/effect-finish (:trace/kind %))
+                        (= :effect/demo (:effect-type %))
+                        (= {:ok true} (:result %)))
+                  by-id))
+        (is (= :dispatch/completed (:trace/kind (last by-id)))))))
+
   (testing "service request/response/notify entries inherit an explicit dispatch-id"
     (let [calls (atom [])
-          dispatch-id (dispatch/next-dispatch-id)]
+          dispatch-id (dispatch/next-dispatch-id)
+          request-fn-var (resolve 'psi.agent-session.service-protocol/send-service-request!)
+          notify-fn-var (resolve 'psi.agent-session.service-protocol/send-service-notification!)]
       (with-redefs [psi.agent-session.services/service-in
                     (fn [_ctx _service-key]
                       {:send-fn (fn [_payload] (swap! calls conj :send))
                        :await-response-fn (fn [_req]
                                             {:payload {"result" {"ok" true}}})
                        :await-response-sends? false})]
-        (psi.agent-session.service-protocol/send-service-request!
+        (@request-fn-var
          {} [:svc :one]
          {:request-id "r1"
           :payload {"jsonrpc" "2.0" "id" "r1" "method" "initialize"}
           :timeout-ms 100}
          {:dispatch-id dispatch-id})
-        (psi.agent-session.service-protocol/send-service-notification!
+        (@notify-fn-var
          {} [:svc :one]
          {"jsonrpc" "2.0" "method" "initialized"}
          {:dispatch-id dispatch-id})

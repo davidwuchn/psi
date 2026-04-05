@@ -153,7 +153,9 @@ Retention/volume tradeoff:
 - the log keeps bounded summaries rather than full root-state snapshots
 - all entries are replay-safe by construction: replay suppresses effects and applies
   only pure state transforms, so no classification is needed to determine safety
-- the single bounded log serves both observability/debugging and replay substrate use
+- this log is the coarse-grained dispatch journal: one summarized entry per dispatch
+- it is the preferred surface for replay-oriented questions like "what events happened?"
+  and "what broad state/effect shape did they produce?"
 
 ## Canonical dispatch trace observability
 
@@ -162,6 +164,10 @@ canonical dispatch trace keyed by `dispatch-id`.
 
 Current trace entry kinds include:
 - `:dispatch/received`
+- `:dispatch/interceptor-enter`
+- `:dispatch/interceptor-exit`
+- `:dispatch/handler-result`
+- `:dispatch/effects-emitted`
 - `:dispatch/effect-start`
 - `:dispatch/effect-finish`
 - `:dispatch/service-request`
@@ -172,6 +178,8 @@ Current trace entry kinds include:
 
 Current guarantees:
 - every dispatch-created trace has one stable `dispatch-id`
+- dispatch-owned traces now include interceptor stage boundaries, handler-result summaries,
+  and emitted-effect summaries where the flow passes through the dispatch pipeline
 - post-tool flows can create and explicitly thread a `dispatch-id` through
   nested extension/service activity
 - managed-service protocol helpers record service request/response/notify events
@@ -189,15 +197,19 @@ Useful attrs on trace entries include:
 - `:psi.dispatch-trace/trace-kind`
 - `:psi.dispatch-trace/dispatch-id`
 - `:psi.dispatch-trace/event-type`
+- `:psi.dispatch-trace/interceptor-id`
 - `:psi.dispatch-trace/method`
 - `:psi.dispatch-trace/effect-type`
 - `:psi.dispatch-trace/tool-call-id`
 - `:psi.dispatch-trace/error-message`
 
 This canonical trace is the preferred observability surface for end-to-end
-runtime coordination. Adapter-local debug atoms remain useful for low-level
-transport diagnosis, but normal architectural debugging should prefer the
-queryable dispatch trace.
+runtime coordination. It is the fine-grained complement to the dispatch event-log:
+- use the event-log for replay-oriented, one-entry-per-event journaling
+- use the dispatch trace for correlated stage-by-stage diagnosis under one `dispatch-id`
+
+Adapter-local debug atoms remain useful for low-level transport diagnosis, but
+normal architectural debugging should prefer the queryable dispatch trace.
 
 ## Conforming vertical slice — manual compaction
 

@@ -46,6 +46,7 @@
    :psi.dispatch-trace/blocked?
    :psi.dispatch-trace/block-reason
    :psi.dispatch-trace/validation-error
+   :psi.dispatch-trace/interceptor-id
    :psi.dispatch-trace/result
    :psi.dispatch-trace/effects
    :psi.dispatch-trace/effect-type
@@ -90,29 +91,30 @@
    :psi.post-tool/timestamp      (:timestamp e)})
 
 (defn- dispatch-trace->eql [e]
-  {:psi.dispatch-trace/trace-kind      (:trace/kind e)
-   :psi.dispatch-trace/dispatch-id     (:dispatch-id e)
-   :psi.dispatch-trace/session-id      (:session-id e)
-   :psi.dispatch-trace/event-type      (:event-type e)
-   :psi.dispatch-trace/event-data      (:event-data e)
-   :psi.dispatch-trace/origin          (:origin e)
-   :psi.dispatch-trace/replaying?      (:replaying? e)
-   :psi.dispatch-trace/blocked?        (:blocked? e)
-   :psi.dispatch-trace/block-reason    (:block-reason e)
+  {:psi.dispatch-trace/trace-kind       (:trace/kind e)
+   :psi.dispatch-trace/dispatch-id      (:dispatch-id e)
+   :psi.dispatch-trace/session-id       (:session-id e)
+   :psi.dispatch-trace/event-type       (:event-type e)
+   :psi.dispatch-trace/event-data       (:event-data e)
+   :psi.dispatch-trace/origin           (:origin e)
+   :psi.dispatch-trace/replaying?       (:replaying? e)
+   :psi.dispatch-trace/blocked?         (:blocked? e)
+   :psi.dispatch-trace/block-reason     (:block-reason e)
    :psi.dispatch-trace/validation-error (:validation-error e)
-   :psi.dispatch-trace/result          (:result e)
-   :psi.dispatch-trace/effects         (:effects e)
-   :psi.dispatch-trace/effect-type     (:effect-type e)
-   :psi.dispatch-trace/effect          (:effect e)
-   :psi.dispatch-trace/tool-call-id    (:tool-call-id e)
-   :psi.dispatch-trace/service-key     (:service-key e)
-   :psi.dispatch-trace/request-id      (:request-id e)
-   :psi.dispatch-trace/method          (:method e)
-   :psi.dispatch-trace/payload         (:payload e)
-   :psi.dispatch-trace/response        (:response e)
-   :psi.dispatch-trace/is-error        (:is-error e)
-   :psi.dispatch-trace/error-message   (:error-message e)
-   :psi.dispatch-trace/timestamp       (:timestamp e)})
+   :psi.dispatch-trace/interceptor-id   (:interceptor-id e)
+   :psi.dispatch-trace/result           (:result e)
+   :psi.dispatch-trace/effects          (:effects e)
+   :psi.dispatch-trace/effect-type      (:effect-type e)
+   :psi.dispatch-trace/effect           (:effect e)
+   :psi.dispatch-trace/tool-call-id     (:tool-call-id e)
+   :psi.dispatch-trace/service-key      (:service-key e)
+   :psi.dispatch-trace/request-id       (:request-id e)
+   :psi.dispatch-trace/method           (:method e)
+   :psi.dispatch-trace/payload          (:payload e)
+   :psi.dispatch-trace/response         (:response e)
+   :psi.dispatch-trace/is-error         (:is-error e)
+   :psi.dispatch-trace/error-message    (:error-message e)
+   :psi.dispatch-trace/timestamp        (:timestamp e)})
 
 (pco/defresolver services-resolver
   [entity]
@@ -149,7 +151,7 @@
      :psi.post-tool/recent-events   (mapv telemetry->eql (post-tool/recent-telemetry-in ctx))}))
 
 (pco/defresolver dispatch-trace-resolver
-  [entity]
+  [_entity]
   {::pco/input  [:psi/agent-session-ctx]
    ::pco/output [:psi.dispatch-trace/count
                  {:psi.dispatch-trace/recent dispatch-trace-output}]}

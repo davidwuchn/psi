@@ -101,7 +101,10 @@
                        :diagnostics-timeout-ms 2000
                        :sync-timeout-ms 2000}})
           entries (dispatch/dispatch-trace-entries)
-          received (some #(when (= :post-tool/run (:event-type %)) %) entries)
+          received (some #(when (and (= :dispatch/received (:trace/kind %))
+                                     (= :post-tool/run (:event-type %)))
+                            %)
+                         entries)
           dispatch-id (:dispatch-id received)]
       (try
         (is (= :dispatch/received (:trace/kind received)))
@@ -141,7 +144,8 @@
                                         [{:psi.dispatch-trace/recent [:psi.dispatch-trace/trace-kind
                                                                      :psi.dispatch-trace/dispatch-id
                                                                      :psi.dispatch-trace/event-type
-                                                                     :psi.dispatch-trace/method]}]
+                                                                     :psi.dispatch-trace/method
+                                                                     :psi.dispatch-trace/interceptor-id]}]
                                         {:session-id session-id}))
               qtrace-by-id (:psi.dispatch-trace/by-id
                             (session/query-in ctx
@@ -149,7 +153,8 @@
                                                                           :psi.dispatch-trace/dispatch-id
                                                                           :psi.dispatch-trace/event-type
                                                                           :psi.dispatch-trace/method
-                                                                          :psi.dispatch-trace/effect-type]}]
+                                                                          :psi.dispatch-trace/effect-type
+                                                                          :psi.dispatch-trace/interceptor-id]}]
                                               {:session-id session-id
                                                :psi.dispatch-trace/dispatch-id dispatch-id}))]
           (is (some #(and (= :dispatch/received (:psi.dispatch-trace/trace-kind %))

@@ -289,6 +289,8 @@
    :before (or before identity)
    :after  (or after identity)})
 
+(declare next-dispatch-id append-trace-entry! pure-result? append-interceptor-trace!)
+
 (defn run-interceptor-chain
   "Run `interceptors` over interceptor context `ictx`.
    Executes :before fns in order, then :after fns in reverse order.
@@ -297,18 +299,20 @@
   (let [after-before (reduce (fn [ctx i]
                                (if (:blocked? ctx)
                                  ctx
-                                 ((:before i) ctx)))
+                                 (let [_ (append-interceptor-trace! :dispatch/interceptor-enter ctx i)]
+                                   ((:before i) ctx))))
                              ictx
                              interceptors)]
-    (reduce (fn [ctx i] ((:after i) ctx))
+    (reduce (fn [ctx i]
+              (let [after-ctx ((:after i) ctx)]
+                (append-interceptor-trace! :dispatch/interceptor-exit after-ctx i)
+                after-ctx))
             after-before
             (reverse interceptors))))
 
 ;; ============================================================
 ;; Event normalization
 ;; ============================================================
-
-(declare next-dispatch-id append-trace-entry!)
 
 (defn normalize-event
   "Normalize public dispatch inputs into one canonical internal event value.
@@ -353,6 +357,26 @@
   [ictx]
   (or (:dispatch-id ictx)
       (get-in ictx [:event :event/dispatch-id])))
+
+(defn- append-interceptor-trace!
+  [trace-kind ictx interceptor]
+  (append-trace-entry! {:trace/kind     trace-kind
+                        :dispatch-id    (dispatch-id-of ictx)
+                        :session-id     (event-session-id-of ictx)
+                        :event-type     (event-type-of ictx)
+                        :interceptor-id (:id interceptor)}))
+
+(defn- summarize-handler-result
+  [result]
+  (if (pure-result? result)
+    {:kind                  :pure-result
+     :effect-count          (count (:effects result))
+     :has-root-state-update (boolean (:root-state-update result))
+     :has-return            (contains? result :return)
+     :return-key            (:return-key result)
+     :return-effect-result? (boolean (:return-effect-result? result))}
+    {:kind  :legacy-return
+     :value result}))
 
 ;; ============================================================
 ;; Built-in interceptors
@@ -654,6 +678,11 @@
                                         (event-type-of ictx)
                                         (ex-message e))
                            nil))]
+            (append-trace-entry! {:trace/kind  :dispatch/handler-result
+                                  :dispatch-id (dispatch-id-of ictx)
+                                  :session-id  (event-session-id-of ictx)
+                                  :event-type  (event-type-of ictx)
+                                  :result      (summarize-handler-result result)})
             (if (pure-result? result)
               (assoc ictx :pure-result result)
               (assoc ictx :result result)))
@@ -686,6 +715,12 @@
               return-effect-result? (:return-effect-result? pure-result)]
           (when (and (fn? root-update-fn) (fn? apply-root-fn))
             (apply-root-fn ctx root-update-fn))
+          (when (contains? pure-result :effects)
+            (append-trace-entry! {:trace/kind  :dispatch/effects-emitted
+                                  :dispatch-id (dispatch-id-of ictx)
+                                  :session-id  (event-session-id-of ictx)
+                                  :event-type  (event-type-of ictx)
+                                  :effects     (vec (:effects pure-result))}))
           (cond-> ictx
             (contains? pure-result :effects)
             (assoc :applied-effects (:effects pure-result))
