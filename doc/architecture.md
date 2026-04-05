@@ -155,6 +155,50 @@ Retention/volume tradeoff:
   only pure state transforms, so no classification is needed to determine safety
 - the single bounded log serves both observability/debugging and replay substrate use
 
+## Canonical dispatch trace observability
+
+In addition to the retained event log, `agent-session` now keeps a bounded
+canonical dispatch trace keyed by `dispatch-id`.
+
+Current trace entry kinds include:
+- `:dispatch/received`
+- `:dispatch/effect-start`
+- `:dispatch/effect-finish`
+- `:dispatch/service-request`
+- `:dispatch/service-response`
+- `:dispatch/service-notify`
+- `:dispatch/completed`
+- `:dispatch/failed`
+
+Current guarantees:
+- every dispatch-created trace has one stable `dispatch-id`
+- post-tool flows can create and explicitly thread a `dispatch-id` through
+  nested extension/service activity
+- managed-service protocol helpers record service request/response/notify events
+  under the explicitly supplied `dispatch-id`
+- dispatch effect execution records effect start/finish entries including
+  `:effect-type`
+- trace storage is bounded in memory
+
+Current EQL surface:
+- `:psi.dispatch-trace/count`
+- `{:psi.dispatch-trace/recent [...]}`
+- `{:psi.dispatch-trace/by-id [...]}` from seed `[:psi.dispatch-trace/dispatch-id some-id]`
+
+Useful attrs on trace entries include:
+- `:psi.dispatch-trace/trace-kind`
+- `:psi.dispatch-trace/dispatch-id`
+- `:psi.dispatch-trace/event-type`
+- `:psi.dispatch-trace/method`
+- `:psi.dispatch-trace/effect-type`
+- `:psi.dispatch-trace/tool-call-id`
+- `:psi.dispatch-trace/error-message`
+
+This canonical trace is the preferred observability surface for end-to-end
+runtime coordination. Adapter-local debug atoms remain useful for low-level
+transport diagnosis, but normal architectural debugging should prefer the
+queryable dispatch trace.
+
 ## Conforming vertical slice — manual compaction
 
 The first explicit conforming vertical slice target is manual compaction.

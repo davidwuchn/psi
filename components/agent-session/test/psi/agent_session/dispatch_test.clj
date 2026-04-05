@@ -3,19 +3,23 @@
    [psi.agent-session.test-support :as test-support]
    [clojure.test :refer [deftest testing is use-fixtures]]
    [psi.agent-session.core :as session]
-   [psi.agent-session.session-state :as ss]
-   [psi.agent-session.dispatch :as dispatch]))
+   [psi.agent-session.dispatch :as dispatch]
+   [psi.agent-session.service-protocol]
+   [psi.agent-session.services]
+   [psi.agent-session.session-state :as ss]))
 
 ;; ── Fixture: clean handler registry and event log between tests ─
 
 (defn- clean-state [f]
   (dispatch/clear-handlers!)
   (dispatch/clear-event-log!)
+  (dispatch/clear-dispatch-trace!)
   (dispatch/set-interceptors! nil)
   (try (f)
        (finally
          (dispatch/clear-handlers!)
          (dispatch/clear-event-log!)
+         (dispatch/clear-dispatch-trace!)
          (dispatch/set-interceptors! nil))))
 
 (use-fixtures :each clean-state)
@@ -88,12 +92,13 @@
                                      {:origin :extension
                                       :ext-id "/ext/test.clj"
                                       :replaying? true})))
-      (is (= {:event {:event/type       :normalized
-                      :event/data       {:x 1}
-                      :event/session-id nil
-                      :event/origin     :extension
-                      :event/ext-id     "/ext/test.clj"
-                      :event/replaying? true}
+      (is (= {:event {:event/type        :normalized
+                      :event/data        {:x 1}
+                      :event/session-id  nil
+                      :event/origin      :extension
+                      :event/ext-id      "/ext/test.clj"
+                      :event/replaying?  true
+                      :event/dispatch-id (:event/dispatch-id (:event @seen))}
               :event-type :normalized
               :event-data {:x 1}
               :origin     :extension
@@ -305,6 +310,53 @@
       (is (true? @after-ran?)))))
 
 ;; ── Event log ───────────────────────────────────────────────
+
+(deftest canonical-dispatch-trace-test
+  (testing "dispatch assigns one stable dispatch-id and records received/completed"
+    (dispatch/register-handler! :trace-event (fn [_ _] :ok))
+    (is (= :ok (dispatch/dispatch! {} :trace-event {:x 1})))
+    (let [entries (dispatch/dispatch-trace-entries)
+          received (first entries)
+          completed (second entries)]
+      (is (= 2 (count entries)))
+      (is (= :dispatch/received (:trace/kind received)))
+      (is (= :dispatch/completed (:trace/kind completed)))
+      (is (= (:dispatch-id received) (:dispatch-id completed)))
+      (is (= :trace-event (:event-type received)))
+      (is (= :trace-event (:event-type completed)))))
+
+  (testing "service request/response/notify entries inherit an explicit dispatch-id"
+    (let [calls (atom [])
+          dispatch-id (dispatch/next-dispatch-id)]
+      (with-redefs [psi.agent-session.services/service-in
+                    (fn [_ctx _service-key]
+                      {:send-fn (fn [_payload] (swap! calls conj :send))
+                       :await-response-fn (fn [_req]
+                                            {:payload {"result" {"ok" true}}})
+                       :await-response-sends? false})]
+        (psi.agent-session.service-protocol/send-service-request!
+         {} [:svc :one]
+         {:request-id "r1"
+          :payload {"jsonrpc" "2.0" "id" "r1" "method" "initialize"}
+          :timeout-ms 100}
+         {:dispatch-id dispatch-id})
+        (psi.agent-session.service-protocol/send-service-notification!
+         {} [:svc :one]
+         {"jsonrpc" "2.0" "method" "initialized"}
+         {:dispatch-id dispatch-id})
+        (let [entries (dispatch/dispatch-trace-entries)]
+          (is (some #(and (= :dispatch/service-request (:trace/kind %))
+                          (= dispatch-id (:dispatch-id %))
+                          (= "initialize" (:method %)))
+                    entries))
+          (is (some #(and (= :dispatch/service-response (:trace/kind %))
+                          (= dispatch-id (:dispatch-id %))
+                          (= "initialize" (:method %)))
+                    entries))
+          (is (some #(and (= :dispatch/service-notify (:trace/kind %))
+                          (= dispatch-id (:dispatch-id %))
+                          (= "initialized" (:method %)))
+                    entries)))))))
 
 (deftest event-log-test
   (testing "dispatch writes event log entries"

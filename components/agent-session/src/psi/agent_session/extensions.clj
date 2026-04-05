@@ -587,23 +587,25 @@
          (runtime-not-initialized :stop-service)))
 
      :service-request
-     (fn [{:keys [key request-id payload timeout-ms]}]
+     (fn [{:keys [key request-id payload timeout-ms dispatch-id]}]
        (if mutate-fn
          (mutate-fn 'psi.extension/service-request
                     {:ext-path   ext-path
                      :key        key
                      :request-id request-id
                      :payload    payload
-                     :timeout-ms timeout-ms})
+                     :timeout-ms timeout-ms
+                     :dispatch-id dispatch-id})
          (runtime-not-initialized :service-request)))
 
      :service-notify
-     (fn [{:keys [key payload]}]
+     (fn [{:keys [key payload dispatch-id]}]
        (if mutate-fn
          (mutate-fn 'psi.extension/service-notify
                     {:ext-path ext-path
                      :key      key
-                     :payload  payload})
+                     :payload  payload
+                     :dispatch-id dispatch-id})
          (runtime-not-initialized :service-notify)))
 
      :list-services

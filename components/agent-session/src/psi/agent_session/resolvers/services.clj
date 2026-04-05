@@ -2,6 +2,7 @@
   "Pathom3 resolvers for managed services, post-tool processors, and telemetry."
   (:require
    [com.wsscode.pathom3.connect.operation :as pco]
+   [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.post-tool :as post-tool]
    [psi.agent-session.services :as services]))
 
@@ -34,6 +35,31 @@
    :psi.post-tool/duration-ms
    :psi.post-tool/timestamp])
 
+(def ^:private dispatch-trace-output
+  [:psi.dispatch-trace/trace-kind
+   :psi.dispatch-trace/dispatch-id
+   :psi.dispatch-trace/session-id
+   :psi.dispatch-trace/event-type
+   :psi.dispatch-trace/event-data
+   :psi.dispatch-trace/origin
+   :psi.dispatch-trace/replaying?
+   :psi.dispatch-trace/blocked?
+   :psi.dispatch-trace/block-reason
+   :psi.dispatch-trace/validation-error
+   :psi.dispatch-trace/result
+   :psi.dispatch-trace/effects
+   :psi.dispatch-trace/effect-type
+   :psi.dispatch-trace/effect
+   :psi.dispatch-trace/tool-call-id
+   :psi.dispatch-trace/service-key
+   :psi.dispatch-trace/request-id
+   :psi.dispatch-trace/method
+   :psi.dispatch-trace/payload
+   :psi.dispatch-trace/response
+   :psi.dispatch-trace/is-error
+   :psi.dispatch-trace/error-message
+   :psi.dispatch-trace/timestamp])
+
 (defn- service->eql [svc]
   {:psi.service/id            (:id svc)
    :psi.service/key           (:key svc)
@@ -62,6 +88,31 @@
    :psi.post-tool/status         (:status e)
    :psi.post-tool/duration-ms    (:duration-ms e)
    :psi.post-tool/timestamp      (:timestamp e)})
+
+(defn- dispatch-trace->eql [e]
+  {:psi.dispatch-trace/trace-kind      (:trace/kind e)
+   :psi.dispatch-trace/dispatch-id     (:dispatch-id e)
+   :psi.dispatch-trace/session-id      (:session-id e)
+   :psi.dispatch-trace/event-type      (:event-type e)
+   :psi.dispatch-trace/event-data      (:event-data e)
+   :psi.dispatch-trace/origin          (:origin e)
+   :psi.dispatch-trace/replaying?      (:replaying? e)
+   :psi.dispatch-trace/blocked?        (:blocked? e)
+   :psi.dispatch-trace/block-reason    (:block-reason e)
+   :psi.dispatch-trace/validation-error (:validation-error e)
+   :psi.dispatch-trace/result          (:result e)
+   :psi.dispatch-trace/effects         (:effects e)
+   :psi.dispatch-trace/effect-type     (:effect-type e)
+   :psi.dispatch-trace/effect          (:effect e)
+   :psi.dispatch-trace/tool-call-id    (:tool-call-id e)
+   :psi.dispatch-trace/service-key     (:service-key e)
+   :psi.dispatch-trace/request-id      (:request-id e)
+   :psi.dispatch-trace/method          (:method e)
+   :psi.dispatch-trace/payload         (:payload e)
+   :psi.dispatch-trace/response        (:response e)
+   :psi.dispatch-trace/is-error        (:is-error e)
+   :psi.dispatch-trace/error-message   (:error-message e)
+   :psi.dispatch-trace/timestamp       (:timestamp e)})
 
 (pco/defresolver services-resolver
   [entity]
@@ -97,7 +148,28 @@
      :psi.post-tool/error-count     (:error-count counts)
      :psi.post-tool/recent-events   (mapv telemetry->eql (post-tool/recent-telemetry-in ctx))}))
 
+(pco/defresolver dispatch-trace-resolver
+  [entity]
+  {::pco/input  [:psi/agent-session-ctx]
+   ::pco/output [:psi.dispatch-trace/count
+                 {:psi.dispatch-trace/recent dispatch-trace-output}]}
+  (let [entries (dispatch/dispatch-trace-entries)]
+    {:psi.dispatch-trace/count  (count entries)
+     :psi.dispatch-trace/recent (mapv dispatch-trace->eql entries)}))
+
+(pco/defresolver dispatch-trace-by-id-resolver
+  [entity]
+  {::pco/input  [:psi/agent-session-ctx :psi.dispatch-trace/dispatch-id]
+   ::pco/output [{:psi.dispatch-trace/by-id dispatch-trace-output}]}
+  (let [dispatch-id (:psi.dispatch-trace/dispatch-id entity)
+        entries     (->> (dispatch/dispatch-trace-entries)
+                         (filter #(= dispatch-id (:dispatch-id %)))
+                         vec)]
+    {:psi.dispatch-trace/by-id (mapv dispatch-trace->eql entries)}))
+
 (def resolvers
   [services-resolver
    post-tool-processors-resolver
-   post-tool-telemetry-resolver])
+   post-tool-telemetry-resolver
+   dispatch-trace-resolver
+   dispatch-trace-by-id-resolver])

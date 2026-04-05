@@ -1,6 +1,7 @@
 (ns psi.agent-session.post-tool
   "Ctx-owned post-tool processor registry and additive result composition."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [psi.agent-session.dispatch :as dispatch]))
 
 (defn create-registry []
   {:state (atom {:processors []
@@ -73,49 +74,73 @@
       result)))
 
 (defn run-post-tool-processing-in!
-  [ctx {:keys [session-id tool-name tool-call-id tool-args tool-result worktree-path] :as input}]
-  (let [processors (matching-processors ctx tool-name)]
-    (reduce
-     (fn [result {:keys [name timeout-ms handler]}]
-       (let [started (System/nanoTime)
-             outcome (try
-                       (run-with-timeout timeout-ms #(handler input))
-                       (catch Throwable t t))
-             duration-ms (long (/ (- (System/nanoTime) started) 1000000))]
-         (cond
-           (= ::timeout outcome)
-           (do (record-telemetry! ctx {:tool-call-id tool-call-id
-                                       :tool-name tool-name
-                                       :processor-name name
-                                       :status :timeout
-                                       :duration-ms timeout-ms})
-               result)
+  [ctx {:keys [session-id tool-name tool-call-id tool-args tool-result worktree-path dispatch-id] :as input}]
+  (let [processors   (matching-processors ctx tool-name)
+        dispatch-id  (or dispatch-id (dispatch/next-dispatch-id))]
+    (dispatch/append-trace-entry! {:trace/kind  :dispatch/received
+                                   :dispatch-id dispatch-id
+                                   :session-id  session-id
+                                   :event-type  :post-tool/run
+                                   :event-data  {:tool-name tool-name
+                                                 :tool-call-id tool-call-id
+                                                 :worktree-path worktree-path}})
+    (try
+      (let [result
+            (reduce
+             (fn [result {:keys [name timeout-ms handler]}]
+               (let [started (System/nanoTime)
+                     outcome (try
+                               (run-with-timeout timeout-ms #(handler (dispatch/assoc-dispatch-id input dispatch-id)))
+                               (catch Throwable t t))
+                     duration-ms (long (/ (- (System/nanoTime) started) 1000000))]
+                 (cond
+                   (= ::timeout outcome)
+                   (do (record-telemetry! ctx {:tool-call-id tool-call-id
+                                               :tool-name tool-name
+                                               :processor-name name
+                                               :status :timeout
+                                               :duration-ms timeout-ms})
+                       result)
 
-           (instance? Throwable outcome)
-           (do (record-telemetry! ctx {:tool-call-id tool-call-id
-                                       :tool-name tool-name
-                                       :processor-name name
-                                       :status :error
-                                       :duration-ms duration-ms})
-               result)
+                   (instance? Throwable outcome)
+                   (do (record-telemetry! ctx {:tool-call-id tool-call-id
+                                               :tool-name tool-name
+                                               :processor-name name
+                                               :status :error
+                                               :duration-ms duration-ms})
+                       result)
 
-           (nil? outcome)
-           (do (record-telemetry! ctx {:tool-call-id tool-call-id
-                                       :tool-name tool-name
-                                       :processor-name name
-                                       :status :success
-                                       :duration-ms duration-ms})
-               result)
+                   (nil? outcome)
+                   (do (record-telemetry! ctx {:tool-call-id tool-call-id
+                                               :tool-name tool-name
+                                               :processor-name name
+                                               :status :success
+                                               :duration-ms duration-ms})
+                       result)
 
-           :else
-           (do (record-telemetry! ctx {:tool-call-id tool-call-id
-                                       :tool-name tool-name
-                                       :processor-name name
-                                       :status :success
-                                       :duration-ms duration-ms})
-               (apply-contribution result outcome)))))
-     (update tool-result :enrichments #(vec (or % [])))
-     processors)))
+                   :else
+                   (do (record-telemetry! ctx {:tool-call-id tool-call-id
+                                               :tool-name tool-name
+                                               :processor-name name
+                                               :status :success
+                                               :duration-ms duration-ms})
+                       (apply-contribution result outcome)))))
+             (update tool-result :enrichments #(vec (or % [])))
+             processors)]
+        (dispatch/append-trace-entry! {:trace/kind  :dispatch/completed
+                                       :dispatch-id dispatch-id
+                                       :session-id  session-id
+                                       :event-type  :post-tool/run
+                                       :tool-call-id tool-call-id})
+        result)
+      (catch Throwable t
+        (dispatch/append-trace-entry! {:trace/kind    :dispatch/failed
+                                       :dispatch-id   dispatch-id
+                                       :session-id    session-id
+                                       :event-type    :post-tool/run
+                                       :tool-call-id  tool-call-id
+                                       :error-message (ex-message t)})
+        (throw t)))))
 
 (defn project-processor [processor]
   (select-keys processor [:name :ext-path :tools :timeout-ms]))

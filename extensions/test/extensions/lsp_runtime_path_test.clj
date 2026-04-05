@@ -5,8 +5,10 @@
    [clojure.test :refer [deftest is testing]]
    [extensions.lsp :as sut]
    [psi.agent-session.core :as session]
+   [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.mutations :as mutations]
+   [psi.agent-session.post-tool :as post-tool]
    [psi.agent-session.services :as services]
    [psi.agent-session.test-support :as test-support]
    [psi.query.core :as query]))
@@ -69,6 +71,102 @@
           (when-let [close-fn (:close-fn (services/service-in ctx (sut/workspace-key root)))]
             (future (close-fn)))
           (future (services/stop-service-in! ctx (sut/workspace-key root))))))))
+
+(deftest sync-tool-result-canonical-trace-observability-test
+  (testing "post-tool LSP sync produces one coherent canonical trace chain"
+    (dispatch/clear-dispatch-trace!)
+    (reset! sut/state {:initialized-workspaces #{} :documents {}})
+    (let [worktree (create-temp-worktree)
+          file-path (str (io/file worktree "src" "demo.clj"))
+          _ (.mkdirs (.getParentFile (io/file file-path)))
+          _ (write-file! file-path "(ns demo) ;; warn\n")
+          [ctx session-id] (create-runtime-session worktree)
+          api (create-ext-api ctx session-id)
+          _ (post-tool/register-processor-in!
+             ctx
+             {:name "lsp-diagnostics"
+              :ext-path "/ext/lsp.clj"
+              :match {:tools #{"write"}}
+              :timeout-ms 2000
+              :handler (sut/make-post-tool-handler api)})
+          _ (post-tool/run-post-tool-processing-in!
+             ctx
+             {:session-id session-id
+              :tool-name "write"
+              :tool-call-id "call-trace"
+              :tool-result {:effects [{:path file-path}]}
+              :worktree-path worktree
+              :config {:command lsp-fixture-command
+                       :startup-timeout-ms 2000
+                       :diagnostics-timeout-ms 2000
+                       :sync-timeout-ms 2000}})
+          entries (dispatch/dispatch-trace-entries)
+          received (some #(when (= :post-tool/run (:event-type %)) %) entries)
+          dispatch-id (:dispatch-id received)]
+      (try
+        (is (= :dispatch/received (:trace/kind received)))
+        (is (= :post-tool/run (:event-type received)))
+        (is (= "call-trace" (:tool-call-id (last entries))))
+        (is (string? dispatch-id))
+        (is (some #(and (= :dispatch/service-request (:trace/kind %))
+                        (= dispatch-id (:dispatch-id %))
+                        (= "initialize" (:method %)))
+                  entries))
+        (is (some #(and (= :dispatch/service-response (:trace/kind %))
+                        (= dispatch-id (:dispatch-id %))
+                        (= "initialize" (:method %)))
+                  entries))
+        (is (some #(and (= :dispatch/service-notify (:trace/kind %))
+                        (= dispatch-id (:dispatch-id %))
+                        (= "initialized" (:method %)))
+                  entries))
+        (is (some #(and (= :dispatch/service-notify (:trace/kind %))
+                        (= dispatch-id (:dispatch-id %))
+                        (= "textDocument/didOpen" (:method %)))
+                  entries))
+        (is (some #(and (= :dispatch/service-request (:trace/kind %))
+                        (= dispatch-id (:dispatch-id %))
+                        (= "textDocument/diagnostic" (:method %)))
+                  entries))
+        (is (some #(and (= :dispatch/service-response (:trace/kind %))
+                        (= dispatch-id (:dispatch-id %))
+                        (= "textDocument/diagnostic" (:method %)))
+                  entries))
+        (is (some #(and (= :dispatch/completed (:trace/kind %))
+                        (= dispatch-id (:dispatch-id %))
+                        (= :post-tool/run (:event-type %)))
+                  entries))
+        (let [qtrace (:psi.dispatch-trace/recent
+                      (session/query-in ctx
+                                        [{:psi.dispatch-trace/recent [:psi.dispatch-trace/trace-kind
+                                                                     :psi.dispatch-trace/dispatch-id
+                                                                     :psi.dispatch-trace/event-type
+                                                                     :psi.dispatch-trace/method]}]
+                                        {:session-id session-id}))
+              qtrace-by-id (:psi.dispatch-trace/by-id
+                            (session/query-in ctx
+                                              [{:psi.dispatch-trace/by-id [:psi.dispatch-trace/trace-kind
+                                                                          :psi.dispatch-trace/dispatch-id
+                                                                          :psi.dispatch-trace/event-type
+                                                                          :psi.dispatch-trace/method
+                                                                          :psi.dispatch-trace/effect-type]}]
+                                              {:session-id session-id
+                                               :psi.dispatch-trace/dispatch-id dispatch-id}))]
+          (is (some #(and (= :dispatch/received (:psi.dispatch-trace/trace-kind %))
+                          (= dispatch-id (:psi.dispatch-trace/dispatch-id %))
+                          (= :post-tool/run (:psi.dispatch-trace/event-type %)))
+                    qtrace))
+          (is (some #(and (= :dispatch/service-request (:psi.dispatch-trace/trace-kind %))
+                          (= dispatch-id (:psi.dispatch-trace/dispatch-id %))
+                          (= "initialize" (:psi.dispatch-trace/method %)))
+                    qtrace))
+          (is (seq qtrace-by-id))
+          (is (every? #(= dispatch-id (:psi.dispatch-trace/dispatch-id %)) qtrace-by-id)))
+        (finally
+          (when-let [svc (services/service-in ctx (sut/workspace-key worktree))]
+            (when-let [close-fn (:close-fn svc)]
+              (future (close-fn))))
+          (future (services/stop-service-in! ctx (sut/workspace-key worktree))))))))
 
 (deftest sync-tool-result-runs-live-initialize-sync-and-diagnostics-test
   (testing "sync-tool-result! uses the live managed-service path and returns diagnostics"

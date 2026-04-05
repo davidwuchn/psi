@@ -308,17 +308,20 @@
 ;; Event normalization
 ;; ============================================================
 
+(declare next-dispatch-id append-trace-entry!)
+
 (defn normalize-event
   "Normalize public dispatch inputs into one canonical internal event value.
    Lifts :session-id from event-data to :event/session-id so interceptors
    and effect handlers can access it without reading ctx."
   [event-type event-data opts]
-  {:event/type       event-type
-   :event/data       event-data
-   :event/session-id (:session-id event-data)
-   :event/origin     (or (:origin opts) :core)
-   :event/ext-id     (:ext-id opts)
-   :event/replaying? (boolean (:replaying? opts))})
+  {:event/type        event-type
+   :event/data        event-data
+   :event/session-id  (:session-id event-data)
+   :event/origin      (or (:origin opts) :core)
+   :event/ext-id      (:ext-id opts)
+   :event/replaying?  (boolean (:replaying? opts))
+   :event/dispatch-id (or (:dispatch-id opts) (next-dispatch-id))})
 
 (defn- event-type-of [ictx]
   (or (:event-type ictx)
@@ -346,6 +349,11 @@
   (or (:session-id ictx)
       (get-in ictx [:event :event/session-id])))
 
+(defn dispatch-id-of
+  [ictx]
+  (or (:dispatch-id ictx)
+      (get-in ictx [:event :event/dispatch-id])))
+
 ;; ============================================================
 ;; Built-in interceptors
 ;; ============================================================
@@ -356,9 +364,18 @@
   ;; Bounded ring buffer of recent dispatch log entries.
   (atom []))
 
+(defonce ^:private dispatch-trace
+  ;; Bounded ring buffer of canonical dispatch/service trace entries.
+  (atom []))
+
 (def ^:private max-event-log-size
   "Maximum number of entries retained in the dispatch event log."
   1000)
+
+(def ^:private max-dispatch-trace-size
+  "Maximum number of entries retained in the canonical dispatch trace."
+  1000)
+
 
 (defn- trim-bounded-log
   [entries max-size]
@@ -373,11 +390,44 @@
   []
   @event-log)
 
+(defn dispatch-trace-entries
+  "Return the current canonical dispatch trace entries (most recent last)."
+  []
+  @dispatch-trace)
+
 (defn clear-event-log!
   "Clear the retained dispatch event log. Used in tests."
   []
   (reset! event-log [])
   nil)
+
+(defn clear-dispatch-trace!
+  "Clear the retained canonical dispatch trace. Used in tests."
+  []
+  (reset! dispatch-trace [])
+  nil)
+
+(defn next-dispatch-id
+  "Create a stable id for one dispatched event."
+  []
+  (str (java.util.UUID/randomUUID)))
+
+(defn append-trace-entry!
+  "Append one canonical trace entry to the bounded dispatch trace."
+  [entry]
+  (swap! dispatch-trace
+         (fn [log]
+           (trim-bounded-log
+            (conj log (assoc entry :timestamp (System/currentTimeMillis)))
+            max-dispatch-trace-size)))
+  entry)
+
+(defn assoc-dispatch-id
+  "Assoc `:dispatch-id` onto `m` when `dispatch-id` is present.
+   Small helper to keep explicit trace-id threading terse."
+  [m dispatch-id]
+  (cond-> (or m {})
+    dispatch-id (assoc :dispatch-id dispatch-id)))
 
 (defn- summarize-dispatch-db
   [db]
@@ -669,15 +719,42 @@
       (let [ctx         (:ctx ictx)
             execute-fn  (:execute-dispatch-effect-fn ctx)
             effects     (:applied-effects ictx)
+            dispatch-id (dispatch-id-of ictx)
             ;; Inject the resolved session-id into each effect that doesn't
             ;; already carry one, so effect handlers never need to read ctx.
             eff-sid     (:session-id ictx)
-            effects*    (if eff-sid
-                          (mapv (fn [e] (if (:session-id e) e (assoc e :session-id eff-sid)))
-                                effects)
-                          effects)]
+            effects*    (mapv (fn [e] (if eff-sid
+                                        (if (:session-id e) e (assoc e :session-id eff-sid))
+                                        e))
+                              effects)]
         (if (and (fn? execute-fn) (seq effects*))
-          (let [results (mapv (fn [effect] (execute-fn ctx effect)) effects*)]
+          (let [results (mapv (fn [effect]
+                                (append-trace-entry! {:trace/kind  :dispatch/effect-start
+                                                      :dispatch-id dispatch-id
+                                                      :session-id  (:session-id effect)
+                                                      :event-type  (event-type-of ictx)
+                                                      :effect-type (:effect/type effect)
+                                                      :effect      effect})
+                                (try
+                                  (let [result (execute-fn ctx effect)]
+                                    (append-trace-entry! {:trace/kind  :dispatch/effect-finish
+                                                          :dispatch-id dispatch-id
+                                                          :session-id  (:session-id effect)
+                                                          :event-type  (event-type-of ictx)
+                                                          :effect-type (:effect/type effect)
+                                                          :effect      effect
+                                                          :result      result})
+                                    result)
+                                  (catch Throwable t
+                                    (append-trace-entry! {:trace/kind    :dispatch/effect-finish
+                                                          :dispatch-id   dispatch-id
+                                                          :session-id    (:session-id effect)
+                                                          :event-type    (event-type-of ictx)
+                                                          :effect-type   (:effect/type effect)
+                                                          :effect        effect
+                                                          :error-message (ex-message t)})
+                                    (throw t))))
+                              effects*)]
             (cond-> ictx
               (and (:return-effect-result? ictx)
                    (nil? (:result ictx))
@@ -823,17 +900,50 @@
   ([ctx event-type event-data]
    (dispatch! ctx event-type event-data nil))
   ([ctx event-type event-data opts]
-   (let [event      (normalize-event event-type event-data opts)
-         session-id (event-session-id-of {:event event})
-         ictx  {:ctx        ctx
-                :session-id session-id
-                :event      event
-                :event-type (:event/type event)
-                :event-data (:event/data event)
-                :origin     (:event/origin event)
-                :ext-id     (:event/ext-id event)
-                :replaying? (:event/replaying? event)
-                :result     nil
-                :blocked?   false}
-         result-ictx (run-interceptor-chain ictx (current-interceptors))]
-     (:result result-ictx))))
+   (let [event       (normalize-event event-type event-data opts)
+         session-id  (event-session-id-of {:event event})
+         dispatch-id (:event/dispatch-id event)
+         ictx        {:ctx         ctx
+                      :session-id  session-id
+                      :dispatch-id dispatch-id
+                      :event       event
+                      :event-type  (:event/type event)
+                      :event-data  (:event/data event)
+                      :origin      (:event/origin event)
+                      :ext-id      (:event/ext-id event)
+                      :replaying?  (:event/replaying? event)
+                      :result      nil
+                      :blocked?    false}]
+     (append-trace-entry! {:trace/kind      :dispatch/received
+                           :dispatch-id     dispatch-id
+                           :session-id      session-id
+                           :event-type      (:event/type event)
+                           :event-data      (:event/data event)
+                           :origin          (:event/origin event)
+                           :replaying?      (:event/replaying? event)})
+     (try
+       (let [result-ictx (run-interceptor-chain ictx (current-interceptors))
+             failed?     (or (and (:blocked? result-ictx)
+                                  (:validation-error result-ictx))
+                             false)]
+         (append-trace-entry!
+          (cond-> {:trace/kind  (if failed? :dispatch/failed :dispatch/completed)
+                   :dispatch-id dispatch-id
+                   :session-id  (event-session-id-of result-ictx)
+                   :event-type  (event-type-of result-ictx)
+                   :blocked?    (boolean (:blocked? result-ictx))
+                   :result      (:result result-ictx)}
+            (:validation-error result-ictx)
+            (assoc :validation-error (:validation-error result-ictx))
+            (:block-reason result-ictx)
+            (assoc :block-reason (:block-reason result-ictx))
+            (:applied-effects result-ictx)
+            (assoc :effects (:applied-effects result-ictx))))
+         (:result result-ictx))
+       (catch Throwable t
+         (append-trace-entry! {:trace/kind    :dispatch/failed
+                               :dispatch-id   dispatch-id
+                               :session-id    session-id
+                               :event-type    (:event/type event)
+                               :error-message (ex-message t)})
+         (throw t))))))

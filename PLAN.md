@@ -264,14 +264,37 @@ Trace entry candidates:
 - `:dispatch/failed`
 
 Planned increments:
-1. define canonical trace entry schema + bounded runtime storage
-2. generate a `dispatch-id` at dispatch entry and thread it through opts/context
+1. define canonical trace entry schema + bounded runtime storage ✅
+2. generate a `dispatch-id` at dispatch entry and thread it through opts/context ✅
 3. record interceptor enter/exit around the existing dispatch pipeline
 4. record handler result + emitted effects summary
-5. record effect execution start/finish and associate back to `dispatch-id`
-6. record service request/response summaries from the managed-service protocol layer
-7. expose trace surface through EQL
-8. add focused tests proving one dispatched event yields a coherent trace chain
+5. record effect execution start/finish and associate back to `dispatch-id` ✅
+6. record service request/response summaries from the managed-service protocol layer ✅
+7. expose trace surface through EQL ✅
+8. add focused tests proving one dispatched event yields a coherent trace chain ✅
+
+Current implemented surface:
+- bounded canonical trace storage in `psi.agent-session.dispatch`
+- stable explicit `dispatch-id` threading without dynamic vars
+- trace entry kinds currently recorded:
+  - `:dispatch/received`
+  - `:dispatch/effect-start`
+  - `:dispatch/effect-finish`
+  - `:dispatch/service-request`
+  - `:dispatch/service-response`
+  - `:dispatch/service-notify`
+  - `:dispatch/completed`
+  - `:dispatch/failed`
+- EQL resolver surface:
+  - `:psi.dispatch-trace/count`
+  - `{:psi.dispatch-trace/recent [...]}`
+  - `{:psi.dispatch-trace/by-id [...]}`
+- focused LSP integration tests now prove one post-tool sync flow yields a coherent trace chain queryable by `dispatch-id`
+
+Remaining next increments:
+- interceptor enter/exit entries
+- handler result / effects-emitted summary entries
+- broaden tests for failure/restart flows and more dispatch-owned slices
 
 Likely namespaces to add/change next:
 - `psi.agent-session.dispatch`

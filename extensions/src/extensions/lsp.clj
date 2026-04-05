@@ -10,6 +10,7 @@
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
+   [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.service-protocol :as service-protocol]))
 
 (def ^:private default-lsp-config
@@ -98,7 +99,7 @@
   workspace-root)
 
 (defn jsonrpc-request!
-  [api {:keys [workspace-root id method params timeout-ms]}]
+  [api {:keys [workspace-root id method params timeout-ms dispatch-id]}]
   ((:service-request api)
    {:key (workspace-key workspace-root)
     :request-id id
@@ -106,15 +107,17 @@
               "id" id
               "method" method
               "params" params}
-    :timeout-ms timeout-ms}))
+    :timeout-ms timeout-ms
+    :dispatch-id dispatch-id}))
 
 (defn jsonrpc-notify!
-  [api {:keys [workspace-root method params]}]
+  [api {:keys [workspace-root method params dispatch-id]}]
   ((:service-notify api)
    {:key (workspace-key workspace-root)
     :payload {"jsonrpc" "2.0"
               "method" method
-              "params" params}}))
+              "params" params}
+    :dispatch-id dispatch-id}))
 
 (defn initialize-request
   [{:keys [workspace-root]}]
@@ -135,16 +138,22 @@
   workspace-root)
 
 (defn ensure-lsp-initialized!
-  [api {:keys [workspace-root startup-timeout-ms] :as _opts}]
+  [api {:keys [workspace-root startup-timeout-ms dispatch-id] :as _opts}]
   (when-not (workspace-initialized? workspace-root)
-    (jsonrpc-request! api {:workspace-root workspace-root
-                           :id "initialize"
-                           :method "initialize"
-                           :params (initialize-request {:workspace-root workspace-root})
-                           :timeout-ms startup-timeout-ms})
-    (jsonrpc-notify! api {:workspace-root workspace-root
-                          :method "initialized"
-                          :params {}})
+    (jsonrpc-request! api
+                      (dispatch/assoc-dispatch-id
+                       {:workspace-root workspace-root
+                        :id "initialize"
+                        :method "initialize"
+                        :params (initialize-request {:workspace-root workspace-root})
+                        :timeout-ms startup-timeout-ms}
+                       dispatch-id))
+    (jsonrpc-notify! api
+                     (dispatch/assoc-dispatch-id
+                      {:workspace-root workspace-root
+                       :method "initialized"
+                       :params {}}
+                      dispatch-id))
     (mark-workspace-initialized! workspace-root)))
 
 (defn- file-uri [path]
@@ -183,13 +192,16 @@
        vec))
 
 (defn request-diagnostics!
-  [api {:keys [workspace-root paths diagnostics-timeout-ms]}]
+  [api {:keys [workspace-root paths diagnostics-timeout-ms dispatch-id]}]
   (reduce (fn [acc path]
-            (let [response (jsonrpc-request! api {:workspace-root workspace-root
-                                                  :id (str "diagnostics:" path)
-                                                  :method "textDocument/diagnostic"
-                                                  :params (document-diagnostics-request path)
-                                                  :timeout-ms diagnostics-timeout-ms})
+            (let [response (jsonrpc-request! api
+                                             (dispatch/assoc-dispatch-id
+                                              {:workspace-root workspace-root
+                                               :id (str "diagnostics:" path)
+                                               :method "textDocument/diagnostic"
+                                               :params (document-diagnostics-request path)
+                                               :timeout-ms diagnostics-timeout-ms}
+                                              dispatch-id))
                   result   (or (service-protocol/await-jsonrpc-result
                                  {:response (:psi.extension.service/response response)})
                                (service-protocol/await-jsonrpc-result response)
@@ -232,7 +244,7 @@
   {:path path :version version})
 
 (defn sync-document!
-  [api {:keys [workspace-root path text]}]
+  [api {:keys [workspace-root path text dispatch-id]}]
   (let [first-open? (not (document-open? path))
         version     (next-document-version path)
         method      (if first-open?
@@ -246,14 +258,17 @@
                       {"textDocument" {"uri" (file-uri path)
                                         "version" version}
                        "contentChanges" [{"text" text}]})]
-    (jsonrpc-notify! api {:workspace-root workspace-root
-                          :method method
-                          :params params})
+    (jsonrpc-notify! api
+                     (dispatch/assoc-dispatch-id
+                      {:workspace-root workspace-root
+                       :method method
+                       :params params}
+                      dispatch-id))
     (record-document-sync! path version text)
     {:path path :version version :first-open? first-open? :method method}))
 
 (defn sync-tool-result!
-  [api {:keys [worktree-path config] :as input}]
+  [api {:keys [worktree-path config dispatch-id] :as input}]
   (let [cfg   (normalize-config config)
         paths (changed-paths input)
         root  (workspace-root {:worktree-path worktree-path
@@ -264,17 +279,20 @@
                               :path (first paths)
                               :config cfg})
     (ensure-lsp-initialized! api {:workspace-root root
-                                  :startup-timeout-ms (:startup-timeout-ms cfg)})
+                                  :startup-timeout-ms (:startup-timeout-ms cfg)
+                                  :dispatch-id dispatch-id})
     (doseq [path paths]
       (swap! syncs conj (sync-document! api {:workspace-root root
                                              :path path
-                                             :text (read-text path)})))
+                                             :text (read-text path)
+                                             :dispatch-id dispatch-id})))
     {:workspace-root root
      :changed-paths paths
      :document-syncs @syncs
      :diagnostics-by-path (request-diagnostics! api {:workspace-root root
                                                      :paths paths
-                                                     :diagnostics-timeout-ms (:diagnostics-timeout-ms cfg)})}))
+                                                     :diagnostics-timeout-ms (:diagnostics-timeout-ms cfg)
+                                                     :dispatch-id dispatch-id})}))
 
 (defn- diagnostic-path-count
   [diagnostics-by-path]

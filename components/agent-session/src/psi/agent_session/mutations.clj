@@ -212,9 +212,9 @@
 
 (pco/defmutation service-request
   "Send a correlated request to an extension-owned managed service."
-  [_ {:keys [psi/agent-session-ctx ext-path key request-id payload timeout-ms]}]
+  [_ {:keys [psi/agent-session-ctx ext-path key request-id payload timeout-ms dispatch-id]}]
   {::pco/op-name 'psi.extension/service-request
-   ::pco/params  [:psi/agent-session-ctx :ext-path :key :request-id :payload :timeout-ms]
+   ::pco/params  [:psi/agent-session-ctx :ext-path :key :request-id :payload :timeout-ms :dispatch-id]
    ::pco/output  [:psi.extension/path
                   :psi.extension.service/service-key
                   :psi.extension.service/request-id
@@ -225,7 +225,8 @@
                 agent-session-ctx key
                 {:request-id request-id
                  :payload payload
-                 :timeout-ms timeout-ms})]
+                 :timeout-ms timeout-ms}
+                {:dispatch-id dispatch-id})]
     {:psi.extension/path                ext-path
      :psi.extension.service/service-key (:service-key result)
      :psi.extension.service/request-id  (:request-id result)
@@ -235,14 +236,14 @@
 
 (pco/defmutation service-notify
   "Send a notification to an extension-owned managed service."
-  [_ {:keys [psi/agent-session-ctx ext-path key payload]}]
+  [_ {:keys [psi/agent-session-ctx ext-path key payload dispatch-id]}]
   {::pco/op-name 'psi.extension/service-notify
-   ::pco/params  [:psi/agent-session-ctx :ext-path :key :payload]
+   ::pco/params  [:psi/agent-session-ctx :ext-path :key :payload :dispatch-id]
    ::pco/output  [:psi.extension/path
                   :psi.extension.service/service-key
                   :psi.extension.service/payload]}
   (let [result (service-protocol/send-service-notification!
-                agent-session-ctx key payload)]
+                agent-session-ctx key payload {:dispatch-id dispatch-id})]
     {:psi.extension/path                ext-path
      :psi.extension.service/service-key (:service-key result)
      :psi.extension.service/payload     (:payload result)}))
