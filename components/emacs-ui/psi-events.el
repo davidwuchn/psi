@@ -387,18 +387,27 @@ Child sessions (non-nil parent-session-id that matches a slot) are indented."
        ;; canonical clear+rebuild lifecycle. Clear stale transcript immediately so
        ;; previous session content disappears before replayed messages arrive.
        (when psi-emacs--state
-         (let ((saved-footer (psi-emacs-state-projection-footer psi-emacs--state))
-               (preserve-tool-view (not (eq (psi-emacs-state-tool-output-view-mode psi-emacs--state)
-                                            'collapsed)))
-               (inhibit-read-only t))
+         (let* ((resumed-session-id
+                 (psi-emacs--session-normalize-text
+                  (psi-emacs--event-data-get data '(:session-id session-id :sessionId sessionId))))
+                (saved-footer (psi-emacs-state-projection-footer psi-emacs--state))
+                (preserve-tool-view (not (eq (psi-emacs-state-tool-output-view-mode psi-emacs--state)
+                                             'collapsed)))
+                (inhibit-read-only t))
            (psi-emacs--reset-transcript-state preserve-tool-view)
+           ;; Keep selected-session identity pinned immediately after transcript reset.
+           ;; Without this, cross-session stream events can leak through while
+           ;; `session-id` is nil between resumed → updated/rehydrated frames.
+           (when resumed-session-id
+             (setf (psi-emacs-state-session-id psi-emacs--state) resumed-session-id))
            (when saved-footer
              (setf (psi-emacs-state-projection-footer psi-emacs--state) saved-footer)
              (psi-emacs--upsert-projection-block))
            (when (fboundp 'psi-emacs--focus-input-area)
              (psi-emacs--focus-input-area (current-buffer))))))
       ("session/rehydrated"
-       (when psi-emacs--state
+       (when (and psi-emacs--state
+                  (psi-emacs--event-session-matches-current-p data))
          (let ((messages (or (psi-emacs--event-data-get data '(:messages messages)) '()))
                (inhibit-read-only t))
            (psi-emacs--replay-session-messages

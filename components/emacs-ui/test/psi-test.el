@@ -1517,7 +1517,12 @@ B output into A. Switching to B later then produced corrupted transcript state."
        (:data . ((:session-id . "s-b")
                  (:session-file . "/tmp/s-b.ndedn")
                  (:message-count . 1)))))
-    (setf (psi-emacs-state-session-id psi-emacs--state) "s-b")
+    ;; Regression guard: before session/updated arrives, wrong-session stream
+    ;; events must still be filtered out while selected session is s-b.
+    (psi-emacs--handle-rpc-event
+     '((:event . "assistant/delta")
+       (:data . ((:session-id . "s-a")
+                 (:text . "late wrong-session text")))))
     (psi-emacs--handle-rpc-event
      '((:event . "session/rehydrated")
        (:data . ((:session-id . "s-b")
@@ -1536,6 +1541,7 @@ B output into A. Switching to B later then produced corrupted transcript state."
                  (:content . [((:type . :text) (:text . "beta live done"))])))))
     (let ((text (buffer-string)))
       (should-not (string-match-p "wrong-session text" text))
+      (should-not (string-match-p "late wrong-session text" text))
       (should-not (string-match-p "alpha" text))
       (should (string-match-p "beta start" text))
       (should (string-match-p "beta live done" text)))))
