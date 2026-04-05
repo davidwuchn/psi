@@ -1,9 +1,16 @@
 (ns extensions.lsp-post-tool-test
   (:require
    [clojure.java.io :as io]
+   [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
    [extensions.lsp :as sut]
-   [psi.extension-test-helpers.nullable-api :as nullable]))
+   [psi.agent-session.core :as session]
+   [psi.agent-session.extensions :as ext]
+   [psi.agent-session.mutations :as mutations]
+   [psi.agent-session.services :as services]
+   [psi.agent-session.test-support :as test-support]
+   [psi.extension-test-helpers.nullable-api :as nullable]
+   [psi.query.core :as query]))
 
 (defn- mkdirs! [path]
   (.mkdirs (io/file path))
@@ -124,3 +131,55 @@
              (get-in contribution [:details/merge :lsp :error])))
       (is (= "LSP diagnostics unavailable"
              (get-in contribution [:enrichments 0 :label]))))))
+
+(deftest lsp-post-tool-handler-live-runtime-diagnostics-test
+  (testing "post-tool handler can use the live runtime path and append real diagnostics"
+    (reset! sut/state {:initialized-workspaces #{} :documents {}})
+    (let [root (tmp-dir)
+          _    (mkdirs! (str root "/.git"))
+          path (spit! (str root "/src/foo/core.clj") "(ns foo.core) ;; warn\n")
+          qctx  (query/create-query-context)
+          ctx   (session/create-context (test-support/safe-context-opts {:cwd root}))
+          sd    (session/new-session-in! ctx nil {:worktree-path root})
+          session-id (:session-id sd)
+          mutate (fn [op params]
+                   (get (query/query-in qctx
+                                        {:psi/agent-session-ctx ctx}
+                                        [(list op (assoc params :psi/agent-session-ctx ctx :session-id session-id))])
+                        op))
+          query* (fn [eql] (session/query-in ctx eql {:session-id session-id}))
+          runtime-fns {:query-fn query*
+                       :mutate-fn mutate
+                       :get-api-key-fn (fn [_] nil)
+                       :ui-type-fn (fn [] :console)
+                       :ui-context-fn (fn [_] nil)
+                       :log-fn (fn [_] nil)}
+          _ (session/register-resolvers-in! qctx false)
+          _ (session/register-mutations-in! qctx mutations/all-mutations true)
+          api (ext/create-extension-api (:extension-registry ctx) "/ext/lsp.clj" runtime-fns)
+          handler (sut/make-post-tool-handler api)
+          contribution (handler {:tool-name "write"
+                                 :tool-call-id "call-live"
+                                 :tool-result {:content "ok"
+                                               :is-error false
+                                               :details nil
+                                               :effects [{:path path}]
+                                               :enrichments []}
+                                 :worktree-path root
+                                 :config {:command [(or (System/getenv "BB") "bb")
+                                                    (str (.getCanonicalPath (java.io.File. "extensions/test/extensions/lsp_fixture_bb.clj")))]
+                                          :startup-timeout-ms 2000
+                                          :diagnostics-timeout-ms 2000}})
+          svc (services/service-in ctx (sut/workspace-key root))]
+      (try
+        (is (str/includes? (:content/append contribution) "fixture diagnostic for"))
+        (is (= "LSP workspace synced"
+               (get-in contribution [:enrichments 0 :label])))
+        (is (= (str "LSP diagnostics: " path)
+               (get-in contribution [:enrichments 1 :label])))
+        (is (= 1
+               (get-in contribution [:details/merge :lsp :diagnostic-path-count])))
+        (finally
+          (when-let [close-fn (:close-fn svc)]
+            (future (close-fn)))
+          (future (services/stop-service-in! ctx (sut/workspace-key root))))))))
