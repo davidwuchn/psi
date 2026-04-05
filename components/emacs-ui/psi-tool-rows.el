@@ -552,42 +552,47 @@ This command is valid even when no tool rows exist."
            (new-mode (if (eq current 'collapsed) 'expanded 'collapsed))
            (rows (psi-emacs-state-tool-rows psi-emacs--state)))
       (setf (psi-emacs-state-tool-output-view-mode psi-emacs--state) new-mode)
-      ;; Re-render all existing tool rows with the new mode
-      (maphash (lambda (tool-id row)
-                 (let* ((accumulated (plist-get row :accumulated-text))
-                        (start (plist-get row :start))
-                        (end (plist-get row :end))
-                        (tool-summary (or (plist-get row :tool-summary)
-                                          (psi-emacs--tool-summary
-                                           (plist-get row :tool-name)
-                                           (plist-get row :parsed-args)
-                                           (plist-get row :arguments)
-                                           tool-id
-                                           (plist-get row :details))))
-                        (status (or (plist-get row :status)
-                                    (psi-emacs--tool-status-label
-                                     (plist-get row :stage)
-                                     (plist-get row :is-error)))))
-                   (when (and (markerp start)
-                              (markerp end)
-                              (marker-buffer start)
-                              (marker-buffer end))
-                     (let ((rendered (psi-emacs--render-tool-row
-                                      tool-summary status accumulated new-mode)))
-                       (save-excursion
-                         (let* ((start-pos (marker-position start))
-                                (end-pos (psi-emacs--tool-row-safe-end-position end)))
-                           (when (and (numberp start-pos)
-                                      (numberp end-pos)
-                                      (<= start-pos end-pos))
-                             (let ((inhibit-read-only t))
+      ;; Re-render all existing tool rows with the new mode.
+      ;; Bind `inhibit-read-only' across the whole pass so transcript/footer
+      ;; protection never interferes with these programmatic replacements.
+      (let ((inhibit-read-only t))
+        (maphash (lambda (tool-id row)
+                   (let* ((row* (psi-emacs--tool-row-restore-markers tool-id row))
+                          (accumulated (plist-get row* :accumulated-text))
+                          (start (plist-get row* :start))
+                          (end (plist-get row* :end))
+                          (tool-summary (or (plist-get row* :tool-summary)
+                                            (psi-emacs--tool-summary
+                                             (plist-get row* :tool-name)
+                                             (plist-get row* :parsed-args)
+                                             (plist-get row* :arguments)
+                                             tool-id
+                                             (plist-get row* :details))))
+                          (status (or (plist-get row* :status)
+                                      (psi-emacs--tool-status-label
+                                       (plist-get row* :stage)
+                                       (plist-get row* :is-error)))))
+                     (when (and (markerp start)
+                                (markerp end)
+                                (marker-buffer start)
+                                (marker-buffer end))
+                       (let ((rendered (psi-emacs--render-tool-row
+                                        tool-summary status accumulated new-mode)))
+                         (save-excursion
+                           (let* ((start-pos (marker-position start))
+                                  (end-pos (psi-emacs--tool-row-safe-end-position end)))
+                             (when (and (numberp start-pos)
+                                        (numberp end-pos)
+                                        (<= start-pos end-pos))
                                (goto-char start-pos)
                                (delete-region start-pos end-pos)
                                (insert rendered)
-                               (set-marker end (point)))
-                             ;; Keep row boundary stable with projection/footer.
-                             (set-marker-insertion-type end nil))))))))
-               rows)
+                               (psi-emacs--mark-region-read-only start-pos (point))
+                               (set-marker end (point))
+                               ;; Keep row boundary stable with projection/footer.
+                               (set-marker-insertion-type end nil)
+                               (psi-emacs--sync-tool-row-region tool-id start end))))))))
+                 rows))
       (psi-emacs--refresh-header-line))))
 
 (provide 'psi-tool-rows)
