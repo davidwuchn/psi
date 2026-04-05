@@ -87,6 +87,7 @@
                  :spec {:command ["clojure-lsp"]
                         :cwd "/repo"
                         :transport :stdio
+                        :protocol :json-rpc
                         :env nil}}]
                (:services @state)))
         (is (not (contains? (:initialized-workspaces @sut/state) "/repo")))
@@ -160,6 +161,7 @@
                  :spec {:command ["clojure-lsp"]
                         :cwd "/repo"
                         :transport :stdio
+                        :protocol :json-rpc
                         :env nil}}]
                (:services @state)))
         (is (= "textDocument/didClose"
@@ -191,6 +193,7 @@
                  :spec {:command ["clojure-lsp"]
                         :cwd "/repo"
                         :transport :stdio
+                        :protocol :json-rpc
                         :env nil}}]
                (:services @state)))
         (is (some #(re-find #"Restarted LSP workspace /repo" %) @printed))))))

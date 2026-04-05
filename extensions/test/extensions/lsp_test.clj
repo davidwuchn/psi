@@ -59,6 +59,7 @@
                :spec {:command ["clojure-lsp"]
                       :cwd (.getCanonicalPath (io/file root))
                       :transport :stdio
+                      :protocol :json-rpc
                       :env nil}}]
              (:services @state)))))
 

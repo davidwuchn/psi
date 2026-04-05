@@ -64,6 +64,7 @@
     {:command command
      :cwd workspace-root
      :transport transport
+     :protocol :json-rpc
      :env env}))
 
 (defn ensure-lsp-service!

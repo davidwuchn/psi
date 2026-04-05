@@ -60,12 +60,14 @@
                :spec {:command ["clojure-lsp"]
                       :cwd (.getCanonicalPath (io/file root))
                       :transport :stdio
+                      :protocol :json-rpc
                       :env nil}}
               {:key [:lsp (.getCanonicalPath (io/file root))]
                :type :subprocess
                :spec {:command ["clojure-lsp"]
                       :cwd (.getCanonicalPath (io/file root))
                       :transport :stdio
+                      :protocol :json-rpc
                       :env nil}}]
              (:services @state)))
       (is (= 3 (count (:service-requests @state))))
