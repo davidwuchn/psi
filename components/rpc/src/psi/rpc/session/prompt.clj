@@ -96,8 +96,9 @@
                                     (streams/stop-progress-loop! {:stop? stop?
                                                                   :thread thread
                                                                   :progress-q progress-q
-                                                                  :emit! emit!})
-                                    (emit/emit-assistant-message! emit! result)
+                                                                  :emit! emit!
+                                                                  :session-id session-id})
+                                    (emit/emit-assistant-message! emit! session-id result)
                                     (emit/emit-session-snapshots! emit! ctx state session-id))))
                               (catch Throwable t
                                 (emit! "error" {:error-code "runtime/failed"

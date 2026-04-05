@@ -277,8 +277,9 @@
                                 (streams/stop-progress-loop! {:stop? stop?
                                                               :thread thread
                                                               :progress-q progress-q
-                                                              :emit! emit!})
-                                (emit/emit-assistant-message! emit! result)
+                                                              :emit! emit!
+                                                              :session-id session-id})
+                                (emit/emit-assistant-message! emit! session-id result)
                                 (emit/emit-session-snapshots! emit! ctx state session-id))
                               (when (< attempt 1200)
                                 (Thread/sleep 250)
@@ -321,7 +322,7 @@
                                 (let [message (:message evt)]
                                   (events/emit-event! emit-frame! state
                                                       {:event "assistant/message"
-                                                       :data  (events/external-message->assistant-payload message)})
+                                                       :data  (events/external-message->assistant-payload session-id message)})
                                   (events/emit-event! emit-frame! state
                                                       {:event "session/updated"
                                                        :data  (events/session-updated-payload ctx session-id)})

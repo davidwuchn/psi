@@ -84,7 +84,7 @@
                          :logged-in true})))))
 
 (defn complete-pending-login!
-  [{:keys [ctx message emit!]}]
+  [{:keys [ctx session-id message emit!]}]
   (when-let [{:keys [provider-id provider-name login-state]} (pending-login-state ctx)]
     (if-let [oauth-ctx (:oauth-ctx ctx)]
       (try
@@ -92,13 +92,13 @@
               input   (when-not (str/blank? trimmed) trimmed)]
           (oauth/complete-login! oauth-ctx provider-id input login-state)
           (sa/complete-oauth-login-in! ctx provider-id)
-          (emit/emit-assistant-text! emit! (str "✓ Logged in to " (or provider-name
-                                                                      (some-> provider-id name)
-                                                                      "provider"))))
+          (emit/emit-assistant-text! emit! session-id (str "✓ Logged in to " (or provider-name
+                                                                                 (some-> provider-id name)
+                                                                                 "provider"))))
         (catch Throwable e
           (sa/complete-oauth-login-in! ctx provider-id)
-          (emit/emit-assistant-text! emit! (str "✗ Login failed: " (ex-message e)))))
-      (emit/emit-assistant-text! emit! "OAuth not available."))))
+          (emit/emit-assistant-text! emit! session-id (str "✗ Login failed: " (ex-message e)))))
+      (emit/emit-assistant-text! emit! session-id "OAuth not available."))))
 
 (defn handle-login-start-command!
   [{:keys [ctx state session-id emit-frame! request-id cmd-result emit! start-daemon-thread!]}]
@@ -108,12 +108,12 @@
                           "provider")
         login-state   (:login-state cmd-result)
         callback?     (boolean (:uses-callback-server cmd-result))]
-    (emit/emit-assistant-text! emit!
+    (emit/emit-assistant-text! emit! session-id
                                (str "Login: " provider-name
                                     " — open URL: " (:url cmd-result)))
     (if callback?
       (do
-        (emit/emit-assistant-text! emit! "Waiting for browser callback…")
+        (emit/emit-assistant-text! emit! session-id "Waiting for browser callback…")
         (if-let [oauth-ctx (:oauth-ctx ctx)]
           (let [worker (start-daemon-thread!
                         (fn []
@@ -122,17 +122,17 @@
                             (let [emit-login! (emit/make-request-emitter emit-frame! state request-id)]
                               (try
                                 (oauth/complete-login! oauth-ctx provider-id nil login-state)
-                                (emit/emit-assistant-text! emit-login! (str "✓ Logged in to " provider-name))
+                                (emit/emit-assistant-text! emit-login! session-id (str "✓ Logged in to " provider-name))
                                 (catch Throwable e
-                                  (emit/emit-assistant-text! emit-login! (str "✗ Login failed: " (ex-message e))))
+                                  (emit/emit-assistant-text! emit-login! session-id (str "✗ Login failed: " (ex-message e))))
                                 (finally
                                   (emit/emit-session-snapshots! emit-login! ctx state session-id))))))
                         "rpc-oauth-worker")]
             (rpc.state/add-inflight-future! state worker))
-          (emit/emit-assistant-text! emit! "OAuth not available.")))
+          (emit/emit-assistant-text! emit! session-id "OAuth not available.")))
       (do
         (sa/set-oauth-pending-login-in! ctx
                                         {:provider-id provider-id
                                          :provider-name provider-name
                                          :login-state login-state})
-        (emit/emit-assistant-text! emit! "Paste authorization code as your next prompt message.")))))
+        (emit/emit-assistant-text! emit! session-id "Paste authorization code as your next prompt message.")))))

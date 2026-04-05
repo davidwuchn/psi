@@ -56,9 +56,24 @@ When MODEL-REASONING is non-nil, append an explicit thinking/effort suffix."
             (format "%s • thinking %s" base label))
         base))))
 
+(defun psi-emacs--event-session-matches-current-p (data)
+  "Return non-nil when event DATA targets the current frontend session.
+
+If DATA has no session id, return non-nil for backward compatibility.
+If frontend state has no known session id yet, also allow the event."
+  (let ((event-session-id (psi-emacs--session-normalize-text
+                           (psi-emacs--event-data-get data '(:session-id session-id :sessionId sessionId))))
+        (current-session-id (and psi-emacs--state
+                                 (psi-emacs--session-normalize-text
+                                  (psi-emacs-state-session-id psi-emacs--state)))))
+    (or (null event-session-id)
+        (null current-session-id)
+        (equal event-session-id current-session-id))))
+
 (defun psi-emacs--handle-session-updated-event (data)
   "Project `session/updated` DATA into frontend session/header state."
-  (when psi-emacs--state
+  (when (and psi-emacs--state
+             (psi-emacs--event-session-matches-current-p data))
     (let* ((session-id (psi-emacs--session-normalize-text
                         (psi-emacs--event-data-get data '(:session-id session-id :sessionId sessionId))))
            (phase (psi-emacs--session-normalize-text
@@ -332,38 +347,41 @@ Child sessions (non-nil parent-session-id that matches a slot) are indented."
            (data (or (alist-get :data frame nil nil #'equal) '())))
       (pcase event
       ("assistant/delta"
-       (psi-emacs--assistant-delta
-        (or (psi-emacs--event-data-get data '(:text text :delta delta)) "")))
+       (when (psi-emacs--event-session-matches-current-p data)
+         (psi-emacs--assistant-delta
+          (or (psi-emacs--event-data-get data '(:text text :delta delta)) ""))))
       ("assistant/message"
-       (let* ((explicit-text (psi-emacs--non-blank-text
-                              (psi-emacs--event-data-get data '(:text text :message message))))
-              (content-text  (psi-emacs--non-blank-text
-                              (psi-emacs--assistant-content->text
-                               (psi-emacs--event-data-get data '(:content content)))))
-              (error-text    (psi-emacs--non-blank-text
-                              (psi-emacs--event-data-get data
-                                                         '(:error-message error-message
-                                                           :errorMessage errorMessage
-                                                           :error_message error_message))))
-              (final-text    (or explicit-text
-                                 content-text
-                                 (and error-text (format "[error] %s" error-text))))
-              (has-streamed-text (and psi-emacs--state
-                                      (psi-emacs--non-blank-text
-                                       (psi-emacs-state-assistant-in-progress psi-emacs--state)))))
-         (if (or final-text has-streamed-text)
-             (psi-emacs--assistant-finalize final-text)
-           ;; Empty assistant/message payloads (tool-only or provider-edge events)
-           ;; should not render a blank `ψ:` line.
-           ;; Archive (not clear) any live thinking block — it is part of the
-           ;; transcript and must remain visible even when no reply text follows.
-           (when psi-emacs--state
-             (psi-emacs--archive-thinking-line)
-             (psi-emacs--disarm-stream-watchdog psi-emacs--state)
-             (psi-emacs--set-run-state psi-emacs--state 'idle)))))
+       (when (psi-emacs--event-session-matches-current-p data)
+         (let* ((explicit-text (psi-emacs--non-blank-text
+                                (psi-emacs--event-data-get data '(:text text :message message))))
+                (content-text  (psi-emacs--non-blank-text
+                                (psi-emacs--assistant-content->text
+                                 (psi-emacs--event-data-get data '(:content content)))))
+                (error-text    (psi-emacs--non-blank-text
+                                (psi-emacs--event-data-get data
+                                                           '(:error-message error-message
+                                                             :errorMessage errorMessage
+                                                             :error_message error_message))))
+                (final-text    (or explicit-text
+                                   content-text
+                                   (and error-text (format "[error] %s" error-text))))
+                (has-streamed-text (and psi-emacs--state
+                                        (psi-emacs--non-blank-text
+                                         (psi-emacs-state-assistant-in-progress psi-emacs--state)))))
+           (if (or final-text has-streamed-text)
+               (psi-emacs--assistant-finalize final-text)
+             ;; Empty assistant/message payloads (tool-only or provider-edge events)
+             ;; should not render a blank `ψ:` line.
+             ;; Archive (not clear) any live thinking block — it is part of the
+             ;; transcript and must remain visible even when no reply text follows.
+             (when psi-emacs--state
+               (psi-emacs--archive-thinking-line)
+               (psi-emacs--disarm-stream-watchdog psi-emacs--state)
+               (psi-emacs--set-run-state psi-emacs--state 'idle))))))
       ("assistant/thinking-delta"
-       (psi-emacs--assistant-thinking-delta
-        (or (psi-emacs--event-data-get data '(:text text :delta delta)) "")))
+       (when (psi-emacs--event-session-matches-current-p data)
+         (psi-emacs--assistant-thinking-delta
+          (or (psi-emacs--event-data-get data '(:text text :delta delta)) ""))))
       ("session/resumed"
        ;; Session transitions (/new, /tree, /resume) emit resumed/rehydrated as the
        ;; canonical clear+rebuild lifecycle. Clear stale transcript immediately so
@@ -395,22 +413,23 @@ Child sessions (non-nil parent-session-id that matches a slot) are indented."
       ("context/updated"
        (psi-emacs--handle-context-updated-event data))
       ((or "tool/start" "tool/executing" "tool/update" "tool/result")
-       (psi-emacs--assistant-before-tool-event)
-       (let* ((tool-id (psi-emacs--event-data-get data
-                                                  '(:tool-id tool-id :toolCallId toolCallId :tool-call-id tool-call-id :id id)))
-              (tool-name (psi-emacs--event-data-get data
-                                                    '(:tool-name tool-name :toolName toolName :name name)))
-              (arguments (psi-emacs--event-data-get data '(:arguments arguments)))
-              (parsed-args (psi-emacs--event-data-get data '(:parsed-args parsed-args :parsedArgs parsedArgs)))
-              (is-error (psi-emacs--event-data-get data '(:is-error is-error :isError isError)))
-              (details (psi-emacs--event-data-get data '(:details details)))
-              (stage (replace-regexp-in-string "^tool/" "" event))
-              (raw-text (or (psi-emacs--event-data-get data
-                                                       '(:result-text result-text :text text :output output :delta delta :message message))
-                            ""))
-              (body-text raw-text))
-         (psi-emacs--reset-stream-watchdog psi-emacs--state)
-         (psi-emacs--upsert-tool-row tool-id stage body-text tool-name arguments parsed-args is-error details)))
+       (when (psi-emacs--event-session-matches-current-p data)
+         (psi-emacs--assistant-before-tool-event)
+         (let* ((tool-id (psi-emacs--event-data-get data
+                                                    '(:tool-id tool-id :toolCallId toolCallId :tool-call-id tool-call-id :id id)))
+                (tool-name (psi-emacs--event-data-get data
+                                                      '(:tool-name tool-name :toolName toolName :name name)))
+                (arguments (psi-emacs--event-data-get data '(:arguments arguments)))
+                (parsed-args (psi-emacs--event-data-get data '(:parsed-args parsed-args :parsedArgs parsedArgs)))
+                (is-error (psi-emacs--event-data-get data '(:is-error is-error :isError isError)))
+                (details (psi-emacs--event-data-get data '(:details details)))
+                (stage (replace-regexp-in-string "^tool/" "" event))
+                (raw-text (or (psi-emacs--event-data-get data
+                                                         '(:result-text result-text :text text :output output :delta delta :message message))
+                              ""))
+                (body-text raw-text))
+           (psi-emacs--reset-stream-watchdog psi-emacs--state)
+           (psi-emacs--upsert-tool-row tool-id stage body-text tool-name arguments parsed-args is-error details))))
       ("command-result"
        (psi-emacs--handle-command-result-event data))
       ("ui/dialog-requested"
@@ -439,7 +458,8 @@ Child sessions (non-nil parent-session-id that matches a slot) are indented."
       ("ui/notification"
        (psi-emacs--handle-notification-event data))
       ("footer/updated"
-       (when psi-emacs--state
+       (when (and psi-emacs--state
+                  (psi-emacs--event-session-matches-current-p data))
          (setf (psi-emacs-state-projection-footer psi-emacs--state)
                (psi-emacs--projection-footer-text data))
          (psi-emacs--upsert-projection-block)))

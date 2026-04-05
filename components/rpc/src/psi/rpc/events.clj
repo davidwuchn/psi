@@ -391,29 +391,34 @@
     (case k
       :text-delta
       {:event "assistant/delta"
-       :data  {:text (or (:text progress-event) "")}}
+       :data  {:session-id (:session-id progress-event)
+               :text       (or (:text progress-event) "")}}
 
       :thinking-delta
       {:event "assistant/thinking-delta"
-       :data  {:text (or (:text progress-event) "")}}
+       :data  {:session-id (:session-id progress-event)
+               :text       (or (:text progress-event) "")}}
 
       :tool-start
       {:event "tool/start"
-       :data  (cond-> {:tool-id   (:tool-id progress-event)
-                       :tool-name (:tool-name progress-event)}
-                (some? (:arguments progress-event))  (assoc :arguments (:arguments progress-event))
+       :data  (cond-> {:session-id (:session-id progress-event)
+                       :tool-id    (:tool-id progress-event)
+                       :tool-name  (:tool-name progress-event)}
+                (some? (:arguments progress-event))   (assoc :arguments (:arguments progress-event))
                 (some? (:parsed-args progress-event)) (assoc :parsed-args (:parsed-args progress-event)))}
 
       :tool-executing
       {:event "tool/executing"
-       :data  (cond-> {:tool-id   (:tool-id progress-event)
-                       :tool-name (:tool-name progress-event)}
-                (some? (:arguments progress-event)) (assoc :arguments (:arguments progress-event))
+       :data  (cond-> {:session-id (:session-id progress-event)
+                       :tool-id    (:tool-id progress-event)
+                       :tool-name  (:tool-name progress-event)}
+                (some? (:arguments progress-event))   (assoc :arguments (:arguments progress-event))
                 (some? (:parsed-args progress-event)) (assoc :parsed-args (:parsed-args progress-event)))}
 
       :tool-execution-update
       {:event "tool/update"
-       :data  {:tool-id     (:tool-id progress-event)
+       :data  {:session-id  (:session-id progress-event)
+               :tool-id     (:tool-id progress-event)
                :tool-name   (:tool-name progress-event)
                :content     (or (:content progress-event) [])
                :result-text (or (:result-text progress-event) "")
@@ -422,7 +427,8 @@
 
       :tool-result
       {:event "tool/result"
-       :data  {:tool-id     (:tool-id progress-event)
+       :data  {:session-id  (:session-id progress-event)
+               :tool-id     (:tool-id progress-event)
                :tool-name   (:tool-name progress-event)
                :content     (or (:content progress-event) [])
                :result-text (or (:result-text progress-event) "")
@@ -498,12 +504,13 @@
       (message-text/content-text content)))
 
 (defn external-message->assistant-payload
-  [message]
+  [session-id message]
   (let [content (or (:content message) [])
         text    (or (:text message)
                     (assistant-content-text content))]
-    (cond-> {:role    (or (:role message) "assistant")
-             :content content}
+    (cond-> {:session-id session-id
+             :role       (or (:role message) "assistant")
+             :content    content}
       (and (string? text) (not (str/blank? text))) (assoc :text text)
       (contains? message :custom-type) (assoc :custom-type (:custom-type message))
       (contains? message :stop-reason) (assoc :stop-reason (:stop-reason message))

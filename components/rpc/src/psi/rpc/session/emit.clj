@@ -17,7 +17,9 @@
 
 (defn emit-footer-updated!
   [emit! ctx session-id]
-  (emit! "footer/updated" (events/footer-updated-payload ctx session-id)))
+  (emit! "footer/updated"
+         (assoc (events/footer-updated-payload ctx session-id)
+                :session-id session-id)))
 
 (defn emit-context-updated!
   [emit! ctx state session-id]
@@ -41,9 +43,10 @@
           :message-count message-count}))
 
 (defn emit-session-rehydrated!
-  [emit! {:keys [messages tool-calls tool-order]}]
+  [emit! {:keys [session-id messages tool-calls tool-order]}]
   (emit! "session/rehydrated"
-         {:messages   messages
+         {:session-id session-id
+          :messages   messages
           :tool-calls (or tool-calls {})
           :tool-order (or tool-order [])}))
 
@@ -53,17 +56,19 @@
   (emit-session-resumed! emit! {:session-id session-id
                                 :session-file session-file
                                 :message-count message-count})
-  (emit-session-rehydrated! emit! {:messages messages
+  (emit-session-rehydrated! emit! {:session-id session-id
+                                   :messages messages
                                    :tool-calls tool-calls
                                    :tool-order tool-order}))
 
 (defn emit-assistant-message!
-  [emit! result]
+  [emit! session-id result]
   (let [content (or (:content result) [])
         text    (events/assistant-content-text content)]
     (emit! "assistant/message"
-           (cond-> {:role    (:role result)
-                    :content content}
+           (cond-> {:session-id session-id
+                    :role       (:role result)
+                    :content    content}
              (and (string? text) (not (str/blank? text)))
              (assoc :text text)
 
@@ -77,12 +82,13 @@
              (assoc :usage (:usage result))))))
 
 (defn emit-assistant-text!
-  [emit! text]
+  [emit! session-id text]
   (let [text* (str text)]
     (emit! "assistant/message"
-           {:role    "assistant"
-            :text    text*
-            :content [{:type :text :text text*}]})))
+           {:session-id session-id
+            :role       "assistant"
+            :text       text*
+            :content    [{:type :text :text text*}]})))
 
 (defn emit-command-result!
   [emit! payload]

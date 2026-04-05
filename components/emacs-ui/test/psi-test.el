@@ -1484,6 +1484,62 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
+(ert-deftest psi-inactive-session-stream-events-are-ignored-and-do-not-garble-next-switch ()
+  "Streaming/tool/footer events for a non-selected session must not mutate the current buffer.
+
+Regression: when session B streamed while session A was selected, Emacs rendered
+B output into A. Switching to B later then produced corrupted transcript state."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (setf (psi-emacs-state-session-id psi-emacs--state) "s-a")
+    (psi-emacs--append-assistant-message "alpha")
+    (let ((before (buffer-string)))
+      (psi-emacs--handle-rpc-event
+       '((:event . "assistant/delta")
+         (:data . ((:session-id . "s-b")
+                   (:text . "wrong-session text")))))
+      (psi-emacs--handle-rpc-event
+       '((:event . "tool/start")
+         (:data . ((:session-id . "s-b")
+                   (:tool-id . "tb")
+                   (:tool-name . "read")))))
+      (psi-emacs--handle-rpc-event
+       '((:event . "footer/updated")
+         (:data . ((:session-id . "s-b")
+                   (:path-line . "/repo/b")
+                   (:stats-line . "tokens: 1")))))
+      (should (equal before (buffer-string)))
+      (should (zerop (hash-table-count (psi-emacs-state-tool-rows psi-emacs--state)))))
+
+    (psi-emacs--handle-rpc-event
+     '((:event . "session/resumed")
+       (:data . ((:session-id . "s-b")
+                 (:session-file . "/tmp/s-b.ndedn")
+                 (:message-count . 1)))))
+    (setf (psi-emacs-state-session-id psi-emacs--state) "s-b")
+    (psi-emacs--handle-rpc-event
+     '((:event . "session/rehydrated")
+       (:data . ((:session-id . "s-b")
+                 (:messages . [((:role . :assistant) (:text . "beta start"))])
+                 (:tool-calls . ())
+                 (:tool-order . ())))))
+    (psi-emacs--handle-rpc-event
+     '((:event . "assistant/delta")
+       (:data . ((:session-id . "s-b")
+                 (:text . "beta live")))))
+    (psi-emacs--handle-rpc-event
+     '((:event . "assistant/message")
+       (:data . ((:session-id . "s-b")
+                 (:text . "beta live done")
+                 (:role . "assistant")
+                 (:content . [((:type . :text) (:text . "beta live done"))])))))
+    (let ((text (buffer-string)))
+      (should-not (string-match-p "wrong-session text" text))
+      (should-not (string-match-p "alpha" text))
+      (should (string-match-p "beta start" text))
+      (should (string-match-p "beta live done" text)))))
+
 (ert-deftest psi-session-rehydrated-event-replays-messages-without-get-messages ()
   (with-temp-buffer
     (psi-emacs-mode)
