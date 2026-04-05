@@ -6,6 +6,7 @@
    [psi.agent-core.core :as agent]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.executor :as executor]
+   [psi.agent-session.post-tool :as post-tool]
    [psi.agent-session.session-state :as ss]
    [psi.agent-session.test-support :as test-support]
    [psi.agent-session.tool-execution :as tool-exec]
@@ -233,6 +234,48 @@
           (is (some #{:session/tool-execute-prepared} @events))
           (is (some #{:session/tool-record-result} @events))
           (is (some #{:session/tool-execute} @events)))))))
+
+(deftest post-tool-diagnostics-are-in-provider-facing-tool-result-test
+  (testing "post-tool content append is recorded into the final provider-facing toolResult message"
+    (let [agent-ctx   (setup-agent-ctx!)
+          [session-ctx session-ctx-id] (setup-session-ctx! agent-ctx)
+          tc          {:id "call-lsp" :name "write" :arguments "{}"}
+          q           (LinkedBlockingQueue.)
+          recorded    (atom nil)]
+      (post-tool/register-processor-in!
+       session-ctx
+       {:name "lsp-diagnostics"
+        :match {:tools #{"write"}}
+        :timeout-ms 100
+        :handler (fn [_]
+                   {:content/append "\nLSP diagnostics for /tmp/example.clj:\n- unresolved symbol foo"
+                    :details/merge {:lsp {:diagnostic-path-count 1}}
+                    :enrichments [{:type "lsp/diagnostics"
+                                   :label "LSP diagnostics: /tmp/example.clj"}]})})
+      (with-redefs [tool-plan/execute-tool-runtime-in!
+                    (fn [_ _ _ _]
+                      {:content "Successfully wrote 10 bytes to /tmp/example.clj"
+                       :is-error false
+                       :details nil
+                       :effects [{:type "file/write"
+                                  :path "/tmp/example.clj"}]
+                       :enrichments []})
+                    agent/emit-tool-start-in! (fn [_ _] nil)
+                    agent/emit-tool-end-in! (fn [_ _ _ _] nil)
+                    agent/record-tool-result-in!
+                    (fn [_ msg]
+                      (reset! recorded msg)
+                      nil)]
+        (#'executor/run-tool-call! session-ctx session-ctx-id tc q)
+        (is (= [{:type :text
+                 :text (str "Successfully wrote 10 bytes to /tmp/example.clj"
+                            "\nLSP diagnostics for /tmp/example.clj:\n- unresolved symbol foo")}]
+               (:content @recorded)))
+        (is (= (str "Successfully wrote 10 bytes to /tmp/example.clj"
+                    "\nLSP diagnostics for /tmp/example.clj:\n- unresolved symbol foo")
+               (:result-text @recorded)))
+        (is (= {:lsp {:diagnostic-path-count 1}}
+               (:details @recorded)))))))
 
 (deftest tool-lifecycle-progress-derived-from-canonical-event-test
   (testing "progress projection uses the same canonical lifecycle event shape"

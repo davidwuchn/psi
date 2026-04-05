@@ -4,13 +4,16 @@
    [clojure.string :as str]
    [clojure.test :refer [deftest is testing]]
    [extensions.lsp :as sut]
+   [psi.agent-core.core :as agent]
    [psi.agent-session.core :as session]
    [psi.agent-session.dispatch :as dispatch]
+   [psi.agent-session.executor :as executor]
    [psi.agent-session.extensions :as ext]
    [psi.agent-session.mutations :as mutations]
    [psi.agent-session.post-tool :as post-tool]
    [psi.agent-session.services :as services]
    [psi.agent-session.test-support :as test-support]
+   [psi.agent-session.tool-plan :as tool-plan]
    [psi.query.core :as query]))
 
 (def ^:private lsp-fixture-command
@@ -88,7 +91,13 @@
               :ext-path "/ext/lsp.clj"
               :match {:tools #{"write"}}
               :timeout-ms 2000
-              :handler (sut/make-post-tool-handler api)})
+              :handler (fn [input]
+                         ((sut/make-post-tool-handler api)
+                          (assoc input
+                                 :config {:command lsp-fixture-command
+                                          :startup-timeout-ms 2000
+                                          :diagnostics-timeout-ms 2000
+                                          :sync-timeout-ms 2000})))})
           _ (post-tool/run-post-tool-processing-in!
              ctx
              {:session-id session-id
@@ -218,6 +227,62 @@
           (when-let [close-fn (:close-fn svc)]
             (future (close-fn)))
           (future (services/stop-service-in! ctx (sut/workspace-key root))))))))
+
+(deftest live-lsp-post-tool-is-recorded-into-final-toolresult-test
+  (testing "real LSP post-tool runtime appends diagnostics into the final recorded provider-facing toolResult"
+    (reset! sut/state {:initialized-workspaces #{} :documents {}})
+    (let [worktree (create-temp-worktree)
+          file-path (str (io/file worktree "src" "demo.clj"))
+          _ (.mkdirs (.getParentFile (io/file file-path)))
+          _ (write-file! file-path "(ns demo) ;; warn\n")
+          [ctx session-id] (create-runtime-session worktree)
+          api (create-ext-api ctx session-id)
+          _ (post-tool/register-processor-in!
+             ctx
+             {:name "lsp-diagnostics"
+              :ext-path "/ext/lsp.clj"
+              :match {:tools #{"write"}}
+              :timeout-ms 2000
+              :handler (fn [input]
+                         ((sut/make-post-tool-handler api)
+                          (assoc input
+                                 :config {:command lsp-fixture-command
+                                          :startup-timeout-ms 2000
+                                          :diagnostics-timeout-ms 2000
+                                          :sync-timeout-ms 2000})))})
+          recorded (atom nil)
+          tc {:id "call-live-lsp" :name "write" :arguments "{}"}]
+      (try
+        (with-redefs [tool-plan/execute-tool-runtime-in!
+                      (fn [_ _ _ _]
+                        {:content (str "Successfully wrote 18 bytes to " file-path)
+                         :is-error false
+                         :details nil
+                         :effects [{:type "file/write"
+                                    :path file-path
+                                    :worktree-path worktree
+                                    :bytes 18}]
+                         :enrichments []})
+                      agent/emit-tool-start-in! (fn [_ _] nil)
+                      agent/emit-tool-end-in! (fn [_ _ _ _] nil)
+                      agent/record-tool-result-in! (fn [_ msg] (reset! recorded msg) nil)]
+          (#'executor/run-tool-call! ctx session-id tc nil)
+          (is (some? @recorded))
+          (is (= "call-live-lsp" (:tool-call-id @recorded)))
+          (is (str/includes? (:result-text @recorded)
+                             (str "fixture diagnostic for " file-path)))
+          (is (str/includes? (:result-text @recorded)
+                             (str "LSP diagnostics for " file-path ":")))
+          (is (= [{:type :text
+                   :text (:result-text @recorded)}]
+                 (:content @recorded)))
+          (is (= 1
+                 (get-in @recorded [:details :lsp :diagnostic-path-count]))))
+        (finally
+          (when-let [svc (services/service-in ctx (sut/workspace-key worktree))]
+            (when-let [close-fn (:close-fn svc)]
+              (future (close-fn))))
+          (future (services/stop-service-in! ctx (sut/workspace-key worktree))))))))
 
 (deftest sync-tool-result-subsequent-sync-uses-didchange-test
   (testing "subsequent syncs for an open document use didChange"

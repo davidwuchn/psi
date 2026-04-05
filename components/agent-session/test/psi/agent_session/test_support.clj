@@ -114,6 +114,8 @@
                        :session-defaults             (or session-data {})
                        :extension-registry           ext-reg
                        :workflow-registry            wf-reg
+                       :service-registry             (services/create-registry)
+                       :post-tool-registry           (post-tool/create-registry)
                        :tool-batch-executor          tool-batch-executor
                        :extension-run-fn-atom        (atom nil)
                        :apply-root-state-update-fn   ss/apply-root-state-update-in!
