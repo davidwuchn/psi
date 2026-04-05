@@ -4259,8 +4259,8 @@ so the old `(eq role :user)' check always fell through to the assistant branch."
     (psi-emacs--handle-rpc-event
      '((:event . "context/updated")
        (:data . ((:active-session-id . "s1")
-                 (:sessions . [((:id . "s1") (:name . "main") (:is-active . t) (:is-streaming . nil) (:parent-session-id . nil) (:worktree-path . "/repo/main") (:created-at . "2026-03-16T09:00:00Z"))
-                               ((:id . "s2") (:name . "fork-1") (:is-active . nil) (:is-streaming . nil) (:parent-session-id . "s1") (:worktree-path . "/repo/child") (:created-at . "2026-03-16T08:00:00Z"))
+                 (:sessions . [((:id . "s1") (:name . "main") (:is-active . t) (:is-streaming . nil) (:parent-session-id . nil) (:worktree-path . "/repo/main") (:created-at . "2026-03-16T09:00:00Z") (:updated-at . "2026-03-16T09:15:00Z"))
+                               ((:id . "s2") (:name . "fork-1") (:is-active . nil) (:is-streaming . nil) (:parent-session-id . "s1") (:worktree-path . "/repo/child") (:created-at . "2026-03-16T08:00:00Z") (:updated-at . "2026-03-16T08:10:00Z"))
                                ])))))
     (let* ((widgets (psi-emacs-state-projection-widgets psi-emacs--state))
            (tree-w (seq-find (lambda (w)
@@ -4297,10 +4297,12 @@ so the old `(eq role :user)' check always fell through to the assistant branch."
 
 (ert-deftest psi-session-tree-active-line-has-no-action ()
   "Active session slot line carries no action."
-  (let* ((slots '(((:id . "s1") (:name . "main") (:is-active . t) (:is-streaming . nil) (:parent-session-id . nil) (:worktree-path . "/repo/main"))))
+  (let* ((slots '(((:id . "s1") (:name . "main") (:is-active . t) (:is-streaming . nil) (:parent-session-id . nil) (:worktree-path . "/repo/main") (:created-at . "2026-03-16T09:00:00Z") (:updated-at . "2026-03-16T09:15:00Z"))))
          (lines (psi-emacs--session-tree-widget-lines slots "s1"))
-         (line  (car lines)))
-    (should (equal "main — /repo/main ← active" (alist-get :text line nil nil #'equal)))
+         (line  (car lines))
+         (text  (alist-get :text line nil nil #'equal)))
+    (should (string-prefix-p "main — " text))
+    (should (string-match-p " — [0-9][0-9]:[0-9][0-9] / [0-9][0-9]:[0-9][0-9] — /repo/main ← active$" text))
     (should-not (alist-get :action line nil nil #'equal))))
 
 (ert-deftest psi-session-tree-inactive-line-has-switch-action ()
@@ -4410,51 +4412,56 @@ so the old `(eq role :user)' check always fell through to the assistant branch."
                  (psi-emacs--session-display-name
                   '((:session-id . "abc123456789") (:session-name . nil))))))
 
-(ert-deftest psi-session-age-label-uses-compact-relative-units ()
-  "session age labels use compact relative time units."
-  (let* ((now (float-time))
-         (ts-now (format-time-string "%Y-%m-%dT%H:%M:%SZ" (seconds-to-time (- now 30)) t))
-         (ts-53m (format-time-string "%Y-%m-%dT%H:%M:%SZ" (seconds-to-time (- now (* 53 60))) t))
-         (ts-2h  (format-time-string "%Y-%m-%dT%H:%M:%SZ" (seconds-to-time (- now (* 2 3600))) t)))
-    (cl-letf (((symbol-function 'psi-emacs--now-seconds) (lambda () now)))
-      (should (equal "now" (psi-emacs--session-age-label ts-now)))
-      (should (equal "53m" (psi-emacs--session-age-label ts-53m)))
-      (should (equal "2h" (psi-emacs--session-age-label ts-2h))))))
+(ert-deftest psi-session-clock-label-renders-hour-minute-shape ()
+  "session clock labels render HH:MM shape when timestamp is available."
+  (let ((label (psi-emacs--session-clock-label "2026-03-16T09:12:00Z")))
+    (should (stringp label))
+    (should (string-match-p "^[0-9][0-9]:[0-9][0-9]$" label))))
 
-(ert-deftest psi-tree-session-line-label-includes-worktree-and-age ()
-  "tree line labels include worktree path and compact age when available."
-  (let* ((now (float-time))
-         (ts-53m (format-time-string "%Y-%m-%dT%H:%M:%SZ" (seconds-to-time (- now (* 53 60))) t)))
-    (cl-letf (((symbol-function 'psi-emacs--now-seconds) (lambda () now)))
-      (should (equal "Alpha — /repo/alpha — 53m"
-                     (psi-emacs--session-tree-line-label
-                      `((:id . "abc123456789")
-                        (:name . "Alpha")
-                        (:worktree-path . "/repo/alpha")
-                        (:created-at . ,ts-53m))))))))
+(ert-deftest psi-session-time-range-label-renders-compact-start-and-change-times ()
+  "session time range labels render compact start and change times."
+  (let ((label (psi-emacs--session-time-range-label
+                "2026-03-16T09:12:00Z"
+                "2026-03-16T10:47:00Z")))
+    (should (stringp label))
+    (should (string-match-p "^[0-9][0-9]:[0-9][0-9] / [0-9][0-9]:[0-9][0-9]$" label))))
 
-(ert-deftest psi-tree-session-candidates-include-worktree-and-support-command-keys ()
-  "tree candidates expose worktree path and support backend command payload keys."
-  (let* ((now (float-time))
-         (ts-53m (format-time-string "%Y-%m-%dT%H:%M:%SZ" (seconds-to-time (- now (* 53 60))) t))
-         (ts-2h  (format-time-string "%Y-%m-%dT%H:%M:%SZ" (seconds-to-time (- now (* 2 3600))) t)))
-    (cl-letf (((symbol-function 'psi-emacs--now-seconds) (lambda () now)))
-      (should
-       (equal '(("Alpha — /repo/alpha — 53m ← active" . "abc123456789")
-                ("  (session def98765) — /repo/beta — 2h" . "def987654321"))
-              (psi-emacs--tree-session-candidates
-               `(((:session-id . "abc123456789")
-                  (:session-name . "Alpha")
+(ert-deftest psi-tree-session-line-label-includes-times-and-worktree ()
+  "tree line labels include compact start/change times and worktree path."
+  (let ((label (psi-emacs--session-tree-line-label
+                '((:id . "abc123456789")
+                  (:name . "Alpha")
                   (:worktree-path . "/repo/alpha")
-                  (:created-at . ,ts-53m)
-                  (:is-active . t)
-                  (:parent-session-id . nil))
-                 ((:session-id . "def987654321")
-                  (:session-name . nil)
-                  (:worktree-path . "/repo/beta")
-                  (:created-at . ,ts-2h)
-                  (:parent-session-id . "abc123456789")))
-               "abc123456789"))))))
+                  (:created-at . "2026-03-16T09:12:00Z")
+                  (:updated-at . "2026-03-16T10:47:00Z")))))
+    (should (string-prefix-p "Alpha — " label))
+    (should (string-match-p " — [0-9][0-9]:[0-9][0-9] / [0-9][0-9]:[0-9][0-9] — /repo/alpha$" label))))
+
+(ert-deftest psi-tree-session-candidates-include-times-worktree-and-support-command-keys ()
+  "tree candidates expose compact times, worktree path, and command payload keys."
+  (let ((candidates
+         (psi-emacs--tree-session-candidates
+          '(((:session-id . "abc123456789")
+             (:session-name . "Alpha")
+             (:worktree-path . "/repo/alpha")
+             (:created-at . "2026-03-16T09:12:00Z")
+             (:updated-at . "2026-03-16T10:47:00Z")
+             (:is-active . t)
+             (:parent-session-id . nil))
+            ((:session-id . "def987654321")
+             (:session-name . nil)
+             (:worktree-path . "/repo/beta")
+             (:created-at . "2026-03-16T08:00:00Z")
+             (:updated-at . "2026-03-16T08:05:00Z")
+             (:parent-session-id . "abc123456789")))
+          "abc123456789")))
+    (should (= 2 (length candidates)))
+    (should (equal "abc123456789" (cdar candidates)))
+    (should (string-match-p "^Alpha — [0-9][0-9]:[0-9][0-9] / [0-9][0-9]:[0-9][0-9] — /repo/alpha ← active$"
+                            (caar candidates)))
+    (should (equal "def987654321" (cdadr candidates)))
+    (should (string-match-p "^  (session def98765) — [0-9][0-9]:[0-9][0-9] / [0-9][0-9]:[0-9][0-9] — /repo/beta$"
+                            (car (cadr candidates))))))
 
 (ert-deftest psi-tree-capf-includes-tree-command ()
   "'/tree' appears in slash CAPF candidates."

@@ -186,7 +186,7 @@
    current live session.
 
    Each session slot includes :id :name :worktree-path :is-streaming :is-active
-   :parent-session-id and :created-at.
+   :parent-session-id, :created-at, and :updated-at.
    Sessions are ordered by updated-at ascending (oldest first → stable tree order)."
   [ctx state session-id]
   (let [active-id        (focus-session-id state)
@@ -195,9 +195,9 @@
         indexed-sessions (or (seq (ss/list-context-sessions-in ctx)) [])
         sessions*        (if (seq indexed-sessions)
                            (->> indexed-sessions
-                                (sort-by :updated-at)
+                                (sort-by (juxt :updated-at :session-id))
                                 vec)
-                           [(select-keys sd [:session-id :session-name :worktree-path :parent-session-id :created-at])])
+                           [(select-keys sd [:session-id :session-name :worktree-path :parent-session-id :created-at :updated-at])])
         active-id*       (or active-id current-id)
         slots            (mapv (fn [m]
                                  {:id                (:session-id m)
@@ -208,7 +208,8 @@
                                                            (:is-streaming sd)))
                                   :is-active         (= (:session-id m) active-id*)
                                   :parent-session-id (:parent-session-id m)
-                                  :created-at        (:created-at m)})
+                                  :created-at        (:created-at m)
+                                  :updated-at        (:updated-at m)})
                                sessions*)]
     {:active-session-id active-id*
      :sessions          slots}))

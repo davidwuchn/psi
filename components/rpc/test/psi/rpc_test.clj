@@ -1603,7 +1603,8 @@
       (is (contains? (:data context-evt) :active-session-id))
       (is (vector? (get-in context-evt [:data :sessions])))
       (is (every? #(contains? % :worktree-path) (get-in context-evt [:data :sessions])))
-      (is (every? #(contains? % :created-at) (get-in context-evt [:data :sessions]))))))
+      (is (every? #(contains? % :created-at) (get-in context-evt [:data :sessions])))
+      (is (every? #(contains? % :updated-at) (get-in context-evt [:data :sessions]))))))
 
 (deftest rpc-fork-emits-context-updated-test
   (testing "fork emits context/updated with new session in sessions list"
@@ -1634,7 +1635,8 @@
       (is (some #(= new-sid (:id %)) (get-in context-evt [:data :sessions]))
           "context/updated sessions must include the forked session")
       (is (every? #(contains? % :worktree-path) (get-in context-evt [:data :sessions])))
-      (is (every? #(contains? % :created-at) (get-in context-evt [:data :sessions]))))))
+      (is (every? #(contains? % :created-at) (get-in context-evt [:data :sessions])))
+      (is (every? #(contains? % :updated-at) (get-in context-evt [:data :sessions]))))))
 
 (deftest rpc-new-session-emits-context-updated-test
   (testing "new_session emits context/updated event"
@@ -1654,7 +1656,8 @@
       (is (= new-sid (get-in context-evt [:data :active-session-id])))
       (is (vector? (get-in context-evt [:data :sessions])))
       (is (every? #(contains? % :worktree-path) (get-in context-evt [:data :sessions])))
-      (is (every? #(contains? % :created-at) (get-in context-evt [:data :sessions]))))))
+      (is (every? #(contains? % :created-at) (get-in context-evt [:data :sessions])))
+      (is (every? #(contains? % :updated-at) (get-in context-evt [:data :sessions]))))))
 
 (deftest rpc-e2e-handshake-query-and-streaming-test
   (testing "handshake -> query_eql -> prompt with interleaved events"

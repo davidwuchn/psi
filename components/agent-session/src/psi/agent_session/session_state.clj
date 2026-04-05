@@ -217,8 +217,8 @@
                    (when-not (str/blank? sid)
                      (select-keys data [:session-id :session-file :session-name
                                         :worktree-path :parent-session-id
-                                        :parent-session-path])))))
-         (sort-by :session-id)
+                                        :parent-session-path :created-at :updated-at])))))
+         (sort-by (juxt :updated-at :session-id))
          vec)))
 
 ;; set-context-active-session-in! removed — adapters own focus locally.

@@ -139,41 +139,44 @@ Supports both event slots (`:id`/`:name`) and backend command payloads
   "Return current wall-clock time as float seconds."
   (float-time))
 
-(defun psi-emacs--session-age-label (created-at)
-  "Return compact relative age label for CREATED-AT, or nil when unavailable."
-  (when created-at
-    (let* ((ts (cond
-                ((stringp created-at)
-                 (ignore-errors (float-time (date-to-time created-at))))
-                ((consp created-at)
-                 (ignore-errors (float-time created-at)))
-                (t nil)))
-           (diff (and ts (max 0 (- (psi-emacs--now-seconds) ts)))))
-      (when diff
-        (cond
-         ((< diff 60) "now")
-         ((< diff 3600) (format "%dm" (floor (/ diff 60))))
-         ((< diff 86400) (format "%dh" (floor (/ diff 3600))))
-         ((< diff (* 86400 7)) (format "%dd" (floor (/ diff 86400))))
-         ((< diff (* 86400 30)) (format "%dw" (floor (/ diff (* 86400 7)))))
-         ((< diff (* 86400 365)) (format "%dmo" (floor (/ diff (* 86400 30)))))
-         (t (format "%dy" (floor (/ diff (* 86400 365))))))))))
+(defun psi-emacs--session-clock-label (timestamp)
+  "Return compact local HH:MM label for TIMESTAMP, or nil when unavailable."
+  (when timestamp
+    (let ((time (cond
+                 ((stringp timestamp)
+                  (ignore-errors (date-to-time timestamp)))
+                 ((consp timestamp)
+                  timestamp)
+                 (t nil))))
+      (when time
+        (format-time-string "%H:%M" time)))))
+
+(defun psi-emacs--session-time-range-label (created-at updated-at)
+  "Return compact `HH:MM / HH:MM` label from CREATED-AT and UPDATED-AT."
+  (let ((start (psi-emacs--session-clock-label created-at))
+        (changed (psi-emacs--session-clock-label updated-at)))
+    (cond
+     ((and start changed) (format "%s / %s" start changed))
+     (start start)
+     (changed changed)
+     (t nil))))
 
 (defun psi-emacs--session-tree-line-label (slot)
   "Return the rendered base label for a session tree SLOT."
-  (let* ((base-name (psi-emacs--session-display-name slot))
-         (worktree  (string-trim
-                     (or (psi-emacs--event-data-get slot '(:worktree-path worktree-path
-                                                           :worktreePath worktreePath
-                                                           :cwd cwd))
-                         "")))
+  (let* ((base-name  (psi-emacs--session-display-name slot))
          (created-at (psi-emacs--event-data-get slot '(:created-at created-at :createdAt createdAt)))
-         (age       (psi-emacs--session-age-label created-at)))
+         (updated-at (psi-emacs--event-data-get slot '(:updated-at updated-at :updatedAt updatedAt)))
+         (time-range (psi-emacs--session-time-range-label created-at updated-at))
+         (worktree   (string-trim
+                      (or (psi-emacs--event-data-get slot '(:worktree-path worktree-path
+                                                            :worktreePath worktreePath
+                                                            :cwd cwd))
+                          ""))))
     (concat base-name
+            (when time-range
+              (format " — %s" time-range))
             (when (not (string-empty-p worktree))
-              (format " — %s" worktree))
-            (when age
-              (format " — %s" age)))))
+              (format " — %s" worktree)))))
 
 (defun psi-emacs--session-tree-widget-lines (slots active-id)
   "Build structured widget content-lines for SLOTS with ACTIVE-ID marked.
