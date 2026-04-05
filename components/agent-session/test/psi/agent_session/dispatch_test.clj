@@ -917,6 +917,72 @@
     ;; Event is still logged
     (is (= 1 (count (dispatch/event-log-entries))))))
 
+(deftest canonical-dispatch-trace-failure-paths-test
+  (testing "dispatch handler exception records handler-result and completes with nil legacy result"
+    (dispatch/register-handler! :handler-throws
+                                (fn [_ _] (throw (ex-info "boom" {}))))
+    (is (nil? (dispatch/dispatch! {} :handler-throws {:x 1})))
+    (let [entries (dispatch/dispatch-trace-entries)
+          dispatch-id (:dispatch-id (first entries))
+          by-id (filter #(= dispatch-id (:dispatch-id %)) entries)]
+      (is (some #(and (= :dispatch/received (:trace/kind %))
+                      (= :handler-throws (:event-type %)))
+                by-id))
+      (is (some #(and (= :dispatch/handler-result (:trace/kind %))
+                      (= {:kind :legacy-return :value nil} (:result %)))
+                by-id))
+      (is (some #(and (= :dispatch/completed (:trace/kind %))
+                      (= nil (:result %)))
+                by-id))))
+
+  (testing "effect execution exception records effect-start effect-finish error and failed dispatch"
+    (dispatch/clear-dispatch-trace!)
+    (let [ctx {:execute-dispatch-effect-fn (fn [_ _]
+                                             (throw (ex-info "effect boom" {})))}]
+      (dispatch/register-handler! :effect-throws
+                                  (fn [_ _]
+                                    {:effects [{:effect/type :effect/fail
+                                                :value 1}]
+                                     :return :ok}))
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"effect boom"
+            (dispatch/dispatch! ctx :effect-throws {:x 1})))
+      (let [entries (dispatch/dispatch-trace-entries)
+            dispatch-id (:dispatch-id (first entries))
+            by-id (filter #(= dispatch-id (:dispatch-id %)) entries)]
+        (is (some #(and (= :dispatch/effect-start (:trace/kind %))
+                        (= :effect/fail (:effect-type %)))
+                  by-id))
+        (is (some #(and (= :dispatch/effect-finish (:trace/kind %))
+                        (= :effect/fail (:effect-type %))
+                        (= "effect boom" (:error-message %)))
+                  by-id))
+        (is (some #(and (= :dispatch/failed (:trace/kind %))
+                        (= :effect-throws (:event-type %))
+                        (= "effect boom" (:error-message %)))
+                  by-id)))))
+
+  (testing "service request error payload is traced as service-response is-error"
+    (dispatch/clear-dispatch-trace!)
+    (let [dispatch-id (dispatch/next-dispatch-id)
+          request-fn-var (resolve 'psi.agent-session.service-protocol/send-service-request!)]
+      (with-redefs [psi.agent-session.services/service-in
+                    (fn [_ctx _service-key]
+                      {:request-fn (fn [_req]
+                                     {:payload {"error" {"message" "rpc boom"}}
+                                      :is-error true})})]
+        (@request-fn-var
+         {} [:svc :err]
+         {:request-id "r-err"
+          :payload {"jsonrpc" "2.0" "id" "r-err" "method" "explode"}
+          :timeout-ms 100}
+         {:dispatch-id dispatch-id})
+        (let [entries (dispatch/dispatch-trace-entries)]
+          (is (some #(and (= :dispatch/service-response (:trace/kind %))
+                          (= dispatch-id (:dispatch-id %))
+                          (= "explode" (:method %))
+                          (true? (:is-error %)))
+                    entries)))))))
+
 ;;; Schema validation
 
 (deftest schema-validation-test

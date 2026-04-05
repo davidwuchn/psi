@@ -1,6 +1,7 @@
 (ns psi.agent-session.post-tool-test
   (:require
-   [clojure.test :refer [deftest is testing]]
+   [clojure.test :refer [deftest is]]
+   [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.post-tool :as post-tool]))
 
 (defn- make-ctx []
@@ -82,5 +83,40 @@
                    :tool-result base-result
                    :worktree-path "/repo"})]
       (is (= base-result result))
+      (is (= {:processed-count 0 :timeout-count 1 :error-count 1}
+             (post-tool/telemetry-counts-in ctx))))))
+
+(deftest canonical-post-tool-trace-failure-and-timeout-test
+  (let [ctx (make-ctx)]
+    (post-tool/register-processor-in!
+     ctx
+     {:name "timeout"
+      :match {:tools #{"write"}}
+      :timeout-ms 10
+      :handler (fn [_] (Thread/sleep 50) {:content/append "bad"})})
+    (post-tool/register-processor-in!
+     ctx
+     {:name "error"
+      :match {:tools #{"write"}}
+      :timeout-ms 100
+      :handler (fn [_] (throw (ex-info "boom" {})))})
+    (dispatch/clear-dispatch-trace!)
+    (let [result (post-tool/run-post-tool-processing-in!
+                  ctx
+                  {:session-id "s1"
+                   :tool-name "write"
+                   :tool-call-id "call-trace-1"
+                   :tool-args {}
+                   :tool-result base-result
+                   :worktree-path "/repo"})
+          entries (dispatch/dispatch-trace-entries)
+          received (first entries)
+          completed (last entries)]
+      (is (= base-result result))
+      (is (= :dispatch/received (:trace/kind received)))
+      (is (= :post-tool/run (:event-type received)))
+      (is (= :dispatch/completed (:trace/kind completed)))
+      (is (= :post-tool/run (:event-type completed)))
+      (is (= "call-trace-1" (:tool-call-id completed)))
       (is (= {:processed-count 0 :timeout-count 1 :error-count 1}
              (post-tool/telemetry-counts-in ctx))))))

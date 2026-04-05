@@ -262,6 +262,7 @@
 
 (deftest restart-workspace-closes-documents-and-restarts-service-test
   (testing "restart-workspace! sends didClose and clears tracked document state"
+    (dispatch/clear-dispatch-trace!)
     (reset! sut/state {:initialized-workspaces #{} :documents {}})
     (let [worktree (create-temp-worktree)
           file-path (str (io/file worktree "src" "demo.clj"))
@@ -269,25 +270,51 @@
           _ (write-file! file-path "(ns demo) ;; warn\n")
           [ctx session-id] (create-runtime-session worktree)
           api (create-ext-api ctx session-id)
-          _ (sut/sync-tool-result! api
-                                   {:worktree-path worktree
-                                    :tool-result {:effects [{:path file-path}]}
-                                    :config {:command lsp-fixture-command
-                                             :startup-timeout-ms 2000
-                                             :diagnostics-timeout-ms 2000}})
+          first-result (sut/sync-tool-result! api
+                                              {:worktree-path worktree
+                                               :tool-result {:effects [{:path file-path}]}
+                                               :config {:command lsp-fixture-command
+                                                        :startup-timeout-ms 2000
+                                                        :diagnostics-timeout-ms 2000}})
           root worktree
           svc-before (services/service-in ctx (sut/workspace-key root))
           restarted-root (sut/restart-workspace! api {:worktree-path worktree
                                                       :config {:command lsp-fixture-command}})
           debug-before @(:debug-atom svc-before)
-          svc-after (services/service-in ctx (sut/workspace-key root))]
+          cleared-document-state (sut/document-state file-path)
+          cleared-initialized? (sut/workspace-initialized? root)
+          _ (write-file! file-path "(ns demo) ;; warn again\n")
+          second-result (sut/sync-tool-result! api
+                                               {:worktree-path worktree
+                                                :tool-result {:effects [{:path file-path}]}
+                                                :config {:command lsp-fixture-command
+                                                         :startup-timeout-ms 2000
+                                                         :diagnostics-timeout-ms 2000
+                                                         :sync-timeout-ms 2000}})
+          svc-after (services/service-in ctx (sut/workspace-key root))
+          entries (dispatch/dispatch-trace-entries)]
       (try
         (is (= root restarted-root))
         (is (some #(= "textDocument/didClose" (get-in % [:payload "method"])) debug-before))
-        (is (nil? (sut/document-state file-path)))
-        (is (false? (sut/workspace-initialized? root)))
+        (is (= [{:path file-path :version 1 :first-open? true :method "textDocument/didOpen"}]
+               (:document-syncs first-result)))
+        (is (= [{:path file-path :version 1 :first-open? true :method "textDocument/didOpen"}]
+               (:document-syncs second-result)))
+        (is (= [{"message" (str "fixture diagnostic for " file-path)
+                 "severity" 2}]
+               (get (:diagnostics-by-path second-result) file-path)))
+        (is (nil? cleared-document-state))
+        (is (false? cleared-initialized?))
         (is (= :running (:status svc-after)))
         (is (not= (:pid svc-before) (:pid svc-after)))
+        (is (>= (count (filter #(and (= :dispatch/service-request (:trace/kind %))
+                                     (= "initialize" (:method %)))
+                               entries))
+                2))
+        (is (>= (count (filter #(and (= :dispatch/service-request (:trace/kind %))
+                                     (= "textDocument/diagnostic" (:method %)))
+                               entries))
+                2))
         (finally
           (when-let [close-fn (:close-fn svc-after)]
             (future (close-fn)))
