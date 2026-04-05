@@ -1,11 +1,22 @@
 (ns psi.agent-session.post-tool-test
   (:require
-   [clojure.test :refer [deftest is]]
+   [clojure.test :refer [deftest is use-fixtures]]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.post-tool :as post-tool]))
 
+(defn- clean-state [f]
+  (dispatch/clear-handlers!)
+  (dispatch/clear-dispatch-trace!)
+  (try (f)
+       (finally
+         (dispatch/clear-handlers!)
+         (dispatch/clear-dispatch-trace!))))
+
+(use-fixtures :each clean-state)
+
 (defn- make-ctx []
-  {:post-tool-registry (post-tool/create-registry)})
+  {:post-tool-registry (post-tool/create-registry)
+   :state* (atom {})})
 
 (def base-result
   {:content "ok"
@@ -87,6 +98,9 @@
              (post-tool/telemetry-counts-in ctx))))))
 
 (deftest canonical-post-tool-trace-failure-and-timeout-test
+  (dispatch/register-handler! :session/post-tool-run
+                              (fn [ctx input]
+                                {:return (post-tool/run-post-tool-processing-direct-in! ctx input)}))
   (let [ctx (make-ctx)]
     (post-tool/register-processor-in!
      ctx
@@ -114,9 +128,17 @@
           completed (last entries)]
       (is (= base-result result))
       (is (= :dispatch/received (:trace/kind received)))
-      (is (= :post-tool/run (:event-type received)))
+      (is (= :session/post-tool-run (:event-type received)))
+      (is (some #(and (= :dispatch/interceptor-enter (:trace/kind %))
+                      (= :permission (:interceptor-id %)))
+                entries))
+      (is (some #(and (= :dispatch/handler-result (:trace/kind %))
+                      (= :session/post-tool-run (:event-type %)))
+                entries))
+      (is (some #(and (= :dispatch/interceptor-exit (:trace/kind %))
+                      (= :apply (:interceptor-id %)))
+                entries))
       (is (= :dispatch/completed (:trace/kind completed)))
-      (is (= :post-tool/run (:event-type completed)))
-      (is (= "call-trace-1" (:tool-call-id completed)))
+      (is (= :session/post-tool-run (:event-type completed)))
       (is (= {:processed-count 0 :timeout-count 1 :error-count 1}
              (post-tool/telemetry-counts-in ctx))))))

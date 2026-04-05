@@ -668,9 +668,13 @@
                 ;; Ensure :session-id is in handler data when the event
                 ;; carries one (sourced from ictx, never from ctx).
                 eff-sid      (:session-id ictx)
-                handler-data (if (and eff-sid (not (:session-id raw-data)))
-                               (assoc (or raw-data {}) :session-id eff-sid)
-                               raw-data)
+                handler-data (cond-> (or raw-data {})
+                               (and eff-sid (not (:session-id raw-data)))
+                               (assoc :session-id eff-sid)
+
+                               (and (dispatch-id-of ictx)
+                                    (not (:dispatch-id raw-data)))
+                               (assoc :dispatch-id (dispatch-id-of ictx)))
                 result (try
                          (handler-fn ctx handler-data)
                          (catch Exception e

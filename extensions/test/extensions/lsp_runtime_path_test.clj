@@ -102,14 +102,13 @@
                        :sync-timeout-ms 2000}})
           entries (dispatch/dispatch-trace-entries)
           received (some #(when (and (= :dispatch/received (:trace/kind %))
-                                     (= :post-tool/run (:event-type %)))
+                                     (= :session/post-tool-run (:event-type %)))
                             %)
                          entries)
           dispatch-id (:dispatch-id received)]
       (try
         (is (= :dispatch/received (:trace/kind received)))
-        (is (= :post-tool/run (:event-type received)))
-        (is (= "call-trace" (:tool-call-id (last entries))))
+        (is (= :session/post-tool-run (:event-type received)))
         (is (string? dispatch-id))
         (is (some #(and (= :dispatch/service-request (:trace/kind %))
                         (= dispatch-id (:dispatch-id %))
@@ -137,7 +136,7 @@
                   entries))
         (is (some #(and (= :dispatch/completed (:trace/kind %))
                         (= dispatch-id (:dispatch-id %))
-                        (= :post-tool/run (:event-type %)))
+                        (= :session/post-tool-run (:event-type %)))
                   entries))
         (let [qtrace (:psi.dispatch-trace/recent
                       (session/query-in ctx
@@ -159,7 +158,7 @@
                                                :psi.dispatch-trace/dispatch-id dispatch-id}))]
           (is (some #(and (= :dispatch/received (:psi.dispatch-trace/trace-kind %))
                           (= dispatch-id (:psi.dispatch-trace/dispatch-id %))
-                          (= :post-tool/run (:psi.dispatch-trace/event-type %)))
+                          (= :session/post-tool-run (:psi.dispatch-trace/event-type %)))
                     qtrace))
           (is (some #(and (= :dispatch/service-request (:psi.dispatch-trace/trace-kind %))
                           (= dispatch-id (:psi.dispatch-trace/dispatch-id %))

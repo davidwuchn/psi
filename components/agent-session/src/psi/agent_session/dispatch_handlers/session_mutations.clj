@@ -7,6 +7,7 @@
    [psi.agent-core.core :as agent]
    [psi.agent-session.dispatch :as dispatch]
    [psi.agent-session.dispatch-handlers.session-state :as ss]
+   [psi.agent-session.post-tool :as post-tool]
    [psi.agent-session.session :as session-data]
    [psi.agent-session.session-state :as session]
    [psi.agent-session.tool-execution :as tool-exec]))
@@ -388,6 +389,20 @@
                  :args       args
                  :opts       opts}]
       :return-effect-result? true}))
+
+  (register-core-handler!
+   :session/post-tool-run
+   (fn [ctx {:keys [session-id tool-name tool-call-id tool-args tool-result worktree-path dispatch-id] :as input}]
+     {:return (post-tool/run-post-tool-processing-direct-in!
+               ctx
+               (assoc input
+                      :session-id session-id
+                      :tool-name tool-name
+                      :tool-call-id tool-call-id
+                      :tool-args tool-args
+                      :tool-result tool-result
+                      :worktree-path worktree-path
+                      :dispatch-id dispatch-id))}))
 
   (register-core-handler!
    :session/tool-execute-prepared
