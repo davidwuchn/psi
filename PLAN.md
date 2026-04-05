@@ -206,6 +206,8 @@ Completed in this slice:
 - proved workspace restart closes tracked documents, clears initialization state, and respawns the service
 - proved post-tool handler adds diagnostics enrichments/content append and shapes non-fatal failure output
 - proved workspace status rendering reflects live service state and tracked documents
+- proved restart-flow diagnostics continuity by re-syncing after restart and observing fresh initialize + diagnostic requests
+- reduced the LSP runtime-path slice's dependence on nullable response stubs by exercising the real managed-service path for trace-oriented flows
 
 Likely namespaces to add/change next:
 - `extensions.lsp`
@@ -266,18 +268,24 @@ Trace entry candidates:
 Planned increments:
 1. define canonical trace entry schema + bounded runtime storage ✅
 2. generate a `dispatch-id` at dispatch entry and thread it through opts/context ✅
-3. record interceptor enter/exit around the existing dispatch pipeline
-4. record handler result + emitted effects summary
+3. record interceptor enter/exit around the existing dispatch pipeline ✅
+4. record handler result + emitted effects summary ✅
 5. record effect execution start/finish and associate back to `dispatch-id` ✅
 6. record service request/response summaries from the managed-service protocol layer ✅
 7. expose trace surface through EQL ✅
 8. add focused tests proving one dispatched event yields a coherent trace chain ✅
+9. add focused failure/restart-path coverage for dispatch + LSP trace surfaces ✅
+10. route post-tool flows through the canonical dispatch pipeline ✅
 
 Current implemented surface:
 - bounded canonical trace storage in `psi.agent-session.dispatch`
 - stable explicit `dispatch-id` threading without dynamic vars
 - trace entry kinds currently recorded:
   - `:dispatch/received`
+  - `:dispatch/interceptor-enter`
+  - `:dispatch/interceptor-exit`
+  - `:dispatch/handler-result`
+  - `:dispatch/effects-emitted`
   - `:dispatch/effect-start`
   - `:dispatch/effect-finish`
   - `:dispatch/service-request`
@@ -285,14 +293,25 @@ Current implemented surface:
   - `:dispatch/service-notify`
   - `:dispatch/completed`
   - `:dispatch/failed`
+- post-tool flows now route through dispatch as `:session/post-tool-run` rather than appending ad hoc top-level trace entries
+- nested managed-service request/response/notify activity now inherits the enclosing dispatch-owned `dispatch-id` for post-tool LSP flows
 - EQL resolver surface:
   - `:psi.dispatch-trace/count`
   - `{:psi.dispatch-trace/recent [...]}`
   - `{:psi.dispatch-trace/by-id [...]}`
-- focused LSP integration tests now prove one post-tool sync flow yields a coherent trace chain queryable by `dispatch-id`
+  - includes `:psi.dispatch-trace/interceptor-id`
+- focused LSP integration tests now prove one dispatch-owned post-tool sync flow yields a coherent trace chain queryable by `dispatch-id`
+- focused failure-path tests now cover:
+  - handler exception behavior
+  - effect execution failure trace recording
+  - service error response trace recording
+  - post-tool timeout/error shaping without failing the underlying tool result
+  - restart-flow initialize/diagnostic continuity
 
 Remaining next increments:
-- broaden tests for failure/restart flows and more dispatch-owned slices
+- decide whether LSP findings should remain result-integrated data or become first-class dispatch events of their own
+- broaden dispatch-owned tracing to additional slices beyond the current tool/post-tool/service path
+- decide whether service lifecycle transitions (`ensure`/`stop`/`restart`) need explicit canonical trace entries
 
 Likely namespaces to add/change next:
 - `psi.agent-session.dispatch`
