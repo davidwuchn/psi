@@ -133,25 +133,33 @@ If frontend state has no known session id yet, also allow the event."
           (t                                    'idle))))
       (psi-emacs--refresh-header-line))))
 
-(defun psi-emacs--session-display-name (slot)
-  "Return display name for session SLOT map.
+(defun psi-emacs--session-short-id (slot)
+  "Return compact 8-char session id prefix for SLOT, or empty string."
+  (let ((id (or (psi-emacs--event-data-get slot '(:id id
+                                                  :session-id session-id
+                                                  :sessionId sessionId))
+                "")))
+    (substring id 0 (min 8 (length id)))))
 
-Supports both event slots (`:id`/`:name`) and backend command payloads
-(`:session-id`/`:session-name`). Prefers explicit display/name fields, else
-falls back to `(session <8-char id prefix>)`."
+(defun psi-emacs--session-explicit-display-name (slot)
+  "Return explicit display/name for SLOT, or nil when absent."
   (let ((name (psi-emacs--event-data-get slot '(:display-name display-name
                                                 :session-display-name session-display-name
                                                 :sessionDisplayName sessionDisplayName
                                                 :name name
                                                 :session-name session-name
                                                 :sessionName sessionName))))
-    (if (and (stringp name) (not (string-empty-p (string-trim name))))
-        (string-trim name)
-      (let ((id (or (psi-emacs--event-data-get slot '(:id id
-                                                      :session-id session-id
-                                                      :sessionId sessionId))
-                    "")))
-        (format "(session %s)" (substring id 0 (min 8 (length id))))))))
+    (when (and (stringp name) (not (string-empty-p (string-trim name))))
+      (string-trim name))))
+
+(defun psi-emacs--session-display-name (slot)
+  "Return display name for session SLOT map.
+
+Supports both event slots (`:id`/`:name`) and backend command payloads
+(`:session-id`/`:session-name`). Prefers explicit display/name fields, else
+falls back to `(session <8-char id prefix>)`."
+  (or (psi-emacs--session-explicit-display-name slot)
+      (format "(session %s)" (psi-emacs--session-short-id slot))))
 
 (defun psi-emacs--now-seconds ()
   "Return current wall-clock time as float seconds."
@@ -182,6 +190,7 @@ falls back to `(session <8-char id prefix>)`."
 (defun psi-emacs--session-tree-line-label (slot)
   "Return the rendered base label for a session tree SLOT."
   (let* ((base-name  (psi-emacs--session-display-name slot))
+         (short-id   (psi-emacs--session-short-id slot))
          (created-at (psi-emacs--event-data-get slot '(:created-at created-at :createdAt createdAt)))
          (updated-at (psi-emacs--event-data-get slot '(:updated-at updated-at :updatedAt updatedAt)))
          (time-range (psi-emacs--session-time-range-label created-at updated-at))
@@ -191,6 +200,8 @@ falls back to `(session <8-char id prefix>)`."
                                                             :cwd cwd))
                           ""))))
     (concat base-name
+            (when (and (stringp short-id) (not (string-empty-p short-id)))
+              (format " [%s]" short-id))
             (when time-range
               (format " — %s" time-range))
             (when (not (string-empty-p worktree))

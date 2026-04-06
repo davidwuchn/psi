@@ -4380,8 +4380,9 @@ so the old `(eq role :user)' check always fell through to the assistant branch."
          (lines (psi-emacs--session-tree-widget-lines slots "s1"))
          (line  (car lines))
          (text  (alist-get :text line nil nil #'equal)))
-    (should (string-prefix-p "main — " text))
-    (should (string-match-p " — [0-9][0-9]:[0-9][0-9] / [0-9][0-9]:[0-9][0-9] — /repo/main ← active$" text))
+    (should (string-prefix-p "main [s1] — " text))
+    (should (string-suffix-p " — /repo/main ← active" text))
+    (should (string-match-p "[0-9][0-9]:[0-9][0-9] / [0-9][0-9]:[0-9][0-9]" text))
     (should-not (alist-get :action line nil nil #'equal))))
 
 (ert-deftest psi-session-tree-inactive-line-has-switch-action ()
@@ -4653,19 +4654,20 @@ summaries and made toggling body visibility ineffective after returning."
     (should (stringp label))
     (should (string-match-p "^[0-9][0-9]:[0-9][0-9] / [0-9][0-9]:[0-9][0-9]$" label))))
 
-(ert-deftest psi-tree-session-line-label-includes-times-and-worktree ()
-  "tree line labels include compact start/change times and worktree path."
+(ert-deftest psi-tree-session-line-label-includes-id-times-and-worktree ()
+  "tree line labels include short id, compact times, and worktree path."
   (let ((label (psi-emacs--session-tree-line-label
                 '((:id . "abc123456789")
                   (:name . "Alpha")
                   (:worktree-path . "/repo/alpha")
                   (:created-at . "2026-03-16T09:12:00Z")
                   (:updated-at . "2026-03-16T10:47:00Z")))))
-    (should (string-prefix-p "Alpha — " label))
-    (should (string-match-p " — [0-9][0-9]:[0-9][0-9] / [0-9][0-9]:[0-9][0-9] — /repo/alpha$" label))))
+    (should (string-prefix-p "Alpha [abc12345] — " label))
+    (should (string-suffix-p " — /repo/alpha" label))
+    (should (string-match-p "[0-9][0-9]:[0-9][0-9] / [0-9][0-9]:[0-9][0-9]" label))))
 
-(ert-deftest psi-tree-session-candidates-include-times-worktree-and-support-command-keys ()
-  "tree candidates expose compact times, worktree path, and command payload keys."
+(ert-deftest psi-tree-session-candidates-include-id-times-worktree-and-support-command-keys ()
+  "tree candidates expose short id, compact times, worktree path, and command payload keys."
   (let ((candidates
          (psi-emacs--tree-session-candidates
           '(((:session-id . "abc123456789")
@@ -4684,11 +4686,11 @@ summaries and made toggling body visibility ineffective after returning."
           "abc123456789")))
     (should (= 2 (length candidates)))
     (should (equal "abc123456789" (cdar candidates)))
-    (should (string-match-p "^Alpha — [0-9][0-9]:[0-9][0-9] / [0-9][0-9]:[0-9][0-9] — /repo/alpha ← active$"
-                            (caar candidates)))
+    (should (string-prefix-p "Alpha [abc12345] — " (caar candidates)))
+    (should (string-suffix-p " — /repo/alpha ← active" (caar candidates)))
     (should (equal "def987654321" (cdadr candidates)))
-    (should (string-match-p "^  (session def98765) — [0-9][0-9]:[0-9][0-9] / [0-9][0-9]:[0-9][0-9] — /repo/beta$"
-                            (car (cadr candidates))))))
+    (should (string-prefix-p "  (session def98765) [def98765] — " (car (cadr candidates))))
+    (should (string-suffix-p " — /repo/beta" (car (cadr candidates))))))
 
 (ert-deftest psi-tree-capf-includes-tree-command ()
   "'/tree' appears in slash CAPF candidates."
