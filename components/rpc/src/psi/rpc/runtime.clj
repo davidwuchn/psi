@@ -94,8 +94,8 @@
   (let [protocol-out       *out*
         original-systemout System/out]
     (try
-      (System/setOut (java.io.PrintStream. System/err true))
       (binding [*out* *err*]
+        (System/setOut (java.io.PrintStream. System/err true))
         (let [ai-model      (resolve-model model-key)
               {:keys [ctx oauth-ctx session-id]} (session-ctx-factory ai-model session-config)
               _             (bootstrap-fn! ctx session-id ai-model memory-runtime-opts)

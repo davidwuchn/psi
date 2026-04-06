@@ -240,6 +240,44 @@
       (is (str/includes? err-text "diagnostic line"))
       (is (= 2 (count out-lines))))))
 
+(deftest rpc-start-runtime-redirects-bootstrap-stdout-to-stderr-test
+  (testing "rpc runtime startup keeps bootstrap stdout off the protocol stream"
+    (let [out            (java.io.StringWriter.)
+          err            (java.io.StringWriter.)
+          session-state* (atom nil)]
+      (binding [*in*  (java.io.StringReader. "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n")
+                *out* out
+                *err* err]
+        (rpc/start-runtime!
+         {:model-key :claude-sonnet
+          :memory-runtime-opts {}
+          :session-config {}
+          :rpc-trace-file nil
+          :session-state* session-state*
+          :nrepl-runtime (atom nil)
+          :resolve-model (fn [_]
+                           {:provider :anthropic :id "stub" :name "Stub" :supports-reasoning true})
+          :session-ctx-factory (fn [_ai-model _session-config]
+                                 (println "BOOTSTRAP BANNER")
+                                 (let [ctx (session/create-context {})
+                                       sd  (session/new-session-in! ctx nil {})]
+                                   {:ctx ctx :oauth-ctx nil :session-id (:session-id sd)}))
+          :bootstrap-fn! (fn [_ctx _session-id _ai-model _memory-runtime-opts]
+                           (println "BOOTSTRAP TRANSCRIPT")
+                           nil)
+          :on-new-session! (fn [_source-session-id]
+                             {:messages [] :tool-calls {} :tool-order []})}))
+      (let [out-lines (->> (str/split-lines (str out)) (remove str/blank?) vec)
+            frames    (parse-frames out-lines)]
+        (is (not (str/includes? (str out) "BOOTSTRAP BANNER")))
+        (is (not (str/includes? (str out) "BOOTSTRAP TRANSCRIPT")))
+        (is (str/includes? (str err) "BOOTSTRAP BANNER"))
+        (is (str/includes? (str err) "BOOTSTRAP TRANSCRIPT"))
+        (is (= :event (:kind (first frames))))
+        (is (= "context/updated" (:event (first frames))))
+        (is (= :response (:kind (second frames))))
+        (is (= "handshake" (:op (second frames))))))))
+
 (deftest run-stdio-loop-trace-fn-captures-inbound-and-outbound-test
   (let [traces  (atom [])
         input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
