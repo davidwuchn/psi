@@ -5,6 +5,8 @@
    [clojure.string :as str]
    [psi.agent-session.commands :as commands]
    [psi.agent-session.core :as session]
+   [psi.agent-session.message-text :as message-text]
+   [psi.agent-session.persistence :as persist]
    [psi.agent-session.runtime :as runtime]
    [psi.agent-session.session-state :as ss]
    [psi.ai.models :as ai-models]
@@ -136,13 +138,39 @@
       (emit-text-command-result! emit! (str "[command result: " result-type "]"))
       nil)))
 
+(defn- current-session-fork-points
+  [ctx session-id]
+  (->> (persist/all-entries-in ctx session-id)
+       (keep (fn [entry]
+               (let [msg  (get-in entry [:data :message])
+                     text (message-text/user-message-display-text msg)]
+                 (when (and (= :message (:kind entry))
+                            (= "user" (:role msg))
+                            (string? text)
+                            (not (str/blank? text)))
+                   {:session-id        session-id
+                    :item-kind         "fork-point"
+                    :entry-id          (:id entry)
+                    :display-name      text
+                    :parent-session-id session-id}))))))
+
 (defn- session-selector-payload
   [ctx session-id]
-  (let [sessions0 (vec (or (ss/list-context-sessions-in ctx) []))]
-    (if (seq sessions0)
-      sessions0
-      [(select-keys (ss/get-session-data-in ctx session-id)
-                    [:session-id :session-name :worktree-path])])))
+  (let [sessions0 (vec (or (ss/list-context-sessions-in ctx) []))
+        sessions  (if (seq sessions0)
+                    sessions0
+                    [(select-keys (ss/get-session-data-in ctx session-id)
+                                  [:session-id :session-name :worktree-path])])
+        session-items (mapv #(assoc % :item-kind "session") sessions)
+        fork-items    (vec (current-session-fork-points ctx session-id))]
+    (loop [remaining session-items
+           acc       []]
+      (if-let [item (first remaining)]
+        (let [acc' (conj acc item)]
+          (if (= session-id (:session-id item))
+            (into acc' (concat fork-items (rest remaining)))
+            (recur (rest remaining) acc')))
+        acc))))
 
 (defn- emit-session-rehydration-from-sid!
   [ctx state emit! sid]

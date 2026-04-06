@@ -183,6 +183,23 @@
   [state session-id]
   (rpc.state/set-focus-session-id! state session-id))
 
+(defn- current-session-fork-point-slots
+  [ctx current-id]
+  (->> (persist/all-entries-in ctx current-id)
+       (keep (fn [entry]
+               (let [msg  (get-in entry [:data :message])
+                     text (message-text/user-message-display-text msg)]
+                 (when (and (= :message (:kind entry))
+                            (= "user" (:role msg))
+                            (string? text)
+                            (not (str/blank? text)))
+                   {:id                current-id
+                    :item-kind         "fork-point"
+                    :entry-id          (:id entry)
+                    :display-name      text
+                    :parent-session-id current-id}))))
+       vec))
+
 (defn context-updated-payload
   "Build the `context/updated` event payload from the current context session snapshot.
 
@@ -192,37 +209,48 @@
 
    Each session slot includes :id :name :worktree-path :is-streaming :is-active
    :parent-session-id, :created-at, and :updated-at.
-   Sessions are ordered by updated-at ascending (oldest first → stable tree order)."
+   Sessions are ordered by updated-at ascending (oldest first → stable tree order).
+   The current session additionally exposes fork-point rows for non-command user prompts."
   [ctx state session-id]
-  (let [active-id        (focus-session-id state)
-        sd               (ss/get-session-data-in ctx session-id)
-        current-id       (:session-id sd)
-        indexed-sessions (or (seq (ss/list-context-sessions-in ctx)) [])
-        sessions*        (if (seq indexed-sessions)
-                           (->> indexed-sessions
-                                (sort-by (juxt :updated-at :session-id))
-                                vec)
-                           [(select-keys sd [:session-id :session-name :worktree-path :parent-session-id :created-at :updated-at])])
-        current-display-name (message-text/session-display-name
-                              (:session-name sd)
-                              (:messages (agent/get-data-in (ss/agent-ctx-in ctx session-id))))
-        active-id*       (or active-id current-id)
-        slots            (mapv (fn [m]
-                                 {:id                (:session-id m)
-                                  :name              (:session-name m)
-                                  :display-name      (or (:display-name m)
-                                                         (if (= (:session-id m) current-id)
-                                                           current-display-name
-                                                           (message-text/short-display-text (:session-name m))) )
-                                  :worktree-path     (:worktree-path m)
-                                  :is-streaming      (boolean
-                                                      (and (= (:session-id m) current-id)
-                                                           (:is-streaming sd)))
-                                  :is-active         (= (:session-id m) active-id*)
-                                  :parent-session-id (:parent-session-id m)
-                                  :created-at        (:created-at m)
-                                  :updated-at        (:updated-at m)})
-                               sessions*)]
+  (let [active-id             (focus-session-id state)
+        sd                    (ss/get-session-data-in ctx session-id)
+        current-id            (:session-id sd)
+        indexed-sessions      (or (seq (ss/list-context-sessions-in ctx)) [])
+        sessions*             (if (seq indexed-sessions)
+                                (->> indexed-sessions
+                                     (sort-by (juxt :updated-at :session-id))
+                                     vec)
+                                [(select-keys sd [:session-id :session-name :worktree-path :parent-session-id :created-at :updated-at])])
+        current-display-name  (message-text/session-display-name
+                               (:session-name sd)
+                               (:messages (agent/get-data-in (ss/agent-ctx-in ctx session-id))))
+        active-id*            (or active-id current-id)
+        session-slots         (mapv (fn [m]
+                                      {:id                (:session-id m)
+                                       :item-kind         "session"
+                                       :name              (:session-name m)
+                                       :display-name      (or (:display-name m)
+                                                              (if (= (:session-id m) current-id)
+                                                                current-display-name
+                                                                (message-text/short-display-text (:session-name m))))
+                                       :worktree-path     (:worktree-path m)
+                                       :is-streaming      (boolean
+                                                           (and (= (:session-id m) current-id)
+                                                                (:is-streaming sd)))
+                                       :is-active         (= (:session-id m) active-id*)
+                                       :parent-session-id (:parent-session-id m)
+                                       :created-at        (:created-at m)
+                                       :updated-at        (:updated-at m)})
+                                    sessions*)
+        fork-slots            (current-session-fork-point-slots ctx active-id*)
+        slots                 (loop [remaining session-slots
+                                     acc       []]
+                                (if-let [slot (first remaining)]
+                                  (let [acc' (conj acc slot)]
+                                    (if (= active-id* (:id slot))
+                                      (into acc' (concat fork-slots (rest remaining)))
+                                      (recur (rest remaining) acc')))
+                                  acc))]
     {:active-session-id active-id*
      :sessions          slots}))
 

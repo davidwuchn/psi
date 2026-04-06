@@ -502,6 +502,84 @@
       (is (not (str/includes? plain "session-s1")))
       (is (not (str/includes? plain "session-s2"))))))
 
+(deftest tree-selector-view-renders-current-session-fork-points-test
+  (testing "tree selector renders abbreviated user prompts under the active session"
+    (let [update-fn (app/make-update (stub-agent-fn ""))
+          qfn       (fn [_q]
+                      {:psi.agent-session/context-sessions
+                       [{:psi.session-info/id "s1"
+                         :psi.session-info/path "/tmp/psi-test/a.ndedn"
+                         :psi.session-info/name "Root"
+                         :psi.session-info/display-name "Root"
+                         :psi.session-info/worktree-path "/tmp/psi-test/root"}
+                        {:psi.session-info/id "s2"
+                         :psi.session-info/path "/tmp/psi-test/b.ndedn"
+                         :psi.session-info/name "Child"
+                         :psi.session-info/display-name "Child"
+                         :psi.session-info/worktree-path "/tmp/psi-test/child"
+                         :psi.session-info/parent-session-id "s1"}]
+                       :psi.agent-session/session-entries
+                       [{:psi.session-entry/id "e1"
+                         :psi.session-entry/kind :message
+                         :psi.session-entry/data {:message {:role "user"
+                                                            :content [{:type :text :text "Investigate prompt lifecycle convergence"}]}}}
+                        {:psi.session-entry/id "e2"
+                         :psi.session-entry/kind :message
+                         :psi.session-entry/data {:message {:role "user"
+                                                            :content [{:type :text :text "/tree"}]}}}]})
+          [state _] ((app/make-init "test-model" qfn nil nil {:dispatch-fn default-dispatch-fn
+                                                              :cwd "/tmp/psi-test"
+                                                              :focus-session-id "s1"}))
+          typed     (type-text update-fn state "/tree")
+          [s1 _]    (update-fn typed (msg/key-press :enter))
+          plain     (ansi/strip-ansi (app/view (assoc s1 :width 120)))]
+      (is (str/includes? plain "Root"))
+      (is (str/includes? plain "Investigate prompt lifecycle convergence"))
+      (is (str/includes? plain "fork"))
+      (is (not (str/includes? plain "⎇ /tree"))))))
+
+(deftest tree-selector-enter-on-fork-point-forks-and-selects-fork-test
+  (testing "enter on a prompt row forks from its entry and selects the fork"
+    (let [forked-entry-id (atom nil)
+          update-fn       (app/make-update (stub-agent-fn ""))
+          qfn             (fn [_q]
+                            {:psi.agent-session/context-sessions
+                             [{:psi.session-info/id "s1"
+                               :psi.session-info/path "/tmp/psi-test/a.ndedn"
+                               :psi.session-info/name "Root"
+                               :psi.session-info/display-name "Root"
+                               :psi.session-info/worktree-path "/tmp/psi-test/root"}
+                              {:psi.session-info/id "s2"
+                               :psi.session-info/path "/tmp/psi-test/b.ndedn"
+                               :psi.session-info/name "Child"
+                               :psi.session-info/display-name "Child"
+                               :psi.session-info/worktree-path "/tmp/psi-test/child"
+                               :psi.session-info/parent-session-id "s1"}]
+                             :psi.agent-session/session-entries
+                             [{:psi.session-entry/id "e1"
+                               :psi.session-entry/kind :message
+                               :psi.session-entry/data {:message {:role "user"
+                                                                  :content [{:type :text :text "Branch from here"}]}}}]})
+          [state _]       ((app/make-init "test-model" qfn nil nil {:dispatch-fn default-dispatch-fn
+                                                                    :cwd "/tmp/psi-test"
+                                                                    :focus-session-id "s1"
+                                                                    :fork-session-fn! (fn [entry-id]
+                                                                                        (reset! forked-entry-id entry-id)
+                                                                                        {:session-id "s3"
+                                                                                         :messages [{:role :assistant
+                                                                                                      :text "forked s3"}]
+                                                                                         :tool-calls {}
+                                                                                         :tool-order []})}))
+          typed           (type-text update-fn state "/tree")
+          [s1 _]          (update-fn typed (msg/key-press :enter))
+          [s2 _]          (update-fn s1 (msg/key-press :down))
+          [s3 _]          (update-fn s2 (msg/key-press :enter))]
+      (is (= "e1" @forked-entry-id))
+      (is (= :idle (:phase s3)))
+      (is (= "s3" (:focus-session-id s3)))
+      (is (= "forked s3" (get-in s3 [:messages 0 :text])))
+      (is (:force-clear? s3)))))
+
 (deftest tree-rename-result-renders-status-message-test
   (testing "tree rename command result appends confirmation text"
     (let [dispatch-fn (fn [text]

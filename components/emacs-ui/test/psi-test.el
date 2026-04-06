@@ -1223,6 +1223,46 @@
       (when (process-live-p (psi-emacs-state-process psi-emacs--state))
         (delete-process (psi-emacs-state-process psi-emacs--state))))))
 
+(ert-deftest psi-frontend-action-context-session-selector-submits-fork-point-payload ()
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state (psi-test--spawn-long-lived-process)))
+    (unwind-protect
+        (let ((rpc-calls nil))
+          (cl-letf (((symbol-function 'completing-read)
+                     (lambda (&rest _args)
+                       "  ⎇ Branch from here"))
+                    ((symbol-value 'psi-emacs--send-request-function)
+                     (lambda (_state op params &optional _callback)
+                       (push (list op params) rpc-calls)
+                       t)))
+            (psi-emacs--handle-rpc-event
+             '((:event . "ui/frontend-action-requested")
+               (:data . ((:request-id . "req-3")
+                         (:action-name . "context-session-selector")
+                         (:prompt . "Select a live session")
+                         (:payload . ((:active-session-id . "s1")
+                                      (:sessions . [((:id . "s1")
+                                                     (:item-kind . "session")
+                                                     (:name . "main")
+                                                     (:is-active . t))
+                                                    ((:id . "s1")
+                                                     (:item-kind . "fork-point")
+                                                     (:entry-id . "e1")
+                                                     (:display-name . "Branch from here")
+                                                     (:parent-session-id . "s1"))])))))))
+          (setq rpc-calls (nreverse rpc-calls))
+          (should (equal '(("frontend_action_result"
+                            ((:request-id . "req-3")
+                             (:action-name . "context-session-selector")
+                             (:status . "submitted")
+                             (:value . ((:type . "fork-point")
+                                        (:entry-id . "e1")
+                                        (:session-id . "s1"))))))
+                         rpc-calls)))
+      (when (process-live-p (psi-emacs-state-process psi-emacs--state))
+        (delete-process (psi-emacs-state-process psi-emacs--state))))))
+
 (ert-deftest psi-resume-session-candidates-sort-newest-first-by-modified ()
   (let* ((sessions (list '((:psi.session-info/path . "/tmp/sessions/older.ndedn")
                            (:psi.session-info/name . "Older")
@@ -3450,6 +3490,24 @@ command rehydration."
         (should (equal '(("switch_session" ((:session-id . "s2"))))
                        calls))))))
 
+(ert-deftest psi-projection-fork-widget-action-uses-fork-op ()
+  "Widget action `/fork <entry-id>` should dispatch the fork op directly."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (let ((calls nil))
+      (cl-letf (((symbol-value 'psi-emacs--send-request-function)
+                 (lambda (_state op params &optional _callback)
+                   (push (list op params) calls)
+                   t)))
+        (insert (propertize "fork here"
+                            'psi-widget-command "/fork e1"
+                            'keymap psi-emacs--projection-widget-action-keymap))
+        (goto-char (point-min))
+        (psi-emacs--projection-activate-widget-action)
+        (should (equal '(("fork" ((:entry-id . "e1"))))
+                       calls))))))
+
 (ert-deftest psi-projection-tree-widget-action-clears-transcript-via-rehydrate-events ()
   "Widget `/tree <id>` activation should clear stale transcript via switch-session rehydration."
   (with-temp-buffer
@@ -4431,6 +4489,50 @@ so the old `(eq role :user)' check always fell through to the assistant branch."
       (should (= 1 (length calls)))
       (should (equal "switch_session" (caar calls)))
       (should (equal "s2" (alist-get :session-id (cadar calls) nil nil #'equal))))))
+
+(ert-deftest psi-tree-session-candidates-support-fork-points ()
+  "Fork-point slots produce candidate payloads with entry-id instead of a plain session-id."
+  (let* ((slots '(((:id . "s1")
+                   (:item-kind . "session")
+                   (:name . "main")
+                   (:is-active . t))
+                  ((:id . "s1")
+                   (:item-kind . "fork-point")
+                   (:entry-id . "e1")
+                   (:display-name . "Branch from here")
+                   (:parent-session-id . "s1"))))
+         (candidates (psi-emacs--tree-session-candidates slots "s1"))
+         (fork-value (cdr (cadr candidates))))
+    (should (stringp (cdar candidates)))
+    (should (equal "fork-point" (alist-get :type fork-value nil nil #'equal)))
+    (should (equal "e1" (alist-get :entry-id fork-value nil nil #'equal)))))
+
+(ert-deftest psi-tree-picker-dispatches-fork-for-fork-point-selection ()
+  "Selecting a fork-point candidate dispatches the fork op with entry-id."
+  (with-temp-buffer
+    (psi-emacs-mode)
+    (setq-local psi-emacs--state (psi-emacs--initialize-state nil))
+    (let ((calls nil))
+      (cl-letf (((symbol-function 'completing-read)
+                 (lambda (&rest _args)
+                   "  Branch from here"))
+                ((symbol-value 'psi-emacs--send-request-function)
+                 (lambda (_state op params &optional _cb)
+                   (push (list op params) calls)
+                   t))
+                ((symbol-function 'psi-emacs--session-tree-line-label)
+                 (lambda (slot)
+                   (or (alist-get :display-name slot nil nil #'equal)
+                       (alist-get :name slot nil nil #'equal)
+                       "(unknown)"))))
+        (psi-emacs--tree-select-and-switch
+         psi-emacs--state
+         "s1"
+         '(((:id . "s1") (:item-kind . "session") (:name . "main") (:is-active . t))
+           ((:id . "s1") (:item-kind . "fork-point") (:entry-id . "e1")
+            (:display-name . "Branch from here") (:parent-session-id . "s1")))))
+      (setq calls (nreverse calls))
+      (should (equal '(("fork" ((:entry-id . "e1")))) calls)))))
 
 (ert-deftest psi-switch-rehydration-query-restores-completed-and-live-session-output ()
   "Switch rehydration should restore completed tool rows and in-progress stream text.

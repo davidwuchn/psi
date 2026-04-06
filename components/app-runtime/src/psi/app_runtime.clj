@@ -762,6 +762,22 @@ Available: " (str/join ", " (map name (keys models/all-models))))
                                    :tool-calls {}
                                    :tool-order []})))
 
+         fork-session-fn! (fn [entry-id]
+                            (try
+                              (let [source-session-id @tui-focus*
+                                    sd                (session/fork-session-in! ctx source-session-id entry-id)
+                                    sid               (:session-id sd)
+                                    _                 (reset! tui-focus* sid)
+                                    msgs              (:messages (agent/get-data-in (ss/agent-ctx-in ctx sid)))]
+                                (assoc (agent-messages->tui-resume-state msgs)
+                                       :session-id sid))
+                              (catch Exception e
+                                (timbre/error e "Session fork failed:" entry-id)
+                                {:messages [{:role :assistant
+                                             :text (str "✗ Session fork failed: " (ex-message e))}]
+                                 :tool-calls {}
+                                 :tool-order []})))
+
          cmd-opts  {:oauth-ctx oauth-ctx
                     :ai-model ai-model
                     :supports-session-tree? true
@@ -859,6 +875,7 @@ Available: " (str/join ", " (map name (keys models/all-models))))
                      :initial-tool-order   (vec (or (:tool-order startup-rehydrate) []))
                      :resume-fn!           resume-fn!
                      :switch-session-fn!   switch-session-fn!
+                     :fork-session-fn!     fork-session-fn!
                      :event-queue          event-queue
                      :alt-screen           false}))))
 

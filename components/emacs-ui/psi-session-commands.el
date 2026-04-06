@@ -895,28 +895,38 @@ Failure path appends deterministic assistant-visible feedback, sets
 (defun psi-emacs--tree-session-candidates (slots active-id)
   "Build completing-read candidates from context session SLOTS with ACTIVE-ID.
 
-Returns an alist of (label . session-id)."
+Returns an alist of (label . value), where value is either a session-id string
+or an alist payload for fork-point selection." 
   (mapcar
    (lambda (slot)
-     (let* ((id           (or (psi-emacs--event-data-get slot '(:id id
+     (let* ((item-kind    (or (psi-emacs--event-data-get slot '(:item-kind item-kind :itemKind itemKind))
+                              "session"))
+            (id           (or (psi-emacs--event-data-get slot '(:id id
                                                                 :session-id session-id
                                                                 :sessionId sessionId))
                               ""))
+            (entry-id     (psi-emacs--event-data-get slot '(:entry-id entry-id :entryId entryId)))
             (is-active*   (psi-emacs--event-data-get slot '(:is-active is-active :isActive isActive)))
-            (is-active    (or is-active*
-                              (and id active-id (equal id active-id))))
+            (is-active    (and (equal item-kind "session")
+                               (or is-active*
+                                   (and id active-id (equal id active-id)))))
             (is-streaming (psi-emacs--event-data-get slot '(:is-streaming is-streaming :isStreaming isStreaming)))
             (parent-id    (psi-emacs--event-data-get slot '(:parent-session-id parent-session-id :parentSessionId parentSessionId)))
             (name         (if (and (listp slot)
                                    (fboundp 'psi-emacs--session-tree-line-label))
                               (psi-emacs--session-tree-line-label slot)
                             (or id "(unknown)")))
-            (indent       (if parent-id "  " ""))
+            (indent       (if (or parent-id (equal item-kind "fork-point")) "  " ""))
             (suffix       (concat
-                           (when is-streaming " [streaming]")
+                           (when (and (equal item-kind "session") is-streaming) " [streaming]")
                            (when is-active " ← active")))
-            (label        (concat indent name suffix)))
-       (cons label id)))
+            (label        (concat indent name suffix))
+            (value        (if (equal item-kind "fork-point")
+                              `((:type . "fork-point")
+                                (:entry-id . ,entry-id)
+                                (:session-id . ,id))
+                            id)))
+       (cons label value)))
    slots))
 
 (defun psi-emacs--request-switch-session-by-id (state session-id)
@@ -935,7 +945,7 @@ Returns an alist of (label . session-id)."
                (psi-emacs--handle-switch-session-response state session-id frame)))))))))
 
 (defun psi-emacs--tree-select-and-switch (state active-id slots)
-  "Prompt from SLOTS (ACTIVE-ID default) and switch selected session."
+  "Prompt from SLOTS (ACTIVE-ID default) and switch selected session or fork-point."
   (let ((candidates (psi-emacs--tree-session-candidates slots active-id)))
     (if (null candidates)
         (psi-emacs--append-assistant-message "No live sessions available.")
@@ -943,15 +953,21 @@ Returns an alist of (label . session-id)."
               (completing-read "Switch session: " candidates nil t nil nil
                                ;; default: active session label
                                (car (rassoc active-id candidates))))
-             (selected-id (cdr (assoc selected-label candidates))))
+             (selected-value (cdr (assoc selected-label candidates))))
         (cond
-         ((null selected-id)
+         ((null selected-value)
           nil)
-         ((equal selected-id active-id)
+         ((and (stringp selected-value)
+               (equal selected-value active-id))
           (psi-emacs--append-assistant-message
            (format "Already on session: %s" selected-label)))
+         ((and (listp selected-value)
+               (equal (alist-get :type selected-value nil nil #'equal) "fork-point"))
+          (let ((entry-id (alist-get :entry-id selected-value nil nil #'equal)))
+            (when (and (stringp entry-id) (not (string-empty-p entry-id)))
+              (psi-emacs--dispatch-request "fork" `((:entry-id . ,entry-id)))))
          (t
-          (psi-emacs--request-switch-session-by-id state selected-id)))))))
+          (psi-emacs--request-switch-session-by-id state selected-value)))))))
 
 (defun psi-emacs--handle-idle-tree-command (state)
   "Handle `/tree` command.

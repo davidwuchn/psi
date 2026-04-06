@@ -1322,6 +1322,31 @@
       (is (vector? (get-in (some #(when (= "session/rehydrated" (:event %)) %) events)
                            [:data :messages])))))
 
+  (testing "command /tree emits frontend selector payload with current-session fork-points"
+    (let [cwd                (str (System/getProperty "java.io.tmpdir") "/psi-rpc-tree-picker-" (java.util.UUID/randomUUID))
+          _                  (.mkdirs (java.io.File. cwd))
+          [ctx session-id]   (create-session-context {:cwd cwd})
+          entry              (persist/message-entry {:role "user"
+                                                    :content [{:type :text :text "Branch from this prompt"}]})
+          _                  (ss/journal-append-in! ctx session-id entry)
+          state              (atom {:ready? true
+                                    :pending {}
+                                    :subscribed-topics #{"ui/frontend-action-requested"}})
+          handler            (make-handler ctx state)
+          input              (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                                  "{:id \"c1\" :kind :request :op \"command\" :params {:text \"/tree\"}}\n")
+          {:keys [out-lines]} (run-loop input handler state)
+          frames             (parse-frames out-lines)
+          action-evt         (some #(when (= "ui/frontend-action-requested" (:event %)) %) frames)
+          sessions           (get-in action-evt [:data :payload :sessions])
+          fork-slot          (some #(when (= "fork-point" (:item-kind %)) %) sessions)]
+      (is (some? action-evt))
+      (is (= "context-session-selector" (get-in action-evt [:data :action-name])))
+      (is (vector? sessions))
+      (is (some? fork-slot))
+      (is (= (:id entry) (:entry-id fork-slot)))
+      (is (= "Branch from this prompt" (:display-name fork-slot)))))
+
   (testing "switch_session and get_messages derive transcript from ctx journal when agent messages drift"
     (let [[ctx _]            (create-session-context {:persist? false})
           sd1                (session/new-session-in! ctx nil {})
@@ -1722,9 +1747,35 @@
           "context/updated active-session-id must be the forked session")
       (is (some #(= new-sid (:id %)) (get-in context-evt [:data :sessions]))
           "context/updated sessions must include the forked session")
-      (is (every? #(contains? % :worktree-path) (get-in context-evt [:data :sessions])))
-      (is (every? #(contains? % :created-at) (get-in context-evt [:data :sessions])))
-      (is (every? #(contains? % :updated-at) (get-in context-evt [:data :sessions]))))))
+      (is (every? #(contains? % :worktree-path) (remove #(= "fork-point" (:item-kind %)) (get-in context-evt [:data :sessions]))))
+      (is (every? #(contains? % :created-at) (remove #(= "fork-point" (:item-kind %)) (get-in context-evt [:data :sessions]))))
+      (is (every? #(contains? % :updated-at) (remove #(= "fork-point" (:item-kind %)) (get-in context-evt [:data :sessions]))))))
+
+  (testing "frontend_action_result context-session-selector accepts fork-point payload and forks"
+    (let [cwd      (str (System/getProperty "java.io.tmpdir") "/psi-rpc-frontend-fork-" (java.util.UUID/randomUUID))
+          _        (.mkdirs (java.io.File. cwd))
+          [ctx sid] (create-session-context {:cwd cwd})
+          entry     (persist/message-entry {:role "user" :content "branch here"})
+          _         (ss/journal-append-in! ctx sid entry)
+          state     (atom {:ready? true
+                           :pending {}
+                           :subscribed-topics #{"session/resumed" "session/rehydrated" "context/updated"}})
+          handler   (make-handler ctx state)
+          input     (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                         "{:id \"a1\" :kind :request :op \"frontend_action_result\" :params {:request-id \"req-1\" :action-name \"context-session-selector\" :status \"submitted\" :value {:type \"fork-point\" :entry-id \"" (:id entry) "\" :session-id \"" sid "\"}}}\n")
+          {:keys [out-lines]} (run-loop input handler state)
+          frames      (parse-frames out-lines)
+          resumed-evt (some #(when (= "session/resumed" (:event %)) %) frames)
+          rehyd-evt   (some #(when (= "session/rehydrated" (:event %)) %) frames)
+          context-evt (some #(when (= "context/updated" (:event %)) %) frames)
+          new-sid     (get-in resumed-evt [:data :session-id])]
+      (is (some? resumed-evt))
+      (is (some? rehyd-evt))
+      (is (some? context-evt))
+      (is (string? new-sid))
+      (is (not= sid new-sid))
+      (is (= new-sid (get-in context-evt [:data :active-session-id])))
+      (is (vector? (get-in rehyd-evt [:data :messages]))))))
 
 (deftest rpc-new-session-emits-context-updated-test
   (testing "new_session emits context/updated event"

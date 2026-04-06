@@ -782,6 +782,7 @@
       (filterv (fn [s]
                  (or (str/includes? (str/lower-case (or (:first-message s) "")) q)
                      (str/includes? (str/lower-case (or (:display-name s) "")) q)
+                     (str/includes? (str/lower-case (or (:prompt-text s) "")) q)
                      (str/includes? (str/lower-case (or (:name s) "")) q)
                      (str/includes? (str/lower-case (or (:cwd s) "")) q)
                      (str/includes? (str/lower-case (or (:session-id s) "")) q)
@@ -794,7 +795,16 @@
      :psi.session-info/path
      :psi.session-info/name
      :psi.session-info/display-name
-     :psi.session-info/parent-session-id]}])
+     :psi.session-info/parent-session-id
+     :psi.session-info/worktree-path
+     :psi.session-info/cwd
+     :psi.session-info/created
+     :psi.session-info/updated
+     :psi.session-info/is-streaming]}
+   {:psi.agent-session/session-entries
+    [:psi.session-entry/id
+     :psi.session-entry/kind
+     :psi.session-entry/data]}])
 
 (defn- session-selector-init
   "Build the initial session selector state for `cwd`."
@@ -815,7 +825,8 @@
   (let [worktree-path (or (:psi.session-info/worktree-path m)
                           (:psi.session-info/cwd m)
                           cwd)]
-    {:session-id        (:psi.session-info/id m)
+    {:item-kind         :session
+     :session-id        (:psi.session-info/id m)
      :path              (:psi.session-info/path m)
      :name              (:psi.session-info/name m)
      :display-name      (:psi.session-info/display-name m)
@@ -824,7 +835,9 @@
                                      (:is-streaming m)))
      :first-message     ""
      :message-count     0
-     :modified          nil
+     :modified          (:psi.session-info/updated m)
+     :created-at        (:psi.session-info/created m)
+     :updated-at        (:psi.session-info/updated m)
      :cwd               worktree-path
      :worktree-path     worktree-path
      :tree-depth        0
@@ -890,9 +903,47 @@
 (defn- selected-index-for-session-id
   [sessions sid]
   (or (first (keep-indexed (fn [i s]
-                             (when (= sid (:session-id s)) i))
+                             (when (and (= :session (:item-kind s :session))
+                                        (= sid (:session-id s)))
+                               i))
                            sessions))
       0))
+
+(defn- current-session-user-prompt-items
+  [entries active-id]
+  (->> (or entries [])
+       (keep (fn [entry]
+               (let [kind    (:psi.session-entry/kind entry)
+                     data    (:psi.session-entry/data entry)
+                     message (:message data)
+                     text    (message-text/user-message-display-text message)]
+                 (when (and (= :message kind)
+                            (= "user" (:role message))
+                            (string? text)
+                            (not (str/blank? text)))
+                   {:item-kind         :fork-point
+                    :session-id        active-id
+                    :entry-id          (:psi.session-entry/id entry)
+                    :prompt-text       text
+                    :display-name      text
+                    :parent-session-id active-id
+                    :tree-depth        1
+                    :tree-prefix       "↳ "}))))
+       vec))
+
+(defn- inject-current-session-prompts
+  [sessions active-id prompt-items]
+  (if (or (str/blank? active-id) (empty? prompt-items))
+    sessions
+    (loop [remaining sessions
+           acc       []]
+      (if-let [item (first remaining)]
+        (let [acc' (conj acc item)]
+          (if (and (= :session (:item-kind item :session))
+                   (= active-id (:session-id item)))
+            (into acc' (concat prompt-items (rest remaining)))
+            (recur (rest remaining) acc')))
+        acc))))
 
 (defn- session-selector-init-from-context
   "Build selector state from the live context snapshot query.
@@ -906,12 +957,15 @@
     (if-not query-fn
       (session-selector-init cwd current-session-file)
       (try
-        (let [data      (or (query-fn tree-selector-query) {})
-              sessions  (->> (or (:psi.agent-session/context-sessions data) [])
-                             (mapv (partial context-session->selector-session cwd))
-                             tree-sort-context-sessions)
-              selected  (selected-index-for-session-id sessions active-id)]
-          {:sessions              sessions
+        (let [data         (or (query-fn tree-selector-query) {})
+              sessions     (->> (or (:psi.agent-session/context-sessions data) [])
+                                (mapv (partial context-session->selector-session cwd))
+                                tree-sort-context-sessions)
+              prompt-items (current-session-user-prompt-items (:psi.agent-session/session-entries data)
+                                                              active-id)
+              items        (inject-current-session-prompts sessions active-id prompt-items)
+              selected     (selected-index-for-session-id items active-id)]
+          {:sessions              items
            :all-sessions          nil
            :scope                 :current
            :search                ""
@@ -1044,6 +1098,8 @@
                               returns {:messages [...], :tool-calls {...}, :tool-order [...]}
      :switch-session-fn!   — (fn [session-id]) called by /tree direct-switch;
                               returns {:messages [...], :tool-calls {...}, :tool-order [...]} | nil
+     :fork-session-fn!     — (fn [entry-id]) called by /tree fork-point selection;
+                              returns {:session-id ... :messages [...], :tool-calls {...}, :tool-order [...]} | nil
      :dispatch-fn          — (fn [text]) → command result map or nil; central command dispatch
      :on-interrupt-fn!     — (fn [state]) -> {:queued-text str? :message str?} | nil
      :on-queue-input-fn!   — (fn [text state]) -> {:message str?} | nil
@@ -1096,6 +1152,7 @@
                                     (:psi.agent-session/session-file introspected))
          :resume-fn!            (:resume-fn! opts)
          :switch-session-fn!    (:switch-session-fn! opts)
+         :fork-session-fn!      (:fork-session-fn! opts)
          :session-selector      nil   ;; non-nil when /resume or /tree picker is active
          :session-selector-mode nil   ;; :resume | :tree
          :prompt-input-state    (initial-prompt-input-state)
@@ -1266,14 +1323,28 @@
 
 (defn- choose-tree-session
   [state chosen]
-  (let [sid (:session-id chosen)]
-    [(restore-session-view state
-                           (restored-session-payload ((:switch-session-fn! state) sid))
-                           {:phase :idle
-                            :focus-session-id sid
-                            :session-selector nil
-                            :session-selector-mode nil})
-     nil]))
+  (case (:item-kind chosen :session)
+    :fork-point
+    (if-let [fork-fn (:fork-session-fn! state)]
+      (let [restored (fork-fn (:entry-id chosen))
+            sid      (:session-id restored)]
+        [(restore-session-view state
+                               (restored-session-payload restored)
+                               {:phase :idle
+                                :focus-session-id sid
+                                :session-selector nil
+                                :session-selector-mode nil})
+         nil])
+      (session-switch-unavailable state))
+
+    (let [sid (:session-id chosen)]
+      [(restore-session-view state
+                             (restored-session-payload ((:switch-session-fn! state) sid))
+                             {:phase :idle
+                              :focus-session-id sid
+                              :session-selector nil
+                              :session-selector-mode nil})
+       nil])))
 
 (defn- choose-resume-session
   [state chosen]
@@ -2507,7 +2578,8 @@
 (defn- selector-label-base
   [info]
   (let [sid-str (some-> (:session-id info) str)]
-    (-> (or (:display-name info)
+    (-> (or (:prompt-text info)
+            (:display-name info)
             (:name info)
             (:first-message info)
             (when sid-str
@@ -2517,27 +2589,36 @@
 
 (defn- tree-selector-label
   [info]
-  (let [glyph    (when (zero? (int (or (:tree-depth info) 0)))
-                   (charm/render dim-style "● "))
-        worktree (shorten-path (or (:worktree-path info) (:cwd info)))]
+  (let [session-item? (= :session (:item-kind info :session))
+        glyph         (when (and session-item?
+                                 (zero? (int (or (:tree-depth info) 0))))
+                        (charm/render dim-style "● "))
+        prompt-prefix (when (= :fork-point (:item-kind info))
+                        (charm/render dim-style "⎇ "))
+        worktree      (shorten-path (or (:worktree-path info) (:cwd info)))]
     (str (or (:tree-prefix info) "")
          (or glyph "")
+         (or prompt-prefix "")
          (selector-label-base info)
-         (when (seq worktree)
+         (when (and session-item? (seq worktree))
            (charm/render dim-style (str "  " worktree))))))
 
 (defn- selector-right-cell
   [sel-state info scope tree-mode?]
   (let [worktree (shorten-path (or (:worktree-path info) (:cwd info)))]
     (if tree-mode?
-      (let [sid         (:session-id info)
-            sid-str     (some-> sid str)
-            active?     (= sid (:active-session-id sel-state))
-            streaming?  (boolean (:is-streaming info))]
-        (str (render-tree-status-cell active? streaming?)
-             (when sid-str
-               (charm/render dim-style
-                             (str "  " (subs sid-str 0 (min 8 (count sid-str))))))))
+      (case (:item-kind info :session)
+        :fork-point
+        (charm/render dim-style "fork")
+
+        (let [sid         (:session-id info)
+              sid-str     (some-> sid str)
+              active?     (= sid (:active-session-id sel-state))
+              streaming?  (boolean (:is-streaming info))]
+          (str (render-tree-status-cell active? streaming?)
+               (when sid-str
+                 (charm/render dim-style
+                               (str "  " (subs sid-str 0 (min 8 (count sid-str)))))))))
       (str (charm/render dim-style (str (:message-count info) " " (format-age (:modified info))))
            (when (= :all scope)
              (str " " (charm/render dim-style worktree)))))))
@@ -2546,8 +2627,9 @@
   [sel-state current-session-file width tree-mode? scope selected i info]
   (let [is-sel     (= i selected)
         is-current (if tree-mode?
-                     (or (= (:session-id info) (:active-session-id sel-state))
-                         (= (:session-id info) (:id info)))
+                     (and (= :session (:item-kind info :session))
+                          (or (= (:session-id info) (:active-session-id sel-state))
+                              (= (:session-id info) (:id info))))
                      (= (:path info) current-session-file))
         label      (if tree-mode?
                      (tree-selector-label info)

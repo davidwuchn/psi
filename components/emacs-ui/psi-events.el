@@ -189,29 +189,35 @@ falls back to `(session <8-char id prefix>)`."
 
 (defun psi-emacs--session-tree-line-label (slot)
   "Return the rendered base label for a session tree SLOT."
-  (let* ((base-name  (psi-emacs--session-display-name slot))
-         (short-id   (psi-emacs--session-short-id slot))
+  (let* ((item-kind  (or (psi-emacs--event-data-get slot '(:item-kind item-kind :itemKind itemKind))
+                         "session"))
+         (base-name  (psi-emacs--session-display-name slot))
+         (short-id   (and (equal item-kind "session")
+                          (psi-emacs--session-short-id slot)))
          (created-at (psi-emacs--event-data-get slot '(:created-at created-at :createdAt createdAt)))
          (updated-at (psi-emacs--event-data-get slot '(:updated-at updated-at :updatedAt updatedAt)))
-         (time-range (psi-emacs--session-time-range-label created-at updated-at))
-         (worktree   (string-trim
-                      (or (psi-emacs--event-data-get slot '(:worktree-path worktree-path
-                                                            :worktreePath worktreePath
-                                                            :cwd cwd))
-                          ""))))
-    (concat base-name
+         (time-range (and (equal item-kind "session")
+                          (psi-emacs--session-time-range-label created-at updated-at)))
+         (worktree   (and (equal item-kind "session")
+                          (string-trim
+                           (or (psi-emacs--event-data-get slot '(:worktree-path worktree-path
+                                                                 :worktreePath worktreePath
+                                                                 :cwd cwd))
+                               "")))))
+    (concat (if (equal item-kind "fork-point") "⎇ " "")
+            base-name
             (when (and (stringp short-id) (not (string-empty-p short-id)))
               (format " [%s]" short-id))
             (when time-range
               (format " — %s" time-range))
-            (when (not (string-empty-p worktree))
+            (when (and (stringp worktree) (not (string-empty-p worktree)))
               (format " — %s" worktree)))))
 
 (defun psi-emacs--session-tree-widget-lines (slots active-id)
   "Build structured widget content-lines for SLOTS with ACTIVE-ID marked.
 
 Returns a list of line maps with :text and optionally :action.
-Child sessions (non-nil parent-session-id that matches a slot) are indented."
+Child sessions and fork-points are indented beneath their parent session."
   (let* ((slot-ids (mapcar (lambda (s)
                              (or (psi-emacs--event-data-get s '(:id id
                                                                 :session-id session-id
@@ -224,25 +230,37 @@ Child sessions (non-nil parent-session-id that matches a slot) are indented."
       (when id (puthash id t slot-id-set)))
     (mapcar
      (lambda (slot)
-       (let* ((id          (or (psi-emacs--event-data-get slot '(:id id
-                                                                 :session-id session-id
-                                                                 :sessionId sessionId))
-                               ""))
-              (is-active   (psi-emacs--event-data-get slot '(:is-active is-active :isActive isActive)))
+       (let* ((id           (or (psi-emacs--event-data-get slot '(:id id
+                                                                  :session-id session-id
+                                                                  :sessionId sessionId))
+                                ""))
+              (item-kind    (or (psi-emacs--event-data-get slot '(:item-kind item-kind :itemKind itemKind))
+                                "session"))
+              (entry-id     (psi-emacs--event-data-get slot '(:entry-id entry-id :entryId entryId)))
+              (is-active    (psi-emacs--event-data-get slot '(:is-active is-active :isActive isActive)))
               (is-streaming (psi-emacs--event-data-get slot '(:is-streaming is-streaming :isStreaming isStreaming)))
-              (parent-id   (psi-emacs--event-data-get slot '(:parent-session-id parent-session-id :parentSessionId parentSessionId)))
-              (indent      (if (and parent-id (gethash parent-id slot-id-set))
-                               "  " ""))
-              (base-label  (psi-emacs--session-tree-line-label slot))
-              (suffix      (concat
-                            (when is-streaming " [streaming]")
-                            (when is-active " ← active")))
-              (text        (concat indent base-label suffix)))
-         (if is-active
-             `((:text . ,text))
-           `((:text . ,text)
-             (:action . ((:type . "command")
-                         (:command . ,(concat "/tree " id))))))))
+              (parent-id    (psi-emacs--event-data-get slot '(:parent-session-id parent-session-id :parentSessionId parentSessionId)))
+              (indent       (if (or (equal item-kind "fork-point")
+                                    (and parent-id (gethash parent-id slot-id-set)))
+                                "  " ""))
+              (base-label   (psi-emacs--session-tree-line-label slot))
+              (suffix       (concat
+                             (when (and (equal item-kind "session") is-streaming) " [streaming]")
+                             (when is-active " ← active")))
+              (text         (concat indent base-label suffix)))
+         (cond
+          (and (equal item-kind "session") is-active)
+          `((:text . ,text))
+
+          (equal item-kind "fork-point")
+          `((:text . ,text)
+            (:action . ((:type . "command")
+                        (:command . ,(concat "/fork " entry-id)))))
+
+          :else
+          `((:text . ,text)
+            (:action . ((:type . "command")
+                        (:command . ,(concat "/tree " id))))))))
      slots)))
 
 (defun psi-emacs--handle-context-updated-event (data)

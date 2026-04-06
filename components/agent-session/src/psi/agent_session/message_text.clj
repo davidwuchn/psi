@@ -166,19 +166,23 @@
     (and (seq trimmed)
          (str/starts-with? trimmed "/"))))
 
-(defn last-user-message-text
-  "Return the most recent non-command user message text from agent-core `messages`, or nil.
+(defn user-message-display-text
+  "Return compact display text for a user MESSAGE map, or nil.
 
    Slash-command inputs (for example `/tree`, `/status`, `/tree name ...`) are
-   ignored so session display names reflect actual conversational/task content
-   rather than navigation commands."
+   ignored so session labels and fork affordances reflect conversational/task
+   content rather than navigation commands."
+  [message]
+  (when (= "user" (:role message))
+    (let [text (short-display-text (content-text (:content message)))]
+      (when-not (slash-command-text? text)
+        text))))
+
+(defn last-user-message-text
+  "Return the most recent non-command user message text from agent-core `messages`, or nil."
   [messages]
   (some->> (reverse (vec (or messages [])))
-           (some (fn [msg]
-                   (when (= "user" (:role msg))
-                     (let [text (short-display-text (content-text (:content msg)))]
-                       (when-not (slash-command-text? text)
-                         text)))))))
+           (some user-message-display-text)))
 
 (defn session-display-name
   "Return live display name from explicit `session-name` or the latest user message."
