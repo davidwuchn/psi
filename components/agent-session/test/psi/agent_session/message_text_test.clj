@@ -51,3 +51,14 @@
           nil
           [{:role "user" :content [{:type :text :text "latest"}]}])))
   (is (nil? (message-text/session-display-name nil []))))
+
+(deftest session-display-name-derives-from-canonical-journal-message-shapes-test
+  (is (= "Investigate failing tests"
+         (message-text/session-display-name
+          nil
+          [{:role "user" :content [{:type :text :text "Investigate failing tests"}]}
+           {:role "assistant" :content [{:type :text :text "ok"}]}])))
+  (is (= "string content also works"
+         (message-text/session-display-name
+          nil
+          [{:role "user" :content "string content also works"}]))))

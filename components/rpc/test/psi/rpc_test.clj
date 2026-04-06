@@ -157,18 +157,23 @@
 
 (deftest session-updated-payload-includes-model-metadata-test
   (testing "session payload includes model metadata for frontend header projection"
-    (let [[ctx _] (create-session-context {:session-defaults {:session-id "sess-123"
-                                                         :model {:provider "openai"
-                                                                 :id "gpt-5.3-codex"
-                                                                 :reasoning true}
-                                                         :thinking-level :xhigh
-                                                         :is-streaming true
-                                                         :is-compacting false
-                                                         :retry-attempt 2
-                                                         :steering-messages [{:content "a"}]
-                                                         :follow-up-messages [{:content "b"}]}})
-          payload (rpc.events/session-updated-payload ctx)]
-      (is (= "sess-123" (:session-id payload)))
+    (let [[ctx sid] (create-session-context)
+          _         (dispatch/dispatch! ctx :session/set-model
+                                        {:session-id sid
+                                         :model {:provider "openai"
+                                                 :id "gpt-5.3-codex"
+                                                 :reasoning true}}
+                                        {:origin :core})
+          _         (dispatch/dispatch! ctx :session/set-thinking-level
+                                        {:session-id sid :level :xhigh}
+                                        {:origin :core})
+          _         (ss/apply-root-state-update-in! ctx
+                                                    (ss/session-update sid #(assoc %
+                                                                                  :retry-attempt 2
+                                                                                  :steering-messages [{:content "a"}]
+                                                                                  :follow-up-messages [{:content "b"}])))
+          payload   (rpc.events/session-updated-payload ctx sid)]
+      (is (= sid (:session-id payload)))
       (is (= "openai" (:model-provider payload)))
       (is (= "gpt-5.3-codex" (:model-id payload)))
       (is (= true (:model-reasoning payload)))
@@ -1681,9 +1686,11 @@
       (is (some? context-evt) "context/updated must be emitted on subscribe")
       (is (contains? (:data context-evt) :active-session-id))
       (is (vector? (get-in context-evt [:data :sessions])))
+      (is (every? #(contains? % :display-name) (get-in context-evt [:data :sessions])))
       (is (every? #(contains? % :worktree-path) (get-in context-evt [:data :sessions])))
       (is (every? #(contains? % :created-at) (get-in context-evt [:data :sessions])))
       (is (every? #(contains? % :updated-at) (get-in context-evt [:data :sessions])))
+      (is (= "hi" (:display-name session-slot)) "display-name should reflect inferred latest user message")
       (is (= (str user-ts) (:updated-at session-slot)) "updated-at should reflect latest message timestamp"))))
 
 (deftest rpc-fork-emits-context-updated-test

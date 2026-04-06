@@ -142,6 +142,16 @@
         (is (= 1 (count listed)))
         (is (= session-id (:session-id (first listed)))))))
 
+  (testing "list-context-sessions-in carries canonical inferred display-name"
+    (let [[ctx session-id] (create-session-context)]
+      (ss/journal-append-in! ctx session-id
+                             (persist/message-entry {:role "user"
+                                                     :content [{:type :text :text "Investigate failing tests"}]
+                                                     :timestamp (java.time.Instant/parse "2026-03-16T10:47:00Z")}))
+      (let [listed (ss/list-context-sessions-in ctx)
+            slot   (first (filter #(= session-id (:session-id %)) listed))]
+        (is (= "Investigate failing tests" (:display-name slot))))))
+
   (testing "new-session-in! accepts explicit worktree-path and session-name and keeps prior context peer"
     (let [[ctx session-id]       (create-session-context {:cwd "/repo/main"
                                                           :session-defaults {:worktree-path "/repo/main"}})

@@ -502,6 +502,18 @@
       (is (not (str/includes? plain "session-s1")))
       (is (not (str/includes? plain "session-s2"))))))
 
+(deftest tree-rename-result-renders-status-message-test
+  (testing "tree rename command result appends confirmation text"
+    (let [dispatch-fn (fn [text]
+                        (when (= text "/tree name s1 Focus on prompt lifecycle")
+                          {:type :tree-rename :session-id "s1" :session-name "Focus on prompt lifecycle"}))
+          update-fn   (app/make-update (stub-agent-fn ""))
+          state       (init-state "test-model" {:dispatch-fn dispatch-fn})
+          typed       (type-text update-fn state "/tree name s1 Focus on prompt lifecycle")
+          [s1 _]      (update-fn typed (msg/key-press :enter))]
+      (is (= :idle (:phase s1)))
+      (is (str/includes? (get-in s1 [:messages 0 :text]) "Renamed session s1 to")))))
+
 ;;;; Update — agent results
 
 (deftest agent-result-transitions-to-idle-test

@@ -1237,6 +1237,7 @@
       :resume (open-session-selector state :resume)
       :tree-open (open-session-selector state :tree)
       :tree-switch (handle-tree-switch-result state result)
+      :tree-rename (handle-text-result state (str "Renamed session " (:session-id result) " to " (pr-str (:session-name result))))
       :new-session (handle-new-session-result state result)
       :text (handle-text-result state (:message result))
       (:login-error :logout) (handle-text-result state (:message result))

@@ -54,6 +54,7 @@ clojure -M:run --tui --nrepl 8888
 - `/tree` dispatches to the backend; when selection is needed, the backend requests
   a frontend action and TUI renders the live context session picker (in-process multi-session view).
 - `/tree <session-id|prefix>` switches directly to a live context session by id.
+- `/tree name <session-id|prefix> <name>` assigns an explicit human name to a live context session.
 - In `/tree` picker mode, sessions render in parent/child order with explicit tree
   glyphs (root `●`, branch connectors `├─` / `└─` / `│`).
 - Right-side status cells are column-aligned across rows (`[active] [stream]`) to

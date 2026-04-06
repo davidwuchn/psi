@@ -24,6 +24,7 @@
    Adapters no longer bake session-id into persistent ctx closures."
   (:require
    [clojure.string :as str]
+   [psi.agent-session.message-text :as message-text]
    [psi.agent-session.persistence :as persist]
    [psi.agent-session.statechart :as sc]))
 
@@ -223,6 +224,9 @@
 (defn list-context-sessions-in
   "Return valid session metadata entries sorted by updated-at.
 
+   `:display-name` is canonicalized here so all adapters can render the same
+   explicit-or-inferred label for a session.
+
    `:updated-at` prefers explicit session metadata when present, otherwise
    derives from the latest journaled message timestamp so adapters can render a
    real last-message clock instead of repeating session creation time.
@@ -235,11 +239,21 @@
          (keep (fn [{:keys [data persistence]}]
                  (when-let [sid (:session-id data)]
                    (when-not (str/blank? sid)
-                     (assoc (select-keys data [:session-id :session-file :session-name
-                                               :worktree-path :parent-session-id
-                                               :parent-session-path :created-at :updated-at])
-                            :updated-at (or (:updated-at data)
-                                            (latest-message-timestamp (:journal persistence))))))))
+                     (let [journal       (:journal persistence)
+                           messages      (keep (fn [entry]
+                                                 (when (= (:kind entry) :message)
+                                                   (get-in entry [:data :message])))
+                                               journal)
+                           updated-at    (or (:updated-at data)
+                                             (latest-message-timestamp journal))
+                           display-name  (message-text/session-display-name
+                                          (:session-name data)
+                                          messages)]
+                       (assoc (select-keys data [:session-id :session-file :session-name
+                                                 :worktree-path :parent-session-id
+                                                 :parent-session-path :created-at :updated-at])
+                              :display-name display-name
+                              :updated-at updated-at))))))
          (sort-by (juxt :updated-at :session-id))
          vec)))
 

@@ -38,13 +38,7 @@
                    :psi.session-info/created]}]}
   (let [resolver-sid (support/resolver-session-id agent-session-ctx)
         sd           (support/session-data agent-session-ctx)
-        state        @(:state* agent-session-ctx)
-        sessions     (get-in state [:agent-session :sessions])
-        hs           (->> (vals sessions)
-                          (map :data)
-                          (filter some?)
-                          (sort-by :session-id)
-                          vec)
+        hs           (ss/list-context-sessions-in agent-session-ctx)
         messages     (when resolver-sid
                        (support/agent-core-messages agent-session-ctx))]
     {:psi.agent-session/session-id                 (:session-id sd)
@@ -56,17 +50,15 @@
      :psi.agent-session/context-session-count      (count hs)
      :psi.agent-session/context-sessions
      (mapv (fn [m]
-             (let [sid      (:session-id m)
-                   messages (:messages (agent/get-data-in (ss/agent-ctx-in agent-session-ctx sid)))]
-               {:psi.session-info/id                  sid
-                :psi.session-info/path                (:session-file m)
-                :psi.session-info/cwd                 (:worktree-path m)
-                :psi.session-info/worktree-path       (:worktree-path m)
-                :psi.session-info/name                (:session-name m)
-                :psi.session-info/display-name        (message-text/session-display-name (:session-name m) messages)
-                :psi.session-info/parent-session-id   (:parent-session-id m)
-                :psi.session-info/parent-session-path (:parent-session-path m)
-                :psi.session-info/created             (:created-at m)}))
+             {:psi.session-info/id                  (:session-id m)
+              :psi.session-info/path                (:session-file m)
+              :psi.session-info/cwd                 (:worktree-path m)
+              :psi.session-info/worktree-path       (:worktree-path m)
+              :psi.session-info/name                (:session-name m)
+              :psi.session-info/display-name        (:display-name m)
+              :psi.session-info/parent-session-id   (:parent-session-id m)
+              :psi.session-info/parent-session-path (:parent-session-path m)
+              :psi.session-info/created             (:created-at m)})
            hs)}))
 
 ;; ── Phase and streaming state ───────────────────────────

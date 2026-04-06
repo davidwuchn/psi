@@ -5,6 +5,7 @@
    [psi.agent-core.core :as agent]
    [psi.agent-session.core :as session]
    [psi.agent-session.message-text :as message-text]
+   [psi.agent-session.persistence :as persist]
    [psi.agent-session.session-state :as ss]
    [psi.rpc.state :as rpc.state]
    [psi.rpc.transport :refer [default-session-id-in event-frame protocol-version]]))
@@ -151,12 +152,12 @@
   ([ctx]
    (session-updated-payload ctx (default-session-id-in ctx)))
   ([ctx session-id]
-   (let [sd                 (ss/get-session-data-in ctx session-id)
-         model              (:model sd)
-         thinking-level     (:thinking-level sd)
-         effective-effort   (effective-reasoning-effort model thinking-level)
-         messages           (:messages (agent/get-data-in (ss/agent-ctx-in ctx session-id)))
-         session-display-name (message-text/session-display-name (:session-name sd) messages)]
+   (let [sd                   (ss/get-session-data-in ctx session-id)
+         model                (:model sd)
+         thinking-level       (:thinking-level sd)
+         effective-effort     (effective-reasoning-effort model thinking-level)
+         journal-messages     (persist/messages-from-entries-in ctx session-id)
+         session-display-name (message-text/session-display-name (:session-name sd) journal-messages)]
      {:session-id                  (:session-id sd)
       :session-file                (:session-file sd)
       :session-name                (:session-name sd)
@@ -209,9 +210,10 @@
         slots            (mapv (fn [m]
                                  {:id                (:session-id m)
                                   :name              (:session-name m)
-                                  :display-name      (if (= (:session-id m) current-id)
-                                                       current-display-name
-                                                       (message-text/short-display-text (:session-name m)))
+                                  :display-name      (or (:display-name m)
+                                                         (if (= (:session-id m) current-id)
+                                                           current-display-name
+                                                           (message-text/short-display-text (:session-name m))) )
                                   :worktree-path     (:worktree-path m)
                                   :is-streaming      (boolean
                                                       (and (= (:session-id m) current-id)

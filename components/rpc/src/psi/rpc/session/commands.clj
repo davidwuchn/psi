@@ -118,6 +118,11 @@
       :tree-open
       (emit-text-command-result! emit! "[/tree requires frontend action handling]")
 
+      :tree-rename
+      (emit/emit-command-result! emit! {:type "text"
+                                        :message (str "Renamed session " (:session-id cmd-result)
+                                                      " to " (pr-str (:session-name cmd-result)))})
+
       (:tree-switch :session-switch)
       (emit/emit-command-result! emit! {:type "session_switch"
                                         :session-id (:session-id cmd-result)})
@@ -192,20 +197,39 @@
               :prompt "Select a live session"
               :payload {:active-session-id active-id
                         :sessions sessions}})
-      (let [arg    (-> (str/replace trimmed #"^/tree\s+" "") str/trim)
-            chosen (maybe-match-session sessions arg)
-            sid    (:session-id chosen)]
-        (cond
-          (nil? chosen)
-          (emit-text-command-result! emit! (str "Session not found in context: " arg))
+      (let [arg (-> (str/replace trimmed #"^/tree\s+" "") str/trim)]
+        (if (str/starts-with? arg "name ")
+          (let [tail        (-> (subs arg 5) str/trim)
+                [sid-part name-part] (let [[a b] (str/split tail #"\s+" 2)]
+                                       [a (some-> b str/trim)])]
+            (cond
+              (str/blank? sid-part)
+              (emit-text-command-result! emit! "Usage: /tree name <session-id|prefix> <name>")
 
-          (= sid active-id)
-          (emit-text-command-result! emit! (str "Already active session: " sid))
+              (str/blank? name-part)
+              (emit-text-command-result! emit! "Usage: /tree name <session-id|prefix> <name>")
 
-          :else
-          (do
-            (session/ensure-session-loaded-in! ctx active-id sid)
-            (emit-session-rehydration-from-sid! ctx state emit! sid)))))))
+              :else
+              (let [chosen (maybe-match-session sessions sid-part)
+                    sid    (:session-id chosen)]
+                (if-not chosen
+                  (emit-text-command-result! emit! (str "Session not found in context: " sid-part))
+                  (do
+                    (session/set-session-name-in! ctx sid name-part)
+                    (emit-text-command-result! emit! (str "Renamed session " sid " to " (pr-str name-part))))))))
+          (let [chosen (maybe-match-session sessions arg)
+                sid    (:session-id chosen)]
+            (cond
+              (nil? chosen)
+              (emit-text-command-result! emit! (str "Session not found in context: " arg))
+
+              (= sid active-id)
+              (emit-text-command-result! emit! (str "Already active session: " sid))
+
+              :else
+              (do
+                (session/ensure-session-loaded-in! ctx active-id sid)
+                (emit-session-rehydration-from-sid! ctx state emit! sid)))))))))
 
 (defn- handle-picker-command!
   [request-id emit! trimmed]

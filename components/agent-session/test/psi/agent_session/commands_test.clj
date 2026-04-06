@@ -128,6 +128,20 @@
     (is (= :text (:type result)))
     (is (str/includes? (:message result) "Already active session"))))
 
+(deftest dispatch-tree-name-session-test
+  (let [[ctx session-id] (make-test-ctx)
+        result (commands/dispatch-in ctx session-id (str "/tree name " session-id " Focus on prompt lifecycle") cmd-opts)]
+    (is (= :tree-rename (:type result)))
+    (is (= session-id (:session-id result)))
+    (is (= "Focus on prompt lifecycle" (:session-name result)))
+    (is (= "Focus on prompt lifecycle" (:session-name (ss/get-session-data-in ctx session-id))))))
+
+(deftest dispatch-tree-name-session-usage-test
+  (let [[ctx session-id] (make-test-ctx)
+        result (commands/dispatch-in ctx session-id "/tree name" cmd-opts)]
+    (is (= :text (:type result)))
+    (is (= "Usage: /tree name <session-id|prefix> <name>" (:message result)))))
+
 (deftest dispatch-status-test
   (let [[ctx session-id] (make-test-ctx)
         result     (commands/dispatch-in ctx session-id "/status" cmd-opts)]

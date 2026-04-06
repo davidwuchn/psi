@@ -191,6 +191,10 @@
           sd-1               (session/new-session-in! ctx nil {})
           sid-1              (:session-id sd-1)
           path-1             (:session-file sd-1)
+          _                  (ss/journal-append-in! ctx sid-1
+                                                    (persist/message-entry {:role "user"
+                                                                            :content [{:type :text :text "alpha"}]
+                                                                            :timestamp (java.time.Instant/parse "2026-03-16T10:47:00Z")}))
           _                  (persist/flush-journal! (java.io.File. path-1)
                                                      sid-1
                                                      cwd
@@ -201,6 +205,10 @@
           sd-2               (session/new-session-in! ctx sid-1 {})
           sid-2              (:session-id sd-2)
           path-2             (:session-file sd-2)
+          _                  (ss/journal-append-in! ctx sid-2
+                                                    (persist/message-entry {:role "user"
+                                                                            :content [{:type :text :text "beta"}]
+                                                                            :timestamp (java.time.Instant/parse "2026-03-16T10:48:00Z")}))
           _                  (persist/flush-journal! (java.io.File. path-2)
                                                      sid-2
                                                      cwd
@@ -215,6 +223,7 @@
                                           :psi.session-info/cwd
                                           :psi.session-info/worktree-path
                                           :psi.session-info/name
+                                          :psi.session-info/display-name
                                           :psi.session-info/created]}])
           persisted-result   (q-in ctx [{:psi.session/list
                                          [:psi.session-info/id
@@ -230,6 +239,8 @@
       (is (some #(= sid-2 (:psi.session-info/id %)) context-sessions))
       (is (some #(= path-1 (:psi.session-info/path %)) context-sessions))
       (is (some #(= path-2 (:psi.session-info/path %)) context-sessions))
+      (is (some #(= "alpha" (:psi.session-info/display-name %)) context-sessions))
+      (is (some #(= "beta" (:psi.session-info/display-name %)) context-sessions))
       (is (every? #(= cwd (:psi.session-info/cwd %)) context-sessions))
       (is (every? #(= cwd (:psi.session-info/worktree-path %)) context-sessions))
       (is (every? #(instance? java.time.Instant (:psi.session-info/created %)) context-sessions))

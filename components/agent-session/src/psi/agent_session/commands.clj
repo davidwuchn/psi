@@ -11,6 +11,7 @@
      :resume        — {:type :resume}
      :tree-open     — {:type :tree-open}
      :tree-switch   — {:type :tree-switch :session-id string}
+     :tree-rename   — {:type :tree-rename :session-id string :session-name string}
      :login-start   — {:type :login-start :provider map :url string :login-state map
                         :uses-callback-server bool}
      :login-error   — {:type :login-error :message string}
@@ -372,8 +373,35 @@
      :message "[/tree is only available in TUI mode (--tui)]"}
     (let [arg      (-> (str/replace trimmed #"^/tree\s*" "") str/trim)
           sessions (tree-sessions ctx session-id)]
-      (if (str/blank? arg)
+      (cond
+        (str/blank? arg)
         {:type :tree-open}
+
+        (= arg "name")
+        {:type :text :message "Usage: /tree name <session-id|prefix> <name>"}
+
+        (str/starts-with? arg "name ")
+        (let [tail        (-> (subs arg 5) str/trim)
+              [sid-part name-part] (let [[a b] (str/split tail #"\s+" 2)]
+                                     [a (some-> b str/trim)])]
+          (cond
+            (str/blank? sid-part)
+            {:type :text :message "Usage: /tree name <session-id|prefix> <name>"}
+
+            (str/blank? name-part)
+            {:type :text :message "Usage: /tree name <session-id|prefix> <name>"}
+
+            :else
+            (let [chosen (match-session-in-context sessions sid-part)
+                  sid    (:session-id chosen)]
+              (if-not chosen
+                {:type :text :message (str "Session not found in context: " sid-part)}
+                (let [result (session/set-session-name-in! ctx sid name-part)]
+                  {:type :tree-rename
+                   :session-id sid
+                   :session-name (:session-name result)})))))
+
+        :else
         (let [chosen (match-session-in-context sessions arg)
               sid    (:session-id chosen)]
           (cond
