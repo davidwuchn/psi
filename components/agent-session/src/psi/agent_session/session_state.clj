@@ -204,20 +204,42 @@
   [ctx]
   (get-state-in* ctx [:agent-session :sessions]))
 
+(defn- latest-message-timestamp
+  "Return the latest journaled user/assistant/tool-result message timestamp.
+
+   Falls back to nil when the session has no recorded message entries yet."
+  [entries]
+  (reduce (fn [latest entry]
+            (let [timestamp (when (= :message (:kind entry))
+                              (get-in entry [:data :message :timestamp]))]
+              (cond
+                (nil? timestamp) latest
+                (nil? latest)    timestamp
+                (pos? (compare timestamp latest)) timestamp
+                :else latest)))
+          nil
+          (or entries [])))
+
 (defn list-context-sessions-in
   "Return valid session metadata entries sorted by updated-at.
+
+   `:updated-at` prefers explicit session metadata when present, otherwise
+   derives from the latest journaled message timestamp so adapters can render a
+   real last-message clock instead of repeating session creation time.
 
    Defensive filter: ignore malformed runtime slots that do not carry a
    non-blank :session-id in :data. Adapters should only render real sessions."
   [ctx]
   (let [sessions (get-sessions-map-in ctx)]
     (->> (vals sessions)
-         (keep (fn [{:keys [data]}]
+         (keep (fn [{:keys [data persistence]}]
                  (when-let [sid (:session-id data)]
                    (when-not (str/blank? sid)
-                     (select-keys data [:session-id :session-file :session-name
-                                        :worktree-path :parent-session-id
-                                        :parent-session-path :created-at :updated-at])))))
+                     (assoc (select-keys data [:session-id :session-file :session-name
+                                               :worktree-path :parent-session-id
+                                               :parent-session-path :created-at :updated-at])
+                            :updated-at (or (:updated-at data)
+                                            (latest-message-timestamp (:journal persistence))))))))
          (sort-by (juxt :updated-at :session-id))
          vec)))
 

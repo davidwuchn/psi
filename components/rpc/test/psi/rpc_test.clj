@@ -1662,22 +1662,29 @@
 
 (deftest rpc-subscribe-emits-context-updated-test
   (testing "subscribe emits context/updated with active-session-id and sessions list"
-    (let [[ctx _] (create-session-context)
-          state   (atom {:ready? true
-                         :pending {}
-                         :subscribed-topics #{"context/updated"}})
-          handler (make-handler ctx state)
-          input   (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
-                       "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"context/updated\"]}}\n")
+    (let [[ctx session-id] (create-session-context)
+          user-ts          (java.time.Instant/parse "2026-03-16T10:47:00Z")
+          _                (ss/journal-append-in! ctx session-id
+                                                  (persist/message-entry {:role "user"
+                                                                          :content [{:type :text :text "hi"}]
+                                                                          :timestamp user-ts}))
+          state            (atom {:ready? true
+                                  :pending {}
+                                  :subscribed-topics #{"context/updated"}})
+          handler          (make-handler ctx state)
+          input            (str "{:id \"h1\" :kind :request :op \"handshake\" :params {:client-info {:protocol-version \"1.0\"}}}\n"
+                                "{:id \"s1\" :kind :request :op \"subscribe\" :params {:topics [\"context/updated\"]}}\n")
           {:keys [out-lines]} (run-loop input handler state)
-          frames   (parse-frames out-lines)
-          context-evt (some #(when (= "context/updated" (:event %)) %) frames)]
+          frames           (parse-frames out-lines)
+          context-evt      (some #(when (= "context/updated" (:event %)) %) frames)
+          session-slot     (some #(when (= session-id (:id %)) %) (get-in context-evt [:data :sessions]))]
       (is (some? context-evt) "context/updated must be emitted on subscribe")
       (is (contains? (:data context-evt) :active-session-id))
       (is (vector? (get-in context-evt [:data :sessions])))
       (is (every? #(contains? % :worktree-path) (get-in context-evt [:data :sessions])))
       (is (every? #(contains? % :created-at) (get-in context-evt [:data :sessions])))
-      (is (every? #(contains? % :updated-at) (get-in context-evt [:data :sessions]))))))
+      (is (every? #(contains? % :updated-at) (get-in context-evt [:data :sessions])))
+      (is (= (str user-ts) (:updated-at session-slot)) "updated-at should reflect latest message timestamp"))))
 
 (deftest rpc-fork-emits-context-updated-test
   (testing "fork emits context/updated with new session in sessions list"
